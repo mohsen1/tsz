@@ -1,4 +1,4 @@
-//! Regression tests for the relation-derived elaboration tail on a failed
+//! Regression tests for the relation-derived elaboration of a failed sync
 //! `using` declaration (TS2850) and, more broadly, for symbol-keyed missing
 //! property elaboration (TS2741) on a non-array target.
 //!
@@ -7,13 +7,19 @@
 //! (e.g. `Disposable`'s `[Symbol.dispose]`) and omits them only for array-like
 //! targets (where the iteration protocol makes them implicitly satisfied). The
 //! `using` check routes a failed sync `using` through the shared assignability
-//! gateway against the global `Disposable` interface so the nested tail is the
-//! real relation reason rather than a hand-built string; `await using` (TS2851)
-//! carries no tail.
+//! gateway against the global `Disposable` interface. When the ONLY failure is
+//! that the disposable member is absent outright (a bare `MissingProperty`/
+//! `MissingProperties` leaf), `tsc` REPLACES the `using`-specific TS2850 head
+//! message with that leaf's own self-contained TS2741/TS2739 -- no TS2850 line
+//! at all (#16872). When the member is present but incompatible (wrong type,
+//! wrong arity -- a `PropertyTypeMismatch` with its own nested chain), TS2850
+//! stays as the head message with the relation reason nested beneath it as the
+//! tail. `await using` (TS2851) carries no tail and is never replaced.
 //!
 //! Owner: solver `explain_object_failure` (reason) +
 //! `error_reporter::assignability` (emission) +
-//! `check_using_declaration_disposable`.
+//! `check_using_declaration_disposable` / `disposable_relation_outcome`
+//! (`crates/tsz-checker/src/types/type_checking/using_disposable_check.rs`).
 //!
 //! The cases are fully self-contained (an inline `Symbol`/`Disposable` so the
 //! relation stays in one arena), and they vary the source member name where it
@@ -79,43 +85,53 @@ fn elaboration(body: &str, code: u32) -> String {
     lines.join("\n")
 }
 
-/// Sync `using` whose initializer lacks `[Symbol.dispose]`: the TS2850 top line
-/// keeps its wording and gains the relation-derived missing-property tail that
-/// `tsc` attaches via `checkTypeAssignableTo(initType, Disposable)`.
+/// Sync `using` whose initializer lacks `[Symbol.dispose]` ENTIRELY (the
+/// member is absent, not merely incompatible): `tsc` reports the bare
+/// `checkTypeAssignableTo(initType, Disposable)` failure — a self-contained
+/// `TS2741` — and does NOT wrap it in the `using`-specific `TS2850` head
+/// message at all. Verified against the pinned `typescript@7.0.2` oracle:
+/// `using r = { foo: number }` reports only `TS2741`, no `TS2850` line.
 #[test]
-fn using_missing_dispose_attaches_symbol_missing_tail() {
+fn using_missing_dispose_reports_bare_ts2741() {
     let text = elaboration(
         r#"
 declare const x: { foo: number };
 function f() { using r = x; }
 "#,
-        2850,
+        2741,
     );
     assert_eq!(
         text,
-        "The initializer of a 'using' declaration must be either an object with a \
-         '[Symbol.dispose]()' method, or be 'null' or 'undefined'.\n\
-         Property '[Symbol.dispose]' is missing in type '{ foo: number; }' but required \
+        "Property '[Symbol.dispose]' is missing in type '{ foo: number; }' but required \
          in type 'Disposable'.",
+    );
+    let diags = check(
+        r#"
+declare const x: { foo: number };
+function f() { using r = x; }
+"#,
+    );
+    assert!(
+        !diags.iter().any(|d| d.code == 2850),
+        "a bare missing-member failure must not also emit TS2850, got: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
     );
 }
 
-/// Same rule, different source member name — the tail must echo the renamed
-/// source type, never a hard-coded `{ foo: number; }`.
+/// Same rule, different source member name — the message must echo the
+/// renamed source type, never a hard-coded `{ foo: number; }`.
 #[test]
-fn using_missing_dispose_tail_is_member_name_independent() {
+fn using_missing_dispose_message_is_member_name_independent() {
     let text = elaboration(
         r#"
 declare const handle: { resourceId: string };
 function open() { using h = handle; }
 "#,
-        2850,
+        2741,
     );
     assert_eq!(
         text,
-        "The initializer of a 'using' declaration must be either an object with a \
-         '[Symbol.dispose]()' method, or be 'null' or 'undefined'.\n\
-         Property '[Symbol.dispose]' is missing in type '{ resourceId: string; }' but \
+        "Property '[Symbol.dispose]' is missing in type '{ resourceId: string; }' but \
          required in type 'Disposable'.",
     );
 }
@@ -467,6 +483,8 @@ function f() { using r = { [Symbol.dispose](x: number) {}, extra: 1 }; }
 /// excess PROPERTIES from failing the relation -- it must not weaken presence
 /// checking. A fresh object literal with no dispose member at all is still
 /// rejected, same as the non-fresh `declare const` shape already covered above.
+/// Per #16872 (oracle-verified), a bare missing-member failure reports TS2741
+/// alone, not TS2850 -- same as the non-fresh case.
 #[test]
 fn using_fresh_literal_missing_dispose_still_errors() {
     let diags = check(
@@ -475,8 +493,13 @@ function f() { using r = { notDispose() {} }; }
 "#,
     );
     assert!(
-        diags.iter().any(|d| d.code == 2850),
-        "a fresh literal with no dispose member must still raise TS2850, got: {:?}",
+        diags.iter().any(|d| d.code == 2741),
+        "a fresh literal with no dispose member must still raise TS2741, got: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+    assert!(
+        !diags.iter().any(|d| d.code == 2850),
+        "a bare missing-member failure must not also emit TS2850, got: {:?}",
         diags.iter().map(|d| d.code).collect::<Vec<_>>()
     );
 }
