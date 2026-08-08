@@ -37,6 +37,32 @@ fn parse_args(args: &[&str]) -> CliArgs {
     CliArgs::try_parse_from(args).expect("test args should parse")
 }
 
+/// Whether `dir`'s filesystem distinguishes file names by case.
+///
+/// The two collision fixtures below need `foo.ts` and `Foo.ts` to exist as two
+/// distinct files. On a case-insensitive filesystem — APFS's default on macOS,
+/// and Windows — the second `write_file` overwrites the first, leaving a single
+/// root, so there is no casing collision and `TS1149` correctly does not fire.
+/// The compiler is right and the scenario is simply unrepresentable there, so
+/// those cases skip rather than assert.
+///
+/// Deliberately a runtime probe and not a `known-failures.txt` entry: on a
+/// case-sensitive filesystem (Linux CI) these must run and pass, and a blanket
+/// known-failure would mask a genuine regression there.
+fn fs_is_case_sensitive(dir: &Path) -> bool {
+    let lower = dir.join("tsz_case_probe.tmp");
+    let upper = dir.join("TSZ_CASE_PROBE.tmp");
+    if std::fs::write(&lower, "probe").is_err() {
+        // Cannot tell; assume sensitive so the assertions still run rather than
+        // silently skipping on an unrelated I/O problem.
+        return true;
+    }
+    let sensitive = !upper.exists();
+    let _ = std::fs::remove_file(&lower);
+    let _ = std::fs::remove_file(&upper);
+    sensitive
+}
+
 /// Two real, distinct root files whose names differ only in casing must
 /// report TS1149, anchored nowhere (no `file`/`start`/`length`), with the
 /// "Root file specified for compilation" reason repeated once per file.
@@ -44,6 +70,12 @@ fn parse_args(args: &[&str]) -> CliArgs {
 fn two_root_files_differing_only_in_casing_report_ts1149() {
     let temp = tempfile::TempDir::new().expect("temp dir");
     let base = temp.path();
+
+    if !fs_is_case_sensitive(base) {
+        // See `fs_is_case_sensitive`: the two-distinct-files fixture cannot
+        // exist here, so there is no collision to detect.
+        return;
+    }
 
     write_file(&base.join("foo.ts"), "export const a = 1;\n");
     write_file(&base.join("Foo.ts"), "export const b = 2;\n");
@@ -99,6 +131,12 @@ fn two_root_files_differing_only_in_casing_report_ts1149() {
 fn casing_collision_message_order_follows_root_file_argument_order() {
     let temp = tempfile::TempDir::new().expect("temp dir");
     let base = temp.path();
+
+    if !fs_is_case_sensitive(base) {
+        // See `fs_is_case_sensitive`: the two-distinct-files fixture cannot
+        // exist here, so there is no collision to detect.
+        return;
+    }
 
     write_file(&base.join("foo.ts"), "export const a = 1;\n");
     write_file(&base.join("Foo.ts"), "export const b = 2;\n");
