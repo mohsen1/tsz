@@ -441,12 +441,18 @@ fn is_hard_keyword_interface_name_2427_parse_diagnostic(diagnostic: &ParseDiagno
 /// our parser emits instead.
 ///
 /// Membership is load-bearing in BOTH directions. A listed code is suppressed
-/// when a real parse error exists, and — because `has_non_grammar_parse_error`
-/// is computed as the complement of this list — an *unlisted* parser-emitted
-/// grammar code counts as a real parse error and suppresses every listed
-/// sibling. So omitting one member of a `grammarError`-family silently deletes
-/// the rest of its family: TS1049/TS1051 were missing here, and any file whose
-/// setter tripped one of them lost the getter's TS1054 entirely.
+/// when a real parse error exists. And every listed code is folded into
+/// `is_non_suppressing_parse_error` by construction (that predicate delegates
+/// to this one), so a parser-emitted grammar code that is *omitted* here is
+/// classified as a suppressing "real parse error" by
+/// `has_non_grammar_parse_error` and silently deletes every listed sibling in
+/// its file. (Before the filter-trigger unification `has_non_grammar_parse_error`
+/// was the literal complement of this list; it is now computed from
+/// `is_non_suppressing_parse_error`, but the containment above keeps the hazard
+/// — and the fix — identical.) So omitting one member of a `grammarError`-family
+/// silently deletes the rest of its family: TS1049/TS1051 were missing here,
+/// and any file whose setter tripped one of them lost the getter's TS1054
+/// entirely.
 ///
 /// The accessor family (tsc's single `checkGrammarAccessor`) is therefore all
 /// in or all out: TS1049, TS1051, TS1054, TS1095. TS1052/TS1053 belong to the
@@ -723,6 +729,28 @@ const fn is_parser_grammar_code(code: u32) -> bool {
         | 18037 // 'await' expression cannot be used inside a class static block
         | 18041 // A 'return' statement cannot be used inside a class static block
         | 18054 // 'await using' statements cannot be used inside a class static block
+        // The invalid-meta-property-name family, reported from tsc's single
+        // `checkMetaProperty` (checker-side `grammarErrorOnNode`) and emitted
+        // from tsz's parser instead (`state_expressions_literals.rs`, the
+        // `new.<name>` / `import.<name>` sites, which pick between the two codes
+        // on whether a `(` follows). It is all-in-or-all-out: TS17012 fires for
+        // the non-call form (`import.foo` / `new.foo`) and TS18061 for the call
+        // form (`import.foo()`), and a file can carry both at once
+        // (`importDefer/importMetaPropertyInvalidInCall.ts`), so listing only
+        // one lets the *other* — still counted as a suppressing "real parse
+        // error" — delete the listed one. The checker's own meta-property
+        // access path (`property_access_type/helpers.rs`) deliberately does NOT
+        // emit either ("A separate grammar check is expected to emit TS17012"),
+        // so there is no double-emission — the trap that blocked TS2499/TS18016.
+        // #16279 meta-property round: oracle-confirmed against `typescript@7.0.2`
+        // — Direction A, `const y = import.foo;` reports TS17012 and
+        // `import.foo();` reports TS18061; Direction B, either construct plus an
+        // unrelated real syntax error (`let zzz: = 1;`) drops the meta-property
+        // code entirely, which tsz's parser-emitted copies did not — and,
+        // unlisted, TS17012 deleted a co-occurring listed TS1054 (`get` accessor
+        // with parameters) from the same file.
+        | 17012 // '{0}' is not a valid meta-property for keyword '{1}'. Did you mean '{2}'?
+        | 18061 // '{0}' is not a valid meta-property for keyword 'import'. Did you mean 'meta' or 'defer'?
         | 1326 // This use of 'import' is invalid. 'import()' calls can be written,
                // but they must have parentheses and cannot have type arguments.
                // tsc's checkGrammarImportCallExpression reports this from the
@@ -1951,6 +1979,10 @@ mod class_static_block_grammar_tests;
 #[cfg(test)]
 #[path = "check_utils/import_call_type_arguments_grammar_tests.rs"]
 mod import_call_type_arguments_grammar_tests;
+
+#[cfg(test)]
+#[path = "check_utils/meta_property_grammar_tests.rs"]
+mod meta_property_grammar_tests;
 
 #[cfg(test)]
 #[path = "check_utils/private_identifier_parse_error_suppression_tests.rs"]
