@@ -1824,24 +1824,56 @@ impl<'a> CheckerState<'a> {
         anchor: NodeIndex,
     ) -> Option<Vec<crate::diagnostics::DiagnosticRelatedInformation>> {
         let disposable_type = self.resolve_disposable_interface_type(false)?;
+        // Widen freshness before running the relation, mirroring the gate in
+        // `type_has_disposable_method`: `tsc` never excess-property-checks a
+        // `using` initializer (#16862), so a fresh object literal that carries a
+        // *signature-incompatible* `[Symbol.dispose]` alongside extra properties
+        // must elaborate the signature failure, not a leaked "Object literal may
+        // only specify known properties" tail. The gate and the tail must see
+        // the same regular type or they disagree on the fresh-plus-extra case.
+        let init_type = crate::query_boundaries::common::widen_freshness(self.ctx.types, init_type);
         let analysis = self.analyze_assignability_failure(init_type, disposable_type);
         let reason = analysis.failure_reason?;
         let rendered = self.render_failure_reason(&reason, init_type, disposable_type, anchor, 0);
-        // The rendered reason's top message is the first elaboration line; its own
-        // nested chain re-seats one level deeper beneath it.
-        let mut related = vec![crate::diagnostics::Diagnostic::related_message(
-            rendered.code,
-            rendered.file,
-            rendered.start,
-            rendered.length,
-            rendered.message_text,
-        )];
-        related.extend(
-            rendered
-                .related_information
-                .into_iter()
-                .map(|info| info.with_depth_shift(1)),
-        );
+        // `tsc` reports this failure through `checkTypeAssignableTo(initType,
+        // Disposable, headMessage = TS2850)`. In its `reportRelationError`, a
+        // supplied head message *replaces* the generic outer
+        // `Type 'S' is not assignable to type 'T'.` frame rather than nesting
+        // beneath it — the TS2850 wording ("must be … an object with a
+        // '[Symbol.dispose]()' method …") already conveys that relationship, so
+        // the tail drills straight to the specific nested reason.
+        //
+        // `render_failure_reason` at depth 0 reproduces that generic frame as
+        // the rendered *top* message (code `TYPE_IS_NOT_ASSIGNABLE_TO_TYPE`)
+        // whenever the reason is an object-structural mismatch that carries a
+        // deeper chain (e.g. a `[Symbol.dispose]` whose signature is
+        // incompatible). Mirror `tsc`: drop that redundant frame and promote its
+        // already-correctly-nested children directly beneath the head message.
+        // A self-heading leaf reason instead renders as its own specific message
+        // (e.g. `Property '[Symbol.dispose]' is missing … required in type
+        // 'Disposable'.`, code TS2741) with no generic frame to replace, so keep
+        // it as the first tail line with its own chain one level deeper.
+        let top_is_generic_frame = rendered.code
+            == crate::diagnostics::diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+            && !rendered.related_information.is_empty();
+        let related = if top_is_generic_frame {
+            rendered.related_information
+        } else {
+            let mut related = vec![crate::diagnostics::Diagnostic::related_message(
+                rendered.code,
+                rendered.file,
+                rendered.start,
+                rendered.length,
+                rendered.message_text,
+            )];
+            related.extend(
+                rendered
+                    .related_information
+                    .into_iter()
+                    .map(|info| info.with_depth_shift(1)),
+            );
+            related
+        };
         Some(related)
     }
 

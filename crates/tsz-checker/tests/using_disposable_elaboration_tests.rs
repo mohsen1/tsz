@@ -183,6 +183,160 @@ const d: Disposable = x;
     );
 }
 
+/// Full elaboration as `(depth, text)` pairs — the primary message at depth 0,
+/// then each related line at its rendered nesting depth + 1 (so the primary is
+/// the shallowest). Locks both the wording AND the `tsc`-style progressive
+/// indentation, which a flat text join cannot distinguish.
+fn elaboration_with_depths(body: &str, code: u32) -> Vec<(u8, String)> {
+    let diags = check(body);
+    let matching: Vec<_> = diags.iter().filter(|d| d.code == code).collect();
+    assert_eq!(
+        matching.len(),
+        1,
+        "Expected exactly one TS{code}. Got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, d.message_text.clone()))
+            .collect::<Vec<_>>()
+    );
+    let d = matching[0];
+    let mut out = vec![(0u8, d.message_text.clone())];
+    out.extend(
+        d.related_information
+            .iter()
+            .map(|info| (info.depth + 1, info.message_text.clone())),
+    );
+    out
+}
+
+/// Sync `using` whose `[Symbol.dispose]` method has an incompatible *signature*
+/// (an extra required parameter): the TS2850 top line keeps its wording and the
+/// relation-derived tail drills straight to the specific incompatibility, with
+/// no redundant `Type '{…}' is not assignable to type 'Disposable'.` wrapper
+/// frame (the TS2850 head message already conveys it) and with the arity leaf
+/// nested one level under the function-type line — matching `tsc`. Regression
+/// for #16859 (a type-mismatch, not missing-property, Disposable failure).
+#[test]
+fn using_type_mismatch_dispose_signature_attaches_incompatible_tail() {
+    let lines = elaboration_with_depths(
+        r#"
+function f() { using r = { [Symbol.dispose](extra: number) {} }; }
+"#,
+        2850,
+    );
+    assert_eq!(
+        lines,
+        vec![
+            (
+                0u8,
+                "The initializer of a 'using' declaration must be either an object with a \
+                 '[Symbol.dispose]()' method, or be 'null' or 'undefined'."
+                    .to_string(),
+            ),
+            (
+                1,
+                "Types of property '[Symbol.dispose]' are incompatible.".to_string(),
+            ),
+            (
+                2,
+                "Type '(extra: number) => void' is not assignable to type '() => void'."
+                    .to_string(),
+            ),
+            (
+                3,
+                "Target signature provides too few arguments. Expected 1 or more, but got 0."
+                    .to_string(),
+            ),
+        ],
+    );
+}
+
+/// Same rule, different parameter name — the tail must echo the renamed source
+/// signature, never a hard-coded `extra` (CLAUDE.md anti-hardcoding gate).
+#[test]
+fn using_type_mismatch_tail_is_param_name_independent() {
+    let lines = elaboration_with_depths(
+        r#"
+function open() { using h = { [Symbol.dispose](spare: string) {} }; }
+"#,
+        2850,
+    );
+    assert_eq!(
+        lines,
+        vec![
+            (
+                0u8,
+                "The initializer of a 'using' declaration must be either an object with a \
+                 '[Symbol.dispose]()' method, or be 'null' or 'undefined'."
+                    .to_string(),
+            ),
+            (
+                1,
+                "Types of property '[Symbol.dispose]' are incompatible.".to_string(),
+            ),
+            (
+                2,
+                "Type '(spare: string) => void' is not assignable to type '() => void'."
+                    .to_string(),
+            ),
+            (
+                3,
+                "Target signature provides too few arguments. Expected 1 or more, but got 0."
+                    .to_string(),
+            ),
+        ],
+    );
+}
+
+/// The void-return exception is unchanged by the structural gate: a
+/// `[Symbol.dispose]` method that *returns a value* is still a valid `Disposable`
+/// (anything is assignable to a `void`-returning target position), so no TS2850
+/// fires. Locks that the gate rejects only genuine signature failures.
+#[test]
+fn using_dispose_value_return_is_clean() {
+    let diags = check(
+        r#"
+function f() { using r = { [Symbol.dispose]() { return 1; } }; }
+"#,
+    );
+    assert!(
+        !diags.iter().any(|d| d.code == 2850),
+        "a value-returning `[Symbol.dispose]` must not raise TS2850 (void-return exception), got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, d.message_text.clone()))
+            .collect::<Vec<_>>()
+    );
+}
+
+/// `await using` whose `[Symbol.asyncDispose]` returns `void` (not a
+/// `PromiseLike`) and which carries no sync `[Symbol.dispose]` fallback must
+/// report TS2851 — the signature-level rejection the structural gate newly
+/// catches. Per `tsc`, TS2851 carries no elaboration tail, so it stays flat.
+#[test]
+fn await_using_async_dispose_wrong_return_reports_flat_ts2851() {
+    let diags = check(
+        r#"
+async function f() { await using r = { [Symbol.asyncDispose](): void {} }; }
+"#,
+    );
+    let ts2851 = diags.iter().find(|d| d.code == 2851).unwrap_or_else(|| {
+        panic!(
+            "expected TS2851 for a void-returning `[Symbol.asyncDispose]`, got: {:?}",
+            diags.iter().map(|d| d.code).collect::<Vec<_>>()
+        )
+    });
+    assert!(
+        ts2851.related_information.is_empty(),
+        "await using (TS2851) must carry no elaboration tail, got: {:?}",
+        ts2851
+            .related_information
+            .iter()
+            .map(|i| i.message_text.clone())
+            .collect::<Vec<_>>()
+    );
+}
+
 /// #16862: a `using` initializer is not excess-property checked. A fresh object
 /// literal carrying `[Symbol.dispose]` plus extra properties is a perfectly good
 /// disposable, and `tsc` accepts it — #16858 passed the fresh literal type
@@ -267,6 +421,45 @@ function f() { using r = { [Symbol.dispose](x: number) {} }; }
         diags.iter().any(|d| d.code == 2850),
         "a `[Symbol.dispose]` with a required parameter must still raise TS2850, got: {:?}",
         diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+/// Combined case: a fresh object literal carrying BOTH a signature-incompatible
+/// `[Symbol.dispose]` and an extra property. `tsc` does not excess-property-check
+/// a `using` initializer (#16862), so the tail must elaborate the signature
+/// failure — never a leaked "Object literal may only specify known properties".
+/// This is what pins the gate and the tail to the same freshness-widened source.
+#[test]
+fn using_type_mismatch_with_extra_properties_reports_signature_tail() {
+    let lines = elaboration_with_depths(
+        r#"
+function f() { using r = { [Symbol.dispose](x: number) {}, extra: 1 }; }
+"#,
+        2850,
+    );
+    assert_eq!(
+        lines,
+        vec![
+            (
+                0u8,
+                "The initializer of a 'using' declaration must be either an object with a \
+                 '[Symbol.dispose]()' method, or be 'null' or 'undefined'."
+                    .to_string(),
+            ),
+            (
+                1,
+                "Types of property '[Symbol.dispose]' are incompatible.".to_string(),
+            ),
+            (
+                2,
+                "Type '(x: number) => void' is not assignable to type '() => void'.".to_string(),
+            ),
+            (
+                3,
+                "Target signature provides too few arguments. Expected 1 or more, but got 0."
+                    .to_string(),
+            ),
+        ],
     );
 }
 
