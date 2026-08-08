@@ -462,3 +462,21 @@ function f() { using r = { [Symbol.dispose](x: number) {}, extra: 1 }; }
         ],
     );
 }
+
+/// A third guard case alongside the two above: the freshness fix only stops
+/// excess PROPERTIES from failing the relation -- it must not weaken presence
+/// checking. A fresh object literal with no dispose member at all is still
+/// rejected, same as the non-fresh `declare const` shape already covered above.
+#[test]
+fn using_fresh_literal_missing_dispose_still_errors() {
+    let diags = check(
+        r#"
+function f() { using r = { notDispose() {} }; }
+"#,
+    );
+    assert!(
+        diags.iter().any(|d| d.code == 2850),
+        "a fresh literal with no dispose member must still raise TS2850, got: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
