@@ -30,8 +30,7 @@ impl<'a> CheckerState<'a> {
         // (`{ x: number; y: number; }` not `{ x: 0; y: 0; }`), matching tsc.
         // But preserve top-level literal/union-of-literal types so explicit
         // annotations like `var x: 5; var x: 6;` keep their literal form
-        // (`'5'` / `'6'`) instead of collapsing to `number`/`number` (which
-        // would also self-suppress via the equal-display short-circuit below).
+        // (`'5'` / `'6'`) instead of collapsing to `number`/`number`.
         //
         // Use the widened formatter (no display-property side-table fallback)
         // so the widened shape is actually rendered — `format_type_diagnostic`
@@ -49,16 +48,8 @@ impl<'a> CheckerState<'a> {
         let current_type_str = self
             .ts2403_typeof_fundule_initializer_display(idx)
             .unwrap_or_else(|| self.format_type_for_redeclaration_message(current_display));
-        // Suppress when both types format to the same name. This handles cross-binder
-        // scenarios where a lib_checker resolves a type annotation (e.g., `Document`)
-        // to a separate DefId from the main checker's version. Interface declaration
-        // merging means both annotations semantically refer to the same type, but
-        // different internal TypeIds prevent the structural check from recognizing this.
-        if prev_type_str == current_type_str {
-            return;
-        }
         let message = format!(
-            "Subsequent variable declarations must have the same type. Variable '{name}' must be of type '{prev_type_str}', but here has type '{current_type_str}'."
+            "Subsequent variable declarations must have the same type.  Variable '{name}' must be of type '{prev_type_str}', but here has type '{current_type_str}'."
         );
         self.error_at_node(idx, &message, diagnostic_codes::SUBSEQUENT_VARIABLE_DECLARATIONS_MUST_HAVE_THE_SAME_TYPE_VARIABLE_MUST_BE_OF_TYP);
     }
