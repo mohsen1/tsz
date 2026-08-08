@@ -25,11 +25,13 @@
 //! `typescript@7.0.2` (`scripts/conformance/oracle.sh`) under `--strict --lib
 //! es2022 --target es2022`.
 //!
-//! Out of scope (a known limitation, not asserted here): a member inherited from
-//! a *base class* (`class Sub extends Base { p = baseStatic; }`) still gets a
-//! bare `TS2304` rather than the suggestion — resolving it needs the class's own
-//! (mid-computation) constructor/instance type, whose lookup is not stable across
-//! the two resolution passes and would reintroduce a duplicate diagnostic.
+//! A member inherited from a *base class* (`class Sub extends Base { p =
+//! baseStatic; }`) is suggested too. The `extends` chain is walked from the AST
+//! and the base classes' own members are read by binder symbol flags — never a
+//! materialized (mid-computation) constructor/instance type — so, like the
+//! own-member check, the answer is identical in both resolution passes and does
+//! not desync into a duplicate diagnostic. Lib/`node_modules` base classes,
+//! whose declarations are not walkable class AST nodes here, remain out of scope.
 
 use std::sync::Arc;
 use tsz_binder::lib_loader::LibFile;
@@ -132,6 +134,75 @@ fn own_instance_member_suggests_the_instance_member() {
         "class E { m() {} p = m; }",
         &libs,
         &["TS2663: Cannot find name 'm'. Did you mean the instance member 'this.m'?"],
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Inherited members: a static/instance member declared on a base class is
+// suggested on the derived class, via the AST `extends` chain.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn inherited_static_member_suggests_the_derived_static_member() {
+    let libs = load_default_lib_files();
+    assert_suggestions(
+        "class Base { static bs = 1; } class Sub extends Base { p = bs; }",
+        &libs,
+        &["TS2662: Cannot find name 'bs'. Did you mean the static member 'Sub.bs'?"],
+    );
+}
+
+#[test]
+fn inherited_instance_member_suggests_the_derived_instance_member() {
+    let libs = load_default_lib_files();
+    assert_suggestions(
+        "class Base { bm() {} } class Sub extends Base { p = bm; }",
+        &libs,
+        &["TS2663: Cannot find name 'bm'. Did you mean the instance member 'this.bm'?"],
+    );
+}
+
+#[test]
+fn inherited_static_member_is_found_through_multiple_levels() {
+    let libs = load_default_lib_files();
+    // The walk follows the whole `extends` chain, not just the direct base.
+    assert_suggestions(
+        "class A { static as = 1; } class B extends A {} class Cc extends B { p = as; }",
+        &libs,
+        &["TS2662: Cannot find name 'as'. Did you mean the static member 'Cc.as'?"],
+    );
+}
+
+#[test]
+fn inherited_static_member_is_suggested_in_a_static_context() {
+    let libs = load_default_lib_files();
+    // A static member stays suggestable where `this` is the constructor.
+    assert_suggestions(
+        "class Base { static bs = 1; } class Sub extends Base { static p = bs; }",
+        &libs,
+        &["TS2662: Cannot find name 'bs'. Did you mean the static member 'Sub.bs'?"],
+    );
+}
+
+#[test]
+fn inherited_instance_member_from_a_static_context_produces_no_suggestion() {
+    let libs = load_default_lib_files();
+    // An inherited *instance* member is no more reachable from a static context
+    // than an own one — `this` is the constructor, so tsc reports a bare TS2304.
+    assert_suggestions(
+        "class Base { bm() {} } class Sub extends Base { static p = bm; }",
+        &libs,
+        &[],
+    );
+}
+
+#[test]
+fn inherited_suggestion_is_binder_name_invariant() {
+    let libs = load_default_lib_files();
+    assert_suggestions(
+        "class Vault { static token = 1; } class Client extends Vault { p = token; }",
+        &libs,
+        &["TS2662: Cannot find name 'token'. Did you mean the static member 'Client.token'?"],
     );
 }
 

@@ -402,6 +402,48 @@ impl<'a> CheckerState<'a> {
         )
     }
 
+    /// Whether a class in the `extends` chain *above* `class_idx` (its base
+    /// classes, not `class_idx` itself) declares a member named `name` that is
+    /// static when `want_static`, or instance otherwise. This extends the
+    /// member-prefix suggestion to inherited members — `class D extends C`
+    /// referencing `C`'s static `s` unqualified is `TS2662 'D.s'` in tsc, just
+    /// like an own static.
+    ///
+    /// Resolved purely from the AST heritage and binder symbol flags (via
+    /// [`Self::get_base_class_idx`] / [`Self::is_static_member`]) — never a
+    /// materialized constructor/instance type — so, like the own-member check,
+    /// it yields the identical answer in both the type-computation and
+    /// statement-walk passes and cannot desync into a double diagnostic. The
+    /// walk is cycle-guarded (an illegal `extends` cycle would otherwise loop).
+    fn base_chain_declares_member(
+        &self,
+        class_idx: NodeIndex,
+        name: &str,
+        want_static: bool,
+    ) -> bool {
+        let mut visited: rustc_hash::FxHashSet<NodeIndex> = rustc_hash::FxHashSet::default();
+        visited.insert(class_idx);
+        let mut current = class_idx;
+        while let Some(base) = self.get_base_class_idx(current) {
+            if !visited.insert(base) {
+                break;
+            }
+            if let Some(class) = self.ctx.arena.get_class_at(base) {
+                let members = &class.members.nodes;
+                let found = if want_static {
+                    self.is_static_member(members, name)
+                } else {
+                    self.is_instance_member(members, name)
+                };
+                if found {
+                    return true;
+                }
+            }
+            current = base;
+        }
+        false
+    }
+
     /// Handle a truly unresolved identifier — not a type parameter, not in the
     /// binder, not a known global. Emits the member-prefix suggestion
     /// (`TS2662`/`TS2663`), `TS2524`/`TS2523`, or falls through to the bare
@@ -441,23 +483,27 @@ impl<'a> CheckerState<'a> {
             && let Some(class_idx) = self.nearest_enclosing_class(idx)
             && let Some((member_nodes, class_name)) = self.class_members_and_name(class_idx)
         {
-            // Static (TS2662): a declared static, or a member of `Function`
-            // (`arguments`/`caller`/… — every constructor type is a subtype of
-            // `Function`). Checked before the instance arm, matching tsc.
+            // Static (TS2662): a declared static — own or inherited from a base
+            // class — or a member of `Function` (`arguments`/`caller`/… — every
+            // constructor type is a subtype of `Function`). Checked before the
+            // instance arm, matching tsc.
             if self.is_static_member(&member_nodes, name)
                 || self.global_function_type_has_member(name)
+                || self.base_chain_declares_member(class_idx, name, true)
             {
                 self.error_cannot_find_name_static_member_at(name, &class_name, idx);
                 return TypeId::ERROR;
             }
-            // Instance (TS2663): a declared instance member, in a non-static
-            // context (in a static member `this` is the constructor, so tsc
-            // reports the bare `TS2304`) with no regular-function boundary
-            // between the reference and the class (a function rebinds `this`, so
-            // `this.x` would not reach the class instance).
+            // Instance (TS2663): a declared instance member — own or inherited
+            // from a base class — in a non-static context (in a static member
+            // `this` is the constructor, so tsc reports the bare `TS2304`) with
+            // no regular-function boundary between the reference and the class (a
+            // function rebinds `this`, so `this.x` would not reach the class
+            // instance).
             if !self.is_in_static_class_member_context(idx)
                 && !self.has_regular_function_boundary_to_class(idx)
-                && self.is_instance_member(&member_nodes, name)
+                && (self.is_instance_member(&member_nodes, name)
+                    || self.base_chain_declares_member(class_idx, name, false))
             {
                 use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
                 let message = format_message(
