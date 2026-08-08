@@ -590,3 +590,101 @@ module.exports = { ns };
         result.diagnostics
     );
 }
+
+/// An explicit-root `node_modules` JS file (tsc's `rootNames`) is a full
+/// program input: its `module.exports = { ... }` surface must be readable by a
+/// later `import x = require("pkg")`, so real members type-check and unknown
+/// members report TS2339 on the concrete shape — never a false TS2339 on an
+/// empty `typeof import("pkg")`.
+///
+/// Regression for the `maxNodeModuleJsDepth` body-strip leaking into explicit
+/// roots. Before the fix the rooted `node_modules/untyped/index.js` was
+/// body-stripped in the source-discovery BFS, so its export surface came back
+/// empty: `u.hello()` reported a false TS2339 under `node16`/`nodenext` (an
+/// empty `typeof import("untyped")`) while `commonjs` silently widened `u` to
+/// `any`. tsc reads the real surface in every module mode, so the two must
+/// agree and match it. The module setting is varied to pin that agreement.
+fn explicit_root_node_modules_js_require_reads_commonjs_surface(module: &str) {
+    let temp = TempDir::new().expect("temp dir");
+    let base = temp.path.as_path();
+
+    write_file(
+        &base.join("tsconfig.json"),
+        &format!(
+            r#"{{
+  "compilerOptions": {{
+    "allowJs": true,
+    "checkJs": true,
+    "noEmit": true,
+    "target": "es2015",
+    "module": "{module}",
+    "types": []
+  }},
+  "files": ["repro.ts", "node_modules/untyped/index.js"]
+}}"#
+        ),
+    );
+    write_file(
+        &base.join("node_modules/untyped/package.json"),
+        r#"{"name":"untyped","version":"1.0.0","main":"index.js"}"#,
+    );
+    write_file(
+        &base.join("node_modules/untyped/index.js"),
+        "module.exports = { hello: function () { return 1; } };\n",
+    );
+    write_file(
+        &base.join("repro.ts"),
+        "import u = require(\"untyped\");\nu.hello();\nu.nonexistent();\n",
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    let ts2339: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE)
+        .collect();
+    // `u.hello()` is a real member of the read CJS surface — no TS2339 there
+    // (before the fix this was the reported false-positive on an empty
+    // `typeof import("untyped")`).
+    assert!(
+        ts2339
+            .iter()
+            .all(|d| !d.message_text.contains("'hello'")),
+        "[module={module}] real CJS member `u.hello()` must not report TS2339, got: {:#?}",
+        result.diagnostics
+    );
+    // `u.nonexistent()` is not on the surface — it must report TS2339 on the
+    // concrete `{ hello: () => number; }` shape. That the type is the real
+    // shape (not `any`, not an empty `typeof import(...)`) is the whole point:
+    // it proves the rooted JS body was parsed and its `module.exports` read.
+    let nonexistent: Vec<_> = ts2339
+        .iter()
+        .filter(|d| d.message_text.contains("'nonexistent'"))
+        .collect();
+    assert!(
+        nonexistent
+            .iter()
+            .any(|d| d.message_text.contains("{ hello: () => number; }")),
+        "[module={module}] unknown member `u.nonexistent()` must report TS2339 on the \
+         read `{{ hello: () => number; }}` surface (proves `u` is the real shape, not \
+         `any` nor an empty `typeof import(...)`), got: {:#?}",
+        result.diagnostics
+    );
+}
+
+#[test]
+fn explicit_root_node_modules_js_require_reads_surface_commonjs() {
+    explicit_root_node_modules_js_require_reads_commonjs_surface("commonjs");
+}
+
+#[test]
+fn explicit_root_node_modules_js_require_reads_surface_node16() {
+    explicit_root_node_modules_js_require_reads_commonjs_surface("node16");
+}
+
+#[test]
+fn explicit_root_node_modules_js_require_reads_surface_nodenext() {
+    explicit_root_node_modules_js_require_reads_commonjs_surface("nodenext");
+}

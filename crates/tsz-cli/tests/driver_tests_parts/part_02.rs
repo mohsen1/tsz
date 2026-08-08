@@ -169,11 +169,24 @@ fn compile_allow_js_passthrough_emits_skipped_node_modules_js() {
     let args = default_args();
     let result = compile(&args, base).expect("compile should succeed");
 
+    // `node_modules/untyped/index.js` is an explicit program root (a `files`
+    // entry), so its `require("untyped")` is clean — an explicit root is never
+    // `isExternalLibraryImport` in tsc's model, so no TS7016 fires (#16926,
+    // oracle-verified). The root's body is a full program input rather than
+    // `maxNodeModuleJsDepth`-stripped, so a `require()` of it reads the real
+    // `module.exports` surface instead of a false empty one. (Under `noCheck`
+    // the member accesses in `bug40140.js` are not type-checked, so no TS2339
+    // either — the non-`noCheck` shape is covered by the conformance witness
+    // `namespaceAssignmentToRequireAlias.ts` and by
+    // `explicit_root_node_modules_js_require_reads_surface_*`.)
     assert!(
-        result.diagnostics.iter().any(|diag| diag.code == 7016),
-        "Expected TS7016 for the untyped package, got: {:?}",
+        result.diagnostics.iter().all(|diag| diag.code != 7016),
+        "explicit-root node_modules JS require must not report TS7016, got: {:?}",
         result.diagnostics
     );
+    // The test's core invariant: a `maxNodeModuleJsDepth`-skipped node_modules
+    // JS is emitted verbatim (path-based emit passthrough, unaffected by the
+    // root's body now being parsed for type analysis).
     assert_eq!(
         std::fs::read_to_string(base.join("out/node_modules/untyped/index.js"))
             .expect("read emitted skipped JS"),

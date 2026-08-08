@@ -707,8 +707,26 @@ pub(super) fn read_source_files(
         canonical
     };
 
+    // Canonical paths of the explicit program roots (tsc's `rootNames` —
+    // `files`/CLI-argument entries). An explicit root is always a full program
+    // input in tsc's model, even when it is a `node_modules` JS file that the
+    // `maxNodeModuleJsDepth` gate would otherwise skip for a *transitively*
+    // reached dependency: `getSourceFilesToEmit`/`processRootFile` never apply
+    // the depth cap to a root, so its body is parsed, bound, and available for
+    // type analysis (its `module.exports`/`exports.x` surface is readable). The
+    // same distinction gates the external-CJS-require TS7016 suppression in
+    // `ModuleResolver::lookup` (#16926). Without this, a required, rooted
+    // `node_modules/<pkg>/index.js` is body-stripped here, so a later
+    // `require()`/`import x = require()` of it reads an empty export surface and
+    // reports a false TS2339 on every real member (worse under
+    // `node16`/`nodenext`, where the file is force-classified as an external
+    // module and typed as an empty `typeof import(...)` rather than falling back
+    // to `any`).
+    let mut root_paths_canonical: FxHashSet<PathBuf> = FxHashSet::default();
+
     for path in paths {
         let canonical = normalize(path, options);
+        root_paths_canonical.insert(canonical.clone());
         outfile_bundle_paths.insert(canonical.clone());
         if seen.insert(canonical.clone()) {
             discovery_order.insert(canonical.clone(), next_discovery_order);
@@ -761,7 +779,12 @@ pub(super) fn read_source_files(
                     });
                 if cached {
                     BatchAction::Cached
-                } else if should_skip_js_in_node_modules(path, options.max_node_module_js_depth) {
+                } else if should_skip_js_in_node_modules(path, options.max_node_module_js_depth)
+                    && !root_paths_canonical.contains(path)
+                {
+                    // A `node_modules` JS file that is itself an explicit program
+                    // root is never subject to the `maxNodeModuleJsDepth` skip —
+                    // roots are full program inputs (see `root_paths_canonical`).
                     BatchAction::SkipJs
                 } else {
                     BatchAction::Read
