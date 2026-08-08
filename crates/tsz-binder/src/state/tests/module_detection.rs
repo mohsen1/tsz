@@ -145,6 +145,70 @@ fn legacy_still_honours_an_exported_declaration() {
 }
 
 // ---------------------------------------------------------------------------
+// import-equals: only `= require("...")` is module syntax, not `= A.B`
+//
+// tsc's `isAnExternalModuleIndicatorNode` counts an `ImportEqualsDeclaration`
+// only when `isExternalModuleReference(node.moduleReference)` — i.e. the
+// `= require("...")` form. An internal `import X = A.B` (entity-name
+// reference) is a namespace alias, not module syntax, so its file stays a
+// script. Binder names vary so nothing keys on an identifier string.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn import_equals_require_is_module_syntax() {
+    assert!(
+        is_external_module(
+            "import wallaby = require(\"./w\");\nwallaby;\n",
+            "h.ts",
+            ModuleDetectionKind::Legacy
+        ),
+        "`import X = require(\"...\")` is an external module reference"
+    );
+}
+
+#[test]
+fn import_equals_entity_name_is_not_module_syntax() {
+    // The reported witness (issue-family): `import await = foo.await;` in a
+    // script must leave the file a script so `await` stays a legal top-level
+    // identifier (no spurious TS1262). Use a neutral name to prove the rule
+    // is structural, not a `await` special case.
+    assert!(
+        !is_external_module(
+            "namespace ns { export const wombat = 1; }\nimport alias = ns.wombat;\nalias;\n",
+            "i.ts",
+            ModuleDetectionKind::Legacy
+        ),
+        "`import X = A.B` (entity-name reference) is a namespace alias, not module syntax"
+    );
+}
+
+#[test]
+fn import_equals_entity_name_stays_a_script_under_auto() {
+    assert!(
+        !is_external_module(
+            "namespace ns { export const koala = 1; }\nimport alias = ns.koala;\nalias;\n",
+            "j.ts",
+            ModuleDetectionKind::Auto
+        ),
+        "auto detection must not promote an entity-name `import =` file to a module"
+    );
+}
+
+#[test]
+fn import_equals_entity_name_alongside_real_import_is_a_module() {
+    // The entity-name `import =` contributes nothing, but a sibling external
+    // import still makes the file a module — the gate is per-statement.
+    assert!(
+        is_external_module(
+            "import { yak } from \"./y\";\nnamespace ns { export const x = 1; }\nimport alias = ns.x;\nyak;\nalias;\n",
+            "k.ts",
+            ModuleDetectionKind::Legacy
+        ),
+        "a real import declaration is a module indicator even beside an entity-name `import =`"
+    );
+}
+
+// ---------------------------------------------------------------------------
 // auto: syntax plus format, declaration files excluded from format forcing
 // ---------------------------------------------------------------------------
 
