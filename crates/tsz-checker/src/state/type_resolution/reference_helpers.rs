@@ -147,11 +147,29 @@ impl CheckerState<'_> {
                                     })
                                     .unwrap_or_else(|| name.to_string())
                             };
-                            let display_name = Self::format_generic_display_name_with_interner(
-                                &resolved_name,
-                                &type_params,
-                                self.ctx.types,
-                            );
+                            // tsc renders a generic type *alias* by its bare name
+                            // (`callback`), but a generic class/interface with its
+                            // type parameters (`Array<T>`, `I<T>`) —
+                            // `typeToString` writes the declared type parameters
+                            // for the latter only. A re-export carries `ALIAS`
+                            // (not `TYPE_ALIAS`), so `export type { A as B }` still
+                            // resolves to its target's parameterized `A<T>`.
+                            let is_bare_type_alias =
+                                self.ctx.binder.get_symbol(sym_id).is_some_and(|s| {
+                                    s.has_any_flags(symbol_flags::TYPE_ALIAS)
+                                        && !s.has_any_flags(
+                                            symbol_flags::CLASS | symbol_flags::INTERFACE,
+                                        )
+                                });
+                            let display_name = if is_bare_type_alias {
+                                resolved_name
+                            } else {
+                                Self::format_generic_display_name_with_interner(
+                                    &resolved_name,
+                                    &type_params,
+                                    self.ctx.types,
+                                )
+                            };
                             if required_count < type_params.len() {
                                 // TS2707: Generic type 'X<T, U, V>' requires between N and M type arguments.
                                 let min_str = required_count.to_string();
