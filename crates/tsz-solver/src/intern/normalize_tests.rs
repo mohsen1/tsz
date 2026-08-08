@@ -311,6 +311,83 @@ fn enum_absorbed_into_base_primitive_in_union_reduction() {
     );
 }
 
+#[test]
+fn enum_absorbed_into_base_primitive_via_literal_only_union() {
+    // Regression for #16866's TS2411 false positive on
+    // `unionSubtypeIfEveryConstituentTypeIsSubtype.ts`: an interface property
+    // annotation like `foo2: e | number` is constructed through
+    // `normalize_union_literal_only` (the type-annotation path,
+    // `get_type_from_union_type` -> `union_or_single_literal_reduce`), which
+    // — unlike the general `union()` path already covered by
+    // `enum_absorbed_into_base_primitive_in_union_reduction` above — skips
+    // subtype-based reduction entirely and relies solely on the literal
+    // ladder's `absorb_literals_into_primitives` step. tsc's own
+    // `removeRedundantLiteralTypes` sweeps enum member literals the same way
+    // it sweeps plain literals, so this path must absorb too.
+    use crate::def::DefId;
+    let interner = TypeInterner::new();
+    let mk_enum =
+        |def: u32, members: Vec<TypeId>| interner.enum_type(DefId(def), interner.union(members));
+
+    // Renamed binder (different DefId/name than the union() test above) to
+    // prove the rule is structural, not tied to a specific def or literal set.
+    let num_enum = mk_enum(
+        8101,
+        vec![interner.literal_number(0.0), interner.literal_number(1.0)],
+    );
+    let str_enum = mk_enum(
+        8102,
+        vec![interner.literal_string("p"), interner.literal_string("q")],
+    );
+    // A specific enum member (not the whole-enum union) — the checker
+    // represents `E.a` as `Enum(member_def_id, <that member's own literal>)`.
+    let num_member = interner.enum_type(DefId(8103), interner.literal_number(5.0));
+
+    for enriched in [false, true] {
+        assert_eq!(
+            interner.union_literal_ladder_for_test(vec![TypeId::NUMBER, num_enum], enriched),
+            TypeId::NUMBER,
+            "number | (numeric enum) must reduce to number on the literal-only path (enriched={enriched})"
+        );
+        assert_eq!(
+            interner.union_literal_ladder_for_test(vec![TypeId::STRING, str_enum], enriched),
+            TypeId::STRING,
+            "string | (string enum) must reduce to string on the literal-only path (enriched={enriched})"
+        );
+        assert_eq!(
+            interner.union_literal_ladder_for_test(vec![TypeId::NUMBER, num_member], enriched),
+            TypeId::NUMBER,
+            "number | (specific numeric enum member) must reduce to number (enriched={enriched})"
+        );
+
+        // Negative control: a string enum is disjoint from `number` and must
+        // NOT be absorbed.
+        let mixed =
+            interner.union_literal_ladder_for_test(vec![TypeId::NUMBER, str_enum], enriched);
+        let Some(TypeData::Union(list_id)) = interner.lookup(mixed) else {
+            panic!(
+                "number | (string enum) must stay a union on the literal-only path (enriched={enriched})"
+            );
+        };
+        assert_eq!(interner.type_list(list_id).len(), 2);
+
+        // Negative control: without the co-present primitive, two distinct
+        // numeric enums stay nominal (mirrors the real I14 case: `e | E2`
+        // itself, absent any bare `number`, is not touched by this rule).
+        let other_num_enum = mk_enum(
+            8104,
+            vec![interner.literal_number(0.0), interner.literal_number(1.0)],
+        );
+        let two = interner.union_literal_ladder_for_test(vec![num_enum, other_num_enum], enriched);
+        let Some(TypeData::Union(list_id)) = interner.lookup(two) else {
+            panic!(
+                "two distinct enums without a bare primitive must stay a union (enriched={enriched})"
+            );
+        };
+        assert_eq!(interner.type_list(list_id).len(), 2);
+    }
+}
+
 fn distinct_keyof(interner: &TypeInterner, n: u32) -> TypeId {
     // `keyof <unique literal>` — a distinct, unevaluated `TypeData::KeyOf`
     // per `n`. This is the shape produced by distributing `keyof` over a

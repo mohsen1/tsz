@@ -1111,8 +1111,35 @@ declare const m: M;
 }
 
 // =========================================================================
-// Union widening: a constituent absorbed into a sibling constituent
+// Regression: a numeric/string enum unioned with its own primitive absorbs
+// into that primitive before the index-signature check runs, matching tsc's
+// `removeRedundantLiteralTypes` (which sweeps an enum member's LiteralType
+// the same as any other literal). Belt-and-suspenders: the TS2411 check site
+// also widens through `evaluate_type_with_env` before decomposing the union
+// (see `property_type_assignable_to_index_type`), so the fix holds even if a
+// future caller builds the union some other way. #16866 /
+// unionSubtypeIfEveryConstituentTypeIsSubtype.ts.
 // =========================================================================
+
+#[test]
+fn ts2411_numeric_enum_unioned_with_number_absorbs_against_unrelated_enum_index() {
+    // `e | number` collapses to `number` before this check runs, so it is
+    // never compared against `E2` as a nominal enum member — matches tsc
+    // 7.0.2 exactly (byte-for-byte on the real conformance fixture).
+    let source = r#"
+enum e { e1, e2 }
+enum E2 { A }
+interface I14 {
+    [x: string]: E2;
+    foo2: e | number;
+}
+"#;
+    assert!(
+        !has_error_with_code(source, 2411),
+        "e | number must absorb into number and not be checked against the unrelated enum E2: {:?}",
+        get_diagnostics(source)
+    );
+}
 
 #[test]
 fn enum_member_absorbed_into_number_in_union_matches_numeric_enum_index() {
@@ -1139,6 +1166,110 @@ interface Hand {
 }
 
 #[test]
+fn ts2411_string_enum_unioned_with_string_still_errors_against_unrelated_enum_index() {
+    // Negative control, oracle-verified against tsc 7.0.2: `s | string` DOES
+    // absorb into plain `string` (same union-construction rule as the
+    // numeric case), but unlike numeric enums, tsc has no "open string enum"
+    // exception — a bare `string` is never assignable to ANY string enum, so
+    // the diagnostic still fires. The message text itself proves absorption
+    // happened: it names the collapsed type `'string'`, not the enum `'s'`.
+    let source = r#"
+enum s { a = "a", b = "b" }
+enum S2 { X = "x" }
+interface I {
+    [x: string]: S2;
+    foo2: s | string;
+}
+"#;
+    let diagnostics = get_diagnostics(source);
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2411 && message.contains("type 'string'") && message.contains("'S2'")
+        }),
+        "s | string must absorb into string (proven by the message naming 'string', not 's') \
+         and still fail against the unrelated string enum S2: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn ts2411_specific_numeric_enum_member_unioned_with_number_absorbs() {
+    // Adjacent case: a specific member (`e.e1`), not the whole enum type,
+    // must absorb the same way.
+    let source = r#"
+enum e { e1, e2 }
+enum E2 { A }
+interface I {
+    [x: string]: E2;
+    foo2: e.e1 | number;
+}
+"#;
+    assert!(
+        !has_error_with_code(source, 2411),
+        "e.e1 | number must absorb into number: {:?}",
+        get_diagnostics(source)
+    );
+}
+
+#[test]
+fn ts2411_renamed_numeric_enum_unioned_with_number_absorbs() {
+    // Adjacent case: renamed binders prove the rule is structural, not tied
+    // to a specific identifier.
+    let source = r#"
+enum Direction { Up, Down }
+enum Suit { Clubs }
+interface Board {
+    [x: string]: Suit;
+    cell: Direction | number;
+}
+"#;
+    assert!(
+        !has_error_with_code(source, 2411),
+        "Direction | number must absorb into number regardless of binder names: {:?}",
+        get_diagnostics(source)
+    );
+}
+
+#[test]
+fn ts2411_numeric_enum_alias_wrapper_unioned_with_number_absorbs() {
+    // Adjacent case: alias/wrapper — the union is written through a type
+    // alias rather than inline in the property; the alias resolves to the
+    // same underlying union before this check runs.
+    let source = r#"
+enum e { e1, e2 }
+enum E2 { A }
+type EOrNumber = e | number;
+interface I {
+    [x: string]: E2;
+    foo2: EOrNumber;
+}
+"#;
+    assert!(
+        !has_error_with_code(source, 2411),
+        "an aliased e | number must still absorb into number: {:?}",
+        get_diagnostics(source)
+    );
+}
+
+#[test]
+fn ts2411_string_literal_still_errors_against_unrelated_numeric_enum_index() {
+    // Negative control: `foo: string | number` in the same interface must
+    // still error — `string` is not absorbed, and `number` alone is not
+    // structurally assignable to the unrelated enum `E2` (matches tsc).
+    let source = r#"
+enum E2 { A }
+interface I14 {
+    [x: string]: E2;
+    foo: string | number;
+}
+"#;
+    assert!(
+        has_error_with_code(source, 2411),
+        "string | number must still be rejected against the unrelated enum E2: {:?}",
+        get_diagnostics(source)
+    );
+}
+
+#[test]
 fn distinct_enum_union_without_number_sibling_still_reports_ts2411() {
     // Negative control: without a `number` (or matching-enum) sibling to
     // absorb into, a different enum's member type is still not assignable to
@@ -1156,6 +1287,25 @@ interface Hand {
     assert!(
         has_error_with_code(source, 2411),
         "`Suit | Season` has no `number` sibling to collapse into, and neither is `Rank`: {:?}",
+        get_diagnostics(source)
+    );
+}
+
+#[test]
+fn ts2411_distinct_numeric_enums_without_a_bare_number_stay_nominal() {
+    // Negative control: without a co-present bare `number`, two distinct
+    // numeric enums do NOT absorb into each other — nominal typing holds.
+    let source = r#"
+enum e { e1, e2 }
+enum E2 { A }
+interface I {
+    [x: string]: E2;
+    foo2: e;
+}
+"#;
+    assert!(
+        has_error_with_code(source, 2411),
+        "e alone (no bare number present) must stay nominal and fail against E2: {:?}",
         get_diagnostics(source)
     );
 }

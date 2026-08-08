@@ -1140,19 +1140,64 @@ impl TypeInterner {
                 return !has_boolean;
             }
 
-            // Keep if it's not a literal type
-            let Some(TypeData::Literal(literal)) = self.lookup(*type_id) else {
-                return true;
-            };
-
-            // Remove literal if the corresponding primitive is present
-            match literal {
-                LiteralValue::String(_) => !has_string,
-                LiteralValue::Number(_) => !has_number,
-                LiteralValue::Boolean(_) => !has_boolean,
-                LiteralValue::BigInt(_) => !has_bigint,
+            match self.lookup(*type_id) {
+                // Remove literal if the corresponding primitive is present
+                Some(TypeData::Literal(literal)) => match literal {
+                    LiteralValue::String(_) => !has_string,
+                    LiteralValue::Number(_) => !has_number,
+                    LiteralValue::Boolean(_) => !has_boolean,
+                    LiteralValue::BigInt(_) => !has_bigint,
+                },
+                // tsc represents an enum member's type as a LiteralType
+                // carrying an extra `Enum` flag, not a distinct type kind, so
+                // `removeRedundantLiteralTypes` sweeps a numeric/string enum
+                // member into a co-present `number`/`string` the same way it
+                // sweeps a plain literal (`e | number` => `number`). tsz keeps
+                // enums as a nominal `Enum(DefId, member_type)` wrapper, so
+                // mirror that absorption here based on the wrapped member
+                // type's primitive domain instead.
+                Some(TypeData::Enum(_, member_type)) => {
+                    match self.enum_underlying_primitive_class(member_type) {
+                        Some(PrimitiveClass::String) => !has_string,
+                        Some(PrimitiveClass::Number) => !has_number,
+                        _ => true,
+                    }
+                }
+                // Keep if it's not a literal or enum type
+                _ => true,
             }
         });
+    }
+
+    /// Classifies an enum's structural member type (the second field of
+    /// `TypeData::Enum(DefId, member_type)`) as `String`/`Number` when every
+    /// member is drawn from that single primitive domain — the wrapped type
+    /// is either the primitive itself (`e.g. TypeId::NUMBER`, used for the
+    /// whole-enum reference), a single literal (a specific member), or a
+    /// union of literals (the whole enum's member set). A mixed or non-
+    /// literal member type returns `None` so absorption is skipped.
+    fn enum_underlying_primitive_class(&self, member_type: TypeId) -> Option<PrimitiveClass> {
+        if let Some(class) = self.primitive_class_for(member_type) {
+            return matches!(class, PrimitiveClass::String | PrimitiveClass::Number)
+                .then_some(class);
+        }
+        let TypeData::Union(list_id) = self.lookup(member_type)? else {
+            return None;
+        };
+        let members = self.type_list(list_id);
+        let mut result = None;
+        for &member in members.iter() {
+            let class = self.primitive_class_for(member)?;
+            if !matches!(class, PrimitiveClass::String | PrimitiveClass::Number) {
+                return None;
+            }
+            match result {
+                None => result = Some(class),
+                Some(existing) if existing == class => {}
+                Some(_) => return None,
+            }
+        }
+        result
     }
 
     /// TS2590 pairwise-iteration budget matching tsc `removeSubtypes`.
