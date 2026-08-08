@@ -961,6 +961,35 @@ fn test_unknown_type_property_access() {
 }
 
 #[test]
+fn test_unknown_type_property_access_without_strict_null_checks() {
+    let interner = TypeInterner::new();
+    interner.set_strict_null_checks(false);
+    let evaluator = PropertyAccessEvaluator::new(&interner);
+
+    // With strictNullChecks off, tsc's `getApparentType` maps a bare `unknown`
+    // to the global `Object` type for property lookup only, so Object.prototype
+    // members (toString, valueOf, ...) resolve. `declare const x: unknown;
+    // x.toString(); x.nonExistentProp;` compiles clean on `toString()` and
+    // reports TS2339 (naming `unknown`, not `{}`) only on `nonExistentProp`
+    // under the pinned tsc 7.0.2 oracle with `strictNullChecks: false`.
+    assert!(
+        evaluator
+            .resolve_property_access(TypeId::UNKNOWN, "toString")
+            .is_success(),
+        "unknown should expose Object.prototype members when strictNullChecks is off"
+    );
+    // A genuine miss keeps returning IsUnknown (not PropertyNotFound) so every
+    // existing caller that special-cases IsUnknown is unaffected; the checker
+    // still surfaces TS2339 for it (see the checker-level integration test).
+    assert!(
+        evaluator
+            .resolve_property_access(TypeId::UNKNOWN, "nonExistentProp")
+            .is_unknown(),
+        "a genuine miss on unknown must still return IsUnknown"
+    );
+}
+
+#[test]
 fn test_never_type_property_access() {
     let interner = TypeInterner::new();
     let evaluator = PropertyAccessEvaluator::new(&interner);

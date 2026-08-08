@@ -2787,3 +2787,6 @@ path = "tests/ts2369_source_order_anchor_tests.rs"
 [[test]]
 name = "ts7032_zero_parameter_setter_tests"
 path = "tests/ts7032_zero_parameter_setter_tests.rs"
+[[test]]
+name = "unknown_property_access_non_strict_null_checks_tests"
+path = "tests/unknown_property_access_non_strict_null_checks_tests.rs"

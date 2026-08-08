@@ -764,7 +764,25 @@ impl<'a> PropertyAccessEvaluator<'a> {
             TypeData::Intrinsic(kind) => {
                 match kind {
                     IntrinsicKind::Any => PropertyAccessResult::simple(TypeId::ANY),
-                    IntrinsicKind::Unknown => PropertyAccessResult::IsUnknown,
+                    IntrinsicKind::Unknown => {
+                        // tsc's `getApparentType` maps a bare `unknown` to the global
+                        // `Object` type for property lookup only when strictNullChecks
+                        // is off (the substituted/displayed type stays `unknown`). This
+                        // also covers an unconstrained type parameter that defaulted to
+                        // `unknown` for lack of inference candidates, since the
+                        // defaulted TypeId literally is `TypeId::UNKNOWN`. Only step in
+                        // for members the Object-prototype table actually resolves;
+                        // a genuine miss keeps returning `IsUnknown` so every existing
+                        // caller that special-cases it (suppression, TS18046 vs TS2339
+                        // dispatch, ...) is unaffected.
+                        match (!self.db.strict_null_checks())
+                            .then(|| self.resolve_object_member(prop_atom))
+                            .flatten()
+                        {
+                            Some(result) => result,
+                            None => PropertyAccessResult::IsUnknown,
+                        }
+                    }
                     IntrinsicKind::Void => {
                         // In tsc, accessing a property on `void` produces TS2339
                         // ("Property 'X' does not exist on type 'void'"), NOT TS2532
