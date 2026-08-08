@@ -156,6 +156,10 @@ name = "const_assertion_wide_index_signature_dts_emit_tests"
 path = "tests/const_assertion_wide_index_signature_dts_emit_tests.rs"
 
 [[test]]
+name = "computed_object_index_signature_source_order_dts_emit_tests"
+path = "tests/computed_object_index_signature_source_order_dts_emit_tests.rs"
+
+[[test]]
 name = "object_rest_binding_dts_emit_tests"
 path = "tests/object_rest_binding_dts_emit_tests.rs"
 
