@@ -387,14 +387,6 @@ impl<'a> CheckerState<'a> {
                         &["string"],
                     );
                 }
-            } else if nodes.len() == 1
-                && self.jsx_runtime_self_imports_intrinsic_elements(container_node)
-            {
-                self.error_at_node_msg(
-                    nodes[0],
-                    crate::diagnostics::diagnostic_codes::DUPLICATE_INDEX_SIGNATURE_FOR_TYPE,
-                    &["string"],
-                );
             }
         }
         for nodes in [&number_index_nodes, &static_number_index_nodes] {
@@ -406,14 +398,6 @@ impl<'a> CheckerState<'a> {
                         &["number"],
                     );
                 }
-            } else if nodes.len() == 1
-                && self.jsx_runtime_self_imports_intrinsic_elements(container_node)
-            {
-                self.error_at_node_msg(
-                    nodes[0],
-                    crate::diagnostics::diagnostic_codes::DUPLICATE_INDEX_SIGNATURE_FOR_TYPE,
-                    &["number"],
-                );
             }
         }
         for nodes in [&symbol_index_nodes, &static_symbol_index_nodes] {
@@ -425,14 +409,6 @@ impl<'a> CheckerState<'a> {
                         &["symbol"],
                     );
                 }
-            } else if nodes.len() == 1
-                && self.jsx_runtime_self_imports_intrinsic_elements(container_node)
-            {
-                self.error_at_node_msg(
-                    nodes[0],
-                    crate::diagnostics::diagnostic_codes::DUPLICATE_INDEX_SIGNATURE_FOR_TYPE,
-                    &["symbol"],
-                );
             }
         }
         self.report_duplicate_other_index_signatures(&other_index_nodes);
@@ -1593,223 +1569,6 @@ impl<'a> CheckerState<'a> {
             }
         }
         false
-    }
-
-    fn jsx_runtime_self_imports_intrinsic_elements(&self, container_node: NodeIndex) -> bool {
-        use tsz_common::checker_options::JsxMode;
-
-        if !matches!(
-            self.ctx.compiler_options.jsx_mode,
-            JsxMode::ReactJsx | JsxMode::ReactJsxDev
-        ) && self.ctx.compiler_options.jsx_import_source.is_empty()
-        {
-            return false;
-        }
-
-        let Some(container) = self.ctx.arena.get(container_node) else {
-            return false;
-        };
-        let Some(interface) = self.ctx.arena.get_interface(container) else {
-            return false;
-        };
-        let Some(name_node) = self.ctx.arena.get(interface.name) else {
-            return false;
-        };
-        let Some(name) = self.ctx.arena.get_identifier(name_node) else {
-            return false;
-        };
-        if name.escaped_text.as_str() != "IntrinsicElements" {
-            return false;
-        }
-
-        let namespace_node = self.get_enclosing_namespace(container_node);
-        let Some(namespace) = self.ctx.arena.get(namespace_node) else {
-            return false;
-        };
-        let Some(namespace_decl) = self.ctx.arena.get_module(namespace) else {
-            return false;
-        };
-        let Some(namespace_name_node) = self.ctx.arena.get(namespace_decl.name) else {
-            return false;
-        };
-        let Some(namespace_name) = self.ctx.arena.get_identifier(namespace_name_node) else {
-            return false;
-        };
-        if namespace_name.escaped_text.as_str() != "JSX" {
-            return false;
-        }
-
-        let current_file = self.ctx.file_name.replace('\\', "/");
-        let Some(package_dir) = current_file
-            .strip_suffix("/index.d.ts")
-            .or_else(|| current_file.strip_suffix("/index.d.mts"))
-            .or_else(|| current_file.strip_suffix("/index.d.cts"))
-        else {
-            return false;
-        };
-        if !package_dir.contains("/node_modules/@types/") {
-            return false;
-        }
-        if !self.jsx_runtime_types_package_dir_matches(package_dir) {
-            return false;
-        }
-
-        let Some(all_arenas) = self.ctx.all_arenas.as_ref() else {
-            return false;
-        };
-
-        let package_json_exports = all_arenas.iter().find_map(|arena| {
-            let source_file = arena.source_files.first()?;
-            let package_json = source_file.file_name.replace('\\', "/");
-            if package_json == format!("{package_dir}/package.json") {
-                Some(Self::package_json_redirects_package_subpaths_to_js(
-                    &source_file.text,
-                ))
-            } else {
-                None
-            }
-        });
-        if package_json_exports == Some(false) {
-            return false;
-        }
-
-        all_arenas.iter().any(|arena| {
-            let Some(source_file) = arena.source_files.first() else {
-                return false;
-            };
-            let runtime_file = source_file.file_name.replace('\\', "/");
-            let in_runtime_file = runtime_file == format!("{package_dir}/jsx-runtime.d.ts")
-                || runtime_file == format!("{package_dir}/jsx-runtime/index.d.ts")
-                || runtime_file == format!("{package_dir}/jsx-dev-runtime.d.ts")
-                || runtime_file == format!("{package_dir}/jsx-dev-runtime/index.d.ts");
-            in_runtime_file && Self::has_package_root_side_effect_import(&source_file.text)
-        })
-    }
-
-    fn has_package_root_side_effect_import(text: &str) -> bool {
-        let bytes = text.as_bytes();
-        let mut idx = 0usize;
-        while idx < bytes.len() {
-            idx = Self::skip_js_trivia(text, idx);
-            if idx >= bytes.len() {
-                break;
-            }
-
-            if !text[idx..].starts_with("import") || !Self::is_word_boundary(text, idx + 6) {
-                idx += text[idx..].chars().next().map(char::len_utf8).unwrap_or(1);
-                continue;
-            }
-
-            let mut cursor = Self::skip_js_trivia(text, idx + 6);
-            let Some(quote) = text[cursor..].chars().next() else {
-                break;
-            };
-            if quote != '"' && quote != '\'' {
-                idx += 6;
-                continue;
-            }
-            cursor += quote.len_utf8();
-            let Some(rest) = text.get(cursor..) else {
-                break;
-            };
-            if let Some(after_specifier) = rest
-                .strip_prefix("./")
-                .map(|_| cursor + 2)
-                .or_else(|| rest.strip_prefix('.').map(|_| cursor + 1))
-                && text[after_specifier..].starts_with(quote)
-            {
-                let after_quote = after_specifier + quote.len_utf8();
-                let after_import = Self::skip_js_trivia(text, after_quote);
-                if after_import >= text.len()
-                    || text[after_import..].starts_with(';')
-                    || text[after_import..].starts_with('\n')
-                    || text[after_import..].starts_with('\r')
-                {
-                    return true;
-                }
-            }
-
-            idx += 6;
-        }
-
-        false
-    }
-
-    fn skip_js_trivia(text: &str, mut idx: usize) -> usize {
-        loop {
-            while let Some(ch) = text[idx..].chars().next()
-                && ch.is_whitespace()
-            {
-                idx += ch.len_utf8();
-            }
-
-            if text[idx..].starts_with("//") {
-                idx += 2;
-                while let Some(ch) = text[idx..].chars().next() {
-                    idx += ch.len_utf8();
-                    if ch == '\n' || ch == '\r' {
-                        break;
-                    }
-                }
-                continue;
-            }
-
-            if text[idx..].starts_with("/*") {
-                idx += 2;
-                if let Some(end) = text[idx..].find("*/") {
-                    idx += end + 2;
-                } else {
-                    return text.len();
-                }
-                continue;
-            }
-
-            return idx;
-        }
-    }
-
-    fn is_word_boundary(text: &str, idx: usize) -> bool {
-        text[idx..]
-            .chars()
-            .next()
-            .is_none_or(|ch| !(ch == '_' || ch == '$' || ch.is_ascii_alphanumeric()))
-    }
-
-    fn jsx_runtime_types_package_dir_matches(&self, package_dir: &str) -> bool {
-        use tsz_common::checker_options::JsxMode;
-
-        let import_source = if self.ctx.compiler_options.jsx_import_source.is_empty()
-            && matches!(
-                self.ctx.compiler_options.jsx_mode,
-                JsxMode::ReactJsx | JsxMode::ReactJsxDev
-            ) {
-            "react"
-        } else {
-            self.ctx.compiler_options.jsx_import_source.as_str()
-        };
-        let Some(types_package) = Self::types_package_name_for_jsx_import_source(import_source)
-        else {
-            return false;
-        };
-        package_dir.ends_with(&format!("/node_modules/{types_package}"))
-    }
-
-    fn types_package_name_for_jsx_import_source(import_source: &str) -> Option<String> {
-        let mut parts = import_source.split('/').filter(|part| !part.is_empty());
-        let first = parts.next()?;
-        if let Some(scope) = first.strip_prefix('@') {
-            let second = parts.next()?;
-            Some(format!("@types/{scope}__{second}"))
-        } else {
-            Some(format!("@types/{first}"))
-        }
-    }
-
-    fn package_json_redirects_package_subpaths_to_js(text: &str) -> bool {
-        let compact: String = text.chars().filter(|ch| !ch.is_whitespace()).collect();
-        compact.contains("\"exports\"")
-            && compact.contains("\"./*.js\":\"./*.js\"")
-            && compact.contains("\"./*\":\"./*.js\"")
     }
 
     fn synthesized_computed_member_index_info(
