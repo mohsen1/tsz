@@ -1935,16 +1935,29 @@ impl<'a> CheckerState<'a> {
         // rejected, while the ordinary void-return exception (a `(): number`
         // dispose method) must still be accepted, exactly as the relation
         // already implements for every other assignability check.
+        // Widen freshness first. A disposable only has to *carry* a
+        // `[Symbol.dispose]` method; properties beyond it are fine, and tsc
+        // does not excess-property-check a `using` initializer. Passing the
+        // fresh literal type straight into the relation turns
+        // `using x = { [Symbol.dispose]() {}, extra: 1 }` into a `TS2850`
+        // whose tail reads "Object literal may only specify known properties",
+        // which is the freshness check leaking into a position tsc never runs
+        // it (#16862). The same object bound to a variable first was always
+        // accepted, which is the tell. Widening here mirrors tsc reaching this
+        // relation with `getRegularTypeOfObjectLiteral`, and leaves every
+        // signature-shape rejection above intact.
+        let source = crate::query_boundaries::common::widen_freshness(self.ctx.types, type_id);
+
         let is_disposable = self
             .resolve_disposable_interface_type(false)
-            .is_some_and(|target| self.is_assignable_to(type_id, target));
+            .is_some_and(|target| self.is_assignable_to(source, target));
 
         if is_await_using {
             // await using accepts either Symbol.asyncDispose or Symbol.dispose
             return is_disposable
                 || self
                     .resolve_disposable_interface_type(true)
-                    .is_some_and(|target| self.is_assignable_to(type_id, target));
+                    .is_some_and(|target| self.is_assignable_to(source, target));
         }
 
         is_disposable
