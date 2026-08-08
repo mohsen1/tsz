@@ -630,6 +630,70 @@ fn compile_inner_impl(
     }
 
     let root_file_paths = file_paths.clone();
+
+    // TS1149: two root files whose real on-disk paths are identical except
+    // for casing (e.g. `foo.ts` and `Foo.ts` both specified as roots). tsc
+    // reports this unconditionally — independent of `useCaseSensitiveFileNames`
+    // — as a portability warning, with a two-line "file is in the program
+    // because: / Root file specified for compilation / Root file specified
+    // for compilation" chain and no source location, since neither
+    // colliding path is reached via an import specifier to anchor on.
+    // Import-discovered casing collisions (`tsc`'s `Imported via "..." from
+    // file '...'` chain link) are a separate, unclaimed slice: they need the
+    // module-resolution loop's specifier/importer attribution, not just the
+    // root file list.
+    {
+        let mut seen_by_lowercase: FxHashMap<String, PathBuf> = FxHashMap::default();
+        for path in &root_file_paths {
+            let canonical = canonicalize_or_owned(path);
+            let lowercase_key = canonical.to_string_lossy().to_ascii_lowercase();
+            match seen_by_lowercase.get(&lowercase_key) {
+                Some(existing) if existing != &canonical => {
+                    let new_display = canonical.to_string_lossy().into_owned();
+                    let existing_display = existing.to_string_lossy().into_owned();
+                    let mut diagnostic = Diagnostic::from_code(
+                        diagnostic_codes::FILE_NAME_DIFFERS_FROM_ALREADY_INCLUDED_FILE_NAME_ONLY_IN_CASING,
+                        String::new(),
+                        0,
+                        0,
+                        &[&new_display, &existing_display],
+                    );
+                    diagnostic
+                        .related_information
+                        .push(DiagnosticRelatedInformation {
+                            category: DiagnosticCategory::Message,
+                            code: diagnostic_codes::THE_FILE_IS_IN_THE_PROGRAM_BECAUSE,
+                            file: String::new(),
+                            start: 0,
+                            length: 0,
+                            message_text: "The file is in the program because:".to_string(),
+                            depth: 0,
+                            kind: RelatedInformationKind::ChainLink,
+                        });
+                    for _ in 0..2 {
+                        diagnostic
+                            .related_information
+                            .push(DiagnosticRelatedInformation {
+                                category: DiagnosticCategory::Message,
+                                code: diagnostic_codes::ROOT_FILE_SPECIFIED_FOR_COMPILATION,
+                                file: String::new(),
+                                start: 0,
+                                length: 0,
+                                message_text: "Root file specified for compilation".to_string(),
+                                depth: 1,
+                                kind: RelatedInformationKind::ChainLink,
+                            });
+                    }
+                    config_diagnostics.push(diagnostic);
+                }
+                Some(_) => {}
+                None => {
+                    seen_by_lowercase.insert(lowercase_key, canonical);
+                }
+            }
+        }
+    }
+
     // `@noTypesAndSymbols` is a TypeScript test-corpus pragma, not a real
     // compiler directive. Honor only the explicit value coming from
     // tsconfig/CLI; never let an ordinary source comment override the

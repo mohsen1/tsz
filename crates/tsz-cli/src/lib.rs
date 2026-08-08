@@ -56,6 +56,9 @@ mod driver_tests_ts2307;
 #[path = "../tests/dual_package_exports_tests.rs"]
 mod dual_package_exports_tests;
 #[cfg(test)]
+#[path = "../tests/file_casing_collision_ts1149_tests.rs"]
+mod file_casing_collision_ts1149_tests;
+#[cfg(test)]
 #[path = "../tests/fs_tests.rs"]
 mod fs_tests;
 #[cfg(test)]
