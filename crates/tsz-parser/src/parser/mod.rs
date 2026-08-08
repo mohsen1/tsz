@@ -79,6 +79,9 @@ pub(crate) mod test_fixture;
 // without grepping a single monolithic file. Each shard imports only the
 // `test_fixture` helpers it actually uses; tests share no per-shard helpers.
 #[cfg(test)]
+#[path = "../../tests/ambient_destructuring_initializer_tests.rs"]
+mod ambient_destructuring_initializer_tests;
+#[cfg(test)]
 #[path = "../../tests/definite_assignment_assertion_tests.rs"]
 mod definite_assignment_assertion_tests;
 #[cfg(test)]
