@@ -1488,13 +1488,14 @@ impl<'a> CheckerState<'a> {
         }
 
         if object_type != TypeId::ANY && object_type != TypeId::ERROR {
+            let is_static = self.is_constructor_type(object_type);
             if let Some(class_idx) = self.get_class_decl_from_type(object_type) {
-                return Some((class_idx, false));
+                return Some((class_idx, is_static));
             }
             if let Some(sym_id) = self.property_access_receiver_symbol(object_type)
                 && let Some(class_idx) = self.get_class_declaration_from_symbol(sym_id)
             {
-                return Some((class_idx, false));
+                return Some((class_idx, is_static));
             }
         }
 
