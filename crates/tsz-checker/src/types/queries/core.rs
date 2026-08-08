@@ -963,7 +963,32 @@ impl<'a> CheckerState<'a> {
             && !self.ctx.binder.lib_symbol_ids.contains(&sym_id)
             && !self.symbol_is_global_this_namespace_merge(sym_id)
         {
-            return false;
+            // A `declare global { namespace globalThis { ... } }` augmentation
+            // merges into the ambient `globalThis` in tsc: the reopened
+            // namespace's exports fold into the same Symbol tsc already uses
+            // for the lib `globalThis` var, so `leftType.symbol ===
+            // globalThisSymbol` still holds. tsz's binder gives the
+            // augmenting namespace its own SymbolId instead of unifying
+            // identity with the lib var, so it never lands in
+            // `lib_symbol_ids`. Recognize the augmentation shape directly: a
+            // MODULE-flagged symbol registered under the "globalThis" key in
+            // `global_augmentations` (populated only for declarations inside
+            // a `declare global` block — a plain module-local `namespace
+            // globalThis {}` without `declare global` has no such entry and
+            // correctly keeps shadowing).
+            let is_declared_global_this_augmentation = self
+                .ctx
+                .binder
+                .get_symbol(sym_id)
+                .is_some_and(|sym| sym.has_any_flags(symbol_flags::MODULE))
+                && self
+                    .ctx
+                    .binder
+                    .global_augmentations
+                    .contains_key("globalThis");
+            if !is_declared_global_this_augmentation {
+                return false;
+            }
         }
 
         true
