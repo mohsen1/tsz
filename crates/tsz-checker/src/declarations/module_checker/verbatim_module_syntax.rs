@@ -48,9 +48,22 @@ impl<'a> CheckerState<'a> {
         // specifier's SOURCE name (before `as`, matching tsc); this takes
         // priority over the per-specifier type-only checks below exactly like
         // the import side does.
+        //
+        // An *empty* named-exports clause (`export {}`, with or without
+        // `from`) carries no runtime binding, so — like the empty import
+        // clause on the sibling check — tsc never fires TS1286/TS1295/TS1293
+        // for it. Only a clause with at least one specifier does.
+        // (Oracle-verified against `typescript@7.0.2`: `export {};`,
+        // `export {} from "./m";`, and `export {};` in a `.cts` are all clean.)
+        // `export_named_clause_is_empty` owns this "binds nothing" shape test,
+        // shared with the TS2307 module-resolution skip.
+        let clause_has_binding = !self.export_named_clause_is_empty(named_exports_idx);
         let vms = self.ctx.compiler_options.verbatim_module_syntax;
         let preserve_isolated = self.preserve_isolated_modules_cjs_check_active();
-        if (vms || preserve_isolated) && self.is_current_file_commonjs_for_vms() {
+        if clause_has_binding
+            && (vms || preserve_isolated)
+            && self.is_current_file_commonjs_for_vms()
+        {
             let anchor = named_exports
                 .elements
                 .nodes

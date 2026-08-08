@@ -461,7 +461,10 @@ impl CheckerState<'_> {
                 // emitting TS2662.
                 return Some(self.get_type_of_symbol(outer_sym_id));
             }
-            // Get the class name from the symbol's parent for the error message
+            // Get the class name from the symbol's parent for the error message.
+            // The value-position-only rule for a `typeof` operand (#16840/#16848) is
+            // enforced in the shared `TS2662` sink `error_cannot_find_name_static_member_at`,
+            // which this call funnels through — no per-call-site guard is needed.
             let class_name = if let Some(parent_sym) = self.ctx.binder.get_symbol(
                 self.ctx
                     .binder

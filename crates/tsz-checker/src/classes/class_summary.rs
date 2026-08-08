@@ -1387,6 +1387,7 @@ impl<'a> CheckerState<'a> {
             has_dynamic_name: false,
             has_computed_non_literal_name: false,
             from_interface: false,
+            has_declare: self.has_declare_modifier(&param.modifiers),
         })
     }
 
@@ -1503,6 +1504,7 @@ impl<'a> CheckerState<'a> {
             has_dynamic_name: false,
             has_computed_non_literal_name: false,
             from_interface: true,
+            has_declare: false,
         };
         let is_visible = visibility != crate::class_checker::MemberVisibility::Private;
         Self::record_unified_member(info, is_visible, summary, self);
@@ -1682,6 +1684,7 @@ impl<'a> CheckerState<'a> {
                 has_dynamic_name: false,
                 has_computed_non_literal_name: false,
                 from_interface: false,
+                has_declare: false,
             },
             display_name,
             kind,
