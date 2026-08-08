@@ -1768,8 +1768,17 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // Get the type of the initializer
-        let init_type = self.get_type_of_node(var_decl.initializer);
+        // Get the type of the initializer. `tsc` checks the disposal shape
+        // against the initializer's *regular* (non-fresh) type — an object
+        // literal's excess-property freshness is consumed once, at its own
+        // point of use, and does not re-trigger for this auxiliary structural
+        // query. Without widening, `is_assignable_to` below would apply
+        // excess-property checking against `Disposable`/`AsyncDisposable`
+        // and wrongly reject `{ [Symbol.dispose]() {}, extra: 1 }`.
+        let init_type = crate::query_boundaries::common::widen_freshness(
+            self.ctx.types,
+            self.get_type_of_node(var_decl.initializer),
+        );
 
         // Skip error type and any (suppressed by convention)
         if init_type == TypeId::ERROR || init_type == TypeId::ANY {
