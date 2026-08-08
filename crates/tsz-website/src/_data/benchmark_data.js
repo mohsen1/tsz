@@ -1759,12 +1759,17 @@ export function getBenchmarkEnvironmentSummary() {
 export function getProjectCompatibilityDashboard() {
   const data = loadBenchmarks();
   const allResults = withExpectedProjectRows(data?.results);
-  // Only show rows we actually measured. A "gray" / "Not measured" row (no
-  // compatibility artifact, oracle unavailable, or fixture not recorded) carries
-  // no signal, so it is excluded rather than rendered as "Not measured".
+  // Render EVERY defined corpus row, including unmeasured ("gray") ones (#16310).
+  // A row that is never measured is otherwise indistinguishable, downstream,
+  // from a row that does not exist — so coverage can silently shrink and nothing
+  // reports it. An unmeasured row is shown as "Not measured" and still carries
+  // its reason in the Exit class column ("missing or incomplete artifact" /
+  // "fixture invalid"), which is honest and creates pressure to fix it.
   const rows = COMPATIBILITY_CORPUS_ROWS
-    .map((definition) => compatibilityRowFor(definition, allResults, data))
-    .filter((row) => row.className !== "gray");
+    .map((definition) => compatibilityRowFor(definition, allResults, data));
+
+  const measuredCount = rows.filter((row) => row.className !== "gray").length;
+  const notMeasuredCount = rows.length - measuredCount;
 
   if (!rows.length) {
     return `<section class="compat-dashboard">
@@ -1830,9 +1835,21 @@ export function getProjectCompatibilityDashboard() {
 })();
 </script>`;
 
+  const runStatusRaw = String(data?.run_status || "").trim();
+  let runStatusLabel = "";
+  if (runStatusRaw === "local") runStatusLabel = "local snapshot (not a CI run)";
+  else if (runStatusRaw) runStatusLabel = `run status: ${runStatusRaw}`;
+  const provenanceSummary = runnerEnvironmentSummary(data);
+  const provenanceParts = [provenanceSummary, escapeHtml(runStatusLabel)].filter(Boolean);
+  const provenanceLine = provenanceParts.length
+    ? `\n  <p class="compat-dashboard-meta">${provenanceParts.join(" · ")}</p>`
+    : "";
+  const coverageLine = `<p class="compat-dashboard-coverage">${measuredCount} of ${rows.length} defined corpus rows measured${notMeasuredCount ? ` · ${notMeasuredCount} not measured` : ""}.</p>`;
+
   return `<section class="compat-dashboard">
   <h2>Project compatibility</h2>
-  <p class="compat-dashboard-intro">These rows track real project fixtures that <code>tsc</code> accepts. A green row means <code>tsz</code> completed the same project check; red or yellow rows identify the current compatibility blocker.</p>
+  <p class="compat-dashboard-intro">These rows track real project fixtures that <code>tsc</code> accepts. A green row means <code>tsz</code> completed the same project check; red or yellow rows identify the current compatibility blocker. A "Not measured" row is a defined corpus project with no measurement in the latest artifact.</p>
+  ${coverageLine}${provenanceLine}
   <div class="compat-table-wrap">
     <table class="compat-table" data-compat-sortable>
       <thead>
