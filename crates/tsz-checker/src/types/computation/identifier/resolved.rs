@@ -461,6 +461,20 @@ impl CheckerState<'_> {
                 // emitting TS2662.
                 return Some(self.get_type_of_symbol(outer_sym_id));
             }
+            // A `typeof s` operand is a type-position value reference: tsc's
+            // member-prefix suggestion (`checkAndReportErrorForMissingPrefix`)
+            // is reachable only from `checkIdentifier` on the value-expression
+            // path, not the type-query/entity-name path a `typeof` operand
+            // resolves through — so a bare static name there is just not
+            // found, the same as in real tsc's scope chain (see the "in tsc
+            // static members are NOT in the scope chain" note above). Route
+            // through the shared not-found boundary for the bare `TS2304`
+            // instead of the `TS2662` suggestion.
+            if self.is_in_type_query(idx) {
+                use crate::query_boundaries::name_resolution::NameLookupKind;
+                self.report_not_found_at_boundary(name, idx, NameLookupKind::Value);
+                return Some(TypeId::ERROR);
+            }
             // Get the class name from the symbol's parent for the error message
             let class_name = if let Some(parent_sym) = self.ctx.binder.get_symbol(
                 self.ctx
