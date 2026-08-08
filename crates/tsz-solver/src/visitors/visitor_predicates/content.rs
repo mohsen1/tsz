@@ -95,14 +95,14 @@ pub fn contains_any_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
 /// intrinsic id range), which the generic `contains_type_matching` walk
 /// cannot do.
 ///
-/// This is the single canonical error-containment answer; the checker-facing
-/// `contains_error_type_db` delegates here so both query paths agree.
+/// This is the single canonical error-containment answer; it delegates to the
+/// project-cached `contains_error_type_db` so both query paths share the
+/// per-node `ContainsError` memo and give one answer (#15729). The deep
+/// `ERROR_CONTAINMENT`-policy walk — including the intrinsic-range
+/// `TypeId::ERROR` sentinel — is unchanged; only the discarded-per-call memo
+/// of the former ephemeral `DeepContainsChecker` becomes a project-wide one.
 pub fn contains_error_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    DeepContainsChecker::new(types, ChildPolicy::ERROR_CONTAINMENT, |key| {
-        matches!(key, TypeData::Error | TypeData::UnresolvedTypeName(_))
-    })
-    .with_sentinel(TypeId::ERROR)
-    .check_from_root(type_id)
+    crate::type_queries::contains_error_type_db(types, type_id)
 }
 
 /// Check if a type contains the `this` type anywhere.
@@ -510,11 +510,6 @@ where
     types: &'a dyn TypeDatabase,
     policy: ChildPolicy,
     predicate: F,
-    /// Intrinsic-range sentinel id (e.g. `TypeId::ERROR`) matched before the
-    /// intrinsic fast path. Sentinel ids live in the intrinsic id range, where
-    /// `lookup`-based predicates are never consulted, so an id-level match is
-    /// the only way a walk can detect them when nested.
-    sentinel: Option<TypeId>,
     memo: FxHashMap<TypeId, bool>,
     guard: crate::recursion::RecursionGuard<TypeId>,
 }
@@ -528,17 +523,11 @@ where
             types,
             policy,
             predicate,
-            sentinel: None,
             memo: FxHashMap::default(),
             guard: crate::recursion::RecursionGuard::with_profile(
                 crate::recursion::RecursionProfile::ShallowTraversal,
             ),
         }
-    }
-
-    const fn with_sentinel(mut self, sentinel: TypeId) -> Self {
-        self.sentinel = Some(sentinel);
-        self
     }
 
     #[cfg(test)]
@@ -551,9 +540,6 @@ where
     /// common leaf-root query stays allocation-free (`FxHashMap` only
     /// allocates on first insert).
     fn check_from_root(mut self, type_id: TypeId) -> bool {
-        if self.sentinel == Some(type_id) {
-            return true;
-        }
         if type_id.is_intrinsic() {
             return false;
         }
@@ -573,9 +559,6 @@ where
     }
 
     fn check(&mut self, type_id: TypeId) -> bool {
-        if self.sentinel == Some(type_id) {
-            return true;
-        }
         // Fast path: intrinsic types (primitives, any, never, etc.) have no
         // subtypes and can never contain nested type structures.
         if type_id.is_intrinsic() {

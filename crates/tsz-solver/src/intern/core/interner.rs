@@ -226,6 +226,10 @@ pub(crate) enum PredicateCacheKind {
     /// [`ChildPolicy::FREE_INFER`]:
     ///     crate::visitors::child_policy::ChildPolicy::FREE_INFER
     ContainsFreeInfer = 19,
+    /// `type_id` contains the error type (`TypeId::ERROR`, `TypeData::Error`,
+    /// or `UnresolvedTypeName`) on its `ChildPolicy::ERROR_CONTAINMENT` surface,
+    /// memoized per node. See `contains_error_type_db` (#15729).
+    ContainsError = 20,
 }
 
 impl PredicateCacheKind {

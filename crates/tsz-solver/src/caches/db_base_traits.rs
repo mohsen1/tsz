@@ -73,6 +73,16 @@ pub trait TypePredicateCache {
     /// interner cache. Default impl is a no-op.
     fn set_contains_never_cache(&self, _type_id: TypeId, _result: bool) {}
 
+    /// Look up a cached `contains_error_type_db(type_id)` result if available.
+    /// Default impl returns `None` (no caching).
+    fn contains_error_cached(&self, _type_id: TypeId) -> Option<bool> {
+        None
+    }
+
+    /// Record the result of `contains_error_type_db(type_id)` in the shared
+    /// interner cache. Default impl is a no-op.
+    fn set_contains_error_cache(&self, _type_id: TypeId, _result: bool) {}
+
     /// Look up a cached free-type-parameter containment result if available.
     /// Default impl returns `None` (no caching).
     fn contains_free_type_params_cached(&self, _type_id: TypeId) -> Option<bool> {

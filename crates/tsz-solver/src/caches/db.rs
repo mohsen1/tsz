@@ -672,6 +672,14 @@ impl TypePredicateCache for TypeInterner {
         self.predicate_cache_set(type_id, PredicateCacheKind::ContainsNever, result);
     }
 
+    fn contains_error_cached(&self, type_id: TypeId) -> Option<bool> {
+        self.predicate_cache_get(type_id, PredicateCacheKind::ContainsError)
+    }
+
+    fn set_contains_error_cache(&self, type_id: TypeId, result: bool) {
+        self.predicate_cache_set(type_id, PredicateCacheKind::ContainsError, result);
+    }
+
     fn contains_type_params_cached(&self, type_id: TypeId) -> Option<bool> {
         self.predicate_cache_get(type_id, PredicateCacheKind::ContainsTypeParams)
     }
