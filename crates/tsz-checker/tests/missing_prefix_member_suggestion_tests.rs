@@ -166,6 +166,125 @@ fn arguments_inside_a_method_body_is_resolved_not_reported() {
 }
 
 // ---------------------------------------------------------------------------
+// Type-position regression (#16840, fixed on main via #16844's `is_in_type_query`).
+// The property/parameter/return-type-annotation rows and their value-position
+// controls live in `property_type_annotation_produces_no_suggestion` /
+// `parameter_type_annotation_produces_no_suggestion` /
+// `return_type_annotation_produces_no_suggestion` below. This section adds the
+// coverage #16844 didn't: the exact codes on the pinned corpus fixture (not just
+// the absence of TS2662/TS2663), and a static-member-in-a-parameter-annotation
+// variant of the still-open static arm (see `a_static_member_in_a_type_position_produces_no_suggestion`
+// below, no longer `#[ignore]`d).
+// ---------------------------------------------------------------------------
+
+/// All diagnostic codes for `source`, sorted — used below to assert the bare
+/// `TS2304` fires (not just that no suggestion is offered).
+fn diagnostic_codes(source: &str, libs: &[Arc<LibFile>]) -> Vec<u32> {
+    let mut out: Vec<u32> =
+        check_source_with_libs(source, "test.ts", strict_checker_options(), libs)
+            .iter()
+            .map(|d| d.code)
+            .collect();
+    out.sort_unstable();
+    out
+}
+
+#[test]
+fn typeof_of_a_static_member_in_a_parameter_annotation_produces_no_suggestion() {
+    let libs = load_default_lib_files();
+    // The static (TS2662) arm's type-position leak (fixed in resolved.rs, the
+    // second emission site #16844 left open — see the un-ignored test below)
+    // in a *parameter* annotation rather than a property annotation. `s` is
+    // initialized and the operand lives in a parameter, not a bare
+    // uninitialized instance property, so no unrelated
+    // strictPropertyInitialization diagnostic is in play.
+    assert_suggestions(
+        "class C { static s: number = 0; m(x: typeof s) {} }",
+        &libs,
+        &[],
+    );
+    assert_eq!(
+        diagnostic_codes("class C { static s: number = 0; m(x: typeof s) {} }", &libs),
+        vec![2304],
+        "must be the bare TS2304, not TS2662/TS2663"
+    );
+}
+
+#[test]
+fn typeof_in_a_value_expression_still_suggests_the_member() {
+    let libs = load_default_lib_files();
+    // Control: `typeof a` used as a value-position operand of an *expression*
+    // (not a type annotation) is a value reference, so the suggestion still
+    // applies there — the regression is specifically about type positions.
+    assert_suggestions(
+        "class C { a: number; m() { return typeof a; } }",
+        &libs,
+        &["TS2663: Cannot find name 'a'. Did you mean the instance member 'this.a'?"],
+    );
+}
+
+#[test]
+fn conformance_fixture_typeof_property_no_member_prefix_suggestion() {
+    let libs = load_default_lib_files();
+    // The exact regression witness from #16840: TypeScript's own
+    // `tests/cases/compiler/typeofProperty.ts` corpus fixture (pinned at
+    // typescript@7.0.2's `4d4f005c8541e0255a9d8791205fdce326e462bc` submodule
+    // commit — `scripts/conformance/tsc-cache-full.json`'s
+    // `compiler/typeofProperty.ts` entry records the oracle's 9-diagnostic set:
+    // six bare TS2304 (interfaces I1-I3 and classes C1-C3, none suggested —
+    // I1-I3 have no class to suggest from, and C1/C3's `typeof a`/`typeof e`
+    // are type-position operands per this fix) plus three TS2564 (properties
+    // `a`, `d`, `x` themselves lack initializers under strict mode — unrelated
+    // to the `typeof` operand and independently oracle-confirmed).
+    let source = r#"
+interface I1 {
+    a: number;
+    b: typeof a; // Should yield error (a is not a value)
+}
+
+interface I2 {
+    c: typeof d; // Should yield error (d is not a value)
+    d: string;
+}
+
+interface I3 {
+    e: typeof e; // Should yield error (e is not a value)
+}
+
+class C1 {
+    a: number;
+    b: typeof a; // Should yield error (a is not a value)
+}
+
+
+class C2 {
+    c: typeof d; // Should yield error (d is not a value)
+    d: string;
+}
+
+class C3 {
+    e: typeof e; // Should yield error (e is not a value)
+}
+
+
+
+interface ValidInterface {
+    x: string;
+}
+
+class ValidClass implements ValidInterface {
+    x: string;
+}
+"#;
+    assert_suggestions(source, &libs, &[]);
+    assert_eq!(
+        diagnostic_codes(source, &libs),
+        vec![2304, 2304, 2304, 2304, 2304, 2304, 2564, 2564, 2564],
+        "must match the pinned typescript@7.0.2 oracle set exactly — no TS2662/TS2663"
+    );
+}
+
+// ---------------------------------------------------------------------------
 // Binder-name invariance: the rule reads the class shape, never a name string.
 // ---------------------------------------------------------------------------
 
@@ -242,14 +361,14 @@ fn return_type_annotation_produces_no_suggestion() {
 }
 
 #[test]
-#[ignore = "known divergence (#16840, pre-existing and older than #16834): a \
-            *declared static* named in a type position still reports TS2662 \
-            where tsc reports the bare TS2304. That name binds to a real \
-            symbol, so it never reaches resolve_truly_unknown_identifier — it \
-            is emitted from the resolved-symbol paths in \
-            types/computation/identifier/resolved.rs and \
-            types/computation/helpers.rs, which need the same value-position \
-            guard applied at their own sites"]
+// Was a known, deliberately `#[ignore]`d divergence (older than #16834): a
+// *declared static* named in a type position binds to a real symbol, so it
+// never reaches `resolve_truly_unknown_identifier` — it was emitted from the
+// resolved-symbol path in `identifier/resolved.rs` (`type_of_resolved_value_symbol`'s
+// STATIC-flag arm), gated here the same way via `is_in_type_query`.
+// `identifier/helpers.rs`'s `get_type_of_assignment_target` looked like a second
+// site but every caller is a write/destructuring target, never a `typeof`
+// operand, so it was never reachable from a type position and needs no change.
 fn a_static_member_in_a_type_position_produces_no_suggestion() {
     let libs = load_default_lib_files();
     assert_suggestions(
