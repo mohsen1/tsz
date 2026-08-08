@@ -119,6 +119,35 @@ const ee: boolean = e;
 }
 
 #[test]
+fn object_union_names_first_source_order_constituent_when_interning_reverses_it() {
+    // `preB`/`preA` force `{ b: number }` to be content-interned before
+    // `{ a: string }`, reversing the union's canonical (allocation-identity)
+    // member order relative to how `v`'s union type was written. tsc mints a
+    // fresh anonymous type per `TypeLiteral`, so its relation walk (and its
+    // elaboration) still names the first *written* constituent, `{ a: string }`
+    // — not `{ b: number }` (issue #16965).
+    let diags = check_source_strict(
+        r#"
+declare const preB: { b: number };
+declare const preA: { a: string };
+declare const v: { a: string } | { b: number };
+const x: boolean = v;
+"#,
+    );
+    let texts = chain_texts(&diags);
+    assert!(
+        texts
+            .iter()
+            .any(|m| m.contains("Type '{ a: string; }' is not assignable to type 'boolean'")),
+        "expected the first written constituent `{{ a: string; }}`; got {texts:?}"
+    );
+    assert!(
+        !texts.iter().any(|m| m.contains("Type '{ b: number; }'")),
+        "elaboration must not name the second written constituent `{{ b: number; }}`; got {texts:?}"
+    );
+}
+
+#[test]
 fn mixed_object_then_enum_union_names_first_source_order_object() {
     // Ground truth (tsc): the object literal is written first, so it is the
     // named constituent even though the enum was declared earlier.

@@ -9,7 +9,9 @@ use crate::diagnostics::SubtypeFailureReason;
 use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 use crate::relations::subtype::SubtypeChecker;
 use crate::relations::subtype::explain_guard::{ExplainFuelState, ExplainRecursionEntryState};
-use crate::relations::subtype::explain_union_order::reorder_union_members_nullish_first;
+use crate::relations::subtype::explain_union_order::{
+    reorder_union_members_nullish_first, union_elaboration_base_order,
+};
 use crate::type_queries::data::get_object_symbol;
 use crate::types::{
     IntrinsicKind, LiteralValue, ObjectShape, ObjectShapeId, PropertyInfo, TupleElement,
@@ -1202,11 +1204,20 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             };
         if let Some(member_list) = union_member_list {
             let members = self.interner.type_list(member_list);
+            // Prefer the union's as-written source order when the interner's
+            // canonical order reordered it (`union_elaboration_base_order`,
+            // issue #16965).
+            let base_order =
+                union_elaboration_base_order(self.interner, union_member_source, &members);
             // Pick the first failing member in tsc's *relation* order (nullish
             // first), not tsz's stored *printer* order (nullish last) — see
             // `reorder_union_members_nullish_first`. Example: `number | undefined`
-            // -> `string` drills the `undefined` member, matching tsc.
-            let mut ordered = reorder_union_members_nullish_first(&members);
+            // -> `string` drills the `undefined` member, matching tsc. This
+            // still applies on top of the origin order above: nullish members
+            // are pre-interned at the very start of both compilers, so tsc's
+            // relation walk always reaches them first regardless of where
+            // they were written.
+            let mut ordered = reorder_union_members_nullish_first(&base_order);
             // Same-rank enum members: `sort_union_members` orders the interned
             // list by allocation identity (needed so `E1 | E2` and `E2 | E1`
             // intern to one canonical `TypeId`), which does not track

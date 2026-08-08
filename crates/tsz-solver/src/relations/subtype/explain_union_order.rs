@@ -8,9 +8,53 @@
 //! `TypeId`), not the source-declaration order — these two reorders bridge
 //! that gap without touching the interned identity itself.
 
+use crate::construction::TypeDatabase;
 use crate::def::resolver::TypeResolver;
 use crate::relations::subtype::SubtypeChecker;
 use crate::types::TypeId;
+
+/// Whether `origin` is a pure reordering of `members` — same length, same
+/// multiset of `TypeId`s — as opposed to a flatten/collapse (`origin` longer,
+/// e.g. a written duplicate anonymous object tsc keeps but tsz content-interns
+/// to one member) or an unrelated set.
+///
+/// Used to gate using a union's as-written `display_union_origin` order as the
+/// error-elaboration walk order: it is only safe to substitute when it
+/// describes the same members, just in a different order.
+pub(super) fn is_permutation_of(origin: &[TypeId], members: &[TypeId]) -> bool {
+    if origin.len() != members.len() {
+        return false;
+    }
+    let mut sorted_origin: Vec<u32> = origin.iter().map(|id| id.0).collect();
+    let mut sorted_members: Vec<u32> = members.iter().map(|id| id.0).collect();
+    sorted_origin.sort_unstable();
+    sorted_members.sort_unstable();
+    sorted_origin == sorted_members
+}
+
+/// Base order for a union-source elaboration walk: the union's as-written
+/// `display_union_origin` when one was stored and it is a pure reordering of
+/// `members` (same multiset — not a flatten/collapse, e.g. a duplicate
+/// anonymous object tsc keeps but tsz content-interns to one member),
+/// otherwise `members` unchanged.
+///
+/// tsc mints a fresh anonymous type per `TypeLiteral`, so its relation walk
+/// sees source order for object/literal/keyof/tuple members; tsz's canonical
+/// union order is allocation-identity order, which can reverse source order
+/// whenever a member's shape was interned by an earlier declaration (issue
+/// #16965). The union header already renders from this same origin, so this
+/// keeps the nested elaboration line naming the same constituent the header
+/// does.
+pub(super) fn union_elaboration_base_order(
+    interner: &dyn TypeDatabase,
+    union_member_source: TypeId,
+    members: &[TypeId],
+) -> Vec<TypeId> {
+    interner
+        .get_union_origin(union_member_source)
+        .filter(|origin| is_permutation_of(origin, members))
+        .map_or_else(|| members.to_vec(), |origin| origin.as_ref().clone())
+}
 
 /// Reorder a source union's members into tsc's relation-iteration order for
 /// error elaboration.
