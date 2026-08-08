@@ -17,6 +17,7 @@ mod index_signature_checks;
 #[cfg(test)]
 mod index_signature_checks_tests;
 mod index_signature_key_helpers;
+mod index_signature_property_names;
 mod index_signature_type_helpers;
 mod index_signature_validity;
 mod interface_checks;

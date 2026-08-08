@@ -850,26 +850,9 @@ impl<'a> CheckerState<'a> {
 
             // TSC preserves the original text for computed names and the original
             // quote style for string-literal property names in TS2411 diagnostics.
-            let diag_prop_name = if let Some(name_node) = self.ctx.arena.get(name_idx) {
-                if name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME {
-                    // The node range runs one token past the `]` (a trailing
-                    // `(`, `:`, `=` leaks in); truncate at the closing bracket
-                    // so the printed name is exactly the bracketed text.
-                    self.node_text(name_idx)
-                        .map(|text| match text.rfind(']') {
-                            Some(end) => text[..=end].to_string(),
-                            None => text.trim_end_matches(':').to_string(),
-                        })
-                        .unwrap_or_else(|| prop_name.clone())
-                } else if name_node.kind == tsz_scanner::SyntaxKind::StringLiteral as u16 {
-                    self.node_text(name_idx)
-                        .unwrap_or_else(|| prop_name.clone())
-                } else {
-                    prop_name.clone()
-                }
-            } else {
-                prop_name.clone()
-            };
+            let diag_prop_name = self
+                .ts2411_written_member_name(name_idx)
+                .unwrap_or_else(|| prop_name.clone());
 
             // Select the applicable index signatures: static members check
             // against static index signatures, instance members check against
@@ -1290,11 +1273,13 @@ impl<'a> CheckerState<'a> {
                     let prop_type_str = self.format_ts2411_type(prop_type);
                     let index_type_str = self.format_ts2411_type(sym_value_type);
                     let error_node = symbol_index_sig_node.unwrap_or(name_fallback_node);
+                    let diag_prop_name =
+                        self.ts2411_inherited_prop_name(prop.parent_id, &prop_name);
 
                     self.error_at_node_msg(
                         error_node,
                         diagnostic_codes::PROPERTY_OF_TYPE_IS_NOT_ASSIGNABLE_TO_INDEX_TYPE,
-                        &[&prop_name, &prop_type_str, "symbol", &index_type_str],
+                        &[&diag_prop_name, &prop_type_str, "symbol", &index_type_str],
                     );
                 }
                 continue;
@@ -1312,11 +1297,12 @@ impl<'a> CheckerState<'a> {
                 let prop_type_str = self.format_ts2411_type(prop_type);
                 let index_type_str = self.format_ts2411_type(number_idx.value_type);
                 let error_node = number_index_sig_node.unwrap_or(name_fallback_node);
+                let diag_prop_name = self.ts2411_inherited_prop_name(prop.parent_id, &prop_name);
 
                 self.error_at_node_msg(
                     error_node,
                     diagnostic_codes::PROPERTY_OF_TYPE_IS_NOT_ASSIGNABLE_TO_INDEX_TYPE,
-                    &[&prop_name, &prop_type_str, "number", &index_type_str],
+                    &[&diag_prop_name, &prop_type_str, "number", &index_type_str],
                 );
             }
 
@@ -1348,11 +1334,17 @@ impl<'a> CheckerState<'a> {
                 let index_type_str = self.format_ts2411_type(string_value_type);
                 let index_kind_str = self.index_signature_key_display(string_key_type);
                 let error_node = string_index_sig_node.unwrap_or(name_fallback_node);
+                let diag_prop_name = self.ts2411_inherited_prop_name(prop.parent_id, &prop_name);
 
                 self.error_at_node_msg(
                     error_node,
                     diagnostic_codes::PROPERTY_OF_TYPE_IS_NOT_ASSIGNABLE_TO_INDEX_TYPE,
-                    &[&prop_name, &prop_type_str, &index_kind_str, &index_type_str],
+                    &[
+                        &diag_prop_name,
+                        &prop_type_str,
+                        &index_kind_str,
+                        &index_type_str,
+                    ],
                 );
             }
         }
