@@ -79,6 +79,101 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    /// The bitwise-OR of flags on the alias-resolved target symbol of an
+    /// `import X = <entity-name>` / `import X = require(...)` declaration,
+    /// plus that symbol's declaration list. Shared by the TS2309/TS2440
+    /// value-meaning check and TS1288's pure-type-vs-value classification.
+    fn import_equals_resolved_target_flags(&self, stmt_idx: NodeIndex) -> (u32, Vec<NodeIndex>) {
+        let mut resolved_flags = 0u32;
+        let mut resolved_decls = Vec::new();
+
+        let Some(target_node) = self
+            .ctx
+            .arena
+            .get(stmt_idx)
+            .and_then(|node| self.ctx.arena.get_import_decl(node))
+            .map(|import_decl| import_decl.module_specifier)
+        else {
+            return (resolved_flags, resolved_decls);
+        };
+
+        let target_sym_id_opt = if let Some(node) = self.ctx.arena.get(target_node) {
+            if node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
+                self.resolve_identifier_symbol(target_node)
+            } else if node.kind == tsz_parser::parser::syntax_kind_ext::QUALIFIED_NAME {
+                // For qualified names like A.B.C, we need to resolve the whole chain
+                self.resolve_qualified_symbol(target_node)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        if let Some(target_sym_id) = target_sym_id_opt {
+            let mut visited = AliasCycleTracker::new();
+            if let Some(resolved_id) = self.resolve_alias_symbol(target_sym_id, &mut visited)
+                && let Some(resolved_sym) = self
+                    .ctx
+                    .binder
+                    .get_symbol_with_libs(resolved_id, &self.get_lib_binders())
+            {
+                resolved_flags = resolved_sym.flags;
+                resolved_decls = resolved_sym.declarations.clone();
+            }
+        }
+
+        (resolved_flags, resolved_decls)
+    }
+
+    /// Whether an `import X = <entity-name>` / `import X = require(...)`
+    /// declaration's resolved target has runtime value semantics, as opposed
+    /// to being purely a type (an interface, type alias, or an
+    /// uninstantiated/type-only namespace).
+    ///
+    /// Shared by TS2440 (import conflicts with a local value declaration) and
+    /// the TS2309 "other exported element" gate for `export import` aliases
+    /// (`check_export_assignment` in `core/module_exports.rs`): both need the
+    /// same answer to "does this alias carry a runtime export."
+    pub(crate) fn import_equals_declaration_has_value_meaning(&self, stmt_idx: NodeIndex) -> bool {
+        let (resolved_flags, resolved_decls) = self.import_equals_resolved_target_flags(stmt_idx);
+
+        let mut has_value = (resolved_flags & tsz_binder::symbol_flags::VALUE) != 0;
+        if has_value
+            && (resolved_flags & tsz_binder::symbol_flags::VALUE_MODULE) != 0
+            && (resolved_flags
+                & (tsz_binder::symbol_flags::VALUE & !tsz_binder::symbol_flags::VALUE_MODULE))
+                == 0
+        {
+            let mut any_instantiated = false;
+            for decl_idx in &resolved_decls {
+                if let Some(decl_node) = self.ctx.arena.get(*decl_idx) {
+                    if decl_node.kind == tsz_parser::parser::syntax_kind_ext::MODULE_DECLARATION {
+                        if self.is_namespace_declaration_instantiated(*decl_idx) {
+                            any_instantiated = true;
+                            break;
+                        }
+                    } else {
+                        any_instantiated = true;
+                        break;
+                    }
+                }
+            }
+            has_value = any_instantiated;
+        }
+        if !has_value
+            && let Some(target_node) = self
+                .ctx
+                .arena
+                .get(stmt_idx)
+                .and_then(|node| self.ctx.arena.get_import_decl(node))
+                .map(|import_decl| import_decl.module_specifier)
+        {
+            has_value = self.import_equals_target_has_exported_value(target_node);
+        }
+        has_value
+    }
+
     pub(crate) fn check_import_equals_declaration(&mut self, stmt_idx: NodeIndex) {
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
         use crate::state_checking::is_strict_mode_reserved_name;
@@ -364,77 +459,7 @@ impl<'a> CheckerState<'a> {
 
         // Resolve the import alias target to determine if it has Value semantics.
         // This is needed for both TS2440 and TS2437 checks.
-        let mut resolved_flags = 0u32;
-        let mut resolved_decls = Vec::new();
-
-        if let Some(import_decl) = self.ctx.arena.get_import_decl(
-            self.ctx
-                .arena
-                .get(stmt_idx)
-                .expect("stmt_idx is a valid node index from caller"),
-        ) {
-            let target_node = import_decl.module_specifier;
-            let target_sym_id_opt = if let Some(node) = self.ctx.arena.get(target_node) {
-                if node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
-                    self.resolve_identifier_symbol(target_node)
-                } else if node.kind == tsz_parser::parser::syntax_kind_ext::QUALIFIED_NAME {
-                    // For qualified names like A.B.C, we need to resolve the whole chain
-                    self.resolve_qualified_symbol(target_node)
-                } else {
-                    None
-                }
-            } else {
-                None
-            };
-
-            if let Some(target_sym_id) = target_sym_id_opt {
-                let mut visited = AliasCycleTracker::new();
-                if let Some(resolved_id) = self.resolve_alias_symbol(target_sym_id, &mut visited)
-                    && let Some(resolved_sym) = self
-                        .ctx
-                        .binder
-                        .get_symbol_with_libs(resolved_id, &self.get_lib_binders())
-                {
-                    resolved_flags = resolved_sym.flags;
-                    resolved_decls = resolved_sym.declarations.clone();
-                }
-            }
-        }
-
-        let mut has_value = (resolved_flags & tsz_binder::symbol_flags::VALUE) != 0;
-        if has_value
-            && (resolved_flags & tsz_binder::symbol_flags::VALUE_MODULE) != 0
-            && (resolved_flags
-                & (tsz_binder::symbol_flags::VALUE & !tsz_binder::symbol_flags::VALUE_MODULE))
-                == 0
-        {
-            let mut any_instantiated = false;
-            for decl_idx in &resolved_decls {
-                if let Some(decl_node) = self.ctx.arena.get(*decl_idx) {
-                    if decl_node.kind == tsz_parser::parser::syntax_kind_ext::MODULE_DECLARATION {
-                        if self.is_namespace_declaration_instantiated(*decl_idx) {
-                            any_instantiated = true;
-                            break;
-                        }
-                    } else {
-                        any_instantiated = true;
-                        break;
-                    }
-                }
-            }
-            has_value = any_instantiated;
-        }
-        if !has_value
-            && let Some(import_decl) = self.ctx.arena.get_import_decl(
-                self.ctx
-                    .arena
-                    .get(stmt_idx)
-                    .expect("stmt_idx is a valid node index from caller"),
-            )
-        {
-            has_value = self.import_equals_target_has_exported_value(import_decl.module_specifier);
-        }
-        let import_has_value = has_value;
+        let import_has_value = self.import_equals_declaration_has_value_meaning(stmt_idx);
 
         // Check for TS2440: Import declaration conflicts with local declaration
         // This error is specific to ImportEqualsDeclaration (not ES6 imports).
@@ -736,6 +761,7 @@ impl<'a> CheckerState<'a> {
                     | tsz_binder::symbol_flags::CLASS
                     | tsz_binder::symbol_flags::ENUM
                     | tsz_binder::symbol_flags::NAMESPACE;
+                let (resolved_flags, _) = self.import_equals_resolved_target_flags(stmt_idx);
                 if (resolved_flags & pure_type_flags) != 0 && (resolved_flags & value_flags) == 0 {
                     self.error_at_node(
                         stmt_idx,
