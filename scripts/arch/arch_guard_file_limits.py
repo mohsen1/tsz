@@ -9,7 +9,13 @@ exactly as before, so `self.arch_guard.FILE_LINE_LIMIT_CHECKS` and friends in
 `test_arch_guard.py` keep working unmodified.
 """
 
-from arch_guard_shared import ROOT
+from pathlib import Path
+
+from arch_guard_shared import (
+    _CRATE_SRC_LINE_LIMIT_ALLOWLISTS,
+    _CRATE_TESTS_LINE_LIMIT_ALLOWLISTS,
+    ROOT,
+)
 
 # Ratcheted 1901 -> 1740 by the #15643 arch-health paydown: FunctionShape
 # instantiation, parameter-list transformation, and redeclaration-widening
@@ -1012,4 +1018,143 @@ FILE_LINE_LIMIT_CHECKS = [
     # parser/state_declarations.rs dropped below the 2000-line cap once enum
     # declaration parsing moved to state_declarations_enums.rs; its ratchet
     # entry was removed (the allowlist only shrinks).
+    #
+    # #16488: the eleven entries below close the last hole in the 2000-LOC
+    # ceiling. #16733/#16745 registered every `crates/*/src` and `crates/*/tests`
+    # root under the per-crate cap, but a file listed in one of those crates'
+    # allowlists is *exempt* from the directory cap — and these eleven had no
+    # `FILE_LINE_LIMIT_CHECKS` ratchet of their own, so they could grow without
+    # bound above 2000 while the `arch-size` gate stayed green (exactly the
+    # `core_dispatch.rs`-at-2075 gap the issue reports, in its residual form).
+    # Pinning each at its observed size makes the allowlist shrink-only, as the
+    # contract requires. `scan_allowlist_ratchet_coverage` (below) keeps this
+    # closed: any future allowlist addition without a matching ratchet fails.
+    (
+        "Checker tests boundary: symbol_index_signature_tests.rs size ratchet (#16488)",
+        ROOT / "crates" / "tsz-checker" / "tests" / "symbol_index_signature_tests.rs",
+        2158,
+    ),
+    (
+        "Checker tests boundary: ts2353_tests.rs size ratchet (#16488)",
+        ROOT / "crates" / "tsz-checker" / "tests" / "ts2353_tests.rs",
+        2113,
+    ),
+    (
+        "CLI tests boundary: driver_tests_parts/part_12.rs size ratchet (#16488)",
+        ROOT / "crates" / "tsz-cli" / "tests" / "driver_tests_parts" / "part_12.rs",
+        2078,
+    ),
+    (
+        "CLI tests boundary: tsc_compat_tests_parts/part_00.rs size ratchet (#16488)",
+        ROOT / "crates" / "tsz-cli" / "tests" / "tsc_compat_tests_parts" / "part_00.rs",
+        2069,
+    ),
+    (
+        "Core boundary: config/tests/module_resolution.rs size ratchet (#16488)",
+        ROOT / "crates" / "tsz-core" / "src" / "config" / "tests" / "module_resolution.rs",
+        2016,
+    ),
+    (
+        "Core tests boundary: parser_state_tests_parts/part_00.rs size ratchet (#16488)",
+        ROOT / "crates" / "tsz-core" / "tests" / "parser_state_tests_parts" / "part_00.rs",
+        2045,
+    ),
+    (
+        "Emitter boundary: declaration_emitter/tests/type_info.rs size ratchet (#16488)",
+        ROOT
+        / "crates"
+        / "tsz-emitter"
+        / "src"
+        / "declaration_emitter"
+        / "tests"
+        / "type_info.rs",
+        2153,
+    ),
+    (
+        "Emitter boundary: emitter/source_file/es5_emit_tests.rs size ratchet (#16488)",
+        ROOT
+        / "crates"
+        / "tsz-emitter"
+        / "src"
+        / "emitter"
+        / "source_file"
+        / "es5_emit_tests.rs",
+        2048,
+    ),
+    (
+        "LSP tests boundary: hover_tests.rs size ratchet (#16488)",
+        ROOT / "crates" / "tsz-lsp" / "tests" / "hover_tests.rs",
+        2151,
+    ),
+    (
+        "Solver tests boundary: canonicalize_tests.rs size ratchet (#16488)",
+        ROOT / "crates" / "tsz-solver" / "tests" / "canonicalize_tests.rs",
+        2287,
+    ),
+    (
+        "Solver tests boundary: intern_tests.rs size ratchet (#16488)",
+        ROOT / "crates" / "tsz-solver" / "tests" / "intern_tests.rs",
+        2045,
+    ),
 ]
+
+
+ALLOWLIST_RATCHET_COVERAGE_NAME = (
+    "Architecture boundary: every file allowlisted from the per-crate 2000-LOC "
+    "cap must also carry a FILE_LINE_LIMIT_CHECKS size ratchet — an allowlisted "
+    "file is otherwise fully exempt from the ceiling and can grow unbounded "
+    "(#16488)"
+)
+
+
+def file_line_limit_ratcheted_paths(checks=None) -> set:
+    """Repo-relative POSIX paths that carry a per-file size ratchet."""
+    checks = checks if checks is not None else FILE_LINE_LIMIT_CHECKS
+    paths = set()
+    for _name, path, _limit in checks:
+        path = Path(path)
+        try:
+            paths.add(path.resolve().relative_to(ROOT).as_posix())
+        except ValueError:
+            paths.add(path.as_posix())
+    return paths
+
+
+def line_limit_allowlisted_files(
+    src_allowlists=None, tests_allowlists=None
+) -> set:
+    """Every file exempted from a per-crate 2000-LOC directory cap."""
+    src = (
+        src_allowlists
+        if src_allowlists is not None
+        else _CRATE_SRC_LINE_LIMIT_ALLOWLISTS
+    )
+    tests = (
+        tests_allowlists
+        if tests_allowlists is not None
+        else _CRATE_TESTS_LINE_LIMIT_ALLOWLISTS
+    )
+    files = set()
+    for _crate, _label, allow in src:
+        files |= set(allow)
+    for _crate, _label, allow in tests:
+        files |= set(allow)
+    return files
+
+
+def scan_allowlist_ratchet_coverage(
+    src_allowlists=None, tests_allowlists=None, file_line_checks=None
+) -> list:
+    """Report allowlisted files that lack a per-file size ratchet.
+
+    A file listed in a `crates/*/src` or `crates/*/tests` allowlist is exempt
+    from that directory's 2000-LOC cap. Without a matching
+    `FILE_LINE_LIMIT_CHECKS` ratchet it is then bounded by *nothing* and can
+    grow arbitrarily while the `arch-size` gate stays green — the residual hole
+    #16488 tracks. Making "allowlisted implies ratcheted" a checked invariant
+    (the same pattern `scan_line_limit_coverage` uses for crate registration)
+    means the ceiling cannot silently reopen for a newly allowlisted file.
+    """
+    allowlisted = line_limit_allowlisted_files(src_allowlists, tests_allowlists)
+    ratcheted = file_line_limit_ratcheted_paths(file_line_checks)
+    return sorted(f for f in allowlisted if f not in ratcheted)

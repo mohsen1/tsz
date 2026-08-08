@@ -198,6 +198,11 @@ def main() -> int:
             if hits:
                 size_failures.append((name, hits))
 
+        allowlist_gap = scan_allowlist_ratchet_coverage()
+        size_total += len(allowlist_gap)
+        if allowlist_gap:
+            size_failures.append((ALLOWLIST_RATCHET_COVERAGE_NAME, allowlist_gap))
+
         payload = build_json_payload(size_failures, size_total)
         if args.json_report:
             write_json_report(Path(args.json_report), payload)
@@ -279,6 +284,11 @@ def main() -> int:
         total_hits += len(hits)
         if hits:
             failures.append((name, hits))
+
+    allowlist_gap = scan_allowlist_ratchet_coverage()
+    total_hits += len(allowlist_gap)
+    if allowlist_gap:
+        failures.append((ALLOWLIST_RATCHET_COVERAGE_NAME, allowlist_gap))
 
     for name, path, struct_name, max_fields in STRUCT_FIELD_COUNT_CHECKS:
         hits = scan_struct_field_count(path, struct_name, max_fields)

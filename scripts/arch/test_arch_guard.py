@@ -1473,5 +1473,62 @@ class ArchGuardAllFileLimitChecksPassTests(unittest.TestCase):
             )
 
 
+class ArchGuardAllowlistRatchetCoverageTests(unittest.TestCase):
+    """Cover the "allowlisted implies ratcheted" invariant (#16488).
+
+    #16733/#16745 registered every `crates/*/src` and `crates/*/tests` root
+    under the per-crate 2000-LOC cap, but a file named in one of those crates'
+    allowlists is *exempt* from the directory cap. Without a matching
+    `FILE_LINE_LIMIT_CHECKS` ratchet such a file is bounded by nothing and can
+    grow arbitrarily while `arch-size` stays green — the residual hole #16488
+    reports. `scan_allowlist_ratchet_coverage` makes the pairing a checked
+    invariant so the ceiling cannot silently reopen for a newly allowlisted
+    file.
+    """
+
+    def setUp(self):
+        self.arch_guard = load_arch_guard_module()
+
+    def test_every_allowlisted_file_is_ratcheted(self):
+        """No allowlisted file may lack a per-file size ratchet on main."""
+        gap = self.arch_guard.scan_allowlist_ratchet_coverage()
+        self.assertEqual(
+            gap,
+            [],
+            "Allowlisted files exempt from the 2000-LOC cap but with no "
+            "FILE_LINE_LIMIT_CHECKS ratchet (can grow unbounded): "
+            + ", ".join(gap),
+        )
+
+    def test_flags_allowlisted_file_without_ratchet(self):
+        """An allowlisted file with no ratchet entry is reported."""
+        gap = self.arch_guard.scan_allowlist_ratchet_coverage(
+            src_allowlists=[("tsz-demo", "Demo", {"crates/tsz-demo/src/huge.rs"})],
+            tests_allowlists=[],
+            file_line_checks=[],
+        )
+        self.assertEqual(gap, ["crates/tsz-demo/src/huge.rs"])
+
+    def test_ratcheted_allowlisted_file_is_not_flagged(self):
+        """An allowlisted file that carries a ratchet is not reported."""
+        rel = "crates/tsz-demo/src/huge.rs"
+        gap = self.arch_guard.scan_allowlist_ratchet_coverage(
+            src_allowlists=[("tsz-demo", "Demo", {rel})],
+            tests_allowlists=[],
+            file_line_checks=[("Demo ratchet", ROOT / rel, 2500)],
+        )
+        self.assertEqual(gap, [])
+
+    def test_tests_allowlist_entries_are_covered_too(self):
+        """The tests-tree allowlist is scanned alongside the src allowlist."""
+        rel = "crates/tsz-demo/tests/huge_tests.rs"
+        gap = self.arch_guard.scan_allowlist_ratchet_coverage(
+            src_allowlists=[],
+            tests_allowlists=[("tsz-demo", "Demo", {rel})],
+            file_line_checks=[],
+        )
+        self.assertEqual(gap, [rel])
+
+
 if __name__ == "__main__":
     unittest.main()
