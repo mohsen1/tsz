@@ -4,7 +4,8 @@
 
 use tsz_checker::context::CheckerOptions;
 use tsz_checker::test_utils::{
-    check_source, check_source_code_messages as get_diagnostics, diagnostic_code_messages,
+    check_source, check_source_code_messages as get_diagnostics, check_source_diagnostics,
+    diagnostic_code_messages,
 };
 
 fn has_error_with_code(source: &str, code: u32) -> bool {
@@ -365,6 +366,104 @@ class D extends C {
         "TS2411 must render the two-level-inherited computed name as \
          `[\"deep\"]`, got: {}",
         ts2411.1
+    );
+}
+
+// =========================================================================
+// Inherited member vs index signature: `TS2728` "declared here" pointer
+//
+// tsc reports this TS2411 at the index signature the DERIVED type owns, not
+// at the property (owned by a base) -- so it attaches a `'{0}' is declared
+// here.` (TS2728) related-information entry pointing back at the base
+// declaration. The own-member TS2411 path needs no such pointer: the report
+// site already IS the declaration.
+// =========================================================================
+
+#[test]
+fn test_ts2411_inherited_computed_name_has_declared_here_pointer() {
+    let source = r#"
+class Foo { x: number = 0; }
+class Foo2 { x: number = 0; y: number = 0; }
+class C {
+    get ["get1"]() { return new Foo(); }
+}
+class D extends C {
+    [s: string]: Foo2;
+}
+"#;
+    let diagnostics = check_source_diagnostics(source);
+    let ts2411 = diagnostics
+        .iter()
+        .find(|d| d.code == 2411)
+        .expect("expected TS2411 for inherited computed-name getter vs string index");
+    let declared_here = ts2411
+        .related_information
+        .iter()
+        .find(|r| r.code == 2728)
+        .expect("expected a TS2728 'declared here' pointer on the inherited TS2411");
+    assert!(
+        declared_here.is_location_pointer(),
+        "the TS2728 entry must be a cross-location pointer, not an elaboration chain link"
+    );
+    assert!(
+        declared_here.message_text.contains("[\"get1\"]"),
+        "TS2728 must name the property with tsc's verbatim computed-name text, got: {}",
+        declared_here.message_text
+    );
+}
+
+#[test]
+fn test_ts2411_inherited_plain_identifier_has_declared_here_pointer() {
+    // Adjacent case: the pointer is a property of being INHERITED, not of
+    // having a computed name -- a plain identifier gets it too.
+    let source = r#"
+class Foo { x: number = 0; }
+class Foo2 { x: number = 0; y: number = 0; }
+class C {
+    get plainGetter() { return new Foo(); }
+}
+class D extends C {
+    [s: string]: Foo2;
+}
+"#;
+    let diagnostics = check_source_diagnostics(source);
+    let ts2411 = diagnostics
+        .iter()
+        .find(|d| d.code == 2411)
+        .expect("expected TS2411 for inherited plain getter vs string index");
+    let declared_here = ts2411
+        .related_information
+        .iter()
+        .find(|r| r.code == 2728)
+        .expect("expected a TS2728 'declared here' pointer on the inherited TS2411");
+    assert!(
+        declared_here.message_text.contains("'plainGetter'"),
+        "TS2728 must name the plain inherited identifier without brackets, got: {}",
+        declared_here.message_text
+    );
+}
+
+#[test]
+fn test_ts2411_own_member_has_no_declared_here_pointer() {
+    // Negative control: an OWN-member TS2411 (no inheritance involved) must
+    // NOT gain a TS2728 pointer -- the report site already is the
+    // declaration, so tsc attaches no related information there.
+    let source = r#"
+class Foo { x: number = 0; }
+interface I {
+    [s: string]: Foo;
+    ["own1"]: number;
+}
+"#;
+    let diagnostics = check_source_diagnostics(source);
+    let ts2411 = diagnostics
+        .iter()
+        .find(|d| d.code == 2411)
+        .expect("expected TS2411 for own computed-name member vs string index");
+    assert!(
+        !ts2411.related_information.iter().any(|r| r.code == 2728),
+        "an own-member TS2411 must carry no TS2728 pointer, got: {:?}",
+        ts2411.related_information
     );
 }
 
