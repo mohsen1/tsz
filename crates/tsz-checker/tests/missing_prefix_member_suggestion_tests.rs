@@ -242,16 +242,13 @@ fn return_type_annotation_produces_no_suggestion() {
 }
 
 #[test]
-#[ignore = "known divergence (#16840, pre-existing and older than #16834): a \
-            *declared static* named in a type position still reports TS2662 \
-            where tsc reports the bare TS2304. That name binds to a real \
-            symbol, so it never reaches resolve_truly_unknown_identifier — it \
-            is emitted from the resolved-symbol paths in \
-            types/computation/identifier/resolved.rs and \
-            types/computation/helpers.rs, which need the same value-position \
-            guard applied at their own sites"]
 fn a_static_member_in_a_type_position_produces_no_suggestion() {
     let libs = load_default_lib_files();
+    // A *declared static* binds to a real symbol, so it reaches the resolved-symbol
+    // static arm, not `resolve_truly_unknown_identifier` (the path #16844 gated).
+    // That arm's shared sink now applies the same `is_in_type_query` guard, so a
+    // bare static in a `typeof` query takes the plain `TS2304`. Value-position
+    // control: `a_static_member_in_a_value_position_still_suggests` below.
     assert_suggestions(
         "class C { static s: number = 1; b: typeof s = 1 as any; }",
         &libs,
@@ -262,9 +259,9 @@ fn a_static_member_in_a_type_position_produces_no_suggestion() {
 #[test]
 fn a_static_member_in_a_value_position_still_suggests() {
     let libs = load_default_lib_files();
-    // The control for the ignored row above: the same class and member in a
-    // value position must keep its suggestion, so whoever fixes the static
-    // arm's type-position leak has a live guard against over-correcting.
+    // The value-position control for `a_static_member_in_a_type_position_produces_no_suggestion`
+    // above: the same class and member read from a value position must keep its
+    // suggestion, guarding the sink's `is_in_type_query` gate against over-correcting.
     assert_suggestions(
         "class C { static s: number = 1; m() { return s; } }",
         &libs,

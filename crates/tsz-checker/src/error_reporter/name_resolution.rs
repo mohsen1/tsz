@@ -1542,6 +1542,18 @@ impl<'a> CheckerState<'a> {
         class_name: &str,
         idx: NodeIndex,
     ) {
+        // The static-member suggestion is value-position only (#16840 / #16844):
+        // a bare static named in a `typeof` type query (`class C { static s = 1;
+        // t: typeof s; }`) sits outside the bare-identifier scope in tsc, which
+        // reports the plain `TS2304` — `C.s` is not writable in a type position.
+        // This is the single sink for `TS2662`, so gating here covers all of its
+        // callers at once (the resolved-static read path and the assignment-target
+        // write path). The predicate is purely syntactic, so both resolution passes
+        // agree and emit exactly one diagnostic per site.
+        if self.is_in_type_query(idx) {
+            self.error_cannot_find_name_at(name, idx);
+            return;
+        }
         let message = format!(
             "Cannot find name '{name}'. Did you mean the static member '{class_name}.{name}'?"
         );
