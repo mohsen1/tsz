@@ -873,6 +873,8 @@ mod syntax_constraint_relation_routing_arch_tests;
 mod synthetic_unique_atom_union_display_tests;
 #[path = "tests/this_context_self_type_tests.rs"]
 mod this_context_self_type_tests;
+#[path = "tests/this_lexical_global_type_tests.rs"]
+mod this_lexical_global_type_tests;
 #[path = "tests/this_parameter_placement_tests.rs"]
 mod this_parameter_placement_tests;
 #[path = "tests/this_prop_nullish_operand_code_tests.rs"]

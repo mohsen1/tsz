@@ -231,33 +231,7 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                 idx,
                 crate::recovery::RecoveryReason::ThisUnresolvedClassOrObjectLiteralMember,
             )
-        } else if self.checker.ctx.no_implicit_this()
-            && !self.checker.is_js_file()
-            && !self.checker.ctx.binder.is_external_module()
-            && self.checker.is_this_in_global_capturing_arrow(idx)
-        {
-            // TS7041: `this` in an arrow chain with no enclosing
-            // function/class/object `this` binder captures globalThis.
-            // Prefer this over the generic TS2683 path.
-            //
-            // Only fires in *script* files. At the top level of an
-            // external module (has `import`/`export`), `this` is
-            // `undefined`, not `globalThis`, so a capturing arrow at
-            // module top-level produces TS2532 on property access,
-            // not a global-capture warning. Matches tsc.
-            use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-            self.checker.error_at_node(
-                idx,
-                diagnostic_messages::THE_CONTAINING_ARROW_FUNCTION_CAPTURES_THE_GLOBAL_VALUE_OF_THIS,
-                diagnostic_codes::THE_CONTAINING_ARROW_FUNCTION_CAPTURES_THE_GLOBAL_VALUE_OF_THIS,
-            );
-            TypeId::ANY
-        } else if self.checker.ctx.no_implicit_this()
-            && self
-                .checker
-                .find_enclosing_non_arrow_function(idx)
-                .is_some()
-        {
+        } else if let Some(_enclosing_fn) = self.checker.find_enclosing_non_arrow_function(idx) {
             // TS2683: 'this' implicitly has type 'any'
             // Reaching this branch means `this` has no resolved owner: all
             // owned receivers (class member, JSDoc `@this`, contextual, and
@@ -266,53 +240,67 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
             // synthesizes a `this` for plain JS constructor functions, so a
             // top-level JS function's `this` is implicitly `any` here just like
             // in TS files — not only nested ones.
-            // Suppress if the enclosing function has an explicit `this` parameter
-            // or a contextual `this` type from a parent type annotation
-            if self
-                .checker
-                .enclosing_function_has_explicit_this_parameter(idx)
-                || self
+            //
+            // The TYPE is `any` regardless of `noImplicitThis` (a plain
+            // function's `this` has no declared receiver either way); only
+            // the *warning* about that implicit `any` is gated by the flag.
+            // Suppress the warning if the enclosing function has an explicit
+            // `this` parameter or a contextual `this` type from a parent
+            // type annotation.
+            if self.checker.ctx.no_implicit_this()
+                && !self
+                    .checker
+                    .enclosing_function_has_explicit_this_parameter(idx)
+                && !self
                     .checker
                     .enclosing_function_has_contextual_this_type(idx)
             {
-                TypeId::ANY
-            } else {
                 use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
                 self.checker.error_at_node(
                     idx,
                     diagnostic_messages::THIS_IMPLICITLY_HAS_TYPE_ANY_BECAUSE_IT_DOES_NOT_HAVE_A_TYPE_ANNOTATION,
                     diagnostic_codes::THIS_IMPLICITLY_HAS_TYPE_ANY_BECAUSE_IT_DOES_NOT_HAVE_A_TYPE_ANNOTATION,
                 );
-                TypeId::ANY
             }
-        } else if self.checker.ctx.no_implicit_this()
-            && !self.checker.is_js_file()
-            && self
-                .checker
-                .find_enclosing_non_arrow_function(idx)
-                .is_none()
-        {
-            // `this` at the top level of a script or module with noImplicitThis.
+            TypeId::ANY
+        } else if self.checker.is_js_file() {
+            // JS-file top-level/arrow-inherited `this` behavior is
+            // unaffected by this change; keep it exactly as before.
+            TypeId::ANY
+        } else {
+            // `this` at the top level of a script or module (including
+            // inside an arrow chain, which has no `this` binding of its
+            // own and inherits lexically from here).
             //
             // In an external module (has `import`/`export`), top-level `this`
             // — including `this` inside a top-level arrow — is `undefined`.
             // Property access on `this` then produces TS2532 ("Object is
             // possibly 'undefined'.") under strictNullChecks, matching tsc.
             //
-            // In a script, tsc resolves `this` to `typeof globalThis` (an
-            // object type). We approximate with TypeId::OBJECT since we
-            // don't have a full globalThis type yet; this ensures that
-            // operations like `++this` correctly emit TS2356 (arithmetic
-            // type error) instead of TS2357 (invalid lvalue) — matching
-            // tsc behavior where the type check fires first and suppresses
-            // the lvalue check.
+            // In a script, tsc resolves `this` to `typeof globalThis`, the
+            // synthetic surface object built from in-scope globals
+            // (`CheckerContext::global_this_surface_type`).
+            //
+            // Both resolve to their real TYPE regardless of `noImplicitThis`
+            // — TypeScript computes the type of `this` unconditionally and
+            // only conditionally *warns* about an arrow capturing it
+            // implicitly (TS7041, script files only).
+            if !self.checker.ctx.binder.is_external_module()
+                && self.checker.ctx.no_implicit_this()
+                && self.checker.is_this_in_global_capturing_arrow(idx)
+            {
+                use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+                self.checker.error_at_node(
+                    idx,
+                    diagnostic_messages::THE_CONTAINING_ARROW_FUNCTION_CAPTURES_THE_GLOBAL_VALUE_OF_THIS,
+                    diagnostic_codes::THE_CONTAINING_ARROW_FUNCTION_CAPTURES_THE_GLOBAL_VALUE_OF_THIS,
+                );
+            }
             if self.checker.ctx.binder.is_external_module() {
                 TypeId::UNDEFINED
             } else {
-                TypeId::OBJECT
+                self.checker.ctx.global_this_surface_type()
             }
-        } else {
-            TypeId::ANY
         }
     }
 }
