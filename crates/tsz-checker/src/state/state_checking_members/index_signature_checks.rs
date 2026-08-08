@@ -1285,9 +1285,18 @@ impl<'a> CheckerState<'a> {
             // heritage chain to find the base declaration that actually
             // introduced this inherited property, falling back to the resolved
             // name when the base declaration can't be located (e.g. a lib type).
-            let diag_prop_name = self
-                .inherited_member_display_name(iface_node, &prop_name)
+            let inherited_decl_node =
+                self.inherited_member_declaration_node(iface_node, &prop_name);
+            let diag_prop_name = inherited_decl_node
+                .and_then(|n| self.get_member_name_text(n))
                 .unwrap_or_else(|| prop_name.clone());
+            // tsc reports this TS2411 at the index signature the DERIVED type
+            // owns, not at the property (owned by the base), so it attaches a
+            // `'{0}' is declared here.` (TS2728) pointer back to the base
+            // declaration — unlike the own-member TS2411 case, where the
+            // report site already is the declaration.
+            let declared_here =
+                self.inherited_member_declared_here_related(inherited_decl_node, &diag_prop_name);
 
             // Symbol-keyed inherited properties (e.g. [Symbol.iterator]) are
             // checked against the symbol index signature, NOT string/number.
@@ -1301,10 +1310,11 @@ impl<'a> CheckerState<'a> {
                     let index_type_str = self.format_ts2411_type(sym_value_type);
                     let error_node = symbol_index_sig_node.unwrap_or(name_fallback_node);
 
-                    self.error_at_node_msg(
+                    self.error_at_node_msg_with_related(
                         error_node,
                         diagnostic_codes::PROPERTY_OF_TYPE_IS_NOT_ASSIGNABLE_TO_INDEX_TYPE,
                         &[&diag_prop_name, &prop_type_str, "symbol", &index_type_str],
+                        declared_here.clone(),
                     );
                 }
                 continue;
@@ -1323,10 +1333,11 @@ impl<'a> CheckerState<'a> {
                 let index_type_str = self.format_ts2411_type(number_idx.value_type);
                 let error_node = number_index_sig_node.unwrap_or(name_fallback_node);
 
-                self.error_at_node_msg(
+                self.error_at_node_msg_with_related(
                     error_node,
                     diagnostic_codes::PROPERTY_OF_TYPE_IS_NOT_ASSIGNABLE_TO_INDEX_TYPE,
                     &[&diag_prop_name, &prop_type_str, "number", &index_type_str],
+                    declared_here.clone(),
                 );
             }
 
@@ -1359,7 +1370,7 @@ impl<'a> CheckerState<'a> {
                 let index_kind_str = self.index_signature_key_display(string_key_type);
                 let error_node = string_index_sig_node.unwrap_or(name_fallback_node);
 
-                self.error_at_node_msg(
+                self.error_at_node_msg_with_related(
                     error_node,
                     diagnostic_codes::PROPERTY_OF_TYPE_IS_NOT_ASSIGNABLE_TO_INDEX_TYPE,
                     &[
@@ -1368,6 +1379,7 @@ impl<'a> CheckerState<'a> {
                         &index_kind_str,
                         &index_type_str,
                     ],
+                    declared_here,
                 );
             }
         }
