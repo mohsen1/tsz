@@ -381,6 +381,9 @@ mod type_member_hard_modifier_accessor_cascade_tests;
 #[path = "../../tests/type_member_modifier_grammar_tests.rs"]
 mod type_member_modifier_grammar_tests;
 #[cfg(test)]
+#[path = "../../tests/type_member_out_variance_accessor_cascade_tests.rs"]
+mod type_member_out_variance_accessor_cascade_tests;
+#[cfg(test)]
 #[path = "../../tests/yield_grammar_type_and_enum_context_tests.rs"]
 mod yield_grammar_type_and_enum_context_tests;
 
