@@ -85,6 +85,10 @@ pub(super) struct CachedContentWalker<'a, P: ContentPredicate> {
     db: &'a dyn TypeDatabase,
     predicate: &'a P,
     policy: ChildPolicy,
+    /// Intrinsic-range sentinel id (e.g. `TypeId::ERROR`) matched before the
+    /// intrinsic fast path, snapshotted from `predicate.sentinel()` alongside
+    /// `policy`. See [`ContentPredicate::sentinel`].
+    sentinel: Option<TypeId>,
     visiting: FxHashSet<TypeId>,
 }
 
@@ -94,12 +98,20 @@ impl<'a, P: ContentPredicate> CachedContentWalker<'a, P> {
             db,
             predicate,
             policy: predicate.child_policy(),
+            sentinel: predicate.sentinel(),
             visiting: FxHashSet::default(),
         }
     }
 
     /// Returns `(predicate_holds, cycle_tainted)`.
     fn check_tracked(&mut self, type_id: TypeId) -> (bool, bool) {
+        // The sentinel sits in the intrinsic id range, so it must be matched
+        // before the intrinsic fast path. A sentinel hit is a definite,
+        // untainted fact; it is not cached (intrinsic-range ids are never
+        // written to the predicate cache).
+        if self.sentinel == Some(type_id) {
+            return (true, false);
+        }
         if type_id.is_intrinsic() {
             return (false, false);
         }

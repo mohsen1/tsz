@@ -88,6 +88,16 @@ pub(super) trait ContentPredicate {
     fn child_policy(&self) -> ChildPolicy {
         ChildPolicy::CONTENT_PREDICATE
     }
+    /// An intrinsic-range sentinel `TypeId` (e.g. `TypeId::ERROR`) that counts
+    /// as a match wherever it appears, matched *before* the walker's intrinsic
+    /// fast path. Sentinel ids live in the intrinsic id range, where the
+    /// `lookup`-based `matches_node` is never consulted, so an id-level match is
+    /// the only way the cached walk can detect them (at the root, via
+    /// [`contains_content_cached`], and when nested, via the walker). Defaults
+    /// to `None`: a predicate with no sentinel opts out entirely.
+    fn sentinel(&self) -> Option<TypeId> {
+        None
+    }
 }
 
 pub(super) struct TypeParamPredicate;
@@ -602,6 +612,13 @@ pub(super) fn contains_content_cached<P: ContentPredicate>(
     type_id: TypeId,
     predicate: &P,
 ) -> bool {
+    // A root that *is* the sentinel is a match: the sentinel sits in the
+    // intrinsic id range, so this must be checked before the intrinsic fast
+    // path (the walker applies the same rule to nested children). Sentinel-less
+    // predicates return `None` here, so this is a single false compare for them.
+    if predicate.sentinel() == Some(type_id) {
+        return true;
+    }
     if type_id.is_intrinsic() {
         return false;
     }
@@ -1125,16 +1142,6 @@ pub fn contains_current_infer_placeholder_db(db: &dyn TypeDatabase, type_id: Typ
         TypeData::Infer(_) => true,
         _ => false,
     })
-}
-
-/// Check if a type contains the error type.
-///
-/// Delegates to the canonical `visitor_predicates::contains_error_type` walk,
-/// so this checker-facing query and the visitor query give one answer: an
-/// error is detected anywhere in the full structural surface, including
-/// `Application` bases and the nested raw `TypeId::ERROR` sentinel.
-pub fn contains_error_type_db(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    crate::visitors::visitor_predicates::contains_error_type(db, type_id)
 }
 
 /// Check if a type or its preserved display alias contains a generic

@@ -51,6 +51,14 @@ impl TypePredicateCache for QueryCache<'_> {
         self.interner.set_contains_never_cache(type_id, result);
     }
 
+    fn contains_error_cached(&self, type_id: TypeId) -> Option<bool> {
+        self.interner.contains_error_cached(type_id)
+    }
+
+    fn set_contains_error_cache(&self, type_id: TypeId, result: bool) {
+        self.interner.set_contains_error_cache(type_id, result);
+    }
+
     fn contains_free_type_params_cached(&self, type_id: TypeId) -> Option<bool> {
         self.interner.contains_free_type_params_cached(type_id)
     }

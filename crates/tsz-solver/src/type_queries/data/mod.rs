@@ -11,6 +11,9 @@ mod conditional_distribution;
 mod construct_return_union_tests;
 mod content_predicate_guards;
 mod content_predicates;
+#[cfg(test)]
+mod error_cache_tests;
+mod error_predicate;
 mod exact_property_keys;
 #[cfg(test)]
 mod free_infer_cache_tests;
@@ -29,6 +32,7 @@ pub use accessors::*;
 pub use conditional_constraint::*;
 pub use conditional_distribution::*;
 pub use content_predicates::*;
+pub use error_predicate::*;
 pub use exact_property_keys::*;
 pub use free_infer_predicate::*;
 pub use intersection_conflict::*;
