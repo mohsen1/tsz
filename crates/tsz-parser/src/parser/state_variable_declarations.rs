@@ -311,10 +311,16 @@ impl ParserState {
         // TS1182 — `const {x}\n!foo;` still reports the missing initializer.
         let stray_same_line_definite_assignment =
             self.is_token(SyntaxKind::ExclamationToken) && !self.scanner.has_preceding_line_break();
+        // Skip in every ambient declaration, not just `declare`-flagged ones: a
+        // destructuring `var`/`let`/`const` at the top level of a `.d.ts` file is
+        // ambient by virtue of the file and never carries an initializer, so tsc
+        // reports no TS1182 there. `in_ambient_context()` only covers the
+        // `CONTEXT_FLAG_AMBIENT` set inside a `declare`, missing the whole-file case;
+        // `in_ambient_declaration()` covers both.
         if !is_catch_clause
             && initializer.is_none()
             && !stray_same_line_definite_assignment
-            && !self.in_ambient_context()
+            && !self.in_ambient_declaration()
             && let Some(name_node) = self.arena.get(name)
             && name_node.is_binding_pattern()
         {
