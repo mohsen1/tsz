@@ -98,10 +98,13 @@ impl<'a> CheckerState<'a> {
 
     /// Same as `check_truthy_or_falsy`, but reuses a caller-provided type.
     ///
-    /// Both the `void` TS1345 check and the TS2872/TS2873 syntactic checks are
-    /// gated on `strictNullChecks`. Without strict null checks, `void` is
-    /// effectively `undefined` (which is a valid falsy value), and all types
-    /// implicitly include `null | undefined`, so truthiness checks are not meaningful.
+    /// The TS1345 (`void` truthiness) check fires regardless of
+    /// `strictNullChecks` — tsc's `checkTruthinessOfType` rejects a `void`
+    /// operand unconditionally (oracle-verified, `typescript@7.0.2`:
+    /// `declare var v: void; v && x;` reports TS1345 with no `--strict` flag
+    /// at all, and even with `--strict false` explicit). The TS2872/TS2873
+    /// syntactic always-truthy/always-falsy checks below are independent and
+    /// unaffected by this.
     ///
     /// `check_enum_members` controls TS2845 enum member truthiness diagnostics.
     /// tsc only emits TS2845 for enum members in condition contexts (if/while/for/
@@ -128,8 +131,8 @@ impl<'a> CheckerState<'a> {
     ) {
         use crate::diagnostics::diagnostic_codes;
 
-        // TS1345 (void truthiness) requires strictNullChecks
-        if self.ctx.compiler_options.strict_null_checks && ty == TypeId::VOID {
+        // TS1345 (void truthiness) fires regardless of strictNullChecks.
+        if ty == TypeId::VOID {
             self.error_at_node(
                 node_idx,
                 "An expression of type 'void' cannot be tested for truthiness.",

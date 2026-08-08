@@ -553,7 +553,15 @@ fn no_ts2365_for_same_orderable_kind() {
 }
 
 // =========================================================================
-// TS1345: Void truthiness gated on strictNullChecks
+// TS1345: Void truthiness fires regardless of strictNullChecks
+//
+// Oracle-verified (`typescript@7.0.2`): `declare var v: void; v && x;`
+// reports TS1345 with no `--strict` flag at all, and even with an explicit
+// `--strict false` — matching the real conformance fixtures
+// `logicalAndOperatorWithEveryType.ts`/`logicalOrOperatorWithEveryType.ts`,
+// both of which set `@strict: false` and still expect TS1345. Previously
+// this file asserted the opposite (TS1345 should NOT fire without strict),
+// which was never true in tsc.
 // =========================================================================
 
 fn check_source_diagnostics_no_strict(source: &str) -> Vec<crate::diagnostics::Diagnostic> {
@@ -585,26 +593,85 @@ fn ts1345_void_truthiness_with_strict() {
 }
 
 #[test]
-fn no_ts1345_void_truthiness_without_strict() {
-    // Without strictNullChecks, TS1345 should NOT fire for void truthiness.
-    // TSC does not emit this diagnostic when strictNullChecks is off.
+fn ts1345_void_truthiness_without_strict() {
+    // TS1345 fires for void truthiness even without strictNullChecks.
     let diags = check_source_diagnostics_no_strict("declare var a: void; if (a) {}");
     assert!(
-        !diags.iter().any(|d| d.code == 1345),
-        "Should NOT emit TS1345 for void truthiness without strict, got: {:?}",
+        diags.iter().any(|d| d.code == 1345),
+        "Expected TS1345 for void truthiness without strict, got: {:?}",
         diags.iter().map(|d| d.code).collect::<Vec<_>>()
     );
 }
 
 #[test]
-fn no_ts1345_void_in_logical_and_without_strict() {
-    // void && any — should NOT emit TS1345 without strictNullChecks.
+fn ts1345_void_in_logical_and_without_strict() {
+    // void && any — TS1345 fires on the left operand even without strictNullChecks.
     let diags = check_source_diagnostics_no_strict(
         "declare var a: void; declare var b: any; var r = a && b;",
     );
     assert!(
+        diags.iter().any(|d| d.code == 1345),
+        "Expected TS1345 for void && any without strict, got: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn ts1345_void_in_logical_or_without_strict() {
+    // void || any — TS1345 fires on the left operand even without strictNullChecks.
+    let diags = check_source_diagnostics_no_strict(
+        "declare var a: void; declare var b: any; var r = a || b;",
+    );
+    assert!(
+        diags.iter().any(|d| d.code == 1345),
+        "Expected TS1345 for void || any without strict, got: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn no_ts1345_void_in_logical_and_right_operand() {
+    // any && void — tsc only recurses into the LEFT operand of `&&`/`||`;
+    // the right operand's value is the expression's result, not something
+    // being "tested" at that AST node, so no TS1345 fires here (oracle-verified).
+    let diags =
+        check_source_diagnostics("declare var a: any; declare var b: void; var r = a && b;");
+    assert!(
         !diags.iter().any(|d| d.code == 1345),
-        "Should NOT emit TS1345 for void && any without strict, got: {:?}",
+        "Should NOT emit TS1345 for the right operand of &&, got: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn ts1345_void_not_operand_without_strict() {
+    // !void — TS1345 fires on the `!` operand even without strictNullChecks.
+    let diags = check_source_diagnostics_no_strict("declare var a: void; var r = !a;");
+    assert!(
+        diags.iter().any(|d| d.code == 1345),
+        "Expected TS1345 for !void without strict, got: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn ts1345_void_ternary_condition_without_strict() {
+    // void ? a : b — TS1345 fires on the ternary condition even without strictNullChecks.
+    let diags = check_source_diagnostics_no_strict("declare var a: void; var r = a ? 1 : 2;");
+    assert!(
+        diags.iter().any(|d| d.code == 1345),
+        "Expected TS1345 for void ternary condition without strict, got: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn ts1345_void_while_condition_without_strict() {
+    // while (void) — TS1345 fires even without strictNullChecks.
+    let diags = check_source_diagnostics_no_strict("declare function f(): void; while (f()) {}");
+    assert!(
+        diags.iter().any(|d| d.code == 1345),
+        "Expected TS1345 for void while-condition without strict, got: {:?}",
         diags.iter().map(|d| d.code).collect::<Vec<_>>()
     );
 }
