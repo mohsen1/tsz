@@ -972,9 +972,24 @@ impl<'a> CheckerContext<'a> {
     /// inspects a rendered TS7016 message — and returns `None` for drivers that
     /// do not populate the map (LSP, WASM, unit harness).
     pub fn untyped_module_path_for(&self, specifier: &str) -> Option<&str> {
+        self.untyped_module_path_for_file(self.current_file_idx, specifier)
+    }
+
+    /// Like `untyped_module_path_for`, but resolves the untyped-JS target as
+    /// seen from an arbitrary source file rather than the current one.
+    ///
+    /// Semantic-type queries (`commonjs_module_value_type`) thread the
+    /// importing file index through explicitly, so an untyped-module decision
+    /// made for a cross-file `require()` keys off the file that actually wrote
+    /// the specifier, not whichever file the checker happens to be centered on.
+    pub fn untyped_module_path_for_file(
+        &self,
+        source_file_idx: usize,
+        specifier: &str,
+    ) -> Option<&str> {
         self.untyped_module_paths
             .as_ref()?
-            .get(&(self.current_file_idx, specifier.to_string()))
+            .get(&(source_file_idx, specifier.to_string()))
             .map(String::as_str)
     }
 
