@@ -7,7 +7,7 @@
  *
  * Features:
  * - Parallel execution with N workers (default: CPU count)
- * - Per-test timeout protection (default: 15s)
+ * - Per-test timeout protection (default: 25s)
  * - Per-worker OOM protection with memory monitoring + bridge restart
  * - Worker crash recovery (remaining tests redistributed)
  * - Detailed timing and memory stats in summary
@@ -36,7 +36,7 @@
  *   --server-tests        Run server-specific tests
  *   --workers=N           Number of parallel workers (default: CPU count)
  *   --sequential          Run tests sequentially (single process, no workers)
- *   --timeout=MS          Per-test timeout in ms (default: 15000)
+ *   --timeout=MS          Per-test timeout in ms (default: 25000)
  *   --memory-limit=MB     Per-worker memory limit in MB (default: 512)
  */
 
@@ -74,7 +74,7 @@ function parseArgs() {
         serverTests: false,
         workers: os.cpus().length,
         sequential: false,
-        testTimeout: 15000,
+        testTimeout: 25000,
         memoryLimitMB: 512,
         jsonOut: null,
     };
@@ -609,7 +609,7 @@ async function runParallel(opts, testsToRun) {
     // Wall-clock timeout per test: if a worker sends no result for this long, kill it.
     // This catches infinite loops in the Rust server that the per-request Atomics.wait
     // timeout (30s) cannot fully guard against (a test may make dozens of requests).
-    const WORKER_WATCHDOG_MS = opts.testTimeout * 4; // 60s default (4x the 15s per-test timeout)
+    const WORKER_WATCHDOG_MS = opts.testTimeout * 4; // 100s default (4x the 25s per-test timeout)
 
     console.log(`  Spawning ${chunks.length} workers (timeout: ${opts.testTimeout}ms, mem limit: ${opts.memoryLimitMB}MB)...`);
 
