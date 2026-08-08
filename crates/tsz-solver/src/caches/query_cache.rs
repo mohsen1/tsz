@@ -232,6 +232,15 @@ pub struct QueryCache<'a> {
     interner: &'a TypeInterner,
     eval_cache: RefCell<FxHashMap<EvaluationCacheKey, TypeId>>,
     eval_dependency_index: EvalDependencyIndex,
+    /// Top-level `eval_cache` keys whose result passed the depth-agnostic gate
+    /// but not the stricter `is_stable_for_run_wide_cache` gate — i.e. a
+    /// registration-window artifact (`UnresolvedDef`), valid only within the
+    /// window that produced it. The bounded checker pool reuses one
+    /// `QueryCache` across a partition's files, each a distinct window, so
+    /// these are evicted at every file boundary by
+    /// `evict_registration_window_eval_entries`; clean entries stay, preserving
+    /// the pool's cross-file amortization (#16553).
+    registration_window_eval_keys: RefCell<rustc_hash::FxHashSet<EvaluationCacheKey>>,
     /// Substitution-independent evaluation cache (see the `closed_eval` module
     /// in `evaluate`). Keyed by
     /// `(TypeId, no_unchecked_indexed_access, exact_optional_property_types)`.
@@ -350,6 +359,7 @@ impl<'a> QueryCache<'a> {
             interner,
             eval_cache: RefCell::new(FxHashMap::default()),
             eval_dependency_index: RefCell::new(EvalDependencyIndexState::default()),
+            registration_window_eval_keys: RefCell::new(rustc_hash::FxHashSet::default()),
             closed_eval_cache: RefCell::new(FxHashMap::default()),
             closed_eval_dependency_index: RefCell::new(EvalDependencyIndexState::default()),
             conditional_branch_verdict_cache: RefCell::new(FxHashMap::default()),
@@ -415,6 +425,7 @@ impl<'a> QueryCache<'a> {
     pub fn clear(&self) {
         self.eval_cache.borrow_mut().clear();
         self.eval_dependency_index.borrow_mut().clear();
+        self.registration_window_eval_keys.borrow_mut().clear();
         self.closed_eval_cache.borrow_mut().clear();
         self.closed_eval_dependency_index.borrow_mut().clear();
         self.conditional_branch_verdict_cache.borrow_mut().clear();
@@ -1454,8 +1465,27 @@ impl QueryDatabase for QueryCache<'_> {
         {
             if top_level_clean {
                 self.insert_eval_cache_entry(key, result);
-                // Also write to shared cache for cross-file benefit.
-                if let Some(shared) = self.shared {
+                if !intermediates_clean {
+                    // `top_level_clean` (depth-agnostic) admitted this entry, but
+                    // the stricter run-wide gate refused it: its value is a
+                    // function of the current registration window, not of its key
+                    // alone (an `UnresolvedDef` taint). It is reusable *within*
+                    // this window — a same-file circular type-parameter default's
+                    // recovery relies on exactly that (#16587) — but the bounded
+                    // checker pool reuses one `QueryCache` across the files of a
+                    // partition, each a distinct window, so it must be evicted at
+                    // the next file boundary rather than shadow the next file's
+                    // authoritative answer (#16553).
+                    self.registration_window_eval_keys.borrow_mut().insert(key);
+                }
+                // The shared cache is the run-wide, cross-window cache other
+                // files/threads read without ever entering this window; per
+                // `is_stable_for_run_wide_cache`'s own contract it must never
+                // receive a registration-window artifact. Gate its top-level
+                // write on run-wide stability, matching the intermediate drain
+                // below (previously it inherited only the looser
+                // `top_level_clean`, which tolerates `UnresolvedDef`).
+                if intermediates_clean && let Some(shared) = self.shared {
                     shared.insert_eval_cache(self.interner, self.definition_store(), key, result);
                 }
             }
@@ -1962,3 +1992,6 @@ mod property;
 
 #[path = "query_cache_spread.rs"]
 mod spread;
+
+#[path = "query_cache_registration_window.rs"]
+mod registration_window;
