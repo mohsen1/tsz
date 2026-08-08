@@ -147,6 +147,61 @@ pub(crate) fn check_duplicate_parameters_in_type(
     }
 }
 
+/// Property-name node kinds that can form the "renamed-from" side of a
+/// destructuring rename in a signature binding pattern (TS2842). `tsc` flags
+/// the rename regardless of how the property name is written, so identifier,
+/// string-literal, numeric-literal, and computed names all qualify.
+const fn is_renaming_source_property_kind(kind: u16) -> bool {
+    kind == SyntaxKind::Identifier as u16
+        || kind == SyntaxKind::StringLiteral as u16
+        || kind == SyntaxKind::NumericLiteral as u16
+        || kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
+}
+
+/// Render the "renamed-from" property name for a TS2842 message. An identifier
+/// uses its escaped text; every other kind uses its verbatim source text so the
+/// message matches `tsc` with quotes and brackets preserved (`"a"`, `2`,
+/// `["a"]`, `[2]`).
+fn renaming_property_name_text(
+    ctx: &crate::CheckerContext,
+    prop_idx: NodeIndex,
+    prop_kind: u16,
+) -> String {
+    if prop_kind == SyntaxKind::Identifier as u16 {
+        return ctx
+            .arena
+            .get(prop_idx)
+            .and_then(|n| ctx.arena.get_identifier(n))
+            .map(|i| i.escaped_text.trim_end_matches(':').trim().to_string())
+            .unwrap_or_default();
+    }
+    node_source_text(ctx, prop_idx)
+        .map(|t| t.trim().to_string())
+        .unwrap_or_default()
+}
+
+/// Verbatim source text of `idx`, resolving the source file that owns the node
+/// so multi-file programs slice from the correct buffer (mirrors the checker's
+/// `owning_source_file` walk).
+fn node_source_text(ctx: &crate::CheckerContext, idx: NodeIndex) -> Option<String> {
+    let node = ctx.arena.get(idx)?;
+    let start = node.pos as usize;
+    let end = node.end as usize;
+    let mut current = idx;
+    let text = loop {
+        let n = ctx.arena.get(current)?;
+        if n.kind == syntax_kind_ext::SOURCE_FILE {
+            break ctx.arena.get_source_file(n)?.text.clone();
+        }
+        let info = ctx.arena.node_info(current)?;
+        if info.parent.is_none() {
+            return None;
+        }
+        current = info.parent;
+    };
+    text.get(start..end).map(str::to_string)
+}
+
 fn collect_names_in_type(
     ctx: &mut crate::CheckerContext,
     name_idx: tsz_parser::parser::NodeIndex,
@@ -184,35 +239,41 @@ fn collect_names_in_type(
                     continue;
                 }
                 if let Some(elem) = ctx.arena.get_binding_element(elem_node) {
+                    let prop_idx = elem.property_name;
+                    let name_idx = elem.name;
                     // TS2842 reports a renaming that is *unused*. The renamed
                     // local is in scope for the signature's own type
                     // positions, so a `typeof` query naming it makes the
-                    // renaming used and `tsc` stays silent.
-                    if elem.property_name.is_some()
-                        && let Some(prop_node) = ctx.arena.get(elem.property_name)
-                        && prop_node.kind == SyntaxKind::Identifier as u16
-                        && let Some(name_node) = ctx.arena.get(elem.name)
+                    // renaming used and `tsc` stays silent. The property side of
+                    // the rename may be spelled as an identifier (`a`), a string
+                    // literal (`"a"`), a numeric literal (`2`), or a computed
+                    // name (`["a"]`, `[2]`) — tsc flags all of them, so the gate
+                    // matches every property-name kind, not just identifiers.
+                    if prop_idx.is_some()
+                        && let Some(prop_node) = ctx.arena.get(prop_idx)
+                        && is_renaming_source_property_kind(prop_node.kind)
+                        && let Some(name_node) = ctx.arena.get(name_idx)
                         && name_node.kind == SyntaxKind::Identifier as u16
-                        && !ctx.arena.get_identifier_text(elem.name).is_some_and(|n| {
+                        && !ctx.arena.get_identifier_text(name_idx).is_some_and(|n| {
                             crate::types_domain::signature_binding_scope::binding_is_referenced_by_type_query(
                                 ctx, elem_idx, n,
                             )
                         })
                     {
-                        let prop_name = ctx
-                            .arena
-                            .get_identifier(prop_node)
-                            .map(|i| i.escaped_text.trim_end_matches(":").trim().to_string())
-                            .unwrap_or_default();
+                        let prop_kind = prop_node.kind;
+                        let name_pos = name_node.pos;
+                        let name_len = name_node.end - name_node.pos;
+                        let prop_name = renaming_property_name_text(ctx, prop_idx, prop_kind);
                         let name_str = ctx
                             .arena
-                            .get_identifier(name_node)
+                            .get(name_idx)
+                            .and_then(|n| ctx.arena.get_identifier(n))
                             .map(|i| i.escaped_text.clone())
                             .unwrap_or_default();
                         let msg = crate::diagnostics::format_message(crate::diagnostics::diagnostic_messages::IS_AN_UNUSED_RENAMING_OF_DID_YOU_INTEND_TO_USE_IT_AS_A_TYPE_ANNOTATION, &[&name_str, &prop_name]);
-                        ctx.error(name_node.pos, name_node.end - name_node.pos, msg, crate::diagnostics::diagnostic_codes::IS_AN_UNUSED_RENAMING_OF_DID_YOU_INTEND_TO_USE_IT_AS_A_TYPE_ANNOTATION);
+                        ctx.error(name_pos, name_len, msg, crate::diagnostics::diagnostic_codes::IS_AN_UNUSED_RENAMING_OF_DID_YOU_INTEND_TO_USE_IT_AS_A_TYPE_ANNOTATION);
                     }
-                    collect_names_in_type(ctx, elem.name, seen);
+                    collect_names_in_type(ctx, name_idx, seen);
                 }
             }
         }

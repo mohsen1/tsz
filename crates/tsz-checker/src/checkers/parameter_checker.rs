@@ -619,7 +619,11 @@ impl<'a> CheckerState<'a> {
                 // it used and `tsc` reports nothing.
                 if !has_body
                     && let Some(prop_node) = self.ctx.arena.get(elem.property_name)
-                    && prop_node.kind == tsz_scanner::SyntaxKind::Identifier as u16
+                    && (prop_node.kind == tsz_scanner::SyntaxKind::Identifier as u16
+                        || prop_node.kind == tsz_scanner::SyntaxKind::StringLiteral as u16
+                        || prop_node.kind == tsz_scanner::SyntaxKind::NumericLiteral as u16
+                        || prop_node.kind
+                            == tsz_parser::parser::syntax_kind_ext::COMPUTED_PROPERTY_NAME)
                     && let Some(name_node) = self.ctx.arena.get(elem.name)
                     && name_node.kind == tsz_scanner::SyntaxKind::Identifier as u16
                     && !self.ctx.arena.get_identifier_text(elem.name).is_some_and(|n| {
