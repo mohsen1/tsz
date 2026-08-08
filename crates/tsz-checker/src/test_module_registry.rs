@@ -21,6 +21,8 @@
 mod alias_application_display_retention_tests;
 #[path = "tests/ambient_declare_async_modifier_tests.rs"]
 mod ambient_declare_async_modifier_tests;
+#[path = "tests/ambient_declare_async_static_modifier_tests.rs"]
+mod ambient_declare_async_static_modifier_tests;
 #[path = "tests/ambient_declare_override_modifier_tests.rs"]
 mod ambient_declare_override_modifier_tests;
 #[path = "tests/any_parameter_never_opposite_tests.rs"]
