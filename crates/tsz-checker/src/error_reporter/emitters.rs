@@ -92,6 +92,22 @@ impl<'a> CheckerState<'a> {
         self.ctx.push_diagnostic(diag);
     }
 
+    /// Push an already fully-built `Diagnostic` (message, code, and
+    /// related-information all resolved by the caller, e.g. via
+    /// `render_failure_reason`) exactly as-is.
+    ///
+    /// For callers that promote a relation's own rendered diagnostic to be
+    /// the primary diagnostic in place of a fixed head message/code — the
+    /// bespoke-message counterpart to the template-based emitters above,
+    /// which build the `Diagnostic` themselves from a message string.
+    /// `push_diagnostic` calls are confined to this module by architecture
+    /// contract (`test_no_push_diagnostic_outside_error_reporter`), so
+    /// non-`error_reporter` call sites route through this instead of calling
+    /// `self.ctx.push_diagnostic` directly.
+    pub(crate) fn push_prebuilt_diagnostic(&mut self, diag: Diagnostic) {
+        self.ctx.push_diagnostic(diag);
+    }
+
     /// Report an error using a shared diagnostic anchor policy.
     pub(crate) fn error_at_anchor(
         &mut self,

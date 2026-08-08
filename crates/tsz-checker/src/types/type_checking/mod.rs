@@ -40,6 +40,7 @@ mod type_alias_missing_name_coverage;
 mod type_alias_recursion_patterns;
 mod type_alias_variance;
 mod unused;
+mod using_declaration_disposable;
 mod using_declaration_placement;
 
 /// Release the type-alias resolution scratch pool owned by this module tree.

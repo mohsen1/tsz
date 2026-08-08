@@ -79,44 +79,70 @@ fn elaboration(body: &str, code: u32) -> String {
     lines.join("\n")
 }
 
-/// Sync `using` whose initializer lacks `[Symbol.dispose]`: the TS2850 top line
-/// keeps its wording and gains the relation-derived missing-property tail that
-/// `tsc` attaches via `checkTypeAssignableTo(initType, Disposable)`.
+/// Sync `using` whose object-like initializer lacks `[Symbol.dispose]`
+/// entirely: `tsc` drops the TS2850 headMessage frame and reports the
+/// relation's own missing-property diagnostic (TS2741) directly — the
+/// initializer IS an object, it simply lacks the member, so TS2850's "must be
+/// either an object with a '[Symbol.dispose]()' method..." wording does not
+/// apply (#16872).
 #[test]
-fn using_missing_dispose_attaches_symbol_missing_tail() {
+fn using_missing_dispose_reports_ts2741_not_ts2850() {
     let text = elaboration(
         r#"
 declare const x: { foo: number };
 function f() { using r = x; }
 "#,
-        2850,
+        2741,
     );
     assert_eq!(
         text,
-        "The initializer of a 'using' declaration must be either an object with a \
-         '[Symbol.dispose]()' method, or be 'null' or 'undefined'.\n\
-         Property '[Symbol.dispose]' is missing in type '{ foo: number; }' but required \
+        "Property '[Symbol.dispose]' is missing in type '{ foo: number; }' but required \
          in type 'Disposable'.",
     );
 }
 
-/// Same rule, different source member name — the tail must echo the renamed
-/// source type, never a hard-coded `{ foo: number; }`.
+/// Same rule, different source member name — the message must echo the
+/// renamed source type, never a hard-coded `{ foo: number; }`.
 #[test]
-fn using_missing_dispose_tail_is_member_name_independent() {
+fn using_missing_dispose_message_is_member_name_independent() {
     let text = elaboration(
         r#"
 declare const handle: { resourceId: string };
 function open() { using h = handle; }
 "#,
-        2850,
+        2741,
     );
     assert_eq!(
         text,
-        "The initializer of a 'using' declaration must be either an object with a \
-         '[Symbol.dispose]()' method, or be 'null' or 'undefined'.\n\
-         Property '[Symbol.dispose]' is missing in type '{ resourceId: string; }' but \
+        "Property '[Symbol.dispose]' is missing in type '{ resourceId: string; }' but \
          required in type 'Disposable'.",
+    );
+}
+
+/// A `using` initializer that isn't object-like at all (not merely missing
+/// the member) keeps the flat TS2850 head with no elaboration tail — `tsc`
+/// only ever attaches the missing-property reason to an object-like source,
+/// and never says "Type 'number' is not assignable to type 'Disposable'."
+/// underneath it.
+#[test]
+fn using_non_object_initializer_stays_flat_ts2850() {
+    let diags = check(
+        r#"
+function f() { using r = 42; }
+"#,
+    );
+    let ts2850 = diags
+        .iter()
+        .find(|d| d.code == 2850)
+        .expect("expected TS2850 for a non-object `using` initializer");
+    assert!(
+        ts2850.related_information.is_empty(),
+        "a non-object initializer must carry no elaboration tail, got: {:?}",
+        ts2850
+            .related_information
+            .iter()
+            .map(|i| i.message_text.clone())
+            .collect::<Vec<_>>()
     );
 }
 
@@ -467,6 +493,9 @@ function f() { using r = { [Symbol.dispose](x: number) {}, extra: 1 }; }
 /// excess PROPERTIES from failing the relation -- it must not weaken presence
 /// checking. A fresh object literal with no dispose member at all is still
 /// rejected, same as the non-fresh `declare const` shape already covered above.
+/// Per #16872, a wholly-missing member reports TS2741 (not TS2850) — updating
+/// this assertion is the fix, not a preserved divergence (the fresh-literal
+/// shape is object-like exactly like the non-fresh `declare const` case).
 #[test]
 fn using_fresh_literal_missing_dispose_still_errors() {
     let diags = check(
@@ -475,8 +504,8 @@ function f() { using r = { notDispose() {} }; }
 "#,
     );
     assert!(
-        diags.iter().any(|d| d.code == 2850),
-        "a fresh literal with no dispose member must still raise TS2850, got: {:?}",
+        diags.iter().any(|d| d.code == 2741),
+        "a fresh literal with no dispose member must still raise TS2741, got: {:?}",
         diags.iter().map(|d| d.code).collect::<Vec<_>>()
     );
 }
