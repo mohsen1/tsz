@@ -45,6 +45,15 @@ pub(super) struct SourceResolutionSetupInput<'a> {
     /// the caller has no such distinction available (falls back to the old
     /// behavior of never treating a resolution as root-explicit).
     pub(super) root_file_paths: Option<&'a FxHashSet<PathBuf>>,
+    /// Canonical paths of `node_modules` JS files the `maxNodeModuleJsDepth`
+    /// BFS gate skipped reading (see `sources::SourceReadResult`). A
+    /// specifier that resolves to one of these paths must not be mapped into
+    /// `resolved_module_paths`: the target file is a real program entry but
+    /// has a permanently empty statement list, so treating it as a normal
+    /// resolved target makes the checker synthesize an empty CJS export
+    /// surface instead of falling back to `any` the way tsc does for a JS
+    /// module it never inspected (#16934).
+    pub(super) depth_skipped_js_paths: Option<&'a FxHashSet<PathBuf>>,
     pub(super) package_redirects: &'a FxHashMap<PathBuf, PathBuf>,
     pub(super) resolution_cache: &'a mut ModuleResolutionCache,
 }
@@ -102,6 +111,7 @@ pub(super) fn prepare_source_resolution_setup(
         program_file_index,
         program_paths,
         root_file_paths,
+        depth_skipped_js_paths,
         package_redirects,
         resolution_cache,
     } = input;
@@ -352,19 +362,33 @@ pub(super) fn prepare_source_resolution_setup(
 
                 if let Some((target_idx, resolved_using_ts_extension)) = discovered_target {
                     resolved_module_specifiers.insert((file_idx, specifier.clone()));
-                    resolved_module_paths.insert((file_idx, specifier.clone()), target_idx);
-                    resolved_module_request_paths.insert(
-                        (
-                            file_idx,
-                            specifier.clone(),
-                            request_mode_key,
-                            request_kind_key,
-                        ),
-                        target_idx,
-                    );
-                    if resolved_using_ts_extension {
-                        resolved_module_ts_extension_flags
-                            .insert((file_idx, specifier.clone()), true);
+                    // A depth-skipped `node_modules` JS stub (see the
+                    // `untyped_module_paths` block above) is a real program
+                    // file but was never read, so it must not be trusted as a
+                    // normal resolved target: mapping it into
+                    // `resolved_module_paths` would let the checker
+                    // synthesize an empty CJS export surface for it instead
+                    // of falling back to `any` (#16934). Leave the specifier
+                    // resolved (no TS2307) but no target index.
+                    let is_depth_skipped_stub = discovered.is_some_and(|d| {
+                        depth_skipped_js_paths
+                            .is_some_and(|skipped| skipped.contains(&d.canonical_path))
+                    });
+                    if !is_depth_skipped_stub {
+                        resolved_module_paths.insert((file_idx, specifier.clone()), target_idx);
+                        resolved_module_request_paths.insert(
+                            (
+                                file_idx,
+                                specifier.clone(),
+                                request_mode_key,
+                                request_kind_key,
+                            ),
+                            target_idx,
+                        );
+                        if resolved_using_ts_extension {
+                            resolved_module_ts_extension_flags
+                                .insert((file_idx, specifier.clone()), true);
+                        }
                     }
                     continue;
                 }
@@ -459,11 +483,19 @@ pub(super) fn prepare_source_resolution_setup(
                         } else {
                             canonical
                         };
-                        if let Some(target_idx) = program_file_index.get_with_symlink_fallback(
-                            &canonical,
-                            resolved_path,
-                            options,
-                        ) {
+                        // See the `discovered_target` arm above: a depth-skipped
+                        // `node_modules` JS stub resolves to a real `target_idx`
+                        // but was never read, so it must not be mapped as a
+                        // normal target (#16934).
+                        let is_depth_skipped_stub = depth_skipped_js_paths
+                            .is_some_and(|skipped| skipped.contains(&canonical));
+                        if !is_depth_skipped_stub
+                            && let Some(target_idx) = program_file_index.get_with_symlink_fallback(
+                                &canonical,
+                                resolved_path,
+                                options,
+                            )
+                        {
                             resolved_module_paths.insert((file_idx, specifier.clone()), target_idx);
                             resolved_module_request_paths.insert(
                                 (

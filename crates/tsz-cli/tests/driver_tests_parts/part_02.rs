@@ -194,6 +194,147 @@ fn compile_allow_js_passthrough_emits_root_node_modules_js() {
 }
 
 #[test]
+fn compile_untyped_node_modules_js_require_property_access_falls_back_to_any() {
+    // A non-root `node_modules` JS module reached only via `require()` stays
+    // beyond the default `maxNodeModuleJsDepth` (0), so tsc never inspects its
+    // body and types the import as `any` — a bare `require()` and a property
+    // access on it are both clean. Before this fix, tsz still registered the
+    // depth-skipped file as a real resolved target (with a permanently empty
+    // statement list) and synthesized an empty `{}` CJS export surface for
+    // it, producing a spurious TS2339 on `u.hello()` where tsc is clean. See
+    // #16934.
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "allowJs": true,
+            "noImplicitAny": false,
+            "module": "node16",
+            "target": "es2020",
+            "noEmit": true
+          },
+          "files": ["main.ts"]
+        }"#,
+    );
+    write_file(
+        &base.join("node_modules/untyped/index.js"),
+        "module.exports = { hello: function () { return 1; } };\n",
+    );
+    write_file(
+        &base.join("main.ts"),
+        "import u = require(\"untyped\");\nu.hello();\n",
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        result.diagnostics.is_empty(),
+        "depth-skipped node_modules JS require must fall back to `any`, got: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
+fn compile_untyped_node_modules_js_require_no_implicit_any_still_reports_ts7016() {
+    // Negative control for the fix above: under `noImplicitAny: true`, tsc
+    // (and tsz, both before and after this fix) reports TS7016 for the same
+    // depth-skipped require — the `any` fallback must not silently swallow
+    // the real diagnostic.
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "allowJs": true,
+            "noImplicitAny": true,
+            "module": "node16",
+            "target": "es2020",
+            "noEmit": true
+          },
+          "files": ["main.ts"]
+        }"#,
+    );
+    write_file(
+        &base.join("node_modules/untyped/index.js"),
+        "module.exports = { hello: function () { return 1; } };\n",
+    );
+    write_file(
+        &base.join("main.ts"),
+        "import u = require(\"untyped\");\nu.hello();\n",
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        result.diagnostics.iter().any(|diag| diag.code
+            == diagnostic_codes::COULD_NOT_FIND_A_DECLARATION_FILE_FOR_MODULE_IMPLICITLY_HAS_AN_ANY_TYPE),
+        "noImplicitAny must still surface TS7016 for the depth-skipped require, got: {:?}",
+        result.diagnostics
+    );
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .all(|diag| diag.code != diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE),
+        "TS7016 must not be joined by a spurious TS2339, got: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
+fn compile_node_modules_js_require_within_max_depth_infers_real_export_shape() {
+    // Positive control: raising `maxNodeModuleJsDepth` to admit the file for
+    // real makes tsz read its body and infer the actual CJS export shape
+    // (not `any`), matching tsc. `hello()` genuinely returns `number`, so
+    // assigning it to a `string` must still report TS2322 — proving the fix
+    // above did not widen this case to `any` as well.
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "allowJs": true,
+            "noImplicitAny": false,
+            "module": "node16",
+            "target": "es2020",
+            "maxNodeModuleJsDepth": 1,
+            "noEmit": true
+          },
+          "files": ["main.ts"]
+        }"#,
+    );
+    write_file(
+        &base.join("node_modules/untyped/index.js"),
+        "module.exports = { hello: function () { return 1; } };\n",
+    );
+    write_file(
+        &base.join("main.ts"),
+        "import u = require(\"untyped\");\nconst x: string = u.hello();\n",
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .any(|diag| diag.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "raising maxNodeModuleJsDepth must infer the real export shape, got: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn compile_checked_js_prototype_optional_chain_method_call_suppresses_ts2531() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
