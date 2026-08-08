@@ -889,6 +889,8 @@ mod ts1168_method_overload_computed_name_tests;
 mod ts1170_computed_property_syntactic_form_tests;
 #[path = "tests/ts1250_ts1251_ts1252_strict_function_in_block_tests.rs"]
 mod ts1250_ts1251_ts1252_strict_function_in_block_tests;
+#[path = "tests/ts1293_preserve_isolated_modules_esm_syntax_in_cjs_tests.rs"]
+mod ts1293_preserve_isolated_modules_esm_syntax_in_cjs_tests;
 #[path = "tests/ts1309_top_level_await_commonjs_file_tests.rs"]
 mod ts1309_top_level_await_commonjs_file_tests;
 #[path = "tests/ts1318_abstract_accessor_implementation_tests.rs"]
