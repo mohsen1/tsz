@@ -61,6 +61,7 @@ exclude_files = [
   # Pre-existing: class member lookup in class_checker
   "crates/tsz-checker/src/classes/class_checker.rs",
   "crates/tsz-checker/src/classes/class_checker_compat.rs",
+  "crates/tsz-checker/src/classes/class_checker_constructor_overrides.rs",
   # Pre-existing: property access lookup
   "crates/tsz-checker/src/checkers/property_checker.rs",
   "crates/tsz-checker/src/state/state_checking/property.rs",
