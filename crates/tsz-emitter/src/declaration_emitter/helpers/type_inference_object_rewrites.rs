@@ -835,7 +835,41 @@ impl<'a> DeclarationEmitter<'a> {
             }
         }
 
+        Self::stable_partition_primitive_first_type_texts(&mut value_types);
         (value_types.len() > 1).then(|| value_types.join(" | "))
+    }
+
+    /// tsc's synthesized index-signature union (recovered here from source
+    /// text because the solver's own union collapsed a member the emitter
+    /// needs back) is not in plain source order. It groups into four tiers,
+    /// each internally in source order, independent of which member was
+    /// written first: literal/keyword primitives, then structural types (an
+    /// object shape, array/tuple, or function/constructor signature), then
+    /// `null`, then `undefined` — matching the solver's own type-printer
+    /// convention of hoisting the nullable tail (see `print_union`).
+    /// Oracle-verified against `typescript@7.0.2`: swapping a method/array/
+    /// object/`null`-valued property's source position relative to its
+    /// siblings never changes which tier it lands in.
+    fn stable_partition_primitive_first_type_texts(value_types: &mut [String]) {
+        value_types.sort_by_key(|text| Self::index_value_type_text_sort_tier(text));
+    }
+
+    fn index_value_type_text_sort_tier(text: &str) -> u8 {
+        let trimmed = text.trim();
+        if trimmed == "null" {
+            2
+        } else if trimmed == "undefined" {
+            3
+        } else if trimmed.starts_with('{')
+            || trimmed.starts_with('(')
+            || trimmed.starts_with("new (")
+            || trimmed.starts_with("readonly [")
+            || trimmed.starts_with('[')
+        {
+            1
+        } else {
+            0
+        }
     }
 
     fn object_literal_member_index_value_type_text(&self, member_idx: NodeIndex) -> Option<String> {
