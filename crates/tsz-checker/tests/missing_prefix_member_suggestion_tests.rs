@@ -432,14 +432,16 @@ fn return_type_annotation_produces_no_suggestion() {
 }
 
 #[test]
-// Was a known, deliberately `#[ignore]`d divergence (older than #16834): a
-// *declared static* named in a type position binds to a real symbol, so it
-// never reaches `resolve_truly_unknown_identifier` — it was emitted from the
-// resolved-symbol path in `identifier/resolved.rs` (`type_of_resolved_value_symbol`'s
-// STATIC-flag arm), gated here the same way via `is_in_type_query`.
-// `identifier/helpers.rs`'s `get_type_of_assignment_target` looked like a second
-// site but every caller is a write/destructuring target, never a `typeof`
-// operand, so it was never reachable from a type position and needs no change.
+// A *declared static* named in a type position binds to a real symbol, so it
+// never reaches `resolve_truly_unknown_identifier` (the arm #16844 gated) — it is
+// emitted from the resolved-symbol path (`type_of_resolved_value_symbol`'s
+// STATIC-flag arm, first fixed at that call site in #16848). The value-position-
+// only rule now lives in the single `TS2662` sink
+// `error_cannot_find_name_static_member_at`, which every emitter funnels through,
+// so a bare static in a `typeof` query takes the plain `TS2304`.
+// `identifier/helpers.rs`'s `get_type_of_assignment_target` is a write/destructuring
+// target, never a `typeof` operand, so it is unreachable from a type position.
+// Value-position control: `a_static_member_in_a_value_position_still_suggests` below.
 fn a_static_member_in_a_type_position_produces_no_suggestion() {
     let libs = load_default_lib_files();
     assert_suggestions(
@@ -452,9 +454,9 @@ fn a_static_member_in_a_type_position_produces_no_suggestion() {
 #[test]
 fn a_static_member_in_a_value_position_still_suggests() {
     let libs = load_default_lib_files();
-    // The control for the ignored row above: the same class and member in a
-    // value position must keep its suggestion, so whoever fixes the static
-    // arm's type-position leak has a live guard against over-correcting.
+    // The value-position control for `a_static_member_in_a_type_position_produces_no_suggestion`
+    // above: the same class and member read from a value position must keep its
+    // suggestion, guarding the sink's `is_in_type_query` gate against over-correcting.
     assert_suggestions(
         "class C { static s: number = 1; m() { return s; } }",
         &libs,

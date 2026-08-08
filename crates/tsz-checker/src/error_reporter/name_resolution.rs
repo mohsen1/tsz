@@ -1542,6 +1542,22 @@ impl<'a> CheckerState<'a> {
         class_name: &str,
         idx: NodeIndex,
     ) {
+        // The static-member suggestion is value-position only (#16840 / #16844 /
+        // #16848): a bare static named in a `typeof` type query (`class C { static
+        // s = 1; t: typeof s; }`) sits outside the bare-identifier scope in tsc,
+        // which reports the plain `TS2304` — `C.s` is not writable in a type
+        // position. This method is the single emitter of `TS2662`, so the
+        // value-position policy lives here and covers every caller at once (the
+        // resolved-static read path #16848 guarded at its own site, and the
+        // assignment-target write path, which is never a `typeof` operand). Route
+        // through the shared not-found boundary for the bare `TS2304`, exactly as
+        // the unresolved path does. The predicate is purely syntactic, so both
+        // resolution passes agree and emit one diagnostic per site.
+        if self.is_in_type_query(idx) {
+            use crate::query_boundaries::name_resolution::NameLookupKind;
+            self.report_not_found_at_boundary(name, idx, NameLookupKind::Value);
+            return;
+        }
         let message = format!(
             "Cannot find name '{name}'. Did you mean the static member '{class_name}.{name}'?"
         );
