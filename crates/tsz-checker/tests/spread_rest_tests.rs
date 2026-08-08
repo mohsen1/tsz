@@ -921,6 +921,128 @@ var [...rest, x] = [1, 2, 3];
 }
 
 #[test]
+fn test_object_assignment_target_rest_not_last_emits_ts2462() {
+    // Unlike the `var { ... }` binding-pattern form above, an assignment
+    // target (`({ ... } = ...)`) parses as a plain object literal, not a
+    // binding pattern, so the parser's grammar check does not cover it and
+    // this must be enforced by the checker.
+    let source = r#"
+declare let rest: any, x: any, z: any;
+({ ...rest, x } = z);
+"#;
+
+    let diagnostics = check_source_diagnostics(source);
+
+    let ts2462_count = diagnostic_count(&diagnostics, 2462);
+    assert!(
+        ts2462_count >= 1,
+        "Expected TS2462 for object assignment-target rest that is not last, got {ts2462_count}. Diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_array_assignment_target_rest_not_last_emits_ts2462() {
+    let source = r#"
+declare let rest: any, x: any, z: any;
+[...rest, x] = z;
+"#;
+
+    let diagnostics = check_source_diagnostics(source);
+
+    let ts2462_count = diagnostic_count(&diagnostics, 2462);
+    assert!(
+        ts2462_count >= 1,
+        "Expected TS2462 for array assignment-target rest that is not last, got {ts2462_count}"
+    );
+}
+
+#[test]
+fn test_nested_array_element_object_rest_not_last_emits_ts2462() {
+    // The rest-not-last violation is nested inside an array element, one
+    // level down from the top-level assignment target.
+    let source = r#"
+declare let x: any, rest: any, y: any, z: any;
+[x, { ...rest, y }] = z;
+"#;
+
+    let diagnostics = check_source_diagnostics(source);
+
+    let ts2462_count = diagnostic_count(&diagnostics, 2462);
+    assert!(
+        ts2462_count >= 1,
+        "Expected TS2462 for object rest nested in an array element, got {ts2462_count}. Diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_nested_array_element_array_rest_not_last_emits_ts2462() {
+    let source = r#"
+declare let a: any, rest: any, x: any, z: any;
+[a, [...rest, x]] = z;
+"#;
+
+    let diagnostics = check_source_diagnostics(source);
+
+    let ts2462_count = diagnostic_count(&diagnostics, 2462);
+    assert!(
+        ts2462_count >= 1,
+        "Expected TS2462 for array rest nested in an array element, got {ts2462_count}. Diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_nested_property_value_object_rest_not_last_emits_ts2462() {
+    // Violation nested under a named property's value pattern.
+    let source = r#"
+declare let p: any, rest: any, y: any, z: any;
+({ p: { ...rest, y } } = z);
+"#;
+
+    let diagnostics = check_source_diagnostics(source);
+
+    let ts2462_count = diagnostic_count(&diagnostics, 2462);
+    assert!(
+        ts2462_count >= 1,
+        "Expected TS2462 for object rest nested under a property value, got {ts2462_count}. Diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_nested_property_value_array_rest_not_last_emits_ts2462() {
+    let source = r#"
+declare let p: any, rest: any, y: any, z: any;
+({ p: [...rest, y] } = z);
+"#;
+
+    let diagnostics = check_source_diagnostics(source);
+
+    let ts2462_count = diagnostic_count(&diagnostics, 2462);
+    assert!(
+        ts2462_count >= 1,
+        "Expected TS2462 for array rest nested under a property value, got {ts2462_count}. Diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_object_assignment_target_rest_last_no_false_ts2462() {
+    // Fallback/negative case: rest correctly in last position, at both the
+    // top level and a nested property value, must not report TS2462.
+    let source = r#"
+declare let x: any, rest: any, p: any, y: any, z: any;
+({ x, ...rest } = z);
+({ p: { y, ...rest } } = z);
+"#;
+
+    let diagnostics = check_source_diagnostics(source);
+
+    let ts2462_count = diagnostic_count(&diagnostics, 2462);
+    assert_eq!(
+        ts2462_count, 0,
+        "Expected no TS2462 when rest is already last, got {ts2462_count}. Diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_object_rest_with_type_parameter_constraint_no_false_ts2783() {
     // When a generic function destructures `{ a, ...rest } = obj` where `obj: T extends { a, b }`,
     // the rest type should omit `a` using the constraint's shape.

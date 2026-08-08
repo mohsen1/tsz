@@ -907,7 +907,6 @@ impl<'a> CheckerState<'a> {
             let is_iterable =
                 self.check_destructuring_iterability(left_idx, right_type, NodeIndex::NONE);
             is_not_iterable = !is_iterable;
-            self.check_array_destructuring_rest_position(left_idx);
             if !is_not_iterable {
                 self.check_tuple_destructuring_bounds(left_idx, right_type);
             }
@@ -915,6 +914,7 @@ impl<'a> CheckerState<'a> {
 
         // TS1186: Check for rest elements with initializers in destructuring assignments.
         if is_destructuring {
+            self.check_destructuring_rest_position(left_idx);
             self.check_rest_element_initializer(left_idx);
             self.check_rest_element_trailing_comma(left_idx);
         }
@@ -1570,37 +1570,64 @@ impl<'a> CheckerState<'a> {
             .is_some_and(|bin| bin.operator_token == SyntaxKind::EqualsToken as u16)
     }
 
-    /// TS2462: A rest element in array destructuring must be the last element.
+    /// TS2462: A rest element in a destructuring assignment target must be
+    /// the last element.
     ///
-    /// Enforce syntax for array destructuring assignment targets.
-    fn check_array_destructuring_rest_position(&mut self, left_idx: NodeIndex) {
+    /// Assignment targets parse as plain object/array literals rather than
+    /// binding patterns, so this is enforced here rather than by the parser's
+    /// binding-pattern grammar check. Applies to both array and object
+    /// targets, at every nesting level (mirroring the traversal in
+    /// `check_rest_element_trailing_comma`), since a rest element anywhere in
+    /// a nested pattern is equally illegal if it is not that pattern's last
+    /// element.
+    fn check_destructuring_rest_position(&mut self, left_idx: NodeIndex) {
         let Some(left_node) = self.ctx.arena.get(left_idx) else {
             return;
         };
-        if left_node.kind != syntax_kind_ext::ARRAY_LITERAL_EXPRESSION {
-            return;
-        }
-        let Some(array_lit) = self.ctx.arena.get_literal_expr(left_node) else {
+        let rest_kind = if left_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION {
+            syntax_kind_ext::SPREAD_ELEMENT
+        } else if left_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            syntax_kind_ext::SPREAD_ASSIGNMENT
+        } else {
             return;
         };
-
-        let elements_len = array_lit.elements.nodes.len();
-        if elements_len == 0 {
+        let Some(lit) = self.ctx.arena.get_literal_expr(left_node) else {
             return;
-        }
-        for (i, &element_idx) in array_lit.elements.nodes.iter().enumerate() {
-            if i + 1 >= elements_len {
-                break;
-            }
+        };
+        let elements: Vec<NodeIndex> = lit.elements.nodes.clone();
+        let elements_len = elements.len();
+        for (i, &element_idx) in elements.iter().enumerate() {
             let Some(element_node) = self.ctx.arena.get(element_idx) else {
                 continue;
             };
-            if element_node.kind == syntax_kind_ext::SPREAD_ELEMENT {
+            if element_node.kind == rest_kind && i + 1 < elements_len {
                 self.error_at_node_msg(
                     element_idx,
                     diagnostic_codes::A_REST_ELEMENT_MUST_BE_LAST_IN_A_DESTRUCTURING_PATTERN,
                     &[],
                 );
+            }
+            // Recurse into nested destructuring targets: array elements,
+            // object property values, rest operands, and `= default` left
+            // sides.
+            if element_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                || element_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+            {
+                self.check_destructuring_rest_position(element_idx);
+            } else if element_node.kind == syntax_kind_ext::SPREAD_ELEMENT
+                || element_node.kind == syntax_kind_ext::SPREAD_ASSIGNMENT
+            {
+                if let Some(spread) = self.ctx.arena.get_spread(element_node) {
+                    self.check_destructuring_rest_position(spread.expression);
+                }
+            } else if element_node.kind == syntax_kind_ext::PROPERTY_ASSIGNMENT {
+                if let Some(prop) = self.ctx.arena.get_property_assignment(element_node) {
+                    self.check_destructuring_rest_position(prop.initializer);
+                }
+            } else if let Some(bin) = self.ctx.arena.get_binary_expr(element_node)
+                && bin.operator_token == SyntaxKind::EqualsToken as u16
+            {
+                self.check_destructuring_rest_position(bin.left);
             }
         }
     }
