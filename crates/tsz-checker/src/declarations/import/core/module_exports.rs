@@ -129,6 +129,54 @@ impl<'a> CheckerState<'a> {
             .is_none_or(|named| !named.elements.nodes.is_empty())
     }
 
+    /// Whether a bare `export default <clause>` declaration contributes a
+    /// **value-meaning** default export, and therefore counts as an "other
+    /// exported element" for the export-assignment conflict (TS2309).
+    ///
+    /// tsc counts only value-meaning exports: `export = X` coexisting with a
+    /// value default (`export default 1`, `export default function`,
+    /// `export default class`) is TS2309, but coexisting with a type-only
+    /// default (`export default interface`, `export default SomeTypeAlias`) is
+    /// not. Only forms that are values **by syntax** are counted here — a bare
+    /// reference (`export default Ident` / `export default ns.Member`) is left
+    /// out because its value-vs-type meaning depends on symbol resolution, and
+    /// counting it unconditionally would wrongly flag a type reference. This
+    /// conservative predicate therefore never over-reports TS2309.
+    ///
+    /// Only applies to `is_default_export` declarations; the named
+    /// `export { X as default }` form is a `NAMED_EXPORTS` clause handled by
+    /// [`Self::export_decl_has_named_default_export`] and is not classified here.
+    fn default_export_has_value_meaning(
+        &self,
+        export_data: &tsz_parser::parser::node::ExportDeclData,
+    ) -> bool {
+        if !export_data.is_default_export || export_data.is_type_only {
+            return false;
+        }
+        let Some(clause_node) = self.ctx.arena.get(export_data.export_clause) else {
+            return false;
+        };
+        // Type-only default declarations (`export default interface`,
+        // `export default <type alias>`) carry no value meaning.
+        if clause_node.kind == syntax_kind_ext::INTERFACE_DECLARATION
+            || clause_node.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION
+        {
+            return false;
+        }
+        // A bare reference (`export default Ident`, `export default ns.T`,
+        // `export default (X)`) may resolve to a type, so it is not counted by
+        // this syntax-only predicate — value-vs-type there needs resolution.
+        if self.is_identifier_or_qualified_name(export_data.export_clause)
+            || clause_node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
+        {
+            return false;
+        }
+        // Everything else in a `export default` position is a value: a function
+        // or class declaration, or a value expression (literal, object/array
+        // literal, call, `new`, arrow/function/class expression, template, ...).
+        true
+    }
+
     /// TS7: emit TS2309 for a JavaScript CommonJS module that mixes a bare
     /// `module.exports = X` export assignment with sibling property exports
     /// (`module.exports.p = ...` / `exports.p = ...`). tsc classifies the bare
@@ -316,6 +364,17 @@ impl<'a> CheckerState<'a> {
                         if export_data.is_default_export || has_named_default_export {
                             export_default_indices.push(stmt_idx);
 
+                            // A value-meaning default export is an "other
+                            // exported element" for the export-assignment
+                            // conflict (TS2309): `export = X` coexisting with
+                            // `export default 1`/`function`/`class` is illegal,
+                            // exactly like coexisting with a named value export.
+                            // Type-only defaults do not count (see
+                            // `default_export_has_value_meaning`).
+                            if self.default_export_has_value_meaning(export_data) {
+                                has_other_exports = true;
+                            }
+
                             // TS2714: In ambient context, export default expression must be
                             // an identifier or qualified name. Skip for declarations
                             // (class, function, interface, enum) which are always valid.
@@ -466,11 +525,14 @@ impl<'a> CheckerState<'a> {
         }
 
         // TS2309: Check for export assignment with other exports.
-        // Skip in `preserve` mode — it allows mixing CJS (`export =`) and ESM syntax.
+        // This is a whole-module structural rule and fires independent of the
+        // module target: tsc reports TS2309 for `export = X` mixed with any
+        // other value export under commonjs, esnext, node16/nodenext, and
+        // `module: preserve` alike (verified against typescript@7.0.2). Only the
+        // module-format diagnostic TS1203 above is preserve-exempt, not this.
         if let Some(&export_idx) = export_assignment_indices.first()
             && has_other_exports
             && export_assignment_indices.len() == 1
-            && !is_preserve
         {
             self.error_at_node(
                 export_idx,

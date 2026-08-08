@@ -79,6 +79,9 @@ pub(crate) mod test_fixture;
 // without grepping a single monolithic file. Each shard imports only the
 // `test_fixture` helpers it actually uses; tests share no per-shard helpers.
 #[cfg(test)]
+#[path = "../../tests/ambient_destructuring_initializer_tests.rs"]
+mod ambient_destructuring_initializer_tests;
+#[cfg(test)]
 #[path = "../../tests/definite_assignment_assertion_tests.rs"]
 mod definite_assignment_assertion_tests;
 #[cfg(test)]
@@ -377,6 +380,9 @@ mod type_member_hard_modifier_accessor_cascade_tests;
 #[cfg(test)]
 #[path = "../../tests/type_member_modifier_grammar_tests.rs"]
 mod type_member_modifier_grammar_tests;
+#[cfg(test)]
+#[path = "../../tests/type_member_out_variance_accessor_cascade_tests.rs"]
+mod type_member_out_variance_accessor_cascade_tests;
 #[cfg(test)]
 #[path = "../../tests/yield_grammar_type_and_enum_context_tests.rs"]
 mod yield_grammar_type_and_enum_context_tests;
