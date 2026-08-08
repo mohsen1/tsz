@@ -53,15 +53,15 @@
 //! matching tsc. `import` / `const` / `default` are not type-member modifiers in
 //! tsc (they take a parser-recovery path) and are intentionally not covered.
 //!
-//! Left as follow-up (a separate, larger defect, not fixed here): `declare`/
-//! `abstract`/`override`/`in`/`out` before an interface/type-literal accessor
-//! also fail to parse in tsc, but the recovery is a different shape entirely —
-//! it cascades into TS1434/TS1005/TS1128 (the retry re-parses the accessor's
-//! own name as a fresh top-level statement) rather than a single TS1131 per
-//! modifier. tsz still reports the uniform semantic TS1070 for those; they are
-//! deliberately excluded from the qualifying modifier set (see
-//! `look_ahead_modifier_run_before_accessor`), a pre-existing, unrelated code
-//! path this change does not touch.
+//! The "hard" cascade modifiers `async`/`declare`/`abstract`/`override` before
+//! an interface/type-literal accessor also fail to parse in tsc, but with a
+//! different recovery shape — one TS1131 per modifier, then the accessor's own
+//! tail re-parses as top-level statements (TS1434/TS1005/TS1128) rather than a
+//! bare-accessor recovery. That family is now handled and lives, with full
+//! fingerprint parity, in `type_member_hard_modifier_accessor_cascade_tests`
+//! (see `look_ahead_hard_modifier_run_before_accessor`). `in`/`out` remain on
+//! the pre-existing semantic TS1070 path: `in` is a reserved operator whose
+//! statement re-parse differs, and both carry variance-position idiosyncrasies.
 
 use crate::parser::test_fixture::parse_source;
 use tsz_common::diagnostics::diagnostic_codes;
@@ -605,21 +605,38 @@ fn clean_modifier_run_is_not_keyed_to_a_binder_name() {
 }
 
 // ---------------------------------------------------------------------------
-// Cascade-shaped modifiers stay OUT of scope: `declare`/`abstract`/`override`/
-// `in`/`out` before an accessor keep reporting the pre-existing semantic
-// TS1070, not the new TS1131 path (see the module doc comment).
+// Hard-cascade modifiers (`async`/`declare`/`abstract`/`override`) before an
+// accessor now derail into tsc's abandon-body statement re-parse cascade,
+// covered in full by `type_member_hard_modifier_accessor_cascade_tests`. Only
+// `in`/`out` remain on the pre-existing semantic TS1070 path (see the module
+// doc comment); guarded here so they are not accidentally swept into the hard
+// set.
 // ---------------------------------------------------------------------------
 
 #[test]
-fn cascade_modifiers_before_accessor_still_report_ts1070_not_ts1131() {
+fn hard_cascade_modifiers_before_accessor_now_cascade_not_ts1070() {
+    // `declare`/`abstract`/`override` are hard modifiers: one TS1131, then the
+    // accessor tail re-parses as statements — TS1434 (unexpected keyword),
+    // TS1005 (`;` expected), TS1128 (declaration or statement expected). Full
+    // fingerprint parity lives in the sibling cascade suite.
+    const TS1434: u32 = diagnostic_codes::UNEXPECTED_KEYWORD_OR_IDENTIFIER;
+    const TS1005: u32 = diagnostic_codes::EXPECTED;
+    const TS1128: u32 = diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED;
     for modifier in ["declare", "abstract", "override"] {
         let source = format!("interface I {{ {modifier} get x(): number; }}");
-        assert_eq!(codes(&source), vec![TS1070], "modifier `{modifier}`");
+        assert_eq!(
+            codes(&source),
+            vec![TS1131, TS1434, TS1005, TS1128],
+            "modifier `{modifier}`",
+        );
     }
 }
 
 #[test]
 fn in_out_before_accessor_on_generic_interface_still_report_ts1070() {
+    // `in` is a reserved operator (different statement re-parse) and both
+    // `in`/`out` carry variance-position idiosyncrasies, so they are excluded
+    // from the hard set and keep the pre-existing semantic TS1070.
     for modifier in ["in", "out"] {
         let source = format!("interface I<T> {{ {modifier} get x(): number; }}");
         assert_eq!(codes(&source), vec![TS1070], "modifier `{modifier}`");
@@ -627,17 +644,17 @@ fn in_out_before_accessor_on_generic_interface_still_report_ts1070() {
 }
 
 #[test]
-fn cascade_modifier_poisons_a_run_with_a_leading_clean_modifier() {
-    // `declare` anywhere in the run keeps the WHOLE run out of the TS1131
-    // path, even when a clean modifier (`static`) leads it — matches tsc,
-    // where the clean modifier still fails to recover once `declare` follows
-    // (tsc itself reports a 5-diagnostic TS1131/TS1128/TS1434/TS1005/TS1128
-    // cascade for this exact shape). tsz's existing (unrelated, pre-existing)
-    // multi-modifier TS1070 handling consumes the whole illegal-modifier run
-    // and reports once, which this change does not touch or improve.
+fn hard_modifier_poisons_a_run_with_a_leading_clean_modifier() {
+    // A hard modifier anywhere in the run keeps the WHOLE run off the
+    // clean-only bare-accessor recovery, even when a clean modifier (`static`)
+    // leads it — matching tsc, which reports one TS1131 per modifier
+    // (`static` and `declare`) then re-parses the accessor tail as statements.
+    const TS1434: u32 = diagnostic_codes::UNEXPECTED_KEYWORD_OR_IDENTIFIER;
+    const TS1005: u32 = diagnostic_codes::EXPECTED;
+    const TS1128: u32 = diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED;
     assert_eq!(
         codes("interface I { static declare get x(): number; }"),
-        vec![TS1070],
+        vec![TS1131, TS1131, TS1434, TS1005, TS1128],
     );
 }
 
