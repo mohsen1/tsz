@@ -313,7 +313,9 @@ run_benchmark() {
     # Use --ignore-failure so hyperfine continues even if a rare iteration is killed.
     local run_timeout=15
     local json_file=$(mktemp)
-    if ! hyperfine \
+    local hyperfine_output=""
+    local hyperfine_status=0
+    hyperfine_output="$(hyperfine \
         --warmup "$WARMUP" \
         --min-runs "$MIN_RUNS" \
         --max-runs "$MAX_RUNS" \
@@ -321,7 +323,9 @@ run_benchmark() {
         --ignore-failure \
         --export-json "$json_file" \
         -n "tsz" "bash $BENCH_TIMEOUT_RUNNER $run_timeout -- ${TSZ_LIB_DIR:+env TSZ_LIB_DIR=$TSZ_LIB_DIR} $TSZ --noEmit $extra_args $file 2>/dev/null" \
-        -n "tsgo" "bash $BENCH_TIMEOUT_RUNNER $run_timeout -- $TSGO --noEmit $extra_args $file 2>/dev/null"; then
+        -n "tsgo" "bash $BENCH_TIMEOUT_RUNNER $run_timeout -- $TSGO --noEmit $extra_args $file 2>/dev/null" 2>&1)" || hyperfine_status=$?
+    if [ "$hyperfine_status" -ne 0 ]; then
+        printf '%s\n' "$hyperfine_output"
         local status="hyperfine error"
         RESULTS_CSV="${RESULTS_CSV}${name},${lines},${kb},ERR,ERR,N/A,N/A,error,0,${status}\n"
         rm -f "$json_file"
@@ -334,7 +338,11 @@ run_benchmark() {
         local tsgo_exit_status
         tsz_exit_status="$(hyperfine_exit_status_for "$json_file" "tsz" || true)"
         tsgo_exit_status="$(hyperfine_exit_status_for "$json_file" "tsgo" || true)"
-        if [ "$tsz_exit_status" != "ok" ] || [ "$tsgo_exit_status" != "ok" ]; then
+        local hyperfine_ok=true
+        [ "$tsz_exit_status" != "ok" ] && hyperfine_ok=false
+        [ "$tsgo_exit_status" != "ok" ] && hyperfine_ok=false
+        print_hyperfine_comparison_output "$hyperfine_output" "$hyperfine_ok"
+        if [ "$hyperfine_ok" != true ]; then
             local status=""
             [ "$tsz_exit_status" != "ok" ] && status="tsz ${tsz_exit_status}"
             [ "$tsgo_exit_status" != "ok" ] && status="${status:+${status}; }tsgo ${tsgo_exit_status}"
@@ -366,6 +374,8 @@ run_benchmark() {
 
             RESULTS_CSV="${RESULTS_CSV}${name},${lines},${kb},${tsz_ms},${tsgo_ms},${tsz_lps},${tsgo_lps},${winner},${ratio},\n"
         fi
+    else
+        printf '%s\n' "$hyperfine_output"
     fi
     rm -f "$json_file"
 }
@@ -664,8 +674,9 @@ run_project_benchmark() {
     fi
 
     local hyperfine_status=0
+    local hyperfine_output=""
     if [ "${#hyperfine_prepare_args[@]}" -gt 0 ]; then
-        hyperfine \
+        hyperfine_output="$(hyperfine \
             --warmup "$proj_warmup" \
             --min-runs "$proj_min" \
             --max-runs "$proj_max" \
@@ -674,9 +685,9 @@ run_project_benchmark() {
             --export-json "$json_file" \
             "${hyperfine_prepare_args[@]}" \
             -n "tsz" "bash $BENCH_TIMEOUT_RUNNER $run_timeout -- ${tsz_cmd_prefix}$TSZ --noEmit -p $tsconfig 2>/dev/null" \
-            -n "tsgo" "bash $BENCH_TIMEOUT_RUNNER $run_timeout -- ${tsgo_cmd_prefix}$TSGO --noEmit -p $tsconfig 2>/dev/null" || hyperfine_status=$?
+            -n "tsgo" "bash $BENCH_TIMEOUT_RUNNER $run_timeout -- ${tsgo_cmd_prefix}$TSGO --noEmit -p $tsconfig 2>/dev/null" 2>&1)" || hyperfine_status=$?
     else
-        hyperfine \
+        hyperfine_output="$(hyperfine \
             --warmup "$proj_warmup" \
             --min-runs "$proj_min" \
             --max-runs "$proj_max" \
@@ -684,9 +695,10 @@ run_project_benchmark() {
             --ignore-failure \
             --export-json "$json_file" \
             -n "tsz" "bash $BENCH_TIMEOUT_RUNNER $run_timeout -- ${tsz_cmd_prefix}$TSZ --noEmit -p $tsconfig 2>/dev/null" \
-            -n "tsgo" "bash $BENCH_TIMEOUT_RUNNER $run_timeout -- ${tsgo_cmd_prefix}$TSGO --noEmit -p $tsconfig 2>/dev/null" || hyperfine_status=$?
+            -n "tsgo" "bash $BENCH_TIMEOUT_RUNNER $run_timeout -- ${tsgo_cmd_prefix}$TSGO --noEmit -p $tsconfig 2>/dev/null" 2>&1)" || hyperfine_status=$?
     fi
     if [ "$hyperfine_status" -ne 0 ]; then
+        printf '%s\n' "$hyperfine_output"
         local status="hyperfine error"
         record_project_compatibility "$name" "runner error" "timing" "hyperfine failed" "hyperfine failed while timing project row" "$file_count" "$peak_memory_bytes" "$tsc_exit_codes" "" "" "$tsconfig" "$src_dir"
         RESULTS_CSV="${RESULTS_CSV}${name},${lines},${kb},ERR,ERR,N/A,N/A,error,0,${status}\n"
@@ -700,7 +712,11 @@ run_project_benchmark() {
         local tsgo_exit_status
         tsz_exit_status="$(hyperfine_exit_status_for "$json_file" "tsz" || true)"
         tsgo_exit_status="$(hyperfine_exit_status_for "$json_file" "tsgo" || true)"
-        if [ "$tsz_exit_status" != "ok" ] || [ "$tsgo_exit_status" != "ok" ]; then
+        local hyperfine_ok=true
+        [ "$tsz_exit_status" != "ok" ] && hyperfine_ok=false
+        [ "$tsgo_exit_status" != "ok" ] && hyperfine_ok=false
+        print_hyperfine_comparison_output "$hyperfine_output" "$hyperfine_ok"
+        if [ "$hyperfine_ok" != true ]; then
             local status=""
             [ "$tsz_exit_status" != "ok" ] && status="tsz ${tsz_exit_status}"
             [ "$tsgo_exit_status" != "ok" ] && status="${status:+${status}; }tsgo ${tsgo_exit_status}"
@@ -744,6 +760,8 @@ run_project_benchmark() {
             record_project_compatibility "$name" "$success_exit_class" "$success_phase" "$success_diagnostic_status" "$success_diagnostic_delta" "$file_count" "$peak_memory_bytes" "$tsc_exit_codes" "0" "0" "$tsconfig" "$src_dir"
             RESULTS_CSV="${RESULTS_CSV}${name},${lines},${kb},${tsz_ms},${tsgo_ms},${tsz_lps},${tsgo_lps},${winner},${ratio},\n"
         fi
+    else
+        printf '%s\n' "$hyperfine_output"
     fi
     rm -f "$json_file"
 }

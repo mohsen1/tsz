@@ -1146,9 +1146,15 @@ impl<'a> CheckerState<'a> {
                 // order (`readonly async get`, `async readonly get` both report
                 // only TS1024). `readonly` on a *property* is legal and does not
                 // fire TS1024, so the property arm below keeps its lone TS1042.
+                // A `declare` accessor is excluded either way: tsc reports
+                // exactly one diagnostic per member, and a `declare`+`async`
+                // accessor already gets it from the parser — TS1031 (`declare`
+                // illegal on this member kind) when `declare` came first, or
+                // TS1040 (ambient conflict) when `async` came first.
                 syntax_kind_ext::GET_ACCESSOR | syntax_kind_ext::SET_ACCESSOR => {
                     if let Some(accessor) = self.ctx.arena.get_accessor(node)
                         && !self.has_readonly_modifier(&accessor.modifiers)
+                        && !self.has_declare_modifier(&accessor.modifiers)
                         && let Some(async_mod_idx) = self.find_async_modifier(&accessor.modifiers)
                     {
                         self.error_at_node(
@@ -1163,9 +1169,13 @@ impl<'a> CheckerState<'a> {
                 // only on method/function-like nodes. `readonly` on a property
                 // is legal, so `readonly async p` is a lone TS1042 with no
                 // ordering collision; anchored at the `async` keyword to match
-                // tsc's column even when the property carries a decorator.
+                // tsc's column even when the property carries a decorator. A
+                // `declare` property is excluded: the parser already reports
+                // tsc's single TS1040 (ambient conflict) for `declare async p`
+                // in either source order.
                 syntax_kind_ext::PROPERTY_DECLARATION => {
                     if let Some(prop) = self.ctx.arena.get_property_decl(node)
+                        && !self.has_declare_modifier(&prop.modifiers)
                         && let Some(async_mod_idx) = self.find_async_modifier(&prop.modifiers)
                     {
                         self.error_at_node(
