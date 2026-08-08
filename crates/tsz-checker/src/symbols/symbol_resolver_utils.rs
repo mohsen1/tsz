@@ -1538,10 +1538,23 @@ impl<'a> CheckerState<'a> {
     /// must see `B` as the current class the same way a method body would.
     /// Mirrors `resolve_class_for_access`'s constraint walk so a generic
     /// `this: T extends Foo` resolves through `T`'s constraint to `Foo`.
+    ///
+    /// `is_static` is the accessed member's staticness, and a `true` here means
+    /// no context at all: a `this` parameter constrains the receiver *instance*
+    /// and says nothing about the class object's static side. tsc keeps
+    /// `function f(this: MyClass) { MyClass.protectedStatic }` at `TS2445` for
+    /// exactly that reason. Widening statics too silently accepted three
+    /// `TS2445`s in `conformance/types/thisType/thisTypeAccessibility.ts`
+    /// (#16894) — the false-negative direction, and invisible to a code-set
+    /// comparison because that row's other `TS2445`s kept the code present.
     pub(crate) fn resolve_this_parameter_class_context(
         &mut self,
         idx: NodeIndex,
+        is_static: bool,
     ) -> Option<NodeIndex> {
+        if is_static {
+            return None;
+        }
         let enclosing_fn = self.find_enclosing_non_arrow_function(idx)?;
         let fn_node = self.ctx.arena.get(enclosing_fn)?;
         let params: &[NodeIndex] = if let Some(f) = self.ctx.arena.get_function(fn_node) {
@@ -1582,8 +1595,10 @@ impl<'a> CheckerState<'a> {
             }
             // No literal enclosing class: fall back to the nearest enclosing
             // free function's own `this` parameter type, which is what the
-            // receiver's runtime type is bound by in that case.
-            return self.resolve_this_parameter_class_context(expr_idx);
+            // receiver's runtime type is bound by in that case. `is_static:
+            // false` — this arm only runs for a `this`/`super` receiver, which
+            // is instance-side by construction.
+            return self.resolve_this_parameter_class_context(expr_idx, false);
         }
 
         if self

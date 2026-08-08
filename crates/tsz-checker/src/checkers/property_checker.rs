@@ -306,8 +306,9 @@ impl<'a> CheckerState<'a> {
         // widening at all — tsc denies even an exact-class `this: Foo` free
         // function (TS2341) — so `current_class_idx` itself stays unwidened
         // for that branch.
+        // ...instance-side only; see the helper for why statics are excluded.
         let protected_context_class_idx = self
-            .resolve_this_parameter_class_context(error_node)
+            .resolve_this_parameter_class_context(error_node, is_static)
             .or(current_class_idx);
         let protected_candidates =
             self.protected_access_candidate_classes(protected_context_class_idx, object_expr);
