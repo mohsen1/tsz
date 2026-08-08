@@ -34,6 +34,17 @@ enum TypeMemberPropertyOrMethodName {
     IndexSignature(NodeIndex),
 }
 
+/// The offending token immediately following a type member's leading
+/// `readonly`, when it is not the property/index-signature name. `tsc`
+/// reports a different message and code depending on which of these it is:
+/// a second `readonly` is TS1030 (`'readonly' modifier already seen.`), any
+/// other modifier is TS1070 (`'{0}' modifier cannot appear on a type
+/// member.`).
+enum SecondTypeMemberModifier {
+    DuplicateReadonly,
+    Illegal(String),
+}
+
 impl ParserState {
     /// Parse interface declaration
     pub(crate) fn parse_interface_declaration(&mut self) -> NodeIndex {
@@ -501,38 +512,48 @@ impl ParserState {
         };
         let readonly = readonly_span.is_some();
 
-        // `readonly async x(): number` / `readonly static m(): number` / etc:
-        // any other type-member modifier written directly after `readonly` is a
-        // second leading modifier, not the member name. `tsc` checks `readonly`
-        // first in source order (legal only on a property/index signature — see
-        // the TS1024 check below) and, only when that doesn't already reject the
-        // member, checks the second modifier next (always illegal on a type
-        // member — TS1070). Detected here, before name parsing, so the second
-        // modifier is never misread as the property name (oracle-verified: it
-        // is not a valid property-name continuation in this position, e.g.
-        // `readonly static: number` — `static` used AS the name — stays clean,
-        // guarded by the same `look_ahead_is_property_name_after_keyword` check
-        // used for the leading-modifier case). It must still be consumed even
+        // `readonly async x(): number` / `readonly static m(): number` /
+        // `readonly readonly x: number` / etc: any second leading modifier
+        // written directly after `readonly` — including a repeated
+        // `readonly` itself — is not the member name. `tsc` checks each
+        // modifier in source order and reports (and immediately stops at)
+        // the first violation: `readonly` on a method/construct signature
+        // (TS1024, checked below once the member kind is known), a second
+        // `readonly` once the first was already legal (TS1030), or any other
+        // modifier, which is always illegal on a type member (TS1070).
+        // Detected here, before name parsing, so the offending token is
+        // never misread as the property name (oracle-verified: it is not a
+        // valid property-name continuation in this position, e.g. `readonly
+        // static: number` — `static` used AS the name — stays clean, guarded
+        // by the same `look_ahead_is_property_name_after_keyword` check used
+        // for the leading-modifier case). It must still be consumed even
         // when `modifier_diagnostic_reported` is already true (an earlier
         // illegal modifier fired) — only the diagnostic, not the consumption,
         // is suppressed in that case.
         let second_modifier_span = if readonly
             && (self.is_token(SyntaxKind::AsyncKeyword)
+                || self.is_token(SyntaxKind::ReadonlyKeyword)
                 || Self::is_illegal_type_member_modifier(self.token()))
             && !self.look_ahead_is_property_name_after_keyword()
         {
-            let text = self.scanner.get_token_text();
+            let kind = if self.is_token(SyntaxKind::ReadonlyKeyword) {
+                SecondTypeMemberModifier::DuplicateReadonly
+            } else {
+                SecondTypeMemberModifier::Illegal(self.scanner.get_token_text())
+            };
             let span = (self.token_pos(), self.token_end());
             self.next_token();
 
-            // A longer chain (`readonly async static x`, `readonly static
-            // public x`, ...) still reports a single diagnostic naming only
-            // the first offender — every modifier past it must still be
-            // consumed silently so the member parses cleanly, matching
-            // `parse_type_member_visibility_modifier_error`'s equivalent
-            // "consume the whole run" step for the illegal-modifier-first
-            // case.
+            // A longer chain (`readonly async static x`, `readonly readonly
+            // static x`, `readonly static readonly x`, ...) still reports a
+            // single diagnostic naming only the first offender — every
+            // modifier past it, including further repeated `readonly`s, must
+            // still be consumed silently so the member parses cleanly,
+            // matching `parse_type_member_visibility_modifier_error`'s
+            // equivalent "consume the whole run" step for the
+            // illegal-modifier-first case.
             while (self.is_token(SyntaxKind::AsyncKeyword)
+                || self.is_token(SyntaxKind::ReadonlyKeyword)
                 || Self::is_illegal_type_member_modifier(self.token()))
                 && !self.look_ahead_is_property_name_after_keyword()
             {
@@ -542,7 +563,7 @@ impl ParserState {
             if modifier_diagnostic_reported {
                 None
             } else {
-                Some((span, text))
+                Some((span, kind))
             }
         } else {
             None
@@ -554,6 +575,10 @@ impl ParserState {
 
         let name = match name {
             TypeMemberPropertyOrMethodName::IndexSignature(index_signature) => {
+                // An index signature can never be a method, so `readonly`'s
+                // own TS1024 (readonly-on-method) never applies here — the
+                // second-modifier violation (if any) always gets to report.
+                self.report_type_member_second_modifier(second_modifier_span);
                 return index_signature;
             }
             TypeMemberPropertyOrMethodName::Property(name) => name,
@@ -586,17 +611,7 @@ impl ParserState {
 
         // Property: `readonly` (if present) is legal here, so the second
         // modifier (if present) is the first — and only — offending one.
-        if !modifier_diagnostic_reported
-            && let Some(((mod_start, mod_end), modifier_text)) = second_modifier_span
-        {
-            use tsz_common::diagnostics::diagnostic_codes;
-            self.parse_error_at(
-                mod_start,
-                mod_end.saturating_sub(mod_start),
-                &format!("'{modifier_text}' modifier cannot appear on a type member."),
-                diagnostic_codes::MODIFIER_CANNOT_APPEAR_ON_A_TYPE_MEMBER,
-            );
-        }
+        self.report_type_member_second_modifier(second_modifier_span);
 
         self.parse_type_member_property_signature(
             start_pos,
@@ -605,6 +620,40 @@ impl ParserState {
             question_token,
             in_interface_declaration,
         )
+    }
+
+    /// Reports the diagnostic for a type member's second leading modifier
+    /// (the token right after `readonly`, if it wasn't the member name) —
+    /// TS1030 for a repeated `readonly`, TS1070 for anything else. A `None`
+    /// span means no such modifier was present, or `readonly`'s own TS1024
+    /// (readonly-on-method) already claimed the member's one diagnostic.
+    fn report_type_member_second_modifier(
+        &mut self,
+        second_modifier_span: Option<((u32, u32), SecondTypeMemberModifier)>,
+    ) {
+        let Some(((mod_start, mod_end), kind)) = second_modifier_span else {
+            return;
+        };
+        use tsz_common::diagnostics::diagnostic_codes;
+        let len = mod_end.saturating_sub(mod_start);
+        match kind {
+            SecondTypeMemberModifier::DuplicateReadonly => {
+                self.parse_error_at(
+                    mod_start,
+                    len,
+                    "'readonly' modifier already seen.",
+                    diagnostic_codes::MODIFIER_ALREADY_SEEN,
+                );
+            }
+            SecondTypeMemberModifier::Illegal(modifier_text) => {
+                self.parse_error_at(
+                    mod_start,
+                    len,
+                    &format!("'{modifier_text}' modifier cannot appear on a type member."),
+                    diagnostic_codes::MODIFIER_CANNOT_APPEAR_ON_A_TYPE_MEMBER,
+                );
+            }
+        }
     }
 
     fn parse_type_member_property_or_method_name(
