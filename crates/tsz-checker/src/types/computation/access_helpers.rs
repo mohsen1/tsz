@@ -241,18 +241,40 @@ impl<'a> CheckerState<'a> {
     /// — so under `strictNullChecks` we emit the diagnostic and return `Some`:
     /// `TS18046` (`'x' is of type 'unknown'.`) when the base expression has a
     /// printable name, otherwise the object form `TS2571` (`Object is of type
-    /// 'unknown'.`), returning `ERROR` to stop cascading diagnostics. When
-    /// `strictNullChecks` is off, `unknown` behaves like `any`; we return `None` so
-    /// each caller can apply its own non-strict fallback (index-signature handling
-    /// for element access, `error_property_not_exist_at` for property access).
+    /// 'unknown'.`), returning `ERROR` to stop cascading diagnostics.
+    ///
+    /// When `strictNullChecks` is off, `unknown` is not simply `any`: for a
+    /// statically known property name (`prop_name`), tsc still resolves it
+    /// against `unknown`'s apparent type, which is the `Object.prototype`
+    /// surface (`toString`, `valueOf`, `hasOwnProperty`, ...). A genuine
+    /// member there returns `Some` with its real type; anything else —
+    /// including a general (non-literal) index with no fixed name to check —
+    /// returns `None` so each caller applies its own non-strict fallback for
+    /// a truly missing member (index-signature handling for element access,
+    /// `error_property_not_exist_at` for dot-access property access).
     ///
     /// This is the single decision gate for the unknown-object access result,
     /// shared by the element-access `literal_string`/`literal_index` arms and the
-    /// property-access path, so the `TS2571`/`TS18046` choice is not re-derived
-    /// independently in each place.
-    pub(crate) fn unknown_object_access_result(&mut self, base_expr: NodeIndex) -> Option<TypeId> {
+    /// property-access path, so the `TS2571`/`TS18046`/`Object.prototype` choice
+    /// is not re-derived independently in each place.
+    pub(crate) fn unknown_object_access_result(
+        &mut self,
+        base_expr: NodeIndex,
+        prop_name: Option<&str>,
+    ) -> Option<TypeId> {
         if !self.ctx.compiler_options.strict_null_checks {
-            return None;
+            let prop_name = prop_name?;
+            let prop_atom = self.ctx.types.intern_string(prop_name);
+            return match crate::query_boundaries::property_access::resolve_unknown_non_strict_property_access(
+                self.ctx.types,
+                prop_atom,
+            ) {
+                tsz_solver::operations::property::PropertyAccessResult::Success {
+                    type_id,
+                    ..
+                } => Some(type_id),
+                _ => None,
+            };
         }
         if self.error_is_of_type_unknown(base_expr) {
             Some(TypeId::ERROR)

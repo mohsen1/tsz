@@ -60,6 +60,17 @@ pub(crate) fn resolve_property_access_with_options(
     evaluator.resolve_property_access_atom(obj_type, prop_name)
 }
 
+/// Resolve a property against `unknown`'s non-strict apparent surface (the
+/// `Object.prototype` member table). See
+/// `PropertyAccessEvaluator::resolve_unknown_non_strict_member`.
+pub(crate) fn resolve_unknown_non_strict_property_access(
+    db: &dyn QueryDatabase,
+    prop_name: Atom,
+) -> PropertyAccessResult {
+    let evaluator = tsz_solver::operations::property::PropertyAccessEvaluator::new(db);
+    evaluator.resolve_unknown_non_strict_member(prop_name)
+}
+
 pub(crate) fn resolve_private_identifier_property_access(
     db: &dyn QueryDatabase,
     obj_type: TypeId,

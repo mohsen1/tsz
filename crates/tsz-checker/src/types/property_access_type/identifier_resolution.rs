@@ -1800,10 +1800,14 @@ impl<'a> CheckerState<'a> {
 
             PropertyAccessResult::IsUnknown => {
                 // Shared unknown-object decision gate (TS18046/TS2571 under
-                // strictNullChecks). `None` means non-strict, where property
-                // access reports the missing property instead of falling
-                // through to index signatures the way element access does.
-                if let Some(result) = self.unknown_object_access_result(access.expression) {
+                // strictNullChecks; the `Object.prototype` apparent-surface
+                // fallback otherwise). `None` means the property is genuinely
+                // missing even from that surface, so property access reports
+                // it instead of falling through to index signatures the way
+                // element access does.
+                if let Some(result) = self
+                    .unknown_object_access_result(access.expression, Some(property_name.as_str()))
+                {
                     return result;
                 }
                 self.error_property_not_exist_at(
