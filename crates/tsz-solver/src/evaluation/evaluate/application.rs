@@ -207,35 +207,6 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 self.apparent_conditional_branch = saved_apparent;
                 self.decrement_def_depth(def_id);
 
-                // A class application that evaluated to a structural object which
-                // dropped the class's nominal symbol is a degraded, partially
-                // built instance body: the class's instance type carried only its
-                // annotated fields (no methods, no nominal identity) when this
-                // application forced its resolution — a circular import can make a
-                // sibling's build reach `Class<Args>` before the class publishes
-                // its final type. Surfacing that partial object (e.g. as a
-                // `[X, ...X[]][number]` union member beside the complete
-                // representation) yields spurious `TS2339`s for every missing
-                // method (issue #16055). Discard it: purge whatever the body
-                // evaluation cached under `(def, args)` so a later evaluation
-                // recomputes against the finished body, taint the run so nothing
-                // persists this partial, and keep the application opaque so a
-                // property access re-resolves it. Mirrors the Phase-4.5 in-flight
-                // sentinel's `mark_unresolved_def_seen()`/return-opaque shape.
-                if result != original_type_id
-                    && matches!(
-                        self.resolver.get_def_kind(def_id),
-                        Some(crate::def::DefKind::Class)
-                    )
-                    && self.application_result_dropped_nominal_symbol(result)
-                {
-                    if let Some(db) = self.query_db {
-                        db.invalidate_application_eval_cache_for_def(def_id);
-                    }
-                    self.mark_unresolved_def_seen();
-                    return original_type_id;
-                }
-
                 // Phase 7 — display-alias bookkeeping. Skip entirely when
                 // the result is the original `Application` itself (the
                 // historical `if result != original_type_id` gate).
@@ -267,21 +238,6 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 }
                 result
             }
-        }
-    }
-
-    /// True when `result` is a structural object (`Object`/`ObjectWithIndex`)
-    /// carrying no nominal `symbol`. For a class application this is the
-    /// signature of an instance body instantiated from a partial,
-    /// mid-construction source: the complete instance keeps its class
-    /// `SymbolId`, whereas the annotated-fields-only snapshot produced before
-    /// the class finishes building loses it (issue #16055).
-    fn application_result_dropped_nominal_symbol(&self, result: TypeId) -> bool {
-        match self.interner.lookup(result) {
-            Some(TypeData::Object(shape_id)) | Some(TypeData::ObjectWithIndex(shape_id)) => {
-                self.interner.object_shape(shape_id).symbol.is_none()
-            }
-            _ => false,
         }
     }
 
