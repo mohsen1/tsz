@@ -34,6 +34,19 @@
 //!     for `async`; the other nine modifiers previously mis-parsed instead of
 //!     reporting at all, since only `async` had this second-modifier
 //!     lookahead).
+//!   * A second (or later) `readonly` on a type member → TS1030 (`'readonly'
+//!     modifier already seen.`), anchored at the repeated `readonly` — a
+//!     duplicate-modifier check tsz's type-member parser previously did not
+//!     implement at all (the second `readonly` mis-parsed as a failed
+//!     property-name lookahead, `NodeIndex::NONE`). Follows the same
+//!     source-order-wins rule as the row above: an illegal modifier
+//!     encountered before the duplicate `readonly` still wins (`readonly
+//!     static readonly x` is TS1070 at `static`), a duplicate `readonly`
+//!     encountered first wins over a later illegal modifier (`readonly
+//!     readonly static x` is TS1030), and `readonly` on a method reports the
+//!     pre-existing TS1024 regardless of how many `readonly`s lead it, since
+//!     the method-kind check on the very first `readonly` fires before a
+//!     second one is ever inspected.
 //!
 //! `readonly` on a property / index signature stays legal, and `export` / `in`
 //! / `out` used as a member *name* (`export: T`, `export(): void`) stay clean —
@@ -84,6 +97,7 @@ const TS1071: u32 = diagnostic_codes::MODIFIER_CANNOT_APPEAR_ON_AN_INDEX_SIGNATU
 const TS1024: u32 =
     diagnostic_codes::READONLY_MODIFIER_CAN_ONLY_APPEAR_ON_A_PROPERTY_DECLARATION_OR_INDEX_SIGNATURE;
 const TS1131: u32 = diagnostic_codes::PROPERTY_OR_SIGNATURE_EXPECTED;
+const TS1030: u32 = diagnostic_codes::MODIFIER_ALREADY_SEEN;
 
 // ---------------------------------------------------------------------------
 // TS1070: export / in / out modifier on a type member
@@ -1107,5 +1121,148 @@ fn async_second_modifier_used_as_property_name_still_reports_ts1070_at_async() {
             15,
             "'async' modifier cannot appear on a type member.".to_string()
         )],
+    );
+}
+
+// A second (or later) `readonly` on a type member — TS1030 ("'readonly'
+// modifier already seen."), not tsc's checkGrammarModifiers duplicate check,
+// which tsz's parser previously did not implement at all for type members:
+// the second `readonly` mis-parsed as a failed property-name lookahead
+// (`NodeIndex::NONE`) instead of reporting. `checkGrammarModifiers` walks
+// modifiers in SOURCE ORDER and stops at the first violation, so a duplicate
+// `readonly` only wins when nothing else in the run fires first — an earlier
+// illegal modifier (`static`) still wins over a trailing duplicate `readonly`
+// (mirroring the existing `readonly`-then-illegal-modifier precedence), and
+// `readonly` on a method reports the pre-existing TS1024 regardless of how
+// many `readonly`s lead it, since the method-kind check on the very first
+// `readonly` fires before a second one is ever inspected.
+
+#[test]
+fn duplicate_readonly_on_interface_property_reports_ts1030() {
+    assert_eq!(
+        fingerprints("interface I { readonly readonly x: number; }"),
+        vec![(
+            TS1030,
+            1,
+            24,
+            "'readonly' modifier already seen.".to_string()
+        )],
+    );
+}
+
+#[test]
+fn duplicate_readonly_on_type_literal_property_reports_ts1030() {
+    assert_eq!(
+        fingerprints("type T = { readonly readonly x: number; };"),
+        vec![(
+            TS1030,
+            1,
+            21,
+            "'readonly' modifier already seen.".to_string()
+        )],
+    );
+}
+
+#[test]
+fn triple_readonly_on_property_reports_ts1030_once_at_the_second() {
+    // A third `readonly` is silently swallowed, not separately reported —
+    // `checkGrammarModifiers` stops at the first violation.
+    assert_eq!(
+        fingerprints("interface I { readonly readonly readonly x: number; }"),
+        vec![(
+            TS1030,
+            1,
+            24,
+            "'readonly' modifier already seen.".to_string()
+        )],
+    );
+}
+
+#[test]
+fn duplicate_readonly_on_index_signature_reports_ts1030() {
+    // An index signature can never be a method, so `readonly`'s own TS1024
+    // never competes here — the duplicate always gets to report. (Index
+    // signatures return early in the parser, a separate code path from the
+    // property/method branch that the other rows in this matrix exercise.)
+    assert_eq!(
+        fingerprints("interface I { readonly readonly [k: string]: number; }"),
+        vec![(
+            TS1030,
+            1,
+            24,
+            "'readonly' modifier already seen.".to_string()
+        )],
+    );
+}
+
+#[test]
+fn duplicate_readonly_on_method_reports_ts1024_not_ts1030() {
+    // The method-kind check on the FIRST `readonly` fires immediately, before
+    // the parser ever inspects the second one for a duplicate — anchored at
+    // the first `readonly`, matching the existing single-`readonly` TS1024
+    // row exactly.
+    assert_eq!(
+        fingerprints("interface I { readonly readonly m(): void; }"),
+        vec![(
+            TS1024,
+            1,
+            15,
+            "'readonly' modifier can only appear on a property declaration or index signature."
+                .to_string()
+        )],
+    );
+}
+
+#[test]
+fn duplicate_readonly_then_illegal_modifier_reports_ts1030_and_swallows_the_rest() {
+    // The duplicate `readonly` is encountered before `static` in source
+    // order, so it wins; `static` is consumed silently rather than mis-parsed
+    // as the property name.
+    assert_eq!(
+        fingerprints("interface I { readonly readonly static x: number; }"),
+        vec![(
+            TS1030,
+            1,
+            24,
+            "'readonly' modifier already seen.".to_string()
+        )],
+    );
+}
+
+#[test]
+fn illegal_modifier_then_duplicate_readonly_reports_ts1070_and_swallows_the_readonly() {
+    // `static` is encountered before the second `readonly` in source order,
+    // so it wins here — the reverse ordering from the row above. The trailing
+    // duplicate `readonly` must still be consumed so `x` parses as the name,
+    // not mis-parsed as a failed name lookahead.
+    assert_eq!(
+        fingerprints("interface I { readonly static readonly x: number; }"),
+        vec![(
+            TS1070,
+            1,
+            24,
+            "'static' modifier cannot appear on a type member.".to_string()
+        )],
+    );
+}
+
+#[test]
+fn duplicate_readonly_then_async_reports_ts1030_and_swallows_async() {
+    assert_eq!(
+        fingerprints("interface I { readonly readonly async x: number; }"),
+        vec![(
+            TS1030,
+            1,
+            24,
+            "'readonly' modifier already seen.".to_string()
+        )],
+    );
+}
+
+#[test]
+fn duplicate_readonly_does_not_swallow_the_following_member() {
+    assert_eq!(
+        codes("interface I { readonly readonly x: number; y: string; }"),
+        vec![TS1030],
     );
 }
