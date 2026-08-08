@@ -16,6 +16,7 @@ mod implicit_any_param_context;
 mod index_signature_checks;
 #[cfg(test)]
 mod index_signature_checks_tests;
+mod index_signature_inherited_display;
 mod index_signature_key_helpers;
 mod index_signature_type_helpers;
 mod index_signature_validity;

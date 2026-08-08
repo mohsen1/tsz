@@ -251,9 +251,122 @@ function test(arg: string | number, whatever: any) {
     );
 }
 
-// Note: Inherited member vs index signature is tested via conformance tests
-// (e.g. inheritedMembersAndIndexSignaturesFromDifferentBases.ts) since it
-// requires full lib type resolution that unit tests don't provide.
+// =========================================================================
+// Inherited member vs index signature: computed-name display (#16866)
+//
+// tsc's `declarationNameToString` renders a computed member name
+// (`["get1"]`) as verbatim source text. tsz's own-member TS2411 path already
+// did this (`diag_prop_name`), but the INHERITED-member path
+// (`check_inherited_properties_against_index_signatures`) used the bare
+// resolved property name instead, dropping the brackets for a member
+// inherited from a base class/interface.
+// =========================================================================
+
+#[test]
+fn test_ts2411_inherited_computed_name_class_keeps_brackets() {
+    let source = r#"
+class Foo { x: number = 0; }
+class Foo2 { x: number = 0; y: number = 0; }
+class C {
+    get ["get1"]() { return new Foo(); }
+}
+class D extends C {
+    [s: string]: Foo2;
+}
+"#;
+    let diags = get_diagnostics(source);
+    let ts2411 = diags
+        .iter()
+        .find(|d| d.0 == 2411)
+        .expect("expected TS2411 for inherited computed-name getter vs string index");
+    assert!(
+        ts2411.1.contains("[\"get1\"]"),
+        "TS2411 must render the inherited computed name as `[\"get1\"]` (tsc's \
+         declarationNameToString), got: {}",
+        ts2411.1
+    );
+}
+
+#[test]
+fn test_ts2411_inherited_plain_identifier_has_no_brackets() {
+    // Adjacent case: a plain (non-computed) inherited member name must NOT
+    // gain brackets -- only computed names get the verbatim-source treatment.
+    let source = r#"
+class Foo { x: number = 0; }
+class Foo2 { x: number = 0; y: number = 0; }
+class C {
+    get plainGetter() { return new Foo(); }
+}
+class D extends C {
+    [s: string]: Foo2;
+}
+"#;
+    let diags = get_diagnostics(source);
+    let ts2411 = diags
+        .iter()
+        .find(|d| d.0 == 2411)
+        .expect("expected TS2411 for inherited plain getter vs string index");
+    assert!(
+        ts2411.1.contains("Property 'plainGetter'"),
+        "TS2411 for a plain inherited identifier must not gain brackets, got: {}",
+        ts2411.1
+    );
+}
+
+#[test]
+fn test_ts2411_inherited_computed_name_interface_keeps_brackets() {
+    // Adjacent case: the same fix applies to `interface extends`, not just
+    // `class extends` (the shared function handles both declaration kinds).
+    let source = r#"
+class Foo { x: number = 0; }
+class Foo2 { x: number = 0; y: number = 0; }
+interface IBase {
+    ["ifaceGet"]: Foo;
+}
+interface IDerived extends IBase {
+    [s: string]: Foo2;
+}
+"#;
+    let diags = get_diagnostics(source);
+    let ts2411 = diags
+        .iter()
+        .find(|d| d.0 == 2411)
+        .expect("expected TS2411 for inherited interface computed name vs string index");
+    assert!(
+        ts2411.1.contains("[\"ifaceGet\"]"),
+        "TS2411 must render the inherited interface computed name as \
+         `[\"ifaceGet\"]`, got: {}",
+        ts2411.1
+    );
+}
+
+#[test]
+fn test_ts2411_inherited_computed_name_multi_level_class_chain() {
+    // Adjacent case: the computed name lives two `extends` hops up
+    // (D -> C -> B), exercising the heritage-walk recursion.
+    let source = r#"
+class Foo { x: number = 0; }
+class Foo2 { x: number = 0; y: number = 0; }
+class B {
+    get ["deep"]() { return new Foo(); }
+}
+class C extends B {}
+class D extends C {
+    [s: string]: Foo2;
+}
+"#;
+    let diags = get_diagnostics(source);
+    let ts2411 = diags
+        .iter()
+        .find(|d| d.0 == 2411)
+        .expect("expected TS2411 for a two-level-inherited computed name vs string index");
+    assert!(
+        ts2411.1.contains("[\"deep\"]"),
+        "TS2411 must render the two-level-inherited computed name as \
+         `[\"deep\"]`, got: {}",
+        ts2411.1
+    );
+}
 
 #[test]
 fn test_ts2411_method_overload_displays_merged_signatures() {
@@ -902,7 +1015,11 @@ declare const m: M;
 // Regression: a numeric/string enum unioned with its own primitive absorbs
 // into that primitive before the index-signature check runs, matching tsc's
 // `removeRedundantLiteralTypes` (which sweeps an enum member's LiteralType
-// the same as any other literal). #16866 / unionSubtypeIfEveryConstituentTypeIsSubtype.ts.
+// the same as any other literal). Belt-and-suspenders: the TS2411 check site
+// also widens through `evaluate_type_with_env` before decomposing the union
+// (see `property_type_assignable_to_index_type`), so the fix holds even if a
+// future caller builds the union some other way. #16866 /
+// unionSubtypeIfEveryConstituentTypeIsSubtype.ts.
 // =========================================================================
 
 #[test]
@@ -921,6 +1038,30 @@ interface I14 {
     assert!(
         !has_error_with_code(source, 2411),
         "e | number must absorb into number and not be checked against the unrelated enum E2: {:?}",
+        get_diagnostics(source)
+    );
+}
+
+#[test]
+fn enum_member_absorbed_into_number_in_union_matches_numeric_enum_index() {
+    // A union constituent that is a subtype of a sibling constituent is
+    // absorbed into it when tsc constructs the union type -- `Suit | number`
+    // is the type `number`, not a two-member union (confirmed against tsc
+    // 7.0.2: `let s: string = suitOrNumber` reports "Type 'number' is not
+    // assignable to type 'string'", not "Type 'Suit | number'"). A property
+    // of that union is therefore checked against a numeric-enum index the
+    // same way a bare `number` property is -- no TS2411.
+    let source = r#"
+enum Suit { Hearts, Spades }
+enum Rank { Ace }
+interface Hand {
+    [x: string]: Rank;
+    card: Suit | number;
+}
+"#;
+    assert!(
+        !has_error_with_code(source, 2411),
+        "`Suit | number` collapses to `number`, which a numeric enum index accepts: {:?}",
         get_diagnostics(source)
     );
 }
@@ -1030,6 +1171,28 @@ interface I14 {
 }
 
 #[test]
+fn distinct_enum_union_without_number_sibling_still_reports_ts2411() {
+    // Negative control: without a `number` (or matching-enum) sibling to
+    // absorb into, a different enum's member type is still not assignable to
+    // this index's enum -- the widen step must not silently accept every
+    // enum union.
+    let source = r#"
+enum Suit { Hearts, Spades }
+enum Rank { Ace }
+enum Season { Summer }
+interface Hand {
+    [x: string]: Rank;
+    card: Suit | Season;
+}
+"#;
+    assert!(
+        has_error_with_code(source, 2411),
+        "`Suit | Season` has no `number` sibling to collapse into, and neither is `Rank`: {:?}",
+        get_diagnostics(source)
+    );
+}
+
+#[test]
 fn ts2411_distinct_numeric_enums_without_a_bare_number_stay_nominal() {
     // Negative control: without a co-present bare `number`, two distinct
     // numeric enums do NOT absorb into each other — nominal typing holds.
@@ -1044,6 +1207,44 @@ interface I {
     assert!(
         has_error_with_code(source, 2411),
         "e alone (no bare number present) must stay nominal and fail against E2: {:?}",
+        get_diagnostics(source)
+    );
+}
+
+#[test]
+fn numeric_literal_absorbed_into_number_in_union_matches_numeric_enum_index_renamed() {
+    // Same shape as the enum case above but with a numeric literal type and
+    // renamed binders, confirming the widen step is not keyed to a specific
+    // enum/interface/property name.
+    let source = r#"
+enum Level { Low, Mid, High }
+interface Config {
+    [k: string]: Level;
+    threshold: 1 | number;
+}
+"#;
+    assert!(
+        !has_error_with_code(source, 2411),
+        "`1 | number` collapses to `number`, matching the numeric enum index: {:?}",
+        get_diagnostics(source)
+    );
+}
+
+#[test]
+fn union_still_reports_ts2411_when_a_constituent_genuinely_mismatches() {
+    // Positive control: the widen step must not blanket-suppress TS2411 -- a
+    // union that still contains a genuinely incompatible constituent after
+    // widening (`string`, which has no relation to a `number` index) keeps
+    // reporting.
+    let source = r#"
+interface Bag {
+    [k: string]: number;
+    label: string | number;
+}
+"#;
+    assert!(
+        has_error_with_code(source, 2411),
+        "`string | number` still has `string`, incompatible with the `number` index: {:?}",
         get_diagnostics(source)
     );
 }
