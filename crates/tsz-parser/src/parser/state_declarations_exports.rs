@@ -579,14 +579,6 @@ impl ParserState {
             NodeIndex::NONE
         };
 
-        // TS1003: without a `from` clause, the *local* name of an export specifier
-        // (the part before `as`) must be an identifier, not a string literal. This is
-        // the export mirror of the import-specifier string-binding check; see
-        // `report_export_specifier_string_local_names` for the full rule.
-        if module_specifier.is_none() {
-            self.report_export_specifier_string_local_names(export_clause);
-        }
-
         // Parse optional import attributes: with { ... } or assert { ... }
         let attributes = if module_specifier.is_none() {
             NodeIndex::NONE
