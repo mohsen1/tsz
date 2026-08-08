@@ -1824,6 +1824,12 @@ impl<'a> CheckerState<'a> {
         anchor: NodeIndex,
     ) -> Option<Vec<crate::diagnostics::DiagnosticRelatedInformation>> {
         let disposable_type = self.resolve_disposable_interface_type(false)?;
+        // `using`/`await using` initializers are never excess-property (freshness)
+        // checked against `Disposable`/`AsyncDisposable` -- tsc accepts an object
+        // literal with properties beyond `[Symbol.dispose]` (#16862). Widen before
+        // building the elaboration so a genuine structural mismatch's tail doesn't
+        // pick up a spurious "does not exist in type" excess-property reason.
+        let init_type = crate::query_boundaries::common::widen_freshness(self.ctx.types, init_type);
         let analysis = self.analyze_assignability_failure(init_type, disposable_type);
         let reason = analysis.failure_reason?;
         let rendered = self.render_failure_reason(&reason, init_type, disposable_type, anchor, 0);
@@ -1935,6 +1941,13 @@ impl<'a> CheckerState<'a> {
         // rejected, while the ordinary void-return exception (a `(): number`
         // dispose method) must still be accepted, exactly as the relation
         // already implements for every other assignability check.
+        //
+        // This check does not apply excess-property (freshness) checking --
+        // tsc accepts a `using`/`await using` object literal with properties
+        // beyond `[Symbol.dispose]`/`[Symbol.asyncDispose]` (#16862). Widen the
+        // fresh literal's freshness flag before the relation so only a real
+        // structural mismatch (missing/mistyped dispose method) is rejected.
+        let type_id = crate::query_boundaries::common::widen_freshness(self.ctx.types, type_id);
         let is_disposable = self
             .resolve_disposable_interface_type(false)
             .is_some_and(|target| self.is_assignable_to(type_id, target));

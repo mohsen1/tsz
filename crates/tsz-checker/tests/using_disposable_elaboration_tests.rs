@@ -182,3 +182,106 @@ const d: Disposable = x;
          in type 'Disposable'.",
     );
 }
+
+/// #16862 regression: a `using` initializer is never excess-property (freshness)
+/// checked against `Disposable` -- an object literal with a valid dispose method
+/// plus extra properties is a perfectly good disposable, `tsc` does not run
+/// freshness here even though the source is a fresh object literal.
+#[test]
+fn using_fresh_literal_with_extra_property_is_clean() {
+    let diags = check(
+        r#"
+function f() { using r = { [Symbol.dispose]() {}, extra: 1 }; }
+"#,
+    );
+    assert!(
+        !diags.iter().any(|d| d.code == 2850),
+        "extra properties on a fresh disposable literal must not raise TS2850, got: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+/// Same rule for `await using` (TS2851): a fresh literal with a valid
+/// `[Symbol.asyncDispose]` plus extra properties is clean.
+#[test]
+fn await_using_fresh_literal_with_extra_property_is_clean() {
+    let diags = check(
+        r#"
+async function f() { await using r = { async [Symbol.asyncDispose]() {}, extra: 1 }; }
+"#,
+    );
+    assert!(
+        !diags.iter().any(|d| d.code == 2851),
+        "extra properties on a fresh async-disposable literal must not raise TS2851, got: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+/// Freshness suppression must not swallow a genuine structural mismatch: a
+/// `[Symbol.dispose]` whose own type is not callable at all is still rejected,
+/// extra properties or not.
+#[test]
+fn using_fresh_literal_wrong_dispose_type_still_errors() {
+    let diags = check(
+        r#"
+function f() { using r = { [Symbol.dispose]: 42, extra: 1 }; }
+"#,
+    );
+    assert!(
+        diags.iter().any(|d| d.code == 2850),
+        "a non-callable [Symbol.dispose] must still raise TS2850, got: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+/// Freshness suppression must not swallow a genuine structural mismatch: a
+/// `[Symbol.dispose]` with a required parameter is not assignable to
+/// `Disposable`'s zero-arg signature, extra properties or not.
+#[test]
+fn using_fresh_literal_wrong_dispose_arity_still_errors() {
+    let diags = check(
+        r#"
+function f() { using r = { [Symbol.dispose](x: number) {}, extra: 1 }; }
+"#,
+    );
+    assert!(
+        diags.iter().any(|d| d.code == 2850),
+        "a required-param [Symbol.dispose] must still raise TS2850, got: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+/// A fresh literal entirely missing a dispose member is still rejected -- the
+/// freshness fix only suppresses excess-property checking, not the underlying
+/// presence/shape requirement.
+#[test]
+fn using_fresh_literal_missing_dispose_still_errors() {
+    let diags = check(
+        r#"
+function f() { using r = { notDispose() {} }; }
+"#,
+    );
+    assert!(
+        diags.iter().any(|d| d.code == 2850),
+        "a fresh literal with no dispose member must still raise TS2850, got: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+/// The same object routed through a variable (never fresh) was already clean
+/// before this fix and must stay clean -- pins the non-regression discriminator
+/// from #16862's own repro.
+#[test]
+fn using_non_fresh_variable_with_extra_property_is_clean() {
+    let diags = check(
+        r#"
+const o = { [Symbol.dispose]() {}, extra: 1 };
+function f() { using r = o; }
+"#,
+    );
+    assert!(
+        !diags.iter().any(|d| d.code == 2850),
+        "a disposable object routed through a variable must not raise TS2850, got: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
