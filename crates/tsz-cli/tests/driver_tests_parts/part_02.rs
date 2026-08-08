@@ -138,7 +138,17 @@ fn compile_import_equals_const_enum_keeps_require_for_runtime_member() {
 }
 
 #[test]
-fn compile_allow_js_passthrough_emits_skipped_node_modules_js() {
+fn compile_allow_js_passthrough_emits_root_node_modules_js() {
+    // `node_modules/untyped/index.js` is an explicit program root here (tsc's
+    // `rootNames` — a `files` entry), not a file merely discovered by
+    // resolving `require("untyped")`. tsc never applies `maxNodeModuleJsDepth`
+    // to a root — it is a real program input, not something reached "by
+    // descending into node_modules" — so `bug40140.js`'s `require('untyped')`
+    // resolves to the root's own (real, checked) export shape `{}` instead of
+    // TS7016's implicit `any`. Oracle-verified against `typescript@7.0.2`
+    // (pinned): with `noCheck: true` the per-file semantic pass that would
+    // report `TS2339` on `u.assignment`/`u.noError()` never runs, and no
+    // TS7016 is produced either. See #16928.
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
 
@@ -170,13 +180,15 @@ fn compile_allow_js_passthrough_emits_skipped_node_modules_js() {
     let result = compile(&args, base).expect("compile should succeed");
 
     assert!(
-        result.diagnostics.iter().any(|diag| diag.code == 7016),
-        "Expected TS7016 for the untyped package, got: {:?}",
+        result.diagnostics.iter().all(|diag| diag.code
+            != diagnostic_codes::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS
+            && diag.code != 7016),
+        "root untyped package must resolve without TS2307/TS7016, got: {:?}",
         result.diagnostics
     );
     assert_eq!(
         std::fs::read_to_string(base.join("out/node_modules/untyped/index.js"))
-            .expect("read emitted skipped JS"),
+            .expect("read emitted JS"),
         "module.exports = {}"
     );
 }
