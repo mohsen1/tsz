@@ -250,6 +250,7 @@ fn collect_names_in_type(
                     // name (`["a"]`, `[2]`) — tsc flags all of them, so the gate
                     // matches every property-name kind, not just identifiers.
                     if prop_idx.is_some()
+                        && !ctx.is_declaration_file()
                         && let Some(prop_node) = ctx.arena.get(prop_idx)
                         && is_renaming_source_property_kind(prop_node.kind)
                         && let Some(name_node) = ctx.arena.get(name_idx)

@@ -11,7 +11,7 @@
 //!
 //! Oracled against `tsc` 7.0.2 with `--strict false --target es2015`.
 
-use tsz_checker::test_utils::check_source_non_strict_codes;
+use tsz_checker::test_utils::{check_source_codes_named, check_source_non_strict_codes};
 
 const TS2304_CANNOT_FIND_NAME: u32 = 2304;
 const TS2842_UNUSED_RENAMING: u32 = 2842;
@@ -238,4 +238,91 @@ fn string_literal_rename_is_binder_name_invariant() {
             "renaming `\"a\"` to `{local}` is flagged once; got {msgs:?}"
         );
     }
+}
+
+// ---------------------------------------------------------------------------
+// TS2842 never fires inside a `.d.ts` file.
+//
+// A declaration file has no bodies at all, so tsc treats a renamed
+// destructured parameter as ordinary declaration syntax rather than a
+// possible authoring mistake. Oracled against `tsc` 7.0.2:
+// identical `{ a: renamed }: O` source reports TS2842 in a `.ts` file and is
+// silent in a `.d.ts` file. Covers both diagnostic-emission sites: the bare
+// function-type path (`type F = (...) => void`, `type_node_helpers.rs`'s
+// `check_duplicate_parameters_in_type`) and the member/signature path
+// (interface methods, `declare function`, a type literal's function-typed
+// property; `parameter_checker.rs`'s `check_duplicate_parameters`).
+// ---------------------------------------------------------------------------
+
+#[test]
+fn bare_function_type_rename_in_declaration_file_reports_nothing() {
+    let codes = check_source_codes_named(
+        "type O = { a: string; b: number };\ntype F = ({ a: renamed }: O) => void;",
+        "lib.d.ts",
+    );
+    assert!(
+        !codes.contains(&TS2842_UNUSED_RENAMING),
+        "a `.d.ts` file has no bodies, so tsc never flags a renamed destructured \
+         parameter there; got {codes:?}"
+    );
+}
+
+#[test]
+fn interface_method_signature_rename_in_declaration_file_reports_nothing() {
+    let codes = check_source_codes_named(
+        "type O = { a: string; b: number };\ninterface I { method({ a: renamed }: O): void; }",
+        "lib.d.ts",
+    );
+    assert!(
+        !codes.contains(&TS2842_UNUSED_RENAMING),
+        "an interface method signature is exempt in a `.d.ts` file too; got {codes:?}"
+    );
+}
+
+#[test]
+fn declare_function_rename_in_declaration_file_reports_nothing() {
+    let codes = check_source_codes_named(
+        "type O = { a: string; b: number };\ndeclare function f({ a: renamed }: O): void;",
+        "lib.d.ts",
+    );
+    assert!(
+        !codes.contains(&TS2842_UNUSED_RENAMING),
+        "a `declare function` in a `.d.ts` file is exempt; got {codes:?}"
+    );
+}
+
+#[test]
+fn type_literal_property_function_type_rename_in_declaration_file_reports_nothing() {
+    let codes = check_source_codes_named(
+        "type O = { a: string; b: number };\ntype T = { f: ({ a: renamed }: O) => void };",
+        "lib.d.ts",
+    );
+    assert!(
+        !codes.contains(&TS2842_UNUSED_RENAMING),
+        "a function-typed type-literal property is exempt in a `.d.ts` file; got {codes:?}"
+    );
+}
+
+#[test]
+fn non_identifier_property_rename_in_declaration_file_reports_nothing() {
+    let codes = check_source_codes_named("type F = ({ \"a\": renamed }) => void;", "lib.d.ts");
+    assert!(
+        !codes.contains(&TS2842_UNUSED_RENAMING),
+        "the declaration-file exemption applies regardless of property-name kind; got {codes:?}"
+    );
+}
+
+#[test]
+fn bare_function_type_rename_in_ordinary_ts_file_still_reports_ts2842() {
+    // Adjacent negative case: the exact same source in a `.ts` file (not
+    // `.d.ts`) must still report — the exemption is declaration-file-scoped,
+    // not a blanket change to the diagnostic.
+    let codes = check_source_codes_named(
+        "type O = { a: string; b: number };\ntype F = ({ a: renamed }: O) => void;",
+        "plain.ts",
+    );
+    assert!(
+        codes.contains(&TS2842_UNUSED_RENAMING),
+        "a plain `.ts` file keeps reporting TS2842; got {codes:?}"
+    );
 }

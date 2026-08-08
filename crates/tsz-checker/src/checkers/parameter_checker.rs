@@ -613,11 +613,11 @@ impl<'a> CheckerState<'a> {
                 self.check_computed_property_name(elem.property_name);
 
                 // TS2842: 'b' is an unused renaming of 'a'. Did you intend to use it as a type annotation?
-                // This is emitted when both property_name and name are identifiers, and there's no body.
-                // The renaming is only *unused* when no `typeof` query in the
-                // owning signature names the renamed binding; `typeof b` keeps
-                // it used and `tsc` reports nothing.
+                // Emitted when property_name/name are both identifiers, no body, and no
+                // `typeof` query in the signature names the rename (which would use it);
+                // also never inside `.d.ts`, which has no bodies at all.
                 if !has_body
+                    && !self.ctx.is_declaration_file()
                     && let Some(prop_node) = self.ctx.arena.get(elem.property_name)
                     && (prop_node.kind == tsz_scanner::SyntaxKind::Identifier as u16
                         || prop_node.kind == tsz_scanner::SyntaxKind::StringLiteral as u16
