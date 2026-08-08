@@ -643,6 +643,15 @@ import { from as fromObservable } from "./from";
     );
 }
 
+// TS1003 for a string-literal export-specifier property name without a `from`
+// clause is a *checker* grammar diagnostic, owned by
+// `crates/tsz-checker/src/declarations/module_export_names.rs`; its full
+// oracle-pinned matrix lives in the checker suite
+// `string_literal_module_export_name_grammar_tests`. The parser-layer guards
+// below (#16702) pin the complementary fact that the *parser* stays out of it —
+// so a future change cannot silently re-home the diagnostic to the syntactic
+// phase, where it would escape the program-wide semantic suppression.
+
 /// The *export* side is asymmetric with the import side above. A string-literal
 /// export local name without a `from` clause (`export { "q" as y }`) is TS1003 in
 /// `tsc`, but `tsc` reports it from the **checker**

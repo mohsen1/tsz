@@ -1,19 +1,32 @@
-//! Regression tests for the relation-derived elaboration tail on a failed
-//! `using` declaration (TS2850) and, more broadly, for symbol-keyed missing
-//! property elaboration (TS2741) on a non-array target.
+//! Regression tests for how a failed sync `using` declaration maps onto `tsc`'s
+//! diagnostic, and, more broadly, for symbol-keyed missing-property elaboration
+//! (TS2741) on a non-array target.
 //!
-//! Structural rule: when an object relation fails only on late-bound-symbol
-//! members, `tsc` lists those members in TS2741/TS2739 for **non-array** targets
-//! (e.g. `Disposable`'s `[Symbol.dispose]`) and omits them only for array-like
-//! targets (where the iteration protocol makes them implicitly satisfied). The
-//! `using` check routes a failed sync `using` through the shared assignability
-//! gateway against the global `Disposable` interface so the nested tail is the
-//! real relation reason rather than a hand-built string; `await using` (TS2851)
-//! carries no tail.
+//! Structural rule (#16872): the `using` check runs the ordinary assignability
+//! relation against the global `Disposable` interface and lets the *shape* of
+//! that failure choose the code — it does not apply TS2850 uniformly.
+//!   * A single plain object type (interface / class / object literal /
+//!     `declare const` of an object type) missing `[Symbol.dispose]` entirely
+//!     falls through to the natural missing-property error, so the **primary**
+//!     diagnostic is TS2741 (`Property '[Symbol.dispose]' is missing … but
+//!     required in type 'Disposable'.`) with no TS2850.
+//!   * A present-but-incompatible member, or a composite source (union /
+//!     intersection / type parameter) whose constituents each miss the member,
+//!     keeps the TS2850 head and nests the relation reason as the tail.
+//!   * A bare whole-type mismatch (a primitive initializer) reports the flat
+//!     TS2850 with no tail.
+//!
+//! `await using` (TS2851) always carries the flat top line.
+//!
+//! The companion rule for missing late-bound-symbol members: `tsc` lists those
+//! members in TS2741/TS2739 for **non-array** targets (e.g. `Disposable`'s
+//! `[Symbol.dispose]`) and omits them only for array-like targets (where the
+//! iteration protocol makes them implicitly satisfied).
 //!
 //! Owner: solver `explain_object_failure` (reason) +
 //! `error_reporter::assignability` (emission) +
-//! `check_using_declaration_disposable`.
+//! `check_using_declaration_disposable` /
+//! `classify_disposable_initializer_failure` (code selection).
 //!
 //! The cases are fully self-contained (an inline `Symbol`/`Disposable` so the
 //! relation stays in one arena), and they vary the source member name where it
@@ -56,9 +69,10 @@ fn check(body: &str) -> Vec<tsz_checker::diagnostics::Diagnostic> {
 }
 
 /// Full elaboration text (primary message plus every related-information line,
-/// in order) of the single diagnostic with `code`.
-fn elaboration(body: &str, code: u32) -> String {
-    let diags = check(body);
+/// in order) of the single diagnostic with `code`, drawn from an
+/// already-computed diagnostic set so a caller that also asserts on other codes
+/// does not recompile the same source.
+fn elaboration_of(diags: &[tsz_checker::diagnostics::Diagnostic], code: u32) -> String {
     let matching: Vec<_> = diags.iter().filter(|d| d.code == code).collect();
     assert_eq!(
         matching.len(),
@@ -79,45 +93,128 @@ fn elaboration(body: &str, code: u32) -> String {
     lines.join("\n")
 }
 
-/// Sync `using` whose initializer lacks `[Symbol.dispose]`: the TS2850 top line
-/// keeps its wording and gains the relation-derived missing-property tail that
-/// `tsc` attaches via `checkTypeAssignableTo(initType, Disposable)`.
+/// [`elaboration_of`] over a freshly checked `body`.
+fn elaboration(body: &str, code: u32) -> String {
+    elaboration_of(&check(body), code)
+}
+
+/// Sync `using` whose initializer is a single plain object type missing
+/// `[Symbol.dispose]` entirely: `tsc` falls through to the ordinary
+/// assignability failure against `Disposable` and reports the missing-property
+/// **TS2741 as the primary diagnostic** — there is no TS2850 at all (#16872).
+/// The `TS2850` "wrong kind of thing" wording is reserved for a source that is
+/// not a single object missing the member (a primitive, a composite type, or a
+/// present-but-incompatible member); see the rows below.
+///
+/// The rows vary the declaration form (object literal / `declare const` object
+/// / class instance / interface) and the binder/member names, so the rule is
+/// pinned to the *failure mode* (single object missing the member) and to a
+/// rendered source type that echoes the input — never a hard-coded spelling
+/// (CLAUDE.md anti-hardcoding gate). Each rendered type name is carried in the
+/// row so the message assertion cannot silently drift to a fixed literal.
 #[test]
-fn using_missing_dispose_attaches_symbol_missing_tail() {
-    let text = elaboration(
+fn using_missing_dispose_reports_ts2741_primary_not_ts2850() {
+    // (source, rendered source-type name in the TS2741 message)
+    let rows = [
+        (
+            "declare const x: { foo: number };\nfunction f() { using r = x; }",
+            "{ foo: number; }",
+        ),
+        (
+            "declare const handle: { resourceId: string };\nfunction open() { using h = handle; }",
+            "{ resourceId: string; }",
+        ),
+        (
+            "function f() { using r = { notDispose() {} }; }",
+            "{ notDispose(): void; }",
+        ),
+        (
+            "class Handle { open() {} }\nfunction f() { using r = new Handle(); }",
+            "Handle",
+        ),
+        (
+            "interface Resource { id: string }\ndeclare const res: Resource;\nfunction f() { using r = res; }",
+            "Resource",
+        ),
+    ];
+    for (body, source_ty) in rows {
+        let diags = check(body);
+        assert!(
+            !diags.iter().any(|d| d.code == 2850),
+            "a single object missing `[Symbol.dispose]` must NOT raise TS2850 for {body:?}, got: {:?}",
+            diags.iter().map(|d| d.code).collect::<Vec<_>>()
+        );
+        assert_eq!(
+            elaboration_of(&diags, 2741),
+            format!(
+                "Property '[Symbol.dispose]' is missing in type '{source_ty}' but required \
+                 in type 'Disposable'."
+            ),
+            "TS2741 message for {body:?}",
+        );
+    }
+}
+
+/// A *composite* source (a union whose constituents each miss the member) is
+/// NOT a single object type, so `tsc` keeps the TS2850 head and nests the
+/// relation's missing-property reason beneath it as the tail — the opposite
+/// choice from the single-object rows above. This is the row that proves the
+/// split is by source shape, not merely "is the member missing".
+#[test]
+fn using_missing_dispose_union_source_keeps_ts2850_with_tail() {
+    let diags = check(
         r#"
-declare const x: { foo: number };
-function f() { using r = x; }
+declare const u: { foo: number } | { bar: string };
+function f() { using r = u; }
 "#,
-        2850,
     );
     assert_eq!(
-        text,
+        elaboration_of(&diags, 2850),
         "The initializer of a 'using' declaration must be either an object with a \
          '[Symbol.dispose]()' method, or be 'null' or 'undefined'.\n\
          Property '[Symbol.dispose]' is missing in type '{ foo: number; }' but required \
          in type 'Disposable'.",
     );
+    // The union keeps TS2850 as its primary — the missing-property line only
+    // ever appears in the tail, never as the leading diagnostic.
+    assert!(
+        !diags.iter().any(|d| d.code == 2741),
+        "union source must not surface TS2741 as a top-level diagnostic, got: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
 }
 
-/// Same rule, different source member name — the tail must echo the renamed
-/// source type, never a hard-coded `{ foo: number; }`.
+/// A primitive initializer is the "wrong kind of thing": `tsc` reports the flat
+/// TS2850 with **no** elaboration tail (the generic
+/// `Type 'number' is not assignable to type 'Disposable'.` frame is replaced by
+/// the TS2850 head and leaves nothing behind). Regression against re-attaching
+/// that redundant whole-type line as a tail.
 #[test]
-fn using_missing_dispose_tail_is_member_name_independent() {
-    let text = elaboration(
-        r#"
-declare const handle: { resourceId: string };
-function open() { using h = handle; }
-"#,
-        2850,
-    );
-    assert_eq!(
-        text,
-        "The initializer of a 'using' declaration must be either an object with a \
-         '[Symbol.dispose]()' method, or be 'null' or 'undefined'.\n\
-         Property '[Symbol.dispose]' is missing in type '{ resourceId: string; }' but \
-         required in type 'Disposable'.",
-    );
+fn using_primitive_initializer_reports_flat_ts2850() {
+    for body in [
+        "function f() { using r = 42; }",
+        r#"function f() { using r = "handle"; }"#,
+    ] {
+        let diags = check(body);
+        let ts2850 = diags
+            .iter()
+            .find(|d| d.code == 2850)
+            .unwrap_or_else(|| panic!("expected TS2850 for {body:?}"));
+        assert!(
+            ts2850.related_information.is_empty(),
+            "a primitive `using` initializer must carry no tail, got: {:?}",
+            ts2850
+                .related_information
+                .iter()
+                .map(|i| i.message_text.clone())
+                .collect::<Vec<_>>()
+        );
+        assert!(
+            !diags.iter().any(|d| d.code == 2741),
+            "a primitive initializer must not surface TS2741, got: {:?}",
+            diags.iter().map(|d| d.code).collect::<Vec<_>>()
+        );
+    }
 }
 
 /// `await using` (TS2851) carries NO tail in `tsc`, so the sync-only routing
@@ -466,7 +563,10 @@ function f() { using r = { [Symbol.dispose](x: number) {}, extra: 1 }; }
 /// A third guard case alongside the two above: the freshness fix only stops
 /// excess PROPERTIES from failing the relation -- it must not weaken presence
 /// checking. A fresh object literal with no dispose member at all is still
-/// rejected, same as the non-fresh `declare const` shape already covered above.
+/// rejected. Per #16872 the code is TS2741 (single object missing the member),
+/// not TS2850 — the error still fires, only its code changed. The full
+/// TS2741-vs-TS2850 split is asserted by
+/// `using_fresh_literal_missing_dispose_reports_ts2741` and its siblings above.
 #[test]
 fn using_fresh_literal_missing_dispose_still_errors() {
     let diags = check(
@@ -475,8 +575,13 @@ function f() { using r = { notDispose() {} }; }
 "#,
     );
     assert!(
-        diags.iter().any(|d| d.code == 2850),
-        "a fresh literal with no dispose member must still raise TS2850, got: {:?}",
+        diags.iter().any(|d| d.code == 2741),
+        "a fresh literal with no dispose member must still be rejected (now TS2741), got: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+    assert!(
+        !diags.iter().any(|d| d.code == 2850),
+        "the single-object missing-member row no longer uses TS2850, got: {:?}",
         diags.iter().map(|d| d.code).collect::<Vec<_>>()
     );
 }

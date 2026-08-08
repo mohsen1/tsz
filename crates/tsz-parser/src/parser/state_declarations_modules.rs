@@ -1358,10 +1358,5 @@ impl ParserState {
         self.parse_import_or_export_specifier(syntax_kind_ext::IMPORT_SPECIFIER)
     }
 
-    // Export string-local-name TS1003 was removed from the parser (#16702): it is
-    // a checker diagnostic, owned by
-    // `CheckerState::check_export_declaration_module_export_names`. See the call
-    // site in `parse_export_named` (state_declarations_exports.rs) for the rule.
-
     // Export declarations and control flow statements → state_declarations_exports.rs
 }

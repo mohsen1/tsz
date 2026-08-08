@@ -170,6 +170,21 @@ impl<'a> CheckerState<'a> {
         self.error_at_node(node_idx, &message, code);
     }
 
+    /// [`Self::error_at_node_msg`], with `related_information` already
+    /// attached via [`Self::error_at_node_with_related`].
+    pub(crate) fn error_at_node_msg_with_related(
+        &mut self,
+        node_idx: NodeIndex,
+        code: u32,
+        args: &[&str],
+        related: Vec<crate::diagnostics::DiagnosticRelatedInformation>,
+    ) {
+        use tsz_common::diagnostics::get_message_template;
+        let template = get_message_template(code).unwrap_or("Unexpected checker diagnostic code.");
+        let message = format_message(template, args);
+        self.error_at_node_with_related(node_idx, &message, code, related);
+    }
+
     /// Get the source text for a node by extracting from the source file text.
     pub(crate) fn get_source_text_for_node(&self, node_idx: NodeIndex) -> String {
         if let Some((start, end)) = self.get_node_span(node_idx)

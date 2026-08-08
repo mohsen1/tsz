@@ -4,7 +4,8 @@
 
 use tsz_checker::context::CheckerOptions;
 use tsz_checker::test_utils::{
-    check_source, check_source_code_messages as get_diagnostics, diagnostic_code_messages,
+    check_source, check_source_code_messages as get_diagnostics, check_source_diagnostics,
+    diagnostic_code_messages,
 };
 
 fn has_error_with_code(source: &str, code: u32) -> bool {
@@ -365,6 +366,104 @@ class D extends C {
         "TS2411 must render the two-level-inherited computed name as \
          `[\"deep\"]`, got: {}",
         ts2411.1
+    );
+}
+
+// =========================================================================
+// Inherited member vs index signature: `TS2728` "declared here" pointer
+//
+// tsc reports this TS2411 at the index signature the DERIVED type owns, not
+// at the property (owned by a base) -- so it attaches a `'{0}' is declared
+// here.` (TS2728) related-information entry pointing back at the base
+// declaration. The own-member TS2411 path needs no such pointer: the report
+// site already IS the declaration.
+// =========================================================================
+
+#[test]
+fn test_ts2411_inherited_computed_name_has_declared_here_pointer() {
+    let source = r#"
+class Foo { x: number = 0; }
+class Foo2 { x: number = 0; y: number = 0; }
+class C {
+    get ["get1"]() { return new Foo(); }
+}
+class D extends C {
+    [s: string]: Foo2;
+}
+"#;
+    let diagnostics = check_source_diagnostics(source);
+    let ts2411 = diagnostics
+        .iter()
+        .find(|d| d.code == 2411)
+        .expect("expected TS2411 for inherited computed-name getter vs string index");
+    let declared_here = ts2411
+        .related_information
+        .iter()
+        .find(|r| r.code == 2728)
+        .expect("expected a TS2728 'declared here' pointer on the inherited TS2411");
+    assert!(
+        declared_here.is_location_pointer(),
+        "the TS2728 entry must be a cross-location pointer, not an elaboration chain link"
+    );
+    assert!(
+        declared_here.message_text.contains("[\"get1\"]"),
+        "TS2728 must name the property with tsc's verbatim computed-name text, got: {}",
+        declared_here.message_text
+    );
+}
+
+#[test]
+fn test_ts2411_inherited_plain_identifier_has_declared_here_pointer() {
+    // Adjacent case: the pointer is a property of being INHERITED, not of
+    // having a computed name -- a plain identifier gets it too.
+    let source = r#"
+class Foo { x: number = 0; }
+class Foo2 { x: number = 0; y: number = 0; }
+class C {
+    get plainGetter() { return new Foo(); }
+}
+class D extends C {
+    [s: string]: Foo2;
+}
+"#;
+    let diagnostics = check_source_diagnostics(source);
+    let ts2411 = diagnostics
+        .iter()
+        .find(|d| d.code == 2411)
+        .expect("expected TS2411 for inherited plain getter vs string index");
+    let declared_here = ts2411
+        .related_information
+        .iter()
+        .find(|r| r.code == 2728)
+        .expect("expected a TS2728 'declared here' pointer on the inherited TS2411");
+    assert!(
+        declared_here.message_text.contains("'plainGetter'"),
+        "TS2728 must name the plain inherited identifier without brackets, got: {}",
+        declared_here.message_text
+    );
+}
+
+#[test]
+fn test_ts2411_own_member_has_no_declared_here_pointer() {
+    // Negative control: an OWN-member TS2411 (no inheritance involved) must
+    // NOT gain a TS2728 pointer -- the report site already is the
+    // declaration, so tsc attaches no related information there.
+    let source = r#"
+class Foo { x: number = 0; }
+interface I {
+    [s: string]: Foo;
+    ["own1"]: number;
+}
+"#;
+    let diagnostics = check_source_diagnostics(source);
+    let ts2411 = diagnostics
+        .iter()
+        .find(|d| d.code == 2411)
+        .expect("expected TS2411 for own computed-name member vs string index");
+    assert!(
+        !ts2411.related_information.iter().any(|r| r.code == 2728),
+        "an own-member TS2411 must carry no TS2728 pointer, got: {:?}",
+        ts2411.related_information
     );
 }
 
@@ -1007,6 +1106,244 @@ declare const m: M;
     assert!(
         has_error_with_code(source, 2411),
         "a well-known symbol key has a fixed identity and is not late-bound: {:?}",
+        get_diagnostics(source)
+    );
+}
+
+// =========================================================================
+// Regression: a numeric/string enum unioned with its own primitive absorbs
+// into that primitive before the index-signature check runs, matching tsc's
+// `removeRedundantLiteralTypes` (which sweeps an enum member's LiteralType
+// the same as any other literal). Belt-and-suspenders: the TS2411 check site
+// also widens through `evaluate_type_with_env` before decomposing the union
+// (see `property_type_assignable_to_index_type`), so the fix holds even if a
+// future caller builds the union some other way. #16866 /
+// unionSubtypeIfEveryConstituentTypeIsSubtype.ts.
+// =========================================================================
+
+#[test]
+fn ts2411_numeric_enum_unioned_with_number_absorbs_against_unrelated_enum_index() {
+    // `e | number` collapses to `number` before this check runs, so it is
+    // never compared against `E2` as a nominal enum member — matches tsc
+    // 7.0.2 exactly (byte-for-byte on the real conformance fixture).
+    let source = r#"
+enum e { e1, e2 }
+enum E2 { A }
+interface I14 {
+    [x: string]: E2;
+    foo2: e | number;
+}
+"#;
+    assert!(
+        !has_error_with_code(source, 2411),
+        "e | number must absorb into number and not be checked against the unrelated enum E2: {:?}",
+        get_diagnostics(source)
+    );
+}
+
+#[test]
+fn enum_member_absorbed_into_number_in_union_matches_numeric_enum_index() {
+    // A union constituent that is a subtype of a sibling constituent is
+    // absorbed into it when tsc constructs the union type -- `Suit | number`
+    // is the type `number`, not a two-member union (confirmed against tsc
+    // 7.0.2: `let s: string = suitOrNumber` reports "Type 'number' is not
+    // assignable to type 'string'", not "Type 'Suit | number'"). A property
+    // of that union is therefore checked against a numeric-enum index the
+    // same way a bare `number` property is -- no TS2411.
+    let source = r#"
+enum Suit { Hearts, Spades }
+enum Rank { Ace }
+interface Hand {
+    [x: string]: Rank;
+    card: Suit | number;
+}
+"#;
+    assert!(
+        !has_error_with_code(source, 2411),
+        "`Suit | number` collapses to `number`, which a numeric enum index accepts: {:?}",
+        get_diagnostics(source)
+    );
+}
+
+#[test]
+fn ts2411_string_enum_unioned_with_string_still_errors_against_unrelated_enum_index() {
+    // Negative control, oracle-verified against tsc 7.0.2: `s | string` DOES
+    // absorb into plain `string` (same union-construction rule as the
+    // numeric case), but unlike numeric enums, tsc has no "open string enum"
+    // exception — a bare `string` is never assignable to ANY string enum, so
+    // the diagnostic still fires. The message text itself proves absorption
+    // happened: it names the collapsed type `'string'`, not the enum `'s'`.
+    let source = r#"
+enum s { a = "a", b = "b" }
+enum S2 { X = "x" }
+interface I {
+    [x: string]: S2;
+    foo2: s | string;
+}
+"#;
+    let diagnostics = get_diagnostics(source);
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2411 && message.contains("type 'string'") && message.contains("'S2'")
+        }),
+        "s | string must absorb into string (proven by the message naming 'string', not 's') \
+         and still fail against the unrelated string enum S2: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn ts2411_specific_numeric_enum_member_unioned_with_number_absorbs() {
+    // Adjacent case: a specific member (`e.e1`), not the whole enum type,
+    // must absorb the same way.
+    let source = r#"
+enum e { e1, e2 }
+enum E2 { A }
+interface I {
+    [x: string]: E2;
+    foo2: e.e1 | number;
+}
+"#;
+    assert!(
+        !has_error_with_code(source, 2411),
+        "e.e1 | number must absorb into number: {:?}",
+        get_diagnostics(source)
+    );
+}
+
+#[test]
+fn ts2411_renamed_numeric_enum_unioned_with_number_absorbs() {
+    // Adjacent case: renamed binders prove the rule is structural, not tied
+    // to a specific identifier.
+    let source = r#"
+enum Direction { Up, Down }
+enum Suit { Clubs }
+interface Board {
+    [x: string]: Suit;
+    cell: Direction | number;
+}
+"#;
+    assert!(
+        !has_error_with_code(source, 2411),
+        "Direction | number must absorb into number regardless of binder names: {:?}",
+        get_diagnostics(source)
+    );
+}
+
+#[test]
+fn ts2411_numeric_enum_alias_wrapper_unioned_with_number_absorbs() {
+    // Adjacent case: alias/wrapper — the union is written through a type
+    // alias rather than inline in the property; the alias resolves to the
+    // same underlying union before this check runs.
+    let source = r#"
+enum e { e1, e2 }
+enum E2 { A }
+type EOrNumber = e | number;
+interface I {
+    [x: string]: E2;
+    foo2: EOrNumber;
+}
+"#;
+    assert!(
+        !has_error_with_code(source, 2411),
+        "an aliased e | number must still absorb into number: {:?}",
+        get_diagnostics(source)
+    );
+}
+
+#[test]
+fn ts2411_string_literal_still_errors_against_unrelated_numeric_enum_index() {
+    // Negative control: `foo: string | number` in the same interface must
+    // still error — `string` is not absorbed, and `number` alone is not
+    // structurally assignable to the unrelated enum `E2` (matches tsc).
+    let source = r#"
+enum E2 { A }
+interface I14 {
+    [x: string]: E2;
+    foo: string | number;
+}
+"#;
+    assert!(
+        has_error_with_code(source, 2411),
+        "string | number must still be rejected against the unrelated enum E2: {:?}",
+        get_diagnostics(source)
+    );
+}
+
+#[test]
+fn distinct_enum_union_without_number_sibling_still_reports_ts2411() {
+    // Negative control: without a `number` (or matching-enum) sibling to
+    // absorb into, a different enum's member type is still not assignable to
+    // this index's enum -- the widen step must not silently accept every
+    // enum union.
+    let source = r#"
+enum Suit { Hearts, Spades }
+enum Rank { Ace }
+enum Season { Summer }
+interface Hand {
+    [x: string]: Rank;
+    card: Suit | Season;
+}
+"#;
+    assert!(
+        has_error_with_code(source, 2411),
+        "`Suit | Season` has no `number` sibling to collapse into, and neither is `Rank`: {:?}",
+        get_diagnostics(source)
+    );
+}
+
+#[test]
+fn ts2411_distinct_numeric_enums_without_a_bare_number_stay_nominal() {
+    // Negative control: without a co-present bare `number`, two distinct
+    // numeric enums do NOT absorb into each other — nominal typing holds.
+    let source = r#"
+enum e { e1, e2 }
+enum E2 { A }
+interface I {
+    [x: string]: E2;
+    foo2: e;
+}
+"#;
+    assert!(
+        has_error_with_code(source, 2411),
+        "e alone (no bare number present) must stay nominal and fail against E2: {:?}",
+        get_diagnostics(source)
+    );
+}
+
+#[test]
+fn numeric_literal_absorbed_into_number_in_union_matches_numeric_enum_index_renamed() {
+    // Same shape as the enum case above but with a numeric literal type and
+    // renamed binders, confirming the widen step is not keyed to a specific
+    // enum/interface/property name.
+    let source = r#"
+enum Level { Low, Mid, High }
+interface Config {
+    [k: string]: Level;
+    threshold: 1 | number;
+}
+"#;
+    assert!(
+        !has_error_with_code(source, 2411),
+        "`1 | number` collapses to `number`, matching the numeric enum index: {:?}",
+        get_diagnostics(source)
+    );
+}
+
+#[test]
+fn union_still_reports_ts2411_when_a_constituent_genuinely_mismatches() {
+    // Positive control: the widen step must not blanket-suppress TS2411 -- a
+    // union that still contains a genuinely incompatible constituent after
+    // widening (`string`, which has no relation to a `number` index) keeps
+    // reporting.
+    let source = r#"
+interface Bag {
+    [k: string]: number;
+    label: string | number;
+}
+"#;
+    assert!(
+        has_error_with_code(source, 2411),
+        "`string | number` still has `string`, incompatible with the `number` index: {:?}",
         get_diagnostics(source)
     );
 }

@@ -1,3 +1,6 @@
+use crate::diagnostics::{
+    Diagnostic, DiagnosticRelatedInformation, diagnostic_codes, diagnostic_messages, format_message,
+};
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -14,10 +17,60 @@ impl<'a> CheckerState<'a> {
         iface_node: NodeIndex,
         prop_name: &str,
     ) -> Option<String> {
-        let mut visited = std::collections::HashSet::new();
-        let name_idx =
-            self.find_member_name_node_in_hierarchy(iface_node, prop_name, false, &mut visited)?;
+        let name_idx = self.inherited_member_declaration_node(iface_node, prop_name)?;
         self.get_member_name_text(name_idx)
+    }
+
+    /// The name node of the base class/interface member that introduced an
+    /// inherited property, or `None` when no base declaration could be
+    /// located (e.g. the property comes from a lib type outside this arena).
+    /// Shared by [`Self::inherited_member_display_name`] (text) and
+    /// [`Self::inherited_member_declared_here_related`] (the `TS2728`
+    /// cross-location pointer) so both walk the heritage chain once per
+    /// property, not twice.
+    pub(crate) fn inherited_member_declaration_node(
+        &mut self,
+        iface_node: NodeIndex,
+        prop_name: &str,
+    ) -> Option<NodeIndex> {
+        let mut visited = std::collections::HashSet::new();
+        self.find_member_name_node_in_hierarchy(iface_node, prop_name, false, &mut visited)
+    }
+
+    /// tsc's `declarationNameToString`-anchored `'{0}' is declared here.`
+    /// (`TS2728`) pointer for an inherited property's `TS2411` diagnostic.
+    ///
+    /// tsc reports TS2411 at the index signature (which the derived type
+    /// owns), not at the property (which a base type owns) — so unlike the
+    /// own-member TS2411 case, the message alone does not locate the
+    /// property's declaration, and tsc attaches this related-information
+    /// entry to point at it. Declines (empty vec, not a guess) when the
+    /// declaration node can't be resolved or has no span, leaving output
+    /// exactly as it was rather than fabricating a pointer.
+    pub(crate) fn inherited_member_declared_here_related(
+        &mut self,
+        decl_node: Option<NodeIndex>,
+        display_name: &str,
+    ) -> Vec<DiagnosticRelatedInformation> {
+        let Some(decl_node) = decl_node else {
+            return Vec::new();
+        };
+        let Some((start, end)) = self.get_node_span(decl_node) else {
+            return Vec::new();
+        };
+        let (start, length) =
+            self.normalized_anchor_span(decl_node, start, end.saturating_sub(start));
+        let file = self
+            .source_file_data_for_node(decl_node)
+            .map(|sf| sf.file_name.clone())
+            .unwrap_or_else(|| self.ctx.file_name.clone());
+        vec![Diagnostic::related_pointer(
+            diagnostic_codes::IS_DECLARED_HERE,
+            file,
+            start,
+            length,
+            format_message(diagnostic_messages::IS_DECLARED_HERE, &[display_name]),
+        )]
     }
 
     /// Recursive helper for [`Self::inherited_member_display_name`]. When
