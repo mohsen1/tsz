@@ -907,7 +907,6 @@ impl<'a> CheckerState<'a> {
             let is_iterable =
                 self.check_destructuring_iterability(left_idx, right_type, NodeIndex::NONE);
             is_not_iterable = !is_iterable;
-            self.check_array_destructuring_rest_position(left_idx);
             if !is_not_iterable {
                 self.check_tuple_destructuring_bounds(left_idx, right_type);
             }
@@ -917,6 +916,7 @@ impl<'a> CheckerState<'a> {
         if is_destructuring {
             self.check_rest_element_initializer(left_idx);
             self.check_rest_element_trailing_comma(left_idx);
+            self.check_destructuring_rest_position(left_idx);
         }
 
         // tsc suppresses TS2322 alongside TS2540 (readonly named property writes)
@@ -1570,37 +1570,74 @@ impl<'a> CheckerState<'a> {
             .is_some_and(|bin| bin.operator_token == SyntaxKind::EqualsToken as u16)
     }
 
-    /// TS2462: A rest element in array destructuring must be the last element.
+    /// TS2462: A rest element must be last in a destructuring pattern.
     ///
-    /// Enforce syntax for array destructuring assignment targets.
-    fn check_array_destructuring_rest_position(&mut self, left_idx: NodeIndex) {
-        let Some(left_node) = self.ctx.arena.get(left_idx) else {
-            return;
-        };
-        if left_node.kind != syntax_kind_ext::ARRAY_LITERAL_EXPRESSION {
-            return;
-        }
-        let Some(array_lit) = self.ctx.arena.get_literal_expr(left_node) else {
+    /// Enforces the "rest must be last" rule for both array (`[...a, b] = x`)
+    /// and object (`({ ...a, b } = x)`) destructuring *assignment* targets, at
+    /// every nesting level. The parser owns the binding-pattern form
+    /// (`let { ...a, b } = x`, enforced in `type_checking::core`); assignment
+    /// targets parse as plain array/object literals — where a spread is legal
+    /// expression syntax anywhere — so the pattern-context rule is only
+    /// enforceable here. Array rest parses as `SpreadElement`, object rest as
+    /// `SpreadAssignment`; either one is illegal unless it is the final element.
+    ///
+    /// Mirrors `check_rest_element_trailing_comma`'s recursion so a mis-placed
+    /// rest is reported inside nested targets (`[x, { ...a, y }] = z`,
+    /// `({ p: [...a, b] } = z)`, `[a, [...b, x]] = z`), matching tsc. Anchored
+    /// at the offending spread element.
+    fn check_destructuring_rest_position(&mut self, node_idx: NodeIndex) {
+        let Some(node) = self.ctx.arena.get(node_idx) else {
             return;
         };
 
-        let elements_len = array_lit.elements.nodes.len();
-        if elements_len == 0 {
+        // A `pattern = default` assignment target: the destructuring pattern is
+        // on the left; the right side is a value expression, not a target.
+        if let Some(bin) = self.ctx.arena.get_binary_expr(node)
+            && bin.operator_token == SyntaxKind::EqualsToken as u16
+        {
+            self.check_destructuring_rest_position(bin.left);
             return;
         }
-        for (i, &element_idx) in array_lit.elements.nodes.iter().enumerate() {
-            if i + 1 >= elements_len {
-                break;
-            }
+
+        let is_array = node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION;
+        let is_object = node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION;
+        if !is_array && !is_object {
+            return;
+        }
+        let Some(lit) = self.ctx.arena.get_literal_expr(node) else {
+            return;
+        };
+
+        let elements: Vec<NodeIndex> = lit.elements.nodes.clone();
+        let last = elements.len().saturating_sub(1);
+        for (i, &element_idx) in elements.iter().enumerate() {
             let Some(element_node) = self.ctx.arena.get(element_idx) else {
                 continue;
             };
-            if element_node.kind == syntax_kind_ext::SPREAD_ELEMENT {
+            let is_rest = element_node.kind == syntax_kind_ext::SPREAD_ELEMENT
+                || element_node.kind == syntax_kind_ext::SPREAD_ASSIGNMENT;
+            if is_rest && i < last {
                 self.error_at_node_msg(
                     element_idx,
                     diagnostic_codes::A_REST_ELEMENT_MUST_BE_LAST_IN_A_DESTRUCTURING_PATTERN,
                     &[],
                 );
+            }
+
+            // Recurse into nested destructuring targets: object property values,
+            // rest operands, and nested array/object patterns (the latter reach
+            // the array/object branch above; a `= default` element unwraps via
+            // the binary-`=` handling at the top of this method).
+            if element_node.kind == syntax_kind_ext::PROPERTY_ASSIGNMENT {
+                if let Some(prop) = self.ctx.arena.get_property_assignment(element_node) {
+                    self.check_destructuring_rest_position(prop.initializer);
+                }
+            } else if is_rest {
+                if let Some(spread) = self.ctx.arena.get_spread(element_node) {
+                    self.check_destructuring_rest_position(spread.expression);
+                }
+            } else {
+                self.check_destructuring_rest_position(element_idx);
             }
         }
     }
