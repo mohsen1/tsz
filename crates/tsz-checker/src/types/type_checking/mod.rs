@@ -41,6 +41,7 @@ mod type_alias_recursion_patterns;
 mod type_alias_variance;
 mod unused;
 mod using_declaration_placement;
+mod using_disposable;
 
 /// Release the type-alias resolution scratch pool owned by this module tree.
 /// Called at independent-compilation boundaries (batch mode).
