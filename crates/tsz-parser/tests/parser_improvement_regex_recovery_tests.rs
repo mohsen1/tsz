@@ -1066,3 +1066,78 @@ fn test_non_modifier_group_forms_are_unaffected() {
         );
     }
 }
+
+// Regression for the `regExpWithOpenBracketInCharClass` / `regularExpressionScanning`
+// conformance family: under the `v` (unicodeSets) flag, an unescaped `[` inside a
+// character class opens a NESTED class that needs its own closing `]`, so
+// `missing_regex_closing_token`'s balance check must track class nesting DEPTH
+// under `v`, not a single in-class boolean. Without `v`, a nested `[` is an
+// ordinary class member and never needs its own close.
+#[test]
+fn test_unclosed_nested_class_under_unicode_sets_flag_reports_ts1005() {
+    // `[[]` under `v`: outer `[` opens, inner `[` opens a nested class, the
+    // lone `]` closes only the inner one — the outer class is never closed.
+    assert_eq!(
+        regex_codes("const r = /[[]/v;", tsz_common::ScriptTarget::ES2024),
+        vec![diagnostic_codes::EXPECTED],
+        "outer class left open by a nested class must report ']' expected"
+    );
+}
+
+#[test]
+fn test_same_bracket_shape_without_v_flag_is_not_a_nested_class() {
+    // Same `[[]` byte shape, but without `v` a nested `[` is just an ordinary
+    // class member: the single `]` closes the (only) class and the regex is
+    // well-formed. `u` alone (no `v`) must behave the same way.
+    for witness in ["const r = /[[]/;", "const r = /[[]/u;"] {
+        assert_eq!(
+            regex_codes(witness, tsz_common::ScriptTarget::ES2024),
+            Vec::<u32>::new(),
+            "{witness}: nested-looking `[` without `v` must not require a second `]`"
+        );
+    }
+}
+
+#[test]
+fn test_balanced_nested_class_under_unicode_sets_flag_is_clean() {
+    // `[[]]` under `v`: outer opens, inner opens and closes, outer closes.
+    // Fully balanced — no missing-token diagnostic.
+    assert_eq!(
+        regex_codes("const r = /[[]]/v;", tsz_common::ScriptTarget::ES2024),
+        Vec::<u32>::new(),
+        "fully balanced nested class under v must stay clean"
+    );
+}
+
+#[test]
+fn test_deeply_nested_unclosed_class_under_unicode_sets_flag_reports_ts1005() {
+    // `[[[]]` under `v`: three opens, two closes — one level (the outermost)
+    // is left open. Depth tracking, not a boolean, is required to see this.
+    assert_eq!(
+        regex_codes("const r = /[[[]]/v;", tsz_common::ScriptTarget::ES2024),
+        vec![diagnostic_codes::EXPECTED],
+        "one unclosed level in a deeper nest must still report ']' expected"
+    );
+    // `[[[]]]` under `v`: three opens, three closes — fully balanced.
+    assert_eq!(
+        regex_codes("const r = /[[[]]]/v;", tsz_common::ScriptTarget::ES2024),
+        Vec::<u32>::new(),
+        "a fully balanced deeper nest under v must stay clean"
+    );
+}
+
+#[test]
+fn test_realistic_class_set_expression_does_not_falsely_report_unclosed_class() {
+    // A real-world `unicodeSets` class-set expression (from the
+    // `regularExpressionScanning` conformance fixture) with heavy nesting and
+    // subtraction/intersection operators. It has its own set of dedicated
+    // class-set diagnostics (`--`/`&&` operand errors), but the OUTER class
+    // balance itself is correct and must not additionally trigger the
+    // generic `']' expected` fallback.
+    let source = r"const r = /[a--b[--][\d++[]]&&[[&0-9--]&&[\p{L}]--\P{L}-_-]]&&&\q{foo}[0---9][&&q&&&\q{bar}&&]/v;";
+    assert!(
+        !regex_codes(source, tsz_common::ScriptTarget::ES2024)
+            .contains(&diagnostic_codes::EXPECTED),
+        "balanced outer class in a heavily-nested class-set expression must not report ']' expected"
+    );
+}
