@@ -19,8 +19,14 @@ impl ParserState {
         method_saved_flags: u32,
     ) -> NodeIndex {
         // TS1031: 'declare' modifier cannot appear on class elements of this
-        // kind (methods cannot be declared, only properties can).
-        if mods.has_declare {
+        // kind (methods cannot be declared, only properties can). Suppressed
+        // when a `static`/`async` ordering conflict or an `async`+`declare`
+        // ambient conflict already fired while scanning modifiers — tsc's
+        // grammar walk reports only the first problem found in source order,
+        // so a third modifier joining an already-conflicting pair (e.g.
+        // `declare async static m()`, or `async static declare m()`) must not
+        // add this as a second diagnostic.
+        if mods.has_declare && !mods.async_declare_order_conflict_reported {
             self.emit_declare_on_non_property_error(&mods.modifiers);
         }
         // TS1275: 'accessor' modifier can only appear on a property declaration.

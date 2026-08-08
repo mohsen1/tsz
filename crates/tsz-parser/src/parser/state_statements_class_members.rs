@@ -40,6 +40,14 @@ pub(crate) struct ClassMemberModifierSet {
     /// legal to report only on a property, and the member kind isn't known
     /// until after modifier scanning finishes. See `construct_class_member`.
     pub(crate) declare_before_async: bool,
+    /// `true` when a `static`/`async` ordering conflict (TS1029) or an
+    /// `async`+`declare` ambient conflict (TS1040) was already reported while
+    /// scanning modifiers. tsc's grammar-modifier walk reports only the first
+    /// problem found in source order, then stops — so when this is set, a
+    /// method/accessor/constructor construction path must not additionally
+    /// report `declare`-invalid-member-kind (TS1031): tsc's walk would have
+    /// already stopped at the earlier conflict before ever reaching that check.
+    pub(crate) async_declare_order_conflict_reported: bool,
     /// Diagnostic-list length captured just before modifier parsing, used to
     /// selectively roll back modifier-ordering diagnostics when a static block
     /// is discovered after modifiers were already parsed.
@@ -47,8 +55,13 @@ pub(crate) struct ClassMemberModifierSet {
 }
 
 impl ParserState {
-    /// Parse class member modifiers (static, public, private, protected, readonly, abstract, override)
-    pub(crate) fn parse_class_member_modifiers(&mut self) -> Option<NodeList> {
+    /// Parse class member modifiers (static, public, private, protected, readonly, abstract, override).
+    ///
+    /// Returns the modifier list plus whether a `static`/`async` ordering
+    /// conflict or an `async`+`declare` ambient conflict was already reported
+    /// during the scan — callers use this to suppress a redundant
+    /// declare-invalid-member-kind diagnostic once the member kind is known.
+    pub(crate) fn parse_class_member_modifiers(&mut self) -> (Option<NodeList>, bool) {
         let mut modifiers = Vec::new();
 
         // State tracking for TS1028 (duplicates) and TS1029 (ordering)
@@ -64,6 +77,16 @@ impl ParserState {
         let mut seen_accessor = false;
         let mut seen_async = false;
         let mut seen_declare = false;
+        // Set once a `static`/`async` ordering conflict (TS1029) or an
+        // `async`+`declare` ambient conflict (TS1040) has already been
+        // reported for this member. tsc's grammar-modifier walk reports only
+        // the FIRST problem found while scanning source order, then stops —
+        // so a third modifier (e.g. `static`) joining an already-conflicting
+        // `declare`/`async` pair must not add a second diagnostic, and a
+        // `declare` that trails an already-reported `static`/`async`
+        // ordering conflict must not add its own ambient-conflict diagnostic
+        // (or, later, the declare-invalid-member-kind TS1031) on top of it.
+        let mut async_declare_order_conflict_reported = false;
 
         loop {
             if self.should_stop_class_member_modifier() {
@@ -143,7 +166,12 @@ impl ParserState {
                 // TS1029: static must come after accessibility, before certain others.
                 // `static` with `abstract` is illegal in either order; the checker
                 // emits TS1243 for that pair, so do not also emit an ordering error.
-                if seen_readonly || seen_override || seen_accessor || seen_async {
+                // The `async` reason is additionally suppressed once `declare` has
+                // already been seen: `declare async static m()` reports only TS1031
+                // (declare invalid on a method) in tsc, never this ordering error,
+                // because tsc's walk already stopped at `declare`.
+                let async_conflict = seen_async && !seen_declare;
+                if seen_readonly || seen_override || seen_accessor || async_conflict {
                     use tsz_common::diagnostics::diagnostic_codes;
                     let other = if seen_override {
                         "override"
@@ -158,6 +186,9 @@ impl ParserState {
                         &format!("'static' modifier must precede '{other}' modifier."),
                         diagnostic_codes::MODIFIER_MUST_PRECEDE_MODIFIER,
                     );
+                    if async_conflict && !seen_readonly && !seen_override && !seen_accessor {
+                        async_declare_order_conflict_reported = true;
+                    }
                 }
                 seen_static = true;
             } else if current_kind == SyntaxKind::AbstractKeyword {
@@ -366,13 +397,17 @@ impl ParserState {
                     // When `async` precedes `declare` (`async declare p`), the
                     // ambient conflict is only known once `declare` is reached, so
                     // — mirroring the `override` case above — report here rather
-                    // than at `async`'s own position.
-                    if seen_async {
+                    // than at `async`'s own position. Suppressed when a `static`
+                    // ordering conflict already fired earlier in this same scan
+                    // (e.g. `async static declare m()`): tsc's walk already
+                    // stopped at `static`, so `declare` is never reached at all.
+                    if seen_async && !async_declare_order_conflict_reported {
                         use tsz_common::diagnostics::diagnostic_codes;
                         self.parse_error_at_current_token(
                             "'async' modifier cannot be used in an ambient context.",
                             diagnostic_codes::MODIFIER_CANNOT_BE_USED_IN_AN_AMBIENT_CONTEXT,
                         );
+                        async_declare_order_conflict_reported = true;
                     }
                     // Auto-accessor properties cannot be `declare`d. When
                     // `accessor` precedes `declare`, tsc emits TS1243 on the
@@ -535,7 +570,10 @@ impl ParserState {
                     // Don't continue parsing modifiers (e.g., don't process 'export' in 'var export foo')
                     let var_modifier = self.arena.create_modifier(var_token, start_pos);
                     modifiers.push(var_modifier);
-                    return Some(Self::make_node_list(modifiers));
+                    return (
+                        Some(Self::make_node_list(modifiers)),
+                        async_declare_order_conflict_reported,
+                    );
                 }
                 // `in` / `out` are variance modifiers that only apply to type
                 // parameters (of class/interface/type alias). When they appear on a
@@ -557,11 +595,12 @@ impl ParserState {
             modifiers.push(modifier);
         }
 
-        if modifiers.is_empty() {
+        let modifier_list = if modifiers.is_empty() {
             None
         } else {
             Some(Self::make_node_list(modifiers))
-        }
+        };
+        (modifier_list, async_declare_order_conflict_reported)
     }
 
     /// Peeks past any remaining modifier keywords, without consuming them,
@@ -1046,7 +1085,8 @@ impl ParserState {
     ) -> ClassMemberModifierSet {
         let has_decorators = decorators.is_some();
         let diag_len_before_modifiers = self.parse_diagnostics.len();
-        let parsed_modifiers = self.parse_class_member_modifiers();
+        let (parsed_modifiers, async_declare_order_conflict_reported) =
+            self.parse_class_member_modifiers();
         let had_keyword_modifiers = parsed_modifiers.is_some();
 
         let mut combined = match (decorators, parsed_modifiers) {
@@ -1128,6 +1168,7 @@ impl ParserState {
             has_accessor,
             has_async,
             declare_before_async,
+            async_declare_order_conflict_reported,
             diag_len_before_modifiers,
         }
     }
