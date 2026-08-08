@@ -1514,8 +1514,15 @@ impl<'a> InferenceContext<'a> {
 
         let mut structurally_matched_sources = std::collections::HashSet::new();
         for &source_ty in resolved_sources.iter() {
-            // Skip source members that match fixed targets
-            if fixed.contains(&source_ty) {
+            // Skip source members that match a fixed target, by identity or tsc's
+            // number/string literal->base leg (`isTypeOrBaseIdenticalTo`); without
+            // the literal leg a literal source (`13`, `"12"`) would leak past the
+            // fixed `number`/`string` targets into a naked variable (#16948).
+            if crate::type_queries::source_is_or_base_identical_to_fixed(
+                self.interner,
+                source_ty,
+                |candidate| fixed.contains(&candidate),
+            ) {
                 continue;
             }
 
@@ -1530,8 +1537,12 @@ impl<'a> InferenceContext<'a> {
         let unmatched: Vec<TypeId> = resolved_sources
             .iter()
             .copied()
-            .filter(|source_ty| {
-                !fixed.contains(source_ty) && !structurally_matched_sources.contains(source_ty)
+            .filter(|&source_ty| {
+                !crate::type_queries::source_is_or_base_identical_to_fixed(
+                    self.interner,
+                    source_ty,
+                    |candidate| fixed.contains(&candidate),
+                ) && !structurally_matched_sources.contains(&source_ty)
             })
             .collect();
 

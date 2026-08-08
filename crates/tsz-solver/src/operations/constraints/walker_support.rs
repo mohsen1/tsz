@@ -73,6 +73,26 @@ impl<C: AssignabilityChecker> CallEvaluator<'_, C> {
         out.into()
     }
 
+    /// Whether a source union member should be treated as "matched" by the set of
+    /// fixed (placeholder-free) target union members during inference
+    /// partitioning, per tsc's `isTypeOrBaseIdenticalTo` (identity or a
+    /// number/string literal against its base primitive). Thin `&self` wrapper
+    /// over the shared [`crate::type_queries::source_is_or_base_identical_to_fixed`]
+    /// predicate that binds the `FxHashSet` membership closure once for the two
+    /// loop call sites; the per-target case calls
+    /// [`crate::type_queries::is_type_or_base_identical`] directly.
+    pub(super) fn source_member_matches_fixed_target(
+        &self,
+        member: TypeId,
+        fixed_targets: &rustc_hash::FxHashSet<TypeId>,
+    ) -> bool {
+        crate::type_queries::source_is_or_base_identical_to_fixed(
+            self.interner.as_type_database(),
+            member,
+            |candidate| fixed_targets.contains(&candidate),
+        )
+    }
+
     fn lazy_alias_application_def_id(&self, member: TypeId) -> Option<DefId> {
         let TypeData::Application(app_id) = self.interner.lookup(member)? else {
             return None;
