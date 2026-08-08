@@ -1911,3 +1911,7 @@ mod core_tests;
 #[cfg(test)]
 #[path = "contextual_param_ts2403_tests.rs"]
 mod contextual_param_ts2403_tests;
+
+#[cfg(test)]
+#[path = "ts2403_distinct_nominal_tests.rs"]
+mod ts2403_distinct_nominal_tests;
