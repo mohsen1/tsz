@@ -330,19 +330,29 @@ impl ParserState {
     ///   `get` into an `in`-expression and yields "Expression expected", not the
     ///   "Unexpected keyword or identifier" the hard cascade produces).
     pub(crate) fn look_ahead_clean_prefixed_out_before_accessor(&mut self) -> usize {
+        // A qualifying run must *start* with `out` or a clean modifier; bail on
+        // the common non-modifier member (`foo: number`) before paying for the
+        // speculative `save_state`/`restore_state` (which clones scanner heap
+        // state).
+        let first = self.token();
+        if first != SyntaxKind::OutKeyword && !Self::is_clean_type_member_modifier(first) {
+            return 0;
+        }
+
         let snapshot = self.scanner.save_state();
         let current = self.current_token;
 
         let mut count = 0usize;
         let mut saw_out = false;
+        // The `out` branch below breaks immediately, so `saw_out` is always
+        // false at the top of the loop — it disambiguates only the post-loop
+        // `ends_in_accessor` check (a clean run that ends in an accessor without
+        // an `out` belongs to `look_ahead_modifier_run_before_accessor`).
         loop {
             let kind = self.token();
             // `out` is the trigger and must be the final modifier in the run:
             // once consumed, only the accessor keyword may follow.
-            if !saw_out
-                && kind == SyntaxKind::OutKeyword
-                && !self.look_ahead_is_property_name_after_keyword()
-            {
+            if kind == SyntaxKind::OutKeyword && !self.look_ahead_is_property_name_after_keyword() {
                 saw_out = true;
                 self.next_token();
                 count += 1;
@@ -353,8 +363,7 @@ impl ParserState {
             }
             // Only clean modifiers may precede `out`. A hard modifier, `in`, a
             // second `out`, or a non-modifier token disqualifies the run.
-            if !saw_out
-                && Self::is_clean_type_member_modifier(kind)
+            if Self::is_clean_type_member_modifier(kind)
                 && !self.look_ahead_is_property_name_after_keyword()
             {
                 self.next_token();
