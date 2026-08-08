@@ -965,6 +965,21 @@ impl<'a> CheckerContext<'a> {
         self.untyped_module_paths = Some(paths);
     }
 
+    /// Install the driver's set of file indices skipped by the
+    /// `maxNodeModuleJsDepth` BFS gate (never actually parsed).
+    pub fn set_depth_skipped_target_file_indices(&mut self, indices: Arc<FxHashSet<usize>>) {
+        self.depth_skipped_target_file_indices = Some(indices);
+    }
+
+    /// True when `file_idx` is a `maxNodeModuleJsDepth`-skipped program entry
+    /// that was never actually parsed (see
+    /// `depth_skipped_target_file_indices`'s doc comment).
+    pub fn is_depth_skipped_target_file(&self, file_idx: usize) -> bool {
+        self.depth_skipped_target_file_indices
+            .as_ref()
+            .is_some_and(|indices| indices.contains(&file_idx))
+    }
+
     /// Absolute path of the untyped JavaScript file `specifier` resolves to
     /// from the current file, if the resolution carried no declaration file.
     ///

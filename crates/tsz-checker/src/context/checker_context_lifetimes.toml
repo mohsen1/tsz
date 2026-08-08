@@ -228,6 +228,7 @@ is_external_module_by_file = { lifetime = "ProgramStable", capability = "Program
 resolved_module_errors = { lifetime = "ProgramStable", capability = "ProgramLookupContext", reason = "shared immutable program data; valid until the compilation or project version changes" }
 resolved_module_request_errors = { lifetime = "ProgramStable", capability = "ProgramLookupContext", reason = "shared immutable program data; valid until the compilation or project version changes" }
 untyped_module_paths = { lifetime = "ProgramStable", capability = "ProgramLookupContext", reason = "shared immutable program data; valid until the compilation or project version changes" }
+depth_skipped_target_file_indices = { lifetime = "ProgramStable", capability = "ProgramLookupContext", reason = "shared immutable program data; valid until the compilation or project version changes" }
 import_resolution_stack = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
 type_only_nodes = { lifetime = "FileLocalReset", capability = "EmitSummaryState", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
 symbol_resolution_depth = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }

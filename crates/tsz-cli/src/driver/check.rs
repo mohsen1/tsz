@@ -203,7 +203,15 @@ pub(super) fn collect_diagnostics(
     cache: Option<&mut CompilationCache>,
     type_cache_output: &std::sync::Mutex<FxHashMap<PathBuf, TypeCache>>,
 ) -> CollectDiagnosticsResult {
-    collect_diagnostics_with_source_resolutions(input, cache, type_cache_output, None, None, None)
+    collect_diagnostics_with_source_resolutions(
+        input,
+        cache,
+        type_cache_output,
+        None,
+        None,
+        None,
+        None,
+    )
 }
 
 pub(super) fn collect_diagnostics_with_source_resolutions(
@@ -215,6 +223,7 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
     >,
     source_module_resolution_misses: Option<&FxHashSet<SourceModuleResolutionKey>>,
     explicit_root_paths: Option<&FxHashSet<PathBuf>>,
+    depth_skipped_js_paths: Option<&FxHashSet<PathBuf>>,
 ) -> CollectDiagnosticsResult {
     let &CollectDiagnosticsInput {
         program,
@@ -305,6 +314,23 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
             canonical_to_file_name.insert(canonical, file.file_name.clone());
         }
     }
+
+    // File indices the `maxNodeModuleJsDepth` BFS gate skipped rather than
+    // read (see `depth_skipped_js_paths` on `SourceReadResult`). A resolved
+    // require()/import target in this set has a program entry but was never
+    // actually parsed — its `SourceFile` node exists with empty text, not the
+    // file's real content — so a JS/CJS export-shape computation for it must
+    // not treat "found no exports" as "genuinely has no exports" (#16934).
+    let depth_skipped_target_file_indices: Arc<FxHashSet<usize>> = Arc::new(
+        depth_skipped_js_paths
+            .map(|paths| {
+                paths
+                    .iter()
+                    .filter_map(|path| program_file_index.get(path))
+                    .collect()
+            })
+            .unwrap_or_default(),
+    );
 
     // Duplicate package redirect map
     let package_redirects: FxHashMap<PathBuf, PathBuf> = {
@@ -669,6 +695,7 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
         resolved_module_errors: Arc::clone(&resolved_module_errors),
         resolved_module_request_errors: Arc::clone(&resolved_module_request_errors),
         untyped_module_paths: Arc::clone(&untyped_module_paths),
+        depth_skipped_target_file_indices: Arc::clone(&depth_skipped_target_file_indices),
         is_external_module_by_file: Arc::clone(&is_external_module_by_file),
         file_is_esm_map: Arc::clone(&file_is_esm_map),
         typescript_dom_replacement_globals,

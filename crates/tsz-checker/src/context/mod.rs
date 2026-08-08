@@ -1756,6 +1756,15 @@ pub struct CheckerContext<'a> {
     /// Untyped-JavaScript resolution targets: (`source_file_idx`, specifier) ->
     /// resolved `.js` path. Consulted by the module-augmentation TS2665 gate.
     pub untyped_module_paths: Option<Arc<UntypedModulePathMap>>,
+    /// File indices the `maxNodeModuleJsDepth` BFS gate skipped rather than
+    /// read (driver's `depth_skipped_js_paths`, converted to file indices).
+    /// Such a file has a program entry — specifiers pointing at it still
+    /// resolve — but was never actually parsed: its `SourceFile` node exists
+    /// with permanently empty text, not the file's real content. A JS/CJS
+    /// export-shape computation for a `require()`/import target in this set
+    /// must not treat "found no exports" as "genuinely has no exports";
+    /// tsc types such a target as `any`. See #16934.
+    pub depth_skipped_target_file_indices: Option<Arc<FxHashSet<usize>>>,
 
     /// Import resolution stack for circular import detection.
     /// Tracks the chain of modules being resolved to detect circular dependencies.

@@ -145,6 +145,11 @@ pub struct ProgramContext {
     pub resolved_module_request_errors: Arc<ResolvedModuleRequestErrorMap>,
     /// Untyped-JS resolution targets: (`source_file_idx`, specifier) -> `.js` path.
     pub untyped_module_paths: Arc<UntypedModulePathMap>,
+    /// File indices the `maxNodeModuleJsDepth` BFS gate skipped rather than
+    /// read. Such a file keeps a program entry (so specifiers pointing at it
+    /// still resolve) but was never actually parsed — see
+    /// `CheckerContext::depth_skipped_target_file_indices`.
+    pub depth_skipped_target_file_indices: Arc<FxHashSet<usize>>,
     /// Per-file external module status.
     pub is_external_module_by_file: Arc<FxHashMap<String, bool>>,
     /// Per-file ESM/CJS determination.
@@ -210,6 +215,7 @@ impl Default for ProgramContext {
             resolved_module_ts_extension_flags: Arc::new(FxHashMap::default()),
             resolved_module_errors: Arc::new(FxHashMap::default()),
             untyped_module_paths: Arc::new(FxHashMap::default()),
+            depth_skipped_target_file_indices: Arc::new(FxHashSet::default()),
             resolved_module_request_errors: Arc::new(FxHashMap::default()),
             is_external_module_by_file: Arc::new(FxHashMap::default()),
             file_is_esm_map: Arc::new(FxHashMap::default()),
@@ -361,6 +367,9 @@ impl ProgramContext {
         ctx.set_resolved_module_errors(Arc::clone(&self.resolved_module_errors));
         ctx.set_resolved_module_request_errors(Arc::clone(&self.resolved_module_request_errors));
         ctx.set_untyped_module_paths(Arc::clone(&self.untyped_module_paths));
+        ctx.set_depth_skipped_target_file_indices(Arc::clone(
+            &self.depth_skipped_target_file_indices,
+        ));
         ctx.is_external_module_by_file = Some(Arc::clone(&self.is_external_module_by_file));
         ctx.file_is_esm_map = Some(Arc::clone(&self.file_is_esm_map));
         // Warm local caches from the already-installed shared DefinitionStore.

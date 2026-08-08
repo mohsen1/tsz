@@ -937,6 +937,21 @@ impl<'a> CheckerState<'a> {
             })
             .or_else(|| self.ctx.resolve_import_target(module_name));
 
+        // A require()/import target the driver's `maxNodeModuleJsDepth` BFS
+        // gate skipped rather than read keeps a program entry (so the
+        // specifier resolves) but was never actually parsed: its `SourceFile`
+        // node holds permanently empty text, not the file's real content. tsc
+        // types such a target as `any` — there is no real content to build a
+        // shape from — so return `None` here and let the caller fall back the
+        // same way it already does for an unresolved specifier, instead of
+        // synthesizing a confidently-empty namespace type from the target's
+        // (equally empty) exports table below (#16934).
+        if let Some(idx) = target_file_idx
+            && self.ctx.is_depth_skipped_target_file(idx)
+        {
+            return None;
+        }
+
         let exports_table = self
             .resolve_effective_module_exports_from_file(module_name, source_file_idx)
             .or_else(|| {

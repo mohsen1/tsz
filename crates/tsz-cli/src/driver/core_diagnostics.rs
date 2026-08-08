@@ -738,6 +738,7 @@ fn compile_inner_impl(
         module_resolution_misses,
         type_reference_errors,
         resolution_mode_errors,
+        depth_skipped_js_paths,
     } = {
         read_source_files(
             &file_paths,
@@ -1154,6 +1155,7 @@ fn compile_inner_impl(
         Some(&module_resolutions),
         Some(&module_resolution_misses),
         Some(&explicit_root_paths),
+        Some(&depth_skipped_js_paths),
     );
     let mut diagnostics: Vec<Diagnostic> = collected.diagnostics;
     let check_duration = collect_diagnostics_start.elapsed();

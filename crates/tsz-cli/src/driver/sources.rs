@@ -273,6 +273,14 @@ pub(super) struct SourceReadResult {
     /// TS1453: Invalid `resolution-mode` values in `/// <reference types="..." />` directives.
     /// Tuples of (`file_path`, `byte_offset`, `span_length`).
     pub(super) resolution_mode_errors: Vec<(PathBuf, usize, usize)>,
+    /// Paths the `maxNodeModuleJsDepth` BFS gate skipped rather than read
+    /// (`BatchAction::SkipJs`). Each such path keeps a `SourceFile` registered
+    /// in the program (so `require()`/import specifiers pointing at it still
+    /// resolve) but with permanently empty source text, never a real parse of
+    /// the file's actual content. Checker consumers that build a CJS/JS export
+    /// shape for a `require()` target need this set to tell "never read" apart
+    /// from "read and genuinely has no exports" — see #16934.
+    pub(super) depth_skipped_js_paths: FxHashSet<PathBuf>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -687,6 +695,7 @@ pub(super) fn read_source_files(
     let mut module_resolver = ModuleResolver::new(options);
     let mut type_reference_errors = Vec::new();
     let mut resolution_mode_errors = Vec::new();
+    let mut depth_skipped_js_paths: FxHashSet<PathBuf> = FxHashSet::default();
     let use_cache = cache.is_some() && changed_paths.is_some();
 
     // PERF: cache `normalize_resolved_path` results for the BFS lifetime.
@@ -829,6 +838,7 @@ pub(super) fn read_source_files(
                 }
                 BatchAction::SkipJs => {
                     sources.insert(path.clone(), (None, false, false));
+                    depth_skipped_js_paths.insert(path.clone());
                     continue;
                 }
                 BatchAction::Read => {}
@@ -1151,6 +1161,7 @@ pub(super) fn read_source_files(
         module_resolution_misses,
         type_reference_errors,
         resolution_mode_errors,
+        depth_skipped_js_paths,
     })
 }
 

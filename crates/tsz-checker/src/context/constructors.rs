@@ -473,6 +473,7 @@ impl<'a> CheckerContext<'a> {
             is_external_module_by_file: None,
             resolved_module_errors: None,
             untyped_module_paths: None,
+            depth_skipped_target_file_indices: None,
             resolved_module_request_errors: None,
             import_resolution_stack: Vec::new(),
             type_only_nodes: FxHashSet::default(),

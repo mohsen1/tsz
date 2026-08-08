@@ -818,6 +818,25 @@ impl<'a> CheckerState<'a> {
                         return (module_type, Vec::new());
                     }
 
+                    // `commonjs_module_value_type` returned `None` for a target the
+                    // `maxNodeModuleJsDepth` BFS gate skipped rather than read (see
+                    // `is_depth_skipped_target_file`'s doc comment). Match that
+                    // decision here instead of falling through to the exports-table
+                    // reconstruction below, which would otherwise re-derive the same
+                    // confidently-empty namespace type this function's own call above
+                    // just declined to synthesize — tsc types such a target as `any`
+                    // (#16934).
+                    if self
+                        .ctx
+                        .resolve_import_target_from_file(
+                            self.ctx.current_file_idx,
+                            &module_specifier,
+                        )
+                        .is_some_and(|target_idx| self.ctx.is_depth_skipped_target_file(target_idx))
+                    {
+                        return (TypeId::ANY, Vec::new());
+                    }
+
                     let exports_table = self.resolve_effective_module_exports(&module_specifier);
 
                     if let Some(exports_table) = exports_table {

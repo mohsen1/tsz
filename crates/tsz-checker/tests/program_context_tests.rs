@@ -42,6 +42,7 @@ fn empty_program_context() -> ProgramContext {
         program_cross_file_node_symbols: None,
         program_alias_partners: None,
         untyped_module_paths: Arc::new(FxHashMap::default()),
+        depth_skipped_target_file_indices: Arc::new(FxHashSet::default()),
         resolved_module_paths: Arc::new(FxHashMap::default()),
         resolved_module_request_paths: Arc::new(FxHashMap::default()),
         resolved_module_ts_extension_flags: Arc::new(FxHashMap::default()),

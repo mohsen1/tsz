@@ -538,7 +538,11 @@ STRUCT_FIELD_COUNT_CHECKS = [
         # parameters whose parser-emitted grammar diagnostics tsc's single
         # early-return `checkGrammarParameterList` never reached, so the driver
         # can drop them (#16644).
-        256,
+        # 256 -> 257: `depth_skipped_target_file_indices` lets a CJS/JS
+        # export-shape computation for a require()/import target tell "the
+        # driver's `maxNodeModuleJsDepth` BFS gate skipped this file" apart
+        # from "this file was read and genuinely has no exports" (#16934).
+        257,
     ),
 ]
 
