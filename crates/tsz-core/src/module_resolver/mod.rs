@@ -151,6 +151,12 @@ pub struct ModuleResolver {
     module_kind: ModuleKind,
     /// Whether allowJs is enabled (affects extension candidates)
     allow_js: bool,
+    /// `maxNodeModuleJsDepth` (default 0): the deepest `node_modules` nesting a
+    /// resolved JavaScript dependency may sit at and still be admitted into the
+    /// program. Governs whether the external-`require()` TS7016 fires — a
+    /// `node_modules` JS file within the budget is type-checked as real JS, so
+    /// no "missing declaration file" diagnostic is produced.
+    max_node_module_js_depth: u32,
     /// Whether to rewrite relative imports with TypeScript extensions during emit.
     rewrite_relative_import_extensions: bool,
     /// Whether to print TypeScript-style module resolution traces.
@@ -207,6 +213,17 @@ pub struct ModuleResolver {
     out_dir: Option<PathBuf>,
 }
 
+/// Count the `node_modules` path segments in `path` — tsz's structural proxy
+/// for tsc's `currentNodeModulesDepth`. A first-party file is depth 0; a
+/// top-level dependency at `.../node_modules/foo/index.js` is depth 1; a nested
+/// `.../node_modules/foo/node_modules/bar/index.js` is depth 2. Used to gate
+/// the external-`require()` TS7016 on `maxNodeModuleJsDepth`.
+fn node_modules_nesting_depth(path: &Path) -> u32 {
+    path.components()
+        .filter(|component| component.as_os_str() == "node_modules")
+        .count() as u32
+}
+
 impl ModuleResolver {
     fn increment_counter(counter: &Cell<u64>) {
         counter.set(counter.get().saturating_add(1));
@@ -240,6 +257,7 @@ impl ModuleResolver {
             custom_conditions: options.custom_conditions.clone(),
             module_kind: options.printer.module,
             allow_js: options.allow_js,
+            max_node_module_js_depth: options.max_node_module_js_depth,
             rewrite_relative_import_extensions: options.rewrite_relative_import_extensions,
             trace_resolution: options.trace_resolution,
             resolution_cache_hits: Cell::new(0),
@@ -281,6 +299,7 @@ impl ModuleResolver {
             custom_conditions: Vec::new(),
             module_kind: ModuleKind::CommonJS,
             allow_js: false,
+            max_node_module_js_depth: 0,
             rewrite_relative_import_extensions: false,
             trace_resolution: false,
             resolution_cache_hits: Cell::new(0),
@@ -892,9 +911,22 @@ impl ModuleResolver {
                 // `needs_explicit_root_files` in `crates/conformance/src/tsz_wrapper.rs`).
                 let is_explicit_root =
                     known_files.is_some_and(|roots| roots.contains(&resolved_module.resolved_path));
+                // `maxNodeModuleJsDepth` (default 0) admits a resolved
+                // `node_modules` JS dependency into the program when its nesting
+                // depth is within the budget; once admitted the file is
+                // type-checked as real JS, so the external-`require()` TS7016 is
+                // not produced. The default of 0 admits nothing reached through
+                // `node_modules`, preserving the diagnostic. Oracle-verified
+                // against typescript@7.0.2 (#16921): `require("untyped")` of a
+                // `node_modules/untyped` JS file is TS7016 at the default depth
+                // but clean at `--maxNodeModuleJsDepth 1`.
+                let within_node_module_js_depth =
+                    node_modules_nesting_depth(&resolved_module.resolved_path)
+                        <= self.max_node_module_js_depth;
                 let is_external_cjs_require = resolved_module.is_external
                     && matches!(import_kind, ImportKind::CjsRequire)
-                    && !is_explicit_root;
+                    && !is_explicit_root
+                    && !within_node_module_js_depth;
                 // tsc's augmentation-target check (TS2665) keys on the
                 // *resolution extension*, not on whether the import site was
                 // diagnosed: a specifier resolving to a `.js`/`.jsx` file is an
