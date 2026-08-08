@@ -73,7 +73,7 @@ FAIL TypeScript/tests/cases/compiler/exportAssignmentMembersVisibleInAugmentatio
 FAIL TypeScript/tests/cases/compiler/exportSpecifierAndLocalMemberDeclaration.ts | expected:[TS2503] actual:[]
 FAIL TypeScript/tests/cases/compiler/expressionWithJSDocTypeArguments.ts | expected:[TS1110] actual:[TS8020,TS17019,TS17020]
 FAIL TypeScript/tests/cases/compiler/expressionsForbiddenInParameterInitializers.ts | expected:[TS2523,TS2524] actual:[]
-FAIL TypeScript/tests/cases/compiler/extendGlobalThis.ts | expected:[TS2882] actual:[TS2551,TS2882]
+PASS TypeScript/tests/cases/compiler/extendGlobalThis.ts
 FAIL TypeScript/tests/cases/compiler/externSemantics.ts | expected:[TS1039] actual:[TS1039]
 FAIL TypeScript/tests/cases/compiler/externalModuleImmutableBindings.ts | expected:[TS2339,TS2540] actual:[TS2339,TS2405,TS2540]
 FAIL TypeScript/tests/cases/compiler/extractInferenceImprovement.ts | expected:[TS2322,TS2345] actual:[TS2345]
