@@ -206,6 +206,18 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        // TS2880: the removed `assert` import-attribute keyword is a hard error
+        // in TypeScript 7 at every module mode. `tsc` reports it at the `assert`
+        // keyword and abandons the whole declaration — no module resolution
+        // (TS2307), no attribute-value or assignability checks (TS2858/TS2322),
+        // no deferred/reserved-word/type-only checks. It takes precedence over
+        // the module-support gate (TS2823/TS2821), so it must run before any of
+        // those. `with` clauses fall through to the normal checks below.
+        if !has_parse_errors && self.import_attributes_use_removed_assert(import.attributes) {
+            self.report_removed_import_assert(import.attributes);
+            return;
+        }
+
         // TS18058/TS18059: Validate deferred import binding restrictions.
         // Deferred imports only allow namespace imports: `import defer * as ns from "..."`
         self.check_deferred_import_restrictions(import.import_clause);

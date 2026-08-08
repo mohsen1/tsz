@@ -256,6 +256,20 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                 }
             }
 
+            // TS2880: the removed `assert` import-attribute keyword is a hard
+            // error in TypeScript 7 at every module mode. `tsc` reports it at the
+            // `assert` keyword and abandons the whole declaration — no module
+            // resolution (TS2307), no attribute-value or assignability checks
+            // (TS2858/TS2322), no re-exported-member validation, and not even the
+            // string-literal export-name check (TS18057). `with` clauses fall
+            // through to the normal checks below.
+            if !self.ctx.has_parse_errors
+                && self.import_attributes_use_removed_assert(export_decl.attributes)
+            {
+                self.report_removed_import_assert(export_decl.attributes);
+                return;
+            }
+
             // TS18057: string-literal export names need a module target newer
             // than `es2015`/`es2020`. Unlike the import side, tsc does not gate
             // this on the module specifier resolving.
