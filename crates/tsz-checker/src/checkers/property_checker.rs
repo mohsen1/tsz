@@ -295,8 +295,22 @@ impl<'a> CheckerState<'a> {
             .as_ref()
             .map(|info| info.class_idx)
             .or_else(|| self.nearest_enclosing_class(error_node));
+        // Protected access (unlike private) is also governed by the nearest
+        // enclosing function's own explicit `this: T` parameter when it has
+        // one — both in a free function (no literal class at all) and in a
+        // class member whose own `this: T` narrows past its declaring class
+        // (e.g. `class D { f(this: D1, arg: D1) { arg.protectedMember } }`,
+        // where `D1 extends D`). tsc resolves such accesses against `D1`, not
+        // `D`, so the explicit this-parameter class takes priority over the
+        // literal enclosing class here. Private access does not get this
+        // widening at all — tsc denies even an exact-class `this: Foo` free
+        // function (TS2341) — so `current_class_idx` itself stays unwidened
+        // for that branch.
+        let protected_context_class_idx = self
+            .resolve_this_parameter_class_context(error_node)
+            .or(current_class_idx);
         let protected_candidates =
-            self.protected_access_candidate_classes(current_class_idx, object_expr);
+            self.protected_access_candidate_classes(protected_context_class_idx, object_expr);
         let mut protected_receiver_mismatch: Option<(NodeIndex, NodeIndex)> = None;
         let allowed = match access_info.level {
             MemberAccessLevel::Private => {
