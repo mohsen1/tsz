@@ -1669,3 +1669,49 @@ fn edit_file_fixes_diagnostic() {
     // Should be clean now
     t.verify_no_errors("test.ts");
 }
+
+#[test]
+fn this_completions_none_inside_property_assigned_function_expression() {
+    // `this` inside a plain (non-arrow) function expression assigned to a
+    // property of an `any`-typed receiver creates its own implicit-`any`
+    // `this` binding — it must NOT inherit the enclosing class's members,
+    // even though the assignment target itself never warns about it (see
+    // `property_assignment_any_receiver_no_ts2683` in ts2683_tests.rs).
+    // Mirrors TypeScript/tests/cases/fourslash/completionListFunctionExpression.ts.
+    let mut t = FourslashTest::new(
+        "
+        class DataHandler {
+            dataArray: Uint8Array;
+            loadData(filename) {
+                var xmlReq = new XMLHttpRequest();
+                xmlReq.open(\"GET\", \"/\" + filename, true);
+                xmlReq.onload = function(xmlEvent) {
+                    this./*this*/;
+                }
+            }
+        }
+    ",
+    );
+    t.completions("this").expect_none();
+}
+
+#[test]
+fn this_completions_present_inside_property_assigned_arrow_function() {
+    // An arrow function does not create its own `this` binding, so the same
+    // assignment shape as above must still show the enclosing class's
+    // members when the callback is an arrow instead of a plain function.
+    let mut t = FourslashTest::new(
+        "
+        class DataHandler {
+            dataArray: Uint8Array;
+            loadData(filename) {
+                var xmlReq = new XMLHttpRequest();
+                xmlReq.onload = (xmlEvent) => {
+                    this./*this*/;
+                }
+            }
+        }
+    ",
+    );
+    t.completions("this").expect_contains("dataArray");
+}
