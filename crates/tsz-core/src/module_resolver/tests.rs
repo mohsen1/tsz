@@ -17,6 +17,7 @@ mod explicit_root_untyped_js;
 mod importing_module_kind;
 mod lookup_classify;
 mod lookup_integration;
+mod max_node_module_js_depth;
 mod mixed_esm_cjs_exports;
 mod module_extension;
 mod node16_modes;
