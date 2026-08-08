@@ -13,6 +13,7 @@ mod conditional_types_flavor;
 mod diagnostics_ts2307;
 mod diagnostics_ts2792;
 mod diagnostics_ts2835;
+mod explicit_root_untyped_js;
 mod importing_module_kind;
 mod lookup_classify;
 mod lookup_integration;
