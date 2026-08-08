@@ -645,8 +645,103 @@ import { from as fromObservable } from "./from";
 
 // TS1003 for a string-literal export-specifier property name without a `from`
 // clause is a *checker* grammar diagnostic, owned by
-// `crates/tsz-checker/src/declarations/module_export_names.rs`; its coverage
-// lives in the checker suite `string_literal_module_export_name_grammar_tests`.
+// `crates/tsz-checker/src/declarations/module_export_names.rs`; its full
+// oracle-pinned matrix lives in the checker suite
+// `string_literal_module_export_name_grammar_tests`. The parser-layer guards
+// below (#16702) pin the complementary fact that the *parser* stays out of it —
+// so a future change cannot silently re-home the diagnostic to the syntactic
+// phase, where it would escape the program-wide semantic suppression.
+
+/// The *export* side is asymmetric with the import side above. A string-literal
+/// export local name without a `from` clause (`export { "q" as y }`) is TS1003 in
+/// `tsc`, but `tsc` reports it from the **checker**
+/// (`checkExportSpecifier` -> `checkModuleExportName`), not the parser — so the
+/// parser must stay silent here. Emitting it as a parse diagnostic would
+/// misclassify a semantic grammar check as syntactic: it would survive the
+/// program-wide suppression `tsc` applies to semantic diagnostics once any file
+/// has a real syntax error, and would itself make an otherwise-clean file count
+/// as having a "real syntax error". The checker owns this diagnostic in
+/// `check_export_declaration_module_export_names`; its full oracle-pinned matrix
+/// lives in `tsz-checker`'s `string_literal_module_export_name_grammar_tests`.
+#[test]
+fn export_specifier_string_literal_local_names_without_from_are_not_a_parse_error() {
+    // Names are varied so nothing keys on a specific identifier.
+    let source = r#"
+export { "aa" as bb };
+export type { "cc" as dd };
+export { ee, "ff" as gg };
+export { "hh" as "ii" };
+"#;
+    let (parser, _root) = parse_source(source);
+    let diagnostics = parser.get_diagnostics();
+    let ts1003_count = diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::IDENTIFIER_EXPECTED)
+        .count();
+    assert_eq!(
+        ts1003_count, 0,
+        "the export-side string-local-name TS1003 is a checker diagnostic, not a parse error, got {diagnostics:?}"
+    );
+}
+
+/// The import side keeps its parser-level check: `import { foo as "bar" }` is a
+/// genuine syntactic error in `tsc` (`parseImportOrExportSpecifier`). This pins
+/// that removing the export-side parser emission did not disturb the import side,
+/// which shares `parse_import_or_export_specifier`.
+#[test]
+fn import_specifier_string_local_name_stays_a_parse_error() {
+    let (parser, _root) = parse_source(r#"import { foo as "bar" } from "./m";"#);
+    let diagnostics = parser.get_diagnostics();
+    assert!(
+        diagnostics
+            .iter()
+            .any(|d| d.code == diagnostic_codes::IDENTIFIER_EXPECTED),
+        "an import binding written as a string literal is a parse error, got {diagnostics:?}"
+    );
+}
+
+/// With a `from` clause the string local name re-exports a string-named module
+/// binding, which `tsc` accepts — so no TS1003.
+#[test]
+fn export_specifier_string_local_name_is_valid_with_from() {
+    let source = r#"
+export { "aa" as bb } from "./m";
+export type { "cc" as dd } from "./m";
+export { "hh" as "ii" } from "./m";
+"#;
+    let (parser, _root) = parse_source(source);
+    let ts1003_count = parser
+        .get_diagnostics()
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::IDENTIFIER_EXPECTED)
+        .count();
+    assert_eq!(
+        ts1003_count, 0,
+        "a string local name re-exporting through `from` must not emit TS1003"
+    );
+}
+
+/// Negative controls without a `from` clause: a string *alias* (after `as`), a
+/// bare string name with no `as`, and all-identifier specifiers are each valid.
+#[test]
+fn export_specifier_string_alias_and_bare_string_without_from_are_valid() {
+    let source = r#"
+const jj = 1;
+export { jj as "kk" };
+export { "ll" };
+export { jj as nn };
+"#;
+    let (parser, _root) = parse_source(source);
+    let ts1003_count = parser
+        .get_diagnostics()
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::IDENTIFIER_EXPECTED)
+        .count();
+    assert_eq!(
+        ts1003_count, 0,
+        "string aliases and bare string export names must not emit TS1003"
+    );
+}
 
 #[test]
 fn conditional_tuple_element_inside_conditional_extends_type_parses() {

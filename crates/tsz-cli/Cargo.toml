@@ -228,6 +228,9 @@ name = "imported_infer_readonly_alias_cli_tests"
 path = "tests/imported_infer_readonly_alias_cli_tests.rs"
 
 [[test]]
+name = "export_string_local_name_cross_file_suppression_cli_tests"
+path = "tests/export_string_local_name_cross_file_suppression_cli_tests.rs"
+[[test]]
 name = "cross_module_ambient_class_method_constraint_cli_tests"
 path = "tests/cross_module_ambient_class_method_constraint_cli_tests.rs"
 [[test]]
