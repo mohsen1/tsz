@@ -178,6 +178,15 @@ impl TypeVisitor for ArrayKeyVisitor<'_> {
         }
     }
 
+    /// A `unique symbol` key (e.g. `Symbol.isConcatSpreadable`, `declare const
+    /// s: unique symbol`) is not a numeric/string index contributor, so it
+    /// must resolve like any other unmatched key — `undefined` — not fall
+    /// through to `default_output` -> `None` -> the element-type fallback in
+    /// `evaluate`. Matches the plain-`symbol` arm in `visit_intrinsic` above.
+    fn visit_unique_symbol(&mut self, _symbol_ref: u32) -> Self::Output {
+        Some(TypeId::UNDEFINED)
+    }
+
     /// Signal "use the default fallback" for unhandled type variants.
     fn default_output() -> Self::Output {
         None
