@@ -55,8 +55,10 @@ TSZ_CI_CONFORMANCE_ACCEPTED_REGRESSIONS="${TSZ_CI_CONFORMANCE_ACCEPTED_REGRESSIO
 TSZ_CI_JS_ACCEPTED_FLOOR="${TSZ_CI_JS_ACCEPTED_FLOOR:-11562}"
 # DTS floor tracks the measured value exactly: declaration emit is a
 # deterministic text comparison against checked-in baselines with no platform
-# variance, so there is no headroom to reserve. 1372 -> 1375 after #15917.
-TSZ_CI_DTS_ACCEPTED_FLOOR="${TSZ_CI_DTS_ACCEPTED_FLOOR:-1375}"
+# variance, so there is no headroom to reserve. 1372 -> 1375 after #15917,
+# 1375 -> 1377 after #16909 (const-asserted computed index-signature order)
+# and #16919 (concrete/dynamic computed index-signature bucket order).
+TSZ_CI_DTS_ACCEPTED_FLOOR="${TSZ_CI_DTS_ACCEPTED_FLOOR:-1377}"
 
 cap_positive_baseline() {
   local baseline="$1"
