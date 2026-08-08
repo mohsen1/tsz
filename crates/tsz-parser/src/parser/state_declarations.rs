@@ -287,6 +287,11 @@ impl ParserState {
         let members = self.parse_type_members();
         let end_pos = self.finish_type_member_container_close_brace();
         self.type_member_container_depth = saved_type_member_depth;
+        // An interface parses no trailing separator, so clear any abandon-body
+        // flag here rather than leak it to a later `type X = ...` alias (which
+        // would then wrongly skip its own semicolon). See
+        // `pending_type_member_body_reparse`.
+        self.pending_type_member_body_reparse = false;
         self.arena.add_interface(
             syntax_kind_ext::INTERFACE_DECLARATION,
             start_pos,
@@ -334,6 +339,22 @@ impl ParserState {
             // so `get`/`set` is never mistaken for the property name and the
             // modifiers are never silently dropped (which previously produced a
             // misleading TS1005 or TS1070).
+            // A run containing a "hard" modifier (`async`/`declare`/`abstract`/
+            // `override`) before an accessor does not recover as a bare accessor
+            // in tsc: after one TS1131 per modifier, tsc abandons the
+            // type-member body and re-parses the accessor's own tail as
+            // top-level statements (TS1434/TS1005/TS1128). Reproduced by
+            // deferring the container close brace — the same mechanism
+            // `recover_invalid_type_member` uses — so the tail is left for the
+            // enclosing statement parser. Checked before the clean-only run
+            // below because that helper stops at (and never counts) a hard
+            // modifier, so the two are mutually exclusive.
+            let hard_run_len = self.look_ahead_hard_modifier_run_before_accessor();
+            if hard_run_len > 0 {
+                self.report_hard_modifier_run_before_accessor(hard_run_len);
+                break;
+            }
+
             let modifier_run_len = self.look_ahead_modifier_run_before_accessor();
             if modifier_run_len > 0 {
                 for _ in 0..modifier_run_len {
@@ -1488,7 +1509,14 @@ impl ParserState {
 
         let type_node = self.parse_type();
 
-        self.parse_semicolon();
+        // When the alias's type is a `{ ... }` literal that abandoned its body
+        // mid-parse (a hard modifier before an accessor), the leftover tokens
+        // belong to the enclosing statement list, not the alias — re-parsed as
+        // statements (TS1434/TS1005/TS1128). Requiring a separator here would
+        // emit a spurious TS1005 at those tokens, so take the flag and skip.
+        if !std::mem::take(&mut self.pending_type_member_body_reparse) {
+            self.parse_semicolon();
+        }
 
         let end_pos = self.token_full_start();
         self.arena.add_type_alias(

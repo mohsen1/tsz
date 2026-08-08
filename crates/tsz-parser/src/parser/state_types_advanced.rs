@@ -1392,6 +1392,16 @@ impl ParserState {
             // qualifying modifier set). tsc's parser cannot build any member starting
             // at the first modifier, reports one TS1131 per modifier in the run, and
             // retries from the accessor keyword.
+            // A run containing a "hard" modifier before an accessor abandons the
+            // type-literal body and re-parses the accessor tail as statements —
+            // see `parse_type_members`'s identical check and
+            // `look_ahead_hard_modifier_run_before_accessor`.
+            let hard_run_len = self.look_ahead_hard_modifier_run_before_accessor();
+            if hard_run_len > 0 {
+                self.report_hard_modifier_run_before_accessor(hard_run_len);
+                break;
+            }
+
             let modifier_run_len = self.look_ahead_modifier_run_before_accessor();
             if modifier_run_len > 0 {
                 for _ in 0..modifier_run_len {
@@ -1914,68 +1924,6 @@ impl ParserState {
         self.scanner.restore_state(snapshot);
         self.current_token = current;
         is_property_name
-    }
-
-    /// Check whether the current token starts a run of one or more type-member
-    /// modifiers directly followed, each on the same line, by a `get`/`set`
-    /// accessor signature (`static get x()`, `public static get x()`,
-    /// `readonly export get x()`, ...), as opposed to a modifier or `get`/`set`
-    /// used as an ordinary property/method name (`static get(): void`,
-    /// `static get: number`). No modifier at all may precede an accessor
-    /// signature in an interface or type-literal body: tsc's parser cannot
-    /// build any member starting at the first modifier, and reports one
-    /// TS1131 per modifier in the run (each anchored at its own token) before
-    /// recovering by retrying at the accessor keyword, which then parses as a
-    /// bare (modifier-less) accessor.
-    ///
-    /// Only `private`/`protected`/`public`/`static`/`accessor`/`export`/
-    /// `readonly` qualify — oracle-verified (`typescript@7.0.2`) to recover
-    /// this way. `declare`/`abstract`/`override`/`in`/`out` are deliberately
-    /// excluded: preceding an accessor, tsc's recovery for those cascades
-    /// into a different diagnostic set (TS1434/TS1005/TS1128) rather than one
-    /// TS1131 per modifier, a distinct and out-of-scope shape. Returns the
-    /// number of modifiers in the qualifying run, or `0` if this token does
-    /// not start one.
-    pub(crate) fn look_ahead_modifier_run_before_accessor(&mut self) -> usize {
-        const fn is_clean_type_member_modifier(kind: SyntaxKind) -> bool {
-            matches!(
-                kind,
-                SyntaxKind::PrivateKeyword
-                    | SyntaxKind::ProtectedKeyword
-                    | SyntaxKind::PublicKeyword
-                    | SyntaxKind::StaticKeyword
-                    | SyntaxKind::AccessorKeyword
-                    | SyntaxKind::ExportKeyword
-                    | SyntaxKind::ReadonlyKeyword
-            )
-        }
-
-        let snapshot = self.scanner.save_state();
-        let current = self.current_token;
-
-        let mut count = 0usize;
-        loop {
-            if !is_clean_type_member_modifier(self.token())
-                || self.look_ahead_is_property_name_after_keyword()
-            {
-                break;
-            }
-            self.next_token();
-            count += 1;
-            if self.scanner.has_preceding_line_break() {
-                count = 0;
-                break;
-            }
-        }
-
-        let ends_in_accessor = count > 0
-            && (self.is_token(SyntaxKind::GetKeyword) || self.is_token(SyntaxKind::SetKeyword))
-            && !self.look_ahead_is_property_name_after_keyword();
-
-        self.scanner.restore_state(snapshot);
-        self.current_token = current;
-
-        if ends_in_accessor { count } else { 0 }
     }
 
     /// Check if there is a line break between the current keyword and the next token.

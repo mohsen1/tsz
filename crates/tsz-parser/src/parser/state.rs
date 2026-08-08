@@ -230,6 +230,14 @@ pub struct ParserState {
     /// actual `}` tokens for statement-level TS1128 recovery, skip this many
     /// enclosing close-brace expectations.
     pub(crate) deferred_type_member_close_braces: u32,
+    /// Set when a type-member body is abandoned mid-parse (a hard modifier
+    /// before an accessor — see `report_hard_modifier_run_before_accessor`) so
+    /// its leftover tokens re-parse as top-level statements. An enclosing
+    /// `type X = <literal>` alias consults and clears this to skip its trailing
+    /// `parse_semicolon`: the leftover tokens belong to the statement list, not
+    /// the alias, so requiring a separator here would emit a spurious TS1005.
+    /// The interface path clears it directly (it parses no trailing separator).
+    pub(crate) pending_type_member_body_reparse: bool,
     /// After malformed import-attribute recovery inside an intersection type,
     /// parse the next `import()` options object with generic expression
     /// grammar so its diagnostics degrade like TypeScript's fallback path.
@@ -431,6 +439,7 @@ impl ParserState {
             deferred_module_close_braces: 0,
             abort_intersection_continuation: false,
             deferred_type_member_close_braces: 0,
+            pending_type_member_body_reparse: false,
             fallback_import_type_options_once: false,
             pending_array_binding_tail_recovery: false,
             in_import_type_options_context: false,
@@ -489,6 +498,7 @@ impl ParserState {
         self.current_specifier_recovered_braced_unicode_escape_debris = false;
         self.deferred_module_close_braces = 0;
         self.deferred_type_member_close_braces = 0;
+        self.pending_type_member_body_reparse = false;
         self.abort_intersection_continuation = false;
         self.fallback_import_type_options_once = false;
         self.pending_array_binding_tail_recovery = false;
