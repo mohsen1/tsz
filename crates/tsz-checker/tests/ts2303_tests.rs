@@ -558,6 +558,94 @@ declare module "moduleD" {
 }
 
 #[test]
+fn ambient_module_three_module_alias_cycle_reports_ts2303_at_every_site() {
+    // `recursiveExportAssignmentAndFindAliasedType3`: a three-module cycle
+    // (moduleC -> moduleD -> moduleE -> moduleC) whose members each
+    // contribute an import site and an `export =` site (6 total). Pinned
+    // against the real corpus fixture via the pinned `typescript@7.0.2`
+    // oracle: `def.d.ts` reports TS2303 at lines 2,3,6,7,10,11 and nowhere
+    // else.
+    const SOURCE: &str = r#"declare module "moduleC" {
+    import self = require("moduleD");
+    export = self;
+}
+declare module "moduleD" {
+    import self = require("moduleE");
+    export = self;
+}
+declare module "moduleE" {
+    import self = require("moduleC");
+    export = self;
+}
+"#;
+
+    assert_eq!(
+        ts2303_offsets(SOURCE, "def.d.ts"),
+        vec![
+            nth_offset(SOURCE, "import self", 0),
+            nth_offset(SOURCE, "export = self", 0),
+            nth_offset(SOURCE, "import self", 1),
+            nth_offset(SOURCE, "export = self", 1),
+            nth_offset(SOURCE, "import self", 2),
+            nth_offset(SOURCE, "export = self", 2),
+        ],
+        "Expected TS2303 at all six alias sites of the three-module ambient cycle"
+    );
+}
+
+#[test]
+fn ambient_module_cycle_consumer_file_that_only_imports_the_head_stays_clean() {
+    // The exact shape of `recursiveExportAssignmentAndFindAliasedType1/2/3`:
+    // a separate consumer file (`moduleA`) imports the cyclic ambient module
+    // by name but never resolves through it for a real type (`b`'s type
+    // comes from the unrelated `moduleB`/`ClassB`). `moduleA`'s own
+    // `import moduleC = require("moduleC")` alias is a *tail* pointing into
+    // the cycle, not a member of it — tsc reports TS2303 only inside the
+    // ambient declaration itself (`moduleDef`), never on `moduleA`'s import.
+    const FILES: &[(&str, &str)] = &[
+        (
+            "moduleDef.d.ts",
+            r#"declare module "moduleC" {
+    import self = require("moduleC");
+    export = self;
+}
+"#,
+        ),
+        (
+            "moduleB.ts",
+            r#"class ClassB { }
+export = ClassB;
+"#,
+        ),
+        (
+            "moduleA.ts",
+            r#"import moduleC = require("moduleC");
+import ClassB = require("./moduleB");
+export var b: ClassB;
+"#,
+        ),
+    ];
+
+    let sites = ts2303_sites(FILES);
+    assert_eq!(
+        sites,
+        vec![
+            (
+                "moduleDef.d.ts".to_string(),
+                nth_offset(FILES[0].1, "import self", 0),
+                circular_alias_message("self"),
+            ),
+            (
+                "moduleDef.d.ts".to_string(),
+                nth_offset(FILES[0].1, "export = self", 0),
+                circular_alias_message("self"),
+            ),
+        ],
+        "moduleA's import of the cyclic ambient module must stay clean — only the cycle's own members report"
+    );
+}
+
+#[test]
 fn ambient_module_alias_cycle_export_site_does_not_depend_on_the_binder_name() {
     // Same cycle as above with the alias renamed: the `export =` companion is
     // found through the enclosing module's export table, never by name.
