@@ -136,6 +136,63 @@ function open() { using h = handle; }
     );
 }
 
+/// The bare-missing-member replacement is scoped to an OBJECT source that is
+/// merely missing the member. A primitive initializer (not an object at all)
+/// is a different `tsc` shape entirely: `render_missing_property` falls back
+/// to a generic `Type 'S' is not assignable to type 'T'.` wording for a
+/// primitive source, and `tsc` shows neither that generic line nor a TS2741 --
+/// just the flat `TS2850` head with no tail. Oracle-verified: `using a = 42`
+/// reports bare `TS2850`, nothing else.
+#[test]
+fn using_primitive_initializer_stays_flat_ts2850() {
+    let diags = check("function f() { using a = 42; }");
+    let ts2850 = diags
+        .iter()
+        .find(|d| d.code == 2850)
+        .expect("expected TS2850 for a primitive using initializer");
+    assert!(
+        ts2850.related_information.is_empty(),
+        "a primitive using initializer must carry no elaboration tail, got: {:?}",
+        ts2850
+            .related_information
+            .iter()
+            .map(|i| i.message_text.clone())
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        !diags.iter().any(|d| d.code == 2741),
+        "a primitive using initializer must not emit TS2741, got: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+/// Same boundary, a bare function value: `tsc` suppresses the missing-property
+/// wording for a callable source against a non-callable target (`Disposable`
+/// has no call signature), so this also falls back to flat `TS2850`, not
+/// TS2741 and not a `TS2322`-worded tail. Oracle-verified.
+#[test]
+fn using_callable_initializer_stays_flat_ts2850() {
+    let diags = check("function f() { using r = (() => {}); }");
+    let ts2850 = diags
+        .iter()
+        .find(|d| d.code == 2850)
+        .expect("expected TS2850 for a callable using initializer");
+    assert!(
+        ts2850.related_information.is_empty(),
+        "a callable using initializer must carry no elaboration tail, got: {:?}",
+        ts2850
+            .related_information
+            .iter()
+            .map(|i| i.message_text.clone())
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        !diags.iter().any(|d| d.code == 2741),
+        "a callable using initializer must not emit TS2741, got: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
 /// `await using` (TS2851) carries NO tail in `tsc`, so the sync-only routing
 /// must leave it flat — a single message line, no related information.
 #[test]

@@ -132,67 +132,45 @@ impl<'a> CheckerState<'a> {
         let init_type = crate::query_boundaries::common::widen_freshness(self.ctx.types, init_type);
         let analysis = self.analyze_assignability_failure(init_type, disposable_type);
         let reason = analysis.failure_reason?;
-        // `tsc`'s relation reporter (`reportRelationError`) only NESTS the
-        // structured failure reason beneath the `using`-specific head message
-        // (TS2850/`checkTypeAssignableTo(initType, Disposable, headMessage)`)
-        // when that reason itself elaborates a deeper mismatch. When the
-        // *entire* failure is that the disposable member is absent outright —
-        // `SubtypeFailureReason::MissingProperty`/`MissingProperties`, which
-        // renders as its own self-contained top-level message (TS2741/TS2739)
-        // — tsc promotes that message and REPLACES the head message rather than
-        // nesting it: `using r = { foo: 1 }` (member missing) reports only
-        // `Property '[Symbol.dispose]' is missing … required in type
-        // 'Disposable'.`, no `TS2850` line at all, verified against the pinned
-        // `typescript@7.0.2` oracle. A present-but-incompatible member (wrong
-        // type, wrong arity) is a `PropertyTypeMismatch` with its own nested
-        // chain, not a bare `MissingProperty`, and keeps the TS2850 head with a
-        // nested tail (`using_type_mismatch_dispose_signature_attaches_incompatible_tail`).
-        if matches!(
-            reason,
-            tsz_solver::SubtypeFailureReason::MissingProperty { .. }
-                | tsz_solver::SubtypeFailureReason::MissingProperties { .. }
-        ) {
-            let rendered =
-                self.render_failure_reason(&reason, init_type, disposable_type, anchor, 0);
-            return Some(DisposableRelationOutcome::Replaced(rendered));
-        }
         let rendered = self.render_failure_reason(&reason, init_type, disposable_type, anchor, 0);
         // `tsc` reports this failure through `checkTypeAssignableTo(initType,
-        // Disposable, headMessage = TS2850)`. In its `reportRelationError`, a
-        // supplied head message *replaces* the generic outer
-        // `Type 'S' is not assignable to type 'T'.` frame rather than nesting
-        // beneath it — the TS2850 wording ("must be … an object with a
-        // '[Symbol.dispose]()' method …") already conveys that relationship, so
-        // the tail drills straight to the specific nested reason.
+        // Disposable, headMessage = TS2850)`. Its relation reporter classifies
+        // the rendered failure into three shapes, not two:
         //
-        // `render_failure_reason` at depth 0 reproduces that generic frame as
-        // the rendered *top* message (code `TYPE_IS_NOT_ASSIGNABLE_TO_TYPE`)
-        // whenever the reason is an object-structural mismatch that carries a
-        // deeper chain (e.g. a `[Symbol.dispose]` whose signature is
-        // incompatible). Mirror `tsc`: drop that redundant frame and promote its
-        // already-correctly-nested children directly beneath the head message.
-        let related = if rendered.code
-            == crate::diagnostics::diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
-            && !rendered.related_information.is_empty()
-        {
-            rendered.related_information
-        } else {
-            let mut related = vec![crate::diagnostics::Diagnostic::related_message(
-                rendered.code,
-                rendered.file,
-                rendered.start,
-                rendered.length,
-                rendered.message_text,
-            )];
-            related.extend(
-                rendered
-                    .related_information
-                    .into_iter()
-                    .map(|info| info.with_depth_shift(1)),
-            );
-            related
-        };
-        Some(DisposableRelationOutcome::Elaborated(related))
+        // 1. A GENERIC frame with a deeper chain (code `TYPE_IS_NOT_ASSIGNABLE_TO_TYPE`,
+        //    non-empty `related_information`) — an object-structural mismatch
+        //    like a `[Symbol.dispose]` whose signature is incompatible
+        //    (`PropertyTypeMismatch`). The `using`-specific TS2850 wording
+        //    already conveys the generic relationship, so drop the redundant
+        //    generic frame and promote its already-correctly-nested children
+        //    directly beneath the TS2850 head message
+        //    (`using_type_mismatch_dispose_signature_attaches_incompatible_tail`).
+        // 2. A GENERIC frame with NO chain (same code, empty `related_information`)
+        //    — every shape where `render_missing_property`/friends fall back to
+        //    the bare `Type 'S' is not assignable to type 'T'.` wording instead
+        //    of a specific message: a primitive initializer (`using a = 42`) or
+        //    a bare function value (`using r = () => {}`) against a target with
+        //    no matching call signature. `tsc` shows NEITHER that generic line
+        //    NOR a property-missing message here — just the flat TS2850 head,
+        //    no tail at all (oracle-verified against `typescript@7.0.2`).
+        // 3. A SELF-HEADED leaf (any other code — typically TS2741/TS2739 from a
+        //    bare `MissingProperty`/`MissingProperties`, the disposable member
+        //    absent outright on an object source). `tsc` REPLACES the TS2850
+        //    head message with this diagnostic entirely rather than nesting it:
+        //    `using r = { foo: 1 }` reports only `Property '[Symbol.dispose]'
+        //    is missing … required in type 'Disposable'.`, no TS2850 line at
+        //    all (#16872, oracle-verified).
+        let is_generic_frame =
+            rendered.code == crate::diagnostics::diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE;
+        if is_generic_frame && rendered.related_information.is_empty() {
+            return None;
+        }
+        if !is_generic_frame {
+            return Some(DisposableRelationOutcome::Replaced(rendered));
+        }
+        Some(DisposableRelationOutcome::Elaborated(
+            rendered.related_information,
+        ))
     }
 
     /// Resolve the `Disposable`/`AsyncDisposable` global interface as a
