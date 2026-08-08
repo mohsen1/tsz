@@ -190,3 +190,76 @@ class Garage {
         "Renamed variant: narrower `this: Car` must allow other.wheels. Got: {codes:?}"
     );
 }
+
+/// #16894: the `this: T` widening is **instance-side only**. A `this` parameter
+/// says what the receiver instance is; it grants nothing on the class object's
+/// static side, so a `protected static` reached through the class name stays
+/// `TS2445` in tsc even inside a function whose `this` is that exact class.
+///
+/// This regressed when the widening first landed and silenced three `TS2445`s in
+/// `conformance/types/thisType/thisTypeAccessibility.ts`. It hid well: that row's
+/// code *set* was unchanged (other `TS2445`s remained), so only the count moved,
+/// and net conformance still went up because two other rows were fixed.
+#[test]
+fn ts2445_on_protected_static_via_class_object_despite_this_param() {
+    let source = "\
+class MyClass { protected static spp: number = 0; }
+const f = function (this: MyClass, p: number) { MyClass.spp = p; };
+";
+    let codes = diag_codes(source);
+    assert!(
+        codes.contains(&2445),
+        "MyClass.spp is a protected static reached through the class object; a `this: MyClass` \
+         parameter must not grant access. Got: {codes:?}"
+    );
+}
+
+/// The paired instance case, so the row above cannot be satisfied by simply
+/// disabling the widening: the same class and the same `this` parameter must
+/// still allow instance-side access to a protected member.
+#[test]
+fn no_ts2445_on_protected_instance_via_this_param() {
+    let source = "\
+class MyClass { protected pp: number = 0; }
+const f = function (this: MyClass, p: number) { this.pp = p; };
+";
+    let codes = diag_codes(source);
+    assert!(
+        !codes.contains(&2445),
+        "this.pp is instance-side access under an exact `this: MyClass`; must be allowed. \
+         Got: {codes:?}"
+    );
+}
+
+/// Control isolating the trigger: the identical static access *without* a `this`
+/// parameter was always denied, so a green result above must come from the
+/// static/instance split rather than from static access being denied generally.
+#[test]
+fn ts2445_on_protected_static_without_any_this_param() {
+    let source = "\
+class MyClass { protected static spp: number = 0; }
+const f = function (p: number) { MyClass.spp = p; };
+";
+    let codes = diag_codes(source);
+    assert!(
+        codes.contains(&2445),
+        "protected static via the class object is denied with no `this` parameter at all. \
+         Got: {codes:?}"
+    );
+}
+
+/// Control isolating the access level: a `private` static under the same `this`
+/// parameter reports `TS2341` and never took part in the widening, so the fix
+/// must not be keyed on staticness alone.
+#[test]
+fn ts2341_on_private_static_via_class_object_despite_this_param() {
+    let source = "\
+class MyClass { private static sp: number = 0; }
+const f = function (this: MyClass, p: number) { MyClass.sp = p; };
+";
+    let codes = diag_codes(source);
+    assert!(
+        codes.contains(&2341),
+        "private static keeps TS2341 regardless of the `this` parameter. Got: {codes:?}"
+    );
+}
