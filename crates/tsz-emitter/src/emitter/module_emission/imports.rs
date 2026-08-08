@@ -1007,6 +1007,7 @@ impl<'a> Printer<'a> {
                 self.write("\");");
             }
             self.write_line();
+            self.emit_commonjs_reexports_for_import_bindings(node, &module_var);
             return;
         }
 
@@ -1034,6 +1035,7 @@ impl<'a> Printer<'a> {
             self.write("\");");
         }
         self.write_line();
+        self.emit_commonjs_reexports_for_import_bindings(node, &module_var);
     }
 
     fn register_commonjs_named_import_substitutions(&mut self, node: &Node, module_var: &str) {
@@ -1054,11 +1056,6 @@ impl<'a> Printer<'a> {
                 default_ident.escaped_text.to_string(),
                 format!("{module_var}.default"),
             );
-            // Record that this local name is a default-import-clause binding so the
-            // re-export site emits a plain assignment (`exports.y = mod.default;`)
-            // rather than a named-specifier live-binding getter.
-            self.commonjs_default_import_local_names
-                .insert(default_ident.escaped_text.to_string());
         }
         if !clause.named_bindings.is_some() {
             return;
@@ -1127,6 +1124,145 @@ impl<'a> Printer<'a> {
                 };
             self.commonjs_named_import_substitutions
                 .insert(local_ident.escaped_text.to_string(), substitution);
+        }
+    }
+
+    /// Pre-pass: collect bare `export { local as exported }` re-exports (no
+    /// `from` clause) keyed by the local binding name. tsc's CommonJS transform
+    /// emits the re-export binding immediately after the `require(...)` for the
+    /// import that supplies `local`, not at the `export { }` statement position,
+    /// so the import site consults this map to place the binding correctly.
+    pub(in crate::emitter) fn collect_commonjs_import_reexports(&mut self, statements: &NodeList) {
+        // Reset per source file: this pre-pass runs at the start of every
+        // CommonJS `emit_source_file`, and both maps accumulate across files
+        // otherwise (a reused printer emits several files in sequence).
+        self.commonjs_import_reexport_names.clear();
+        self.commonjs_reexport_handled_at_import.clear();
+        for &stmt_idx in &statements.nodes {
+            let Some(stmt) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            let Some(export_decl) = self.arena.get_export_decl(stmt) else {
+                continue;
+            };
+            // Only bare `export { ... }` (no module specifier), and not a
+            // `export type { ... }` clause — a `from` re-export is emitted with
+            // its own require and a type-only clause produces no runtime binding.
+            if export_decl.module_specifier.is_some() || export_decl.is_type_only {
+                continue;
+            }
+            let Some(clause_node) = self.arena.get(export_decl.export_clause) else {
+                continue;
+            };
+            let Some(named_exports) = self.arena.get_named_imports(clause_node) else {
+                continue;
+            };
+            let value_specs = self.collect_value_specifiers(&named_exports.elements);
+            for spec_idx in value_specs {
+                let Some(spec_node) = self.arena.get(spec_idx) else {
+                    continue;
+                };
+                let Some(spec) = self.arena.get_specifier(spec_node) else {
+                    continue;
+                };
+                let Some(export_name) = self.get_specifier_name_text(spec.name) else {
+                    continue;
+                };
+                let local_name = if spec.property_name.is_some() {
+                    self.get_specifier_name_text(spec.property_name)
+                        .unwrap_or_else(|| export_name.clone())
+                } else {
+                    export_name.clone()
+                };
+                self.commonjs_import_reexport_names
+                    .entry(local_name)
+                    .or_default()
+                    .push(export_name);
+            }
+        }
+    }
+
+    /// Emit the CommonJS re-export bindings for an import's re-exported bindings,
+    /// immediately after that import's `require(...)` line, matching tsc. A named
+    /// import specifier re-exports through a live-binding `Object.defineProperty`
+    /// getter; a default-import-clause binding re-exports with a plain
+    /// `exports.y = mod_1.default;` assignment. Bindings emitted here are recorded
+    /// in `commonjs_reexport_handled_at_import` so the `export { }` statement skips
+    /// them.
+    pub(in crate::emitter) fn emit_commonjs_reexports_for_import_bindings(
+        &mut self,
+        node: &Node,
+        module_var: &str,
+    ) {
+        if self.commonjs_import_reexport_names.is_empty() {
+            return;
+        }
+        let Some(import) = self.arena.get_import_decl(node) else {
+            return;
+        };
+        let Some(clause_node) = self.arena.get(import.import_clause) else {
+            return;
+        };
+        let Some(clause) = self.arena.get_import_clause(clause_node) else {
+            return;
+        };
+
+        // A default-import-clause binding (`import x from "mod"`) re-exports as a
+        // plain assignment reading `mod_1.default`, matching a local value binding.
+        if clause.name.is_some()
+            && let Some(default_node) = self.arena.get(clause.name)
+            && let Some(default_ident) = self.arena.get_identifier(default_node)
+        {
+            let local = default_ident.escaped_text.to_string();
+            // `remove`, not `get`: each import binding is consumed once and the map
+            // has no other reader (the export site keys off the handled-at-import set).
+            if let Some(export_names) = self.commonjs_import_reexport_names.remove(&local) {
+                let value = format!("{module_var}.default");
+                for export_name in export_names {
+                    self.write_export_binding_start(&export_name);
+                    self.write(&value);
+                    self.write_export_binding_end();
+                    self.write_line();
+                }
+                self.commonjs_reexport_handled_at_import.insert(local);
+            }
+        }
+
+        // Named import specifiers (`import { a, b as bb }`, including
+        // `import { default as d }`) re-export through a live-binding getter.
+        if clause.named_bindings.is_some()
+            && let Some(bindings_node) = self.arena.get(clause.named_bindings)
+            && let Some(named_imports) = self.arena.get_named_imports(bindings_node)
+            && named_imports.name.is_none()
+        {
+            let spec_indices: Vec<NodeIndex> = named_imports.elements.nodes.clone();
+            for spec_idx in spec_indices {
+                let Some(spec_node) = self.arena.get(spec_idx) else {
+                    continue;
+                };
+                let Some(spec) = self.arena.get_specifier(spec_node) else {
+                    continue;
+                };
+                // For an import specifier, the local binding name is `spec.name`.
+                let Some(local) = self.get_specifier_name_text(spec.name) else {
+                    continue;
+                };
+                let Some(export_names) = self.commonjs_import_reexport_names.remove(&local) else {
+                    continue;
+                };
+                let Some(substitution) = self
+                    .commonjs_named_import_substitutions
+                    .get(&local)
+                    .cloned()
+                else {
+                    continue;
+                };
+                for export_name in export_names {
+                    self.write_commonjs_reexport_getter(&export_name, &substitution);
+                    self.write_line();
+                }
+                self.commonjs_reexport_handled_at_import.insert(local);
+            }
         }
     }
 

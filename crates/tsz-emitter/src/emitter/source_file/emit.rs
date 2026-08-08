@@ -59,6 +59,15 @@ impl<'a> Printer<'a> {
             self.collect_const_enum_values(&source.statements);
         }
 
+        // Pre-pass: collect bare `export { x }` re-exports of import bindings.
+        // tsc's CommonJS transform emits the re-export binding immediately after
+        // the import's `require(...)` line rather than at the `export { }`
+        // statement, so the import site needs to know which of its bindings are
+        // re-exported before it emits.
+        if matches!(self.ctx.options.module, ModuleKind::CommonJS) {
+            self.collect_commonjs_import_reexports(&source.statements);
+        }
+
         // Enter root scope for block-scoped variable tracking and `var` scope boundaries.
         // This ensures variables declared throughout the file are tracked for renaming.
         self.ctx.block_scope_state.enter_function_scope();

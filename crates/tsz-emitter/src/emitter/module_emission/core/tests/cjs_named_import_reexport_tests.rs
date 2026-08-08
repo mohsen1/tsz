@@ -340,3 +340,91 @@ export { d };
         "A `default`-named specifier must not collapse to a plain assignment.\nOutput:\n{output}"
     );
 }
+
+// ── Placement: re-export bindings follow their import's require() ────────────
+//
+// tsc's CommonJS transform emits the re-export binding for an imported name
+// immediately after the `require(...)` for that import, not at the `export { }`
+// statement's own source position. These tests pin the placement, which the
+// content-only assertions above cannot see.
+
+/// The `Object.defineProperty` getter for a re-exported named import appears
+/// right after that import's `require(...)`, and before a later body statement,
+/// even though the `export { }` statement is written after the body.
+#[test]
+fn named_import_reexport_getter_is_emitted_after_require_before_body() {
+    let source = r#"import { v } from "./mod";
+export const a = 1;
+export { v };
+"#;
+    let output = emit_commonjs(source);
+    let require_pos = output
+        .find(r#"require("./mod")"#)
+        .expect("require should be emitted");
+    let getter_pos = output
+        .find(r#"Object.defineProperty(exports, "v""#)
+        .expect("getter should be emitted");
+    let body_pos = output
+        .find("exports.a = 1;")
+        .expect("body should be emitted");
+    assert!(
+        require_pos < getter_pos && getter_pos < body_pos,
+        "getter must be emitted after the require and before the body statement.\nOutput:\n{output}"
+    );
+}
+
+/// With two imports each re-exporting a binding, each getter follows its own
+/// import's `require(...)`, not a single trailing block at the `export { }` site.
+#[test]
+fn each_import_reexport_getter_follows_its_own_require() {
+    let source = r#"import { p } from "./first";
+import { q } from "./second";
+export const a = 1;
+export { p };
+export { q };
+"#;
+    let output = emit_commonjs(source);
+    let first_require = output.find(r#"require("./first")"#).unwrap();
+    let p_getter = output
+        .find(r#"Object.defineProperty(exports, "p""#)
+        .unwrap();
+    let second_require = output.find(r#"require("./second")"#).unwrap();
+    let q_getter = output
+        .find(r#"Object.defineProperty(exports, "q""#)
+        .unwrap();
+    let body = output.find("exports.a = 1;").unwrap();
+    assert!(
+        first_require < p_getter && p_getter < second_require,
+        "the `p` getter must sit between its own require and the next require.\nOutput:\n{output}"
+    );
+    assert!(
+        second_require < q_getter && q_getter < body,
+        "the `q` getter must follow the second require and precede the body.\nOutput:\n{output}"
+    );
+}
+
+/// A default-import re-export assignment is likewise placed right after the
+/// import's `require(...)`, before a subsequent body statement.
+#[test]
+fn default_import_reexport_assignment_is_emitted_after_require_before_body() {
+    let source = r#"import data from "./mod";
+export const a = 1;
+export { data };
+"#;
+    let output = emit_commonjs(source);
+    let require_pos = output.find(r#"require("./mod")"#).unwrap();
+    let assign_pos = output
+        .find("exports.data = mod_1.default;")
+        .expect("default re-export assignment should be emitted");
+    let body_pos = output.find("exports.a = 1;").unwrap();
+    assert!(
+        require_pos < assign_pos && assign_pos < body_pos,
+        "default re-export assignment must follow the require and precede the body.\nOutput:\n{output}"
+    );
+    // And it must not additionally appear at the `export { }` position (no dup).
+    assert_eq!(
+        output.matches("exports.data = mod_1.default;").count(),
+        1,
+        "the default re-export must be emitted exactly once.\nOutput:\n{output}"
+    );
+}

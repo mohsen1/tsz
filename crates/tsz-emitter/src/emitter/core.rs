@@ -768,14 +768,21 @@ pub struct Printer<'a> {
     /// Used to match tsc emit where named imports are referenced via module temps.
     pub(crate) commonjs_named_import_substitutions: FxHashMap<String, String>,
 
-    /// Local names bound by a **default import clause** (`import x from "mod"`),
-    /// as opposed to a named import specifier (`import { x }` / `import { d as x }`)
-    /// or a namespace import (`import * as x`). tsc re-exports a default-import
-    /// binding with a plain `exports.y = mod.default;` assignment, whereas a named
-    /// import specifier is re-exported through a live-binding getter. Both share
-    /// `commonjs_named_import_substitutions` for reference rewriting, so this set
-    /// is what distinguishes the two at the re-export site.
-    pub(crate) commonjs_default_import_local_names: FxHashSet<String>,
+    /// Bare `export { x }` (no module specifier) re-exports keyed by the local
+    /// name, mapping to the exported name(s) in source order. tsc's CommonJS
+    /// transform emits a re-export of a named-specifier or default-clause import
+    /// binding (`Object.defineProperty` getter, or `exports.y = mod_1.default;`)
+    /// immediately after that import's `require(...)` line rather than at the
+    /// `export { }` statement, so the import site drains this map to place it.
+    /// Namespace-import and local-binding re-exports keep their existing paths;
+    /// only named/default import bindings are moved. Collected in a pre-pass so
+    /// the import site knows what to emit before it runs.
+    pub(crate) commonjs_import_reexport_names: FxHashMap<String, Vec<String>>,
+
+    /// Import binding locals whose CommonJS re-export was already emitted at the
+    /// import site; the `export { }` statement skips them so the binding is not
+    /// emitted twice (once after the `require`, once at the export position).
+    pub(crate) commonjs_reexport_handled_at_import: FxHashSet<String>,
 
     /// Module expressions for wrapped AMD re-export declarations, keyed by node start.
     /// AMD binds dependencies as factory parameters instead of body-local `require()` calls.
