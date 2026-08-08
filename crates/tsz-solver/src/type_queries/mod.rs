@@ -87,8 +87,9 @@ pub use extended::{
     get_invalid_index_type_member, get_invalid_index_type_member_strict, get_literal_property_name,
     get_number_literal_value, get_string_literal_value, get_tuple_list_id, is_literal_enum_member,
     is_number_literal, is_object_with_index_type, is_string_like_type, is_string_literal,
-    key_matches_number_index, key_matches_string_index, string_like_type_for_type,
-    type_contains_string_literal, widen_literal_to_primitive,
+    is_type_or_base_identical, key_matches_number_index, key_matches_string_index,
+    source_is_or_base_identical_to_fixed, string_like_type_for_type, type_contains_string_literal,
+    widen_literal_to_primitive,
 };
 pub use extended_constructors::{
     AbstractClassCheckKind, AbstractConstructorAnchor, BaseInstanceMergeKind, ClassDeclTypeKind,

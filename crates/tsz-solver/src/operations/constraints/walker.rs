@@ -629,7 +629,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     };
                     let mut unmatched: Vec<TypeId> = Vec::new();
                     for &member in s_members.iter() {
-                        if fixed_targets.contains(&member) {
+                        if self.source_member_matches_fixed_target(member, &fixed_targets) {
                             continue;
                         }
                         let structural_matches: Vec<TypeId> = structured_targets
@@ -673,35 +673,48 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     // target union. This matches tsc's `inferFromMatchingTypes`:
                     // without it, `T | null` against `HTMLElement | null` would
                     // infer `T = HTMLElement | null` instead of `T = HTMLElement`.
-                    let matched_fixed: FxHashSet<TypeId> = s_members
+                    // Drop every fixed *target* member that some source member
+                    // consumed, leaving the reduced target the unmatched sources
+                    // infer against. Filtered by target id (not source id) because a
+                    // number/string literal source matches a `number`/`string`
+                    // target whose id differs, so the reduction must remove the
+                    // target, not the source (tsc's `isTypeOrBaseIdenticalTo`,
+                    // #16948). The `fixed_targets` guard keeps the identity leg from
+                    // treating a naked/structured target as consumed.
+                    let remaining_targets: Vec<TypeId> = t_members_list
                         .iter()
                         .copied()
-                        .filter(|member| fixed_targets.contains(member))
+                        .filter(|&candidate| {
+                            !(fixed_targets.contains(&candidate)
+                                && s_members.iter().any(|&member| {
+                                    crate::type_queries::is_type_or_base_identical(
+                                        self.interner.as_type_database(),
+                                        member,
+                                        candidate,
+                                    )
+                                }))
+                        })
                         .collect();
-                    let has_unmatched_source = s_members
+                    let some_fixed_target_matched = remaining_targets.len() < t_members_list.len();
+                    // Source members that matched no fixed target: computed once and
+                    // reused as both the reduction gate and the inference work-list.
+                    let unmatched_sources: Vec<TypeId> = s_members
                         .iter()
-                        .any(|member| !fixed_targets.contains(member));
-                    let reduced_target = if !matched_fixed.is_empty() && has_unmatched_source {
-                        let remaining_targets: Vec<TypeId> = t_members_list
-                            .iter()
-                            .copied()
-                            .filter(|member| !matched_fixed.contains(member))
-                            .collect();
-                        if remaining_targets.is_empty()
-                            || remaining_targets.len() == t_members_list.len()
-                        {
-                            target // No reduction possible or nothing removed
-                        } else {
-                            crate::utils::union_or_single(self.interner, remaining_targets)
-                        }
+                        .copied()
+                        .filter(|&member| {
+                            !self.source_member_matches_fixed_target(member, &fixed_targets)
+                        })
+                        .collect();
+                    let reduced_target = if some_fixed_target_matched
+                        && !remaining_targets.is_empty()
+                        && !unmatched_sources.is_empty()
+                    {
+                        crate::utils::union_or_single(self.interner, remaining_targets)
                     } else {
                         target
                     };
-                    for &member in s_members.iter() {
-                        // Skip source members that directly match a fixed target member
-                        if !fixed_targets.contains(&member) {
-                            self.constrain_types(ctx, var_map, member, reduced_target, priority);
-                        }
+                    for &member in &unmatched_sources {
+                        self.constrain_types(ctx, var_map, member, reduced_target, priority);
                     }
                 }
             }

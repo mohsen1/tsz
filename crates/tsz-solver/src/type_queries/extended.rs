@@ -163,6 +163,39 @@ pub fn is_number_literal(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     )
 }
 
+/// tsc's `isTypeOrBaseIdenticalTo`, restricted to the number/string leg it uses
+/// during union-inference partitioning: `source` matches `target` either by
+/// identity, or when `source` is a number/string *literal* whose base primitive
+/// (`number`/`string`) is `target`. Boolean and bigint literals are
+/// intentionally not widened here, matching tsc.
+///
+/// Union-inference must pair each fixed (placeholder-free) target member against
+/// a matching source member before the leftovers flow to a naked inference
+/// variable. Array-literal element types are literals (`13`, `"12"`), so without
+/// the literal->base leg they never pair with the fixed `number`/`string`
+/// targets and leak into the naked variable — where a constraint-violating
+/// literal (`"12"` against `T extends Numeric`) forces a fallback to the
+/// constraint and a spurious diagnostic (#16948).
+pub fn is_type_or_base_identical(db: &dyn TypeDatabase, source: TypeId, target: TypeId) -> bool {
+    source == target
+        || (target == TypeId::NUMBER && is_number_literal(db, source))
+        || (target == TypeId::STRING && is_string_literal(db, source))
+}
+
+/// [`is_type_or_base_identical`] against a collection of fixed target members,
+/// expressed as a membership predicate so both `FxHashSet`- and slice-backed
+/// callers keep their native lookup cost. True when `source` is identical to a
+/// fixed member, or its number/string literal base primitive is a fixed member.
+pub fn source_is_or_base_identical_to_fixed(
+    db: &dyn TypeDatabase,
+    source: TypeId,
+    fixed_contains: impl Fn(TypeId) -> bool,
+) -> bool {
+    fixed_contains(source)
+        || (is_number_literal(db, source) && fixed_contains(TypeId::NUMBER))
+        || (is_string_literal(db, source) && fixed_contains(TypeId::STRING))
+}
+
 /// Check if two types are literals of the same base kind.
 ///
 /// Returns true when both are string literals, both are number literals,
