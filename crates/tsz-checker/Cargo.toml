@@ -1251,6 +1251,9 @@ path = "tests/ts2313_generic_constraint_tests.rs"
 name = "ts2314_in_type_literal_suppresses_ts2322_tests"
 path = "tests/ts2314_in_type_literal_suppresses_ts2322_tests.rs"
 [[test]]
+name = "ts2314_generic_type_alias_display_tests"
+path = "tests/ts2314_generic_type_alias_display_tests.rs"
+[[test]]
 name = "commonjs_module_export_alias_tests"
 path = "tests/commonjs_module_export_alias_tests.rs"
 [[test]]
