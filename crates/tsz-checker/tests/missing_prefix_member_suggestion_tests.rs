@@ -183,3 +183,100 @@ fn suggestion_is_binder_name_invariant() {
         &["TS2663: Cannot find name 'frob'. Did you mean the instance member 'this.frob'?"],
     );
 }
+
+// ---------------------------------------------------------------------------
+// Type positions take the bare `TS2304` (#16840). `typeof a` in a type is the
+// one place a *value* name appears inside type syntax, and `this.a` is not
+// writable there, so tsc offers no suggestion — `checkAndReportErrorForMissing
+// Prefix` is reached from `checkIdentifier`, never from the type-reference path.
+//
+// Each row pairs a type position with the *same* class and member name in a
+// value position. Without the pairing these would only show that some sources
+// produce no suggestion; paired, they isolate the position as the variable.
+// Oracle-verified against `typescript@7.0.2` (`--singleThreaded
+// --stableTypeOrdering true`): the type rows report `TS2304`, the value rows
+// report `TS2663`.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn property_type_annotation_produces_no_suggestion() {
+    let libs = load_default_lib_files();
+    // `compiler/typeofProperty.ts` — the conformance row this regressed.
+    assert_suggestions(
+        "class C { a: number = 1; b: typeof a = 1 as any; }",
+        &libs,
+        &[],
+    );
+    // Same class, same member, value position → suggestion.
+    assert_suggestions(
+        "class C { a: number = 1; p = a; }",
+        &libs,
+        &["TS2663: Cannot find name 'a'. Did you mean the instance member 'this.a'?"],
+    );
+}
+
+#[test]
+fn parameter_type_annotation_produces_no_suggestion() {
+    let libs = load_default_lib_files();
+    assert_suggestions("class C { a: number = 1; m(x: typeof a) {} }", &libs, &[]);
+    assert_suggestions(
+        "class C { a: number = 1; m() { return a; } }",
+        &libs,
+        &["TS2663: Cannot find name 'a'. Did you mean the instance member 'this.a'?"],
+    );
+}
+
+#[test]
+fn return_type_annotation_produces_no_suggestion() {
+    let libs = load_default_lib_files();
+    assert_suggestions(
+        "class C { a: number = 1; m(): typeof a { return 1 as any; } }",
+        &libs,
+        &[],
+    );
+    assert_suggestions(
+        "class C { a: number = 1; constructor() { a; } }",
+        &libs,
+        &["TS2663: Cannot find name 'a'. Did you mean the instance member 'this.a'?"],
+    );
+}
+
+#[test]
+#[ignore = "known divergence (#16840, pre-existing and older than #16834): a \
+            *declared static* named in a type position still reports TS2662 \
+            where tsc reports the bare TS2304. That name binds to a real \
+            symbol, so it never reaches resolve_truly_unknown_identifier — it \
+            is emitted from the resolved-symbol paths in \
+            types/computation/identifier/resolved.rs and \
+            types/computation/helpers.rs, which need the same value-position \
+            guard applied at their own sites"]
+fn a_static_member_in_a_type_position_produces_no_suggestion() {
+    let libs = load_default_lib_files();
+    assert_suggestions(
+        "class C { static s: number = 1; b: typeof s = 1 as any; }",
+        &libs,
+        &[],
+    );
+}
+
+#[test]
+fn a_static_member_in_a_value_position_still_suggests() {
+    let libs = load_default_lib_files();
+    // The control for the ignored row above: the same class and member in a
+    // value position must keep its suggestion, so whoever fixes the static
+    // arm's type-position leak has a live guard against over-correcting.
+    assert_suggestions(
+        "class C { static s: number = 1; m() { return s; } }",
+        &libs,
+        &["TS2662: Cannot find name 's'. Did you mean the static member 'C.s'?"],
+    );
+}
+
+#[test]
+fn arguments_in_a_type_position_produces_no_suggestion() {
+    let libs = load_default_lib_files();
+    // The `Function`-member path (#16815's original witness) is the widest arm —
+    // it matches any name on `Function`/`Object` — so it is the most likely to
+    // leak into a type position.
+    assert_suggestions("class C { b: typeof arguments = 1 as any; }", &libs, &[]);
+}

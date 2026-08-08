@@ -371,6 +371,55 @@ impl<'a> CheckerState<'a> {
         None
     }
 
+    /// Whether `idx` sits inside a `typeof T` **type** query, i.e. a type
+    /// position rather than a value position.
+    ///
+    /// `typeof T` in a type annotation is the one place a *value* name appears
+    /// inside a type: a bare identifier anywhere else in type syntax parses as
+    /// a `TYPE_REFERENCE` and resolves through the type path. So `TYPE_QUERY`
+    /// is the precise marker for "this value name is not in an expression".
+    ///
+    /// Used to keep the `TS2662`/`TS2663` member-prefix suggestion off type
+    /// positions, where `tsc` reports the bare `TS2304` because `this.x` is not
+    /// writable there.
+    ///
+    /// The walk stops at the enclosing class: a `typeof` *outside* the class
+    /// that contains it says nothing about a reference inside one of its
+    /// members. Being purely syntactic, this answers identically during the
+    /// statement walk and during on-demand class-type computation, which the
+    /// suggestion depends on to emit exactly one diagnostic per site.
+    pub(crate) fn is_in_type_query(&self, idx: NodeIndex) -> bool {
+        use tsz_parser::parser::syntax_kind_ext::{
+            CLASS_DECLARATION, CLASS_EXPRESSION, TYPE_QUERY,
+        };
+
+        let mut current = idx;
+        let mut iterations = 0;
+        while current.is_some() {
+            iterations += 1;
+            if iterations > MAX_TREE_WALK_ITERATIONS {
+                return false;
+            }
+            let Some(node) = self.ctx.arena.get(current) else {
+                return false;
+            };
+            if node.kind == TYPE_QUERY {
+                return true;
+            }
+            if node.kind == CLASS_DECLARATION || node.kind == CLASS_EXPRESSION {
+                return false;
+            }
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                return false;
+            };
+            if ext.parent.is_none() {
+                return false;
+            }
+            current = ext.parent;
+        }
+        false
+    }
+
     /// Check if `this` is inside a static class member by walking the AST.
     /// Returns true if the nearest enclosing class member/static-block has a `static` modifier.
     /// Unlike `enclosing_class.in_static_member`, this works even outside the
