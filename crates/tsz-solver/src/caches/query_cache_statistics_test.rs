@@ -1170,3 +1170,38 @@ fn query_cache_statistics_merge_includes_closed_eval_cache() {
     assert_eq!(left.closed_eval_cache_entries, 9);
     assert_eq!(left.permissive_false_branch_cache_entries, 14);
 }
+
+#[test]
+fn evict_registration_window_entries_drops_only_tainted_keys() {
+    use crate::evaluation::request::EvaluationCacheKey;
+
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+
+    // A clean top-level entry (would pass `is_stable_for_run_wide_cache`) and a
+    // registration-window entry (passed only the depth-agnostic gate) share the
+    // reused pool cache. Only the latter is window-scoped.
+    let clean = EvaluationCacheKey::new(TypeId::STRING, false, false);
+    let tainted = EvaluationCacheKey::new(TypeId::NUMBER, false, false);
+    db.insert_eval_entry_for_test(clean, TypeId::BOOLEAN, false);
+    db.insert_eval_entry_for_test(tainted, TypeId::BOOLEAN, true);
+    assert!(db.eval_cache_contains_key_for_test(&clean));
+    assert!(db.eval_cache_contains_key_for_test(&tainted));
+
+    // A file boundary in the checker-pool reuse loop: the window ends, so the
+    // window-scoped entry must go while the clean cross-file entry stays.
+    db.evict_registration_window_eval_entries();
+    assert!(
+        db.eval_cache_contains_key_for_test(&clean),
+        "clean cross-file entry must be retained for pool amortization"
+    );
+    assert!(
+        !db.eval_cache_contains_key_for_test(&tainted),
+        "registration-window entry must not survive into the next file's window"
+    );
+
+    // Idempotent: the tracked-key set was drained, so a second eviction is a
+    // no-op and leaves the clean entry alone.
+    db.evict_registration_window_eval_entries();
+    assert!(db.eval_cache_contains_key_for_test(&clean));
+}

@@ -29,3 +29,9 @@ pub(super) fn invalidate_for_def(
 ) {
     dependency_index::invalidate_for_def(index, cache, def_id);
 }
+
+/// Drop `key`'s dependency edges after the caller has removed it from the cache
+/// directly (single-entry eviction, not `DefId`-scoped invalidation).
+pub(super) fn forget_key(index: &EvalDependencyIndex, key: &EvaluationCacheKey) {
+    dependency_index::forget_key(index, key);
+}

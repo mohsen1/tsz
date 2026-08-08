@@ -713,6 +713,14 @@ where
             qc_stats,
             ds_stats,
         ));
+
+        // This file's registration window has ended. Evict any `eval_cache`
+        // entry that was only window-valid (published under an `UnresolvedDef`
+        // taint) so it cannot shadow the authoritative type the next file in
+        // this partition computes once the missing bodies register — the
+        // fresh-vs-pool divergence in #16553. Clean entries are retained, so
+        // the pool keeps amortizing evaluation cost across files.
+        query_cache.evict_registration_window_eval_entries();
     }
 
     results

@@ -79,6 +79,13 @@ pub(super) fn invalidate_for_def<K: Eq + Hash>(
     }
 }
 
+/// Drop `key`'s dependency edges from the index without touching any cache.
+/// Callers that evict a single entry directly (rather than through
+/// [`invalidate_for_def`]) use this to keep the reverse index consistent.
+pub(super) fn forget_key<K: Eq + Hash>(index: &DependencyIndex<K>, key: &K) {
+    remove_dependencies(&mut index.borrow_mut(), key);
+}
+
 fn remove_dependencies<K: Eq + Hash>(index: &mut DependencyIndexState<K>, key: &K) {
     let Some(deps) = index.key_dependencies.remove(key) else {
         return;
