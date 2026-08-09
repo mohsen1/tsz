@@ -10,6 +10,7 @@ mod lazy_flow_mirror;
 mod lazy_fuel;
 pub(crate) mod lazy_guard_state;
 mod lazy_impossible_pruning;
+mod lazy_ts2589_divergence;
 mod property_access_visited;
 mod published_program_alias;
 mod source_location;

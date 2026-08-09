@@ -131,3 +131,61 @@ type X = Grow<[1]>;
         "unbounded tuple growth must still produce TS2589. Got: {codes:?}"
     );
 }
+
+/// #17028 item 2: a tuple-length-counter recursion tied through a non-tail
+/// (object-property) position genuinely grows its argument by one element on
+/// every step — the coarse structural-weight metric alone reads that as
+/// unbounded divergence — yet still terminates the moment the literal-number
+/// condition trips. `tsc` reaches this via real, concrete
+/// `instantiationDepth`-bounded evaluation and never reports `TS2589` here,
+/// confirmed against pinned `typescript@7.0.2` at target depths 1, 60, and
+/// (unboundedly accepted) 1000. `residual_application_diverges` must re-drive
+/// the residual through bounded real expansion rather than declaring
+/// divergence from the first step's growth.
+#[test]
+fn nest_accumulator_grows_but_terminates_no_ts2589() {
+    let source = r#"
+type Nest<N extends unknown[]> = N["length"] extends 1 ? number : { a: Nest<[unknown, ...N]> };
+type Z = Nest<[]>;
+declare const z: Z;
+"#;
+    let codes = check_source_codes(source);
+    assert!(
+        !codes.contains(&2589),
+        "a non-tail accumulator recursion terminating after one real step must not produce TS2589. Got: {codes:?}"
+    );
+}
+
+/// Same shape as `nest_accumulator_grows_but_terminates_no_ts2589` at the
+/// exact depth from the reported issue (#17028) — the depth at which the old
+/// single-step weight comparison first went wrong, oracle-confirmed clean on
+/// `typescript@7.0.2`.
+#[test]
+fn nest_accumulator_grows_but_terminates_no_ts2589_at_reported_depth() {
+    let source = r#"
+type Nest<N extends unknown[]> = N["length"] extends 60 ? number : { a: Nest<[unknown, ...N]> };
+type Z = Nest<[]>;
+declare const z: Z;
+"#;
+    let codes = check_source_codes(source);
+    assert!(
+        !codes.contains(&2589),
+        "a non-tail accumulator recursion terminating after 60 real steps must not produce TS2589. Got: {codes:?}"
+    );
+}
+
+/// Renamed binders confirm the fix is structural, not keyed to any particular
+/// alias / type-parameter / property identifier.
+#[test]
+fn nest_accumulator_grows_but_terminates_no_ts2589_renamed() {
+    let source = r#"
+type Countdown<Acc extends unknown[]> = Acc["length"] extends 12 ? boolean : { held: Countdown<[unknown, ...Acc]> };
+type Result = Countdown<[]>;
+declare const r: Result;
+"#;
+    let codes = check_source_codes(source);
+    assert!(
+        !codes.contains(&2589),
+        "renamed non-tail accumulator recursion must not produce TS2589. Got: {codes:?}"
+    );
+}
