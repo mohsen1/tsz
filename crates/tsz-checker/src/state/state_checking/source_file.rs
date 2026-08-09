@@ -885,7 +885,6 @@ impl CheckerState<'_> {
 
         self.rewrite_conditional_types1_fingerprints(&sf.text);
         self.align_awaited_type_instantiation_diagnostics(&sf.text);
-        self.align_evolving_array_inference_diagnostics(&sf.text);
         self.align_complex_recursive_collections_diagnostics(&sf.text);
     }
 
@@ -1208,44 +1207,6 @@ impl CheckerState<'_> {
                 code,
             ));
         }
-    }
-
-    fn align_evolving_array_inference_diagnostics(&mut self, source_text: &str) {
-        use tsz_common::diagnostics::{Diagnostic, diagnostic_codes};
-
-        if !Self::fixture_has_markers(
-            source_text,
-            &[
-                "function logFirstLength<T extends string[], U extends string>",
-                "let zz = [];",
-                "zz = logFirstLength([42]);",
-            ],
-        ) {
-            return;
-        }
-
-        let Some(line_start) = source_text.find("zz = logFirstLength([42]);") else {
-            return;
-        };
-        let Some(anchor_offset) = source_text[line_start..].find("42") else {
-            return;
-        };
-        let start = (line_start + anchor_offset) as u32;
-        let message = "Type 'number' is not assignable to type 'string'.";
-        if self.ctx.diagnostics.iter().any(|diag| {
-            diag.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
-                && diag.start == start
-                && diag.message_text == message
-        }) {
-            return;
-        }
-        self.ctx.diagnostics.push(Diagnostic::error(
-            self.ctx.file_name.clone(),
-            start,
-            2,
-            message,
-            diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-        ));
     }
 
     fn align_complex_recursive_collections_diagnostics(&mut self, source_text: &str) {

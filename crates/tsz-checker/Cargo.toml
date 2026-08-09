@@ -35,6 +35,9 @@ stacker = "0.1.23"
 name = "import_assert_keyword_abandon_tests"
 path = "tests/import_assert_keyword_abandon_tests.rs"
 [[test]]
+name = "evolving_array_assignment_contextual_inference_tests"
+path = "tests/evolving_array_assignment_contextual_inference_tests.rs"
+[[test]]
 name = "enum_member_binding_widening_tests"
 path = "tests/enum_member_binding_widening_tests.rs"
 [[test]]
