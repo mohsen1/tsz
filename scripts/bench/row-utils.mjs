@@ -13,6 +13,17 @@ export function hasCompletePhaseMetadata(compatibility) {
   return REQUIRED_PHASE_EXIT_FIELDS.every((field) => Object.hasOwn(compatibility, field));
 }
 
+// The declared row names (from any benchmark_set/guard_set/corpus name list)
+// that have no result row in `rows`, preserving `declaredNames` order. This is
+// the raw "declared minus measured" primitive shared by the corpus advisory, the
+// required-coverage signal, and the readiness gate. It applies NO all-absent
+// guard: a caller that must not flag a shard carrying none of the declared rows
+// (a standalone/timing-only shard) applies that guard itself.
+export function missingDeclaredRows(declaredNames, rows) {
+  const measuredNames = new Set((rows ?? []).map((row) => row?.name).filter(Boolean));
+  return declaredNames.filter((name) => !measuredNames.has(name));
+}
+
 // A row is green when it succeeded (no status error, not artifact_missing) and
 // either has no compatibility object at all (single-file rows are always
 // eligible) or has a complete green compatibility object.
