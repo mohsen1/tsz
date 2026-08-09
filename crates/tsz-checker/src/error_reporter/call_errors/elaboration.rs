@@ -870,7 +870,7 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
-        let Some(expected_return_type) = self.first_callable_return_type(param_type) else {
+        let Some(expected_return_type) = self.union_callable_return_type(param_type) else {
             return false;
         };
 
@@ -1357,40 +1357,97 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn first_callable_return_type(&mut self, ty: TypeId) -> Option<TypeId> {
+    /// Collect the return types of every call signature reachable from `ty`,
+    /// resolving through nullish unwrapping, a bare function shape, a callable
+    /// shape's call signatures, and a type application's base — the shared
+    /// traversal behind both [`Self::first_callable_return_type`] and
+    /// [`Self::union_callable_return_type`]. `None` when `ty` exposes no callable
+    /// shape at all; `Some(vec)` (possibly empty) once a callable arm matched.
+    fn callable_return_types(&mut self, ty: TypeId) -> Option<Vec<TypeId>> {
         use crate::query_boundaries::diagnostics::{
             callable_shape_for_type, function_shape, type_application,
         };
 
         if let (Some(non_nullish), Some(_nullish_cause)) = self.split_nullish_type(ty) {
-            return self.first_callable_return_type(non_nullish);
+            return self.callable_return_types(non_nullish);
         }
 
         if let Some(shape) = function_shape(self.ctx.types, ty) {
-            return Some(shape.return_type);
+            return Some(vec![shape.return_type]);
         }
 
         if let Some(signatures) =
             crate::query_boundaries::common::call_signatures_for_type(self.ctx.types, ty)
         {
-            return signatures.first().map(|sig| sig.return_type);
+            return Some(signatures.iter().map(|sig| sig.return_type).collect());
         }
 
         if let Some(shape) = callable_shape_for_type(self.ctx.types, ty) {
-            return shape.call_signatures.first().map(|sig| sig.return_type);
+            return Some(
+                shape
+                    .call_signatures
+                    .iter()
+                    .map(|sig| sig.return_type)
+                    .collect(),
+            );
         }
 
         if let Some(app) = type_application(self.ctx.types, ty) {
-            return self.first_callable_return_type(app.base);
+            return self.callable_return_types(app.base);
         }
 
         None
     }
 
+    fn first_callable_return_type(&mut self, ty: TypeId) -> Option<TypeId> {
+        self.callable_return_types(ty)?.first().copied()
+    }
+
+    /// The expected return type governing the arrow-body drill, matching `tsc`'s
+    /// `elaborateArrowFunction`: `getUnionType(map(getSignaturesOfType(target,
+    /// Call), getReturnTypeOfSignature))`.
+    ///
+    /// When the target is an overload set (multiple call signatures), the arrow's
+    /// inferred return type is related against the UNION of every signature's
+    /// return type — not just the first. A contextually-typed arrow whose body
+    /// unions across the overload parameters — e.g. `(x) => x` assigned to
+    /// `{ (x: string): string; (x: number): number }`, whose body `x` is
+    /// contextually typed `string | number` — has return type `string | number`.
+    /// Relating that against only the *first* signature's return type (`string`,
+    /// as [`Self::first_callable_return_type`] yields) makes the drill spuriously
+    /// fail, so the drill reports an inner `TS2322` anchored inside the body and
+    /// suppresses `tsc`'s outer whole-function relation error. Relating against
+    /// the union (`string | number`) lets the drill relation succeed exactly as
+    /// `tsc`'s does, so this elaborator declines and the caller reports the
+    /// outer `TS2322`/`TS2345` at the assignment/argument site with the full
+    /// function-type message and its nested elaboration.
+    ///
+    /// For a single-signature target the union collapses to that one return type,
+    /// so this is identical to [`Self::first_callable_return_type`] there and only
+    /// changes behavior for genuine overload sets.
+    fn union_callable_return_type(&mut self, ty: TypeId) -> Option<TypeId> {
+        // Reduce the collected returns to `tsc`'s `getUnionType`: none → decline,
+        // one → the sole member (no needless intern), many → the interned union
+        // (which dedupes/reduces).
+        let return_types = self.callable_return_types(ty)?;
+        match return_types.len() {
+            0 => None,
+            1 => Some(return_types[0]),
+            _ => Some(self.ctx.types.union(return_types)),
+        }
+    }
+
     /// The expected return type governing the arrow-body drill for an object
     /// literal member whose declared type is `ty`.
     ///
-    /// [`Self::first_callable_return_type`] answers for a type whose callable
+    /// Uses [`Self::union_callable_return_type`] so an overloaded member type
+    /// (`{ (x: string): string; (x: number): number }`) drives the drill with
+    /// the UNION of its signature returns, matching `tsc`'s `elaborateArrowFunction`
+    /// exactly as the argument/assignment sites do; a single-signature member
+    /// collapses to that one return type, leaving the alias-resolution behavior
+    /// below unchanged.
+    ///
+    /// [`Self::union_callable_return_type`] answers for a type whose callable
     /// structure is already materialized. A member written through a type alias
     /// (`cb: Fn` for `type Fn = () => string`) arrives as an unresolved
     /// `TypeData::Lazy(DefId)` that it does not see through, so the drill read
@@ -1422,19 +1479,19 @@ impl<'a> CheckerState<'a> {
     /// own type parameter `T`. This hop is gated on `ty` actually being an
     /// application so it cannot fire on an unrelated declined shape.
     fn callable_return_type_for_drill(&mut self, ty: TypeId) -> Option<TypeId> {
-        if let Some(found) = self.first_callable_return_type(ty) {
+        if let Some(found) = self.union_callable_return_type(ty) {
             return Some(found);
         }
         let resolved = self.resolve_lazy_type(ty);
         if resolved != ty
-            && let Some(found) = self.first_callable_return_type(resolved)
+            && let Some(found) = self.union_callable_return_type(resolved)
         {
             return Some(found);
         }
         if crate::query_boundaries::diagnostics::type_application(self.ctx.types, ty).is_some() {
             let evaluated = self.judge_evaluate(ty);
             if evaluated != ty {
-                return self.first_callable_return_type(evaluated);
+                return self.union_callable_return_type(evaluated);
             }
         }
         None

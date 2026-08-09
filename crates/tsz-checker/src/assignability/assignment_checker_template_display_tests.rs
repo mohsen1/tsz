@@ -340,3 +340,168 @@ function convert<Result extends Output[]>(ors: Input[]): Result {
         "TS2322 should use the structural source display in the arbitrary-type elaboration, got: {diag:?}"
     );
 }
+
+// An untyped function literal assigned to a MULTI-call-signature (overload)
+// target: `tsc`'s `elaborateArrowFunction` relates the literal's return against
+// the UNION of every target signature's return type. When that union relates
+// (the literal's body unions the overload parameters, e.g. `(p) => p` gives
+// `string | number`), elaboration declines and the outer whole-function
+// relation reports a single TS2322 at the binding — NOT an inner TS2322 drilled
+// into the arrow body against one overload's return. Regression for #16986.
+#[test]
+fn arrow_assigned_to_overloaded_target_reports_outer_ts2322_at_binding() {
+    let source = r#"
+var handler: {
+    (p: string): string;
+    (p: number): number;
+} = (p) => p;
+"#;
+    let diagnostics = diagnostics_for(source);
+    let ts2322s: Vec<_> = diagnostics.iter().filter(|d| d.code == 2322).collect();
+    assert_eq!(
+        ts2322s.len(),
+        1,
+        "expected exactly one TS2322 for the overloaded-target arrow; got: {diagnostics:?}"
+    );
+    let diag = ts2322s[0];
+    // The whole-function message must appear (outer relation), not the
+    // inner-only `string | number -> string` body drill.
+    assert!(
+        diag.message_text
+            .contains("(p: string | number) => string | number")
+            && diag.message_text.contains("(p: string): string"),
+        "TS2322 should carry the whole-function-type outer message, got: {:?}",
+        diag.message_text
+    );
+    // Anchor at the binding name `handler`, not inside the arrow body.
+    let binding_start = source.find("handler").expect("expected binding name") as u32;
+    assert_eq!(
+        diag.start, binding_start,
+        "TS2322 should anchor at the binding name, not the arrow body; got: {diag:?}"
+    );
+}
+
+// A single-call-signature target with a matching contextual return must remain
+// clean — the union collapses to the sole return type, so this stays identical
+// to the pre-change first-signature behavior (no spurious diagnostic).
+#[test]
+fn arrow_assigned_to_single_signature_target_is_accepted() {
+    let source = r#"
+var identity: {
+    (p: string): string;
+} = (p) => p;
+"#;
+    let diagnostics = diagnostics_for(source);
+    assert!(
+        diagnostics.iter().all(|d| d.code != 2322),
+        "single-signature contextual return must not emit TS2322; got: {diagnostics:?}"
+    );
+}
+
+// An untyped function literal PASSED AS AN ARGUMENT to a multi-signature
+// overload parameter: when the contextually-typed literal's whole type still
+// fails to satisfy the overload set, `tsc` reports TS2345 at the argument (the
+// return union relates, so no inner body drill fires). Regression for #16986:
+// the argument-level report must not be suppressed just because the callback
+// has unannotated parameters — its parameters DID resolve to concrete types.
+#[test]
+fn arrow_argument_to_overloaded_parameter_reports_ts2345() {
+    let source = r#"
+declare function accept(cb: { (p: string): string; (p: number): number; }): void;
+accept((p) => p);
+"#;
+    let diagnostics = diagnostics_for(source);
+    assert!(
+        diagnostics.iter().any(|d| d.code == 2345),
+        "expected TS2345 at the overloaded-callback argument; got: {diagnostics:?}"
+    );
+    assert!(
+        diagnostics.iter().all(|d| d.code != 2322),
+        "the argument mismatch must surface as TS2345, not an inner-body TS2322; got: {diagnostics:?}"
+    );
+    let diag = diagnostics.iter().find(|d| d.code == 2345).unwrap();
+    assert!(
+        diag.message_text
+            .contains("(p: string | number) => string | number"),
+        "TS2345 should display the contextually-typed whole-function source, got: {:?}",
+        diag.message_text
+    );
+}
+
+// A return value genuinely OUTSIDE the union of overload returns still drills
+// into the arrow body (matching `tsc`'s `elaborateArrowFunction` when the
+// return does not relate to the target-return union). Guards that the union
+// change did not disable the legitimate body drill.
+#[test]
+fn arrow_argument_return_outside_overload_union_drills_to_body() {
+    let source = r#"
+declare function accept(cb: { (p: string): string; (p: number): number; }): void;
+accept((p) => true);
+"#;
+    let diagnostics = diagnostics_for(source);
+    let diag = diagnostics
+        .iter()
+        .find(|d| d.code == 2322)
+        .expect("expected TS2322 drilled into the arrow body for an out-of-union return");
+    assert!(
+        diag.message_text.contains("'boolean'") && diag.message_text.contains("'string | number'"),
+        "TS2322 should describe the body return-type mismatch (boolean vs string | number), got: {:?}",
+        diag.message_text
+    );
+    // Anchor at the body `true`, not the argument.
+    let body_start = source.find("true").expect("expected body expression") as u32;
+    assert_eq!(
+        diag.start, body_start,
+        "TS2322 should anchor at the arrow body expression; got: {diag:?}"
+    );
+}
+
+// An untyped arrow written as an object-literal PROPERTY value whose declared
+// member type is an overload set: the same `elaborateArrowFunction` rule
+// applies. The member drill must relate the arrow return against the union of
+// the member's signature returns, so `(p) => p` (body `string | number`) does
+// not spuriously inner-drill against the first signature's `string`. Regression
+// for #16986 — the object-literal-property arrow drill shares the union
+// resolver with the argument/assignment sites.
+#[test]
+fn arrow_object_literal_property_to_overloaded_member_does_not_inner_drill() {
+    let source = r#"
+const container: { run: { (p: string): string; (p: number): number } } = {
+    run: (p) => p,
+};
+"#;
+    let diagnostics = diagnostics_for(source);
+    let ts2322s: Vec<_> = diagnostics.iter().filter(|d| d.code == 2322).collect();
+    assert_eq!(
+        ts2322s.len(),
+        1,
+        "expected exactly one TS2322 for the overloaded-member property arrow; got: {diagnostics:?}"
+    );
+    // The single diagnostic must NOT be the inner-body drill against `string`.
+    assert!(
+        !ts2322s[0]
+            .message_text
+            .contains("Type 'string | number' is not assignable to type 'string'.")
+            || ts2322s[0].message_text.contains("(p: string): string"),
+        "TS2322 must carry the property/function-type frame, not the inner-only \
+         `string | number -> string` body drill; got: {:?}",
+        ts2322s[0].message_text
+    );
+}
+
+// A single-signature object-literal member with a matching contextual return
+// stays clean — the union collapses to the sole return, so the alias/inline
+// drill behavior is unchanged.
+#[test]
+fn arrow_object_literal_property_to_single_signature_member_is_accepted() {
+    let source = r#"
+const container: { run: { (p: string): string } } = {
+    run: (p) => p,
+};
+"#;
+    let diagnostics = diagnostics_for(source);
+    assert!(
+        diagnostics.iter().all(|d| d.code != 2322),
+        "single-signature member contextual return must not emit TS2322; got: {diagnostics:?}"
+    );
+}
