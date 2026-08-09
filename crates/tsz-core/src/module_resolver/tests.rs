@@ -7,6 +7,7 @@
 
 mod fixtures;
 
+mod arbitrary_extension_ts6263_family;
 mod cache_statistics;
 mod canonical_entry_path;
 mod conditional_types_flavor;
