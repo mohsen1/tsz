@@ -99,13 +99,20 @@ fn target_resolution_priority(target: &IndexedTarget<'_>) -> usize {
 }
 
 /// Tails that mark a file as an *arbitrary-extension declaration file*: a file
-/// named `<base>.d.<ext>.ts` where `<ext>` is itself a known TS/JS/JSON
-/// extension. These files are addressable through their paired implementation
-/// specifier (`./file.ts` → `./file.d.ts.ts`) but NOT through the stripped form
+/// named `<base>.d.<ext>.ts` where `<ext>` is itself a known TS/JS extension.
+/// These files are addressable through their paired implementation specifier
+/// (`./file.ts` → `./file.d.ts.ts`) but NOT through the stripped form
 /// (`./file.d.ts`), because that form would collide with genuine declaration
 /// imports the user wrote.
+///
+/// `.d.json` is deliberately absent: unlike the TS/JS tails above, tsc's own
+/// `tryAddingExtensions` gives a `.json` specifier's `.d.json.ts` companion
+/// declaration priority over the JSON file's own literal shape (tried before
+/// the `.json` extension itself, unconditionally). So `<base>.d.json.ts` is
+/// registered as a normal target and additionally reachable through the
+/// *stripped* `<base>.json` form — see `relative_file_specifier`'s `user_alt`.
 const ARBITRARY_EXT_TAILS: &[&str] = &[
-    ".d.ts", ".d.tsx", ".d.mts", ".d.cts", ".d.js", ".d.jsx", ".d.mjs", ".d.cjs", ".d.json",
+    ".d.ts", ".d.tsx", ".d.mts", ".d.cts", ".d.js", ".d.jsx", ".d.mjs", ".d.cjs",
 ];
 
 /// Detect `<base>.d.<ext>.ts` files. These are treated specially (see the
@@ -365,8 +372,10 @@ struct RelativeFileSpecifier {
     stem: String,
     /// Present only when the file has a recognized extension: `./foo.js`.
     with_extension: Option<String>,
-    /// Present only for `<base>.d.<ext>.ts` with `<ext>` outside TS/JS/JSON:
-    /// the user-written `<base>.<ext>` form (e.g. `./component.html`).
+    /// Present for `<base>.d.<ext>.ts` with `<ext>` outside TS/JS (the
+    /// user-written `<base>.<ext>` form, e.g. `./component.html`), and for
+    /// `<base>.d.json.ts` (the user-written `<base>.json` form — tsc's
+    /// declaration-before-json priority, not a generic arbitrary-extension).
     user_alt: Option<String>,
 }
 
@@ -387,8 +396,20 @@ fn relative_file_specifier(from_dir: &Path, to_file: &Path) -> Option<RelativeFi
     // `./component.d.html.ts`). The legacy `<base>.d.<ext>` stem stays
     // registered for behavior compatibility with existing fixtures; the
     // user-form is added so tsc-style imports also resolve.
-    let user_alt =
-        arbitrary_ext_decl_user_parts(&rel_str).map(|(base, ext)| format!("{prefix}{base}.{ext}"));
+    //
+    // `<base>.d.json.ts` is a separate, tsc-specific rule (not the generic
+    // arbitrary-extension mechanism above, since `.json` is a recognized
+    // extension): a `.json` specifier's declaration companion is tried before
+    // its own JSON extension, unconditionally. Registered under the same
+    // `user_alt` slot so it participates in the same priority-ordered
+    // overwrite as any sibling `<base>.json` target.
+    let user_alt = arbitrary_ext_decl_user_parts(&rel_str)
+        .map(|(base, ext)| format!("{prefix}{base}.{ext}"))
+        .or_else(|| {
+            rel_str
+                .strip_suffix(".d.json.ts")
+                .map(|base| format!("{prefix}{base}.json"))
+        });
 
     Some(RelativeFileSpecifier {
         stem,
@@ -1037,6 +1058,21 @@ fn resolve_specifier_via_file_index_uncached(
         s
     };
     let base = lexical_normalize_slash(&joined);
+
+    // A `.json` specifier's sibling `.d.json.ts` declaration file takes
+    // priority over the JSON file's own literal shape, unconditionally —
+    // mirrors tsc's `tryAddingExtensions` `Extension.Json` case (Declaration
+    // tried before Json) and `register_canonical_forms`'s `user_alt` slot.
+    // Checked before the direct hit below so the declaration wins even when
+    // both a `.json` and a `.d.json.ts` are project files.
+    if let Some(json_stem) = base.strip_suffix(".json") {
+        let mut decl = String::with_capacity(json_stem.len() + 10);
+        decl.push_str(json_stem);
+        decl.push_str(".d.json.ts");
+        if let Some(&idx) = filename_idx.get(&decl) {
+            return Some(idx);
+        }
+    }
 
     // Direct hit: the specifier already spells out the full path (e.g.
     // `./foo.ts` when `foo.ts` is a project file).
