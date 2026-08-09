@@ -1412,6 +1412,15 @@ impl ParserState {
                 break;
             }
 
+            // A hard modifier immediately followed by `out` then an accessor
+            // — see `parse_type_members`'s identical check and
+            // `look_ahead_hard_modifier_then_out_before_accessor`.
+            let hard_then_out_run_len = self.look_ahead_hard_modifier_then_out_before_accessor();
+            if hard_then_out_run_len > 0 {
+                self.report_hard_modifier_run_before_accessor(hard_then_out_run_len);
+                break;
+            }
+
             let modifier_run_len = self.look_ahead_modifier_run_before_accessor();
             if modifier_run_len > 0 {
                 for _ in 0..modifier_run_len {
