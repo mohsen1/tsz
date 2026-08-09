@@ -252,12 +252,26 @@ C.prototype = 12
     );
 }
 
-/// `/** @type {number} */ C.prototype.x;` declares the prototype property
-/// type and should check the constructor's `this.x = ...` initializer against
-/// that declared type. This mirrors
-/// `conformance/jsdoc/jsdocPrototypePropertyAccessWithType.ts`.
+/// `tsc` 7.0.2 no longer synthesizes a `this` type for a plain JS
+/// "constructor" function from its `this.prop = value` assignments (the old
+/// `isJSConstructor` inference was dropped), so `this` inside `C`'s body is
+/// untyped (TS2683) and `this.x = false` is never cross-checked against the
+/// unrelated `C.prototype.x` JSDoc declaration — no TS2322 fires. This test
+/// previously asserted the pre-TS7 TS2322 without re-verifying against the
+/// pinned oracle; see
+/// `jsdoc_typed_prototype_does_not_cross_check_constructor_this_assignment`
+/// in `ts2565_jsdoc_prototype_type_decl_tests.rs` for the same fixture fixed
+/// under the same root cause (#17040).
+///
+/// This harness's `diagnostics_for_js` fixes `noImplicitAny: false` even
+/// under `strict: true` (see `diagnostics_for_js_with_no_implicit_any`
+/// below), and tsc's `resolveNewExpression` gates the companion TS7009
+/// (`new` target lacks a construct signature) on `noImplicitAny` — oracle-
+/// confirmed with `--strict --noImplicitAny false`, only TS2683 fires, not
+/// TS7009. The `noImplicitAny: true` sibling below pins the case where
+/// TS7009 does fire.
 #[test]
-fn ts2322_for_jsdoc_prototype_property_access_decl_checks_constructor_assignment() {
+fn jsdoc_prototype_property_access_decl_does_not_cross_check_constructor_assignment() {
     let diags = diagnostics_for_js(
         r#"
 function C() { this.x = false; }
@@ -266,15 +280,50 @@ C.prototype.x;
 new C().x;
 "#,
     );
-    let ts2322: Vec<_> = diags.iter().filter(|(c, _)| *c == 2322).collect();
-    assert_eq!(
-        ts2322.len(),
-        1,
-        "expected exactly one TS2322 for constructor assignment checked against JSDoc prototype property type; got: {diags:?}"
-    );
-    let msg = &ts2322[0].1;
     assert!(
-        msg.contains("'boolean'") && msg.contains("'number'"),
-        "TS2322 must compare the constructor RHS boolean with the prototype property's JSDoc number type; got: {msg:?}"
+        !diags.iter().any(|(c, _)| *c == 2322),
+        "tsc 7.0.2 does not cross-check a constructor's `this.x` assignment against an \
+         unrelated `.prototype.x` JSDoc type (this shape is untyped `this`, evidenced by \
+         the companion TS2683); got: {diags:?}"
+    );
+    assert!(
+        diags.iter().any(|(c, _)| *c == 2683),
+        "expected the companion TS2683 ('this' implicitly has type 'any'); got: {diags:?}"
+    );
+    assert!(
+        !diags.iter().any(|(c, _)| *c == 7009),
+        "TS7009 requires noImplicitAny (oracle-confirmed: `--strict --noImplicitAny false` \
+         reports only TS2683); got: {diags:?}"
+    );
+}
+
+/// Adjacent case to the test above: with `noImplicitAny: true` (oracle-
+/// confirmed via plain `--strict`), the companion TS7009 (`new` target lacks
+/// a construct signature) also fires alongside TS2683, and TS2322 still does
+/// not, since `this` stays untyped either way.
+#[test]
+fn jsdoc_prototype_property_access_decl_no_implicit_any_adds_ts7009() {
+    let diags = diagnostics_for_js_with_no_implicit_any(
+        r#"
+function C() { this.x = false; }
+/** @type {number} */
+C.prototype.x;
+new C().x;
+"#,
+        true,
+    );
+    assert!(
+        !diags.iter().any(|(c, _)| *c == 2322),
+        "tsc 7.0.2 does not cross-check a constructor's `this.x` assignment against an \
+         unrelated `.prototype.x` JSDoc type; got: {diags:?}"
+    );
+    assert!(
+        diags.iter().any(|(c, _)| *c == 2683),
+        "expected the companion TS2683 ('this' implicitly has type 'any'); got: {diags:?}"
+    );
+    assert!(
+        diags.iter().any(|(c, _)| *c == 7009),
+        "expected the companion TS7009 (`new` target lacks a construct signature) under \
+         noImplicitAny; got: {diags:?}"
     );
 }
