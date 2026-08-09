@@ -762,6 +762,9 @@ path = "tests/type_alias_namespace_merge_tests.rs"
 name = "keyof_self_circular_alias_tests"
 path = "tests/keyof_self_circular_alias_tests.rs"
 [[test]]
+name = "indexed_mapped_type_self_circular_tests"
+path = "tests/indexed_mapped_type_self_circular_tests.rs"
+[[test]]
 name = "tuple_spread_circular_alias_tests"
 path = "tests/tuple_spread_circular_alias_tests.rs"
 [[test]]
