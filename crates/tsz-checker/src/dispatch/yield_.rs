@@ -951,6 +951,28 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                 return false;
             };
 
+            // A computed member name (`[expr]`) is a key expression evaluated
+            // in the class/interface's enclosing scope. `tsc` reports TS7057 for
+            // a `yield` in it only when the member is a *data property* — the key
+            // feeds the property's own type. For a *function member* (method,
+            // accessor, or bodyless method signature) the key does not consume
+            // the yield's implicit-`any` result, so no TS7057 fires. A class or
+            // object-literal method's body is its own non-generator container, so
+            // its computed-name `yield` never reaches this dispatch at all; a
+            // bodyless interface/type-literal method signature does, and this is
+            // where the two must agree with tsc's data-property-only rule.
+            if parent.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
+                && let Some(member) = self
+                    .checker
+                    .ctx
+                    .arena
+                    .parent_of(parent_idx)
+                    .and_then(|member_idx| self.checker.ctx.arena.get(member_idx))
+                && (member.is_function_like() || member.kind == syntax_kind_ext::METHOD_SIGNATURE)
+            {
+                return true;
+            }
+
             // Walk up through parenthesized expressions
             if parent.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
                 current = parent_idx;

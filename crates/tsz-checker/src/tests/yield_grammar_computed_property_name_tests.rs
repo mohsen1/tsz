@@ -23,10 +23,18 @@
 //! (`--noEmit --strict --pretty false --target es2022 --module esnext`) — the
 //! same oracle-cross-checked behavior the await suite pins — and read through
 //! this crate's parse-health harness. The TS1163 grammar axis reproduces
-//! identically in both; the one place the harness and CLI can drift is the
-//! *type-inference* TS7057 row, which is why the class-method TS7057 gap is
-//! documented as an `#[ignore]`d row at the end rather than asserted live (see
-//! its comment and the linked follow-up issue).
+//! identically in both.
+//!
+//! The type-inference TS7057 axis is covered at the end. `tsc` emits TS7057
+//! (`'yield' expression implicitly results in an 'any' type ...`) for a `yield`
+//! in a computed name **only when the member is a data property** — the key
+//! feeds the property's own type. For a *function member* (method, accessor, or
+//! bodyless method signature) the key does not consume the yield's implicit-any
+//! result, so `tsc` emits no TS7057. #17057 was filed as the mirror image of
+//! this (that class methods *should* raise TS7057 and drop it); the oracle shows
+//! the opposite — class/object methods already match `tsc` (silent), and the
+//! real divergence was a false-positive TS7057 on a bodyless interface /
+//! type-literal method **signature**, now fixed.
 
 use crate::test_utils::check_source_codes_with_parse_health;
 
@@ -292,41 +300,146 @@ class Holder { [key]() {} }
 }
 
 // ---------------------------------------------------------------------------
-// Documented follow-up: the TS7057 type-inference gap for function-body class
-// members.
+// The TS7057 type-inference axis (#17057).
 //
-// The TS1163 *grammar* axis above is uniform across every member kind: the
-// container jump reaches the enclosing generator for methods, accessors,
-// properties, object literals and interface signatures alike. The
-// type-inference axis is not. Inside an unannotated generator, a `yield` in a
-// computed name whose type cannot be pinned should raise TS7057 (`'yield'
-// expression implicitly results in an 'any' type because its containing
-// generator lacks a return-type annotation`). The compiled CLI already does so
-// for object-literal computed names, class *property* computed names, and
-// *interface* method-signature computed names — but drops it for the
-// function-body class members (method / getter / setter / static method),
-// whose own function-type construction resets the enclosing generator's
-// yield-collection state before the name is evaluated.
-//
-// This is a genuine tsz false negative (verified against the CLI, not just this
-// harness), tracked separately from the do-not-patch #16104 await parity as
-// #17057. The row below asserts the correct target and is `#[ignore]`d so it
-// documents the gap without gating CI, following the repo's established pattern
-// (`generator_yield_self_similar_nesting_tests.rs`).
+// `tsc` emits TS7057 for a `yield` in a computed name *only* when the member is
+// a data property; a function member (method / accessor / method signature)
+// never raises it. The rows below pin both directions against the oracle.
+
+// --- Data-property members: TS7057 fires. ---
+
 #[test]
-#[ignore = "#17057 open: a `yield` in a function-body class member's computed \
-name inside an unannotated generator should raise TS7057 like the object-literal \
-/ class-property / interface-signature siblings do, but the member's \
-function-type construction resets the generator's yield-collection state before \
-the name is checked."]
-fn generator_class_method_computed_name_yield_should_report_ts7057() {
+fn generator_class_property_computed_name_yield_reports_ts7057() {
+    let codes = check_source_codes_with_parse_health(
+        r#"
+function* gen() { class Holder { [yield 1] = 2; } }
+"#,
+    );
+    assert!(codes.contains(&7057), "class data property; got {codes:?}");
+}
+
+#[test]
+fn generator_object_literal_property_computed_name_yield_reports_ts7057() {
+    let codes = check_source_codes_with_parse_health(
+        r#"
+function* gen() { const bag = { [yield 1]: 1 }; }
+"#,
+    );
+    assert!(
+        codes.contains(&7057),
+        "object-literal property; got {codes:?}"
+    );
+}
+
+#[test]
+fn generator_interface_property_signature_computed_name_yield_reports_ts7057() {
+    let codes = check_source_codes_with_parse_health(
+        r#"
+function* gen() { interface Shape { [yield 1]: number } }
+"#,
+    );
+    assert!(
+        codes.contains(&7057),
+        "interface property signature; got {codes:?}"
+    );
+}
+
+// --- Function members: TS7057 must NOT fire. ---
+//
+// The class/object method rows guard the pre-existing (correct) silence; the
+// interface / type-literal method-signature rows are the #17057 fix — tsz used
+// to emit a false-positive TS7057 there because the bodyless signature has no
+// function boundary to stop the yield dispatch, unlike a method with a body.
+
+#[test]
+fn generator_class_method_computed_name_yield_no_ts7057() {
     let codes = check_source_codes_with_parse_health(
         r#"
 function* gen() { class Holder { [yield 1]() {} } }
 "#,
     );
-    assert!(
-        codes.contains(&7057),
-        "a function-body class member's computed-name yield should raise TS7057 like its siblings; got {codes:?}"
+    assert!(!codes.contains(&7057), "class method; got {codes:?}");
+}
+
+#[test]
+fn generator_class_getter_computed_name_yield_no_ts7057() {
+    let codes = check_source_codes_with_parse_health(
+        r#"
+function* gen() { class Holder { get [yield 1]() { return 1; } } }
+"#,
     );
+    assert!(!codes.contains(&7057), "class getter; got {codes:?}");
+}
+
+#[test]
+fn generator_class_static_method_computed_name_yield_no_ts7057() {
+    let codes = check_source_codes_with_parse_health(
+        r#"
+function* gen() { class Holder { static [yield 1]() {} } }
+"#,
+    );
+    assert!(!codes.contains(&7057), "class static method; got {codes:?}");
+}
+
+#[test]
+fn generator_object_literal_method_computed_name_yield_no_ts7057() {
+    let codes = check_source_codes_with_parse_health(
+        r#"
+function* gen() { const o = { [yield 1]() {} }; }
+"#,
+    );
+    assert!(
+        !codes.contains(&7057),
+        "object-literal method; got {codes:?}"
+    );
+}
+
+#[test]
+fn generator_interface_method_signature_computed_name_yield_no_ts7057() {
+    // #17057 regression: a bodyless interface method signature used to emit a
+    // false-positive TS7057; tsc reports only TS1169 here.
+    let codes = check_source_codes_with_parse_health(
+        r#"
+function* gen() { interface Shape { [yield 1](): void } }
+"#,
+    );
+    assert!(
+        !codes.contains(&7057),
+        "interface method signature is a function member; got {codes:?}"
+    );
+}
+
+#[test]
+fn generator_type_literal_method_signature_computed_name_yield_no_ts7057() {
+    // #17057 regression, type-literal twin of the interface method signature.
+    let codes = check_source_codes_with_parse_health(
+        r#"
+function* gen() { type Shape2 = { [yield 1](): void }; }
+"#,
+    );
+    assert!(
+        !codes.contains(&7057),
+        "type-literal method signature is a function member; got {codes:?}"
+    );
+}
+
+#[test]
+fn renamed_binder_generator_interface_method_signature_computed_name_yield_no_ts7057() {
+    // Anti-hardcoding: the rule keys on member kind, not identifier spelling.
+    let codes = check_source_codes_with_parse_health(
+        r#"
+function* makeStream() { interface ConnectionPool { [yield token](): void } }
+"#,
+    );
+    assert!(!codes.contains(&7057), "got {codes:?}");
+}
+
+#[test]
+fn async_generator_interface_method_signature_computed_name_yield_no_ts7057() {
+    let codes = check_source_codes_with_parse_health(
+        r#"
+async function* gen() { interface Shape { [yield 1](): void } }
+"#,
+    );
+    assert!(!codes.contains(&7057), "got {codes:?}");
 }
