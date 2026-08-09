@@ -17,8 +17,8 @@ mod lib_offsets;
 mod lib_resolution;
 
 use extends::{
-    anchor_inherited_path_options, anchor_inherited_root_selectors, merge_configs,
-    resolve_extends_path, substitute_config_dir_templates,
+    ExtendsResolution, anchor_inherited_path_options, anchor_inherited_root_selectors,
+    merge_configs, resolve_extends_path, substitute_config_dir_templates,
 };
 use jsonc::remove_trailing_commas;
 use lib_offsets::find_lib_entry_offset;
@@ -1429,11 +1429,12 @@ fn load_tsconfig_inner(
         // Each base is merged into the accumulated config.
         let mut accumulated: Option<TsConfig> = None;
         for extends_path_str in &extends_paths {
-            // An unresolved `extends` is a recoverable condition (tsc reports
-            // TS6053 and continues with the local config). This diagnostic-free
-            // loader simply degrades: skip the missing base rather than aborting
-            // the whole config load.
-            let Some(base_path) = resolve_extends_path(path, extends_path_str)? else {
+            // An unresolved or unreadable `extends` is a recoverable condition
+            // (tsc reports TS6053/TS5083 and continues with the local config).
+            // This diagnostic-free loader simply degrades: skip the base rather
+            // than aborting the whole config load.
+            let ExtendsResolution::Found(base_path) = resolve_extends_path(path, extends_path_str)?
+            else {
                 continue;
             };
             let base_config = load_tsconfig_inner(&base_path, visited, true, config_dir)?;
@@ -1514,16 +1515,12 @@ fn load_tsconfig_inner_with_diagnostics(
         let mut inherited_literal_keys: FxHashSet<String> = FxHashSet::default();
         let stripped = strip_jsonc(&source);
         for extends_path_str in &extends_paths {
-            // An `extends` specifier that names no existing config file is a
-            // recoverable error: tsc emits TS6053 anchored at the specifier and
-            // continues with the remaining (local) options. Emit the same and
-            // skip this base instead of failing the whole config load.
-            //
             // A bare `""` is a distinct diagnosis (`getExtendsConfigPathOrArray`
             // in `commandLineParser.ts`): every resolution strategy (relative,
             // absolute, package) is a no-op on an empty specifier, so `tsc`
             // short-circuits to TS18051 (`Compiler option 'extends' cannot be
-            // given an empty string.`) instead of TS6053's `File '' not found.`.
+            // given an empty string.`) instead of the unresolved-file codes. The
+            // resolved outcomes (TS6053/TS5083) are handled per-arm below.
             if extends_path_str.is_empty() {
                 let (start, length) = find_extends_specifier_span(&stripped, extends_path_str);
                 let message = format_message(
@@ -1539,18 +1536,45 @@ fn load_tsconfig_inner_with_diagnostics(
                 ));
                 continue;
             }
-            let Some(base_path) = resolve_extends_path(path, extends_path_str)? else {
-                let (start, length) = find_extends_specifier_span(&stripped, extends_path_str);
-                let message =
-                    format_message(diagnostic_messages::FILE_NOT_FOUND, &[extends_path_str]);
-                parsed.diagnostics.push(Diagnostic::error(
-                    &file_display,
-                    start,
-                    length,
-                    message,
-                    diagnostic_codes::FILE_NOT_FOUND,
-                ));
-                continue;
+            let base_path = match resolve_extends_path(path, extends_path_str)? {
+                ExtendsResolution::Found(base_path) => base_path,
+                ExtendsResolution::Unreadable(resolved) => {
+                    // A rooted/relative `.json` specifier resolved to a concrete
+                    // path that does not exist. tsc returns it unchecked from
+                    // `getExtendsConfigPath`, then the file read fails with a
+                    // file-less TS5083 anchored at the resolved path (not the
+                    // specifier), and continues with the remaining options.
+                    let message = format_message(
+                        diagnostic_messages::CANNOT_READ_FILE_2,
+                        &[resolved.to_string_lossy().as_ref()],
+                    );
+                    parsed.diagnostics.push(Diagnostic::error(
+                        "",
+                        0,
+                        0,
+                        message,
+                        diagnostic_codes::CANNOT_READ_FILE_2,
+                    ));
+                    continue;
+                }
+                ExtendsResolution::NotFound => {
+                    // An `extends` specifier that names no existing config file
+                    // is a recoverable error: tsc emits TS6053 anchored at the
+                    // specifier and continues with the remaining (local)
+                    // options. Emit the same and skip this base instead of
+                    // failing the whole config load.
+                    let (start, length) = find_extends_specifier_span(&stripped, extends_path_str);
+                    let message =
+                        format_message(diagnostic_messages::FILE_NOT_FOUND, &[extends_path_str]);
+                    parsed.diagnostics.push(Diagnostic::error(
+                        &file_display,
+                        start,
+                        length,
+                        message,
+                        diagnostic_codes::FILE_NOT_FOUND,
+                    ));
+                    continue;
+                }
             };
             // Route base configs through the diagnostic path so TS5023 / TS5024 / TS5025
             // fire on the *base* file (matching tsc's `base.json(L,C):` anchor)

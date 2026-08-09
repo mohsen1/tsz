@@ -20,42 +20,99 @@ use crate::module_resolver_helpers::{
 };
 
 use super::{CompilerOptions, TsConfig};
+use tsz_common::file_extensions::{JSON_EXTENSION, is_json_file};
+use tsz_common::module_resolution::path_identity::normalize_segments;
+
+/// The outcome of resolving a tsconfig `extends` specifier, carrying the
+/// distinction `tsc` draws between an unresolvable specifier (TS6053) and a
+/// resolved-but-unreadable file (TS5083).
+///
+/// `tsc`'s `getExtendsConfigPath` splits three ways, which this mirrors:
+/// - a specifier that names an existing config file → [`Self::Found`];
+/// - a **rooted/relative** specifier that already carries a `.json` extension
+///   but whose file does not exist → [`Self::Unreadable`]. `tsc` returns that
+///   path from `getExtendsConfigPath` *unchecked* (the `.json`-append fallback
+///   only fires for extensionless specifiers), so the subsequent file read
+///   fails and surfaces a file-less **TS5083** anchored at the resolved path;
+/// - any other miss — an extensionless/non-`.json` relative specifier whose
+///   `.json`-appended candidate is also absent, or a bare/package specifier
+///   that fails Node resolution → [`Self::NotFound`], the specifier-anchored
+///   **TS6053**.
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum ExtendsResolution {
+    /// An existing config file to load and merge.
+    Found(PathBuf),
+    /// A rooted/relative `.json` specifier that resolved to a concrete path
+    /// which does not exist; the payload is the lexically normalized absolute
+    /// path `tsc` embeds in TS5083's `Cannot read file '{0}'.`
+    Unreadable(PathBuf),
+    /// The specifier never resolved to any candidate file; the caller reports
+    /// TS6053 anchored at the specifier literal.
+    NotFound,
+}
 
 /// Resolve a tsconfig `extends` specifier to the config file it names on disk.
 ///
-/// Returns `Ok(Some(path))` for a successfully located, existing config file,
-/// `Ok(None)` when the specifier cannot be resolved to an existing file (the
-/// caller then reports TS6053 and continues, matching `tsc`'s
-/// `getExtendsConfigPath`), and `Err` only for a malformed `current_path`.
+/// Returns an [`ExtendsResolution`] describing whether the specifier located an
+/// existing file, resolved to an unreadable `.json` path (TS5083), or failed to
+/// resolve at all (TS6053) — and `Err` only for a malformed `current_path`.
 ///
-/// Resolution mirrors `tsc`:
+/// Resolution mirrors `tsc`'s `getExtendsConfigPath`:
 /// - **Relative / absolute** specifiers (`./base`, `../base.json`, `/abs`)
-///   resolve against the declaring config's directory, appending `.json` when
-///   the specifier carries no extension. No directory lookup is attempted (a
+///   resolve against the declaring config's directory. The path is lexically
+///   normalized, probed as written, and — only when it carries no `.json`
+///   extension — re-probed with `.json` appended. A missing `.json` specifier
+///   is [`ExtendsResolution::Unreadable`]; a missing extensionless one is
+///   [`ExtendsResolution::NotFound`]. No directory lookup is attempted (a
 ///   relative `extends` must name a file, like `tsc`).
 /// - **Non-relative** specifiers go through Node module resolution: first the
 ///   package's `package.json` `"exports"` map, then a `node_modules` walk that
 ///   honors an explicit file subpath (`pkg/base.json`), an extensionless
 ///   subpath (`pkg/recommended` -> `recommended.json`), and a bare package
-///   whose root holds a `tsconfig.json`.
-pub(super) fn resolve_extends_path(current_path: &Path, extends: &str) -> Result<Option<PathBuf>> {
+///   whose root holds a `tsconfig.json`. Every module-resolution miss is
+///   [`ExtendsResolution::NotFound`] (TS6053) — `tsc` never reports TS5083 for
+///   a package specifier.
+pub(super) fn resolve_extends_path(
+    current_path: &Path,
+    extends: &str,
+) -> Result<ExtendsResolution> {
     let base_dir = current_path
         .parent()
         .ok_or_else(|| anyhow!("tsconfig has no parent directory"))?;
 
     // Relative or absolute path: resolve against the declaring config's dir.
     if extends.starts_with('.') || extends.starts_with('/') {
-        let candidate = if Path::new(extends).is_absolute() {
+        let joined = if Path::new(extends).is_absolute() {
             PathBuf::from(extends)
         } else {
             base_dir.join(extends)
         };
-        return Ok(probe_extends_candidate(&candidate, false));
+        // `tsc` normalizes the specifier against the config directory before
+        // probing, so the path it feeds to the file read (and thus TS5083's
+        // message) is lexically normalized — `../base.json` becomes an absolute
+        // sibling path, not a `<dir>/../base.json` spelling.
+        let candidate = normalize_segments(&joined);
+        if candidate.is_file() {
+            return Ok(ExtendsResolution::Found(candidate));
+        }
+        // A specifier that already ends in `.json` is returned by `tsc`
+        // unchecked; the ensuing file read fails with TS5083 at the resolved
+        // path rather than the generic specifier-anchored TS6053.
+        if is_json_file(&candidate) {
+            return Ok(ExtendsResolution::Unreadable(candidate));
+        }
+        // Otherwise `tsc` appends `.json` and re-probes; a miss there is the
+        // specifier-anchored TS6053.
+        let with_json = append_json_extension(candidate);
+        if with_json.is_file() {
+            return Ok(ExtendsResolution::Found(with_json));
+        }
+        return Ok(ExtendsResolution::NotFound);
     }
 
     // Non-relative: Node module resolution. `package.json` exports first.
     if let Some(resolved) = resolve_package_extends_path(current_path, extends) {
-        return Ok(Some(resolved));
+        return Ok(ExtendsResolution::Found(resolved));
     }
 
     // Package-name extends (e.g. "@tsconfig/node20/tsconfig.json").
@@ -64,14 +121,24 @@ pub(super) fn resolve_extends_path(current_path: &Path, extends: &str) -> Result
     loop {
         let candidate = search_dir.join("node_modules").join(extends);
         if let Some(resolved) = probe_extends_candidate(&candidate, true) {
-            return Ok(Some(resolved));
+            return Ok(ExtendsResolution::Found(resolved));
         }
         if !search_dir.pop() {
             break;
         }
     }
 
-    Ok(None)
+    Ok(ExtendsResolution::NotFound)
+}
+
+/// Append a literal `.json` to a path, matching `tsc`'s `path + Extension.Json`
+/// (a suffix append, never an extension *replacement*): `foo.bar` becomes
+/// `foo.bar.json`, not `foo.json` (which is what `Path::with_extension` would
+/// produce). Consumes `path` so the caller's dead `PathBuf` is reused.
+fn append_json_extension(path: PathBuf) -> PathBuf {
+    let mut os = path.into_os_string();
+    os.push(JSON_EXTENSION);
+    PathBuf::from(os)
 }
 
 /// Probe a single candidate path for an `extends` target, returning the
@@ -979,20 +1046,72 @@ mod tests {
 
         // Extensionless relative specifier resolves by appending `.json`.
         let resolved = resolve_extends_path(&child, "./base").unwrap();
-        assert_eq!(resolved, Some(project.join("base.json")));
+        assert_eq!(
+            resolved,
+            ExtendsResolution::Found(project.join("base.json"))
+        );
     }
 
     #[test]
-    fn resolve_extends_path_relative_missing_is_none() {
+    fn resolve_extends_path_relative_missing_extensionless_is_not_found() {
         let temp = tempdir().unwrap();
         let project = temp.path().join("p");
         std::fs::create_dir_all(&project).unwrap();
         let child = project.join("tsconfig.json");
 
-        // A relative specifier that names no existing file is reported as a
-        // miss (the caller then emits TS6053) rather than a bogus path.
+        // An extensionless relative specifier whose `.json`-appended candidate
+        // is also absent is a plain miss: the caller emits the specifier-
+        // anchored TS6053, never TS5083.
         let resolved = resolve_extends_path(&child, "./missing").unwrap();
-        assert_eq!(resolved, None);
+        assert_eq!(resolved, ExtendsResolution::NotFound);
+    }
+
+    #[test]
+    fn resolve_extends_path_relative_missing_json_is_unreadable() {
+        let temp = tempdir().unwrap();
+        let project = temp.path().join("p");
+        std::fs::create_dir_all(&project).unwrap();
+        let child = project.join("tsconfig.json");
+
+        // A relative specifier that already ends in `.json` and does not exist
+        // resolves to a concrete-but-unreadable path: `tsc` returns it unchecked
+        // and the file read fails with TS5083 anchored at the normalized path.
+        let resolved = resolve_extends_path(&child, "./nope.json").unwrap();
+        assert_eq!(
+            resolved,
+            ExtendsResolution::Unreadable(project.join("nope.json"))
+        );
+    }
+
+    #[test]
+    fn resolve_extends_path_relative_missing_json_normalizes_parent_segments() {
+        let temp = tempdir().unwrap();
+        let project = temp.path().join("p");
+        let nested = project.join("nested");
+        std::fs::create_dir_all(&nested).unwrap();
+        let child = nested.join("tsconfig.json");
+
+        // The TS5083 path is lexically normalized: `../nope.json` collapses to
+        // the sibling directory, never a `<dir>/../nope.json` spelling.
+        let resolved = resolve_extends_path(&child, "../nope.json").unwrap();
+        assert_eq!(
+            resolved,
+            ExtendsResolution::Unreadable(project.join("nope.json"))
+        );
+    }
+
+    #[test]
+    fn resolve_extends_path_relative_missing_non_json_extension_is_not_found() {
+        let temp = tempdir().unwrap();
+        let project = temp.path().join("p");
+        std::fs::create_dir_all(&project).unwrap();
+        let child = project.join("tsconfig.json");
+
+        // A non-`.json` extension is treated like an extensionless specifier
+        // (`tsc` appends `.json` and re-probes), so a miss is TS6053 — TS5083 is
+        // reserved for `.json` specifiers only.
+        let resolved = resolve_extends_path(&child, "./nope.txt").unwrap();
+        assert_eq!(resolved, ExtendsResolution::NotFound);
     }
 
     #[test]
@@ -1005,7 +1124,22 @@ mod tests {
         let child = project.join("tsconfig.json");
 
         let resolved = resolve_extends_path(&child, abs.to_string_lossy().as_ref()).unwrap();
-        assert_eq!(resolved, Some(abs));
+        assert_eq!(resolved, ExtendsResolution::Found(abs));
+    }
+
+    #[test]
+    fn resolve_extends_path_absolute_missing_json_is_unreadable() {
+        let temp = tempdir().unwrap();
+        let project = temp.path().join("p");
+        std::fs::create_dir_all(&project).unwrap();
+        let child = project.join("tsconfig.json");
+        let abs_missing = temp.path().join("does").join("not").join("exist.json");
+
+        // A rooted (absolute) `.json` specifier shares the relative branch's
+        // TS5083 rule per `isRootedDiskPath` in `commandLineParser.ts`.
+        let resolved =
+            resolve_extends_path(&child, abs_missing.to_string_lossy().as_ref()).unwrap();
+        assert_eq!(resolved, ExtendsResolution::Unreadable(abs_missing));
     }
 
     #[test]
@@ -1019,7 +1153,7 @@ mod tests {
         let child = project.join("tsconfig.json");
 
         let resolved = resolve_extends_path(&child, "@scope/pkg/recommended").unwrap();
-        assert_eq!(resolved, Some(base));
+        assert_eq!(resolved, ExtendsResolution::Found(base));
     }
 
     #[test]
@@ -1033,7 +1167,7 @@ mod tests {
         let child = project.join("tsconfig.json");
 
         let resolved = resolve_extends_path(&child, "@scope/pkg/tsconfig.base.json").unwrap();
-        assert_eq!(resolved, Some(base));
+        assert_eq!(resolved, ExtendsResolution::Found(base));
     }
 
     #[test]
@@ -1052,7 +1186,7 @@ mod tests {
         let child = nested.join("tsconfig.json");
 
         let resolved = resolve_extends_path(&child, "@scope/tsconfig/node22.json").unwrap();
-        assert_eq!(resolved, Some(base));
+        assert_eq!(resolved, ExtendsResolution::Found(base));
     }
 
     #[test]
@@ -1067,7 +1201,7 @@ mod tests {
         let child = project.join("tsconfig.json");
 
         let resolved = resolve_extends_path(&child, "shared-config").unwrap();
-        assert_eq!(resolved, Some(base));
+        assert_eq!(resolved, ExtendsResolution::Found(base));
     }
 
     #[test]
@@ -1080,6 +1214,6 @@ mod tests {
         let child = project.join("tsconfig.json");
 
         let resolved = resolve_extends_path(&child, "@scope/pkg/file.json").unwrap();
-        assert_eq!(resolved, None);
+        assert_eq!(resolved, ExtendsResolution::NotFound);
     }
 }

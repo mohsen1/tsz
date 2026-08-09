@@ -1783,7 +1783,7 @@ fn test_resolve_extends_path_uses_package_exports_mapping() {
     let resolved =
         resolve_extends_path(&project_dir.join("tsconfig.json"), "pkg/tsconfig.json").unwrap();
 
-    assert_eq!(resolved, Some(expected));
+    assert_eq!(resolved, ExtendsResolution::Found(expected));
 }
 
 #[test]
@@ -1883,8 +1883,8 @@ fn extends_unresolved_package_emits_ts6053_and_keeps_local_options() {
 
 #[test]
 fn extends_array_reports_each_unresolved_entry() {
-    // Array `extends` (TS 5.0): every entry that cannot be resolved gets its
-    // own TS6053, and resolvable entries still merge.
+    // Array `extends` (TS 5.0): every unresolvable entry gets its own TS6053
+    // (entries are extensionless; missing `.json` is TS5083, covered elsewhere).
     let temp = tempdir().expect("create temp dir");
     let project = temp.path().join("project");
     std::fs::create_dir_all(&project).expect("create project dir");
@@ -1896,7 +1896,7 @@ fn extends_array_reports_each_unresolved_entry() {
     let child_path = project.join("tsconfig.json");
     std::fs::write(
         &child_path,
-        r#"{ "extends": ["./present.json", "./missing-a.json", "./missing-b.json"] }"#,
+        r#"{ "extends": ["./present.json", "./missing-a", "./missing-b"] }"#,
     )
     .expect("write child");
 
