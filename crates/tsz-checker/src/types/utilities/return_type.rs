@@ -767,6 +767,27 @@ impl<'a> CheckerState<'a> {
         self.ctx.preserve_literal_types = prev_preserve_literals;
         self.ctx.preserve_logical_operand_literals = prev_preserve_logical;
 
+        // A *variable-bound* self-recursive function expression / arrow whose own
+        // binding is genuinely circular — recorded as a non-lazy circular return
+        // site, i.e. the exact condition that fires TS7023 — resolves its return
+        // type to the circular implicit-`any`, mirroring tsc's
+        // `getReturnTypeOfSignature`, which returns `anyType` when re-entered while
+        // the signature is still being computed. When the sole return expression is
+        // a direct self-call (`return f(name)`), return aggregation drops it and the
+        // body degenerates to `void` (fall-through default) or `never`; that
+        // degenerate value must not thread through to the call site (`d = f(1)`),
+        // where tsc sees `any` (#16987). This is distinct from the clean
+        // no-base-case recursion in a *named function declaration*
+        // (`function f(n){ return f(n); }` → `never`) handled below: that is not a
+        // resolving variable, so it is never recorded as a circular return site.
+        if return_context.is_none()
+            && (result == TypeId::VOID || result == TypeId::NEVER)
+            && self.function_is_nonlazy_circular_return_site(function_idx)
+        {
+            snap.rollback(&mut self.ctx.speculation_state());
+            return TypeId::ANY;
+        }
+
         // Direct self-recursive functions with no base case return `never`.
         // Example: `function fn2(n: number) { return fn2(n); }` → return type `never`.
         // When the inferred return type is `any` (from the circular provisional type)
