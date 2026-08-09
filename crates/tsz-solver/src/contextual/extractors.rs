@@ -6,13 +6,14 @@
 //! bidirectional type inference.
 
 use crate::construction::TypeDatabase;
+use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 use crate::relations::relation_queries::{
     RelationContext, RelationKind, RelationPolicy, query_relation,
 };
 use crate::types::{
     CallableShapeId, FunctionShapeId, IndexSignature, IntrinsicKind, LiteralValue, ObjectShapeId,
     ParamInfo, SymbolRef, TupleElement, TupleListId, TypeApplicationId, TypeData, TypeId,
-    TypeListId,
+    TypeListId, TypeParamInfo,
 };
 use crate::visitor::TypeVisitor;
 use tsz_common::interner::Atom;
@@ -49,6 +50,61 @@ pub(crate) fn collect_single_or_union_no_reduce(
         1 => Some(types[0]),
         _ => Some(db.union_literal_reduce(types)),
     }
+}
+
+/// tsc `compareTypeParametersIdentical` (checker.ts), restricted to the
+/// overload-merge use in the contextual-parameter extractors.
+///
+/// When an overloaded callable contextual type has two or more arity-applicable
+/// signatures, tsc's `getIntersectedSignatures` produces a combined signature
+/// only when every signature's type parameters are *identical*: equal arity and,
+/// after mapping one signature's parameters onto the other's positionally,
+/// identical constraints. A differing arity — which includes any mix of generic
+/// and non-generic overloads — or a differing constraint yields no combined
+/// signature, so the callable contextually types nothing.
+///
+/// Two overloads that each declare their own `<T>` are identical under this rule;
+/// their `T`s are distinct decl-scoped ids for the same surface name, so the
+/// constraint comparison is done through [`canonical_type_param_substitution`].
+pub(crate) fn type_parameters_identical(
+    db: &dyn TypeDatabase,
+    left: &[TypeParamInfo],
+    right: &[TypeParamInfo],
+) -> bool {
+    if left.len() != right.len() {
+        return false;
+    }
+    if left.is_empty() {
+        return true;
+    }
+    let substitution = canonical_type_param_substitution(db, right, left);
+    left.iter().zip(right.iter()).all(|(l, r)| {
+        let left_constraint = l.constraint.unwrap_or(TypeId::UNKNOWN);
+        let right_constraint = r.constraint.unwrap_or(TypeId::UNKNOWN);
+        // Interned identity: after remapping `right`'s own type parameters onto
+        // `left`'s, structurally identical constraints share one `TypeId`.
+        instantiate_type(db, right_constraint, &substitution) == left_constraint
+    })
+}
+
+/// Build the tsc `createTypeMapper(from, to)` substitution that rewrites the
+/// `from` type parameters onto the positionally-corresponding `to` (canonical)
+/// type parameters.
+///
+/// Keyed by name so the instantiator rewrites every occurrence — including the
+/// distinct decl-scoped ids two overloads mint for the same surface name — onto
+/// the canonical parameter's interned `TypeParameter` id.
+fn canonical_type_param_substitution(
+    db: &dyn TypeDatabase,
+    from: &[TypeParamInfo],
+    to: &[TypeParamInfo],
+) -> TypeSubstitution {
+    let mut substitution = TypeSubstitution::new();
+    for (src, dst) in from.iter().zip(to.iter()) {
+        let target = db.type_param(*dst);
+        substitution.insert(src.name, target);
+    }
+    substitution
 }
 
 /// Like [`collect_single_or_union`] but preserves every member without any

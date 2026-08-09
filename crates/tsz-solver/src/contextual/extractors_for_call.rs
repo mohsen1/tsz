@@ -2,7 +2,9 @@
 //! extractors in [`super::extractors`], split into its own file so that file
 //! stays under the architecture size ratchet.
 
-use super::extractors::{collect_single_or_union_no_reduce, extract_param_type_at_for_call};
+use super::extractors::{
+    collect_single_or_union_no_reduce, extract_param_type_at_for_call, type_parameters_identical,
+};
 use crate::construction::TypeDatabase;
 use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 use crate::types::{
@@ -142,45 +144,36 @@ impl TypeVisitor for ParameterForCallExtractor<'_> {
             return None;
         }
 
-        // tsc's getIntersectedSignatures returns undefined when multiple
-        // signatures are present and ANY is generic. This prevents contextual
-        // typing when assigning arrow functions to overloaded types that have
-        // both generic and non-generic call signatures.
-        // Only apply when there's a MIX of generic and non-generic signatures
-        // (genuine overloads). When ALL signatures are generic, they likely
-        // come from union member merging and should still provide contextual types.
-        if matching_call_signatures.len() > 1 {
-            let has_generic = matching_call_signatures
-                .iter()
-                .any(|sig| !sig.type_params.is_empty());
-            let has_non_generic = matching_call_signatures
-                .iter()
-                .any(|sig| sig.type_params.is_empty());
-            if has_generic && has_non_generic {
-                return None;
-            }
+        // tsc's `getIntersectedSignatures` (checker.ts) combines two or more
+        // arity-applicable signatures only when their type parameters are
+        // *identical* (`compareTypeParametersIdentical`): equal arity and, after
+        // positional remapping, identical constraints. A differing arity — which
+        // includes any mix of generic and non-generic overloads — or a differing
+        // constraint yields no combined signature, so the callable contextually
+        // types nothing here (the parameter falls back to implicit `any`).
+        let canonical_type_params = matching_call_signatures
+            .first()
+            .map(|sig| sig.type_params.clone())
+            .unwrap_or_default();
+        if matching_call_signatures.len() > 1
+            && !matching_call_signatures[1..].iter().all(|sig| {
+                type_parameters_identical(self.db, &canonical_type_params, &sig.type_params)
+            })
+        {
+            return None;
         }
 
-        // Same-arity generic overloads share one canonical type-parameter
-        // identity (the first matching signature's), so every later
-        // signature's params are read through that mapping before extraction
-        // — see `signature_params_mapped_to_canonical`.
-        let canonical_type_params = matching_call_signatures
-            .iter()
-            .find(|sig| !sig.type_params.is_empty())
-            .map(|sig| sig.type_params.clone());
-
+        // When the signatures ARE combined, tsc maps each later signature's own
+        // type parameters onto the first signature's before unioning parameter
+        // positions (`createTypeMapper` + `combineIntersectionParameters`). Two
+        // overloads that each declare their own `<T>` therefore collapse to a
+        // single `T` at the shared position instead of an undeduped `T | T`.
         for sig in matching_call_signatures {
             matched = true;
-            let mapped_params;
-            let params = if let Some(canonical) = canonical_type_params.as_deref() {
-                mapped_params = signature_params_mapped_to_canonical(self.db, canonical, sig);
-                &mapped_params
-            } else {
-                &sig.params
-            };
+            let mapped_params =
+                signature_params_mapped_to_canonical(self.db, &canonical_type_params, sig);
             if let Some(param_type) =
-                extract_param_type_at_for_call(self.db, params, self.index, self.arg_count)
+                extract_param_type_at_for_call(self.db, &mapped_params, self.index, self.arg_count)
             {
                 param_types.push(param_type);
             }
