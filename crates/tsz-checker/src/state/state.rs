@@ -712,7 +712,19 @@ impl<'a> CheckerState<'a> {
         };
 
         if let Some(access) = self.ctx.arena.get_access_expr(node) {
-            if self.is_this_expression(access.expression)
+            // A `this`-receiver keeps the return's `this` polymorphic (bound to
+            // the enclosing class's own `this`-type marker). An instance `super`
+            // receiver is the same case: the runtime receiver of `super.foo()` is
+            // still the current instance, so the base method's `this` return must
+            // bind to the *enclosing* class's `this`-type, not the base instance
+            // type that `super` evaluates to. Binding it to the base instance
+            // (via the receiver branch below) is what collapses `super.m()`'s
+            // `this` return to the base class — and a multi-level `super` chain to
+            // the root base. Static `super` falls through to the receiver branch,
+            // which uses the constructor receiver.
+            if (self.is_this_expression(access.expression)
+                || (self.is_super_expression(access.expression)
+                    && !self.is_this_in_static_class_member(call_expression)))
                 && self.ctx.enclosing_class.is_some()
                 && !self.is_this_in_nested_function_inside_class(call_expression)
                 && !self.is_this_in_static_class_member(call_expression)

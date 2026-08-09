@@ -848,12 +848,35 @@ impl<'a> CheckerState<'a> {
                 //
                 // `super.method` is special: the property lookup happens on the
                 // base instance type, but polymorphic `this` in the base member
-                // should still bind to the current derived receiver. Without
-                // this, `super.compare(other)` inside `Dog.compare(other: this)`
-                // sees the base signature as `(other: Animal) => boolean`
-                // instead of `(other: Dog) => boolean`, which diverges from tsc.
+                // must bind to the *enclosing* class's `this`-type — matching
+                // tsc's `getTypeWithThisArgument(baseType, enclosingClassThisType)`
+                // — not the base instance type. JS's `super.foo()` never receives
+                // a fresh base-class instance: the runtime receiver stays the
+                // current instance, so `super.compare(other)` inside
+                // `Dog.compare(other: this)` must see `(other: this) => boolean`,
+                // and `super.returnThis()` where the base infers a `this` return
+                // must yield the enclosing class's `this`, not the base class.
+                //
+                // The enclosing class's `this`-type is the polymorphic `ThisType`
+                // marker itself (contextually the enclosing class): binding
+                // `this` to it is the identity, so the base member's `this` stays
+                // polymorphic and is rebound to the actual receiver at the
+                // eventual direct-access site. This is what threads the receiver
+                // through a multi-level `super` chain (`A -> B -> C`): each hop's
+                // inferred `this` return stays polymorphic, so `new C().m()`
+                // resolves to `C`. Baking it to the base instance type here
+                // instead — the previous behavior when `current_this_type()` was
+                // unavailable during lazy return-type inference — collapsed the
+                // whole chain to the root base class.
+                //
+                // Static `super` keeps the constructor-`this` binding computed by
+                // `current_this_type()`; only the instance case is the marker.
                 let this_substitution_target = if self.is_super_expression(access.expression) {
-                    self.current_this_type().unwrap_or(original_object_type)
+                    if self.is_this_in_static_class_member(access.expression) {
+                        self.current_this_type().unwrap_or(original_object_type)
+                    } else {
+                        self.ctx.types.this_type()
+                    }
                 } else if direct_class_this_receiver
                     || crate::query_boundaries::common::contains_this_type(
                         self.ctx.types,
@@ -893,14 +916,28 @@ impl<'a> CheckerState<'a> {
                 // `this[][]`, drawing a false TS2345). The empty branch also
                 // short-circuits the raw-recovery `else if` below, which would
                 // otherwise re-introduce the same nesting.
+                // An instance `super` receiver must force the raw-recovery path
+                // below. The solver eagerly binds a returned `this` to the lookup
+                // receiver — here the *base* instance — so `super.m()`'s stored
+                // type comes back as `() => Base` (whose `Base` still transitively
+                // mentions `this` through its own members). That makes the plain
+                // `contains_this_type(prop_type)` branch a no-op identity against
+                // the enclosing-`this` marker, leaving the return baked to the
+                // base class. Re-resolving with `this` binding deferred recovers
+                // the raw `() => this`, which the marker then keeps polymorphic so
+                // it rebinds to the real receiver at the direct-access site.
+                let super_receiver = self.is_super_expression(access.expression)
+                    && !self.is_this_in_static_class_member(access.expression);
                 if self.receiver_expr_is_this_relative(access.expression)
                     && self.type_is_compound_this_relative(this_substitution_target)
                 {
                     // Leave `prop_type` as the solver produced it.
-                } else if crate::query_boundaries::common::contains_this_type(
-                    self.ctx.types,
-                    prop_type,
-                ) && prop_type != this_substitution_target
+                } else if !super_receiver
+                    && crate::query_boundaries::common::contains_this_type(
+                        self.ctx.types,
+                        prop_type,
+                    )
+                    && prop_type != this_substitution_target
                 {
                     prop_type = crate::query_boundaries::common::substitute_this_type(
                         self.ctx.types,
