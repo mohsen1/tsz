@@ -440,6 +440,54 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         resolver.defs_are_equivalent(source_def, target_def)
     }
 
+    /// Recover the canonical `Application(base, args)` for a type used during
+    /// return-context inference.
+    ///
+    /// A contextual return type such as `GenericClass<[string, boolean]>` can
+    /// exist in the interner in two shapes: the as-written
+    /// `Application(GenericClass, [[string, boolean]])` and the *baked*
+    /// (already-evaluated) structural object that merely displays as
+    /// `GenericClass<[string, boolean]>`. The baked form has no
+    /// `TypeData::Application`, so the application-aware matchers cannot
+    /// decompose it and any tracked type parameter on the source side is left
+    /// unbound — the inner generic call's own type parameter then falls back to
+    /// its declared constraint (e.g. `T := {}`), spuriously rejecting a
+    /// deferred callback argument.
+    ///
+    /// The evaluator records a display-alias back-reference from the baked form
+    /// to its originating application, so consult it (and, as a last resort, a
+    /// fresh evaluation) to restore the structural decomposition through the
+    /// validated `Application`↔`Application` path instead of relying on rendered
+    /// type text. This mirrors the checker-side
+    /// `return_context_application_info` so both return-context implementations
+    /// decompose the same baked contextual shapes.
+    fn return_context_application_info(
+        &mut self,
+        type_id: TypeId,
+    ) -> Option<(TypeId, Vec<TypeId>)> {
+        if let Some(info) = self.app_info_or_alias(type_id) {
+            return Some(info);
+        }
+        let evaluated = self.evaluate_return_context_match_type(type_id);
+        if evaluated == type_id {
+            return None;
+        }
+        self.app_info_or_alias(evaluated)
+    }
+
+    /// The non-evaluating half of `return_context_application_info`: take the
+    /// application form directly, else through a single display-alias hop. A
+    /// caller that already holds the evaluated form pairs a raw call with an
+    /// `app_info_or_alias(eval)` call to skip the redundant re-evaluation.
+    fn app_info_or_alias(&self, type_id: TypeId) -> Option<(TypeId, Vec<TypeId>)> {
+        let db = self.interner.as_type_database();
+        crate::type_queries::get_application_info(db, type_id).or_else(|| {
+            self.interner
+                .get_display_alias(type_id)
+                .and_then(|alias| crate::type_queries::get_application_info(db, alias))
+        })
+    }
+
     /// Match direct, same-base return applications before any structural
     /// expansion can expose foreign type parameters from nested members.
     ///
@@ -456,14 +504,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         substitution: &mut TypeSubstitution,
         visited: &mut FxHashSet<(TypeId, TypeId)>,
     ) -> bool {
-        let Some((source_base, source_args)) =
-            crate::type_queries::get_application_info(self.interner.as_type_database(), source)
-        else {
+        let Some((source_base, source_args)) = self.return_context_application_info(source) else {
             return false;
         };
-        let Some((target_base, target_args)) =
-            crate::type_queries::get_application_info(self.interner.as_type_database(), target)
-        else {
+        let Some((target_base, target_args)) = self.return_context_application_info(target) else {
             return false;
         };
         if source_args.len() != target_args.len()
@@ -982,7 +1026,19 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 ),
             ) {
                 (Some(source_app), Some(target_app)) => Some((source_app, target_app)),
-                _ => None,
+                // Last resort: recover a baked structural object's originating
+                // `Application` through its display-alias back-reference, so a
+                // contextual return type that has been evaluated away from its
+                // `Application` form still decomposes arg-by-arg. Reuse the
+                // already-computed `source_eval`/`target_eval` rather than
+                // re-evaluating; only the display-alias hop is genuinely new here.
+                _ => self
+                    .app_info_or_alias(source)
+                    .or_else(|| self.app_info_or_alias(source_eval))
+                    .zip(
+                        self.app_info_or_alias(target)
+                            .or_else(|| self.app_info_or_alias(target_eval)),
+                    ),
             },
         };
 
@@ -1179,10 +1235,13 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             return;
         }
 
-        // Application matching (same base, same arg count)
+        // Application matching (same base, same arg count). Recover a baked
+        // structural target through its display-alias back-reference so a
+        // nested generic-signature position whose contextual type has been
+        // evaluated away from its `Application` form still decomposes.
         if let (Some((source_base, source_args)), Some((target_base, target_args))) = (
-            crate::type_queries::get_application_info(self.interner.as_type_database(), source),
-            crate::type_queries::get_application_info(self.interner.as_type_database(), target),
+            self.app_info_or_alias(source),
+            self.app_info_or_alias(target),
         ) && source_base == target_base
             && source_args.len() == target_args.len()
         {

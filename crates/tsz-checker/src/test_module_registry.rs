@@ -649,6 +649,8 @@ mod narrowed_union_source_display_tests;
 mod narrowing_union_source_display_tests;
 #[path = "tests/nested_function_async_context_scope_tests.rs"]
 mod nested_function_async_context_scope_tests;
+#[path = "tests/nested_generic_call_return_context_baked_tests.rs"]
+mod nested_generic_call_return_context_baked_tests;
 #[path = "tests/nested_tuple_literal_source_display_tests.rs"]
 mod nested_tuple_literal_source_display_tests;
 #[path = "tests/nested_type_parameter_target_elaboration_tests.rs"]
