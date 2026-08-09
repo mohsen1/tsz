@@ -385,6 +385,9 @@ mod type_member_hard_modifier_accessor_cascade_tests;
 #[path = "../../tests/type_member_hard_modifier_then_out_accessor_cascade_tests.rs"]
 mod type_member_hard_modifier_then_out_accessor_cascade_tests;
 #[cfg(test)]
+#[path = "../../tests/type_member_in_variance_accessor_cascade_tests.rs"]
+mod type_member_in_variance_accessor_cascade_tests;
+#[cfg(test)]
 #[path = "../../tests/type_member_modifier_grammar_tests.rs"]
 mod type_member_modifier_grammar_tests;
 #[cfg(test)]

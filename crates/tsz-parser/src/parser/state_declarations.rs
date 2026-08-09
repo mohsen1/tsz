@@ -366,6 +366,17 @@ impl ParserState {
                 break;
             }
 
+            // The `in` variance modifier in the confined `[clean]* in
+            // (get|set)` shape also abandons the type-member body, but `in`'s
+            // own re-parse differs from `out`'s (a reserved binary operator,
+            // not a contextual keyword) — see
+            // `look_ahead_clean_prefixed_in_before_accessor` and
+            // `report_clean_modifiers_then_in_before_accessor`.
+            if let Some(clean_count) = self.look_ahead_clean_prefixed_in_before_accessor() {
+                self.report_clean_modifiers_then_in_before_accessor(clean_count);
+                break;
+            }
+
             let modifier_run_len = self.look_ahead_modifier_run_before_accessor();
             if modifier_run_len > 0 {
                 for _ in 0..modifier_run_len {
