@@ -382,3 +382,94 @@ fn ambient_annotated_const_still_emits_ts1039() {
         "an annotated ambient const still takes the TS1039 arm, got {codes:?}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// TS1039 must survive the initializer's pre-contextual diagnostic reset
+//
+// A type-annotated ambient variable declaration with an initializer
+// (`declare const a: number = 1`) computes its declared type from the
+// annotation and re-checks the initializer under contextual typing. That path
+// first clears stale contextual diagnostics inside the initializer span; the
+// ambient-initializer grammar error (TS1039) is structural, not a contextual
+// artifact, so it must be preserved across that reset. Untyped ambient
+// declarations never take the contextual path, which is why they were
+// unaffected. Every expectation is pinned against `typescript@7.0.2`.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn top_level_declare_const_annotated_initializer_emits_ts1039() {
+    let codes = check_codes("declare const a: number = 1;");
+    assert!(codes.contains(&1039), "expected TS1039, got {codes:?}");
+}
+
+#[test]
+fn top_level_declare_let_annotated_initializer_emits_ts1039() {
+    let codes = check_codes("declare let a: number = 1;");
+    assert!(codes.contains(&1039), "expected TS1039, got {codes:?}");
+}
+
+#[test]
+fn top_level_declare_var_annotated_initializer_emits_ts1039() {
+    let codes = check_codes("declare var a: number = 1;");
+    assert!(codes.contains(&1039), "expected TS1039, got {codes:?}");
+}
+
+#[test]
+fn renamed_binder_declare_const_annotated_initializer_emits_ts1039() {
+    // The binder name must not matter (anti-hardcoding).
+    let codes = check_codes("declare const resourceHandle: string = \"x\";");
+    assert!(codes.contains(&1039), "expected TS1039, got {codes:?}");
+}
+
+#[test]
+fn annotated_ambient_initializer_survives_object_contextual_type() {
+    // A non-`any` object annotation supplies a contextual type, so the
+    // initializer is re-checked and its span reset — the exact path that
+    // dropped TS1039.
+    let codes = check_codes("declare const o: { x: number } = { x: 1 };");
+    assert!(codes.contains(&1039), "expected TS1039, got {codes:?}");
+}
+
+#[test]
+fn nested_ambient_namespace_annotated_initializer_emits_ts1039() {
+    let codes = check_codes("declare namespace N { namespace M { const b: number = 2; } }");
+    assert!(codes.contains(&1039), "expected TS1039, got {codes:?}");
+}
+
+#[test]
+fn declare_module_nested_namespace_annotated_initializer_emits_ts1039() {
+    let codes = check_codes("declare module Z { namespace M { const b: number = 2; } }");
+    assert!(codes.contains(&1039), "expected TS1039, got {codes:?}");
+}
+
+#[test]
+fn mixed_annotated_and_bare_ambient_initializers_report_both_codes() {
+    // The annotated declaration takes the TS1039 arm; the bare `const` with a
+    // non-literal initializer takes the TS1254 arm. Both must survive.
+    let codes = check_codes("declare const a: number = 1, b = {};");
+    assert!(
+        codes.contains(&1039) && codes.contains(&1254),
+        "expected both TS1039 and TS1254, got {codes:?}"
+    );
+}
+
+#[test]
+fn annotated_ambient_initializer_keeps_both_grammar_and_type_error() {
+    // The reset re-emits real contextual diagnostics: an initializer that also
+    // mismatches the annotation yields TS1039 (grammar) and TS2322 (type).
+    let codes = check_codes("declare const a: number = \"x\";");
+    assert!(
+        codes.contains(&1039) && codes.contains(&2322),
+        "expected both TS1039 and TS2322, got {codes:?}"
+    );
+}
+
+#[test]
+fn non_ambient_annotated_initializer_has_no_ts1039() {
+    // Control: TS1039 is gated on the ambient context, not the annotation.
+    let codes = check_codes("const a: number = 1;");
+    assert!(
+        !codes.contains(&1039),
+        "TS1039 must not fire outside ambient, got {codes:?}"
+    );
+}

@@ -301,6 +301,15 @@ impl<'a> CheckerState<'a> {
                     self.ctx.diagnostics.retain(|diag| {
                         diag.code
                             == crate::diagnostics::diagnostic_codes::STATIC_MEMBERS_CANNOT_REFERENCE_CLASS_TYPE_PARAMETERS
+                            // TS1039/TS1254: ambient-initializer grammar errors are a
+                            // pure syntactic property of the declaration, independent of
+                            // contextual typing, so they survive the reset. Only
+                            // annotated ambient declarations take this contextual path,
+                            // which is why the reset used to drop their TS1039.
+                            || diag.code
+                                == crate::diagnostics::diagnostic_codes::INITIALIZERS_ARE_NOT_ALLOWED_IN_AMBIENT_CONTEXTS
+                            || diag.code
+                                == crate::diagnostics::diagnostic_codes::A_CONST_INITIALIZER_IN_AN_AMBIENT_CONTEXT_MUST_BE_A_STRING_OR_NUMERIC_LITERAL_OR
                             // TS2693/TS2585/TS1361/TS1362: type-only keywords and
                             // type-only import/export used as values are structural
                             // errors, not contextual-typing artifacts.
