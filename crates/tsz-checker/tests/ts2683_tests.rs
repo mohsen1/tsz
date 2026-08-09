@@ -819,3 +819,40 @@ const t = { this: "x" };
         "A non-callback typedef must not be affected by callback `@this` parsing, got: {diags:?}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Mechanism 2 of #16964: CommonJS `exports.X = ...` / `module.exports.X = ...`
+// property-assigned function expressions. #16978 handled the general
+// `o.m = ...` receiver but explicitly deferred the CommonJS bases; these cover
+// them. tsc-independent (the tsz-cli lane verifies exact parity vs the oracle).
+// ---------------------------------------------------------------------------
+
+#[test]
+fn commonjs_exports_property_assigned_function_this_is_implicit_any() {
+    // `exports.f = function () { this.q = 1 }` — the bare `exports` identifier is
+    // the module's own symbol, which tsc declines to type `this` as, so `this`
+    // stays implicitly `any` (TS2683) rather than picking up a receiver.
+    let src = "exports.assemble = function () {\n    this.q = 1;\n};\n";
+    let diags = get_js_diagnostics(src);
+    assert!(
+        diags.iter().any(|d| d.0 == 2683),
+        "CommonJS `exports.f = function () {{ this }}` should report implicit-any TS2683, got: {diags:?}"
+    );
+}
+
+#[test]
+fn commonjs_module_exports_property_assigned_function_this_is_receiver() {
+    // `module.exports.a = function () { this.q }` — tsc types `this` as the
+    // module's own exports namespace (`typeof import(self)`), so a missing member
+    // is TS2339, not the implicit-any TS2683 the bare `exports` base gets.
+    let src = "module.exports.a = function () {\n    this.q;\n};\n";
+    let diags = get_js_diagnostics(src);
+    assert!(
+        diags.iter().any(|d| d.0 == 2339),
+        "CommonJS `module.exports.a = function () {{ this.q }}` should report TS2339 on the missing member, got: {diags:?}"
+    );
+    assert!(
+        !diags.iter().any(|d| d.0 == 2683),
+        "a `module.exports` receiver `this` must not report implicit-any TS2683, got: {diags:?}"
+    );
+}

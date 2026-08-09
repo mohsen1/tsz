@@ -58,7 +58,7 @@ impl<'a> CheckerState<'a> {
         self.is_current_file_commonjs_export_base_syntax(idx)
     }
 
-    pub(super) fn is_current_file_commonjs_export_base_syntax(&self, idx: NodeIndex) -> bool {
+    pub(crate) fn is_current_file_commonjs_export_base_syntax(&self, idx: NodeIndex) -> bool {
         if self.current_source_file_has_esm_syntax() {
             return false;
         }

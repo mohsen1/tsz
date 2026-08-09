@@ -258,6 +258,57 @@ fn tsc_parity_jsdoc_ctor_fn_value_as_type_matrix() {
     );
 }
 
+#[test]
+fn tsc_parity_commonjs_this_in_property_assigned_function_expression() {
+    // Mechanism 2 of #16964: `this` inside a function expression assigned to a
+    // CommonJS export base. #16978 handled the general `o.m = ...` receiver but
+    // deferred the CommonJS bases.
+    //   - `exports.f = function () {}` — the bare `exports` identifier is the
+    //     module's own symbol, which tsc declines to type `this` as, so `this` is
+    //     implicitly `any` (TS2683).
+    //   - `x = function () {}` (plain-identifier target) — not an access
+    //     expression, so `this` is implicitly `any` (TS2683).
+    //   - `o.m = function () {}` (typed receiver, existing method reassigned) —
+    //     `this` is the type of `o`, so a missing member is TS2339.
+    // Both diagnostic arms are covered so a probe that only checks one code
+    // cannot score a half-fix as complete.
+    if !tsc_available() {
+        return;
+    }
+    let temp = TempDir::new("commonjs_this_property_assigned_fn").expect("temp dir");
+    write_file(
+        &temp.path.join("exports-fn.js"),
+        "exports.assemble = function () {\n    this.q = 1;\n};\n",
+    );
+    write_file(
+        &temp.path.join("plain-id-fn.js"),
+        "let sink;\nsink = function () {\n    this.q = 1;\n};\n",
+    );
+    write_file(
+        &temp.path.join("typed-receiver-fn.js"),
+        "const widget = {\n    render() {},\n};\nwidget.render = function () {\n    this.missing;\n};\n",
+    );
+    write_file(
+        &temp.path.join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "target": "es2015",
+    "allowJs": true,
+    "checkJs": true,
+    "noEmit": true,
+    "module": "commonjs",
+    "strict": true
+  },
+  "include": ["*.js"]
+}"#,
+    );
+    assert_tsc_tsz_match(
+        &temp.path,
+        &["-p", "tsconfig.json", "--pretty", "false"],
+        "CommonJS this in property-assigned function expression",
+    );
+}
+
 // ---------------------------------------------------------------------------
 // TS1005: Syntax errors
 // ---------------------------------------------------------------------------
