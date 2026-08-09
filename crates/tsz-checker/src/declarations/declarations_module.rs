@@ -1179,6 +1179,122 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
         found_any
     }
 
+    /// The enclosing `MODULE_DECLARATION` name chain of `module_idx`, outermost
+    /// first. For `namespace A { export namespace Point {} }`, walking up from
+    /// `Point` yields `["A"]`. Used to resolve a namespace's cross-file merge
+    /// partner through the other file's enclosing-namespace exports.
+    fn namespace_enclosing_names(&self, module_idx: NodeIndex) -> Vec<String> {
+        let mut names = Vec::new();
+        let mut current = module_idx;
+        while let Some(ext) = self.ctx.arena.get_extended(current) {
+            current = ext.parent;
+            if current.is_none() {
+                break;
+            }
+            if let Some(node) = self.ctx.arena.get(current)
+                && node.kind == syntax_kind_ext::MODULE_DECLARATION
+                && let Some(mod_data) = self.ctx.arena.get_module(node)
+                && let Some(name_node) = self.ctx.arena.get(mod_data.name)
+                && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+            {
+                names.push(ident.escaped_text.to_string());
+            }
+        }
+        names.reverse(); // outermost first
+        names
+    }
+
+    /// Whether every class/function declaration a namespace merges with is ambient.
+    ///
+    /// A namespace merged with an ambient (`declare`) class/function is valid
+    /// regardless of file or order, so tsc reports neither TS2433 nor TS2434 for
+    /// it. When the class/function lives in another script file its raw
+    /// `NodeIndex` collides with an unrelated node in the current arena and the
+    /// merged symbol's `stable_declarations` does not carry the cross-file
+    /// partner, so this scans the other files' binders for a same-named
+    /// class/function and checks it against its own arena
+    /// ([`Self::cross_file_class_or_function_all_ambient`]).
+    ///
+    /// - `Some(true)`  — a cross-file class/function partner was found and all are ambient.
+    /// - `Some(false)` — a cross-file class/function partner was found and at least one is not.
+    /// - `None`        — no cross-file class/function partner was found.
+    fn merged_class_or_function_decls_all_ambient(
+        &self,
+        module_idx: NodeIndex,
+        symbol: &tsz_binder::Symbol,
+    ) -> Option<bool> {
+        let all_binders = self.ctx.all_binders.as_ref()?;
+        let namespace_name = symbol.escaped_name.as_str();
+        let current_file_idx = self.ctx.current_file_idx;
+
+        let enclosing_names = self.namespace_enclosing_names(module_idx);
+
+        let mut found_partner = false;
+        for (binder_idx, other_binder) in all_binders.iter().enumerate() {
+            if binder_idx == current_file_idx {
+                continue;
+            }
+
+            // Resolve the merge partner's symbol in this other file: directly from
+            // `file_locals` for a top-level namespace, or by walking the enclosing
+            // namespace exports for a nested one.
+            let target_sym_id = if enclosing_names.is_empty() {
+                match other_binder.file_locals.get(namespace_name) {
+                    Some(id) => id,
+                    None => continue,
+                }
+            } else {
+                let Some(mut current_sym_id) =
+                    other_binder.file_locals.get(enclosing_names[0].as_str())
+                else {
+                    continue;
+                };
+                let mut ok = true;
+                for intermediate_name in &enclosing_names[1..] {
+                    if let Some(sym) = other_binder.get_symbol(current_sym_id)
+                        && let Some(exports) = &sym.exports
+                        && let Some(next_id) = exports.get(intermediate_name.as_str())
+                    {
+                        current_sym_id = next_id;
+                    } else {
+                        ok = false;
+                        break;
+                    }
+                }
+                if !ok {
+                    continue;
+                }
+                match other_binder
+                    .get_symbol(current_sym_id)
+                    .and_then(|container| container.exports.as_ref())
+                    .and_then(|exports| exports.get(namespace_name))
+                {
+                    Some(id) => id,
+                    None => continue,
+                }
+            };
+
+            // No self-exclusion needed: the current file is skipped above, and a
+            // `SymbolId` is only meaningful within its own binder — comparing one
+            // from `other_binder` against the current file's symbol would be a
+            // meaningless cross-binder numeric collision.
+            let Some(target_sym) = other_binder.get_symbol(target_sym_id) else {
+                continue;
+            };
+            let is_class = (target_sym.flags & tsz_binder::symbol_flags::CLASS) != 0;
+            let is_function = (target_sym.flags & tsz_binder::symbol_flags::FUNCTION) != 0;
+            if (!is_class && !is_function) || target_sym.declarations.is_empty() {
+                continue;
+            }
+            found_partner = true;
+            if !self.cross_file_class_or_function_all_ambient(binder_idx, target_sym) {
+                return Some(false);
+            }
+        }
+
+        if found_partner { Some(true) } else { None }
+    }
+
     /// Check TS2433/TS2434: Namespace merging with class/function across files or out of order.
     ///
     /// TS2433: A namespace declaration cannot be in a different file from a class or function
@@ -1218,30 +1334,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
             {
                 let namespace_name = &symbol.escaped_name;
 
-                // Build enclosing namespace name chain by walking AST parents.
-                // For `namespace A { export namespace Point { } }`, when checking Point,
-                // this produces ["A"] (outermost first).
-                let enclosing_names: Vec<String> = {
-                    let mut names = Vec::new();
-                    let mut current = module_idx;
-                    // Walk up AST parent chain looking for enclosing MODULE_DECLARATION nodes
-                    while let Some(ext) = self.ctx.arena.get_extended(current) {
-                        current = ext.parent;
-                        if current.is_none() {
-                            break;
-                        }
-                        if let Some(node) = self.ctx.arena.get(current)
-                            && node.kind == syntax_kind_ext::MODULE_DECLARATION
-                            && let Some(mod_data) = self.ctx.arena.get_module(node)
-                            && let Some(name_node) = self.ctx.arena.get(mod_data.name)
-                            && let Some(ident) = self.ctx.arena.get_identifier(name_node)
-                        {
-                            names.push(ident.escaped_text.to_string());
-                        }
-                    }
-                    names.reverse(); // outermost first
-                    names
-                };
+                let enclosing_names = self.namespace_enclosing_names(module_idx);
 
                 let current_file_idx = self.ctx.current_file_idx;
 
@@ -1475,45 +1568,15 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
         }
 
         if !found_same_file {
-            // Before emitting TS2433, check if all class/function declarations we CAN
-            // resolve in the current arena are ambient (e.g., `declare function $()`).
-            // If they are all ambient, the namespace merge is valid and TS2433 should
-            // not fire. If none are resolvable (cross-file), we still emit TS2433
-            // because the symbol has CLASS/FUNCTION flags from another file.
-            let mut found_any_class_or_function_in_arena = false;
-            let mut all_ambient_or_bodyless = true;
-            for &decl_idx in &symbol.declarations {
-                if decl_idx == module_idx {
-                    continue;
-                }
-                let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
-                    continue;
-                };
-                let is_class = decl_node.kind == syntax_kind_ext::CLASS_DECLARATION;
-                let is_function = decl_node.kind == syntax_kind_ext::FUNCTION_DECLARATION;
-                if !is_class && !is_function {
-                    continue;
-                }
-                found_any_class_or_function_in_arena = true;
-                if self.is_ambient_declaration(decl_idx) {
-                    continue;
-                }
-                if is_function
-                    && let Some(func) = self.ctx.arena.get_function(decl_node)
-                    && func.body.is_none()
-                {
-                    continue;
-                }
-                // Found a non-ambient class/function in the arena
-                all_ambient_or_bodyless = false;
-                break;
-            }
-
-            // Suppress TS2433 only when we found class/function declarations in the
-            // current arena AND they are all ambient/bodyless. If no class/function
-            // was found in the arena, the merged symbol's CLASS/FUNCTION flags must
-            // come from another file, so TS2433 should fire.
-            let suppress = found_any_class_or_function_in_arena && all_ambient_or_bodyless;
+            // The class/function partner was not resolvable in the current arena.
+            // It typically lives in another script file, where its raw `NodeIndex`
+            // collides with an unrelated node here, so the same-file scan above
+            // cannot tell whether it is ambient. Resolve the partner in the other
+            // files' binders and suppress TS2433 when it is ambient — tsc exempts
+            // a namespace merged with an ambient (`declare`) class/function from
+            // the same-file restriction regardless of which file it is in.
+            let suppress =
+                self.merged_class_or_function_decls_all_ambient(module_idx, symbol) == Some(true);
             if !suppress && let Some(name_node) = self.ctx.arena.get(module.name) {
                 self.ctx.error(
                         name_node.pos,

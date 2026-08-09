@@ -141,6 +141,61 @@ function Zeta(): void {}
 }
 
 #[test]
+fn cross_file_nested_namespace_merged_with_ambient_class_reports_no_ts2433() {
+    // The namespace is nested inside an outer namespace, so the cross-file
+    // partner must be resolved by walking the enclosing namespace's exports in
+    // the other file — not just its top-level `file_locals`.
+    let diags = codes(
+        &[
+            (
+                "decl.ts",
+                r#"
+namespace Outer { export namespace Inner { var y: number; } }
+"#,
+            ),
+            (
+                "use.ts",
+                r#"
+namespace Outer { export declare class Inner { } }
+"#,
+            ),
+        ],
+        "decl.ts",
+    );
+    assert!(
+        !diags.contains(&2433),
+        "nested namespace merged cross-file with an ambient class must not report TS2433, got: {diags:?}"
+    );
+}
+
+#[test]
+fn cross_file_nested_namespace_merged_with_non_ambient_class_still_reports_ts2433() {
+    // Negative control for the nested case: a non-ambient class in the other
+    // file's enclosing namespace must still report TS2433.
+    let diags = codes(
+        &[
+            (
+                "decl.ts",
+                r#"
+namespace Outer { export namespace Inner { var y: number; } }
+"#,
+            ),
+            (
+                "use.ts",
+                r#"
+namespace Outer { export class Inner { } }
+"#,
+            ),
+        ],
+        "decl.ts",
+    );
+    assert!(
+        diags.contains(&2433),
+        "nested namespace merged cross-file with a non-ambient class must still report TS2433, got: {diags:?}"
+    );
+}
+
+#[test]
 fn cross_file_namespace_merged_with_ambient_class_renamed_binder_reports_no_ts2433() {
     // Same as the first test with every identifier renamed, to prove the fix
     // is not keyed on the literal name `F`/`E` from the conformance fixture.
