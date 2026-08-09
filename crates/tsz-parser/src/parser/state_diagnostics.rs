@@ -642,6 +642,19 @@ impl ParserState {
         }) {
             return;
         }
+        // Immediately after a missing-LHS binary-expression statement
+        // (#16291), the following statement's own diagnostic must never be
+        // dropped just for sitting within `ERROR_SUPPRESSION_DISTANCE` of
+        // that recovery's own diagnostic — even when it surfaces here, inside
+        // argument-list parsing, rather than at a missing semicolon (#17062).
+        let force_emit = std::mem::take(&mut self.force_next_missing_semicolon_error_once);
+        if force_emit {
+            self.parse_error_at_current_token(
+                "',' expected.",
+                tsz_common::diagnostics::diagnostic_codes::EXPECTED,
+            );
+            return;
+        }
         self.error_token_expected(",");
     }
 

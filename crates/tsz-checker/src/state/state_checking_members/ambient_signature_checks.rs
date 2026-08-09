@@ -1390,11 +1390,37 @@ impl<'a> CheckerState<'a> {
         // instead of tripping the program-wide `has_parse_errors` suppression.
         // The parser deliberately defers the body-less accessor here (see
         // `parse_accessor_body`); this is that deferred check.
+        //
+        // tsc's `checkGrammarModifiers(node) || checkGrammarAccessor(node)`
+        // OR-chain means a modifier already invalid on this accessor —
+        // `readonly` (TS1024), `in`/`out` (TS1274), or a duplicate `accessor`
+        // (TS1275) — reports its own error and short-circuits the missing-body
+        // check entirely, rather than piling a second diagnostic on the same
+        // malformed member (#17062). `declare` (TS1031) already gets this for
+        // free because a `declare`-modified node reads as ambient regardless
+        // of placement validity (`is_in_ambient_context`).
         let accessor_end = node.end;
         let accessor_body_missing = accessor.body.is_none();
         let accessor_is_abstract = self.has_abstract_modifier(&accessor.modifiers);
+        let accessor_has_modifier_invalid_on_accessor =
+            accessor.modifiers.as_ref().is_some_and(|mods| {
+                mods.nodes.iter().any(|&mod_idx| {
+                    self.ctx.arena.get(mod_idx).is_some_and(|mod_node| {
+                        matches!(
+                            tsz_scanner::SyntaxKind::try_from_u16(mod_node.kind),
+                            Some(
+                                tsz_scanner::SyntaxKind::ReadonlyKeyword
+                                    | tsz_scanner::SyntaxKind::InKeyword
+                                    | tsz_scanner::SyntaxKind::OutKeyword
+                                    | tsz_scanner::SyntaxKind::AccessorKeyword
+                            )
+                        )
+                    })
+                })
+            });
         if accessor_body_missing
             && !accessor_is_abstract
+            && !accessor_has_modifier_invalid_on_accessor
             && !self.ctx.is_declaration_file()
             && !self.ctx.arena.is_in_ambient_context(member_idx)
         {
