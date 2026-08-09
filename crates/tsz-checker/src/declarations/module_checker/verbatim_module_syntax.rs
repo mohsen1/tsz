@@ -95,7 +95,18 @@ impl<'a> CheckerState<'a> {
                 )
             };
             self.error_at_node(anchor, message, code);
-            return;
+            // `module: "preserve"` + `isolatedModules` (TS1293) reports only the
+            // CJS syntax error. Under verbatimModuleSyntax, tsc still reports the
+            // per-specifier re-export type diagnostics (TS1205/TS1448) at their
+            // own anchors *alongside* the ESM-in-CJS syntax error — the same
+            // double-report the import side does (oracle-verified: a plain
+            // re-export of a type in a CommonJS file reports both TS1295 and
+            // TS1205 at the same position). Fall through to the per-specifier
+            // loop so the commonjs slice matches the ESM slice
+            // (tsz-org/tsz#17098).
+            if preserve_isolated {
+                return;
+            }
         }
 
         let module_specifier_text = if module_specifier_idx.is_some() {
