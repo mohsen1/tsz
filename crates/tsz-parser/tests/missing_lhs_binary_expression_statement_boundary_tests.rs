@@ -1,42 +1,35 @@
-//! A statement that begins with a reserved-keyword binary operator (`in`,
-//! `instanceof`) with no left operand recovers as `tsc`'s
-//! `<missing> <op> <rhs>` (TS1109 at the operator, the operator and its RHS
-//! kept in the tree). tsc's statement-list loop then re-parses whatever
-//! follows as a completely independent fresh statement — e.g. `in get
-//! x(): number;` is `<missing> in get` (one statement) followed by
-//! `x(): number;` (a second, unrelated statement).
+//! A missing-semicolon diagnostic (`';' expected`) always anchors at the first
+//! token of the *next* statement, and that next statement is fully independent
+//! of the one whose terminator was missing. `tsc`'s `parseErrorAtPosition`
+//! dedups only against the immediately preceding diagnostic's exact start
+//! position — never a distance — so the next statement's own first diagnostic
+//! is always reported, even when it falls a couple of columns after the
+//! missing-semicolon one.
 //!
-//! tsz's `parse_error_for_missing_semicolon_after` / `parse_semicolon`
-//! suppress a "';' expected" diagnostic when a recent diagnostic was emitted
-//! within `ERROR_SUPPRESSION_DISTANCE` (3 characters) of the current
-//! position, to avoid cascading noise from a single failed parse. That
-//! heuristic doesn't know a *new*, independently-parsed statement sits in
-//! between: the first statement's own "';' expected" (reported at the second
-//! statement's first token, since that's where the missing semicolon was
-//! expected) sits well within 3 characters of the second statement's own
-//! "';' expected" a few tokens later, so tsz dropped it — even though `tsc`'s
-//! real dedup (`parseErrorAtPosition`) only ever compares against the
-//! immediately preceding diagnostic's exact start position, never a
-//! proximity window.
+//! tsz instead suppresses any diagnostic within `ERROR_SUPPRESSION_DISTANCE`
+//! (3 characters) of the last, to damp cascading noise from a single failed
+//! parse. That heuristic can't tell that a *new*, independently-parsed
+//! statement sits in between, so it silently dropped the next statement's own
+//! error whenever it landed within three columns of the missing-semicolon
+//! diagnostic. This showed up in two shapes:
 //!
-//! Fixed in `crates/tsz-parser/src/parser/state_switch_recovery.rs`'s
-//! `parse_expression_statement`: a missing-LHS statement now sets a one-shot
-//! `force_next_missing_semicolon_error_once` flag (consumed by the very next
-//! `parse_semicolon` / `parse_error_for_missing_semicolon_after` check, in
-//! `crates/tsz-parser/src/parser/state/recovery.rs`), so the following
-//! statement's own diagnostic is never suppressed by proximity to this one.
+//!   * the missing-LHS reserved-keyword binary form — `in set y(v: number);`
+//!     is `<missing> in set` (TS1109 at `in`, missing `;` at `y`) followed by
+//!     `y(v: number)`, whose unexpected `:` draws `',' expected`; and
+//!   * the plain missing-semicolon-between-expression-statements form —
+//!     `0 y(v: number);` is `0` (missing `;` at `y`) followed by the same
+//!     `y(v: number)`.
 //!
-//! The trigger condition is not just `started_with_binary_operator`: `in` is
-//! recognized as a binary operator directly by `is_binary_operator()` at
-//! statement start, but `instanceof` — despite being an equally reserved
-//! word that can never itself start an expression — is also (incorrectly,
-//! out of scope here) listed in `is_expression_start()`'s identifier-like
-//! token set, so it takes the generic `parse_expression()` path instead of
-//! the dedicated `started_with_binary_operator` branch. Both still reach the
-//! same recovery shape and report the same TS1109 anchored at the
-//! statement's own start position, so the flag is set whenever that
-//! diagnostic is present, not only when `started_with_binary_operator` is
-//! set.
+//! Both share one root cause and one fix: `parse_semicolon` /
+//! `parse_error_for_missing_semicolon_after` (in
+//! `crates/tsz-parser/src/parser/state/recovery.rs`) now call
+//! `reset_error_suppression_at_statement_boundary()` right after emitting the
+//! missing-semicolon diagnostic, neutralizing the proximity window so the next
+//! statement's first diagnostic is judged on its own position wherever it is
+//! emitted (`parse_semicolon`, `error_comma_expected`, an argument-list
+//! `parse_expected`, …). This replaces the earlier per-emit-site
+//! `force_next_missing_semicolon_error_once` flag, which only reached the
+//! semicolon and comma sites and only for the `in`/`instanceof` form.
 
 use crate::parser::test_fixture::parse_source;
 use tsz_common::diagnostics::diagnostic_codes;
@@ -222,4 +215,81 @@ fn logical_and_missing_rhs_before_real_token_same_line_anchors_at_token() {
 #[test]
 fn logical_and_missing_rhs_before_real_token_next_line_anchors_at_token() {
     assert_eq!(fingerprints("a &&\n;"), vec![(TS1109, 2, 1)]);
+}
+
+// ---------------------------------------------------------------------------
+// The plain missing-semicolon-between-expression-statements form of the same
+// boundary-independence bug (no `in`/`instanceof` involved). A literal-valued
+// first statement missing its `;` anchors that diagnostic at the second
+// statement's first token; the second statement's own first diagnostic then
+// lands a couple of columns later and used to be dropped for proximity. tsc
+// reports both. The literal kind is irrelevant — what matters is that the
+// missing-`;` diagnostic falls at the next statement's start — so this is
+// exercised across numeric / string / bigint / template / regex first
+// statements, and the second statement is a call with a malformed argument
+// list (`,` expected) or a conditional (`:` expected).
+
+#[test]
+fn numeric_stmt_missing_semicolon_then_call_reports_both() {
+    // `0` (missing `;` at `y`) then `y(v: number)` (`,` expected at `:`).
+    assert_eq!(
+        fingerprints("0 y(v: number);"),
+        vec![(TS1005, 1, 3), (TS1005, 1, 6)],
+    );
+}
+
+#[test]
+fn string_stmt_missing_semicolon_then_call_reports_both() {
+    assert_eq!(
+        fingerprints("\"s\" y(v: number);"),
+        vec![(TS1005, 1, 5), (TS1005, 1, 8)],
+    );
+}
+
+#[test]
+fn bigint_stmt_missing_semicolon_then_call_reports_both() {
+    assert_eq!(
+        fingerprints("0n y(v: number);"),
+        vec![(TS1005, 1, 4), (TS1005, 1, 7)],
+    );
+}
+
+#[test]
+fn numeric_stmt_missing_semicolon_then_conditional_reports_both() {
+    // Second statement's own first diagnostic is a `:` expected (conditional),
+    // emitted via `parse_expected` rather than the comma/semicolon sites — the
+    // uniform boundary reset covers it where the old per-site flag did not.
+    assert_eq!(fingerprints("0 y?1;"), vec![(TS1005, 1, 3), (TS1005, 1, 6)],);
+}
+
+// The call name is not special: varying the second statement's callee must not
+// change the shape (guards against any name-based fast path).
+#[test]
+fn missing_semicolon_then_call_is_callee_name_independent() {
+    for name in ["y", "call", "_f"] {
+        let source = format!("0 {name}(v: number);");
+        let semi_col = 3;
+        let comma_col = 3 + name.len() as u32 + 2; // after `<name>(v`
+        assert_eq!(
+            fingerprints(&source),
+            vec![(TS1005, 1, semi_col), (TS1005, 1, comma_col)],
+            "unexpected fingerprints for {source:?}",
+        );
+    }
+}
+
+// Negative control: when the second statement is itself well-formed, only the
+// missing `;` is reported — the boundary reset must not manufacture a spurious
+// second diagnostic.
+#[test]
+fn numeric_stmt_missing_semicolon_then_valid_statement_reports_only_semicolon() {
+    assert_eq!(fingerprints("0 y;"), vec![(TS1005, 1, 3)]);
+}
+
+// Negative control: an explicit `;` closes the first statement cleanly, so
+// there is no missing-semicolon boundary and nothing to reset — the second
+// statement's diagnostic is reported by ordinary suppression rules.
+#[test]
+fn explicit_semicolon_between_statements_is_unaffected() {
+    assert_eq!(fingerprints("0; y(v: number);"), vec![(TS1005, 1, 7)]);
 }

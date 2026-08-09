@@ -415,14 +415,33 @@ impl ParserState {
             // emitted. This happens when a prior parse failure (e.g., missing identifier,
             // unsupported syntax) causes the parser to not consume tokens, then
             // parse_semicolon is called and fails too.
-            // Use centralized error suppression heuristic — except immediately after a
-            // missing-LHS binary-expression statement (#16291), where the following
-            // statement's own diagnostic must never be dropped just for proximity.
-            let force_emit = std::mem::take(&mut self.force_next_missing_semicolon_error_once);
-            if force_emit || self.should_report_error() {
+            // Use centralized error suppression heuristic.
+            if self.should_report_error() {
                 self.error_token_expected(";");
+                self.reset_error_suppression_at_statement_boundary();
             }
         }
+    }
+
+    /// A missing-semicolon diagnostic (`';' expected`) always anchors at the
+    /// first token of the *next* statement — the statement that follows is
+    /// independent of the one whose terminator was missing. tsc's
+    /// `parseErrorAtPosition` dedups only against the immediately preceding
+    /// diagnostic's exact start, never a distance, so that next statement's own
+    /// first diagnostic is reported even when it falls a couple of columns after
+    /// this one. tsz otherwise suppresses any diagnostic within
+    /// `ERROR_SUPPRESSION_DISTANCE` of the last, which silently drops the next
+    /// statement's error for shapes like `0 y(v: number);` (missing `;` after
+    /// `0`, then `,` expected inside `y(v: number)`) or the missing-LHS binary
+    /// form `in set y(v: number);` (#16291 / #17062). Neutralize the proximity
+    /// window at the boundary so `should_report_error()` judges the next
+    /// statement's first diagnostic on its own position, wherever it is emitted
+    /// (`parse_semicolon`, `error_comma_expected`, an argument-list
+    /// `parse_expected`, …). Once that diagnostic lands `last_error_pos`
+    /// re-anchors and normal cascade suppression resumes within the statement.
+    #[inline]
+    pub(crate) const fn reset_error_suppression_at_statement_boundary(&mut self) {
+        self.last_error_pos = 0;
     }
 
     // =========================================================================
@@ -471,17 +490,17 @@ impl ParserState {
                 .rev()
                 .take(4)
                 .any(|diag| diag.start == token_pos);
-            // Immediately after a missing-LHS binary-expression statement
-            // (#16291), this following statement's own diagnostic must never be
-            // dropped just for proximity to that recovery's diagnostic.
-            let force_emit = std::mem::take(&mut self.force_next_missing_semicolon_error_once);
             if !already_reported_here
-                && (force_emit
-                    || self.should_report_error()
+                && (self.should_report_error()
                     || self.last_error_was_leading_zero_at_other_pos()
                     || self.last_error_was_element_access_missing_argument_at_other_pos())
             {
                 self.parse_error_at_current_token("';' expected.", diagnostic_codes::EXPECTED);
+                // This ';' expected anchors at the next statement's first token,
+                // so the statement that follows is independent — do not let its
+                // own first diagnostic be dropped for proximity to this one
+                // (#17062).
+                self.reset_error_suppression_at_statement_boundary();
             }
             return;
         };
