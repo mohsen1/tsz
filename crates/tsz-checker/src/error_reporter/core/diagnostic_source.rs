@@ -157,16 +157,10 @@ impl<'a> CheckerState<'a> {
             if let Some(param) = decl_arena.get_parameter(decl)
                 && param.type_annotation.is_some()
             {
-                if self.annotation_names_type_query_alias(decl_arena, param.type_annotation)
-                    || Self::annotation_is_keyof_over_degenerate_operand(
-                        decl_arena,
-                        param.type_annotation,
-                    )
-                    || Self::annotation_is_canonicalized_structural_type(
-                        decl_arena,
-                        param.type_annotation,
-                    )
-                {
+                if self.annotation_display_must_use_structural_formatter(
+                    decl_arena,
+                    param.type_annotation,
+                ) {
                     return None;
                 }
                 let mut text =
@@ -191,16 +185,10 @@ impl<'a> CheckerState<'a> {
             if let Some(var_decl) = decl_arena.get_variable_declaration(decl)
                 && var_decl.type_annotation.is_some()
             {
-                if self.annotation_names_type_query_alias(decl_arena, var_decl.type_annotation)
-                    || Self::annotation_is_keyof_over_degenerate_operand(
-                        decl_arena,
-                        var_decl.type_annotation,
-                    )
-                    || Self::annotation_is_canonicalized_structural_type(
-                        decl_arena,
-                        var_decl.type_annotation,
-                    )
-                {
+                if self.annotation_display_must_use_structural_formatter(
+                    decl_arena,
+                    var_decl.type_annotation,
+                ) {
                     return None;
                 }
                 return node_text_in_arena(decl_arena, var_decl.type_annotation).and_then(|text| {
@@ -213,16 +201,10 @@ impl<'a> CheckerState<'a> {
             if let Some(prop_decl) = decl_arena.get_property_decl(decl)
                 && prop_decl.type_annotation.is_some()
             {
-                if self.annotation_names_type_query_alias(decl_arena, prop_decl.type_annotation)
-                    || Self::annotation_is_keyof_over_degenerate_operand(
-                        decl_arena,
-                        prop_decl.type_annotation,
-                    )
-                    || Self::annotation_is_canonicalized_structural_type(
-                        decl_arena,
-                        prop_decl.type_annotation,
-                    )
-                {
+                if self.annotation_display_must_use_structural_formatter(
+                    decl_arena,
+                    prop_decl.type_annotation,
+                ) {
                     return None;
                 }
                 return node_text_in_arena(decl_arena, prop_decl.type_annotation).and_then(
@@ -303,15 +285,8 @@ impl<'a> CheckerState<'a> {
         if let Some(param) = decl_arena.get_parameter(decl)
             && param.type_annotation.is_some()
         {
-            if self.annotation_names_type_query_alias(decl_arena, param.type_annotation)
-                || Self::annotation_is_keyof_over_degenerate_operand(
-                    decl_arena,
-                    param.type_annotation,
-                )
-                || Self::annotation_is_canonicalized_structural_type(
-                    decl_arena,
-                    param.type_annotation,
-                )
+            if self
+                .annotation_display_must_use_structural_formatter(decl_arena, param.type_annotation)
             {
                 return None;
             }
@@ -323,16 +298,10 @@ impl<'a> CheckerState<'a> {
         if let Some(var_decl) = decl_arena.get_variable_declaration(decl)
             && var_decl.type_annotation.is_some()
         {
-            if self.annotation_names_type_query_alias(decl_arena, var_decl.type_annotation)
-                || Self::annotation_is_keyof_over_degenerate_operand(
-                    decl_arena,
-                    var_decl.type_annotation,
-                )
-                || Self::annotation_is_canonicalized_structural_type(
-                    decl_arena,
-                    var_decl.type_annotation,
-                )
-            {
+            if self.annotation_display_must_use_structural_formatter(
+                decl_arena,
+                var_decl.type_annotation,
+            ) {
                 return None;
             }
             return node_text_in_arena(decl_arena, var_decl.type_annotation).and_then(|text| {

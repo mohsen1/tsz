@@ -250,6 +250,23 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    /// Whether a declared type annotation is one whose written form `tsc` never
+    /// preserves in diagnostics, so the declared-annotation source-text fallback
+    /// must return `None` and let the caller render the canonical structural
+    /// form instead. Combines the three carve-outs — a `typeof`-alias reference,
+    /// a `keyof` over a degenerate `any`/`unknown`/`never` operand, and an
+    /// inline structural tuple / function / constructor type — into one gate so
+    /// the several echo sites cannot drift when a future carve-out is added.
+    pub(in crate::error_reporter) fn annotation_display_must_use_structural_formatter(
+        &self,
+        arena: &tsz_parser::NodeArena,
+        annotation_idx: NodeIndex,
+    ) -> bool {
+        self.annotation_names_type_query_alias(arena, annotation_idx)
+            || Self::annotation_is_keyof_over_degenerate_operand(arena, annotation_idx)
+            || Self::annotation_is_canonicalized_structural_type(arena, annotation_idx)
+    }
+
     pub(in crate::error_reporter) fn annotation_names_type_query_alias(
         &self,
         arena: &tsz_parser::NodeArena,
