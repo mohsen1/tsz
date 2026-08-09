@@ -454,14 +454,30 @@ pub use tsz_common::options::strict_family;
 // the emit-capable CLI/tsconfig lanes (which go through `apply_non_strict_fanout`).
 pub use tsz_common::options::checker_fanout;
 
+/// A string compiler-option value, but only when present and non-empty.
+///
+/// This is the single definition of the "empty string means unset" rule: `tsc`
+/// gates every string option on `if (options.X)`, and `""` is falsy in that
+/// gate, so an empty value is treated as if the option were absent while a
+/// whitespace `" "` is a present value that still gets validated. Both
+/// [`option_is_truthy`] (presence/dependency/conflict gates) and the identifier
+/// validators that need the value itself route through here.
+const fn nonempty_string_option(value: Option<&serde_json::Value>) -> Option<&String> {
+    match value {
+        Some(serde_json::Value::String(s)) if !s.is_empty() => Some(s),
+        _ => None,
+    }
+}
+
 /// Check whether a JSON value represents a truthy compiler option.
-/// Returns true for `true` booleans, non-empty strings, and non-null values
-/// that aren't `false`. Returns false for `None`, `null`, and `false`.
+/// Returns false for `None`, `null`, `false`, and the empty string; true for
+/// `true` and any other non-empty value (see [`nonempty_string_option`] for the
+/// empty-string rationale).
 const fn option_is_truthy(value: Option<&serde_json::Value>) -> bool {
     match value {
         None | Some(serde_json::Value::Null) => false,
         Some(serde_json::Value::Bool(b)) => *b,
-        // String options (like jsxFactory, reactNamespace) are truthy when present
+        Some(serde_json::Value::String(_)) => nonempty_string_option(value).is_some(),
         Some(_) => true,
     }
 }

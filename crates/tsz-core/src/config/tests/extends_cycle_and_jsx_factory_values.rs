@@ -379,3 +379,143 @@ fn absent_jsx_fragment_factory_is_clean() {
         codes(&parsed)
     );
 }
+
+// ---------------------------------------------------------------------------
+// Empty-string values for the identifier-shaped jsx options
+//
+// tsc gates every one of these checks on `if (options.X)`, and an empty string
+// is falsy in that gate, so `""` is treated exactly as if the option were
+// unset: no identifier validation (TS5067 / TS18035 / TS5059), no dependency
+// (TS5052) and no conflict (TS5053). A *whitespace-only* string like `" "` is a
+// present, non-empty value and stays a hard error — the boundary is emptiness,
+// not "looks blank". All rows pinned against `typescript@7.0.2`.
+// ---------------------------------------------------------------------------
+
+/// Assert on the codes an inline `compilerOptions` object produces.
+fn codes_for_options(opts: &str) -> Vec<u32> {
+    let temp = tempdir().expect("create temp dir");
+    let path = write(
+        temp.path(),
+        "tsconfig.json",
+        &format!(r#"{{"compilerOptions": {{{opts}}}}}"#),
+    );
+    codes(&load_tsconfig_with_diagnostics(&path).expect("load config"))
+}
+
+#[test]
+fn empty_string_jsx_factory_is_treated_as_unset() {
+    // `jsxFactory: ""` — tsc CLEAN (falsy gate), tsz previously reported TS5067.
+    let got = codes_for_options(r#""jsx": "react", "jsxFactory": """#);
+    assert!(
+        !got.contains(&5067),
+        "empty jsxFactory must be treated as unset, got: {got:?}"
+    );
+}
+
+#[test]
+fn whitespace_jsx_factory_still_reports_ts5067() {
+    // The boundary is emptiness, not blankness: `" "` is a present, invalid
+    // identifier and tsc reports TS5067 for it.
+    let got = codes_for_options(r#""jsx": "react", "jsxFactory": " ""#);
+    assert!(
+        got.contains(&5067),
+        "whitespace jsxFactory is a present invalid value, expected TS5067, got: {got:?}"
+    );
+}
+
+#[test]
+fn empty_string_jsx_fragment_factory_reports_neither_ts18035_nor_ts5052() {
+    // Both the identifier check (TS18035) and the `jsxFactory` dependency
+    // (TS5052) are gated on presence; an empty string satisfies neither.
+    let got = codes_for_options(r#""jsx": "react", "jsxFragmentFactory": """#);
+    assert!(
+        !got.contains(&18035) && !got.contains(&5052),
+        "empty jsxFragmentFactory must draw neither TS18035 nor TS5052, got: {got:?}"
+    );
+}
+
+#[test]
+fn whitespace_jsx_fragment_factory_still_reports_ts18035_and_ts5052() {
+    let got = codes_for_options(r#""jsx": "react", "jsxFragmentFactory": " ""#);
+    assert!(
+        got.contains(&18035) && got.contains(&5052),
+        "whitespace jsxFragmentFactory is present+invalid, expected TS18035 and TS5052, got: {got:?}"
+    );
+}
+
+#[test]
+fn empty_jsx_fragment_factory_alongside_valid_jsx_factory_is_clean() {
+    // With a valid `jsxFactory` present, an empty `jsxFragmentFactory` is inert.
+    let got = codes_for_options(r#""jsx": "react", "jsxFactory": "h", "jsxFragmentFactory": """#);
+    assert!(
+        !got.contains(&18035) && !got.contains(&5052),
+        "empty jsxFragmentFactory with a valid jsxFactory is clean, got: {got:?}"
+    );
+}
+
+#[test]
+fn empty_string_react_namespace_is_treated_as_unset() {
+    // `reactNamespace: ""` — tsc CLEAN, tsz previously reported TS5059.
+    let got = codes_for_options(r#""jsx": "react", "reactNamespace": """#);
+    assert!(
+        !got.contains(&5059),
+        "empty reactNamespace must be treated as unset, got: {got:?}"
+    );
+}
+
+#[test]
+fn whitespace_react_namespace_still_reports_ts5059() {
+    let got = codes_for_options(r#""jsx": "react", "reactNamespace": " ""#);
+    assert!(
+        got.contains(&5059),
+        "whitespace reactNamespace is a present invalid identifier, expected TS5059, got: {got:?}"
+    );
+}
+
+#[test]
+fn empty_react_namespace_does_not_conflict_with_jsx_factory_ts5053() {
+    // The (reactNamespace, jsxFactory) TS5053 conflict is presence-gated; an
+    // empty reactNamespace is unset, so a valid jsxFactory alone is clean.
+    let got = codes_for_options(r#""jsx": "react", "reactNamespace": "", "jsxFactory": "h""#);
+    assert!(
+        !got.contains(&5053) && !got.contains(&5059),
+        "empty reactNamespace must not conflict with jsxFactory, got: {got:?}"
+    );
+}
+
+#[test]
+fn nonempty_react_namespace_still_conflicts_with_jsx_factory_ts5053() {
+    let got = codes_for_options(r#""jsx": "react", "reactNamespace": "React", "jsxFactory": "h""#);
+    assert!(
+        got.contains(&5053),
+        "a present reactNamespace and jsxFactory still conflict, expected TS5053, got: {got:?}"
+    );
+}
+
+#[test]
+fn empty_map_root_is_treated_as_unset_for_ts5069_and_ts5053() {
+    // tsc gates `mapRoot` on `if (options.mapRoot)`. An empty value draws
+    // neither the sourceMap/declarationMap dependency (TS5069) nor the
+    // inlineSourceMap conflict (TS5053).
+    let alone = codes_for_options(r#""mapRoot": """#);
+    assert!(
+        !alone.contains(&5069),
+        "empty mapRoot alone must not draw TS5069, got: {alone:?}"
+    );
+    let with_inline = codes_for_options(r#""mapRoot": "", "inlineSourceMap": true"#);
+    assert!(
+        !with_inline.contains(&5069) && !with_inline.contains(&5053),
+        "empty mapRoot must not draw TS5069/TS5053 against inlineSourceMap, got: {with_inline:?}"
+    );
+}
+
+#[test]
+fn nonempty_map_root_still_requires_source_map_ts5069() {
+    // The boundary check in the other direction: a present mapRoot without
+    // sourceMap/declarationMap still reports TS5069.
+    let got = codes_for_options(r#""mapRoot": "maps""#);
+    assert!(
+        got.contains(&5069),
+        "a present mapRoot without sourceMap still reports TS5069, got: {got:?}"
+    );
+}
