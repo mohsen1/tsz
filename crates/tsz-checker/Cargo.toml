@@ -2557,6 +2557,9 @@ path = "tests/implements_type_param_generation_identity_tests.rs"
 name = "overload_argument_flow_narrowing_visibility_tests"
 path = "tests/overload_argument_flow_narrowing_visibility_tests.rs"
 [[test]]
+name = "type_predicate_false_branch_nonunion_keeps_source_tests"
+path = "tests/type_predicate_false_branch_nonunion_keeps_source_tests.rs"
+[[test]]
 name = "imported_ctor_alias_predicate_narrowing_tests"
 path = "tests/imported_ctor_alias_predicate_narrowing_tests.rs"
 [[test]]
