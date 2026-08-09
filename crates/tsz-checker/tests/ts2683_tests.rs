@@ -636,3 +636,108 @@ f = function () {
         "Expected TS2683 for a bare-identifier reassignment (no base object), got: {diags:?}"
     );
 }
+
+// =========================================================================
+// JSDoc `@callback` + `@this` tag tests (callbackTag4.ts conformance fixture)
+// =========================================================================
+
+#[test]
+fn jsdoc_callback_this_tag_suppresses_ts2683() {
+    // A `@callback` typedef carrying a standalone `@this {T}` tag must give
+    // the assigned function a contextual `this` type, same as a direct
+    // `@this` tag on the function itself. Matches
+    // `TypeScript/tests/cases/conformance/jsdoc/callbackTag4.ts`.
+    let src = r#"
+/**
+ * @callback C
+ * @this {{ a: string, b: number }}
+ * @param {string} a
+ * @param {number} b
+ * @returns {boolean}
+ */
+
+/** @type {C} */
+const cb = function (a, b) {
+    this
+    return true
+}
+"#;
+    let diags = get_js_diagnostics(src);
+    assert!(
+        !diags.iter().any(|d| d.0 == 2683),
+        "Expected a `@callback`'s `@this` tag to suppress TS2683, got: {diags:?}"
+    );
+}
+
+#[test]
+fn jsdoc_callback_this_tag_types_this_member_access() {
+    // The `@this` type on the callback should also be checked structurally:
+    // an absent member on the declared `this` shape should still TS2339.
+    let src = r#"
+/**
+ * @callback C
+ * @this {{ a: string }}
+ * @param {string} a
+ * @returns {boolean}
+ */
+
+/** @type {C} */
+const cb = function (a) {
+    this.missing
+    return true
+}
+"#;
+    let diags = get_js_diagnostics(src);
+    assert!(
+        diags.iter().any(|d| d.0 == 2339),
+        "Expected TS2339 for a member absent from the `@this` shape, got: {diags:?}"
+    );
+    assert!(
+        !diags.iter().any(|d| d.0 == 2683),
+        "A resolved `@this` type must not also emit TS2683, got: {diags:?}"
+    );
+}
+
+#[test]
+fn jsdoc_callback_without_this_tag_still_emits_ts2683() {
+    // Negative case: a `@callback` with no `@this` tag keeps the existing
+    // implicit-any behavior — this must not become a blanket suppression.
+    let src = r#"
+/**
+ * @callback C
+ * @param {string} a
+ * @returns {boolean}
+ */
+
+/** @type {C} */
+const cb = function (a) {
+    this
+    return true
+}
+"#;
+    let diags = get_js_diagnostics(src);
+    assert!(
+        diags.iter().any(|d| d.0 == 2683),
+        "Expected TS2683 when the callback has no `@this` tag, got: {diags:?}"
+    );
+}
+
+#[test]
+fn jsdoc_typedef_this_tag_outside_callback_is_ignored() {
+    // A plain (non-`@callback`) `@typedef` has no call signature, so an
+    // `@this` tag there is meaningless and must not be picked up as a
+    // param named "this" on some other shape.
+    let src = r#"
+/**
+ * @typedef {{ this: string }} T
+ */
+
+/** @type {T} */
+const t = { this: "x" };
+"#;
+    let diags = get_js_diagnostics(src);
+    assert!(
+        !diags.iter().any(|d| d.0 == 2683),
+        "A non-callback typedef must not be affected by callback `@this` parsing, got: {diags:?}"
+    );
+}
