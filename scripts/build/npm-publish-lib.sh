@@ -58,12 +58,61 @@ npm_clear_placeholder_auth() {
   mv "$tmp" "$npmrc"
 }
 
+# A token can be present, well-formed, and still rejected by the registry --
+# expired, revoked, or issued to an account that no longer has write access to
+# the scope. npm answers the resulting PUT with
+#
+#   npm error 404  The requested resource '<pkg>@<version>' could not be found
+#                  or you do not have permission to access it.
+#
+# which reads as a missing package rather than a dead credential. That is the
+# shape #16126 wore for its second phase: `npm_auth_preflight` passed (the
+# secret was set), provenance signed, and only the PUT failed -- 20 minutes and
+# seven build jobs in.
+#
+# `npm whoami` is the cheapest authenticated call the registry offers, so it
+# converts that into a first-second failure that names the acting account.
+# Only meaningful on the token path: under OIDC trusted publishing there is no
+# ambient credential for `whoami` to report, and a failure there would be
+# expected rather than diagnostic.
+npm_assert_token_accepted() {
+  local out status
+  set +e
+  out="$(npm whoami --registry "$NPM_REGISTRY" 2>&1)"
+  status=$?
+  set -e
+
+  if [ "$status" -eq 0 ]; then
+    echo "npm auth: registry accepted the token as '$(printf '%s' "$out" | tr -d '[:space:]')'"
+    return 0
+  fi
+
+  {
+    echo "npm auth: NODE_AUTH_TOKEN is set but the registry rejected it."
+    echo
+    echo "  npm whoami --registry ${NPM_REGISTRY} failed (exit ${status}):"
+    printf '%s\n' "$out" | sed 's/^/    /'
+    echo
+    echo "  A present-but-rejected token is what #16126 looked like after"
+    echo "  #16127: the publish PUT is answered 404, which reads as a missing"
+    echo "  package rather than an expired credential."
+    echo
+    echo "Fix one of:"
+    echo "  * rotate NPM_TOKEN (granular token with write access to try-tsz and"
+    echo "    the @mohsen-azimi/* platform packages) and update the repo secret, or"
+    echo "  * move to OIDC trusted publishing and stop setting NODE_AUTH_TOKEN"
+    echo "    (scripts/build/setup-npm-trusted-publishers.sh)."
+  } >&2
+  return 1
+}
+
 # Fail loudly, before any package is touched, when the job has no way to
 # authenticate. Without this the first symptom is an E404 on a PUT, which reads
 # like a missing package rather than a missing credential.
 npm_auth_preflight() {
   if [ -n "${NODE_AUTH_TOKEN:-}" ]; then
     echo "npm auth: using NODE_AUTH_TOKEN"
+    npm_assert_token_accepted || return 1
     return 0
   fi
   if [ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then

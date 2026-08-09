@@ -52,6 +52,17 @@ case "$1" in
     echo "$PWD" >>"$NPM_STUB_PUBLISH_LOG"
     exit "${NPM_STUB_PUBLISH_STATUS:-0}"
     ;;
+  whoami)
+    # Every invocation is recorded so a test can assert the OIDC path does NOT
+    # reach for an ambient credential that trusted publishing does not have.
+    [ -n "${NPM_STUB_WHOAMI_LOG:-}" ] && echo called >>"$NPM_STUB_WHOAMI_LOG"
+    if [ "${NPM_STUB_WHOAMI_STATUS:-0}" -eq 0 ]; then
+      echo "${NPM_STUB_WHOAMI_USER:-stub-user}"
+      exit 0
+    fi
+    echo "npm error code E401 Unauthorized" >&2
+    exit 1
+    ;;
 esac
 exit 0
 STUB
@@ -116,6 +127,47 @@ check "token present -> ok" "0" "$?"
 check "oidc available -> ok" "0" "$?"
 ( unset NODE_AUTH_TOKEN; unset ACTIONS_ID_TOKEN_REQUEST_URL; npm_auth_preflight >/dev/null 2>&1 )
 check "neither -> fails" "1" "$?"
+
+# A token that is SET but REJECTED is the second phase of #16126: the preflight
+# passed on presence alone, provenance signed, and only the PUT failed -- with a
+# 404 that reads as a missing package rather than an expired credential.
+( NODE_AUTH_TOKEN=tok; export NPM_STUB_WHOAMI_STATUS=1
+  unset ACTIONS_ID_TOKEN_REQUEST_URL
+  npm_auth_preflight >/dev/null 2>&1 )
+check "token set but registry rejects it -> fails" "1" "$?"
+
+# The failure must name the real cause, not just exit non-zero: a job log that
+# says 404 sends the next reader hunting for a missing package.
+rejected_msg="$( ( NODE_AUTH_TOKEN=tok; export NPM_STUB_WHOAMI_STATUS=1
+                   unset ACTIONS_ID_TOKEN_REQUEST_URL
+                   npm_auth_preflight 2>&1 >/dev/null ) )"
+case "$rejected_msg" in
+  *"registry rejected it"*) check "rejection message names the credential" "0" "0" ;;
+  *) check "rejection message names the credential" "0" "1 (got: ${rejected_msg:0:60})" ;;
+esac
+
+# The accepted path should report WHICH account the registry sees, so a token
+# scoped to the wrong account is visible in the log without a second run.
+accepted_msg="$( ( NODE_AUTH_TOKEN=tok; export NPM_STUB_WHOAMI_USER=release-bot
+                   unset ACTIONS_ID_TOKEN_REQUEST_URL
+                   npm_auth_preflight 2>/dev/null ) )"
+case "$accepted_msg" in
+  *release-bot*) check "accepted path reports the account" "0" "0" ;;
+  *) check "accepted path reports the account" "0" "1 (got: ${accepted_msg:0:60})" ;;
+esac
+
+# Under OIDC there is no ambient credential, so probing for one would fail for a
+# reason that is not a problem. The token probe must stay on the token path.
+export NPM_STUB_WHOAMI_LOG="$tmp_root/whoami-calls"
+: >"$NPM_STUB_WHOAMI_LOG"
+( unset NODE_AUTH_TOKEN; ACTIONS_ID_TOKEN_REQUEST_URL=https://example.invalid
+  npm_auth_preflight >/dev/null 2>&1 )
+check "oidc path does not probe whoami" "0" "$(wc -l <"$NPM_STUB_WHOAMI_LOG" | tr -d ' ')"
+
+: >"$NPM_STUB_WHOAMI_LOG"
+( NODE_AUTH_TOKEN=tok; unset ACTIONS_ID_TOKEN_REQUEST_URL; npm_auth_preflight >/dev/null 2>&1 )
+check "token path does probe whoami" "1" "$(wc -l <"$NPM_STUB_WHOAMI_LOG" | tr -d ' ')"
+unset NPM_STUB_WHOAMI_LOG
 
 echo
 echo "npm_clear_placeholder_auth"
