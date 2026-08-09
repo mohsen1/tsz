@@ -5,7 +5,8 @@
 //! definition parsing. No type resolution or checker state access.
 
 use super::types::{
-    JsdocCallbackInfo, JsdocPropertyTagInfo, JsdocTemplateParamInfo, JsdocTypedefInfo,
+    JsdocCallbackInfo, JsdocParamTagInfo, JsdocPropertyTagInfo, JsdocTemplateParamInfo,
+    JsdocTypedefInfo,
 };
 use crate::state::CheckerState;
 
@@ -881,6 +882,20 @@ impl<'a> CheckerState<'a> {
                         && let Some(ref mut cb) = current_info.callback
                     {
                         cb.params.push(param_info);
+                    }
+                    continue;
+                }
+                if let Some(rest) = Self::strip_jsdoc_tag_prefix(line, "this") {
+                    let rest = rest.trim();
+                    if let Some(type_expr) = Self::jsdoc_balanced_braced_type_expr(rest)
+                        && let Some(ref mut cb) = current_info.callback
+                    {
+                        cb.params.push(JsdocParamTagInfo {
+                            name: "this".to_string(),
+                            type_expr: Some(type_expr.to_string()),
+                            optional: false,
+                            rest: false,
+                        });
                     }
                     continue;
                 }
