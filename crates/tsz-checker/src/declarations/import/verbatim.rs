@@ -685,6 +685,38 @@ impl<'a> CheckerState<'a> {
                 &msg,
                 diagnostic_codes::AN_EXPORT_DECLARATION_MUST_REFERENCE_A_VALUE_WHEN_VERBATIMMODULESYNTAX_IS_ENABLE,
             );
+            return;
+        }
+
+        // TS1283: sibling of the TS1289 branch in
+        // `check_isolated_modules_export_equals_type_only` — a plain
+        // (non-type-only) import alias whose target resolves with real
+        // value overall, but whose resolution chain crosses an explicit
+        // `import type`/`export type` boundary in another file. The
+        // `sym.is_type_only` branch above only sees a type-only marking on
+        // the LOCAL import; it cannot see one that lives elsewhere in the
+        // chain, which is exactly what `is_export_type_only_syntax_across_binders`
+        // is for. Double-reported alongside TS1289 by tsc, oracle-verified.
+        if sym.has_any_flags(symbol_flags::ALIAS)
+            && !sym.is_type_only
+            && !sym.has_any_flags(value_flags)
+            && let Some(module_spec) = sym.import_module()
+        {
+            let import_name = sym.import_name().unwrap_or(name.as_str());
+            let (_, target_has_value) = self.lookup_imported_target_flags(module_spec, import_name);
+            if target_has_value
+                && self.is_export_type_only_syntax_across_binders(module_spec, import_name)
+            {
+                let msg = format_message(
+                    diagnostic_messages::AN_EXPORT_DECLARATION_MUST_REFERENCE_A_REAL_VALUE_WHEN_VERBATIMMODULESYNTAX_IS_E,
+                    &[&name],
+                );
+                self.error_at_node(
+                    expression,
+                    &msg,
+                    diagnostic_codes::AN_EXPORT_DECLARATION_MUST_REFERENCE_A_REAL_VALUE_WHEN_VERBATIMMODULESYNTAX_IS_E,
+                );
+            }
         }
     }
 
