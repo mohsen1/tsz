@@ -629,7 +629,7 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
-        // Check if this is a type-only import (TS1283)
+        // Check if this is a type-only import (TS1282/TS1283)
         // Only if the symbol doesn't also have VALUE flags — a local `const I = {}`
         // alongside `import type I = ...` makes `export = I` valid.
         let value_flags = symbol_flags::VARIABLE
@@ -638,15 +638,38 @@ impl<'a> CheckerState<'a> {
             | symbol_flags::ENUM
             | symbol_flags::VALUE_MODULE;
         if sym.is_type_only && !sym.has_any_flags(value_flags) {
-            let msg = format_message(
-                diagnostic_messages::AN_EXPORT_DECLARATION_MUST_REFERENCE_A_REAL_VALUE_WHEN_VERBATIMMODULESYNTAX_IS_E,
-                &[&name],
-            );
-            self.error_at_node(
-                expression,
-                &msg,
-                diagnostic_codes::AN_EXPORT_DECLARATION_MUST_REFERENCE_A_REAL_VALUE_WHEN_VERBATIMMODULESYNTAX_IS_E,
-            );
+            // tsc picks between these two on whether the symbol's FULL merged
+            // meaning (across the alias chain, ignoring this file's own
+            // `import type`) still carries Value: target has Value -> TS1283
+            // ("resolves to a type-only declaration"); no Value anywhere ->
+            // TS1282 ("only refers to a type"), same message the PURE_TYPE
+            // branch below uses for a local type-only declaration. A plain
+            // import symbol never carries VALUE flags itself (only ALIAS),
+            // so `sym`'s own flags can't answer this — the resolved import
+            // target's flags can. Mirrors the identical fix already applied
+            // to `check_verbatim_module_syntax_export_default`'s TS1284/1285
+            // pick.
+            let target_has_value = sym
+                .import_module()
+                .map(|module_spec| {
+                    let import_name = sym.import_name().unwrap_or(name.as_str());
+                    self.lookup_imported_target_flags(module_spec, import_name)
+                        .1
+                })
+                .unwrap_or(true);
+            let (msg_key, code) = if target_has_value {
+                (
+                    diagnostic_messages::AN_EXPORT_DECLARATION_MUST_REFERENCE_A_REAL_VALUE_WHEN_VERBATIMMODULESYNTAX_IS_E,
+                    diagnostic_codes::AN_EXPORT_DECLARATION_MUST_REFERENCE_A_REAL_VALUE_WHEN_VERBATIMMODULESYNTAX_IS_E,
+                )
+            } else {
+                (
+                    diagnostic_messages::AN_EXPORT_DECLARATION_MUST_REFERENCE_A_VALUE_WHEN_VERBATIMMODULESYNTAX_IS_ENABLE,
+                    diagnostic_codes::AN_EXPORT_DECLARATION_MUST_REFERENCE_A_VALUE_WHEN_VERBATIMMODULESYNTAX_IS_ENABLE,
+                )
+            };
+            let msg = format_message(msg_key, &[&name]);
+            self.error_at_node(expression, &msg, code);
             return;
         }
 

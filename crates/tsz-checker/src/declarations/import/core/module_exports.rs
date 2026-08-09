@@ -264,6 +264,18 @@ impl<'a> CheckerState<'a> {
                             self.check_vms_export_equals(export_data.expression);
                         }
 
+                        // TS1291: export = <alias resolving purely to a type>
+                        // under isolatedModules (or verbatimModuleSyntax).
+                        if export_data.is_export_equals
+                            && (self.ctx.compiler_options.verbatim_module_syntax
+                                || self.ctx.compiler_options.isolated_modules)
+                            && !is_declaration_file
+                        {
+                            self.check_isolated_modules_export_equals_type_only(
+                                export_data.expression,
+                            );
+                        }
+
                         // TS2714: In ambient context, export assignment expression must be
                         // an identifier or qualified name. This check applies to both
                         // `export = <expr>` and `export default <expr>` in ambient contexts.
