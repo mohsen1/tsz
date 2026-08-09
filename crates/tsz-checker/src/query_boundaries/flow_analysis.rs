@@ -376,8 +376,21 @@ pub(crate) fn narrow_call_predicate_guard(
     };
     let result = narrowing.narrow_type(type_id, guard, guard_sense);
 
+    // The exclusion fallbacks below are a workaround for *union* sources whose
+    // shallow/structural false-branch reduction the primary `narrow_type`
+    // cannot perform cheaply (recursive-schema unions: typebox / ts-morph
+    // `value is T`). A non-union source (`Date`, `unknown`, `{ x }`, an
+    // intersection, ...) is already narrowed correctly and cheaply by the
+    // primary path, so `result` is authoritative for it. Running the fallbacks
+    // on a non-union source is unsound: the member-level pass compares members
+    // against `predicate_type` with `strict_null_checks = false`, under which a
+    // non-nullish source like `Date`/`unknown` is spuriously "related" to a
+    // nullish predicate (`null` / `undefined`) and gets excluded, collapsing
+    // the false branch to `never` (`!isNull(x)` where `x: Date` must stay
+    // `Date`, matching tsc's `getNarrowedType`).
     if !is_true_branch
         && result == type_id
+        && union_members_for_type(db.as_type_database(), type_id).is_some()
         && let TypeGuard::Predicate {
             type_id: Some(predicate_type),
             ..
