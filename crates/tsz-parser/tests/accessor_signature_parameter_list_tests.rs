@@ -181,10 +181,14 @@ fn get_accessor_signature_reports_ts1054_at_the_accessor_name() {
 }
 
 /// The signature arm and the class arm must produce the *same shape* of span for
-/// TS1054, so the two cannot drift. Both read `name.end - name.pos`, and that
-/// length currently overshoots the identifier by one — a property-name node-end
-/// overshoot shared by both arms and out of scope here. Pinning the two against
-/// each other catches a change to either without baking in the wrong number.
+/// TS1054, so the two cannot drift. Both read `name.end - name.pos`; the length is
+/// now exactly the accessor name's width (`gy27`, 4 chars), matching tsc's
+/// `grammarErrorOnNode(accessor.name, …)`. This span used to overshoot the
+/// identifier by the width of the following token (`(`) because
+/// `parse_property_name_impl` read `token_end()` *after* advancing past the name —
+/// which not only mis-underlined but, since `compareDiagnostics` breaks ties on
+/// length before code, sorted TS1054 *after* a same-position checker diagnostic
+/// (e.g. TS2378) instead of before it. Pinning the exact width guards the fix.
 #[test]
 fn get_accessor_ts1054_span_agrees_between_the_signature_and_class_arms() {
     let (sig_start, sig_len) = span_of(
@@ -198,6 +202,11 @@ fn get_accessor_ts1054_span_agrees_between_the_signature_and_class_arms() {
     assert_eq!(
         sig_len, class_len,
         "TS1054 span length must match between the accessor-signature and class arms"
+    );
+    assert_eq!(
+        sig_len,
+        "gy27".len() as u32,
+        "TS1054 must span exactly the accessor name, matching tsc"
     );
     assert_eq!(
         sig_start - "interface Iy27 { get ".len() as u32,

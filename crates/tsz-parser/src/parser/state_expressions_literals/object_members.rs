@@ -1235,8 +1235,17 @@ impl ParserState {
                     } else {
                         None
                     };
-                self.next_token(); // Accept any token as property name (error recovery)
+                // Capture the identifier/keyword's own end *before* advancing:
+                // `token_end()` after `next_token()` reports the end of the
+                // *following* token, overshooting the property-name node's span
+                // (the same hazard the computed-name branch above guards against).
+                // That overshoot corrupts `name.end - name.pos` for every
+                // diagnostic anchored on a property name (TS1054/TS1049/TS1095…),
+                // which then mis-sorts against a same-position checker diagnostic
+                // (`compareDiagnostics` breaks ties on length before code) and
+                // mis-renders the underline.
                 let end_pos = self.token_end();
+                self.next_token(); // Accept any token as property name (error recovery)
 
                 self.arena.add_identifier(
                     SyntaxKind::Identifier as u16,
