@@ -985,7 +985,7 @@ FILE_LINE_LIMIT_CHECKS = [
         / "src"
         / "parser"
         / "state_expressions_literals_regex.rs",
-        2438,
+        2191,
     ),
     (
         "CLI boundary: driver/check_utils/tests.rs size ratchet",
