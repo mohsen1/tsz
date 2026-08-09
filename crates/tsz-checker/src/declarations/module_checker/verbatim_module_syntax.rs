@@ -164,7 +164,31 @@ impl<'a> CheckerState<'a> {
             };
 
             if is_type_only_chain {
-                if option_name == "verbatimModuleSyntax" {
+                // TS1448 is tsc's code for a chain that crosses an EXPLICIT
+                // `export type`/`import type` syntax boundary (mirrors
+                // `getTypeOnlyAliasDeclarationEx` finding a type-only alias
+                // declaration); a chain of plain re-exports that merely
+                // *resolves* to a non-value type (e.g. a bare `interface`)
+                // stays TS1205 at every hop, not just the first. The `from`
+                // branch's `is_type_only_chain` above only asks the latter
+                // (general "ultimately a type") question, so without this
+                // gate a depth->=2 plain re-export chain wrongly flips to
+                // TS1448 as soon as a hop's immediate target is itself a
+                // re-export alias rather than the original declaration —
+                // `is_import_specifier_type_only` (which picks TS1205 via
+                // `is_inherent_type` above) only looks one hop deep and
+                // can't see through that alias. No module specifier means
+                // `is_inherent_type` already filtered explicit-marked cases
+                // out before reaching here (see its isolatedModules branch
+                // above), so treat that shape as still explicit.
+                let crosses_explicit_type_only_boundary = match module_specifier_text {
+                    Some(ref module_spec) => {
+                        self.is_export_type_only_syntax_across_binders(module_spec, &source_name)
+                    }
+                    None => true,
+                };
+
+                if option_name == "verbatimModuleSyntax" || !crosses_explicit_type_only_boundary {
                     let message = format_message(
                         diagnostic_messages::RE_EXPORTING_A_TYPE_WHEN_IS_ENABLED_REQUIRES_USING_EXPORT_TYPE,
                         &[option_name],
