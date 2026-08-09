@@ -117,6 +117,46 @@ impl CheckerContext<'_> {
         });
     }
 
+    /// The canonical `[Symbol.xxx]` name registered for a well-known symbol
+    /// `SymbolRef`, or `None` for an ordinary user `unique symbol`.
+    ///
+    /// The inverse of [`Self::register_well_known_symbol_name_in_envs`]; reads
+    /// the evaluator environment, which the eager `seed_well_known_symbol_names`
+    /// pre-pass populates from the lib `SymbolConstructor` members before any
+    /// indexed-access / `keyof` type is evaluated. Returns an owned `String`
+    /// rather than a borrow so callers need not hold the `type_env` borrow.
+    pub(crate) fn well_known_symbol_name_for_ref(
+        &self,
+        symbol_ref: tsz_solver::SymbolRef,
+    ) -> Option<String> {
+        self.type_env.try_borrow().ok().and_then(|env| {
+            env.lookup_well_known_symbol_name(symbol_ref)
+                .map(str::to_string)
+        })
+    }
+
+    /// The object-shape key a literal index `type_id` looks up, resolver-aware.
+    ///
+    /// A well-known `UniqueSymbol` index (`typeof Symbol.iterator`) resolves to
+    /// its canonical `[Symbol.xxx]` shape key — the text under which shapes store
+    /// well-known-symbol members — rather than the synthetic `__unique_N`
+    /// placeholder the plain, resolver-less `literal_property_name` emits.
+    /// Without this the key never matches the member and a valid indexed access
+    /// wrongly reports TS2339/TS2538. Non-symbol indices fall through to the
+    /// ordinary literal-key spelling.
+    pub(crate) fn resolver_aware_index_key_name(&self, type_id: TypeId) -> Option<String> {
+        if let Some(sym) =
+            crate::query_boundaries::type_construction::unique_symbol_ref(self.types, type_id)
+            && let Some(name) = self.well_known_symbol_name_for_ref(sym)
+        {
+            return Some(name);
+        }
+        crate::query_boundaries::type_computation::access::literal_property_name(
+            self.types, type_id,
+        )
+        .map(|atom| self.types.resolve_atom(atom))
+    }
+
     /// Register an enum's namespace object type in **both** type environments
     /// through the race-safe deferral discipline.
     pub(crate) fn register_enum_namespace_type_in_envs(&self, def_id: DefId, ns_type: TypeId) {

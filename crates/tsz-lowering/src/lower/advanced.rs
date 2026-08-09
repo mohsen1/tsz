@@ -938,12 +938,54 @@ impl TypeLowering<'_> {
             148 => self.interner.readonly_type(inner_type),
             // UniqueKeyword = 158 - unique symbol
             158 => {
-                // unique symbol creates a unique symbol type
-                // Use node index as unique identifier
-                self.interner.unique_symbol(SymbolRef(node_idx.0))
+                // A `unique symbol`'s identity must be globally unique per
+                // declaration. An arena-local node index is not: the same index
+                // recurs across files, so a `unique symbol` at the same local
+                // index in two different lib files would collide into one
+                // identity (`Symbol.iterator` and `Symbol.asyncIterator` are
+                // declared in different lib files but share a local node index).
+                // Fold the arena's own source-file name in to restore global
+                // uniqueness, using the solver-owned scheme the checker's
+                // `unique symbol` type-operator construction also uses so the
+                // two paths agree on the same declaration.
+                let symbol_ref = self.unique_symbol_ref_for_node(node_idx);
+                self.interner.unique_symbol(symbol_ref)
             }
             _ => inner_type,
         }
+    }
+
+    /// The globally-unique `SymbolRef` for a `unique symbol` type-operator at
+    /// `node_idx`, keyed off the arena's own source-file name and the node's
+    /// source span. Falls back to the arena-local node index only when no
+    /// enclosing source file can be resolved (a detached/synthetic node), which
+    /// preserves the prior behaviour for those rare cases.
+    fn unique_symbol_ref_for_node(&self, node_idx: NodeIndex) -> SymbolRef {
+        let span = self.arena.get(node_idx).map(|node| (node.pos, node.end));
+        match (self.arena_source_file_name(node_idx), span) {
+            (Some(file_name), Some((pos, end))) => {
+                tsz_solver::unique_symbol_identity::unique_symbol_ref_from_source_span(
+                    file_name, pos, end,
+                )
+            }
+            _ => SymbolRef(node_idx.0),
+        }
+    }
+
+    /// The `file_name` of the source file that owns `node_idx` in this arena,
+    /// found by walking the parent chain to the root `SourceFile` node.
+    fn arena_source_file_name(&self, node_idx: NodeIndex) -> Option<&str> {
+        let mut current = node_idx;
+        while let Some(ext) = self.arena.get_extended(current) {
+            if ext.parent.is_none() {
+                break;
+            }
+            current = ext.parent;
+        }
+        let node = self.arena.get(current)?;
+        self.arena
+            .get_source_file(node)
+            .map(|source| source.file_name.as_str())
     }
 
     pub(super) fn lower_type_predicate(&self, node_idx: NodeIndex) -> TypeId {

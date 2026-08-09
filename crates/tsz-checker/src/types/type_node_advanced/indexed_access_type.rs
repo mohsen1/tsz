@@ -498,13 +498,11 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
     /// covers indices whose type did not resolve to a literal.
     fn literal_index_keys(&self, index_type: TypeId, index_node: NodeIndex) -> Vec<String> {
         use crate::query_boundaries::common::union_members;
-        use crate::query_boundaries::type_computation::access::literal_property_name;
         let members =
             union_members(self.ctx.types, index_type).unwrap_or_else(|| vec![index_type].into());
         let keys: Vec<String> = members
             .iter()
-            .filter_map(|&member| literal_property_name(self.ctx.types, member))
-            .map(|atom| self.ctx.types.resolve_atom(atom))
+            .filter_map(|&member| self.literal_index_key(member))
             .collect();
         if keys.is_empty() {
             get_string_literal_from_type_index(self.ctx.arena, index_node)
@@ -513,6 +511,16 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         } else {
             keys
         }
+    }
+
+    /// The object-shape key a single literal index *member* looks up.
+    ///
+    /// Delegates to [`CheckerContext::resolver_aware_index_key_name`] so a
+    /// well-known `UniqueSymbol` index (`typeof Symbol.iterator`) resolves to its
+    /// canonical `[Symbol.xxx]` shape key rather than the `__unique_N`
+    /// placeholder that would spuriously report TS2339.
+    fn literal_index_key(&self, member: TypeId) -> Option<String> {
+        self.ctx.resolver_aware_index_key_name(member)
     }
 
     /// Emit TS2339 when `key` is not a property of the indexed object and no
