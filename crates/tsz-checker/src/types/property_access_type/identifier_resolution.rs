@@ -853,7 +853,20 @@ impl<'a> CheckerState<'a> {
                 // sees the base signature as `(other: Animal) => boolean`
                 // instead of `(other: Dog) => boolean`, which diverges from tsc.
                 let this_substitution_target = if self.is_super_expression(access.expression) {
-                    self.current_this_type().unwrap_or(original_object_type)
+                    // For a `super` receiver the raw-recovery branch below rebinds
+                    // the base member's polymorphic `this` to *this* target. It must
+                    // be the enclosing (derived) class's polymorphic `this`, not a
+                    // *materialized* instance type off `this_type_stack`
+                    // (`current_this_type()`): during phase-2 method checking the
+                    // stack top is a *partial prescan* instance type, and for a
+                    // derived class that declares no own instance properties (only
+                    // deferred methods) that partial type collapses toward the base —
+                    // turning a base `() => this` into `() => Base` and drawing a
+                    // spurious TS2339/TS2322 (#16960). The polymorphic `this` sentinel
+                    // keeps the member's `this` polymorphic so it resolves to the
+                    // correct derived receiver at each use site via flow, and threads
+                    // unchanged through multi-level `super` chains.
+                    self.ctx.types.this_type()
                 } else if direct_class_this_receiver
                     || crate::query_boundaries::common::contains_this_type(
                         self.ctx.types,
@@ -897,10 +910,12 @@ impl<'a> CheckerState<'a> {
                     && self.type_is_compound_this_relative(this_substitution_target)
                 {
                     // Leave `prop_type` as the solver produced it.
-                } else if crate::query_boundaries::common::contains_this_type(
-                    self.ctx.types,
-                    prop_type,
-                ) && prop_type != this_substitution_target
+                } else if !self.is_super_expression(access.expression)
+                    && crate::query_boundaries::common::contains_this_type(
+                        self.ctx.types,
+                        prop_type,
+                    )
+                    && prop_type != this_substitution_target
                 {
                     prop_type = crate::query_boundaries::common::substitute_this_type(
                         self.ctx.types,
@@ -908,6 +923,16 @@ impl<'a> CheckerState<'a> {
                         this_substitution_target,
                     );
                 } else if !used_class_chain_method_type {
+                    // For a `super` receiver the property was resolved against the
+                    // *base* instance type, which eagerly binds the member's
+                    // polymorphic `this` to the base (`() => Base`). The
+                    // `contains_this_type` guard above is spuriously true here
+                    // (the base instance's own members mention `this`), so it would
+                    // otherwise take the branch above and rewrite only those inner
+                    // `this` occurrences, leaving the *return* pinned to `Base`.
+                    // Skipping to this raw-recovery branch re-resolves with `this`
+                    // deferred so the base member's `this` return is recovered and
+                    // rebound to the enclosing (derived) class's `this` (#16960).
                     // When a method returns `this` on an intersection member,
                     // the solver's object visitor eagerly binds `this` to the
                     // structural (flattened) object — so `contains_this_type`

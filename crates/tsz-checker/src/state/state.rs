@@ -712,7 +712,16 @@ impl<'a> CheckerState<'a> {
         };
 
         if let Some(access) = self.ctx.arena.get_access_expr(node) {
-            if self.is_this_expression(access.expression)
+            // A `this.method()` or `super.method()` call binds the callee's
+            // polymorphic `this` return to the enclosing class's `this`. For
+            // `super` this must NOT fall through to the receiver-type branch
+            // below, whose target is `super`'s *base* instance type — that would
+            // collapse a base `() => this` down to `() => Base` (#16960). The
+            // polymorphic `this` sentinel keeps the return polymorphic so it
+            // resolves to the real receiver at each use site and threads through
+            // multi-level `super` chains without collapsing at each hop.
+            if (self.is_this_expression(access.expression)
+                || self.is_super_expression(access.expression))
                 && self.ctx.enclosing_class.is_some()
                 && !self.is_this_in_nested_function_inside_class(call_expression)
                 && !self.is_this_in_static_class_member(call_expression)
