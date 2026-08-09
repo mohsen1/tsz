@@ -1536,9 +1536,23 @@ impl<'a> CheckerState<'a> {
                             access.expression,
                             property_name,
                         );
+                    // A function expression assigned as the RHS of a property/
+                    // element write (`o.m = function () { this.q = 1; }`) gets a
+                    // real contextual `this` from the assignment's base object
+                    // (#16964/#16978) — tsc checks writes against that base type
+                    // (TS2339 for an absent member) instead of treating them as
+                    // loose JS expando writes. This predates that mechanism and
+                    // otherwise blanket-suppresses every JS `this`-write; carve
+                    // out the assignment-receiver shape specifically so the
+                    // narrower JSDoc-`@this`/`this:`-parameter void-zero carve-out
+                    // below is untouched.
+                    let this_is_property_assignment_receiver = self
+                        .enclosing_function_assignment_rhs_this_type(access.expression)
+                        .is_some();
                     if !(has_jsdoc_this_context
                         || (object_literal_owned_this && !prototype_object_literal_expando_write)
-                        || (has_explicit_this_context && this_direct_write_rhs_is_void_zero))
+                        || (has_explicit_this_context && this_direct_write_rhs_is_void_zero)
+                        || this_is_property_assignment_receiver)
                     {
                         return TypeId::ANY;
                     }
