@@ -364,6 +364,19 @@ impl<'a> CheckerState<'a> {
                 };
 
                 // === Round 2: Type-check all substitutions with contextual types ===
+                // Widen literal types inferred from round 1 (e.g. a numeric
+                // literal argument binding `T := 10`) before using the
+                // substitution to seed a sensitive argument's contextual
+                // type — mirrors the regular call-argument two-pass path
+                // (`widen_round2_contextual_substitution`, used by
+                // `argument_collection.rs`). Without this, `T` stays pinned
+                // to the literal while the tag's final call resolution
+                // (a separate, later inference pass) widens it normally,
+                // producing a self-contradictory diagnostic where a
+                // callback's actual and expected types render identically
+                // but their nested literal-vs-widened members disagree.
+                let contextual_substitution =
+                    self.widen_round2_contextual_substitution(&evaluated_shape, &substitution);
                 let total_args = 1 + substitution_exprs.len();
                 let mut arg_types = Vec::with_capacity(total_args);
                 arg_types.push(TypeId::ANY);
@@ -371,7 +384,8 @@ impl<'a> CheckerState<'a> {
                     let ctx_type = ctx_helper
                         .get_parameter_type_for_call(i + 1, total_args)
                         .map(|pt| {
-                            let instantiated = instantiate_type(self.ctx.types, pt, &substitution);
+                            let instantiated =
+                                instantiate_type(self.ctx.types, pt, &contextual_substitution);
                             self.evaluate_type_with_env(instantiated)
                         });
                     let arg_request = if is_contextually_sensitive(self, expr_idx) {
@@ -596,5 +610,114 @@ impl<'a> CheckerState<'a> {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tagged_template_overload_literal_widening_tests {
+    use crate::test_utils::check_source_diagnostics;
+
+    // Oracle-pinned against `typescript@7.0.2` on
+    // `conformance/expressions/contextualTyping/parenthesizedContexualTyping3.ts`.
+    // Every case below is clean on tsc.
+
+    fn assert_no_ts2345(source: &str) {
+        let diags = check_source_diagnostics(source);
+        let ts2345: Vec<_> = diags.iter().filter(|d| d.code == 2345).collect();
+        assert!(
+            ts2345.is_empty(),
+            "expected no TS2345, got: {ts2345:?} (all diagnostics: {diags:?})"
+        );
+    }
+
+    const SINGLE_ARITY_TAG: &str = "
+function tempFun<T>(tempStrs: TemplateStringsArray, g: (x: T) => T, x: T): T {
+    return g(x);
+}
+";
+
+    #[test]
+    fn direct_pass_widens_round1_literal_before_seeding_sensitive_arg_context() {
+        assert_no_ts2345(&format!(
+            "{SINGLE_ARITY_TAG}\nvar a = tempFun`${{ x => x }}  ${{ 10 }}`;"
+        ));
+    }
+
+    #[test]
+    fn parenthesized_arrow_variants_are_unaffected() {
+        assert_no_ts2345(&format!(
+            "{SINGLE_ARITY_TAG}\nvar b = tempFun`${{ (x => x) }}  ${{ 10 }}`;"
+        ));
+        assert_no_ts2345(&format!(
+            "{SINGLE_ARITY_TAG}\nvar c = tempFun`${{ ((x => x)) }} ${{ 10 }}`;"
+        ));
+    }
+
+    #[test]
+    fn renamed_binder_and_type_param_are_unaffected() {
+        assert_no_ts2345(
+            "
+function stamp<Value>(strs: TemplateStringsArray, project: (received: Value) => Value, seed: Value): Value {
+    return project(seed);
+}
+var out = stamp`${ received => received }  ${ 10 }`;
+",
+        );
+    }
+
+    #[test]
+    fn overload_with_two_callback_params_widens_both() {
+        // Second overload: two `(x: T) => T` callbacks before the literal.
+        const TWO_CALLBACK_TAG: &str = "
+function tempFun<T>(tempStrs: TemplateStringsArray, g: (x: T) => T, x: T): T;
+function tempFun<T>(tempStrs: TemplateStringsArray, g: (x: T) => T, h: (y: T) => T, x: T): T;
+function tempFun<T>(tempStrs: TemplateStringsArray, g: (x: T) => T, x: T): T {
+    return g(x);
+}
+";
+        assert_no_ts2345(&format!(
+            "{TWO_CALLBACK_TAG}\nvar d = tempFun`${{ x => x }} ${{ x => x }} ${{ 10 }}`;"
+        ));
+        assert_no_ts2345(&format!(
+            "{TWO_CALLBACK_TAG}\nvar e = tempFun`${{ x => x }} ${{ (x => x) }} ${{ 10 }}`;"
+        ));
+        assert_no_ts2345(&format!(
+            "{TWO_CALLBACK_TAG}\nvar f = tempFun`${{ x => x }} ${{ ((x => x)) }} ${{ 10 }}`;"
+        ));
+        assert_no_ts2345(&format!(
+            "{TWO_CALLBACK_TAG}\nvar g = tempFun`${{ (x => x) }} ${{ (((x => x))) }} ${{ 10 }}`;"
+        ));
+    }
+
+    #[test]
+    fn nullish_literal_positional_argument_is_unaffected() {
+        const TWO_CALLBACK_TAG: &str = "
+function tempFun<T>(tempStrs: TemplateStringsArray, g: (x: T) => T, x: T): T;
+function tempFun<T>(tempStrs: TemplateStringsArray, g: (x: T) => T, h: (y: T) => T, x: T): T;
+function tempFun<T>(tempStrs: TemplateStringsArray, g: (x: T) => T, x: T): T {
+    return g(x);
+}
+";
+        assert_no_ts2345(&format!(
+            "{TWO_CALLBACK_TAG}\nvar h = tempFun`${{ (x => x) }} ${{ (((x => x))) }} ${{ undefined }}`;"
+        ));
+    }
+
+    #[test]
+    fn genuine_body_mismatch_still_reports_after_widening() {
+        // Negative control: the fix must widen the *contextual parameter type*
+        // fed to the callback, not silence real errors inside its body. Once
+        // `x` is correctly widened to `number`, `.length` on it is a genuine
+        // TS2339, proving the widened type actually reached the callback.
+        let diags = check_source_diagnostics(&format!(
+            "{SINGLE_ARITY_TAG}\nvar neg = tempFun`${{ x => x.length }} ${{ 10 }}`;"
+        ));
+        let ts2339: Vec<_> = diags.iter().filter(|d| d.code == 2339).collect();
+        assert_eq!(
+            ts2339.len(),
+            1,
+            "expected exactly one TS2339 from `.length` on the widened `number` \
+             parameter, got: {ts2339:?} (all diagnostics: {diags:?})"
+        );
     }
 }
