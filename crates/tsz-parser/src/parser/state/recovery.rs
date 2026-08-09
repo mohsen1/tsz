@@ -437,6 +437,13 @@ impl ParserState {
         use crate::parser::spelling;
         use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
 
+        // Take (and clear) the boundary left by an immediately preceding
+        // binary-operator-seeded expression statement (see
+        // `binary_seeded_statement_boundary`'s doc comment). Read unconditionally
+        // so it never leaks past the one statement it was recorded for,
+        // regardless of which branch below ends up using it.
+        let inherited_binary_seeded_boundary = self.binary_seeded_statement_boundary.take();
+
         let Some((pos, len, expression_text)) =
             self.missing_semicolon_after_expression_text(expression)
         else {
@@ -468,8 +475,33 @@ impl ParserState {
                 .rev()
                 .take(4)
                 .any(|diag| diag.start == token_pos);
+            // `should_report_error()`'s distance heuristic suppresses cascading
+            // diagnostics that share one root cause within a single statement's
+            // own recovery — correct for e.g. repeated stray `#!` tokens inside
+            // one malformed variable initializer. It wrongly suppresses THIS
+            // statement's own missing-`;` report, though, when the immediately
+            // *preceding* statement was itself a binary-operator-seeded
+            // recovery (`in`/`instanceof`/... at statement start) whose own
+            // missing-`;` report left its unconsumed token as the start of
+            // this new statement. E.g. `in get x(): number;`: `get`'s
+            // missing-`;` report anchors at `x` (the token `<missing> in get`
+            // left unconsumed), which is also where the next, independent
+            // statement's expression (`x()`) begins — so `x()`'s own
+            // missing-`;` report sits within `ERROR_SUPPRESSION_DISTANCE` of
+            // it even though it is a distinct tsc diagnostic (`parseErrorAtPosition`
+            // dedups only same-start, never same-neighborhood).
+            // `binary_seeded_statement_boundary` tags exactly that one shape
+            // (set only for a `started_with_binary_operator` statement, only
+            // when it did not consume a real `;`) so this bypass cannot also
+            // fire for unrelated cascades like the `#!` case above, which
+            // never sets that flag. Same class of fix already applied to the
+            // analogous `parse_expected(ColonToken)` gate in
+            // `state_expressions_literals/object_members.rs`.
+            let expr_start = self.arena.get(expression).map_or(token_pos, |n| n.pos);
+            let prior_statement_diagnostic = inherited_binary_seeded_boundary == Some(expr_start);
             if !already_reported_here
-                && (self.should_report_error()
+                && (prior_statement_diagnostic
+                    || self.should_report_error()
                     || self.last_error_was_leading_zero_at_other_pos()
                     || self.last_error_was_element_access_missing_argument_at_other_pos())
             {

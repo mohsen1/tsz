@@ -187,6 +187,16 @@ pub struct ParserState {
     pub(crate) recursion_depth: u32,
     /// Position of last error (to prevent cascading errors at same position)
     pub(crate) last_error_pos: u32,
+    /// Set when an expression statement that began with a bare binary
+    /// operator (`in`, `instanceof`, ...; tsc's missing-left-operand
+    /// recovery) finishes without consuming a real `;`, to the position of
+    /// the unconsumed token it leaves behind. That token becomes the start of
+    /// the very next statement, so its own missing-`;` report can land within
+    /// `should_report_error`'s distance-suppression window of THIS
+    /// statement's — which are two distinct tsc diagnostics, not a cascade.
+    /// Consumed (taken) by `parse_error_for_missing_semicolon_after` so it
+    /// only ever applies to the one statement immediately following.
+    pub(crate) binary_seeded_statement_boundary: Option<u32>,
     /// Number of scanner diagnostics observed at the time the most recent
     /// parser-side diagnostic was pushed. `scanner_diagnostics[idx..]` for
     /// any `idx >= this` represents scanner emissions that happened *after*
@@ -427,6 +437,7 @@ impl ParserState {
             node_count: 0,
             recursion_depth: 0,
             last_error_pos: 0,
+            binary_seeded_statement_boundary: None,
             scanner_diagnostics_high_water_mark: 0,
             reported_offset_overflow: Cell::new(false),
             reported_node_flag_overflow: Cell::new(false),

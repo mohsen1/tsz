@@ -402,6 +402,10 @@ mod for_header_private_identifier_binding_tests;
 #[path = "../../tests/keyword_identifier_missing_semicolon_cascade_tests.rs"]
 mod keyword_identifier_missing_semicolon_cascade_tests;
 
+#[cfg(test)]
+#[path = "../../tests/binary_operator_seeded_statement_semicolon_cascade_tests.rs"]
+mod binary_operator_seeded_statement_semicolon_cascade_tests;
+
 // Re-export flags
 pub use flags::{modifier_flags, node_flags, transform_flags};
 

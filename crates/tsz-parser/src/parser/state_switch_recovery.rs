@@ -514,7 +514,8 @@ impl ParserState {
         // Use smart error reporting for missing semicolons (matches TypeScript's
         // parseExpressionOrLabeledStatement behavior). Instead of generic TS1005 "';' expected",
         // this checks if the expression is a misspelled keyword and emits TS1435/TS1434.
-        if self.is_token(SyntaxKind::SemicolonToken) {
+        let found_real_semicolon = self.is_token(SyntaxKind::SemicolonToken);
+        if found_real_semicolon {
             let semicolon_pos = self.token_pos();
             let needs_jsx_semicolon_missing_brace =
                 self.arena.get(expression).is_some_and(|node| {
@@ -681,6 +682,15 @@ impl ParserState {
             if self.is_token(SyntaxKind::ColonToken) {
                 self.next_token();
             }
+        }
+        // Tag the boundary this statement leaves behind when it began with a
+        // bare binary operator (`in`/`instanceof`/...) and did not consume a
+        // real `;`: the unconsumed token here becomes the very next
+        // statement's start, and that next statement's own missing-`;` report
+        // (if any) is a distinct tsc diagnostic, not a cascade of this one.
+        // See `binary_seeded_statement_boundary`'s doc comment.
+        if started_with_binary_operator && !found_real_semicolon {
+            self.binary_seeded_statement_boundary = Some(self.token_pos());
         }
         // token_full_start() (not token_end()) matches tsc's finishNode/getTokenFullStart() for ASI.
         let end_pos = self.token_full_start();
