@@ -86,11 +86,19 @@ impl<'a> CheckerState<'a> {
             return None;
         }
         let receiver_idx = self.property_access_receiver_expr(idx)?;
-        let members = self.declared_intersection_member_types_for_expression(receiver_idx)?;
+        // Recover the written intersection behind the `never` receiver, following
+        // any type-alias references (`type C = A & B; declare const c: C`). The
+        // recovered display is `None` for a directly-written intersection (render
+        // the members structurally) or the naming alias otherwise (`C`,
+        // `Pair<"y">`) — matching `tsc`'s `typeToString` of the reduced type.
+        let (members, alias_display) =
+            self.declared_never_intersection_for_expression(receiver_idx)?;
         // Each member is resolved through the same lazy-type machinery
         // property access itself uses (`Lazy(DefId)` interface/type-alias
         // references do not carry a structural shape the solver query below
-        // can read until stabilized against the type environment).
+        // can read until stabilized against the type environment; a generic
+        // application member such as `WithKind<"a">` reached through an alias
+        // must materialize here before its literal property is comparable).
         let members: Vec<TypeId> = members
             .into_iter()
             .map(|member| self.resolve_type_for_property_access(member))
@@ -126,17 +134,22 @@ impl<'a> CheckerState<'a> {
         // accessed — once the receiver type itself is `never`, every access
         // on it carries the same reason.
         let conflict_prop_name = self.ctx.types.resolve_atom(conflict_atom);
-        // Built directly from the recovered member types rather than
-        // `declared_intersection_annotation_display_for_expression`: that
-        // sibling gates its result on seeing a type-literal member (it exists
-        // to improve *assignability*-message display, not to answer "was
-        // this written as an intersection"), so it declines exactly the
-        // plain-interface-member shape (`A & B`) this diagnostic needs most.
-        let intersection_display = members
-            .iter()
-            .map(|&member| self.format_type(member))
-            .collect::<Vec<_>>()
-            .join(" & ");
+        // A directly-written intersection is rendered structurally from the
+        // recovered member types (rather than
+        // `declared_intersection_annotation_display_for_expression`, which gates
+        // its result on seeing a type-literal member — it exists to improve
+        // *assignability*-message display, not to answer "was this written as an
+        // intersection" — and so declines exactly the plain-interface-member
+        // shape `A & B` this diagnostic needs most). When the intersection was
+        // reached through a type alias, `tsc` names that alias instead of its
+        // members, so the recovered alias display wins.
+        let intersection_display = alias_display.unwrap_or_else(|| {
+            members
+                .iter()
+                .map(|&member| self.format_type(member))
+                .collect::<Vec<_>>()
+                .join(" & ")
+        });
         use crate::diagnostics::{Diagnostic, diagnostic_messages, format_message};
         let message_template = if code
             == diagnostic_codes::THE_INTERSECTION_WAS_REDUCED_TO_NEVER_BECAUSE_PROPERTY_HAS_CONFLICTING_TYPES_IN

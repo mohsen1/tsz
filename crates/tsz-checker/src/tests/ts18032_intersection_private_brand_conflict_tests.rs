@@ -448,10 +448,10 @@ c.x;
 }
 
 #[test]
-fn indirect_alias_intersection_has_no_ts18032() {
-    // Same scope limit as TS18031: the narrow syntactic walk declines once
-    // the receiver's own declared type is an alias rather than a
-    // directly-written intersection.
+fn alias_to_private_brand_intersection_carries_ts18032_naming_the_alias() {
+    // Same alias support as TS18031: the walk follows the receiver's alias to
+    // the private-brand-conflicting intersection behind it and names the alias
+    // (`Combined`), matching `tsc`.
     let diags = check_source_strict(
         r#"
 class P1 { private x: string = ""; }
@@ -462,5 +462,11 @@ value.x;
 "#,
     );
     let diag = only(&diags, TS2339);
-    assert!(related(&diag, TS18032).is_none(), "got {diags:?}");
+    assert_eq!(
+        related(&diag, TS18032).as_deref(),
+        Some(
+            "The intersection 'Combined' was reduced to 'never' because property 'x' exists in multiple constituents and is private in some."
+        ),
+        "got {diags:?}"
+    );
 }
