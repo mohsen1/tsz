@@ -86,34 +86,6 @@ fn test_union_index_signature_property_mismatch_uses_relation_helper() {
     );
 }
 
-/// Constructor prototype property assignment diagnostics should choose the
-/// source and exact diagnostic anchors, then let the canonical relation helper
-/// own the assignability decision and TS2322 rendering.
-#[test]
-fn test_constructor_prototype_property_assignment_uses_relation_helper() {
-    let source = fs::read_to_string("src/types/property_access_type/helpers.rs")
-        .expect("failed to read property_access_type/helpers.rs");
-    let block = source
-        .split("fn check_jsdoc_prototype_type_decl_constructor_assignment")
-        .nth(1)
-        .and_then(|tail| {
-            tail.split("fn constructor_this_assignment_for_property")
-                .next()
-        })
-        .expect("failed to locate constructor prototype property assignment block");
-
-    assert!(
-        block.contains("check_assignable_or_report_at_exact_anchor("),
-        "constructor prototype property assignment diagnostics must use the canonical \
-         exact-anchor relation helper"
-    );
-    assert!(
-        !block.contains("diagnostic_relation_boolean_guard("),
-        "constructor prototype property assignment diagnostics must not pre-gate the \
-         canonical relation helper with a raw boolean relation"
-    );
-}
-
 /// Object-literal property diagnostics must route declared-property and
 /// contextual-property assignability through canonical relation diagnostic
 /// helpers instead of raw boolean relations plus manual TS2322 reporting.

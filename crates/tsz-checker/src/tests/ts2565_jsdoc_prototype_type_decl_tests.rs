@@ -199,27 +199,35 @@ MyThing.prototype.label;
     );
 }
 
+/// `tsc` 7.0.2 no longer synthesizes a `this` type for a plain JS
+/// "constructor" function from its `this.prop = value` assignments (the old
+/// `isJSConstructor` inference was dropped) — confirmed by the companion
+/// TS2683 (`'this' implicitly has type 'any'`) and TS7009 (`new` target lacks
+/// a construct signature) the oracle reports for this exact fixture. Since
+/// `this` inside `C`'s body is untyped, `this.x = false` is never cross-
+/// checked against the unrelated `C.prototype.x` JSDoc declaration, and no
+/// TS2322 fires. This test previously asserted the pre-TS7 TS2322 without
+/// re-verifying against the pinned oracle; see the `TypeScript 7 no longer
+/// treats a plain JS function ...` comment in
+/// `types/computation/complex.rs` for the same removal on the `new`-call path.
 #[test]
-fn jsdoc_typed_prototype_checks_constructor_this_assignment() {
+fn jsdoc_typed_prototype_does_not_cross_check_constructor_this_assignment() {
     let source =
         "function C() { this.x = false; };\n/** @type {number} */\nC.prototype.x;\nnew C().x;\n";
     let diagnostics = diagnostics_js(source);
-    let ts2322: Vec<_> = diagnostics.iter().filter(|d| d.code == 2322).collect();
-    assert_eq!(
-        ts2322.len(),
-        1,
-        "expected one TS2322 for constructor `this.x` conflicting with prototype JSDoc; got: {diagnostics:?}"
+    assert!(
+        !diagnostics.iter().any(|d| d.code == 2322),
+        "tsc 7.0.2 does not cross-check a constructor's `this.x` assignment against an \
+         unrelated `.prototype.x` JSDoc type (this shape is untyped `this`, evidenced by \
+         the companion TS2683/TS7009); got: {diagnostics:?}"
     );
-    assert_eq!(
-        ts2322[0].message_text,
-        "Type 'boolean' is not assignable to type 'number'."
+    assert!(
+        diagnostics.iter().any(|d| d.code == 2683),
+        "expected the companion TS2683 ('this' implicitly has type 'any'); got: {diagnostics:?}"
     );
-    assert_eq!(
-        ts2322[0].start as usize,
-        source
-            .find("this.x")
-            .expect("test source should contain this.x"),
-        "TS2322 should be anchored on the constructor assignment target"
+    assert!(
+        diagnostics.iter().any(|d| d.code == 7009),
+        "expected the companion TS7009 (`new` target lacks a construct signature); got: {diagnostics:?}"
     );
     assert!(
         !diagnostics.iter().any(|d| d.code == 2565),

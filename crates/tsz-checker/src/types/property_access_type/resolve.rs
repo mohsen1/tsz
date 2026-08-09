@@ -789,15 +789,6 @@ impl<'a> CheckerState<'a> {
                         ),
                         diagnostic_codes::PROPERTY_IS_USED_BEFORE_BEING_ASSIGNED,
                     );
-                } else if let Some(declared_type) = self
-                    .enclosing_expression_statement(idx)
-                    .and_then(|stmt_idx| self.js_statement_declared_type(stmt_idx))
-                {
-                    self.check_jsdoc_prototype_type_decl_constructor_assignment(
-                        access.expression,
-                        property_name,
-                        declared_type,
-                    );
                 }
             }
             if let Some(result) = self.try_resolve_global_this_property_access(
