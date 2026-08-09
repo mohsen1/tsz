@@ -222,7 +222,14 @@ impl<'a> CheckerState<'a> {
                 )
             };
             self.error_at_node(error_node, message, code);
-            return;
+            // Fall through to the per-specifier loop rather than returning:
+            // under verbatimModuleSyntax tsc still reports the type-only-import
+            // diagnostics (TS1484/TS1485) at their own anchors *alongside* this
+            // ESM-in-CJS syntax error (oracle-verified: a type-only named import
+            // in a CommonJS file reports both TS1295 and TS1484/TS1485 at the
+            // same position). The `preserve_isolated` case (TS1293, where those
+            // verbatimModuleSyntax-exclusive checks do not apply) is stopped by
+            // the shared guard just below (tsz-org/tsz#17098).
         }
 
         // `module: "preserve"` + `isolatedModules` (without VMS) has no
@@ -276,43 +283,53 @@ impl<'a> CheckerState<'a> {
                 import_name.clone()
             };
 
-            // Determine which diagnostic to emit.  tsc distinguishes:
-            //   TS1484: "is a type" — the imported symbol is DIRECTLY a type
-            //           declaration in the source module (e.g. `export type A`).
-            //   TS1485: "resolves to a type-only declaration" — the imported
-            //           symbol is an alias that re-exports a type from
-            //           elsewhere via `export type { X } from "./mod"` or a
-            //           transitive chain.
+            // tsc's `checkAliasSymbol` decides *whether* a non-type-only import
+            // needs a type-only import, and *which* message, in two steps:
+            //   gate:  `isType || getTypeOnlyAliasDeclaration(symbol)` — the
+            //          alias is a pure type, or its resolution chain crossed an
+            //          explicit `import type`/`export type` boundary somewhere.
+            //   split: `isType ? TS1484 : TS1485`, where
+            //          `isType = !(getSymbolFlags(target) & Value)` on the
+            //          FULLY resolved target (following the whole re-export
+            //          chain), not on this module's immediate export symbol.
             //
-            // Both checks below hit `binder_symbol_is_type_only`, so we must
-            // disambiguate by looking at the exported symbol's flags:
-            // an ALIAS symbol routes to TS1485, otherwise TS1484.
-            let is_direct_type = self.is_import_specifier_type_only(module_name, &import_name)
-                && !self.is_import_specifier_alias_reexport(module_name, &import_name);
-            if is_direct_type {
-                let message = format_message(
-                    diagnostic_messages::IS_A_TYPE_AND_MUST_BE_IMPORTED_USING_A_TYPE_ONLY_IMPORT_WHEN_VERBATIMMODULESYNTA,
-                    &[&local_name],
-                );
-                self.error_at_node(
-                    local_name_idx,
-                    &message,
-                    diagnostic_codes::IS_A_TYPE_AND_MUST_BE_IMPORTED_USING_A_TYPE_ONLY_IMPORT_WHEN_VERBATIMMODULESYNTA,
-                );
-                continue;
-            }
-
-            // TS1485: alias-reexport / type-only export chain.
-            if self.is_export_type_only_across_binders(module_name, &import_name) {
-                let message = format_message(
-                    diagnostic_messages::RESOLVES_TO_A_TYPE_ONLY_DECLARATION_AND_MUST_BE_IMPORTED_USING_A_TYPE_ONLY_IMPOR,
-                    &[&local_name],
-                );
-                self.error_at_node(
-                    local_name_idx,
-                    &message,
-                    diagnostic_codes::RESOLVES_TO_A_TYPE_ONLY_DECLARATION_AND_MUST_BE_IMPORTED_USING_A_TYPE_ONLY_IMPOR,
-                );
+            // The gate is preserved verbatim from before (`is_import_specifier_type_only`
+            // handles pure types, uninstantiated namespaces and single-hop
+            // type-only re-exports; `is_export_type_only_across_binders` handles
+            // transitive type-only chains). Only the message split changed: the
+            // old code keyed TS1485 off "the immediate export is a re-export
+            // alias" (`is_import_specifier_alias_reexport`), which mislabels a
+            // pure type reached through a plain re-export hop (`export { Foo }`)
+            // or across an `export type` boundary — tsc reports TS1484 there
+            // because the target carries no value, regardless of the boundary.
+            // TS1485 is reserved for a target that STILL carries a runtime value
+            // but was reached across an explicit type-only boundary. Following
+            // the full chain also fixes arbitrary-depth plain re-export hops,
+            // which the immediate-export check never saw (tsz-org/tsz#17098).
+            let needs_type_only_import = self
+                .is_import_specifier_type_only(module_name, &import_name)
+                || self.is_export_type_only_across_binders(module_name, &import_name);
+            if needs_type_only_import {
+                let (_, target_has_value) =
+                    self.lookup_imported_target_flags(module_name, &import_name);
+                // `target_has_value` first so the pure-type case (the common
+                // TS1484 path) short-circuits before the extra chain-walk in
+                // `is_export_type_only_syntax_across_binders`.
+                let is_value_across_type_only_boundary = target_has_value
+                    && self.is_export_type_only_syntax_across_binders(module_name, &import_name);
+                let (message_key, diag_code) = if is_value_across_type_only_boundary {
+                    (
+                        diagnostic_messages::RESOLVES_TO_A_TYPE_ONLY_DECLARATION_AND_MUST_BE_IMPORTED_USING_A_TYPE_ONLY_IMPOR,
+                        diagnostic_codes::RESOLVES_TO_A_TYPE_ONLY_DECLARATION_AND_MUST_BE_IMPORTED_USING_A_TYPE_ONLY_IMPOR,
+                    )
+                } else {
+                    (
+                        diagnostic_messages::IS_A_TYPE_AND_MUST_BE_IMPORTED_USING_A_TYPE_ONLY_IMPORT_WHEN_VERBATIMMODULESYNTA,
+                        diagnostic_codes::IS_A_TYPE_AND_MUST_BE_IMPORTED_USING_A_TYPE_ONLY_IMPORT_WHEN_VERBATIMMODULESYNTA,
+                    )
+                };
+                let message = format_message(message_key, &[&local_name]);
+                self.error_at_node(local_name_idx, &message, diag_code);
                 continue;
             }
 
@@ -329,50 +346,6 @@ impl<'a> CheckerState<'a> {
                 );
             }
         }
-    }
-
-    /// Check whether the exported symbol for `import_name` in `module_name`
-    /// is itself an ALIAS (e.g. `export type { X } from "./other"`) rather
-    /// than a direct type declaration.  Used to pick TS1485 over TS1484.
-    pub(crate) fn is_import_specifier_alias_reexport(
-        &self,
-        module_name: &str,
-        import_name: &str,
-    ) -> bool {
-        use tsz_binder::symbol_flags;
-
-        let normalized = module_name.trim_matches('"').trim_matches('\'');
-        let target_idx = self
-            .ctx
-            .resolve_import_target_from_file(self.ctx.current_file_idx, normalized)
-            .or_else(|| self.ctx.resolve_import_target(normalized));
-        let Some(target_idx) = target_idx else {
-            return false;
-        };
-        let Some(target_binder) = self.ctx.get_binder_for_file(target_idx) else {
-            return false;
-        };
-        let target_arena = self.ctx.get_arena_for_file(target_idx as u32);
-        let Some(target_file_name) = target_arena
-            .source_files
-            .first()
-            .map(|f| f.file_name.clone())
-        else {
-            return false;
-        };
-        let Some(exports) = self
-            .ctx
-            .module_exports_for_module(target_binder, &target_file_name)
-        else {
-            return false;
-        };
-        let Some(sym_id) = exports.get(import_name) else {
-            return false;
-        };
-        let Some(sym) = target_binder.get_symbol(sym_id) else {
-            return false;
-        };
-        sym.has_any_flags(symbol_flags::ALIAS)
     }
 
     /// Check if a named import refers to a purely type-only entity.
