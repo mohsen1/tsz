@@ -259,6 +259,21 @@ impl CheckerState<'_> {
         if !self.is_identifier_in_type_position(idx)
             && self.alias_resolves_to_uninstantiated_namespace(sym_id)
         {
+            // `export = N` / `export { N }` may legally name an alias whose
+            // only meaning is the namespace's TYPE (all-type members, or an
+            // empty namespace) — an export assignment/declaration exports
+            // whatever meaning the name carries, not specifically its value.
+            // Mirrors the identical exception for local uninstantiated
+            // namespaces (namespace-as-value guard, further below) and for
+            // type-only aliases (immediately above).
+            if let Some(parent_ext) = self.ctx.arena.get_extended(idx)
+                && parent_ext.parent.is_some()
+                && let Some(parent_node) = self.ctx.arena.get(parent_ext.parent)
+                && (parent_node.kind == syntax_kind_ext::EXPORT_ASSIGNMENT
+                    || parent_node.kind == syntax_kind_ext::EXPORT_DECLARATION)
+            {
+                return Some(TypeId::ERROR);
+            }
             self.report_wrong_meaning(
                 name,
                 idx,

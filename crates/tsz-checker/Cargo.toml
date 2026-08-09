@@ -1365,6 +1365,9 @@ path = "tests/conformance_issues_types.rs"
 name = "export_equals_display_order_tests"
 path = "tests/export_equals_display_order_tests.rs"
 [[test]]
+name = "export_equals_imported_uninstantiated_namespace_ts2708_tests"
+path = "tests/export_equals_imported_uninstantiated_namespace_ts2708_tests.rs"
+[[test]]
 name = "commonjs_require_value_tests"
 path = "tests/commonjs_require_value_tests.rs"
 [[test]]
