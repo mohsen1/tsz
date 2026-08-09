@@ -366,3 +366,140 @@ fn import_alias_through_plain_reexport_to_class_reports_neither() {
          plain re-export with no type-only boundary, got: {diagnostics:?}"
     );
 }
+
+/// An import alias whose target has NO value anywhere (a pure interface),
+/// reached through a *plain* (non-type-only) re-export hop rather than a
+/// direct import, must still report TS1282 + TS1291. `lookup_imported_target_flags`
+/// previously stopped at the local re-export ALIAS symbol that
+/// `resolve_export_in_file`'s exports-table branch returns for
+/// `export { Foo } from "./impl"` in `reexport.ts` — that alias carries
+/// `EXPORT_VALUE` unconditionally (it just marks "this name is exported",
+/// not "this name is a value") and never copies the target's `TYPE` flag, so
+/// the multi-hop case silently read `(has_type: false, has_value: false)`
+/// and neither the TS1291 nor the TS1289 condition ever fired. tsz-org/tsz#17098.
+///
+/// Filters to the TS1282/1283/1289/1291 family this fix owns rather than
+/// asserting the full diagnostic set: tsc additionally reports TS1484 here
+/// (`'Foo' is a type...`, oracle-verified), but tsz's independent TS1484-vs-
+/// TS1485 picker in `check_verbatim_module_syntax_imports`
+/// (`is_import_specifier_alias_reexport`) still emits TS1485 instead for a
+/// type reached through a plain re-export hop — a separate, pre-existing
+/// gap this PR does not touch.
+#[test]
+fn import_alias_through_plain_reexport_to_interface_reports_1282_and_1291_verbatim() {
+    let diagnostics = check(
+        &[
+            ("/impl.ts", "export interface Foo { x: number }\n"),
+            ("/reexport.ts", "export { Foo } from \"./impl\";\n"),
+            (
+                "/main.ts",
+                "import { Foo } from \"./reexport\";\nexport = Foo;\n",
+            ),
+        ],
+        "/main.ts",
+        true,
+        false,
+    );
+
+    let export_assignment_codes: Vec<u32> = diagnostics
+        .iter()
+        .map(|d| d.code)
+        .filter(|code| {
+            [
+                EXPORT_EQUALS_MUST_REFERENCE_A_VALUE,
+                EXPORT_EQUALS_MUST_REFERENCE_A_REAL_VALUE,
+                RESOLVES_TO_A_TYPE,
+                RESOLVES_TO_A_TYPE_ONLY_DECLARATION,
+            ]
+            .contains(code)
+        })
+        .collect();
+    assert_eq!(
+        export_assignment_codes,
+        vec![EXPORT_EQUALS_MUST_REFERENCE_A_VALUE, RESOLVES_TO_A_TYPE],
+        "expected TS1282 and TS1291 for an import alias resolving to a pure \
+         type through a plain (non-type-only) re-export hop under \
+         verbatimModuleSyntax, got: {diagnostics:?}"
+    );
+}
+
+/// Same shape, but only `isolatedModules` is enabled: tsc reports only
+/// TS1291 (TS1282 is verbatimModuleSyntax-only), matching the direct-import
+/// sibling test above.
+#[test]
+fn import_alias_through_plain_reexport_to_interface_reports_only_1291_under_isolated_modules() {
+    let diagnostics = check(
+        &[
+            ("/impl.ts", "export interface Foo { x: number }\n"),
+            ("/reexport.ts", "export { Foo } from \"./impl\";\n"),
+            (
+                "/main.ts",
+                "import { Foo } from \"./reexport\";\nexport = Foo;\n",
+            ),
+        ],
+        "/main.ts",
+        false,
+        true,
+    );
+
+    assert_eq!(
+        codes(&diagnostics),
+        vec![RESOLVES_TO_A_TYPE],
+        "expected only TS1291 under isolatedModules through a plain re-export \
+         hop, got: {diagnostics:?}"
+    );
+}
+
+/// Renamed on import (`Foo as Baz`) through the plain re-export hop — the
+/// alias-chain follow must key off the resolved import target/name at each
+/// hop, not the local binding name.
+#[test]
+fn renamed_import_alias_through_plain_reexport_to_interface_reports_1291() {
+    let diagnostics = check(
+        &[
+            ("/impl.ts", "export interface Foo { x: number }\n"),
+            ("/reexport.ts", "export { Foo } from \"./impl\";\n"),
+            (
+                "/main.ts",
+                "import { Foo as Baz } from \"./reexport\";\nexport = Baz;\n",
+            ),
+        ],
+        "/main.ts",
+        false,
+        true,
+    );
+
+    assert_eq!(
+        codes(&diagnostics),
+        vec![RESOLVES_TO_A_TYPE],
+        "expected only TS1291 for a renamed import through a plain re-export \
+         hop, got: {diagnostics:?}"
+    );
+}
+
+/// A THREE-hop chain (`impl.ts` -> `mid.ts` -> `reexport.ts` -> `main.ts`),
+/// all plain re-exports, still reaches the pure-type target — the alias
+/// chain follow must not stop after one extra hop.
+#[test]
+fn import_alias_through_two_plain_reexport_hops_to_interface_reports_1291() {
+    let diagnostics = check(
+        &[
+            ("/impl.ts", "export interface Foo { x: number }\n"),
+            ("/mid.ts", "export { Foo } from \"./impl\";\n"),
+            ("/reexport.ts", "export { Foo } from \"./mid\";\n"),
+            (
+                "/main.ts",
+                "import { Foo } from \"./reexport\";\nexport = Foo;\n",
+            ),
+        ],
+        "/main.ts",
+        false,
+        true,
+    );
+
+    assert_eq!(
+        codes(&diagnostics),
+        vec![RESOLVES_TO_A_TYPE],
+        "expected only TS1291 through a two-hop plain re-export chain, got: {diagnostics:?}"
+    );
+}

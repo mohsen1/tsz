@@ -846,43 +846,103 @@ impl<'a> CheckerState<'a> {
         // Try regular file exports — follow re-export chains.
         if !has_value && let Some(target_idx) = self.ctx.resolve_import_target(module_spec) {
             let mut visited = rustc_hash::FxHashSet::default();
-            if let Some((resolved_sym_id, resolved_file_idx)) =
+            if let Some((raw_sym_id, raw_file_idx)) =
                 self.resolve_export_in_file(target_idx, import_name, &mut visited)
-                && let Some(resolved_binder) = self.ctx.get_binder_for_file(resolved_file_idx)
-                && let Some(resolved_sym) = resolved_binder.symbols.get(resolved_sym_id)
             {
-                // Skip namespace pseudo-symbols (`namespace foo { ... }` with
-                // only type members) — they appear in exports but don't
-                // introduce a runtime value.
-                let mut sym_has_value =
-                    resolved_sym.has_any_flags(symbol_flags::VALUE | symbol_flags::EXPORT_VALUE);
-                if sym_has_value
-                    && resolved_sym.has_any_flags(symbol_flags::VALUE_MODULE)
-                    && !resolved_sym
-                        .has_any_flags(symbol_flags::VALUE & !symbol_flags::VALUE_MODULE)
+                let (resolved_sym_id, resolved_file_idx) =
+                    self.follow_reexport_alias_chain(raw_sym_id, raw_file_idx);
+                if let Some(resolved_binder) = self.ctx.get_binder_for_file(resolved_file_idx)
+                    && let Some(resolved_sym) = resolved_binder.symbols.get(resolved_sym_id)
                 {
-                    // declarations carry file-local NodeIndex into the resolved
-                    // file's arena, not the current file's arena.
-                    let resolved_arena = self.ctx.get_arena_for_file(resolved_file_idx as u32);
-                    let any_instantiated = resolved_sym.declarations.iter().any(|&decl_idx| {
-                        let Some(decl_node) = resolved_arena.get(decl_idx) else {
-                            return false;
-                        };
-                        // Only namespace declarations contribute runtime value;
-                        // type-only declarations (interface/type alias) do not.
-                        decl_node.kind == syntax_kind_ext::MODULE_DECLARATION
-                    });
-                    sym_has_value = any_instantiated;
-                }
-                if resolved_sym.has_any_flags(symbol_flags::TYPE) {
-                    has_type = true;
-                }
-                if sym_has_value {
-                    has_value = true;
+                    // Skip namespace pseudo-symbols (`namespace foo { ... }` with
+                    // only type members) — they appear in exports but don't
+                    // introduce a runtime value.
+                    let mut sym_has_value = resolved_sym
+                        .has_any_flags(symbol_flags::VALUE | symbol_flags::EXPORT_VALUE);
+                    if sym_has_value
+                        && resolved_sym.has_any_flags(symbol_flags::VALUE_MODULE)
+                        && !resolved_sym
+                            .has_any_flags(symbol_flags::VALUE & !symbol_flags::VALUE_MODULE)
+                    {
+                        // declarations carry file-local NodeIndex into the resolved
+                        // file's arena, not the current file's arena.
+                        let resolved_arena = self.ctx.get_arena_for_file(resolved_file_idx as u32);
+                        let any_instantiated = resolved_sym.declarations.iter().any(|&decl_idx| {
+                            let Some(decl_node) = resolved_arena.get(decl_idx) else {
+                                return false;
+                            };
+                            // Only namespace declarations contribute runtime value;
+                            // type-only declarations (interface/type alias) do not.
+                            decl_node.kind == syntax_kind_ext::MODULE_DECLARATION
+                        });
+                        sym_has_value = any_instantiated;
+                    }
+                    if resolved_sym.has_any_flags(symbol_flags::TYPE) {
+                        has_type = true;
+                    }
+                    if sym_has_value {
+                        has_value = true;
+                    }
                 }
             }
         }
 
         (has_type, has_value)
+    }
+
+    /// Follow a possibly-multi-hop named re-export alias chain
+    /// (`export { X } from "./y"` links) to the ultimate declaring symbol.
+    ///
+    /// `resolve_export_in_file`'s own exports-table branch returns the
+    /// *local* re-export ALIAS symbol for a named re-export — that branch
+    /// runs before its reexports-chain branch and always wins once a local
+    /// export-table entry exists, which it always does for `export { X }
+    /// from`. That local alias carries `EXPORT_VALUE` unconditionally (it
+    /// marks "this name is exported", not "this name is a runtime value")
+    /// and never copies the target's `TYPE` flag, so a caller reading flags
+    /// off it directly answers the wrong question once the real declaration
+    /// sits one or more re-export hops away. Bounded against cycles with a
+    /// visited `(file, symbol)` set.
+    fn follow_reexport_alias_chain(
+        &self,
+        mut sym_id: tsz_binder::SymbolId,
+        mut file_idx: usize,
+    ) -> (tsz_binder::SymbolId, usize) {
+        use tsz_binder::symbol_flags;
+
+        let mut hops = rustc_hash::FxHashSet::default();
+        while hops.insert((file_idx, sym_id)) {
+            let Some(binder) = self.ctx.get_binder_for_file(file_idx) else {
+                break;
+            };
+            let Some(sym) = binder.symbols.get(sym_id) else {
+                break;
+            };
+            if !sym.has_any_flags(symbol_flags::ALIAS) {
+                break;
+            }
+            let Some(next_module) = sym.import_module() else {
+                break;
+            };
+            let next_name = sym
+                .import_name()
+                .unwrap_or(sym.escaped_name.as_str())
+                .to_string();
+            let Some(next_file_idx) = self
+                .ctx
+                .resolve_import_target_from_file(file_idx, next_module)
+            else {
+                break;
+            };
+            let mut hop_visited = rustc_hash::FxHashSet::default();
+            let Some((next_sym_id, next_resolved_file_idx)) =
+                self.resolve_export_in_file(next_file_idx, &next_name, &mut hop_visited)
+            else {
+                break;
+            };
+            sym_id = next_sym_id;
+            file_idx = next_resolved_file_idx;
+        }
+        (sym_id, file_idx)
     }
 }
