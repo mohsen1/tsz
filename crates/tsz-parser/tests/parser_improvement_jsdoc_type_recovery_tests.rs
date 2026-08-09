@@ -4,31 +4,11 @@ use crate::parser::test_fixture::parse_source;
 use tsz_common::diagnostics::diagnostic_codes;
 
 #[test]
-fn test_type_argument_with_empty_jsdoc_wildcard_has_no_ts1110() {
-    // `Foo<?>` should emit TS8020 but avoid TS17020/TS1110 cascading.
-    let source = r#"
-type T = Foo<?>;
-"#;
-    let (parser, _root) = parse_source(source);
-
-    let diagnostics: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();
-    assert!(
-        diagnostics.contains(
-            &diagnostic_codes::JSDOC_TYPES_CAN_ONLY_BE_USED_INSIDE_DOCUMENTATION_COMMENTS
-        ),
-        "Expected TS8020 for `Foo<?>`, got {:?}",
-        parser.get_diagnostics(),
-    );
-    assert!(
-        !diagnostics.contains(&diagnostic_codes::TYPE_EXPECTED),
-        "Expected no TS1110 for `Foo<?>`, got {:?}",
-        parser.get_diagnostics(),
-    );
-    assert!(
-        !diagnostics.contains(&diagnostic_codes::AT_THE_START_OF_A_TYPE_IS_NOT_VALID_TYPESCRIPT_SYNTAX_DID_YOU_MEAN_TO_WRITE),
-        "Expected no TS17020 for `Foo<?>`, got {:?}",
-        parser.get_diagnostics(),
-    );
+fn test_type_argument_with_empty_jsdoc_wildcard_emits_ts1110() {
+    // A bare `?` wildcard type argument (`Foo<?>`) is `Type expected.` (TS1110)
+    // in tsc, not TS8020 — tsc reserves TS8020 for `*` and dotted `Foo.<T>`.
+    // Oracle (`typescript@7.0.2`): `type T = Foo<?>;` -> TS1110 at the `>`.
+    assert_bare_wildcard_is_ts1110("type T = Foo<?>;\n", "`Foo<?>`");
 }
 
 #[test]
@@ -79,30 +59,11 @@ type T = Foo<?undefined>;
 }
 
 #[test]
-fn test_expression_type_argument_with_empty_jsdoc_wildcard_emits_ts8020_only() {
-    let source = r#"
-const WhatFoo = foo<?>;
-"#;
-    let (parser, _root) = parse_source(source);
-
-    let diagnostics: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();
-    assert!(
-        diagnostics.contains(
-            &diagnostic_codes::JSDOC_TYPES_CAN_ONLY_BE_USED_INSIDE_DOCUMENTATION_COMMENTS
-        ),
-        "Expected TS8020 for `foo<?>`, got {:?}",
-        parser.get_diagnostics(),
-    );
-    assert!(
-        !diagnostics.contains(&diagnostic_codes::TYPE_EXPECTED),
-        "Expected no TS1110 for `foo<?>`, got {:?}",
-        parser.get_diagnostics(),
-    );
-    assert!(
-        !diagnostics.contains(&diagnostic_codes::AT_THE_START_OF_A_TYPE_IS_NOT_VALID_TYPESCRIPT_SYNTAX_DID_YOU_MEAN_TO_WRITE),
-        "Expected no TS17020 for `foo<?>`, got {:?}",
-        parser.get_diagnostics(),
-    );
+fn test_expression_type_argument_with_empty_jsdoc_wildcard_emits_ts1110() {
+    // A bare `?` wildcard in an expression's type-argument list (`foo<?>`) is
+    // TS1110 in tsc, not TS8020. Oracle (`typescript@7.0.2`):
+    // `const WhatFoo = foo<?>;` -> TS1110 at the `>`.
+    assert_bare_wildcard_is_ts1110("const WhatFoo = foo<?>;\n", "`foo<?>`");
 }
 
 #[test]
@@ -204,4 +165,77 @@ let whatevs: * = 1001;
         "Expected only TS8020 for wildcard type, got {:?}",
         parser.get_diagnostics()
     );
+}
+
+// ---------------------------------------------------------------------------
+// #17001: a *bare* `?`/`!` JSDoc wildcard (no operand) in a type position is
+// TS1110 (`Type expected.`) in tsc, not TS8020. Every case below is
+// oracle-verified against `typescript@7.0.2`
+// (`tsc --noEmit --strict --lib es2022 --target es2022`). The `*` all-type and
+// the dotted `Foo.<T>` legacy generic genuinely stay TS8020 (pinned above);
+// a wildcard *followed by a real type* (`?string`) stays TS17020 (pinned
+// above). Only the bare, operand-less wildcard is TS1110.
+// ---------------------------------------------------------------------------
+
+/// Assert a bare-wildcard source reports TS1110 and neither TS8020 nor TS17020.
+fn assert_bare_wildcard_is_ts1110(source: &str, label: &str) {
+    let (parser, _root) = parse_source(source);
+    let diagnostics: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();
+    assert!(
+        diagnostics.contains(&diagnostic_codes::TYPE_EXPECTED),
+        "Expected TS1110 for {label}, got {:?}",
+        parser.get_diagnostics(),
+    );
+    assert!(
+        !diagnostics.contains(
+            &diagnostic_codes::JSDOC_TYPES_CAN_ONLY_BE_USED_INSIDE_DOCUMENTATION_COMMENTS
+        ),
+        "Expected no TS8020 for {label}, got {:?}",
+        parser.get_diagnostics(),
+    );
+    assert!(
+        !diagnostics.contains(
+            &diagnostic_codes::AT_THE_START_OF_A_TYPE_IS_NOT_VALID_TYPESCRIPT_SYNTAX_DID_YOU_MEAN_TO_WRITE
+        ),
+        "Expected no TS17020 for {label}, got {:?}",
+        parser.get_diagnostics(),
+    );
+}
+
+#[test]
+fn test_bare_question_wildcard_in_annotation_is_ts1110() {
+    // Oracle: `var x: ?;` -> TS1110 at the `;`.
+    assert_bare_wildcard_is_ts1110("var x: ?;\n", "`var x: ?;`");
+}
+
+#[test]
+fn test_bare_question_wildcard_in_required_position_is_ts1110() {
+    // Oracle: `type T = string | ?;` -> TS1110 (a `|`-separated constituent is a
+    // *required* type position, so tsc reports even at a terminator).
+    assert_bare_wildcard_is_ts1110("type T = string | ?;\n", "`string | ?`");
+}
+
+#[test]
+fn test_bare_question_wildcard_in_tuple_is_ts1110() {
+    // Oracle: `type T = [?];` -> TS1110.
+    assert_bare_wildcard_is_ts1110("type T = [?];\n", "`[?]`");
+}
+
+#[test]
+fn test_bare_question_wildcard_with_following_comma_is_ts1110() {
+    // Oracle: `type T = Map<?, string>;` -> TS1110 at the `,`.
+    assert_bare_wildcard_is_ts1110("type T = Map<?, string>;\n", "`Map<?, string>`");
+}
+
+#[test]
+fn test_bare_bang_wildcard_in_annotation_is_ts1110() {
+    // Oracle: `var x: !;` -> TS1110.
+    assert_bare_wildcard_is_ts1110("var x: !;\n", "`var x: !;`");
+}
+
+#[test]
+fn test_bare_bang_wildcard_in_type_argument_is_ts1110() {
+    // Oracle: `type T = Foo<!>;` -> TS1110 (the `!` flows through the ordinary
+    // primary-type parse for each type argument).
+    assert_bare_wildcard_is_ts1110("type T = Foo<!>;\n", "`Foo<!>`");
 }

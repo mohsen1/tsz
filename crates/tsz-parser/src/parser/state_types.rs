@@ -488,15 +488,14 @@ impl ParserState {
             let q_end = self.token_end();
             self.next_token(); // consume '?'
 
-            // Bare `?` is legacy JSDoc wildcard syntax. In TS source it should
-            // surface TS8020 and stop there rather than cascading into TS17020/TS1110.
+            // A bare `?` (the JSDoc "unknown" wildcard with no operand) is not a
+            // valid TypeScript type. tsc consumes the `?` and then reports TS1110
+            // (`Type expected.`) at the following token — e.g. `var x: ?;` reports
+            // at the `;`, and `Foo<?>` at the `>`. It does NOT report TS8020, which
+            // tsc reserves for the `*` all-type and the dotted `Foo.<T>` legacy
+            // generic (both handled by their own branches below/above).
             if !self.can_token_start_type() {
-                self.parse_error_at(
-                    q_start,
-                    q_end.saturating_sub(q_start).max(1),
-                    tsz_common::diagnostics::diagnostic_messages::JSDOC_TYPES_CAN_ONLY_BE_USED_INSIDE_DOCUMENTATION_COMMENTS,
-                    tsz_common::diagnostics::diagnostic_codes::JSDOC_TYPES_CAN_ONLY_BE_USED_INSIDE_DOCUMENTATION_COMMENTS,
-                );
+                self.error_type_expected();
                 return self.arena.add_identifier(
                     SyntaxKind::Identifier as u16,
                     q_start,
@@ -541,12 +540,10 @@ impl ParserState {
 
             if !self.can_token_start_type() {
                 let bang_end = self.token_pos();
-                self.parse_error_at(
-                    bang_start,
-                    bang_end - bang_start,
-                    "JSDoc types can only be used inside documentation comments.",
-                    tsz_common::diagnostics::diagnostic_codes::JSDOC_TYPES_CAN_ONLY_BE_USED_INSIDE_DOCUMENTATION_COMMENTS,
-                );
+                // A bare `!` (JSDoc non-null wildcard with no operand) is not valid
+                // TypeScript. Like the bare `?` above, tsc reports TS1110 at the
+                // following token, not TS8020.
+                self.error_type_expected();
                 return self.arena.add_identifier(
                     SyntaxKind::Identifier as u16,
                     bang_start,

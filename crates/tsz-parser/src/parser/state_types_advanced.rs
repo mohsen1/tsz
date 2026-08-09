@@ -1546,34 +1546,17 @@ impl ParserState {
         let question_end = self.token_end();
         self.next_token(); // consume '?'
 
-        if self.is_greater_than_or_compound() || self.is_token(SyntaxKind::CommaToken) {
-            // `foo<?>` should not emit TS1110; consume the `>` path via caller's expected parser.
-            self.parse_error_at(
-                question_start,
-                question_end - question_start,
-                "JSDoc types can only be used inside documentation comments.",
-                diagnostic_codes::JSDOC_TYPES_CAN_ONLY_BE_USED_INSIDE_DOCUMENTATION_COMMENTS,
-            );
-            return self.arena.add_identifier(
-                SyntaxKind::Identifier as u16,
-                question_start,
-                question_end,
-                crate::parser::node::IdentifierData {
-                    atom: tsz_common::interner::AstAtom::NONE,
-                    escaped_text: IdentText::empty(),
-                    original_text: None,
-                },
-            );
-        }
-
-        if !self.can_token_start_type() {
-            // `foo<?` with no valid following type should emit TS8020.
-            self.parse_error_at(
-                question_start,
-                question_end - question_start,
-                "JSDoc types can only be used inside documentation comments.",
-                diagnostic_codes::JSDOC_TYPES_CAN_ONLY_BE_USED_INSIDE_DOCUMENTATION_COMMENTS,
-            );
+        // A bare `?` wildcard type argument: `foo<?>` / `foo<?, T>` (the `?` is
+        // immediately followed by `>` or `,`), or `foo<?` followed by any token
+        // that cannot start a type. tsc consumes the `?` and reports TS1110
+        // (`Type expected.`) at that following token, not TS8020. The `>` is left
+        // unconsumed, so the caller's `parse_expected_greater_than` still closes
+        // the list cleanly (no cascade).
+        if self.is_greater_than_or_compound()
+            || self.is_token(SyntaxKind::CommaToken)
+            || !self.can_token_start_type()
+        {
+            self.error_type_expected();
             return self.arena.add_identifier(
                 SyntaxKind::Identifier as u16,
                 question_start,
