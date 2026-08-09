@@ -106,7 +106,9 @@ impl<'a> CheckerState<'a> {
             .unwrap_or(decorator_node)
     }
 
-    fn decorator_failure_anchor(
+    /// Shared with the class-decorator TS1238 path in `class_decorators.rs`,
+    /// which anchors legacy class-decorator call failures the same way.
+    pub(crate) fn decorator_failure_anchor(
         &self,
         decorator_node: NodeIndex,
         resolved: TypeId,

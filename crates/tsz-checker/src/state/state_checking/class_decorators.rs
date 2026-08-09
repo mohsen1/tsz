@@ -248,8 +248,9 @@ impl<'a> CheckerState<'a> {
         if !has_call_signatures {
             // No call signatures at all (e.g., a class used as decorator — has construct
             // signatures but no call signatures). Emit TS1238.
+            let anchor = self.decorator_failure_anchor(decorator_node, resolved, 1);
             self.error_at_node(
-                decorator_node,
+                anchor,
                 diagnostic_messages::UNABLE_TO_RESOLVE_SIGNATURE_OF_CLASS_DECORATOR_WHEN_CALLED_AS_AN_EXPRESSION,
                 diagnostic_codes::UNABLE_TO_RESOLVE_SIGNATURE_OF_CLASS_DECORATOR_WHEN_CALLED_AS_AN_EXPRESSION,
             );
@@ -273,8 +274,9 @@ impl<'a> CheckerState<'a> {
         );
 
         let crate::query_boundaries::common::CallResult::Success(return_type) = &result else {
+            let anchor = self.decorator_failure_anchor(decorator_node, resolved, 1);
             self.emit_decorator_signature_error(
-                decorator_node,
+                anchor,
                 diagnostic_messages::UNABLE_TO_RESOLVE_SIGNATURE_OF_CLASS_DECORATOR_WHEN_CALLED_AS_AN_EXPRESSION,
                 diagnostic_codes::UNABLE_TO_RESOLVE_SIGNATURE_OF_CLASS_DECORATOR_WHEN_CALLED_AS_AN_EXPRESSION,
                 &result,
@@ -302,8 +304,9 @@ impl<'a> CheckerState<'a> {
                 diagnostic_messages::DECORATOR_FUNCTION_RETURN_TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                 &[&return_str, &expected_str],
             );
+            let anchor = self.decorator_failure_anchor(decorator_node, resolved, 1);
             self.error_at_node(
-                decorator_node,
+                anchor,
                 &message,
                 diagnostic_codes::DECORATOR_FUNCTION_RETURN_TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
             );

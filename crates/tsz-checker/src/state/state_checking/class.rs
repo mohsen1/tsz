@@ -1009,29 +1009,17 @@ impl<'a> CheckerState<'a> {
         }
 
         for (decorator_node, decorator_type) in experimental_class_decorators {
-            // tsc 7.0.2 anchors TS1238 at the decorator's EXPRESSION for bare
-            // entities (`@CtorDtor` flags col 2) but at the whole DECORATOR
-            // spanning the `@` when the expression is itself a call
-            // (`@dec()` flags col 1) — mirroring call-node arity anchoring.
-            let anchor = self
-                .ctx
-                .arena
-                .get(decorator_node)
-                .and_then(|n| self.ctx.arena.get_decorator(n))
-                .map(|d| {
-                    let expr_is_call = self
-                        .ctx
-                        .arena
-                        .get(d.expression)
-                        .is_some_and(|e| e.kind == syntax_kind_ext::CALL_EXPRESSION);
-                    if expr_is_call {
-                        decorator_node
-                    } else {
-                        d.expression
-                    }
-                })
-                .unwrap_or(decorator_node);
-            self.check_class_decorator_call_signature(anchor, decorator_type, stmt_idx, class);
+            // Anchor selection (bare identifier vs. call-expression decorator
+            // does NOT matter; tsc anchors both the same way) lives in
+            // `check_class_decorator_call_signature` itself, mirroring the
+            // `decorator_failure_anchor` rule the member/parameter decorator
+            // paths already use.
+            self.check_class_decorator_call_signature(
+                decorator_node,
+                decorator_type,
+                stmt_idx,
+                class,
+            );
         }
     }
 
