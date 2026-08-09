@@ -74,15 +74,42 @@ jobs:
 
           stamp="$(date -u +%Y%m%d)"
           branch="automation/readme-benchmark-refresh-${stamp}"
-          if git ls-remote --exit-code --heads origin "${branch}" >/dev/null 2>&1; then
-            echo "Branch ${branch} already exists on origin; today's refresh is already open."
-            exit 0
-          fi
 
+          # Build the refreshed commit first, on top of the checkout (which is
+          # at origin/main), so it exists whether we are creating today's branch
+          # or healing it.
           git checkout -b "${branch}"
           git add README.md crates/tsz-website/static/benchmark-data
           git commit -m "chore(readme): refresh benchmark image and stats"
-          git push -u origin "${branch}"
+
+          if ! git ls-remote --exit-code --heads origin "${branch}" >/dev/null 2>&1; then
+            git push -u origin "${branch}"
+          else
+            # Today's branch already exists. It was cut from whatever main was
+            # earlier today, so once README moves underneath it -- a conformance
+            # stats refresh, a manual edit -- the PR goes CONFLICTING and can
+            # never merge. Exiting here (the previous behaviour) meant a re-run
+            # regenerated the assets, detected changes, and then threw them away:
+            # the stale PR stayed stuck until the next calendar day orphaned it
+            # behind a fresh `-<tomorrow>` branch.
+            #
+            # Only heal a branch that still has an OPEN PR. If the PR merged or
+            # was closed, the branch is finished and must not be resurrected.
+            open_prs="$(gh pr list --head "${branch}" --state open --json number --jq 'length')"
+            if [ "${open_prs}" = "0" ]; then
+              echo "Branch ${branch} exists with no open PR (merged or closed); not resurrecting it."
+              exit 0
+            fi
+
+            # --force-with-lease against the tip we just observed, so a
+            # concurrent run or a human push is refused rather than clobbered.
+            git fetch origin "${branch}:refs/remotes/origin/${branch}"
+            remote_tip="$(git rev-parse "refs/remotes/origin/${branch}")"
+            echo "Healing existing branch ${branch} (was ${remote_tip}) onto current main."
+            git push --force-with-lease="${branch}:${remote_tip}" origin "${branch}"
+            echo "Updated the open refresh PR in place; not opening a second one."
+            exit 0
+          fi
 
           body=$(cat <<'EOF'
           Automated refresh of the README benchmark image and progress stats from
