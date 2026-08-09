@@ -1059,6 +1059,8 @@ mod verbatim_module_syntax_export_default_alias_ts1284_tests;
 mod verbatim_module_syntax_export_default_type_only_import_ts1284_tests;
 #[path = "tests/void_undefined_discriminant_narrowing_tests.rs"]
 mod void_undefined_discriminant_narrowing_tests;
+#[path = "tests/well_known_symbol_alias_member_tests.rs"]
+mod well_known_symbol_alias_member_tests;
 #[path = "tests/window_self_globalthis_resolution_tests.rs"]
 mod window_self_globalthis_resolution_tests;
 #[path = "tests/yieldstar_async_iterable_invalid_thenable_element_tests.rs"]
