@@ -28,6 +28,35 @@ impl<'a> CheckerState<'a> {
         )
     }
 
+    /// True when `type_node` is an indexed access into a mapped type
+    /// (`{ [P in K]: X }[Key]`) at the alias's own top level.
+    ///
+    /// Indexing a mapped type at a literal key forces eager resolution of
+    /// that one property — the same "eager position" `keyof` already gets
+    /// elsewhere in this function — unlike an ordinary deferred object or
+    /// mapped-type property access. Oracle-verified: `type Rec = { [P in
+    /// "x"]: Rec }` is accepted (deferred recursion, a linked-list shape),
+    /// but `type Rec = { [P in "x"]: Rec }["x"]` is `TS2456`. This check is
+    /// purely syntactic (object side is a `MAPPED_TYPE` node); the caller
+    /// only reaches it after the type-level `Lazy` chain has already
+    /// confirmed the whole indexed access resolves back to the alias being
+    /// defined, so no separate key/template inspection is needed here.
+    fn type_node_is_indexed_mapped_type_self_access(&self, type_node: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(type_node) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::INDEXED_ACCESS_TYPE {
+            return false;
+        }
+        let Some(iat) = self.ctx.arena.get_indexed_access_type(node) else {
+            return false;
+        };
+        self.ctx
+            .arena
+            .get(iat.object_type)
+            .is_some_and(|obj_node| obj_node.kind == syntax_kind_ext::MAPPED_TYPE)
+    }
+
     /// Look through enclosing parentheses to the first non-parenthesized type
     /// node. Used by circular-alias detection so `(A<T>)` is treated like
     /// `A<T>`.
@@ -581,6 +610,7 @@ impl<'a> CheckerState<'a> {
                 }
             } else {
                 self.is_simple_type_reference(type_node)
+                    || self.type_node_is_indexed_mapped_type_self_access(type_node)
             };
 
             if is_direct {
