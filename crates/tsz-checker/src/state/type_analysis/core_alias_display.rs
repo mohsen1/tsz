@@ -44,7 +44,7 @@ impl CheckerState<'_> {
         }
     }
 
-    pub(super) fn symbol_is_type_alias(&self, sym_id: SymbolId) -> bool {
+    pub(crate) fn symbol_is_type_alias(&self, sym_id: SymbolId) -> bool {
         self.ctx
             .binder
             .symbols
