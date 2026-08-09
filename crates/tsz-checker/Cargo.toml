@@ -1855,6 +1855,9 @@ path = "tests/destructuring_rest_computed_key_omit_tests.rs"
 name = "super_keyword_speculation_survival_tests"
 path = "tests/super_keyword_speculation_survival_tests.rs"
 [[test]]
+name = "super_polymorphic_this_return_tests"
+path = "tests/super_polymorphic_this_return_tests.rs"
+[[test]]
 name = "ambient_default_namespace_export_dup_tests"
 path = "tests/ambient_default_namespace_export_dup_tests.rs"
 [[test]]
