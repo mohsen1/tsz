@@ -1692,18 +1692,21 @@ fn collect_object_properties_for_identity_match(
     if depth > max_depth {
         return;
     }
-    match tsz_solver::type_queries::classify_property_traversal(db, type_id) {
-        tsz_solver::type_queries::PropertyTraversalKind::Object(shape) => {
+    use crate::query_boundaries::property_access::{
+        PropertyTraversalKind, classify_property_traversal,
+    };
+    match classify_property_traversal(db, type_id) {
+        PropertyTraversalKind::Object(shape) => {
             out.extend(shape.properties.iter().cloned());
         }
-        tsz_solver::type_queries::PropertyTraversalKind::Callable(shape) => {
+        PropertyTraversalKind::Callable(shape) => {
             out.extend(shape.properties.iter().cloned());
         }
-        tsz_solver::type_queries::PropertyTraversalKind::Members(members) => {
+        PropertyTraversalKind::Members(members) => {
             for member in members {
                 collect_object_properties_for_identity_match(db, member, depth + 1, max_depth, out);
             }
         }
-        tsz_solver::type_queries::PropertyTraversalKind::Other => {}
+        PropertyTraversalKind::Other => {}
     }
 }
