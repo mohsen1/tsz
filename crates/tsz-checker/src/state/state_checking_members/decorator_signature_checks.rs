@@ -90,6 +90,47 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// tsc's TS1238 "not callable" shape for a class decorator whose resolved
+    /// type carries no call signature at all — a bare primitive, a class
+    /// (construct signatures only, no call signatures), or any other
+    /// non-callable value. `This expression is not callable.` (TS2349) is
+    /// attached as an elaboration chain link beneath TS1238, with `Type 'X'
+    /// has no call signatures.` (TS2757) nested one level deeper. Oracle-
+    /// verified (`typescript@7.0.2`) to render identically under
+    /// `--experimentalDecorators` and ES (TC39 stage-3) class decorators;
+    /// shared by both call sites in `class_decorators.rs`. Chain-link
+    /// entries carry no real position (matching
+    /// [`Self::decorator_arity_related_info`]'s `(0, 0)` convention) since
+    /// `RelatedInformationKind::ChainLink` renders by depth, not location.
+    pub(crate) fn emit_class_decorator_not_callable(
+        &mut self,
+        anchor: NodeIndex,
+        resolved: TypeId,
+    ) {
+        let mut related = vec![Diagnostic::related_message(
+            diagnostic_codes::THIS_EXPRESSION_IS_NOT_CALLABLE,
+            self.ctx.file_name.clone(),
+            0,
+            0,
+            diagnostic_messages::THIS_EXPRESSION_IS_NOT_CALLABLE,
+        )];
+        if let Some(mut detail) = self.invocation_signature_detail(
+            resolved,
+            crate::error_reporter::operator_errors::InvocationSignatureKind::Call,
+            0,
+            0,
+        ) {
+            detail.depth = 1;
+            related.push(detail);
+        }
+        self.error_at_node_with_related(
+            anchor,
+            diagnostic_messages::UNABLE_TO_RESOLVE_SIGNATURE_OF_CLASS_DECORATOR_WHEN_CALLED_AS_AN_EXPRESSION,
+            diagnostic_codes::UNABLE_TO_RESOLVE_SIGNATURE_OF_CLASS_DECORATOR_WHEN_CALLED_AS_AN_EXPRESSION,
+            related,
+        );
+    }
+
     /// tsc anchors member/parameter decorator failures (TS1239/TS1240/TS1241)
     /// at the decorator's EXPRESSION (one column after the `@`) for
     /// type-mismatch and extra-argument failures, but at the whole DECORATOR

@@ -46,7 +46,7 @@ mod literal_alias_rewrites;
 mod missing_property_declared_here;
 mod name_resolution;
 mod noinfer_diagnostic_display;
-mod operator_errors;
+pub(crate) mod operator_errors;
 mod primitive_intersection_display;
 mod properties;
 mod property_receiver_formatting;
