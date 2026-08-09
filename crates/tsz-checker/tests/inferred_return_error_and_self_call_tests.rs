@@ -123,6 +123,64 @@ const size: number = walk();
     );
 }
 
+/// A *clean* (non-reassigned) self-recursion whose body ends in a hoisted
+/// `function` declaration must still infer `never` — not `void`. The trailing
+/// declaration is control-flow-transparent, so the reachability pre-gate must
+/// look past it to the real terminating tail (`return pure(n)`). Before the
+/// pre-gate skipped trailing declarations, the syntactically-last `function`
+/// statement made the body look like it fell through, defaulting to `void` (the
+/// root of #16987, shared with the reassigned fixture).
+///
+/// `never` is assignable to `string`; `void` is not — so the regression is
+/// detected as a TS2322 that must NOT appear. (Property access can't
+/// distinguish the two: both `never` and `void` reject it with TS2339.)
+#[test]
+fn clean_self_recursion_with_trailing_declaration_infers_never_not_void() {
+    let source = r#"
+function pure(n: number) {
+  return pure(n);
+  function helper() {}
+}
+const s: string = pure(1);
+"#;
+    let codes = check_strict(source);
+    assert!(
+        !codes.contains(&2322),
+        "a trailing hoisted declaration must not make a clean self-recursion infer \
+         `void`; `never` is assignable to `string`, so NO TS2322 fires; got: {codes:?}"
+    );
+}
+
+/// Skipping trailing hoisted declarations to find the terminating tail must NOT
+/// surface a call-expression tail: a body whose real tail is an evolving-array
+/// `x.push(...)` followed by a nested `function` declaration must keep its
+/// `TS7034`/`TS7005` implicit-`any[]` diagnostics. Surfacing the call would run
+/// the reachability query over the evolving array and freeze it, dropping those
+/// diagnostics (`controlFlowArrayErrors.ts`). Only `return`/`throw` tails
+/// revealed past a declaration are surfaced.
+#[test]
+fn evolving_array_before_trailing_declaration_keeps_implicit_any_diagnostics() {
+    let source = r#"
+function f3() {
+    let x = [];
+    x.push(5);
+    function g() {
+        x;
+    }
+}
+"#;
+    let codes = check_strict(source);
+    assert!(
+        codes.contains(&7034),
+        "the evolving-array `let x = []` must still report TS7034 even though the \
+         body ends in a hoisted `function` declaration; got: {codes:?}"
+    );
+    assert!(
+        codes.contains(&7005),
+        "the evolving-array reference must still report TS7005; got: {codes:?}"
+    );
+}
+
 /// A *wrapped* self-call (`return [bounce][0]()`) is NOT a direct self-call, so
 /// — like tsc — its circular type is aggregated and the function degrades to the
 /// implicit-`any` circular return (TS7023), rather than adopting the base case.
