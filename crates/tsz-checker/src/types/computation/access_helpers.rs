@@ -1494,7 +1494,7 @@ impl<'a> CheckerState<'a> {
     /// any symbol key — so they are always missing unless an explicit `symbol`
     /// index signature is present.
     pub(crate) fn symbol_keyed_access_is_missing(
-        &self,
+        &mut self,
         object_type: TypeId,
         index_type_for_access: TypeId,
     ) -> bool {
@@ -1516,7 +1516,7 @@ impl<'a> CheckerState<'a> {
     }
 
     fn symbol_keyed_property_exists(
-        &self,
+        &mut self,
         object_type: TypeId,
         index_type_for_access: TypeId,
     ) -> bool {
@@ -1538,23 +1538,70 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        let sym_id = crate::query_boundaries::definition_identity::symbol_ref_to_symbol_id(sym_ref);
-        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+        let Some(well_known_name) =
+            self.well_known_symbol_name_by_type_identity(index_type_for_access)
+        else {
             return false;
         };
-        let Some(parent_sym) = self.ctx.binder.get_symbol(symbol.parent) else {
-            return false;
-        };
-        if parent_sym.escaped_name != "Symbol" {
-            return false;
-        }
-        let well_known_name = format!("[Symbol.{}]", symbol.escaped_name);
         crate::query_boundaries::common::find_property_by_str(
             self.ctx.types,
             object_type,
             &well_known_name,
         )
         .is_some()
+    }
+
+    /// Resolve the well-known-symbol member name (`hasInstance`, `iterator`,
+    /// etc.) that a `unique symbol`-typed element-access key denotes, by TYPE
+    /// IDENTITY against the lib's own `SymbolConstructor` interface — never by
+    /// decoding the key's `SymbolRef` as a binder `SymbolId`.
+    ///
+    /// A well-known symbol's `SymbolRef` is minted by the lowering layer from
+    /// the `unique symbol` type-operator's NODE INDEX
+    /// (`lower_type_operator`'s `SymbolRef(node_idx.0)`, used for a readonly
+    /// property signature like `SymbolConstructor.iterator`) — not a
+    /// `SymbolId` at all, and a per-binder-local raw id silently collides with
+    /// an unrelated symbol when looked up directly (#16961). Even the DIRECT
+    /// `Symbol.iterator` spelling only ever avoided this: it resolves through
+    /// a separate, purely-syntactic shortcut
+    /// (`computed_names::well_known_symbol_access_shape`) that requires the
+    /// base identifier's literal text to be `"Symbol"` — an alias
+    /// (`const S = Symbol`) bypasses that shortcut and falls through to here.
+    ///
+    /// Every read of `Symbol.<name>` — direct or aliased — resolves through
+    /// ordinary property-type computation against the SAME merged
+    /// `SymbolConstructor` type, so `<name>`'s member type is exactly
+    /// `index_type` whenever `index_type` denotes that well-known symbol;
+    /// comparing by `TypeId` sidesteps the identity-space mismatch entirely.
+    pub(crate) fn well_known_symbol_name_by_type_identity(
+        &mut self,
+        index_type: TypeId,
+    ) -> Option<String> {
+        let ctor_sym_id = crate::types_domain::queries::lib_resolution::resolve_name_to_lib_symbol(
+            "SymbolConstructor",
+            self.ctx.binder,
+            self.ctx.global_file_locals_index.as_deref(),
+            self.ctx
+                .all_binders
+                .as_ref()
+                .map(|binders| binders.as_ref().as_slice()),
+            &self.ctx.lib_contexts,
+        )?;
+        let ctor_type_raw = self.get_type_of_symbol(ctor_sym_id);
+        let ctor_type = self.resolve_type_for_property_access(ctor_type_raw);
+        // `SymbolConstructor` is declaration-merged across several lib files
+        // (base symbol type, iterable, well-known-symbol augmentations); its
+        // resolved type is a naked intersection of each augmentation's own
+        // object shape rather than one flattened shape, so a direct
+        // `get_object_shape`/`find_property_by_str` on `ctor_type` itself
+        // finds nothing — the properties only appear one level down, on the
+        // intersection's members.
+        let mut props = Vec::new();
+        collect_object_properties_for_identity_match(self.ctx.types, ctor_type, 0, 1, &mut props);
+        props
+            .iter()
+            .find(|prop| prop.type_id == index_type)
+            .map(|prop| format!("[Symbol.{}]", self.ctx.types.resolve_atom(prop.name)))
     }
 
     /// Whether an `ESSymbolLike` element-access key resolves *only* through a
@@ -1628,5 +1675,35 @@ impl<'a> CheckerState<'a> {
         // asking generic element access, which may intentionally return the
         // string-index value type for diagnostic parity.
         !self.symbol_keyed_property_exists(object_type, index_type_for_access)
+    }
+}
+
+/// Collect properties reachable from `type_id` for a by-`TypeId` identity
+/// match, descending into intersection/union members up to `max_depth` —
+/// mirrors `tsz_solver::type_queries::collect_property_name_atoms_for_diagnostics`'s
+/// traversal shape but keeps each property's `TypeId`, not just its name.
+fn collect_object_properties_for_identity_match(
+    db: &dyn tsz_solver::construction::TypeDatabase,
+    type_id: TypeId,
+    depth: usize,
+    max_depth: usize,
+    out: &mut Vec<tsz_solver::PropertyInfo>,
+) {
+    if depth > max_depth {
+        return;
+    }
+    match tsz_solver::type_queries::classify_property_traversal(db, type_id) {
+        tsz_solver::type_queries::PropertyTraversalKind::Object(shape) => {
+            out.extend(shape.properties.iter().cloned());
+        }
+        tsz_solver::type_queries::PropertyTraversalKind::Callable(shape) => {
+            out.extend(shape.properties.iter().cloned());
+        }
+        tsz_solver::type_queries::PropertyTraversalKind::Members(members) => {
+            for member in members {
+                collect_object_properties_for_identity_match(db, member, depth + 1, max_depth, out);
+            }
+        }
+        tsz_solver::type_queries::PropertyTraversalKind::Other => {}
     }
 }

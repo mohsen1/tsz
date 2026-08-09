@@ -1264,31 +1264,26 @@ impl<'a> CheckerState<'a> {
 
             // Fallback: well-known symbols (Symbol.hasInstance, Symbol.iterator, etc.)
             // are stored as "[Symbol.xxx]" in class/interface types, not "__unique_N".
-            // When the __unique_N lookup fails, try the [Symbol.xxx] format.
-            if result_type.is_none() {
-                let sym_id =
-                    crate::query_boundaries::definition_identity::symbol_ref_to_symbol_id(sym_ref);
-                if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
-                    let sym_name = &symbol.escaped_name;
-                    // Check if the parent is the Symbol global constructor
-                    if symbol.parent.is_some()
-                        && let Some(parent_sym) = self.ctx.binder.get_symbol(symbol.parent)
-                        && parent_sym.escaped_name == "Symbol"
-                    {
-                        let well_known_name = format!("[Symbol.{sym_name}]");
-                        let result =
-                            self.resolve_property_access_with_env(resolved_type, &well_known_name);
-                        if let PropertyAccessResult::Success {
-                            type_id,
-                            write_type,
-                            ..
-                        } = result
-                            && !union_member_missing_symbol
-                        {
-                            use_index_signature_check = false;
-                            result_type = Some(effective_write_result(type_id, write_type));
-                        }
-                    }
+            // When the __unique_N lookup fails, identify the well-known name by
+            // TYPE IDENTITY against the lib's `SymbolConstructor` interface
+            // (`well_known_symbol_name_by_type_identity`) rather than decoding
+            // `sym_ref` as a binder `SymbolId` — it may have been minted from a
+            // `unique symbol` type-operator NODE INDEX instead, which collides
+            // with an unrelated symbol under a raw-id lookup (#16961).
+            if result_type.is_none()
+                && let Some(well_known_name) =
+                    self.well_known_symbol_name_by_type_identity(index_type)
+            {
+                let result = self.resolve_property_access_with_env(resolved_type, &well_known_name);
+                if let PropertyAccessResult::Success {
+                    type_id,
+                    write_type,
+                    ..
+                } = result
+                    && !union_member_missing_symbol
+                {
+                    use_index_signature_check = false;
+                    result_type = Some(effective_write_result(type_id, write_type));
                 }
             }
 
