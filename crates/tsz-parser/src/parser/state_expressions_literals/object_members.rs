@@ -1235,8 +1235,11 @@ impl ParserState {
                     } else {
                         None
                     };
-                self.next_token(); // Accept any token as property name (error recovery)
+                // Capture the name token's own end before `next_token()` advances past it —
+                // `token_end()` after the call would report the end of the *next* token
+                // instead (mirrors the computed-name branch's `]`-end capture above).
                 let end_pos = self.token_end();
+                self.next_token(); // Accept any token as property name (error recovery)
 
                 self.arena.add_identifier(
                     SyntaxKind::Identifier as u16,
