@@ -5,25 +5,28 @@
 //! pick the same "first failing member" `tsc` elaborates beneath the
 //! union-to-target line. The interner's own stored member order is a
 //! *canonicalization* order (needed so `A | B` and `B | A` intern to one
-//! `TypeId`), not the source-declaration order — these two reorders bridge
-//! that gap without touching the interned identity itself.
+//! `TypeId`), not the display/source-declaration order. The arm reconciles the
+//! two by ranking the members through the display comparator
+//! (`order_union_members_for_display`), seeded with the as-written source order
+//! from [`SubtypeChecker::union_source_elaboration_origin_override`] when the
+//! interner recorded one, and then applying [`reorder_union_members_nullish_first`]
+//! on top — `tsc`'s relation walk visits the nullish intrinsics first even
+//! though the display shows them last.
 
 use crate::def::resolver::TypeResolver;
 use crate::relations::subtype::SubtypeChecker;
 use crate::types::TypeId;
 
-/// Reorder a source union's members into tsc's relation-iteration order for
-/// error elaboration.
+/// Hoist the nullish intrinsics to the front of an elaboration member list.
 ///
 /// `eachTypeRelatedToType` walks `source.types` in ascending type-id order, and
 /// the intrinsic `undefined` and `null` types are allocated before any user
 /// type — so tsc examines them first and elaborates a failing nullish member
-/// ahead of the others. tsz stores union members with `undefined`/`null` last
-/// (that is tsc's *printer* order, keyed by `builtin_sort_key`), so this
-/// restores the relation order used to pick the first failing member:
-/// `undefined`, then `null`, then the remaining members unchanged. Non-nullish
-/// unions keep their stored order, which matches tsc's relation order except
-/// for same-rank enum members — see [`SubtypeChecker::reorder_enum_members_by_declaration`].
+/// ahead of the others. The display order the arm ranks members into
+/// (`order_union_members_for_display`) instead places `undefined`/`null` last
+/// (tsc's *printer* order), so this restores the relation order used to pick the
+/// first failing member: `undefined`, then `null`, then the remaining members in
+/// the order they were given.
 pub(super) fn reorder_union_members_nullish_first(members: &[TypeId]) -> Vec<TypeId> {
     let mut ordered = Vec::with_capacity(members.len());
     // `undefined` before `null` (their intrinsic allocation order), then the
@@ -96,58 +99,5 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             .get_union_origin(union_type_id)
             .filter(|origin| is_pure_permutation(origin.as_ref(), interned_members))
             .map(|origin| origin.as_ref().clone())
-    }
-
-    /// Reorder same-rank enum members of a union-source elaboration list into
-    /// declaration order, in place.
-    ///
-    /// `sort_union_members` (the interner's canonicalization pass) orders a
-    /// union's stored member list by allocation identity so that `E1 | E2`
-    /// and `E2 | E1` intern to one canonical `TypeId` — a `DefId`/`TypeId` is
-    /// allocated lazily, in whatever order the checker first requests an
-    /// enum's type, which does not track source position. `tsc` always
-    /// elaborates the union's first-*declared* failing member, and the
-    /// printer's own tie-break for same-rank union members keeps enum
-    /// members in declaration order (`order_union_members_by_source`'s
-    /// `compare_union_member_names` exception for enums). Without this, the
-    /// elaboration line can name the wrong enum entirely — not just the wrong
-    /// order, but a sibling enum with an unrelated declaration (#16513).
-    ///
-    /// Only the slots already holding an enum member are touched: their
-    /// values are reassigned by ascending `(file_id, span_start)`, leaving
-    /// every other member's position — and the nullish-first order already
-    /// applied — untouched. A union with 0 or 1 enum members is a no-op.
-    pub(in crate::relations::subtype) fn reorder_enum_members_by_declaration(
-        &self,
-        members: &mut [TypeId],
-    ) {
-        let Some(def_store) = self
-            .query_db
-            .and_then(|db| db.definition_store_for_inference())
-        else {
-            return;
-        };
-        let mut enum_slots: Vec<usize> = Vec::new();
-        let mut keyed: Vec<((u32, u32), TypeId)> = Vec::new();
-        for (idx, &member) in members.iter().enumerate() {
-            let Some(def_id) = crate::type_queries::get_enum_def_id(self.interner, member) else {
-                continue;
-            };
-            let Some(def) = def_store.get(def_id) else {
-                continue;
-            };
-            let (Some(file_id), Some((span_start, _))) = (def.file_id, def.span) else {
-                continue;
-            };
-            enum_slots.push(idx);
-            keyed.push(((file_id, span_start), member));
-        }
-        if keyed.len() < 2 {
-            return;
-        }
-        keyed.sort_by_key(|&(pos, _)| pos);
-        for (&idx, &(_, member)) in enum_slots.iter().zip(keyed.iter()) {
-            members[idx] = member;
-        }
     }
 }

@@ -13,11 +13,13 @@
 //! position. Elaboration selection that walks the interned list directly can
 //! therefore name the wrong enum entirely, not just the wrong order.
 //!
-//! Structural rule: `SubtypeChecker::reorder_enum_members_by_declaration`
-//! (`crates/tsz-solver/src/relations/subtype/explain.rs`) reorders only the
-//! enum-typed slots of a union-source elaboration list into declaration order
-//! before the first-failing-member scan, leaving every other member's slot —
-//! and the existing nullish-first order — untouched.
+//! Structural rule: the union-source elaboration arm
+//! (`crates/tsz-solver/src/relations/subtype/explain.rs`) ranks its member list
+//! through the shared display comparator (`order_union_members_for_display`)
+//! before the first-failing-member scan. Same-rank enum members break the tie on
+//! their declaration span, so the scan sees them in declaration order — the same
+//! order the union header renders — leaving every other member's slot and the
+//! nullish-first hoist untouched.
 //!
 //! Regression guard for #16513.
 
