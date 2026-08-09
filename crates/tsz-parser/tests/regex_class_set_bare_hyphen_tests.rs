@@ -166,15 +166,16 @@ fn a_mixed_operator_hyphen_is_not_also_ts1508() {
 }
 
 /// `--` (subtraction with no operand) is TS1520's concern; a doubled hyphen
-/// is an operator, not this check's fresh-atom `-`. (The oracle reports
-/// TS1520 twice for `/[--]/v` — once for each side of the bare operator —
-/// where tsz reports it once; a pre-existing gap in that unrelated operand
-/// check, orthogonal to this fix. Both assertions only need to show 1508 is
-/// absent.)
+/// is an operator, not this check's fresh-atom `-`. `/[a--]/v` has a left
+/// operand (`a`) and only its right operand is missing, so it draws a single
+/// TS1520; `/[--]/v` opens on the operator, so *both* operands are missing
+/// and the oracle reports TS1520 twice — once anchored at the operator's
+/// first character (the missing left operand) and once at the `]` (the
+/// missing right operand). Both assertions also show 1508 is absent.
 #[test]
 fn a_doubled_hyphen_is_not_also_ts1508() {
     assert_eq!(regex_codes("const a = /[a--]/v;"), vec![1520]);
-    assert_eq!(regex_codes("const a = /[--]/v;"), vec![1520]);
+    assert_eq!(regex_codes("const a = /[--]/v;"), vec![1520, 1520]);
 }
 
 /// TS1508 is a `v`-only diagnostic: under `u` and under Annex B the same
