@@ -6,6 +6,7 @@
 
 mod extends_cycle_and_jsx_factory_values;
 mod extends_empty_specifier;
+mod extends_missing_target;
 mod files_list_empty;
 mod module_resolution;
 mod options_parsing;
