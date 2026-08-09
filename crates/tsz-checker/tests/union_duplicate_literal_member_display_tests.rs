@@ -37,6 +37,104 @@ fn ts2322_message(diags: &[Diagnostic]) -> Option<String> {
         .map(|d| d.message_text.clone())
 }
 
+/// The issue's exact repro (#16509): a two-member union whose members are
+/// *both* the identical inline `{ m: number }` literal. Content-interning
+/// collapses the whole union to that one shape, so before the multiplicity-
+/// preserving construction the display dropped to a single `{ m: number; }`.
+/// `tsc` prints both.
+#[test]
+fn fully_collapsing_two_member_object_literal_union_prints_both() {
+    let diags = diagnostics(
+        r#"
+declare const a: { m: number } | { m: number };
+const x: boolean = a;
+"#,
+    );
+    let msg = ts2322_message(&diags).unwrap_or_default();
+    assert!(
+        msg.contains("{ m: number; } | { m: number; }"),
+        "expected both written constituents to print, got: {msg:?}"
+    );
+}
+
+/// Renamed-binder control for the fully-collapsing two-member case: distinct
+/// property spelling, same per-occurrence provenance behavior.
+#[test]
+fn fully_collapsing_two_member_object_literal_union_prints_both_renamed() {
+    let diags = diagnostics(
+        r#"
+declare const source: { count: string } | { count: string };
+const target: boolean = source;
+"#,
+    );
+    let msg = ts2322_message(&diags).unwrap_or_default();
+    assert!(
+        msg.contains("{ count: string; } | { count: string; }"),
+        "expected both written constituents to print, got: {msg:?}"
+    );
+}
+
+/// Fully-collapsing three-identical case: multiplicity is exact even when
+/// nothing else distinguishes the union, so it renders three constituents.
+#[test]
+fn fully_collapsing_three_member_object_literal_union_prints_all_three() {
+    let diags = diagnostics(
+        r#"
+declare const a: { m: number } | { m: number } | { m: number };
+const x: boolean = a;
+"#,
+    );
+    let msg = ts2322_message(&diags).unwrap_or_default();
+    assert!(
+        msg.contains("{ m: number; } | { m: number; } | { m: number; }"),
+        "expected exactly three constituents to print, got: {msg:?}"
+    );
+}
+
+/// Negative control for the fully-collapsing path: a two-member union of the
+/// *same named interface* still collapses to one constituent — the multiplicity
+/// preservation is anonymous-object-specific, matching `tsc`'s `Foo | Foo` → `Foo`.
+#[test]
+fn fully_collapsing_two_member_named_interface_union_collapses() {
+    let diags = diagnostics(
+        r#"
+interface Foo { m: number }
+declare const a: Foo | Foo;
+const x: boolean = a;
+"#,
+    );
+    let msg = ts2322_message(&diags).unwrap_or_default();
+    assert!(
+        msg.contains("'Foo' is not assignable") && !msg.contains("Foo | Foo"),
+        "expected the duplicate named interface to collapse to one, got: {msg:?}"
+    );
+}
+
+/// Negative control: a two-member union of the same type parameter (`T | T`)
+/// collapses to `T`. The multiplicity preservation keys on the reduced type
+/// being a *bare anonymous object*, not on an object reachable only through a
+/// type parameter's constraint, so a constrained `T` never renders as `T | T`.
+#[test]
+fn fully_collapsing_type_parameter_union_collapses() {
+    let diags = diagnostics(
+        r#"
+declare function f<T extends { m: number }>(x: T | T): void;
+declare const v: boolean;
+f(v);
+"#,
+    );
+    // The TS2345 argument message names the parameter type `T`, never `T | T`.
+    let msg = diags
+        .iter()
+        .find(|d| d.code == 2345)
+        .map(|d| d.message_text.clone())
+        .unwrap_or_default();
+    assert!(
+        !msg.contains("T | T"),
+        "a `T | T` type-parameter union must collapse to `T`, got: {msg:?}"
+    );
+}
+
 /// Three written members, two of them identical inline `{ m: number }`
 /// literals: `tsc` prints all three. The duplicate must survive to the display.
 #[test]

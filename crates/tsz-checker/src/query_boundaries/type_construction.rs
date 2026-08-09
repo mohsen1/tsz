@@ -171,9 +171,52 @@ pub(crate) fn type_node_annotation_union_with_origin(
     db: &dyn TypeDatabase,
     members: Vec<TypeId>,
 ) -> TypeId {
-    let result = tsz_solver::utils::union_or_single_literal_reduce(db, members.clone());
+    let result = union_annotation_preserving_anonymous_multiplicity(db, &members);
     db.store_union_origin(result, members);
     result
+}
+
+/// Reduce a written type-annotation union while preserving the *display*
+/// multiplicity of duplicate anonymous object members that content-interning
+/// would otherwise collapse (#16509).
+///
+/// `tsc` mints a fresh anonymous type per written `{ ... }` occurrence, so
+/// `{ m: number } | { m: number }` is a genuine two-member union whose
+/// diagnostic prints both constituents. tsz content-interns the identical
+/// literals onto one `TypeId`, so the ordinary literal reduction collapses the
+/// whole union to that single member and the printer has no union left to
+/// render, dropping the duplicate `tsc` keeps.
+///
+/// When the reduction fully collapses to a lone *anonymous* object that the
+/// written members listed two or more times, this re-interns those members
+/// verbatim through [`TypeDatabase::union_from_sorted_vec`], which interns the
+/// list as given rather than re-deduplicating it, so the duplicate occurrences
+/// survive as a real `Union` carrier; the printer's per-occurrence
+/// literal-member exemption then renders each one. Named types (`Foo | Foo`,
+/// whose members reduce to a `Lazy`/symbol-bearing type, not a bare anonymous
+/// object) and primitive literals (`1 | 1`) are unaffected and collapse exactly
+/// as `tsc` collapses them. A union of structurally identical members is
+/// semantically equivalent to the member, so no assignability or narrowing
+/// outcome changes.
+fn union_annotation_preserving_anonymous_multiplicity(
+    db: &dyn TypeDatabase,
+    members: &[TypeId],
+) -> TypeId {
+    let reduced = db.union_literal_reduce(members.to_vec());
+    // Anonymous object = a direct object shape carrying no declaration symbol.
+    // `get_object_shape_id` resolves only object/substitution forms, never a
+    // type parameter's constraint, so a constrained `T | T` (whose reduced form
+    // is the bare type parameter) is not treated as an anonymous object and
+    // still collapses.
+    let reduced_is_anonymous_object = tsz_solver::type_queries::get_object_shape_id(db, reduced)
+        .is_some_and(|shape_id| db.object_shape(shape_id).symbol.is_none());
+    if reduced_is_anonymous_object {
+        let occurrences = members.iter().filter(|&&member| member == reduced).count();
+        if occurrences >= 2 {
+            return db.union_from_sorted_vec(vec![reduced; occurrences]);
+        }
+    }
+    reduced
 }
 
 pub(crate) fn type_node_intersection(db: &dyn TypeDatabase, members: Vec<TypeId>) -> TypeId {
