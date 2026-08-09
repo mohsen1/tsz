@@ -1657,5 +1657,9 @@ mod meta_property_grammar_tests;
 mod jsx_comma_operator_grammar_tests;
 
 #[cfg(test)]
+#[path = "check_utils/jsdoc_star_type_grammar_tests.rs"]
+mod jsdoc_star_type_grammar_tests;
+
+#[cfg(test)]
 #[path = "check_utils/private_identifier_parse_error_suppression_tests.rs"]
 mod private_identifier_parse_error_suppression_tests;

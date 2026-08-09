@@ -170,6 +170,34 @@
 /// TS2304 (TS1313 does not itself suppress cascading semantic diagnostics,
 /// unlike a genuine structural failure). Fix removed 1313 from the two
 /// structural-error lists and added it here instead.
+///
+/// #16279 audit round 11: re-derived the grep-and-diff recipe (every
+/// `diagnostic_codes::*` name emitted from `crates/tsz-parser/src`, resolved
+/// to numeric codes, diffed against this list AND
+/// `is_non_suppressing_parse_error`'s extra codes plus the 1499-1538 regex
+/// band — round 6's diff undercounted coverage by treating those as
+/// unlisted) surfaced 80 remaining candidates. Message-text triage found the
+/// overwhelming majority are genuine "X expected"/"unterminated X" structural
+/// syntax errors that must stay unlisted. One real addition: **TS8020**
+/// (`JSDoc types can only be used inside documentation comments.`, a bare `*`
+/// in type position outside a doc comment — `state_types.rs`,
+/// `state_types_jsx.rs`). `check_utils.rs`'s own `is_js_only_syntactic_diagnostic`
+/// doc comment already states "JSDoc-related `TS8xxx` codes (TS8020-TS8039 save
+/// for TS8038) come from the checker" in tsc, corroborating the classification
+/// independently of the oracle run. Oracle-confirmed against
+/// `typescript@7.0.2`: Direction A, `let x: *;` alone reports TS8020;
+/// Direction B, the same line plus an unrelated real syntax error
+/// (`let y: = 1;`) drops TS8020 entirely, leaving only TS1110; self-suppression
+/// witness, `class C { get x(a: number) { return a; } }` next to `let y: *;`
+/// reports BOTH TS1054 and TS8020 on tsc, confirming the already-listed
+/// TS1054 would have been silently deleted by the unlisted TS8020. No
+/// checker-side emission site in tsz (parser-only), so no double-emission
+/// risk. Sole rejected candidate this round: **TS6189** (`Multiple
+/// consecutive numeric separators are not permitted.`) survives Direction B
+/// (kept alongside an unrelated real syntax error on the real compiler), so —
+/// like its already-rejected sibling TS6188 — it is a genuine parser
+/// diagnostic in tsc too and must NOT be added; tested independently rather
+/// than assumed from TS6188's membership, per round 4's own caution.
 pub(super) const fn is_parser_grammar_code(code: u32) -> bool {
     matches!(
         code,
@@ -365,6 +393,12 @@ pub(super) const fn is_parser_grammar_code(code: u32) -> bool {
                // error (`let x: = 1;`) elsewhere in the file drops TS1326
                // entirely on the real compiler. Sole emission site, no
                // checker-side counterpart, so no double-emission risk.
+        | 8020 // JSDoc types can only be used inside documentation comments.
+               // tsc's checker reports this `TS8xxx` code via
+               // `grammarErrorOnNode` for a bare `*` (JSDoc "any type") in
+               // ordinary type position; tsz's parser emits it directly
+               // (`state_types.rs`, `state_types_jsx.rs`), sole emission
+               // site, no checker-side counterpart. #16279 audit round 11.
         | 2499 // An interface can only extend an identifier/qualified-name
                // with optional type arguments. tsc's checker rejects a
                // parenthesized or bracketed `extends` operand
