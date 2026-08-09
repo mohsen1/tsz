@@ -16,7 +16,7 @@
 //! `TypeInterner::intern` already collapses such an intersection to the
 //! single canonical `TypeId::NEVER` at construction time, so tsz recovers the
 //! pre-reduction member list from the receiver's own declared-type syntax
-//! (`declared_intersection_member_types_for_expression`,
+//! (`declared_never_intersection_for_expression`,
 //! `error_reporter/core/declared_intersection_display.rs`) rather than from
 //! the reported `never` itself, and re-runs a conflict search
 //! (`find_disjoint_literal_property_across_intersection`,
@@ -24,12 +24,14 @@
 //! resolved members. Owned by `error_reporter/properties.rs`'s
 //! `intersection_reduced_to_never_related_info`.
 //!
-//! Deliberately narrow scope, matching the helper's own doc comments: only
-//! the single-required-literal-per-member discriminant shape, only a
-//! directly-written intersection annotation (no alias/generic-application/
-//! heritage indirection, no private-brand conflicts — TS18032 is a separate,
-//! unimplemented follow-up). Every case outside that scope keeps today's
-//! behavior (`TS2339` with no elaboration), never a wrong one.
+//! The recovery follows type-alias references (`type C = A & B; declare const
+//! c: C`, and multi-hop `type D = C`), naming the alias whose body is directly
+//! the intersection exactly as `tsc`'s `typeToString` does. Remaining scope
+//! limits (each an under-cover that keeps `TS2339` with no elaboration, never
+//! a wrong one): the single-required-literal-per-member discriminant shape
+//! only; a generic *alias* whose conflicting property is the unsubstituted
+//! type parameter (the reduction to `never` itself does not yet fire there);
+//! and a cross-arena alias whose declaration lives in another file.
 
 use crate::diagnostics::Diagnostic;
 use crate::test_utils::check_source_strict;
@@ -310,12 +312,12 @@ c.p;
 }
 
 #[test]
-fn indirect_alias_intersection_has_no_ts18031() {
-    // The conflict is real (tsc still reports the elaboration here through
-    // its full alias-resolution machinery), but the narrow syntactic walk
-    // this diagnostic uses declines once the receiver's own declared type is
-    // an alias rather than a directly-written intersection — a documented
-    // scope limit, not a false report.
+fn alias_to_intersection_carries_ts18031_naming_the_alias() {
+    // The receiver's declared type is a *type alias* to the conflicting
+    // intersection. The syntactic walk now follows the alias reference to the
+    // intersection behind it, and — matching `tsc`'s `typeToString` of the
+    // reduced type — names the alias (`Combined`) in the `{0}` slot rather
+    // than expanding its members.
     let diags = check_source_strict(
         r#"
 interface Left { tag: 1 }
@@ -326,5 +328,104 @@ value.tag;
 "#,
     );
     let diag = only(&diags, TS2339);
-    assert!(related(&diag, TS18031).is_none(), "got {diags:?}");
+    assert_eq!(
+        related(&diag, TS18031).as_deref(),
+        Some(
+            "The intersection 'Combined' was reduced to 'never' because property 'tag' has conflicting types in some constituents."
+        ),
+        "got {diags:?}"
+    );
+}
+
+#[test]
+fn multi_hop_alias_names_the_alias_that_wraps_the_intersection() {
+    // `Outer -> Inner -> A & B`: `tsc` names the *innermost* alias whose body
+    // is directly the intersection (`Inner`), not the outer alias that merely
+    // forwards to it, nor the members.
+    let diags = check_source_strict(
+        r#"
+interface A { tag: 1 }
+interface B { tag: 2 }
+type Inner = A & B;
+type Outer = Inner;
+declare const value: Outer;
+value.tag;
+"#,
+    );
+    let diag = only(&diags, TS2339);
+    assert_eq!(
+        related(&diag, TS18031).as_deref(),
+        Some(
+            "The intersection 'Inner' was reduced to 'never' because property 'tag' has conflicting types in some constituents."
+        ),
+        "got {diags:?}"
+    );
+}
+
+#[test]
+fn alias_of_generic_application_members_materializes_then_conflicts() {
+    // The alias body intersects two *generic applications* (`WithKind<"a">`,
+    // `WithKind<"b">`). Each must materialize before its literal `kind`
+    // property is comparable; once it does, the conflict is found and the
+    // alias `Combined` is named. (Witness from issue #15396's `Combined` case.)
+    let diags = check_source_strict(
+        r#"
+type WithKind<K> = { kind: K };
+type Combined = WithKind<"a"> & WithKind<"b">;
+declare const value: Combined;
+value.kind;
+"#,
+    );
+    let diag = only(&diags, TS2339);
+    assert_eq!(
+        related(&diag, TS18031).as_deref(),
+        Some(
+            "The intersection 'Combined' was reduced to 'never' because property 'kind' has conflicting types in some constituents."
+        ),
+        "got {diags:?}"
+    );
+}
+
+#[test]
+fn parenthesized_alias_body_still_carries_ts18031() {
+    let diags = check_source_strict(
+        r#"
+interface A { tag: 1 }
+interface B { tag: 2 }
+type Combined = (A & B);
+declare const value: Combined;
+value.tag;
+"#,
+    );
+    let diag = only(&diags, TS2339);
+    assert_eq!(
+        related(&diag, TS18031).as_deref(),
+        Some(
+            "The intersection 'Combined' was reduced to 'never' because property 'tag' has conflicting types in some constituents."
+        ),
+        "got {diags:?}"
+    );
+}
+
+#[test]
+fn alias_intersection_elaboration_is_binder_name_agnostic() {
+    // Renaming every binder must not change whether the elaboration fires —
+    // only the rendered alias/property names, which track the source verbatim.
+    let diags = check_source_strict(
+        r#"
+interface Zebra { kind: 'x' }
+interface Yak { kind: 'y' }
+type Quokka = Zebra & Yak;
+declare const w: Quokka;
+w.kind;
+"#,
+    );
+    let diag = only(&diags, TS2339);
+    assert_eq!(
+        related(&diag, TS18031).as_deref(),
+        Some(
+            "The intersection 'Quokka' was reduced to 'never' because property 'kind' has conflicting types in some constituents."
+        ),
+        "got {diags:?}"
+    );
 }

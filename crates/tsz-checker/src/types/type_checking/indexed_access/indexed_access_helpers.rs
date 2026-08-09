@@ -756,7 +756,13 @@ impl<'a> CheckerState<'a> {
         Some(values)
     }
 
-    fn type_reference_alias_body(
+    /// The single-declaration type-alias body node a `TypeReference`'s
+    /// `type_name` resolves to, cycle-guarded by `visited_aliases`.
+    ///
+    /// Shared with the `error_reporter` never-intersection elaboration, which
+    /// walks the same alias chain to recover the written intersection that
+    /// reduced a property-access receiver to `never`.
+    pub(crate) fn type_reference_alias_body(
         &self,
         type_name: NodeIndex,
         visited_aliases: &mut Vec<tsz_binder::SymbolId>,
