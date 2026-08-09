@@ -256,13 +256,11 @@ impl<'a> CheckerState<'a> {
 
         if !has_call_signatures {
             // No call signatures at all (e.g., a class used as decorator — has construct
-            // signatures but no call signatures). Emit TS1238.
+            // signatures but no call signatures, or a bare primitive). tsc attaches the
+            // "This expression is not callable." / "Type 'X' has no call signatures."
+            // chain beneath TS1238 (oracle-verified, typescript@7.0.2).
             let anchor = self.decorator_failure_anchor(decorator_node, resolved, 1);
-            self.error_at_node(
-                anchor,
-                diagnostic_messages::UNABLE_TO_RESOLVE_SIGNATURE_OF_CLASS_DECORATOR_WHEN_CALLED_AS_AN_EXPRESSION,
-                diagnostic_codes::UNABLE_TO_RESOLVE_SIGNATURE_OF_CLASS_DECORATOR_WHEN_CALLED_AS_AN_EXPRESSION,
-            );
+            self.emit_class_decorator_not_callable(anchor, resolved);
             return;
         }
 
@@ -349,12 +347,44 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        // Mirror tsc's `isUntypedFunctionCall`: a decorator typed as the
+        // global `Function` interface has no explicit call signatures but is
+        // still callable (see `check_class_decorator_call_signature`, whose
+        // legacy-mode counterpart of this same check applies the identical
+        // fallback).
+        let Some(resolved) = self.prepare_decorator_callee(resolved) else {
+            return;
+        };
+
         // A decorator whose every call signature takes zero parameters is
         // the "forgot to call the factory" shape (`@d` instead of `@d()`);
         // tsc reports only the TS1329 hint there, not TS1238 — same rule as
         // the legacy (`experimentalDecorators`) class-decorator path above.
+        // A type with no call signature at all (the not-callable case just
+        // below) has no signatures to inspect here, so this is a no-op for
+        // it and falls through correctly.
         if self.decorator_has_zero_arg_factory_shape(decorator_expression, resolved, decorator_node)
         {
+            return;
+        }
+
+        // No call signature at all (bare primitive, a class used as a
+        // decorator, ...): tsc's TS1238 "not callable" chain fires
+        // identically here as it does under `--experimentalDecorators`
+        // (oracle-verified, typescript@7.0.2). Previously this whole
+        // function only inspected `function_shape`, so any decorator type
+        // without a single-signature function shape (a primitive, a class,
+        // an overloaded callable) silently passed arity validation with no
+        // diagnostic at all.
+        let has_call_signatures =
+            crate::query_boundaries::class_type::has_function_shape(self.ctx.types, resolved)
+                || crate::query_boundaries::common::call_signatures_for_type(
+                    self.ctx.types,
+                    resolved,
+                )
+                .is_some_and(|sigs| !sigs.is_empty());
+        if !has_call_signatures {
+            self.emit_class_decorator_not_callable(decorator_expression, resolved);
             return;
         }
 
