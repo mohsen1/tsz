@@ -145,7 +145,8 @@ impl CheckerContext<'_> {
     /// wrongly reports TS2339/TS2538. Non-symbol indices fall through to the
     /// ordinary literal-key spelling.
     pub(crate) fn resolver_aware_index_key_name(&self, type_id: TypeId) -> Option<String> {
-        if let Some(sym) = crate::query_boundaries::common::unique_symbol_ref(self.types, type_id)
+        if let Some(sym) =
+            crate::query_boundaries::type_construction::unique_symbol_ref(self.types, type_id)
             && let Some(name) = self.well_known_symbol_name_for_ref(sym)
         {
             return Some(name);

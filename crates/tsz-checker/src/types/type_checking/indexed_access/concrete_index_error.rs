@@ -265,9 +265,10 @@ impl CheckerState<'_> {
             // canonical `[Symbol.xxx]` key the access resolves it — the
             // value-position `i[Symbol.iterator]` does — so the type-position
             // access must not report TS2538 either. `tsc` reports nothing.
-            if let Some(sym) =
-                crate::query_boundaries::common::unique_symbol_ref(self.ctx.types, index_type)
-                && let Some(name) = self.ctx.well_known_symbol_name_for_ref(sym)
+            if let Some(sym) = crate::query_boundaries::type_construction::unique_symbol_ref(
+                self.ctx.types,
+                index_type,
+            ) && let Some(name) = self.ctx.well_known_symbol_name_for_ref(sym)
                 && matches!(
                     self.resolve_property_access_with_env(concrete_object_type, &name),
                     tsz_solver::operations::property::PropertyAccessResult::Success { .. }

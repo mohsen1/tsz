@@ -155,6 +155,18 @@ pub(crate) fn unique_symbol_ref_from_source_span(
     tsz_solver::unique_symbol_identity::unique_symbol_ref_from_source_span(file_name, pos, end)
 }
 
+/// The `SymbolRef` a `unique symbol` type resolves to, or `None` for a type
+/// that is not a `unique symbol`. Narrow query-boundary alias over
+/// `query_boundaries::common::unique_symbol_ref` for the well-known-symbol
+/// index-key resolution path (#8225): keeps that path's new call sites out of
+/// the `common` quarantine-reference count instead of growing it.
+pub(crate) fn unique_symbol_ref(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<tsz_solver::SymbolRef> {
+    super::common::unique_symbol_ref(db, type_id)
+}
+
 pub(crate) fn type_node_annotation_union_with_origin(
     db: &dyn TypeDatabase,
     members: Vec<TypeId>,
