@@ -21,14 +21,16 @@
 //!   hard modifier gets its own TS1131; `in` does not, and does not start its
 //!   own abandoned-tail re-parse either — a further narrower shape.
 //!
-//! The `set(param)` cases here assert tsz's CURRENT output, which omits one
-//! trailing TS1005 (`','` expected) that `tsc` reports — a pre-existing,
-//! general statement-parser gap in retrying a fresh statement after a
-//! missing-LHS `in`/`instanceof` recovery when the retried statement is a
-//! call expression with a malformed parameter list (tracked by #17062, not
-//! this module). This cascade's own wiring is complete and decoupled: once
-//! #17062 lands, these assertions gain the missing diagnostic with no change
-//! needed here.
+//! The `set(param)` cases assert the oracle in full. They briefly pinned tsz's
+//! then-current output instead, which omitted one trailing TS1005 (`','`
+//! expected) that `tsc` reports — a general statement-parser gap in retrying a
+//! fresh statement after a missing-LHS `in`/`instanceof` recovery when the
+//! retried statement is a call expression with a malformed parameter list.
+//! That was #17062, closed by #17064 (which extended #17052's
+//! `force_next_missing_semicolon_error_once` one-shot to
+//! `error_comma_expected`). The prediction held exactly: this cascade's wiring
+//! was decoupled, and the assertions gained the missing diagnostic with no
+//! change to the cascade itself.
 
 use crate::parser::test_fixture::parse_source;
 use tsz_common::diagnostics::diagnostic_codes;
@@ -87,17 +89,23 @@ fn in_before_get_accessor_cascades() {
 }
 
 #[test]
-fn in_before_set_accessor_cascades_current_tsz_output() {
-    // tsc (oracle) reports 4 diagnostics here — TS1131, then TWO TS1005s
-    // (`';'` at `x`, `','` at the `:` inside the setter's param list), then
-    // TS1128. tsz currently produces only the first, third, and fourth: the
-    // middle `','`-expected diagnostic is dropped by the pre-existing #17062
-    // gap (see the module doc comment), not by this cascade's own wiring.
+fn in_before_set_accessor_cascades() {
+    // Oracle (typescript@7.0.2), all four:
+    //   (1,15) TS1131 in | (1,22) TS1005 ';' | (1,25) TS1005 ',' | (1,36) TS1128 }
+    //
+    // This previously pinned tsz's then-current 3-diagnostic output, deliberately
+    // and with the oracle's real answer recorded in the comment: the middle
+    // `','`-expected diagnostic was dropped by the #17062 gap, which was still
+    // open when this suite was written. #17064 closed that gap (extending
+    // #17052's `force_next_missing_semicolon_error_once` one-shot to
+    // `error_comma_expected`), so tsz now emits all four and this asserts the
+    // oracle directly.
     assert_eq!(
         fingerprints("interface I { in set x(v: number); }"),
         vec![
             (TS1131, 1, 15, "Property or signature expected.".to_string()),
             (TS1005, 1, 22, "';' expected.".to_string()),
+            (TS1005, 1, 25, "',' expected.".to_string()),
             (
                 TS1128,
                 1,
