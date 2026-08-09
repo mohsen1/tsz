@@ -252,12 +252,23 @@ C.prototype = 12
     );
 }
 
-/// `/** @type {number} */ C.prototype.x;` declares the prototype property
-/// type and should check the constructor's `this.x = ...` initializer against
-/// that declared type. This mirrors
-/// `conformance/jsdoc/jsdocPrototypePropertyAccessWithType.ts`.
+/// `tsc` 7.0.2 no longer synthesizes a `this` type for a plain JS "constructor"
+/// function from its `this.prop = value` assignments (the `isJSConstructor`
+/// inference was dropped in TS7), so `this` in the body is untyped and
+/// `this.x = false` is never cross-checked against the `C.prototype.x` JSDoc
+/// declaration. For
+/// `function C() { this.x = false; } /** @type {number} */ C.prototype.x; new C().x;`
+/// the checked-in oracle
+/// (`conformance/jsdoc/jsdocPrototypePropertyAccessWithType.ts` in
+/// `scripts/conformance/tsc-cache-full.json`) reports `[TS2683, TS7009]` and
+/// **no TS2322** — the corpus `.errors.txt` (TS2322) is a stale pre-TS7
+/// baseline. #17040 removed the stale cross-check on the primary path and
+/// rewrote its sibling test
+/// (`jsdoc_typed_prototype_does_not_cross_check_constructor_this_assignment`);
+/// this mirror in the display suite was missed (#17048). tsz's in-process
+/// check surfaces the TS2683 companion (`this` implicitly `any`) here.
 #[test]
-fn ts2322_for_jsdoc_prototype_property_access_decl_checks_constructor_assignment() {
+fn jsdoc_prototype_property_access_decl_does_not_cross_check_constructor_assignment() {
     let diags = diagnostics_for_js(
         r#"
 function C() { this.x = false; }
@@ -266,15 +277,15 @@ C.prototype.x;
 new C().x;
 "#,
     );
-    let ts2322: Vec<_> = diags.iter().filter(|(c, _)| *c == 2322).collect();
-    assert_eq!(
-        ts2322.len(),
-        1,
-        "expected exactly one TS2322 for constructor assignment checked against JSDoc prototype property type; got: {diags:?}"
-    );
-    let msg = &ts2322[0].1;
     assert!(
-        msg.contains("'boolean'") && msg.contains("'number'"),
-        "TS2322 must compare the constructor RHS boolean with the prototype property's JSDoc number type; got: {msg:?}"
+        !diags.iter().any(|(c, _)| *c == 2322),
+        "tsc 7.0.2 does not cross-check a constructor's `this.x` assignment against the \
+         `C.prototype.x` JSDoc type when `this` is untyped (oracle: [2683, 7009], no 2322); \
+         got: {diags:?}"
+    );
+    assert!(
+        diags.iter().any(|(c, _)| *c == 2683),
+        "expected the companion TS2683 ('this' implicitly has type 'any') that evidences the \
+         untyped `this`; got: {diags:?}"
     );
 }
