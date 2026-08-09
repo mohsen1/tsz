@@ -71,6 +71,22 @@ impl ModuleResolver {
             return None;
         }
         if let Some((base, extension)) = split_path_extension(path) {
+            // A `.json` specifier's arbitrary-extension declaration file
+            // (`data.json` -> `data.d.json.ts`) takes priority over the
+            // literal JSON file when `allowArbitraryExtensions` is set, and
+            // it does so regardless of `resolveJsonModule` — verified
+            // against pinned `typescript@7.0.2`: a companion `data.d.json.ts`
+            // is preferred whether `resolveJsonModule` is `true` or `false`.
+            // Unlike the unknown-extension probe above, `.json` is a KNOWN
+            // extension (it reaches this branch, not that one), so it needs
+            // its own priority check before the literal-file fallback below.
+            if self.allow_arbitrary_extensions
+                && extension == "json"
+                && let Some(resolved) = try_arbitrary_extension_declaration(path, extension)
+            {
+                return Some(resolved);
+            }
+
             // Try extension substitution (.js -> .ts/.tsx/.d.ts) for all resolution modes.
             // TypeScript resolves `.js` imports to `.ts` sources in all modes.
             if let Some(rewritten) = node16_extension_substitution(path, extension) {
