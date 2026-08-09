@@ -16,6 +16,17 @@
 //! Oracle-confirmed against `typescript@7.0.2` (`--module preserve`, which
 //! keeps both `export =` and ESM import syntax legal so the matrix isolates
 //! TS1291 from the unrelated CJS-import-under-VMS diagnostics TS1286/TS1295).
+//!
+//! Also covers TS1289, TS1291's sibling in the same `checkExportAssignment`
+//! branch pair: where TS1291 fires when the alias resolves to NO value at
+//! all anywhere in its chain, TS1289 fires when the alias resolves to a
+//! REAL value overall but the chain crosses an explicit `import type`/
+//! `export type` boundary in a file other than this one (oracle-verified:
+//! `import { Foo } from "./reexport"; export = Foo;` where
+//! `reexport.ts` does `export type { Foo } from "./impl";` and `impl.ts`
+//! does `export class Foo {}`). tsc's own gate: `getTypeOnlyAliasDeclarationEx`
+//! finds a type-only alias declaration in the chain, and it is not in the
+//! current file. Same double-report pattern applies with TS1283.
 
 use crate::context::CheckerOptions;
 use crate::diagnostics::Diagnostic;
@@ -23,8 +34,11 @@ use crate::test_utils::check_multi_file;
 use tsz_common::common::ModuleKind;
 
 const EXPORT_EQUALS_MUST_REFERENCE_A_VALUE: u32 = 1282;
+const EXPORT_EQUALS_MUST_REFERENCE_A_REAL_VALUE: u32 = 1283;
 const IMPORT_MUST_BE_TYPE_ONLY: u32 = 1484;
+const IMPORT_RESOLVES_TO_TYPE_ONLY_DECLARATION: u32 = 1485;
 const RESOLVES_TO_A_TYPE: u32 = 1291;
+const RESOLVES_TO_A_TYPE_ONLY_DECLARATION: u32 = 1289;
 
 fn check(
     files: &[(&str, &str)],
@@ -229,5 +243,126 @@ fn import_alias_to_interface_export_equals_clean_without_either_flag() {
     assert!(
         diagnostics.is_empty(),
         "expected no diagnostics without isolatedModules/verbatimModuleSyntax, got: {diagnostics:?}"
+    );
+}
+
+/// An import alias whose chain crosses an explicit `export type { ... }`
+/// re-export boundary, but whose ultimate declaration is a real value
+/// (a class), reports TS1283 + TS1289 under `verbatimModuleSyntax` (plus
+/// the pre-existing TS1485 on the local import statement — the chain
+/// variant of TS1484, since the type-only marking here comes from the
+/// `reexport.ts` hop rather than `Foo` itself being declared type-only).
+#[test]
+fn import_alias_through_export_type_reexport_to_class_reports_1283_and_1289_verbatim() {
+    let diagnostics = check(
+        &[
+            ("/impl.ts", "export class Foo {}\n"),
+            ("/reexport.ts", "export type { Foo } from \"./impl\";\n"),
+            (
+                "/main.ts",
+                "import { Foo } from \"./reexport\";\nexport = Foo;\n",
+            ),
+        ],
+        "/main.ts",
+        true,
+        false,
+    );
+
+    assert_eq!(
+        codes(&diagnostics),
+        vec![
+            EXPORT_EQUALS_MUST_REFERENCE_A_REAL_VALUE,
+            RESOLVES_TO_A_TYPE_ONLY_DECLARATION,
+            IMPORT_RESOLVES_TO_TYPE_ONLY_DECLARATION,
+        ],
+        "expected TS1283 and TS1289 (plus the pre-existing TS1485 on the import \
+         statement itself) for an import alias crossing an `export type` \
+         re-export boundary under verbatimModuleSyntax, got: {diagnostics:?}"
+    );
+}
+
+/// Same shape, but only `isolatedModules` is enabled: tsc reports only
+/// TS1289 (TS1283 is verbatimModuleSyntax-only, matching TS1291's own
+/// isolatedModules-only sibling test above).
+#[test]
+fn import_alias_through_export_type_reexport_to_class_reports_only_1289_under_isolated_modules() {
+    let diagnostics = check(
+        &[
+            ("/impl.ts", "export class Foo {}\n"),
+            ("/reexport.ts", "export type { Foo } from \"./impl\";\n"),
+            (
+                "/main.ts",
+                "import { Foo } from \"./reexport\";\nexport = Foo;\n",
+            ),
+        ],
+        "/main.ts",
+        false,
+        true,
+    );
+
+    assert_eq!(
+        codes(&diagnostics),
+        vec![RESOLVES_TO_A_TYPE_ONLY_DECLARATION],
+        "expected only TS1289 under isolatedModules (no verbatimModuleSyntax), got: {diagnostics:?}"
+    );
+}
+
+/// Renamed on import (`Foo as Baz`) — the chain lookup must key off the
+/// resolved import target/name, not the local binding name.
+#[test]
+fn renamed_import_alias_through_export_type_reexport_reports_1289() {
+    let diagnostics = check(
+        &[
+            ("/impl.ts", "export class Foo {}\n"),
+            ("/reexport.ts", "export type { Foo } from \"./impl\";\n"),
+            (
+                "/main.ts",
+                "import { Foo as Baz } from \"./reexport\";\nexport = Baz;\n",
+            ),
+        ],
+        "/main.ts",
+        false,
+        true,
+    );
+
+    assert_eq!(
+        codes(&diagnostics),
+        vec![RESOLVES_TO_A_TYPE_ONLY_DECLARATION],
+        "expected only TS1289 for a renamed import through an `export type` \
+         re-export boundary, got: {diagnostics:?}"
+    );
+}
+
+/// Negative control: an import alias to a class with NO type-only boundary
+/// anywhere in the chain (plain `export { Foo }` re-export) must not
+/// trigger TS1289 — this is the already-covered
+/// `import_alias_to_class_export_equals_reports_neither_verbatim` shape,
+/// just routed through an intermediate re-exporting file to isolate the
+/// "boundary exists" condition from "value exists".
+#[test]
+fn import_alias_through_plain_reexport_to_class_reports_neither() {
+    let diagnostics = check(
+        &[
+            ("/impl.ts", "export class Foo {}\n"),
+            ("/reexport.ts", "export { Foo } from \"./impl\";\n"),
+            (
+                "/main.ts",
+                "import { Foo } from \"./reexport\";\nexport = Foo;\n",
+            ),
+        ],
+        "/main.ts",
+        true,
+        false,
+    );
+
+    assert!(
+        !diagnostics
+            .iter()
+            .any(|d| d.code == EXPORT_EQUALS_MUST_REFERENCE_A_VALUE
+                || d.code == EXPORT_EQUALS_MUST_REFERENCE_A_REAL_VALUE
+                || d.code == RESOLVES_TO_A_TYPE
+                || d.code == RESOLVES_TO_A_TYPE_ONLY_DECLARATION),
+        "expected no TS1282/1283/1289/1291 for a value-carrying alias through a \
+         plain re-export with no type-only boundary, got: {diagnostics:?}"
     );
 }

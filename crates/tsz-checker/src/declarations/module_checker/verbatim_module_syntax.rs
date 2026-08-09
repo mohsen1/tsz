@@ -611,6 +611,40 @@ impl<'a> CheckerState<'a> {
                     &message,
                     diagnostic_codes::RESOLVES_TO_A_TYPE_AND_MUST_BE_MARKED_TYPE_ONLY_IN_THIS_FILE_BEFORE_RE_EXPORTING_2,
                 );
+            } else if target_has_value
+                && self.is_export_type_only_syntax_across_binders(module_spec, &import_name)
+            {
+                // TS1290: sibling of TS1289 above (see its comment) for
+                // `export default`. Also double-reports TS1285 under
+                // verbatimModuleSyntax, mirroring the TS1284+TS1292 pair
+                // above: the VMS-only branch at the top of this function
+                // cannot see this shape because it only checks the LOCAL
+                // symbol's own `is_type_only` flag, and here the local
+                // import is a plain (non-type-only) alias — the type-only
+                // marking tsc's `getTypeOnlyAliasDeclarationEx` finds lives
+                // in a different file, reachable only through
+                // `is_export_type_only_syntax_across_binders`.
+                if option_name == "verbatimModuleSyntax" && sym_is_direct_alias {
+                    let message = format_message(
+                        diagnostic_messages::AN_EXPORT_DEFAULT_MUST_REFERENCE_A_REAL_VALUE_WHEN_VERBATIMMODULESYNTAX_IS_ENABL,
+                        &[&name],
+                    );
+                    self.error_at_node(
+                        clause_idx,
+                        &message,
+                        diagnostic_codes::AN_EXPORT_DEFAULT_MUST_REFERENCE_A_REAL_VALUE_WHEN_VERBATIMMODULESYNTAX_IS_ENABL,
+                    );
+                }
+
+                let message = format_message(
+                    diagnostic_messages::RESOLVES_TO_A_TYPE_ONLY_DECLARATION_AND_MUST_BE_MARKED_TYPE_ONLY_IN_THIS_FILE_BE_2,
+                    &[&name, option_name],
+                );
+                self.error_at_node(
+                    clause_idx,
+                    &message,
+                    diagnostic_codes::RESOLVES_TO_A_TYPE_ONLY_DECLARATION_AND_MUST_BE_MARKED_TYPE_ONLY_IN_THIS_FILE_BE_2,
+                );
             }
         }
     }
@@ -725,6 +759,40 @@ impl<'a> CheckerState<'a> {
                     expression,
                     &message,
                     diagnostic_codes::RESOLVES_TO_A_TYPE_AND_MUST_BE_MARKED_TYPE_ONLY_IN_THIS_FILE_BEFORE_RE_EXPORTING,
+                );
+            } else if target_has_value
+                && self.is_export_type_only_syntax_across_binders(module_spec, &import_name)
+            {
+                // TS1289: the alias resolves to a real value overall
+                // (`target_has_value`), but its resolution chain crosses an
+                // explicit `import type`/`export type` boundary in a file
+                // other than this one (the local import was already
+                // confirmed not type-only above, so any such boundary tsc's
+                // `getTypeOnlyAliasDeclarationEx` finds must live elsewhere).
+                // Mirrors tsc's `checkExportAssignment` `else if
+                // typeOnlyDeclaration != nil && sourceFile(typeOnlyDeclaration)
+                // != sourceFile(node)` branch, sibling of the TS1291 branch
+                // above (which requires the target to carry NO value at all).
+                if option_name == "verbatimModuleSyntax" && sym_is_direct_alias {
+                    let message = format_message(
+                        diagnostic_messages::AN_EXPORT_DECLARATION_MUST_REFERENCE_A_REAL_VALUE_WHEN_VERBATIMMODULESYNTAX_IS_E,
+                        &[&name],
+                    );
+                    self.error_at_node(
+                        expression,
+                        &message,
+                        diagnostic_codes::AN_EXPORT_DECLARATION_MUST_REFERENCE_A_REAL_VALUE_WHEN_VERBATIMMODULESYNTAX_IS_E,
+                    );
+                }
+
+                let message = format_message(
+                    diagnostic_messages::RESOLVES_TO_A_TYPE_ONLY_DECLARATION_AND_MUST_BE_MARKED_TYPE_ONLY_IN_THIS_FILE_BE,
+                    &[&name, option_name],
+                );
+                self.error_at_node(
+                    expression,
+                    &message,
+                    diagnostic_codes::RESOLVES_TO_A_TYPE_ONLY_DECLARATION_AND_MUST_BE_MARKED_TYPE_ONLY_IN_THIS_FILE_BE,
                 );
             }
         }
