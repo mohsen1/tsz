@@ -13,6 +13,7 @@
 use anyhow::{Result, anyhow};
 use std::path::{Path, PathBuf};
 
+use crate::module_resolver_helpers::normalize_path_segments;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::module_resolver_helpers::{
     PackageExports, PackageJson, find_best_export_pattern, match_export_pattern,
@@ -44,12 +45,8 @@ pub(super) fn resolve_extends_path(current_path: &Path, extends: &str) -> Result
         .ok_or_else(|| anyhow!("tsconfig has no parent directory"))?;
 
     // Relative or absolute path: resolve against the declaring config's dir.
-    if extends.starts_with('.') || extends.starts_with('/') {
-        let candidate = if Path::new(extends).is_absolute() {
-            PathBuf::from(extends)
-        } else {
-            base_dir.join(extends)
-        };
+    if is_relative_or_absolute_extends_specifier(extends) {
+        let candidate = anchor_extends_specifier(current_path, extends)?;
         return Ok(probe_extends_candidate(&candidate, false));
     }
 
@@ -72,6 +69,36 @@ pub(super) fn resolve_extends_path(current_path: &Path, extends: &str) -> Result
     }
 
     Ok(None)
+}
+
+/// Whether an `extends` specifier resolves as a relative/absolute filesystem
+/// path (`./base`, `../base.json`, `/abs`) rather than through Node module
+/// resolution (`@scope/pkg`, `pkg/base.json`).
+pub(super) fn is_relative_or_absolute_extends_specifier(extends: &str) -> bool {
+    extends.starts_with('.') || extends.starts_with('/')
+}
+
+/// Anchor a relative/absolute `extends` specifier at its declaring config's
+/// directory, lexically normalized (no `.`/embedded `..`) like tsc's
+/// `getNormalizedAbsolutePath` — never touches the filesystem.
+///
+/// Besides feeding [`resolve_extends_path`]'s candidate probe, the caller in
+/// `mod.rs` reuses this to anchor tsc's TS5083 diagnostic: `tsc`'s
+/// `getExtendsConfigPath` only probes existence for a specifier lacking a
+/// `.json` extension (appending one and checking again); a specifier that
+/// already ends in `.json` is assumed to resolve, so its read failure
+/// surfaces later as "cannot read file" against the resolved path rather
+/// than the TS6053 "not found" raw-specifier diagnosis.
+pub(super) fn anchor_extends_specifier(current_path: &Path, extends: &str) -> Result<PathBuf> {
+    let base_dir = current_path
+        .parent()
+        .ok_or_else(|| anyhow!("tsconfig has no parent directory"))?;
+    let candidate = if Path::new(extends).is_absolute() {
+        PathBuf::from(extends)
+    } else {
+        base_dir.join(extends)
+    };
+    Ok(normalize_path_segments(&candidate).into_owned())
 }
 
 /// Probe a single candidate path for an `extends` target, returning the

@@ -17,8 +17,9 @@ mod lib_offsets;
 mod lib_resolution;
 
 use extends::{
-    anchor_inherited_path_options, anchor_inherited_root_selectors, merge_configs,
-    resolve_extends_path, substitute_config_dir_templates,
+    anchor_extends_specifier, anchor_inherited_path_options, anchor_inherited_root_selectors,
+    is_relative_or_absolute_extends_specifier, merge_configs, resolve_extends_path,
+    substitute_config_dir_templates,
 };
 use jsonc::remove_trailing_commas;
 use lib_offsets::find_lib_entry_offset;
@@ -1541,15 +1542,42 @@ fn load_tsconfig_inner_with_diagnostics(
             }
             let Some(base_path) = resolve_extends_path(path, extends_path_str)? else {
                 let (start, length) = find_extends_specifier_span(&stripped, extends_path_str);
-                let message =
-                    format_message(diagnostic_messages::FILE_NOT_FOUND, &[extends_path_str]);
-                parsed.diagnostics.push(Diagnostic::error(
-                    &file_display,
-                    start,
-                    length,
-                    message,
-                    diagnostic_codes::FILE_NOT_FOUND,
-                ));
+                // A relative/absolute specifier that already names a `.json`
+                // path skips tsc's existence probe entirely (see
+                // `anchor_extends_specifier`'s doc comment): the failure only
+                // surfaces when tsc tries to read the resolved file, which
+                // reports TS5083 against that resolved path. Every other
+                // shape (extensionless or differently-extensioned
+                // relative/absolute specifiers, and any non-relative package
+                // specifier regardless of extension) fails at resolution
+                // time and keeps TS6053 with the raw specifier text.
+                if is_relative_or_absolute_extends_specifier(extends_path_str)
+                    && extends_path_str.ends_with(".json")
+                {
+                    let resolved = anchor_extends_specifier(path, extends_path_str)?;
+                    let resolved_display = resolved.to_string_lossy();
+                    let message = format_message(
+                        diagnostic_messages::CANNOT_READ_FILE_2,
+                        &[&resolved_display],
+                    );
+                    parsed.diagnostics.push(Diagnostic::error(
+                        &file_display,
+                        start,
+                        length,
+                        message,
+                        diagnostic_codes::CANNOT_READ_FILE_2,
+                    ));
+                } else {
+                    let message =
+                        format_message(diagnostic_messages::FILE_NOT_FOUND, &[extends_path_str]);
+                    parsed.diagnostics.push(Diagnostic::error(
+                        &file_display,
+                        start,
+                        length,
+                        message,
+                        diagnostic_codes::FILE_NOT_FOUND,
+                    ));
+                }
                 continue;
             };
             // Route base configs through the diagnostic path so TS5023 / TS5024 / TS5025

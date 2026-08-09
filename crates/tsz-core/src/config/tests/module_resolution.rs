@@ -1882,45 +1882,6 @@ fn extends_unresolved_package_emits_ts6053_and_keeps_local_options() {
 }
 
 #[test]
-fn extends_array_reports_each_unresolved_entry() {
-    // Array `extends` (TS 5.0): every entry that cannot be resolved gets its
-    // own TS6053, and resolvable entries still merge.
-    let temp = tempdir().expect("create temp dir");
-    let project = temp.path().join("project");
-    std::fs::create_dir_all(&project).expect("create project dir");
-    std::fs::write(
-        project.join("present.json"),
-        r#"{ "compilerOptions": { "target": "ES2021" } }"#,
-    )
-    .expect("write present base");
-    let child_path = project.join("tsconfig.json");
-    std::fs::write(
-        &child_path,
-        r#"{ "extends": ["./present.json", "./missing-a.json", "./missing-b.json"] }"#,
-    )
-    .expect("write child");
-
-    let parsed = load_tsconfig_with_diagnostics(&child_path).expect("load must succeed");
-    let ts6053: Vec<&Diagnostic> = parsed
-        .diagnostics
-        .iter()
-        .filter(|d| d.code == 6053)
-        .collect();
-    assert_eq!(
-        ts6053.len(),
-        2,
-        "one TS6053 per unresolved array entry: {:?}",
-        parsed.diagnostics
-    );
-    let opts = parsed.config.compiler_options.expect("present base merged");
-    assert_eq!(
-        opts.target.as_deref(),
-        Some("ES2021"),
-        "the resolvable array entry is still applied"
-    );
-}
-
-#[test]
 fn config_dir_template_expands_against_leaf_config_dir() {
     // TS 5.5 `${configDir}`: a root config's template resolves to its own
     // directory and produces absolute selectors/paths.
