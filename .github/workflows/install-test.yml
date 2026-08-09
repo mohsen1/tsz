@@ -6,6 +6,16 @@ name: Install test
 # Triggers:
 #   - on every release publish (full validation against real assets)
 #   - on push changes to the installer or this workflow (syntax/logic check)
+#   - on pull requests touching those same files, so `static-checks` gates the
+#     change that breaks them rather than reporting after the merge. The heavy
+#     `installer-from-release` matrix stays off: its own `if:` restricts it to
+#     `release` and `workflow_dispatch`, so a PR here costs one ubuntu job.
+#
+# The path list must name every file `static-checks` actually checks. It did
+# not: the npm publish helpers and their unit suite were added by #16127 and
+# never listed, so the only run they ever got was the one that happened to
+# touch `install.sh` in the same PR. A suite that cannot fire when its subject
+# changes is not coverage.
 
 on:
   release:
@@ -17,11 +27,22 @@ on:
         required: false
         default: "latest"
         type: string
+  # Kept in sync by hand: GitHub Actions does not support YAML anchors, so the
+  # two path lists below must be edited together.
   push:
     branches: [main]
     paths:
       - "scripts/install.sh"
       - "scripts/install.ps1"
+      - "scripts/build/npm-publish-lib.sh"
+      - "scripts/build/test-npm-publish-lib.sh"
+      - ".github/workflows/install-test.yml"
+  pull_request:
+    paths:
+      - "scripts/install.sh"
+      - "scripts/install.ps1"
+      - "scripts/build/npm-publish-lib.sh"
+      - "scripts/build/test-npm-publish-lib.sh"
       - ".github/workflows/install-test.yml"
 permissions:
   contents: read
