@@ -96,7 +96,7 @@ impl<'a> CheckerState<'a> {
     /// (spanning the `@`) when the failure is missing required arguments —
     /// mirroring call-expression arity anchoring (decoratorOnClassProperty6
     /// vs 7).
-    fn decorator_expression_anchor(&self, decorator_node: NodeIndex) -> NodeIndex {
+    pub(crate) fn decorator_expression_anchor(&self, decorator_node: NodeIndex) -> NodeIndex {
         self.ctx
             .arena
             .get(decorator_node)
@@ -482,8 +482,9 @@ impl<'a> CheckerState<'a> {
     /// hint ("did you mean to call it") instead of the generic
     /// method/property-decorator signature failure. This mirrors tsc's
     /// `isPotentiallyUncalledDecorator` for the common zero-parameter case and
-    /// applies uniformly to method, accessor, and field decorators.
-    fn decorator_has_zero_arg_factory_shape(
+    /// applies uniformly to method, accessor, field, and (see
+    /// `class_decorators.rs`) class decorators.
+    pub(crate) fn decorator_has_zero_arg_factory_shape(
         &mut self,
         decorator_expr: NodeIndex,
         decorator_type: TypeId,
