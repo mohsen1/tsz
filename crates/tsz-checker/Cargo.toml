@@ -2805,3 +2805,6 @@ path = "tests/ts2369_source_order_anchor_tests.rs"
 [[test]]
 name = "ts7032_zero_parameter_setter_tests"
 path = "tests/ts7032_zero_parameter_setter_tests.rs"
+[[test]]
+name = "ts2540_import_equals_const_member_tests"
+path = "tests/ts2540_import_equals_const_member_tests.rs"
