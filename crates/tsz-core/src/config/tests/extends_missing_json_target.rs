@@ -58,6 +58,13 @@ fn extends_array_reports_each_unresolved_entry() {
         "TS5083 names the second entry's own resolved path: {}",
         ts5083[1].message_text
     );
+    for diagnostic in &ts5083 {
+        assert!(
+            diagnostic.file.is_empty() && diagnostic.start == 0 && diagnostic.length == 0,
+            "tsc reports TS5083 as a bare filesystem read failure with no \
+             file(line,col) prefix, not anchored at the config source: {diagnostic:?}"
+        );
+    }
     let opts = parsed.config.compiler_options.expect("present base merged");
     assert_eq!(
         opts.target.as_deref(),
@@ -99,6 +106,11 @@ fn extends_missing_relative_json_emits_ts5083_at_resolved_path() {
             .contains(&expected_path.to_string_lossy().into_owned()),
         "TS5083 names the resolved absolute path, not the raw specifier: {}",
         ts5083[0].message_text
+    );
+    assert!(
+        ts5083[0].file.is_empty() && ts5083[0].start == 0 && ts5083[0].length == 0,
+        "tsc reports TS5083 unanchored (no file(line,col) prefix), unlike TS6053: {:?}",
+        ts5083[0]
     );
     assert!(
         !parsed.diagnostics.iter().any(|d| d.code == 6053),
@@ -147,9 +159,55 @@ fn extends_missing_relative_extensionless_keeps_ts6053() {
         ts6053[0].message_text
     );
     assert!(
+        !ts6053[0].file.is_empty(),
+        "TS6053, unlike TS5083, anchors at the extends specifier literal: {:?}",
+        ts6053[0]
+    );
+    assert!(
         !parsed.diagnostics.iter().any(|d| d.code == 5083),
         "an extensionless relative extends must not emit TS5083: {:?}",
         parsed.diagnostics
+    );
+}
+
+#[test]
+fn extends_missing_parent_relative_json_normalizes_dotdot() {
+    // `../` must lexically collapse against the declaring config's directory
+    // before it reaches the TS5083 message — tsc's `getNormalizedAbsolutePath`
+    // never renders an embedded `/../` segment. Oracle-verified against
+    // pinned typescript@7.0.2.
+    let temp = tempdir().expect("create temp dir");
+    let project = temp.path().join("project");
+    let nested = project.join("nested");
+    std::fs::create_dir_all(&nested).expect("create nested dir");
+    let child_path = nested.join("tsconfig.json");
+    let child_source = r#"{ "extends": "../nope.json", "compilerOptions": { "strict": true } }"#;
+    std::fs::write(&child_path, child_source).expect("write child");
+
+    let parsed = load_tsconfig_with_diagnostics(&child_path).expect("load must succeed");
+    let ts5083: Vec<&Diagnostic> = parsed
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 5083)
+        .collect();
+    assert_eq!(
+        ts5083.len(),
+        1,
+        "exactly one TS5083 for the unreadable parent-relative extends target: {:?}",
+        parsed.diagnostics
+    );
+    let expected_path = project.join("nope.json");
+    assert!(
+        ts5083[0]
+            .message_text
+            .contains(&expected_path.to_string_lossy().into_owned()),
+        "TS5083 names the lexically-collapsed path, not one with an embedded '/../': {}",
+        ts5083[0].message_text
+    );
+    assert!(
+        !ts5083[0].message_text.contains("/../"),
+        "the resolved path must not carry an embedded '/../' segment: {}",
+        ts5083[0].message_text
     );
 }
 
@@ -184,5 +242,10 @@ fn extends_missing_absolute_json_emits_ts5083_at_specifier_path() {
             .contains("/definitely/not/a/real/path/nope.json"),
         "TS5083 names the absolute specifier path verbatim: {}",
         ts5083[0].message_text
+    );
+    assert!(
+        ts5083[0].file.is_empty() && ts5083[0].start == 0 && ts5083[0].length == 0,
+        "tsc reports TS5083 unanchored (no file(line,col) prefix): {:?}",
+        ts5083[0]
     );
 }

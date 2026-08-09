@@ -1541,7 +1541,6 @@ fn load_tsconfig_inner_with_diagnostics(
                 continue;
             }
             let Some(base_path) = resolve_extends_path(path, extends_path_str)? else {
-                let (start, length) = find_extends_specifier_span(&stripped, extends_path_str);
                 // A relative/absolute specifier that already names a `.json`
                 // path skips tsc's existence probe entirely (see
                 // `anchor_extends_specifier`'s doc comment): the failure only
@@ -1560,14 +1559,18 @@ fn load_tsconfig_inner_with_diagnostics(
                         diagnostic_messages::CANNOT_READ_FILE_2,
                         &[&resolved_display],
                     );
+                    // Unlike TS6053, tsc reports TS5083 as a bare filesystem
+                    // read failure with no `file(line,col):` prefix — it is
+                    // not a complaint about a token in the config source.
                     parsed.diagnostics.push(Diagnostic::error(
-                        &file_display,
-                        start,
-                        length,
+                        String::new(),
+                        0,
+                        0,
                         message,
                         diagnostic_codes::CANNOT_READ_FILE_2,
                     ));
                 } else {
+                    let (start, length) = find_extends_specifier_span(&stripped, extends_path_str);
                     let message =
                         format_message(diagnostic_messages::FILE_NOT_FOUND, &[extends_path_str]);
                     parsed.diagnostics.push(Diagnostic::error(
