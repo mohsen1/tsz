@@ -885,7 +885,7 @@ impl CheckerState<'_> {
 
         self.rewrite_conditional_types1_fingerprints(&sf.text);
         self.align_awaited_type_instantiation_diagnostics(&sf.text);
-        self.align_complex_recursive_collections_diagnostics(&sf.text);
+        self.suppress_incorrectly_extends_on_simultaneous_extend_conflict();
     }
 
     /// Grammar pass for misplaced `unique symbol` type operators — the
@@ -1209,32 +1209,55 @@ impl CheckerState<'_> {
         }
     }
 
-    fn align_complex_recursive_collections_diagnostics(&mut self, source_text: &str) {
-        use tsz_common::diagnostics::diagnostic_codes;
+    /// Reconcile TS2430 with TS2320 the way tsc's `checkInterfaceDeclaration` does.
+    ///
+    /// This is a structural diagnostic reconciliation, **not** a conformance-fixture
+    /// rewrite like its `rewrite_*`/`align_*` neighbours: it takes no source text and
+    /// keys only on diagnostic codes and structural anchor offsets. Do not fold it in
+    /// when those fixture rewrites are eventually deleted (#14141).
+    ///
+    /// tsc runs the per-base "incorrectly extends" (TS2430) assignability loop only
+    /// when `checkInheritedPropertiesAreIdentical` succeeds. When two bases of an
+    /// interface contribute a shared member with non-identical types, tsc reports
+    /// TS2320 ("cannot simultaneously extend types '{0}' and '{1}'") and skips the
+    /// TS2430 loop for that interface entirely. tsz's heritage-compatibility pass
+    /// (`check_interface_extension_compatibility`) emits TS2430 eagerly while
+    /// iterating the bases, so when a *later* base introduces the conflict the
+    /// TS2430 already reported against an *earlier* base is not withheld and the
+    /// interface ends up carrying both a TS2320 and one or more spurious TS2430.
+    ///
+    /// The reconciliation leans on an invariant of the heritage checkers: every
+    /// TS2320 and TS2430 is emitted via `error_at_node(iface_data.name, ...)`, so
+    /// both anchor at the interface name node (see `class_checker_compat.rs` and
+    /// `class_checker_compat_overloads.rs`). A TS2430 sharing a start offset with a
+    /// TS2320 is therefore, unambiguously, the same interface — exactly the
+    /// "incorrectly extends" tsc's gated loop would never have produced; drop it. If
+    /// a future refactor moves either anchor off the name node, this key must move
+    /// with it.
+    fn suppress_incorrectly_extends_on_simultaneous_extend_conflict(&mut self) {
+        use crate::diagnostics::diagnostic_codes;
 
-        if !Self::fixture_has_markers(
-            source_text,
-            &[
-                "declare namespace Immutable",
-                "export interface Keyed<K, V> extends Seq<K, V>",
-                "export interface Indexed<T> extends Seq<number, T>",
-                "export interface Set<T> extends Seq<never, T>",
-            ],
-        ) {
+        let conflict_anchors: FxHashSet<u32> = self
+            .ctx
+            .diagnostics
+            .iter()
+            .filter(|diag| {
+                diag.code == diagnostic_codes::INTERFACE_CANNOT_SIMULTANEOUSLY_EXTEND_TYPES_AND
+            })
+            .map(|diag| diag.start)
+            .collect();
+        if conflict_anchors.is_empty() {
             return;
         }
 
-        let extra_messages = [
-            "Interface 'Keyed<K, V>' incorrectly extends interface 'Seq<K, V>'.",
-            "Interface 'Indexed<T>' incorrectly extends interface 'Seq<number, T>'.",
-            "Interface 'Set<T>' incorrectly extends interface 'Seq<never, T>'.",
-        ];
+        let before = self.ctx.diagnostics.len();
         self.ctx.diagnostics.retain(|diag| {
-            diag.code != diagnostic_codes::INTERFACE_INCORRECTLY_EXTENDS_INTERFACE
-                || !extra_messages
-                    .iter()
-                    .any(|message| diag.message_text == *message)
+            !(diag.code == diagnostic_codes::INTERFACE_INCORRECTLY_EXTENDS_INTERFACE
+                && conflict_anchors.contains(&diag.start))
         });
+        if self.ctx.diagnostics.len() != before {
+            self.ctx.rebuild_emitted_diagnostics_from_current();
+        }
     }
 
     fn has_ts_nocheck_pragma(&self, source: &str) -> bool {
