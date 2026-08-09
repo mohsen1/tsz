@@ -603,6 +603,9 @@ path = "tests/ts1278_ts1279_decorator_arity_elaboration_tests.rs"
 name = "ts1238_experimental_decorator_anchor_tests"
 path = "tests/ts1238_experimental_decorator_anchor_tests.rs"
 [[test]]
+name = "ts1238_class_decorator_not_callable_chain_tests"
+path = "tests/ts1238_class_decorator_not_callable_chain_tests.rs"
+[[test]]
 name = "ts2862_keyof_tparam_tests"
 path = "tests/ts2862_keyof_tparam_tests.rs"
 [[test]]

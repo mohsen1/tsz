@@ -136,13 +136,19 @@ class C {
 }
 
 #[test]
-fn ts1238_not_emitted_without_experimental_decorators() {
-    // Without experimentalDecorators, TS1238 should not be emitted.
+fn ts1238_emitted_without_experimental_decorators_for_class_used_as_decorator() {
+    // Oracle-verified (typescript@7.0.2): a class used as an ES (TC39
+    // stage-3) decorator has no call signatures either, so tsc emits the
+    // same TS1238 "not callable" shape it does under `experimentalDecorators`
+    // (see `ts1238_class_used_as_decorator_emits_error` above). Previously
+    // tsz's ES path only ever inspected `function_shape` and silently
+    // dropped the diagnostic entirely for any non-function-shaped decorator
+    // type.
     let codes =
         tsz_checker::test_utils::check_source_codes("class Decorate { }\n@Decorate\nclass C { }");
     assert!(
-        !codes.contains(&1238),
-        "Should not emit TS1238 without experimentalDecorators, got: {codes:?}"
+        codes.contains(&1238),
+        "Expected TS1238 when a class (no call signatures) is used as an ES decorator, got: {codes:?}"
     );
 }
 
