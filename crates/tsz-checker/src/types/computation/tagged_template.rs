@@ -644,6 +644,17 @@ function tempFun<T>(tempStrs: TemplateStringsArray, g: (x: T) => T, x: T): T {
     }
 
     #[test]
+    fn literal_widening_is_not_numeric_specific() {
+        // The fix reuses the general-purpose `widen_round2_contextual_substitution`
+        // helper, so a string-literal candidate must widen exactly like a
+        // numeric one — this is not a numeric-literal special case.
+        assert_no_ts2345(&format!(
+            r#"{SINGLE_ARITY_TAG}
+var s = tempFun`${{ x => x }} ${{ "s" }}`;"#
+        ));
+    }
+
+    #[test]
     fn parenthesized_arrow_variants_are_unaffected() {
         assert_no_ts2345(&format!(
             "{SINGLE_ARITY_TAG}\nvar b = tempFun`${{ (x => x) }}  ${{ 10 }}`;"
