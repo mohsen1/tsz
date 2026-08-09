@@ -636,14 +636,15 @@ fn hard_cascade_modifiers_before_accessor_now_cascade_not_ts1070() {
 }
 
 #[test]
-fn in_before_accessor_on_generic_interface_still_reports_ts1070() {
-    // `in` is a reserved operator whose statement re-parse differs from the
-    // `out`/hard cascade, so it is excluded and keeps the pre-existing semantic
-    // TS1070. (`out` in the same position now derails into the cascade — see
-    // `in_before_accessor_stays_ts1070` /
-    // `type_member_out_variance_accessor_cascade_tests`.)
+fn in_before_accessor_on_generic_interface_now_cascades() {
+    // `in` is a reserved operator, so its own cascade differs from the
+    // `out`/hard cascade's TS1434 shape (no TS1434 — `in` folds the accessor
+    // keyword into a missing-LHS binary expression instead). Full fingerprint
+    // parity lives in `type_member_in_variance_accessor_cascade_tests`.
+    const TS1005: u32 = diagnostic_codes::EXPECTED;
+    const TS1128: u32 = diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED;
     let source = "interface I<T> { in get x(): number; }";
-    assert_eq!(codes(source), vec![TS1070]);
+    assert_eq!(codes(source), vec![TS1131, TS1005, TS1005, TS1128]);
 }
 
 #[test]

@@ -16,8 +16,11 @@
 //! Deliberately NOT covered here (idiosyncratic `tsc` recoveries left on their
 //! pre-existing paths, guarded by the negative controls below):
 //! - a modifier *after* `out` (`out readonly get`, `out async get`);
-//! - `out` *after* a hard modifier (`async out get`);
-//! - the `in` variance modifier in any position (reserved-operator re-parse).
+//! - `out` *after* a hard modifier (`async out get`).
+//!
+//! The `in` variance modifier's own cascade (a reserved operator, so its
+//! statement re-parse differs from `out`'s) is covered separately in
+//! `type_member_in_variance_accessor_cascade_tests.rs`.
 
 use crate::parser::test_fixture::parse_source;
 use tsz_common::diagnostics::diagnostic_codes;
@@ -293,17 +296,11 @@ fn plain_accessor_without_modifier_stays_clean() {
 }
 
 // ---------------------------------------------------------------------------
-// Excluded shapes: `in`, a modifier after `out`, and `out` after a hard
-// modifier keep their pre-existing (non-cascade) recovery — the new lookahead
-// must not route them into the clean `out` cascade.
+// Excluded shapes: a modifier after `out` and `out` after a hard modifier
+// keep their pre-existing (non-cascade) recovery — the new lookahead must not
+// route them into the clean `out` cascade. `in`'s own (different) cascade is
+// covered in `type_member_in_variance_accessor_cascade_tests.rs`.
 // ---------------------------------------------------------------------------
-
-#[test]
-fn in_before_accessor_stays_ts1070() {
-    // `in` is a reserved binary operator; its statement re-parse differs from
-    // `out`'s, so it is left on the pre-existing semantic TS1070 path.
-    assert_eq!(codes("interface I { in get x(): number; }"), vec![TS1070]);
-}
 
 #[test]
 fn out_then_modifier_before_accessor_is_not_the_clean_cascade() {

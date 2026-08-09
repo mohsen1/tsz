@@ -328,7 +328,8 @@ impl ParserState {
     /// - the `in` variance modifier in any position: `in` is a reserved binary
     ///   operator, so its statement re-parse differs (it folds the following
     ///   `get` into an `in`-expression and yields "Expression expected", not the
-    ///   "Unexpected keyword or identifier" the hard cascade produces).
+    ///   "Unexpected keyword or identifier" the hard cascade produces). Handled
+    ///   separately by [`Self::look_ahead_clean_prefixed_in_before_accessor`].
     pub(crate) fn look_ahead_clean_prefixed_out_before_accessor(&mut self) -> usize {
         // A qualifying run must *start* with `out` or a clean modifier; bail on
         // the common non-modifier member (`foo: number`) before paying for the
@@ -386,6 +387,112 @@ impl ParserState {
         self.current_token = current;
 
         if ends_in_accessor { count } else { 0 }
+    }
+
+    /// Report a run of `clean_count` "clean" type-member modifiers directly
+    /// before the `in` variance modifier, itself directly before a `get`/`set`
+    /// accessor: one TS1131 per clean modifier (consumed, each anchored at its
+    /// own token), then one TS1131 for `in` itself — anchored at `in` but,
+    /// unlike [`Self::report_hard_modifier_run_before_accessor`], `in` is left
+    /// UNCONSUMED. `in` is a reserved binary operator: tsc's statement re-parse
+    /// absorbs it (and the following `get`/`set`) as a missing-LHS binary
+    /// expression (`<missing> in get`), which only reproduces correctly if the
+    /// abandoned tail's re-parse begins exactly AT `in`. Leaving `in` as the
+    /// current token also makes the general statement parser's own "Expression
+    /// expected" diagnostic at that same position dedupe against this TS1131
+    /// (`parse_error_at`'s exact-same-start rule), matching tsc's single
+    /// diagnostic there. See [`Self::look_ahead_clean_prefixed_in_before_accessor`].
+    pub(crate) fn report_clean_modifiers_then_in_before_accessor(&mut self, clean_count: usize) {
+        use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
+        for _ in 0..clean_count {
+            let mod_start = self.token_pos();
+            let mod_end = self.token_end();
+            self.next_token();
+            self.parse_error_at(
+                mod_start,
+                mod_end.saturating_sub(mod_start),
+                diagnostic_messages::PROPERTY_OR_SIGNATURE_EXPECTED,
+                diagnostic_codes::PROPERTY_OR_SIGNATURE_EXPECTED,
+            );
+        }
+        let in_start = self.token_pos();
+        let in_end = self.token_end();
+        self.parse_error_at(
+            in_start,
+            in_end.saturating_sub(in_start),
+            diagnostic_messages::PROPERTY_OR_SIGNATURE_EXPECTED,
+            diagnostic_codes::PROPERTY_OR_SIGNATURE_EXPECTED,
+        );
+        self.deferred_type_member_close_braces = self
+            .deferred_type_member_close_braces
+            .max(self.type_member_container_depth);
+        self.pending_type_member_body_reparse = true;
+    }
+
+    /// Look ahead for a run of the exact shape `[clean-modifier]* in` directly
+    /// before a `get`/`set` accessor — the `in` variance modifier is the
+    /// accessor's immediate predecessor, preceded only by "clean" modifiers.
+    /// Returns the number of CLEAN modifiers preceding `in` (not counting `in`
+    /// itself — see [`Self::report_clean_modifiers_then_in_before_accessor`]),
+    /// or `None` when the shape doesn't match.
+    ///
+    /// `in` is a reserved binary operator, so unlike [`Self::is_hard_accessor_cascade_modifier`]
+    /// and the `out` cascade (both contextual keywords, both fully consumed
+    /// before the abandoned-tail re-parse), tsc's re-parse of the abandoned
+    /// tail begins AT `in` itself: `<missing> in get` folds `get` in as the
+    /// binary expression's RHS, producing `';' expected` at the token after
+    /// `get` rather than an "unexpected keyword" at `get` — oracle-verified
+    /// against `typescript@7.0.2` for the bare and clean-modifier-prefixed
+    /// (`static`/`readonly`) shapes. A hard modifier immediately before `in`
+    /// (`async in get x()`) is excluded here — the hard modifier gets its own
+    /// TS1131 but `in` does not, a further narrower shape left unimplemented.
+    pub(crate) fn look_ahead_clean_prefixed_in_before_accessor(&mut self) -> Option<usize> {
+        let first = self.token();
+        if first != SyntaxKind::InKeyword && !Self::is_clean_type_member_modifier(first) {
+            return None;
+        }
+
+        let snapshot = self.scanner.save_state();
+        let current = self.current_token;
+
+        let mut clean_count = 0usize;
+        let mut saw_in = false;
+        loop {
+            let kind = self.token();
+            if kind == SyntaxKind::InKeyword && !self.look_ahead_is_property_name_after_keyword() {
+                saw_in = true;
+                self.next_token();
+                if self.scanner.has_preceding_line_break() {
+                    saw_in = false;
+                }
+                break;
+            }
+            if Self::is_clean_type_member_modifier(kind)
+                && !self.look_ahead_is_property_name_after_keyword()
+            {
+                self.next_token();
+                clean_count += 1;
+                if self.scanner.has_preceding_line_break() {
+                    clean_count = 0;
+                    break;
+                }
+                continue;
+            }
+            break;
+        }
+
+        let ends_in_accessor = saw_in
+            && (self.is_token(SyntaxKind::GetKeyword) || self.is_token(SyntaxKind::SetKeyword))
+            && !self.look_ahead_is_property_name_after_keyword();
+
+        self.scanner.restore_state(snapshot);
+        self.current_token = current;
+
+        if ends_in_accessor {
+            Some(clean_count)
+        } else {
+            None
+        }
     }
 
     /// Look ahead for the exact shape `[clean-modifier]* HARD out
