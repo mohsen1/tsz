@@ -1328,7 +1328,19 @@ pub(super) const fn is_real_syntax_error(code: u32) -> bool {
         // excluded. It is a grammar constraint error, not a structural parse failure.
         // The AST is fully valid — the import is parsed correctly. tsc still emits
         // semantic errors like TS2323 alongside TS1191.
-        | 1313 // 'else' is not allowed after rest element
+        //
+        // Note: TS1313 (The body of an 'if' statement cannot be the empty
+        // statement) is intentionally excluded (#16279 follow-up). It was
+        // previously listed here under an unrelated, non-existent message
+        // ("'else' is not allowed after rest element" is not a tsc diagnostic
+        // at all) — a stale mislabel, not a real classification decision. The
+        // `then_statement` AST node tsz emits it on
+        // (`state_declarations_exports.rs`) is a well-formed EMPTY_STATEMENT,
+        // not an error-recovery placeholder, and oracle-verified against
+        // `typescript@7.0.2`: `if (true); undeclaredName;` reports both
+        // TS1313 and TS2304 — TS1313 does not suppress cascading semantic
+        // diagnostics the way a genuine structural parse failure does. It now
+        // lives in `is_parser_grammar_code` instead.
         | 1351 // An identifier or keyword cannot immediately follow a numeric literal
         | 1357 // A default clause cannot appear more than once
         | 1378 // Top-level 'for await' loops are only allowed...
@@ -1402,7 +1414,8 @@ pub(super) const fn is_structural_parse_error(code: u32) -> bool {
         | 1161 // Unterminated regular expression literal
         | 1180 // Property destructuring pattern expected
         | 1185 // Merge conflict marker encountered
-        | 1313 // 'else' is not allowed after rest element
+        // TS1313 is intentionally excluded — see the matching note in
+        // `is_real_syntax_error` above. It moved to `is_parser_grammar_code`.
         | 1351 // An identifier or keyword cannot immediately follow a numeric literal
         | 1382 // Unexpected token in JSX
         | 1441 // Cannot start a function call in a type annotation
