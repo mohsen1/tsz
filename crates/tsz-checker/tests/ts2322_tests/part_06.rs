@@ -229,3 +229,129 @@ const badCarryToRight: Right.Status = carry;
         "merged enum declaration auto-values should reset per declaration block, got: {messages:#?}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// `object` (the non-primitive intrinsic) as an assignment/argument source.
+//
+// `object` is not a `TypeFlags.StructuredType`, so tsc never drills into a
+// target's members to elaborate a missing-property line for it. A failed
+// `object <: <object-like>` surfaces the generic TS2322 (naming `object`
+// verbatim) — never TS2741/TS2739/TS2740 rendered against a `{}` apparent
+// shape. Regression witness:
+// conformance/types/nonPrimitive/nonPrimitiveAssignError.ts.
+// ---------------------------------------------------------------------------
+
+/// Assert an `object` (non-primitive intrinsic) source produces exactly one
+/// generic TS2322 equal to `expected` and no missing-property elaboration
+/// (TS2739/TS2740/TS2741). Collects the diagnostics once.
+fn assert_object_source_single_ts2322(source: &str, expected: &str) {
+    let diagnostics = get_all_diagnostics(source);
+    for missing_property_code in [2739_u32, 2740, 2741] {
+        assert!(
+            !has_diagnostic_code(&diagnostics, missing_property_code),
+            "`object` source must not emit TS{missing_property_code}, got: {diagnostics:?}"
+        );
+    }
+    let ts2322: Vec<&str> = diagnostics
+        .iter()
+        .filter_map(|(code, message)| (*code == 2322).then_some(message.as_str()))
+        .collect();
+    assert_eq!(
+        ts2322,
+        vec![expected],
+        "expected exactly one generic TS2322 naming `object` verbatim (not a \
+         `{{}}`-rendered apparent shape), got: {diagnostics:?}"
+    );
+}
+
+/// A single required target property must NOT turn an `object` source into a
+/// TS2741 "property missing" line; tsc reports the generic TS2322 naming
+/// `object`.
+#[test]
+fn test_object_intrinsic_source_reports_ts2322_not_missing_property() {
+    assert_object_source_single_ts2322(
+        r#"
+declare var src: object;
+var dst: { foo: string } = src;
+"#,
+        "Type 'object' is not assignable to type '{ foo: string; }'.",
+    );
+}
+
+/// Multiple missing target properties must NOT produce TS2739/TS2740 for an
+/// `object` source either — still the generic TS2322.
+#[test]
+fn test_object_intrinsic_source_multi_property_target_reports_ts2322() {
+    assert_object_source_single_ts2322(
+        r#"
+declare var payload: object;
+var sink: { foo: string; bar: number } = payload;
+"#,
+        "Type 'object' is not assignable to type '{ foo: string; bar: number; }'.",
+    );
+}
+
+/// An index-signature target follows the same rule (renamed binder to keep the
+/// check binder-name independent).
+#[test]
+fn test_object_intrinsic_source_index_signature_target_reports_ts2322() {
+    assert_object_source_single_ts2322(
+        r#"
+declare var bag: object;
+var lookup: { [key: string]: number } = bag;
+"#,
+        "Type 'object' is not assignable to type '{ [key: string]: number; }'.",
+    );
+}
+
+/// The same discipline holds in argument position (TS2345): an `object`
+/// argument against an object-typed parameter reports the generic argument
+/// mismatch, not a nested missing-property elaboration.
+#[test]
+fn test_object_intrinsic_argument_source_reports_ts2345_not_missing_property() {
+    let source = r#"
+declare function sink(target: { foo: string }): void;
+declare var src: object;
+sink(src);
+"#;
+    let diagnostics = get_all_diagnostics(source);
+
+    assert!(
+        !has_diagnostic_code(&diagnostics, 2741),
+        "`object` argument must not emit TS2741, got: {diagnostics:?}"
+    );
+    let ts2345 = messages_with_code(source, 2345);
+    assert_eq!(
+        ts2345,
+        vec![
+            "Argument of type 'object' is not assignable to parameter of type '{ foo: string; }'."
+                .to_string()
+        ],
+        "expected generic TS2345 naming `object`, got: {diagnostics:?}"
+    );
+}
+
+/// Regression guard: the empty object type `{}` and a members-less interface
+/// ARE structured object sources, so a missing required target property still
+/// elaborates as TS2741 (tsc parity). The `object` fix must not disturb them.
+#[test]
+fn test_empty_object_and_empty_interface_sources_keep_ts2741() {
+    let empty_object = r#"
+declare var src: {};
+var dst: { foo: string } = src;
+"#;
+    assert!(
+        has_diagnostic_code(&get_all_diagnostics(empty_object), 2741),
+        "empty object literal `{{}}` source must keep TS2741"
+    );
+
+    let empty_interface = r#"
+interface Blank {}
+declare var src: Blank;
+var dst: { foo: string } = src;
+"#;
+    assert!(
+        has_diagnostic_code(&get_all_diagnostics(empty_interface), 2741),
+        "members-less interface source must keep TS2741"
+    );
+}
