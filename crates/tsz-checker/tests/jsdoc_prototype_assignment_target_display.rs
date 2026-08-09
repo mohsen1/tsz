@@ -252,12 +252,28 @@ C.prototype = 12
     );
 }
 
-/// `/** @type {number} */ C.prototype.x;` declares the prototype property
-/// type and should check the constructor's `this.x = ...` initializer against
-/// that declared type. This mirrors
-/// `conformance/jsdoc/jsdocPrototypePropertyAccessWithType.ts`.
+/// A bare `/** @type {number} */ C.prototype.x;` declaration does NOT give the
+/// constructor's `this` a type, so `tsc` never checks `this.x = false` against
+/// it — the constructor's `this` is implicit `any` (TS2683) and `new C()` has
+/// no construct signature (TS7009). No TS2322 is produced.
+///
+/// Oracle-pinned against `typescript@7.0.2` on this exact source:
+///
+/// ```text
+/// t.js(1,16): error TS2683: 'this' implicitly has type 'any' because it does
+///                           not have a type annotation.
+/// t.js(4,1):  error TS7009: 'new' expression, whose target lacks a construct
+///                           signature, implicitly has an 'any' type.
+/// ```
+///
+/// This test previously asserted exactly one TS2322 comparing `boolean` against
+/// the JSDoc `number`. That expectation was never measured against `tsc`, and it
+/// inverted the gate: it passed only while tsz emitted a diagnostic `tsc` does
+/// not, and went red when #17040 made tsz correct. Its own cited witness,
+/// `conformance/jsdoc/jsdocPrototypePropertyAccessWithType.ts`, agrees with the
+/// oracle above and flipped to PASSING on the same change (#17048).
 #[test]
-fn ts2322_for_jsdoc_prototype_property_access_decl_checks_constructor_assignment() {
+fn jsdoc_prototype_property_access_decl_does_not_type_constructor_this() {
     let diags = diagnostics_for_js(
         r#"
 function C() { this.x = false; }
@@ -266,15 +282,20 @@ C.prototype.x;
 new C().x;
 "#,
     );
-    let ts2322: Vec<_> = diags.iter().filter(|(c, _)| *c == 2322).collect();
-    assert_eq!(
-        ts2322.len(),
-        1,
-        "expected exactly one TS2322 for constructor assignment checked against JSDoc prototype property type; got: {diags:?}"
-    );
-    let msg = &ts2322[0].1;
+    let codes: Vec<u32> = diags.iter().map(|(c, _)| *c).collect();
     assert!(
-        msg.contains("'boolean'") && msg.contains("'number'"),
-        "TS2322 must compare the constructor RHS boolean with the prototype property's JSDoc number type; got: {msg:?}"
+        !codes.contains(&2322),
+        "tsc reports no TS2322 here — a bare `C.prototype.x;` declaration does not \
+         type the constructor's `this`; got: {diags:?}"
     );
+    assert!(
+        codes.contains(&2683),
+        "constructor `this` is implicit any, so TS2683 must fire; got: {diags:?}"
+    );
+    // NOTE: the oracle (and the real CLI) also report TS7009 on `new C()`, but
+    // `diagnostics_for_js` does not surface it — this harness sees only TS2683.
+    // Asserting TS7009 here would pin a behavior this harness cannot observe,
+    // so the TS7009 half of the parity claim lives in the conformance row
+    // `conformance/jsdoc/jsdocPrototypePropertyAccessWithType.ts`, which does
+    // check it end-to-end and passes.
 }
