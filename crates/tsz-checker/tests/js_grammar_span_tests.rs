@@ -310,3 +310,33 @@ fn js_module_declaration_ignores_namespace_word_in_comment_for_ts8006_text() {
         "expected TS8006 to identify a module declaration from parser flags. Actual diagnostics: {ts8006:#?}"
     );
 }
+
+/// A class property's definite-assignment diagnostics (TS1255/TS1263/TS1264)
+/// anchor on the `!` token, which immediately follows the property name — i.e.
+/// at `name_node.end`, length 1, exactly as `tsc` reports it and as the
+/// variable-declaration arm already does. This regressed once before: the
+/// property name is parsed via `parse_property_name`, whose node `end` used to
+/// overshoot the identifier, and the checker compensated with `end - 1`; when
+/// the parser overshoot was fixed the compensation had to go with it. Binder
+/// names vary per row so no assertion keys on an identifier string.
+#[test]
+fn class_property_definite_assignment_anchors_at_exclamation() {
+    let source = "class Cx { px! = 1; }";
+    let diagnostics = check_source(source, "a.ts", CheckerOptions::default());
+
+    let ts1263: Vec<_> = diagnostics
+        .iter()
+        .filter(|diag| diag.code == 1263)
+        .collect();
+    assert_eq!(ts1263.len(), 1, "unexpected diagnostics: {diagnostics:#?}");
+
+    let excl = source.find('!').expect("definite assignment marker") as u32;
+    assert_eq!(
+        ts1263[0].start, excl,
+        "TS1263 must anchor at the '!' token (name_node.end). Actual: {ts1263:#?}"
+    );
+    assert_eq!(
+        ts1263[0].length, 1,
+        "unexpected diagnostic length: {ts1263:#?}"
+    );
+}

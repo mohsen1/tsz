@@ -250,15 +250,10 @@ impl<'a> CheckerState<'a> {
             let is_abstract = self.has_abstract_modifier(&prop.modifiers);
             let has_declare = self.has_declare_modifier(&prop.modifiers);
 
-            // tsc points TS1255/TS1263/TS1264 at the `!` token itself.
-            // For class property names parsed via parse_property_name(), the name
-            // node's `end` is one past the `!` (due to end_pos being captured after
-            // next_token()). So the `!` is at name_node.end - 1.
-            let excl_pos = self
-                .ctx
-                .arena
-                .get(prop.name)
-                .map(|n| n.end.saturating_sub(1));
+            // tsc points TS1255/TS1263/TS1264 at the `!` token itself, which
+            // immediately follows the property name, i.e. at `name_node.end`
+            // (length 1) — the same anchor the variable-declaration arm uses.
+            let excl_pos = self.ctx.arena.get(prop.name).map(|n| n.end);
 
             // TS1255: ! is not permitted on static, abstract, ambient, or declared properties
             if in_ambient || is_static || is_abstract || has_declare {
