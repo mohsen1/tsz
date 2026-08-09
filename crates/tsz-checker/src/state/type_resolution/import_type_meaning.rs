@@ -144,27 +144,35 @@ impl<'a> CheckerState<'a> {
             // all types (a `NAMESPACE_MODULE` that never instantiates a
             // runtime object) slips through it uncaught; check that
             // separately here.
-            let namespace_is_uninstantiated = self
-                .ctx
-                .get_binder_for_file(target_idx)
-                .and_then(|binder| {
-                    let file_name = self
-                        .ctx
-                        .get_arena_for_file(target_idx as u32)
-                        .source_files
-                        .first()?
-                        .file_name
-                        .clone();
-                    binder
-                        .module_exports
-                        .get(&file_name)
-                        .and_then(|exports| exports.get("export="))
-                })
-                .is_some_and(|eq_sym_id| {
-                    self.get_cross_file_symbol(eq_sym_id)
-                        .is_some_and(|eq_sym| eq_sym.has_any_flags(symbol_flags::NAMESPACE_MODULE))
-                        && self.is_module_uninstantiated(eq_sym_id)
-                });
+            //
+            // Must go through `module_exports_for_module` (not index
+            // `binder.module_exports` directly): a full project build
+            // aggregates exports into `ctx.program_module_exports` and
+            // leaves each per-file binder's own `module_exports` map
+            // unpopulated, so a direct index only ever succeeds in
+            // single/few-file harnesses that skip that aggregation step.
+            let namespace_is_uninstantiated =
+                self.ctx
+                    .get_binder_for_file(target_idx)
+                    .and_then(|binder| {
+                        let file_name = self
+                            .ctx
+                            .get_arena_for_file(target_idx as u32)
+                            .source_files
+                            .first()?
+                            .file_name
+                            .as_str();
+                        let eq_sym_id = self
+                            .ctx
+                            .module_exports_for_module(binder, file_name)
+                            .and_then(|exports| exports.get("export="))?;
+                        Some((binder, eq_sym_id))
+                    })
+                    .is_some_and(|(binder, eq_sym_id)| {
+                        binder.get_symbol(eq_sym_id).is_some_and(|eq_sym| {
+                            eq_sym.has_any_flags(symbol_flags::NAMESPACE_MODULE)
+                        }) && self.is_module_uninstantiated_in_binder(binder, eq_sym_id)
+                    });
 
             return !namespace_is_uninstantiated
                 && !self.is_module_export_equals_type_only(module_name);
