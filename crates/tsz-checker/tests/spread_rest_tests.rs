@@ -1,7 +1,8 @@
 //! Tests for spread and rest operator type checking
 
 use tsz_checker::test_utils::{
-    check_source_diagnostics, diagnostic_code_message_refs as diagnostic_code_messages,
+    check_source_codes_with_parse_health, check_source_diagnostics,
+    diagnostic_code_message_refs as diagnostic_code_messages,
     diagnostic_code_message_refs_with_code as diagnostic_code_messages_with_code, diagnostic_count,
     diagnostic_count_where, diagnostic_messages_with_code, diagnostics_where,
     diagnostics_with_code, has_diagnostic_where,
@@ -892,16 +893,19 @@ const chars = [...str];  // Should be string[]
 fn test_object_rest_not_last_emits_ts2462() {
     // TypeScript emits TS2462 for object rest patterns where the rest is
     // not the last element, just like it does for array patterns.
+    //
+    // TS2462 is a grammar check emitted while parsing the binding pattern
+    // (`report_rest_element_not_last`), so it lives on the parser side of the
+    // parse-health split rather than in the type-checker's output.
     let source = r#"
 var { ...rest, x } = { x: 1 };
 "#;
 
-    let diagnostics = check_source_diagnostics(source);
+    let codes = check_source_codes_with_parse_health(source);
 
-    let ts2462_count = diagnostic_count(&diagnostics, 2462);
     assert!(
-        ts2462_count >= 1,
-        "Expected TS2462 for object rest that is not last, got {ts2462_count}. Diagnostics: {diagnostics:#?}"
+        codes.contains(&2462),
+        "Expected TS2462 for object rest that is not last, got {codes:?}"
     );
 }
 
@@ -911,12 +915,11 @@ fn test_array_rest_not_last_still_reports_ts2462() {
 var [...rest, x] = [1, 2, 3];
 "#;
 
-    let diagnostics = check_source_diagnostics(source);
+    let codes = check_source_codes_with_parse_health(source);
 
-    let ts2462_count = diagnostic_count(&diagnostics, 2462);
     assert!(
-        ts2462_count >= 1,
-        "Expected TS2462 for array rest that is not last, got {ts2462_count}"
+        codes.contains(&2462),
+        "Expected TS2462 for array rest that is not last, got {codes:?}"
     );
 }
 

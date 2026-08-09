@@ -246,6 +246,8 @@ impl ParserState {
             }
         }
 
+        self.report_rest_element_not_last(&elements);
+
         let end_pos = if self.is_token(SyntaxKind::CloseBraceToken) {
             let end = self.token_end();
             self.parse_expected(SyntaxKind::CloseBraceToken);
@@ -449,6 +451,8 @@ impl ParserState {
             );
         }
 
+        self.report_rest_element_not_last(&elements);
+
         self.arena.add_binding_pattern(
             syntax_kind_ext::ARRAY_BINDING_PATTERN,
             start_pos,
@@ -457,6 +461,51 @@ impl ParserState {
                 elements: Self::make_node_list(elements),
             },
         )
+    }
+
+    /// TS2462: A rest element must be last in a destructuring pattern.
+    ///
+    /// `tsc` reports this grammar error (`checkGrammarBindingElement`) for any
+    /// binding-pattern rest element (`...x`) that is followed by another
+    /// element, anchored at the element's name. Emitting it here — during
+    /// binding-pattern parsing — covers every position uniformly: variable
+    /// declarations, parameters (including arrow, method, and type-signature
+    /// forms), `catch` bindings, and nested patterns. Assignment-destructuring
+    /// targets are array/object *literals* reinterpreted later and carry their
+    /// own TS2462 check, so they never reach this path.
+    fn report_rest_element_not_last(&mut self, elements: &[NodeIndex]) {
+        if elements.len() < 2 {
+            return;
+        }
+        let last_index = elements.len() - 1;
+        let mut anchors: Vec<(u32, u32)> = Vec::new();
+        for &elem_idx in &elements[..last_index] {
+            let Some(elem_node) = self.arena.get(elem_idx) else {
+                continue;
+            };
+            let Some(elem_data) = self.arena.get_binding_element(elem_node) else {
+                continue;
+            };
+            if !elem_data.dot_dot_dot_token {
+                continue;
+            }
+            // Anchor at the rest element's name, matching `tsc`; fall back to the
+            // whole element span when the name is missing (recovery).
+            let anchor = self
+                .arena
+                .get(elem_data.name)
+                .map(|name_node| (name_node.pos, name_node.end.saturating_sub(name_node.pos)))
+                .unwrap_or((elem_node.pos, elem_node.end.saturating_sub(elem_node.pos)));
+            anchors.push(anchor);
+        }
+        for (start, length) in anchors {
+            self.parse_error_at(
+                start,
+                length,
+                "A rest element must be last in a destructuring pattern.",
+                diagnostic_codes::A_REST_ELEMENT_MUST_BE_LAST_IN_A_DESTRUCTURING_PATTERN,
+            );
+        }
     }
 
     /// Parse binding element name (can be identifier or nested binding pattern)

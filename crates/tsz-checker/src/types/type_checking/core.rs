@@ -1271,18 +1271,6 @@ impl<'a> CheckerState<'a> {
 
         let _pattern_kind = pattern_node.kind;
 
-        let is_declarative_pattern = self
-            .ctx
-            .arena
-            .get_extended(pattern_idx)
-            .and_then(|ext| self.ctx.arena.get(ext.parent))
-            .is_some_and(|parent| {
-                matches!(
-                    parent.kind,
-                    syntax_kind_ext::VARIABLE_DECLARATION | syntax_kind_ext::PARAMETER
-                )
-            });
-
         for (i, &element_idx) in pattern_data.elements.nodes.iter().enumerate() {
             if let Some(element_node) = self.ctx.arena.get(element_idx)
                 && let Some(element_data) = self.ctx.arena.get_binding_element(element_node)
@@ -1319,25 +1307,10 @@ impl<'a> CheckerState<'a> {
                     );
                 }
 
-                // TS2462: A rest element must be last in a destructuring pattern.
-                // Applies to both array and object binding patterns.
-                if i < elements_len - 1 {
-                    let diag_node = if is_declarative_pattern {
-                        self.ctx
-                            .arena
-                            .get(element_data.name)
-                            .and_then(|node| self.ctx.arena.get_identifier(node))
-                            .and(Some(element_data.name))
-                            .unwrap_or(element_idx)
-                    } else {
-                        element_idx
-                    };
-                    self.error_at_node_msg(
-                        diag_node,
-                        diagnostic_codes::A_REST_ELEMENT_MUST_BE_LAST_IN_A_DESTRUCTURING_PATTERN,
-                        &[],
-                    );
-                }
+                // TS2462 (a rest element must be last in a destructuring
+                // pattern) is a pure grammar check, emitted uniformly for every
+                // binding pattern during parsing (`report_rest_element_not_last`
+                // in the parser), so it is intentionally not re-checked here.
             }
 
             self.check_binding_element_with_request(

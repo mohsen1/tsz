@@ -7,11 +7,20 @@
 //! object targets and every nested target were silently accepted. These tests
 //! pin parity with `tsc` (verified against `typescript@7.0.2`).
 
-use tsz_checker::test_utils::{check_source_diagnostics, diagnostic_codes, diagnostic_count};
+use tsz_checker::test_utils::{
+    check_source_codes_with_parse_health, check_source_diagnostics, diagnostic_codes,
+};
 
+/// Count TS2462 across both diagnostic sources. Assignment-target rests are
+/// emitted by the checker (`assignment_ops`); binding-pattern rests are emitted
+/// by the parser grammar check (`report_rest_element_not_last`). The two forms
+/// never overlap on a single node, so a combined count still reads exactly one
+/// per offending rest.
 fn ts2462_count(source: &str) -> usize {
-    let diagnostics = check_source_diagnostics(source);
-    diagnostic_count(&diagnostics, 2462)
+    check_source_codes_with_parse_health(source)
+        .into_iter()
+        .filter(|code| *code == 2462)
+        .count()
 }
 
 /// The reported conformance witness (`objectRestPropertyMustBeLast.ts`): an
