@@ -685,3 +685,177 @@ fn explicit_root_node_modules_js_require_reads_surface_node16() {
 fn explicit_root_node_modules_js_require_reads_surface_nodenext() {
     explicit_root_node_modules_js_require_reads_commonjs_surface("nodenext");
 }
+
+// ---------------------------------------------------------------------------
+// #17024: `parse_property_name_impl`'s identifier/keyword branch read
+// `token_end()` *after* `next_token()` had already advanced past the name, so
+// the shared property-name node's `end` overshot into whatever token follows
+// (e.g. the `(` after an accessor name). Since diagnostic ordering sorts by
+// `(start, length, code)`, the inflated length flipped the order between a
+// parser grammar diagnostic anchored on the name (TS1054/TS1049) and a
+// checker diagnostic anchored at the same `start` (TS2378/TS7032). Every
+// expectation below is oracle-verified against `typescript@7.0.2`.
+// ---------------------------------------------------------------------------
+
+/// Returns `(start, length)` for the first diagnostic with `code`.
+fn first_diagnostic_span(
+    diagnostics: &[tsz_common::diagnostics::Diagnostic],
+    code: u32,
+) -> (u32, u32) {
+    let diag = diagnostics
+        .iter()
+        .find(|d| d.code == code)
+        .unwrap_or_else(|| panic!("expected code {code}, got: {diagnostics:#?}"));
+    (diag.start, diag.length)
+}
+
+#[test]
+fn get_accessor_ts1054_span_does_not_overshoot_into_the_parameter_list() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = temp.path.as_path();
+    write_file(
+        &base.join("index.ts"),
+        "class Cq30 { get xq30(vq30: number): string { return \"\"; } }\n",
+    );
+
+    let args = parse_args(&["tsz", "--noEmit", "--strict", "index.ts"]);
+    let result = compile(&args, base).expect("compile should succeed");
+    let (_, length) = first_diagnostic_span(&result.diagnostics, 1054);
+    assert_eq!(
+        length, 4,
+        "TS1054 must span exactly the accessor name `xq30` (length 4), not overshoot into `(`; got: {:#?}",
+        result.diagnostics
+    );
+}
+
+#[test]
+fn get_accessor_with_value_parameter_orders_ts1054_before_ts2378_matching_tsc() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = temp.path.as_path();
+    write_file(
+        &base.join("index.ts"),
+        "class Cr31 { get xr31(vr31: number): string {} }\n",
+    );
+
+    let args = parse_args(&["tsz", "--noEmit", "--strict", "index.ts"]);
+    let result = compile(&args, base).expect("compile should succeed");
+
+    let (ts1054_start, ts1054_len) = first_diagnostic_span(&result.diagnostics, 1054);
+    let (ts2378_start, ts2378_len) = first_diagnostic_span(&result.diagnostics, 2378);
+    assert_eq!(
+        ts1054_start, ts2378_start,
+        "TS1054 and TS2378 must anchor at the same start (the accessor name)"
+    );
+    assert_eq!(
+        ts1054_len, ts2378_len,
+        "TS1054 and TS2378 must share the same span length (both anchor on `name`)"
+    );
+
+    let ts1054_index = result
+        .diagnostics
+        .iter()
+        .position(|d| d.code == 1054)
+        .unwrap();
+    let ts2378_index = result
+        .diagnostics
+        .iter()
+        .position(|d| d.code == 2378)
+        .unwrap();
+    assert!(
+        ts1054_index < ts2378_index,
+        "tsc's (start, length, code) ordering puts TS1054 before TS2378 at an equal span; got order: {:#?}",
+        result.diagnostics
+    );
+}
+
+/// Same shape with every binder renamed, to rule out a name-string match.
+#[test]
+fn get_accessor_with_value_parameter_orders_ts1054_before_ts2378_renamed_binders() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = temp.path.as_path();
+    write_file(
+        &base.join("index.ts"),
+        "class ContainerS32 { get widthS32(inputS32: number): string {} }\n",
+    );
+
+    let args = parse_args(&["tsz", "--noEmit", "--strict", "index.ts"]);
+    let result = compile(&args, base).expect("compile should succeed");
+
+    let ts1054_index = result
+        .diagnostics
+        .iter()
+        .position(|d| d.code == 1054)
+        .unwrap_or_else(|| panic!("expected TS1054, got: {:#?}", result.diagnostics));
+    let ts2378_index = result
+        .diagnostics
+        .iter()
+        .position(|d| d.code == 2378)
+        .unwrap_or_else(|| panic!("expected TS2378, got: {:#?}", result.diagnostics));
+    assert!(
+        ts1054_index < ts2378_index,
+        "renamed binders must not change the (start, length, code) ordering; got: {:#?}",
+        result.diagnostics
+    );
+}
+
+#[test]
+fn set_accessor_with_no_parameters_orders_ts1049_before_ts7032_matching_tsc() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = temp.path.as_path();
+    write_file(
+        &base.join("index.ts"),
+        "class Ct33 { set yt33() {} }\n",
+    );
+
+    let args = parse_args(&["tsz", "--noEmit", "--strict", "index.ts"]);
+    let result = compile(&args, base).expect("compile should succeed");
+
+    let (ts1049_start, ts1049_len) = first_diagnostic_span(&result.diagnostics, 1049);
+    let (ts7032_start, ts7032_len) = first_diagnostic_span(&result.diagnostics, 7032);
+    assert_eq!(
+        ts1049_start, ts7032_start,
+        "TS1049 and TS7032 must anchor at the same start (the accessor name)"
+    );
+    assert_eq!(
+        ts1049_len, ts7032_len,
+        "TS1049 and TS7032 must share the same span length (both anchor on `name`)"
+    );
+
+    let ts1049_index = result
+        .diagnostics
+        .iter()
+        .position(|d| d.code == 1049)
+        .unwrap();
+    let ts7032_index = result
+        .diagnostics
+        .iter()
+        .position(|d| d.code == 7032)
+        .unwrap();
+    assert!(
+        ts1049_index < ts7032_index,
+        "tsc's (start, length, code) ordering puts TS1049 before TS7032 at an equal span; got order: {:#?}",
+        result.diagnostics
+    );
+}
+
+/// A `set` accessor's own `name.end` (not the accessor family's shared
+/// helper) is exercised the same way in a type-literal member, confirming
+/// the fix is not scoped to class members alone.
+#[test]
+fn type_literal_set_accessor_ts1049_span_does_not_overshoot() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = temp.path.as_path();
+    write_file(
+        &base.join("index.ts"),
+        "type Tv35 = { set yv35(av35: number, bv35: number): void };\n",
+    );
+
+    let args = parse_args(&["tsz", "--noEmit", "--strict", "index.ts"]);
+    let result = compile(&args, base).expect("compile should succeed");
+    let (_, length) = first_diagnostic_span(&result.diagnostics, 1049);
+    assert_eq!(
+        length, 4,
+        "TS1049 must span exactly the accessor name `yv35` (length 4), not overshoot into `(`; got: {:#?}",
+        result.diagnostics
+    );
+}
