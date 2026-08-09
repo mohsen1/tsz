@@ -628,42 +628,51 @@ impl CheckerState<'_> {
                                         self.def_body_involves_depth_poisoned_def(def_id)
                                     })));
 
-                        if (exceeded && !suppress_depth_cascade)
-                            || circular_mapped
-                            || tuple_too_large
-                        {
-                            use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-                            let (message, code) = if tuple_too_large
-                                || (exceeded
-                                    && is_type_alias
-                                    && self.type_alias_is_unconditional_tuple_spread(sym_id))
-                            {
-                                (
-                                    diagnostic_messages::TYPE_PRODUCES_A_TUPLE_TYPE_THAT_IS_TOO_LARGE_TO_REPRESENT,
-                                    diagnostic_codes::TYPE_PRODUCES_A_TUPLE_TYPE_THAT_IS_TOO_LARGE_TO_REPRESENT,
-                                )
-                            } else {
-                                (
-                                    diagnostic_messages::TYPE_INSTANTIATION_IS_EXCESSIVELY_DEEP_AND_POSSIBLY_INFINITE,
-                                    diagnostic_codes::TYPE_INSTANTIATION_IS_EXCESSIVELY_DEEP_AND_POSSIBLY_INFINITE,
-                                )
-                            };
-                            self.error_at_node(idx, message, code);
+                        let depth_diagnostic =
+                            (exceeded && !suppress_depth_cascade) || tuple_too_large;
 
-                            // TS2615: When a circular mapped type is involved,
-                            // also emit the property-circularity diagnostic.
-                            if circular_mapped {
-                                self.emit_ts2615_for_circular_mapped_type(idx, type_id);
+                        if depth_diagnostic || circular_mapped {
+                            use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+
+                            // TS2589/tuple-too-large and TS2615 are independent
+                            // signals in tsc: a circular mapped-type property
+                            // (TS2615) does not by itself mean the instantiation
+                            // depth guard tripped, so only emit the depth
+                            // diagnostic when it actually did.
+                            if depth_diagnostic {
+                                let (message, code) = if tuple_too_large
+                                    || (exceeded
+                                        && is_type_alias
+                                        && self.type_alias_is_unconditional_tuple_spread(sym_id))
+                                {
+                                    (
+                                        diagnostic_messages::TYPE_PRODUCES_A_TUPLE_TYPE_THAT_IS_TOO_LARGE_TO_REPRESENT,
+                                        diagnostic_codes::TYPE_PRODUCES_A_TUPLE_TYPE_THAT_IS_TOO_LARGE_TO_REPRESENT,
+                                    )
+                                } else {
+                                    (
+                                        diagnostic_messages::TYPE_INSTANTIATION_IS_EXCESSIVELY_DEEP_AND_POSSIBLY_INFINITE,
+                                        diagnostic_codes::TYPE_INSTANTIATION_IS_EXCESSIVELY_DEEP_AND_POSSIBLY_INFINITE,
+                                    )
+                                };
+                                self.error_at_node(idx, message, code);
+
+                                if code
+                                    == diagnostic_codes::TYPE_INSTANTIATION_IS_EXCESSIVELY_DEEP_AND_POSSIBLY_INFINITE
+                                    && defaulted_recursive_alias
+                                    && self.type_node_is_outside_symbol_declarations(idx, sym_id)
+                                    && let Some(base_def_id) = base_def_id
+                                {
+                                    self.ctx.definition_store.mark_depth_poisoned(base_def_id);
+                                    self.ctx.clear_type_evaluation_caches_for_def(base_def_id);
+                                }
                             }
 
-                            if code
-                                == diagnostic_codes::TYPE_INSTANTIATION_IS_EXCESSIVELY_DEEP_AND_POSSIBLY_INFINITE
-                                && defaulted_recursive_alias
-                                && self.type_node_is_outside_symbol_declarations(idx, sym_id)
-                                && let Some(base_def_id) = base_def_id
-                            {
-                                self.ctx.definition_store.mark_depth_poisoned(base_def_id);
-                                self.ctx.clear_type_evaluation_caches_for_def(base_def_id);
+                            // TS2615: a circular mapped-type property is its own
+                            // signal, independent of whether the depth guard
+                            // also tripped.
+                            if circular_mapped {
+                                self.emit_ts2615_for_circular_mapped_type(idx, type_id);
                             }
 
                             // tsc returns `any` for excessively deep types to
@@ -1651,40 +1660,49 @@ impl CheckerState<'_> {
                                             self.def_body_involves_depth_poisoned_def(def_id)
                                         })));
 
-                            if (exceeded && !suppress_depth_cascade)
-                                || circular_mapped
-                                || tuple_too_large
-                            {
-                                use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-                                let (message, code) = if tuple_too_large
-                                    || (exceeded && tuple_spread_alias)
-                                {
-                                    (
-                                        diagnostic_messages::TYPE_PRODUCES_A_TUPLE_TYPE_THAT_IS_TOO_LARGE_TO_REPRESENT,
-                                        diagnostic_codes::TYPE_PRODUCES_A_TUPLE_TYPE_THAT_IS_TOO_LARGE_TO_REPRESENT,
-                                    )
-                                } else {
-                                    (
-                                        diagnostic_messages::TYPE_INSTANTIATION_IS_EXCESSIVELY_DEEP_AND_POSSIBLY_INFINITE,
-                                        diagnostic_codes::TYPE_INSTANTIATION_IS_EXCESSIVELY_DEEP_AND_POSSIBLY_INFINITE,
-                                    )
-                                };
-                                self.error_at_node(idx, message, code);
+                            let depth_diagnostic =
+                                (exceeded && !suppress_depth_cascade) || tuple_too_large;
 
-                                // TS2615: When a circular mapped type is involved,
-                                // also emit the property-circularity diagnostic.
-                                if circular_mapped {
-                                    self.emit_ts2615_for_circular_mapped_type(idx, result);
+                            if depth_diagnostic || circular_mapped {
+                                use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+
+                                // TS2589/tuple-too-large and TS2615 are independent
+                                // signals in tsc: a circular mapped-type property
+                                // (TS2615) does not by itself mean the instantiation
+                                // depth guard tripped, so only emit the depth
+                                // diagnostic when it actually did.
+                                if depth_diagnostic {
+                                    let (message, code) = if tuple_too_large
+                                        || (exceeded && tuple_spread_alias)
+                                    {
+                                        (
+                                            diagnostic_messages::TYPE_PRODUCES_A_TUPLE_TYPE_THAT_IS_TOO_LARGE_TO_REPRESENT,
+                                            diagnostic_codes::TYPE_PRODUCES_A_TUPLE_TYPE_THAT_IS_TOO_LARGE_TO_REPRESENT,
+                                        )
+                                    } else {
+                                        (
+                                            diagnostic_messages::TYPE_INSTANTIATION_IS_EXCESSIVELY_DEEP_AND_POSSIBLY_INFINITE,
+                                            diagnostic_codes::TYPE_INSTANTIATION_IS_EXCESSIVELY_DEEP_AND_POSSIBLY_INFINITE,
+                                        )
+                                    };
+                                    self.error_at_node(idx, message, code);
+
+                                    if code
+                                        == diagnostic_codes::TYPE_INSTANTIATION_IS_EXCESSIVELY_DEEP_AND_POSSIBLY_INFINITE
+                                        && defaulted_recursive_alias
+                                        && self.type_node_is_outside_symbol_declarations(idx, sym_id)
+                                        && let Some(app_def_id) = app_def_id
+                                    {
+                                        self.ctx.definition_store.mark_depth_poisoned(app_def_id);
+                                        self.ctx.clear_type_evaluation_caches_for_def(app_def_id);
+                                    }
                                 }
 
-                                if code
-                                    == diagnostic_codes::TYPE_INSTANTIATION_IS_EXCESSIVELY_DEEP_AND_POSSIBLY_INFINITE
-                                    && defaulted_recursive_alias
-                                    && self.type_node_is_outside_symbol_declarations(idx, sym_id)
-                                    && let Some(app_def_id) = app_def_id
-                                {
-                                    self.ctx.definition_store.mark_depth_poisoned(app_def_id);
-                                    self.ctx.clear_type_evaluation_caches_for_def(app_def_id);
+                                // TS2615: a circular mapped-type property is its
+                                // own signal, independent of whether the depth
+                                // guard also tripped.
+                                if circular_mapped {
+                                    self.emit_ts2615_for_circular_mapped_type(idx, result);
                                 }
 
                                 // tsc returns `any` for excessively deep types to

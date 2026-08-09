@@ -383,6 +383,9 @@ mod ts2542_readonly_index_coemission_tests;
 #[path = "../tests/ts2558_new_type_args_tests.rs"]
 mod ts2558_new_type_args_tests;
 #[cfg(test)]
+#[path = "../tests/ts2589_mapped_type_tests.rs"]
+mod ts2589_mapped_type_tests;
+#[cfg(test)]
 #[path = "../tests/ts2589_tests.rs"]
 mod ts2589_tests;
 #[cfg(test)]
