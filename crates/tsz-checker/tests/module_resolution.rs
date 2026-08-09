@@ -1152,34 +1152,60 @@ fn test_arbitrary_ext_decl_renamed_extensions() {
 }
 
 #[test]
-fn test_arbitrary_ext_decl_does_not_disturb_ts_js_json_wrapped_files() {
+fn test_arbitrary_ext_decl_does_not_disturb_ts_js_wrapped_files() {
     // Regression guard for the existing `test_arbitrary_extension_declaration_file_is_not_mapped`
-    // invariant: TS/JS/JSON-wrapped declaration files remain unmapped.
+    // invariant: TS/JS-wrapped declaration files remain unmapped. `.d.json.ts`
+    // is deliberately excluded here — see
+    // `test_json_decl_wrapped_file_registers_under_stripped_json_form` below,
+    // which covers the opposite, tsc-mandated rule for that one extension.
     let files = vec![
         "/proj/app.ts".to_string(),
         "/proj/foo.d.ts.ts".to_string(),
-        "/proj/bar.d.json.ts".to_string(),
         "/proj/baz.d.js.ts".to_string(),
     ];
     let (paths, modules) = build_module_resolution_maps(&files);
-    for spec in [
-        "./foo.d.ts",
-        "./foo.json",
-        "./bar.json",
-        "./baz.js",
-        "./foo",
-        "./bar",
-        "./baz",
-    ] {
+    for spec in ["./foo.d.ts", "./foo.json", "./baz.js", "./foo", "./baz"] {
         assert!(
             !paths.contains_key(&(0, spec.to_string())),
-            "TS/JS/JSON-wrapped decl file must not register {spec}",
+            "TS/JS-wrapped decl file must not register {spec}",
         );
         assert!(
             !modules.contains(spec),
-            "TS/JS/JSON-wrapped decl file must not register {spec} in module set",
+            "TS/JS-wrapped decl file must not register {spec} in module set",
         );
     }
+}
+
+#[test]
+fn test_json_decl_wrapped_file_registers_under_stripped_json_form() {
+    // Unlike `.d.ts.ts`/`.d.js.ts` above, `.d.json.ts` is tsc's real
+    // declaration-companion shape for a `.json` specifier (pinned
+    // `typescript@7.0.2` oracle, `declarationFileForJsonImport.ts`):
+    // `tryAddingExtensions`'s `Extension.Json` case tries the Declaration
+    // extension before the Json extension, unconditionally. So `./bar.json`
+    // must resolve to `bar.d.json.ts`, and — when a sibling `bar.json` also
+    // exists — the declaration wins (last-registered-wins overwrite, since a
+    // `.d.json.ts` target's `.ts` suffix ranks it as the highest-priority
+    // resolution-extension group).
+    let files = vec![
+        "/proj/app.ts".to_string(),
+        "/proj/bar.d.json.ts".to_string(),
+    ];
+    let (paths, modules) = build_module_resolution_maps(&files);
+    assert_eq!(paths.get(&(0, "./bar.json".to_string())), Some(&1));
+    assert!(modules.contains("./bar.json"));
+
+    let files_with_sibling_json = vec![
+        "/proj/app.ts".to_string(),
+        "/proj/bar.d.json.ts".to_string(),
+        "/proj/bar.json".to_string(),
+    ];
+    let (paths, _) = build_module_resolution_maps(&files_with_sibling_json);
+    assert_eq!(
+        paths.get(&(0, "./bar.json".to_string())),
+        Some(&1),
+        "declaration companion must win over a sibling literal .json file",
+    );
 }
 
 #[test]

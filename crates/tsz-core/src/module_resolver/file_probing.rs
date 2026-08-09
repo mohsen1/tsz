@@ -71,6 +71,20 @@ impl ModuleResolver {
             return None;
         }
         if let Some((base, extension)) = split_path_extension(path) {
+            // A `.json` specifier prefers a sibling `.d.json.ts` declaration
+            // file over the JSON file's own literal shape, matching tsc's
+            // `tryAddingExtensions` `Extension.Json` case: the declaration
+            // extension is tried before the JSON extension, unconditionally
+            // (independent of `resolveJsonModule`). Without this, a resolved
+            // `.json` file with `resolveJsonModule` off is later upgraded to
+            // TS2732 by the caller, and with it on the JSON literal's own
+            // inferred shape shadows the declared type.
+            if extension == "json"
+                && let Some(resolved) = try_arbitrary_extension_declaration(path, extension)
+            {
+                return Some(resolved);
+            }
+
             // Try extension substitution (.js -> .ts/.tsx/.d.ts) for all resolution modes.
             // TypeScript resolves `.js` imports to `.ts` sources in all modes.
             if let Some(rewritten) = node16_extension_substitution(path, extension) {

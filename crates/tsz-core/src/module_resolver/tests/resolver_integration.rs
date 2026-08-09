@@ -250,6 +250,82 @@ fn test_json_import_without_resolve_json_module() {
     assert_eq!(diagnostic.code, 2732); // TS2732
 }
 
+/// A `.json` specifier's sibling `<base>.d.json.ts` declaration file takes
+/// priority over the JSON file's own literal shape, unconditionally — tsc's
+/// `tryAddingExtensions` `Extension.Json` case tries the Declaration
+/// extension before the Json extension. Verified against the pinned
+/// `typescript@7.0.2` oracle (`declarationFileForJsonImport.ts`): both
+/// `resolveJsonModule` settings resolve to the declaration file, never TS2732.
+#[test]
+fn test_json_import_prefers_decl_companion_with_resolve_json_module_true() {
+    let fixture = TempFixture::new();
+    let dir = fixture.path();
+    fixture.write("app.ts", "import data from './data.json';");
+    fixture.write("data.json", "{}");
+    fixture.write(
+        "data.d.json.ts",
+        "declare var val: string; export default val;",
+    );
+
+    let mut resolver = ModuleResolver::new(&ResolvedCompilerOptions {
+        resolve_json_module: true,
+        ..Default::default()
+    });
+
+    let resolved = resolver
+        .resolve("./data.json", &dir.join("app.ts"), Span::new(0, 10))
+        .expect("declaration companion should resolve");
+    assert_eq!(resolved.resolved_path, dir.join("data.d.json.ts"));
+    assert!(resolved.extension.is_declaration());
+}
+
+#[test]
+fn test_json_import_prefers_decl_companion_with_resolve_json_module_false() {
+    let fixture = TempFixture::new();
+    let dir = fixture.path();
+    fixture.write("app.ts", "import data from './data.json';");
+    fixture.write("data.json", "{}");
+    fixture.write(
+        "data.d.json.ts",
+        "declare var val: string; export default val;",
+    );
+
+    let mut resolver = ModuleResolver::new(&ResolvedCompilerOptions {
+        resolve_json_module: false,
+        ..Default::default()
+    });
+
+    let resolved = resolver
+        .resolve("./data.json", &dir.join("app.ts"), Span::new(0, 10))
+        .expect("declaration companion resolves regardless of resolveJsonModule");
+    assert_eq!(resolved.resolved_path, dir.join("data.d.json.ts"));
+    assert!(resolved.extension.is_declaration());
+}
+
+/// Renamed-binder variant (§25 structural-over-identifier gate): the rule is
+/// keyed on the `.d.json.ts` shape, not on `data`/`val` specifically.
+#[test]
+fn test_json_import_prefers_decl_companion_renamed_specifier() {
+    let fixture = TempFixture::new();
+    let dir = fixture.path();
+    fixture.write("app.ts", "import cfg from './settings.json';");
+    fixture.write("settings.json", "{}");
+    fixture.write(
+        "settings.d.json.ts",
+        "declare var payload: number; export default payload;",
+    );
+
+    let mut resolver = ModuleResolver::new(&ResolvedCompilerOptions {
+        resolve_json_module: true,
+        ..Default::default()
+    });
+
+    let resolved = resolver
+        .resolve("./settings.json", &dir.join("app.ts"), Span::new(0, 10))
+        .expect("renamed declaration companion should resolve");
+    assert_eq!(resolved.resolved_path, dir.join("settings.d.json.ts"));
+}
+
 #[test]
 fn test_extensionless_json_import_does_not_resolve_with_resolve_json_module() {
     let fixture = TempFixture::new();
