@@ -1280,6 +1280,21 @@ impl<'a> CheckerState<'a> {
                 {
                     return namespace_type;
                 }
+                // An explicit JSDoc `@type` on the assignment statement is a
+                // declared type, like a variable's `: T` annotation — it must
+                // reach later `module.exports` reads exactly as written, not
+                // re-widened for "fresh literal" display the way a plain
+                // object-literal export's inferred shape is. Widening it here
+                // would turn e.g. `{ color: "red" | "blue" }`'s narrowed
+                // members into `{ color: string }` while keeping the alias's
+                // display name, producing a same-name-different-shape
+                // mismatch against every other reference to the same alias.
+                if target_file_idx == self.ctx.current_file_idx
+                    && let Some(declared_type) =
+                        self.commonjs_export_rhs_jsdoc_declared_type(rhs_expr)
+                {
+                    return declared_type;
+                }
                 let expando_root = target_arena
                     .get_identifier_at(rhs_expr)
                     .map(|ident| ident.escaped_text.as_str());
