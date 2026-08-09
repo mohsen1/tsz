@@ -11,6 +11,8 @@
  *       application rows (canary application gaps are advisory, never blocking),
  *       --require-green-project-timing-pairs found green perf-timed rows
  *       missing tsz/tsgo timing pairs,
+ *       --require-required-coverage found declared benchmark_set:"required" rows
+ *       absent from the artifact,
  *       or the --require-source-current gate found a stale artifact source commit
  *   2 — artifact file absent or unparseable
  *
@@ -22,7 +24,7 @@
  * is absent (exit 2) so callers reliably get machine-readable status in all cases.
  *
  * Usage:
- *   node scripts/bench/check-artifact-readiness.mjs [--json] [--require-green] [--require-clean-metadata] [--require-application-compat] [--require-green-project-timing-pairs] [--require-project-timing-pairs[=<n>]] [--expect-source-commit=<sha>] [--require-source-current] <artifact.json>
+ *   node scripts/bench/check-artifact-readiness.mjs [--json] [--require-green] [--require-clean-metadata] [--require-application-compat] [--require-green-project-timing-pairs] [--require-required-coverage] [--require-project-timing-pairs[=<n>]] [--expect-source-commit=<sha>] [--require-source-current] <artifact.json>
  */
 
 import fs from "node:fs";
@@ -38,6 +40,7 @@ import { BENCH_RUNNER_EXCLUDED_ROWS } from "./project-row-summary.mjs";
 import {
   hasCompletePhaseMetadata,
   isGreen,
+  missingDeclaredRows,
 } from "./row-utils.mjs";
 import { measurementProfileStatus } from "./measurement-profile.mjs";
 
@@ -102,6 +105,7 @@ function parseArgs(rawArgs) {
     requireCleanMetadata: false,
     requireApplicationCompat: false,
     requireGreenProjectTimingPairs: false,
+    requireRequiredCoverage: false,
     requireSourceCurrent: false,
     requiredProjectTimingPairs: 0,
     expectedSourceCommit: process.env.TSZ_BENCH_EXPECT_SOURCE_COMMIT ?? null,
@@ -120,6 +124,8 @@ function parseArgs(rawArgs) {
       options.requireApplicationCompat = true;
     } else if (arg === "--require-green-project-timing-pairs") {
       options.requireGreenProjectTimingPairs = true;
+    } else if (arg === "--require-required-coverage") {
+      options.requireRequiredCoverage = true;
     } else if (arg === "--require-source-current") {
       options.requireSourceCurrent = true;
     } else if (arg === "--require-project-timing-pairs") {
@@ -151,6 +157,7 @@ const {
   requireCleanMetadata,
   requireApplicationCompat,
   requireGreenProjectTimingPairs,
+  requireRequiredCoverage,
   requireSourceCurrent,
   requiredProjectTimingPairs: rawRequiredProjectTimingPairs,
   expectedSourceCommit: rawExpectedSourceCommit,
@@ -418,7 +425,31 @@ function analyzeArtifact(artifact, expectedCommit) {
   const blockingApplicationGaps = applicationGaps.filter((r) => isBlockingApplicationRow(r.name));
   const advisoryApplicationGaps = applicationGaps.filter((r) => !isBlockingApplicationRow(r.name));
 
+  // Required-set coverage (#17025): every declared benchmark_set:"required" row
+  // that carries no result row at all. This is a PRESENCE check over the full
+  // required set, strictly wider than REQUIRED_MEASURED_ROWS (which drops the
+  // never-timed excluded/application rows): a required row can stop being
+  // measured indefinitely — no timing shard, no compile-guard compat — and pass
+  // the shard-count gate as a `completed` run with a smaller results array. The
+  // artifact's own run_status is surfaced alongside so a merge-stamped `partial`
+  // is visible in the readiness report.
+  // Recomputed from the persisted results rather than trusting the merge-written
+  // validation.missing_required_rows: the readiness gate independently re-judges
+  // an arbitrary artifact (as it does for every other row signal) so a stale or
+  // wrong-version merge cannot self-certify. No all-absent guard here — unlike
+  // the per-shard merge, readiness always sees the final merged artifact, so an
+  // empty/degenerate one legitimately reports the whole required set absent.
+  const missingRequiredCoverageRows = missingDeclaredRows(REQUIRED_PROJECT_ROWS, artifact?.results);
+  const requiredCoverage = {
+    declared: REQUIRED_PROJECT_ROWS.length,
+    present: REQUIRED_PROJECT_ROWS.length - missingRequiredCoverageRows.length,
+    missing: missingRequiredCoverageRows.length,
+    missing_rows: missingRequiredCoverageRows,
+    run_status: artifact?.run_status ?? null,
+  };
+
   return {
+    requiredCoverage,
     measurementProfile: measurementProfileStatus(artifact),
     validationWarnings: analyzeValidationWarnings(artifact),
     sourceFreshness: analyzeSourceFreshness(artifact, expectedCommit),
@@ -459,6 +490,7 @@ function buildJson({
   artifactAbsent,
   parseError,
   artifact,
+  requiredCoverage,
   measurementProfile,
   validationWarnings,
   sourceFreshness,
@@ -511,6 +543,11 @@ function buildJson({
     },
     metadata_clean: metadataWarningsList.length === 0,
     metadata_warnings_total: metadataWarningsList.length,
+    // Full declared benchmark_set:"required" presence coverage (#17025), wider
+    // than the required-timing row set below. `run_status` echoes the artifact's
+    // own merge-stamped status (`partial` when the merge saw the same gap). Null
+    // only on the artifact-absent path, alongside `measurement_profile` below.
+    required_coverage: requiredCoverage ?? null,
     required_row_count: rows?.length ?? REQUIRED_MEASURED_ROWS.length,
     successful_project_timing_pairs: successfulProjectTimingPairs?.length ?? 0,
     required_project_timing_pairs: requiredProjectTimingPairs,
@@ -668,6 +705,7 @@ function artifactAge(generatedAt) {
 
 function buildReport({
   artifact,
+  requiredCoverage,
   measurementProfile,
   validationWarnings,
   sourceFreshness,
@@ -717,6 +755,7 @@ function buildReport({
     `| PGO training | ${profile.training_fingerprint ? `\`${profile.training_fingerprint.slice(0, 12)}\`` : "—"} |`,
     `| Binary target CPU | ${profile.rust_target_cpu ? `\`${profile.rust_target_cpu}\`` : "—"} |`,
     `| Required rows | ${rows.length} |`,
+    `| Required-set coverage | ${requiredCoverage.present}/${requiredCoverage.declared} declared present${requiredCoverage.missing ? ` (${requiredCoverage.missing} absent)` : ""}${requiredCoverage.run_status ? ` · run status: ${requiredCoverage.run_status}` : ""} |`,
     `| Successful project timing pairs | ${successfulProjectTimingPairs.length} |`,
     `| Green perf-timed rows missing timing | ${greenTimedRowsMissingTimingPairs.length} |`,
     `| Application compatibility rows | ${applicationRows.length - applicationMissing.length}/${applicationRows.length} present, ${applicationIncomplete.length} incomplete |`,
@@ -734,6 +773,17 @@ function buildReport({
   if (missing.length > 0) {
     lines.push(`### 🚫 Missing required rows (${missing.length})`, "");
     for (const r of missing) lines.push(`- \`${r.name}\``);
+    lines.push("");
+  }
+
+  if (requiredCoverage.missing > 0) {
+    lines.push(
+      `### 📉 Required-set coverage gap (${requiredCoverage.missing})`,
+      "",
+      `Declared \`benchmark_set:"required"\` rows with no result row in the artifact — never measured by any shard, so "the benchmark is green" excludes them (#17025):`,
+      "",
+    );
+    for (const name of requiredCoverage.missing_rows) lines.push(`- \`${name}\``);
     lines.push("");
   }
 
@@ -851,6 +901,7 @@ if (artifactAbsent || parseError) {
         artifactAbsent: true,
         parseError,
         artifact: null,
+        requiredCoverage: null,
         measurementProfile: null,
         sourceFreshness: null,
         rows: null,
@@ -878,6 +929,7 @@ if (artifactAbsent || parseError) {
 
 const analysis = analyzeArtifact(artifact, expectedSourceCommit);
 const {
+  requiredCoverage,
   measurementProfile,
   validationWarnings,
   sourceFreshness,
@@ -908,6 +960,7 @@ if (jsonOutput) {
       artifactAbsent: false,
       parseError: null,
       artifact,
+      requiredCoverage,
       measurementProfile,
       validationWarnings,
       sourceFreshness,
@@ -1023,6 +1076,20 @@ if (requireGreenProjectTimingPairs && blockingTimedRowsMissingTimingPairs.length
   process.stderr.write(
     `bench-artifact-readiness: ${blockingTimedRowsMissingTimingPairs.length} required perf-timed project row(s) ` +
       `missing tsz/tsgo timing pairs: ${blockingTimedRowsMissingTimingPairs.map((r) => r.name).join(", ")}\n`,
+  );
+  process.exit(1);
+}
+
+// Required-set coverage is always surfaced (report + JSON) and the merge step
+// already downgrades run_status to `partial`, but blocking on it is opt-in:
+// today `nextjs` and `type-challenges-solutions-project` have no measurement
+// path, so a default-on gate would freeze every publish (the #14398/#15004
+// anti-freeze contract). A caller that has given the full required set a
+// measurement path can pass --require-required-coverage to enforce it.
+if (requireRequiredCoverage && requiredCoverage.missing > 0) {
+  process.stderr.write(
+    `bench-artifact-readiness: ${requiredCoverage.missing} declared benchmark_set:"required" row(s) ` +
+      `absent from artifact: ${requiredCoverage.missing_rows.join(", ")}\n`,
   );
   process.exit(1);
 }

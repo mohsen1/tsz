@@ -253,6 +253,73 @@ withTempDir((dir) => {
   );
 });
 
+// Issue #17025: required-set coverage. A CI run with the full declared
+// benchmark_set:"required" set present stays `completed` and records an empty
+// missing_required_rows list.
+const CI_ENV_OVERRIDES = {
+  BENCH_TARGET_SHA: "feedface1234567890",
+  GITHUB_ACTIONS: "true",
+  GITHUB_REPOSITORY: "tsz-org/tsz",
+  GITHUB_RUN_ATTEMPT: "1",
+  GITHUB_RUN_ID: "67890",
+  GITHUB_SERVER_URL: "https://github.com",
+  GITHUB_SHA: "badcafe1234567890",
+  GITHUB_WORKFLOW: "Bench",
+};
+
+withTempDir((dir) => {
+  const input = writeInput(
+    dir,
+    "input.json",
+    REQUIRED_PROJECT_ROWS.map((name) => projectRow(name)),
+    { run_status: "completed" },
+  );
+  const result = runMergeInputs(dir, [input], [], CI_ENV_OVERRIDES);
+  assert.equal(result.status, 0, result.stderr);
+  const merged = JSON.parse(fs.readFileSync(result.output, "utf8"));
+  assert.equal(merged.run_status, "completed");
+  assert.deepEqual(merged.validation.missing_required_rows, []);
+});
+
+// A CI run missing a declared required row downgrades run_status to `partial`,
+// records the absent row in validation.missing_required_rows, still publishes
+// (exit 0, artifact written), and surfaces a ::warning::. This closes the
+// reported gap: a `completed` run with a silently smaller results array.
+withTempDir((dir) => {
+  const missingRow = REQUIRED_PROJECT_ROWS[0];
+  const rows = REQUIRED_PROJECT_ROWS.filter((name) => name !== missingRow).map((name) =>
+    projectRow(name),
+  );
+  const input = writeInput(dir, "input.json", rows, { run_status: "completed" });
+  const result = runMergeInputs(dir, [input], [], CI_ENV_OVERRIDES);
+  assert.equal(result.status, 0, result.stderr);
+  assert.ok(fs.existsSync(result.output), "a partial required set must still publish");
+  assert.match(
+    result.stderr,
+    new RegExp(`::warning::[\\s\\S]*${missingRow}: missing required row`),
+  );
+  const merged = JSON.parse(fs.readFileSync(result.output, "utf8"));
+  assert.equal(merged.run_status, "partial");
+  assert.ok(
+    merged.validation.missing_required_rows.includes(missingRow),
+    "the absent required row must be recorded in validation.missing_required_rows",
+  );
+});
+
+// A standalone/timing-only shard carrying NO required rows must not be flagged
+// against the whole required set (the coverage check is gated on the artifact
+// actually carrying at least one required row), so its run_status is untouched.
+withTempDir((dir) => {
+  const input = writeInput(dir, "input.json", [projectRow("standalone")], {
+    run_status: "completed",
+  });
+  const result = runMergeInputs(dir, [input], [], CI_ENV_OVERRIDES);
+  assert.equal(result.status, 0, result.stderr);
+  const merged = JSON.parse(fs.readFileSync(result.output, "utf8"));
+  assert.equal(merged.run_status, "completed");
+  assert.deepEqual(merged.validation.missing_required_rows, []);
+});
+
 // Issue #16310: the missing-project-row advisory must span the FULL defined
 // compatibility corpus, not just REQUIRED_PROJECT_ROWS. A `category:"application"`
 // row (guard_set:"canary", never in REQUIRED) that is absent from every shard

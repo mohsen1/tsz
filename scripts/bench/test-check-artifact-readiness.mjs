@@ -1066,4 +1066,62 @@ withTempDir((dir) => {
 });
 console.log("✅ multiple missing rows all named in report");
 
+// ---------------------------------------------------------------------------
+// Test (#17025): required-set coverage. A declared benchmark_set:"required" row
+// that the bench runner never measures (BENCH_RUNNER_EXCLUDED_ROWS, e.g.
+// type-challenges-solutions-project) is absent from REQUIRED_MEASURED_ROWS, so
+// its absence does NOT trip the default missing-required-row gate — but it IS
+// reported in required_coverage, and the artifact's merge-stamped run_status is
+// echoed through.
+const COVERAGE_EXCLUDED_ROW = "type-challenges-solutions-project";
+assert.ok(
+  ALL_REQUIRED_PROJECT_ROWS.includes(COVERAGE_EXCLUDED_ROW) &&
+    !REQUIRED_PROJECT_ROWS.includes(COVERAGE_EXCLUDED_ROW),
+  "test fixture expects a declared-required row that the readiness timing gate excludes",
+);
+withTempDir((dir) => {
+  const file = path.join(dir, "bench.json");
+  const rows = ALL_REQUIRED_PROJECT_ROWS.filter((n) => n !== COVERAGE_EXCLUDED_ROW).map((n) =>
+    makeRow(n, "green"),
+  );
+  writeJson(file, makeArtifact(rows, { run_status: "partial" }));
+  const jsonRes = run(file, ["--json"]);
+  assert.equal(jsonRes.status, 0, `excluded-row absence must not block by default: ${jsonRes.stderr}`);
+  const json = JSON.parse(jsonRes.stdout);
+  assert.equal(json.required_coverage.declared, ALL_REQUIRED_PROJECT_ROWS.length);
+  assert.equal(json.required_coverage.missing, 1);
+  assert.deepEqual(json.required_coverage.missing_rows, [COVERAGE_EXCLUDED_ROW]);
+  assert.equal(json.required_coverage.run_status, "partial");
+  assert.match(jsonRes.stderr, /Required-set coverage gap/);
+});
+console.log("✅ required-set coverage reports an unmeasured declared-required row (non-blocking)");
+
+// The opt-in --require-required-coverage flag turns an absent declared-required
+// row into a blocking failure for callers that have given the full set a
+// measurement path.
+withTempDir((dir) => {
+  const file = path.join(dir, "bench.json");
+  const rows = ALL_REQUIRED_PROJECT_ROWS.filter((n) => n !== COVERAGE_EXCLUDED_ROW).map((n) =>
+    makeRow(n, "green"),
+  );
+  writeJson(file, makeArtifact(rows));
+  const res = run(file, ["--require-required-coverage"]);
+  assert.equal(res.status, 1, "opt-in coverage gate must block on an absent declared-required row");
+  assert.match(res.stderr, new RegExp(COVERAGE_EXCLUDED_ROW));
+});
+console.log("✅ --require-required-coverage blocks on an absent declared-required row");
+
+// A complete declared-required set clears the coverage gate under the opt-in flag.
+withTempDir((dir) => {
+  const file = path.join(dir, "bench.json");
+  const rows = ALL_REQUIRED_PROJECT_ROWS.map((n) => makeRow(n, "green"));
+  writeJson(file, makeArtifact(rows));
+  const jsonRes = run(file, ["--json", "--require-required-coverage"]);
+  assert.equal(jsonRes.status, 0, `a complete required set must pass the coverage gate: ${jsonRes.stderr}`);
+  const json = JSON.parse(jsonRes.stdout);
+  assert.equal(json.required_coverage.missing, 0);
+  assert.deepEqual(json.required_coverage.missing_rows, []);
+});
+console.log("✅ complete required set passes --require-required-coverage");
+
 console.log("\nAll tests passed.");

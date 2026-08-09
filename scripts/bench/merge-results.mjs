@@ -9,7 +9,7 @@ import {
   REQUIRED_PROJECT_ROWS,
 } from "./project-rows.mjs";
 import { BENCH_RUNNER_EXCLUDED_ROWS } from "./project-row-summary.mjs";
-import { isGreen } from "./row-utils.mjs";
+import { isGreen, missingDeclaredRows } from "./row-utils.mjs";
 
 const REQUIRED_PROJECT_ROW_SET = new Set(REQUIRED_PROJECT_ROWS);
 // Application rows (real apps cloned + installed) are NEVER timed by the
@@ -471,13 +471,28 @@ function validateMeasurementProfileConsistency(profiles) {
 // actually carrying at least one corpus row so unrelated timing-only/standalone
 // artifacts are not spuriously advised against the whole corpus.
 function collectMissingCorpusRows(rows) {
-  const measuredNames = new Set(rows.map((row) => row?.name).filter(Boolean));
-  if (!COMPATIBILITY_CORPUS_ROW_NAMES.some((name) => measuredNames.has(name))) {
+  const missing = missingDeclaredRows(COMPATIBILITY_CORPUS_ROW_NAMES, rows);
+  // Skip an artifact carrying none of the corpus rows (a timing-only/standalone
+  // shard) so it is not spuriously advised against the whole corpus.
+  if (missing.length === COMPATIBILITY_CORPUS_ROW_NAMES.length) {
     return [];
   }
-  return COMPATIBILITY_CORPUS_ROW_NAMES
-    .filter((name) => !measuredNames.has(name))
-    .map((name) => `${name}: missing project row`);
+  return missing.map((name) => `${name}: missing project row`);
+}
+
+// Enumerate the declared `benchmark_set:"required"` rows absent from the
+// measured results — the required-set coverage check the shard-count gate
+// cannot see (#17025). A required row that produces NO result row at all (never
+// measured by any shard, its compile-guard compat JSONL absent) passes the
+// shard gate as a `completed` run with a silently smaller `results` array, so
+// "the benchmark is green" degrades to "the rows that reported are green". This
+// is isolated from `collectMissingCorpusRows` above (which spans the FULL corpus
+// as an advisory) because the required subset is the one whose absence must
+// change the artifact's own `run_status`. Shares the same all-absent guard so a
+// standalone/timing-only shard is never flagged against the whole required set.
+function collectMissingRequiredRows(rows) {
+  const missing = missingDeclaredRows(REQUIRED_PROJECT_ROWS, rows);
+  return missing.length === REQUIRED_PROJECT_ROWS.length ? [] : missing;
 }
 
 function collectProjectCompatibilityFailures(rows) {
@@ -560,9 +575,21 @@ function githubRunUrl(runId) {
   return `${serverUrl}/${repository}/actions/runs/${runId}`;
 }
 
-function mergedArtifactMetadata(payloads, generatedAt) {
+function mergedArtifactMetadata(payloads, generatedAt, missingRequiredRows = []) {
   const payloadMetadata = payloads.find(({ payload }) => payload?.source_commit)?.payload;
   const runId = firstNonLocal(payloadMetadata?.workflow_run_id, process.env.GITHUB_RUN_ID, "local");
+  let runStatus = firstNonLocal(
+    payloadMetadata?.run_status,
+    process.env.GITHUB_ACTIONS === "true" ? "completed" : "local",
+  );
+  // A required-set coverage gap must not masquerade as a clean `completed` run:
+  // downgrade to `partial` so the published artifact self-signals that part of
+  // the declared benchmark_set:"required" set was never measured (#17025). Only
+  // `completed` is downgraded — a `local` snapshot is already non-authoritative,
+  // and an upstream `partial`/error status is preserved as the stronger signal.
+  if (missingRequiredRows.length > 0 && runStatus === "completed") {
+    runStatus = "partial";
+  }
   return {
     generated_at: generatedAt,
     source_commit: firstNonLocal(
@@ -575,10 +602,7 @@ function mergedArtifactMetadata(payloads, generatedAt) {
     workflow_run_id: runId,
     workflow_run_url: firstNonLocal(payloadMetadata?.workflow_run_url, githubRunUrl(runId)),
     workflow_run_attempt: firstNonEmpty(payloadMetadata?.workflow_run_attempt, process.env.GITHUB_RUN_ATTEMPT),
-    run_status: firstNonLocal(
-      payloadMetadata?.run_status,
-      process.env.GITHUB_ACTIONS === "true" ? "completed" : "local",
-    ),
+    run_status: runStatus,
   };
 }
 
@@ -654,6 +678,21 @@ function main() {
     compatibilityJsonlFiles,
   );
 
+  // Required-set coverage: which declared benchmark_set:"required" rows never
+  // produced a result row. Non-blocking (never freezes the publish, per the
+  // #14398/#15004 anti-freeze contract) but it downgrades run_status to
+  // `partial` and is recorded in the artifact so the gap can never again pass as
+  // a silent `completed` run (#17025).
+  const missingRequiredRows = collectMissingRequiredRows(results);
+  if (missingRequiredRows.length > 0) {
+    console.warn(
+      `::warning::${missingRequiredRows.length} declared benchmark_set:"required" row(s) absent from the merged artifact; run_status downgraded to "partial":`,
+    );
+    for (const name of missingRequiredRows) {
+      console.warn(`  - ${name}: missing required row`);
+    }
+  }
+
   const { blocking: compatBlocking, advisory: compatAdvisory } = collectProjectCompatibilityFailures(results);
   compatAdvisory.push(...collectMissingCorpusRows(results));
   if (compatAdvisory.length > 0) {
@@ -709,7 +748,7 @@ function main() {
   }
 
   const merged = {
-    ...mergedArtifactMetadata(payloads, new Date().toISOString()),
+    ...mergedArtifactMetadata(payloads, new Date().toISOString(), missingRequiredRows),
     benchmark_runner: BENCHMARK_RUNNER,
     merged_from: payloads.map(({ file }) => path.basename(file)).sort(),
     validation: {
@@ -719,6 +758,7 @@ function main() {
       runner_environment_warnings: runnerEnvironmentWarnings,
       measurement_profile_warnings: measurementProfileWarnings,
       project_compatibility_advisory: compatAdvisory,
+      missing_required_rows: missingRequiredRows,
       runner_signature_advisory: runnerSignatureAdvisory,
       dropped_empty_shards: droppedEmptyShards.map(({ file, payload }) => ({
         file: path.basename(file),
