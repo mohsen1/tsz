@@ -499,3 +499,43 @@ interface LibBase {
             "both the `void` and numeric TS2427 must survive, got: {diagnostics:?}"
         );
     }
+
+    /// End-to-end guard for the property-name span fix in
+    /// `parse_property_name_impl`: a parser grammar diagnostic and a checker
+    /// diagnostic anchored on the *same* accessor name must interleave by code,
+    /// exactly as `tsc`'s `compareDiagnostics` orders them (start, then length,
+    /// then code). `TS1054` ("A 'get' accessor cannot have parameters.") and
+    /// `TS2378` ("A 'get' accessor must return a value.") both anchor on the `x`
+    /// name of `get x(v: number): string`; `tsc` emits `TS1054` first because
+    /// `1054 < 2378` at an equal span.
+    ///
+    /// The property-name node used to overshoot its `end` by the width of the
+    /// following `(`, so `TS1054` carried a longer span than `TS2378`; since
+    /// `compare` breaks ties on length before code, the longer diagnostic sorted
+    /// *after* the shorter one, inverting the pair relative to `tsc`. This asserts
+    /// the corrected, code-ordered interleaving through the full CLI sort path.
+    #[test]
+    fn accessor_grammar_and_checker_diagnostics_interleave_by_code_at_one_name() {
+        let mut diagnostics =
+            collect_es2015_default_lib_diagnostics("class C { get x(v: number): string {} }\n");
+        diagnostics.sort_by(|a, b| a.compare(b));
+
+        let ts1054 = diagnostics
+            .iter()
+            .position(|d| d.code == 1054)
+            .expect("TS1054 (get accessor cannot have parameters) must be reported");
+        let ts2378 = diagnostics
+            .iter()
+            .position(|d| d.code == 2378)
+            .expect("TS2378 (get accessor must return a value) must be reported");
+
+        assert_eq!(
+            diagnostics[ts1054].start, diagnostics[ts2378].start,
+            "both diagnostics must anchor on the same accessor name"
+        );
+        assert!(
+            ts1054 < ts2378,
+            "TS1054 must sort before TS2378 at an equal span (code order), matching tsc; \
+             got TS1054 at {ts1054} and TS2378 at {ts2378}: {diagnostics:?}"
+        );
+    }

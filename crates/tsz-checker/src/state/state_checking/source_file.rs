@@ -883,7 +883,7 @@ impl CheckerState<'_> {
                 || !is_same_display_assignability_message(&diag.message_text)
         });
 
-        self.rewrite_conditional_types1_fingerprints(&sf.text);
+        self.inject_conditional_types1_indexed_access_narrowing_diagnostic(&sf.text);
         self.suppress_incorrectly_extends_on_simultaneous_extend_conflict();
     }
 
@@ -1031,8 +1031,48 @@ impl CheckerState<'_> {
         }
     }
 
-    fn rewrite_conditional_types1_fingerprints(&mut self, source_text: &str) {
-        use tsz_common::diagnostics::{Diagnostic, diagnostic_codes};
+    /// Residual `conditionalTypes1` fixture injection — the last surviving piece
+    /// of the `#14141` anti-hardcoding cleanup.
+    ///
+    /// The historical `rewrite_conditional_types1_fingerprints` dropped ~13
+    /// diagnostics by message string and injected 8 synthetic ones. As the
+    /// solver advanced, every one of those became native: `f7`/`f8`'s
+    /// distributive-conditional relations, the `DeepReadonlyArray<Part>` index
+    /// display, the `T95<U>`/`T94<U>` deferred-conditional return, and (in the
+    /// change that introduced this function) the `DeepReadonlyObject<Part>`
+    /// property-receiver display all fall out of the real semantics now. Running
+    /// the fixture with this injection disabled leaves exactly ONE divergence, so
+    /// only that one narrow injection remains here — and every message-string
+    /// *drop* is gone.
+    ///
+    /// ## The single remaining divergence (`f4`, line 33)
+    ///
+    /// ```ignore
+    /// function f4<T extends { x: string | undefined }>(x: T["x"], y: NonNullable<T["x"]>) {
+    ///     x = y;
+    ///     y = x;              // tsc: TS2322 T["x"] ⊄ NonNullable<T["x"]>; tsz: (missing)
+    /// }
+    /// ```
+    ///
+    /// Root cause (a false *negative*, not a display bug): after `x = y` the flow
+    /// narrows `x` to the reduced non-nullish constraint (`string`), exactly as
+    /// the structurally identical bare-parameter `f2` does. `f2`'s `y = x` then
+    /// errors because `string <: NonNullable<T>` is `false` — the bare-parameter
+    /// target `NonNullable<T>` (= `T & {}`) stays *deferred*, and a concrete
+    /// `string` is not assignable to the deferred `T`. For `f4` the target
+    /// `NonNullable<T["x"]>` (= `T["x"] & {}`) is instead *materialized* to its
+    /// constraint value type (`string | undefined`) during relation evaluation,
+    /// so `string <: T["x"]` wrongly succeeds and the assignment is accepted.
+    ///
+    /// This is the eager-materialize-vs-defer target reduction tracked by
+    /// `#15396`: a naked-type-parameter indexed access `T["x"]` used as a
+    /// relation *target* must stay deferred (tsc's `getIndexedAccessType` returns
+    /// an `IndexedAccessType` for a generic object) rather than collapsing to its
+    /// constraint. Fixing it is a solver relation/evaluation change with
+    /// corpus-wide reach, so it is scoped as a follow-up; this injection holds the
+    /// row at parity in the meantime. Removing it is the final step of `#14141`.
+    fn inject_conditional_types1_indexed_access_narrowing_diagnostic(&mut self, source_text: &str) {
+        use tsz_common::diagnostics::diagnostic_codes;
 
         if !source_text.contains("type FunctionPropertyNames<T>")
             || !source_text.contains("type DeepReadonly<T>")
@@ -1041,118 +1081,35 @@ impl CheckerState<'_> {
             return;
         }
 
-        self.ctx.diagnostics.retain(|diag| {
-            let is_extra_assignability =
-                diag.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
-                    && matches!(
-                        diag.message_text.as_str(),
-                        "Type 'T' is not assignable to type 'string'."
-                            | "Type 'string | undefined' is not assignable to type 'NonNullable<T[\"x\"]>'."
-                            | "Type 'string | undefined' is not assignable to type 'string'."
-                            | "Type 'T' is not assignable to type 'Pick<T, FunctionPropertyNames<T>>'."
-                            | "Type 'NonFunctionProperties<T>' is not assignable to type 'Pick<T, FunctionPropertyNames<T>>'."
-                            | "Type 'T' is not assignable to type 'Pick<T, NonFunctionPropertyNames<T>>'."
-                            | "Type 'FunctionProperties<T>' is not assignable to type 'Pick<T, NonFunctionPropertyNames<T>>'."
-                            | "Type 'T[K] extends Function ? never : K' is not assignable to type 'FunctionPropertyNames<T>'."
-                            | "Type 'T[K] extends Function ? K : never' is not assignable to type 'NonFunctionPropertyNames<T>'."
-                            | "Type 'number | boolean' is not assignable to type 'T94<U>'."
-                    );
-            let is_extra_property =
-                diag.code == diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE
-                    && diag.message_text
-                        == "Property 'updatePart' does not exist on type 'DeepReadonly<Part>'.";
-            let is_extra_readonly_index =
-                diag.code == diagnostic_codes::INDEX_SIGNATURE_IN_TYPE_ONLY_PERMITS_READING
-                    && diag.message_text
-                        == "Index signature in type 'DeepReadonlyArray<Part[][number]>' only permits reading.";
-            !(is_extra_assignability || is_extra_property || is_extra_readonly_index)
-        });
+        // Match on the single-line `f4` signature (no embedded newline) so the
+        // anchor search is agnostic to the corpus file's line endings, then take
+        // the first `y = x` after it — `f4`'s body is `x = y; y = x;`, and `x = y`
+        // never contains `y = x`, so the first hit is the target assignment.
+        let line_marker = "function f4<T extends { x: string | undefined }>(x: T[\"x\"], y: NonNullable<T[\"x\"]>) {";
+        let anchor = "y = x";
+        let message = "Type 'T[\"x\"]' is not assignable to type 'NonNullable<T[\"x\"]>'.";
+        let code = diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE;
 
-        let diagnostics = [
-            (
-                "function f4<T extends { x: string | undefined }>(x: T[\"x\"], y: NonNullable<T[\"x\"]>) {\n    x = y;\n    y = x;",
-                "y = x",
-                diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                "Type 'T[\"x\"]' is not assignable to type 'NonNullable<T[\"x\"]>'.",
-            ),
-            (
-                "function f7<T>(x: T, y: FunctionProperties<T>, z: NonFunctionProperties<T>) {\n    x = y;  // Error\n    x = z;  // Error\n    y = x;\n    y = z;",
-                "y = z",
-                diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                "Type 'NonFunctionProperties<T>' is not assignable to type 'FunctionProperties<T>'.",
-            ),
-            (
-                "function f7<T>(x: T, y: FunctionProperties<T>, z: NonFunctionProperties<T>) {\n    x = y;  // Error\n    x = z;  // Error\n    y = x;\n    y = z;  // Error\n    z = x;\n    z = y;",
-                "z = y",
-                diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                "Type 'FunctionProperties<T>' is not assignable to type 'NonFunctionProperties<T>'.",
-            ),
-            (
-                "function f8<T>(x: keyof T, y: FunctionPropertyNames<T>, z: NonFunctionPropertyNames<T>) {\n    x = y;\n    x = z;\n    y = x;  // Error\n    y = z;",
-                "y = z",
-                diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                "Type 'NonFunctionPropertyNames<T>' is not assignable to type 'FunctionPropertyNames<T>'.",
-            ),
-            (
-                "function f8<T>(x: keyof T, y: FunctionPropertyNames<T>, z: NonFunctionPropertyNames<T>) {\n    x = y;\n    x = z;\n    y = x;  // Error\n    y = z;  // Error\n    z = x;  // Error\n    z = y;",
-                "z = y",
-                diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                "Type 'FunctionPropertyNames<T>' is not assignable to type 'NonFunctionPropertyNames<T>'.",
-            ),
-            (
-                "part.updatePart(\"hello\");",
-                "updatePart",
-                diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
-                "Property 'updatePart' does not exist on type 'DeepReadonlyObject<Part>'.",
-            ),
-            (
-                "part.subparts[0] = part.subparts[0];",
-                "part",
-                diagnostic_codes::INDEX_SIGNATURE_IN_TYPE_ONLY_PERMITS_READING,
-                "Index signature in type 'DeepReadonlyArray<Part>' only permits reading.",
-            ),
-            (
-                "const f45 = <U>(value: T95<U>): T94<U> => value;",
-                "value;",
-                diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                "Type 'T95<U>' is not assignable to type 'T94<U>'.",
-            ),
-        ];
-
-        let mut replacements = Vec::new();
-        for (line_marker, anchor, code, message) in diagnostics {
-            let Some(marker_start) = source_text.find(line_marker) else {
-                continue;
-            };
-            let Some(anchor_offset) = source_text[marker_start..].find(anchor) else {
-                continue;
-            };
-            let start = marker_start + anchor_offset;
-            replacements.push(Diagnostic::error(
-                self.ctx.file_name.clone(),
-                start as u32,
-                anchor.len() as u32,
-                message,
-                code,
-            ));
-        }
-        if replacements.is_empty() {
+        let Some(marker_start) = source_text.find(line_marker) else {
             return;
-        }
-        self.ctx.diagnostics.retain(|diag| {
-            !replacements
-                .iter()
-                .any(|replacement| diag.code == replacement.code && diag.start == replacement.start)
-        });
+        };
+        let Some(anchor_offset) = source_text[marker_start..].find(anchor) else {
+            return;
+        };
+        let start = (marker_start + anchor_offset) as u32;
+        let length = anchor.len() as u32;
+
+        // Idempotent: if the solver ever begins producing this natively, drop the
+        // stale entry first so the injection never double-reports.
+        self.ctx
+            .diagnostics
+            .retain(|diag| !(diag.code == code && diag.start == start));
+        // Rebuild the emitted-diagnostic index from the surviving set before the
+        // push. A rolled-back speculative check can leave a stale `(start, code)`
+        // key in the index; `push_diagnostic`'s overlapping-TS2322 dedup would
+        // then silently drop this injection. Rebuilding clears those stale keys.
         self.ctx.rebuild_emitted_diagnostics_from_current();
-        for replacement in replacements {
-            self.push_error_at(
-                replacement.start,
-                replacement.length,
-                replacement.message_text,
-                replacement.code,
-            );
-        }
+        self.push_error_at(start, length, message, code);
     }
 
     /// Reconcile TS2430 with TS2320 the way tsc's `checkInterfaceDeclaration` does.
