@@ -1725,7 +1725,7 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    fn is_module_uninstantiated(&self, sym_id: SymbolId) -> bool {
+    pub(crate) fn is_module_uninstantiated(&self, sym_id: SymbolId) -> bool {
         let lib_binders = self.get_lib_binders();
         let symbol = self
             .get_cross_file_symbol(sym_id)
