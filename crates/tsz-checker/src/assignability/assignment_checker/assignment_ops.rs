@@ -84,6 +84,40 @@ impl<'a> CheckerState<'a> {
             .is_some_and(|sym_id| self.assignment_target_is_control_flow_typed_any_symbol(sym_id))
     }
 
+    /// Whether the assignment target `idx` is an evolving/auto array reference
+    /// (`let x = []`, or the control-flow-any `let x; x = []`). Such a target's
+    /// finalized `any[]` is provisional, so the caller withholds it as the RHS
+    /// contextual type (a contextual `any` return would fix a generic call's
+    /// type parameter and swallow argument errors); tsc does the same.
+    ///
+    /// The underlying evolving-array query resolves the target identifier with
+    /// the read-tracking resolver, which would mark a write-only variable as
+    /// "read" and suppress its TS6133. This is a pure structural query on the
+    /// assignment *target* (not a read), so it must not perturb unused-variable
+    /// tracking: resolve the symbol without tracking and, if the query inserted
+    /// the target into the read-set, restore it. The query only ever resolves
+    /// this one target reference, so restoring that single symbol is sufficient.
+    fn assignment_target_is_evolving_array(&mut self, idx: NodeIndex) -> bool {
+        if self
+            .ctx
+            .arena
+            .get(idx)
+            .is_none_or(|node| node.kind != SyntaxKind::Identifier as u16)
+        {
+            return false;
+        }
+        let target_sym = self.resolve_identifier_symbol_without_tracking(idx);
+        let already_referenced =
+            target_sym.is_some_and(|sym| self.ctx.referenced_symbols.borrow().contains(&sym));
+        let is_evolving = self.reference_is_reachable_evolving_array_mutation_target(idx);
+        if let Some(sym) = target_sym
+            && !already_referenced
+        {
+            self.ctx.referenced_symbols.borrow_mut().remove(&sym);
+        }
+        is_evolving
+    }
+
     fn is_evolving_array_element_assignment_target(&mut self, idx: NodeIndex) -> bool {
         let Some(node) = self.ctx.arena.get(idx) else {
             return false;
@@ -785,6 +819,11 @@ impl<'a> CheckerState<'a> {
             && left_type != TypeId::NEVER
             && left_type != TypeId::UNKNOWN
             && !self.type_contains_error(left_type)
+            // An evolving/auto array target's provisional `any[]` must not be
+            // sourced as the RHS contextual type (see
+            // `assignment_target_is_evolving_array`). Checked last so the query
+            // only runs once the target carries a real non-`any` array type.
+            && !self.assignment_target_is_evolving_array(left_idx)
         {
             let contextual_target = if let Some(right_node) = self.ctx.arena.get(right_idx) {
                 if right_node.kind == syntax_kind_ext::ARROW_FUNCTION
