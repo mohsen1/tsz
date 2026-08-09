@@ -209,6 +209,17 @@ const x: number = v;
     );
 }
 
+// Named-type-vs-inline-anonymous ranking (`{ z: string } | I` / `… | K` with a
+// class declared later, where tsc ranks the named `I`/`K` first — regression
+// #16980) is a re-ranking of `Lazy` interface/class members by their declaration
+// span, which `order_union_members_for_display` performs from the full compiler's
+// definition store. The in-process `check_source_strict` harness does not
+// populate that span for `Lazy` interface/class members (only enums and inline
+// anonymous objects resolve here), so those cases cannot be reproduced through
+// this entry point; they are covered by the CLI oracle matrix in PR #16977 and by
+// the conformance corpus. The anonymous-object and enum cases below exercise the
+// same display-comparator ordering path that the fix routes through.
+
 #[test]
 fn named_type_alias_union_members_keep_their_names() {
     // Named references carry an `aliasSymbol`, so they must keep their names —

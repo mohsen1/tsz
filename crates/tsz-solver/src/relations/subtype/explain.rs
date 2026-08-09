@@ -6,6 +6,7 @@
 
 use crate::def::resolver::TypeResolver;
 use crate::diagnostics::SubtypeFailureReason;
+use crate::diagnostics::format::TypeFormatter;
 use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 use crate::relations::subtype::SubtypeChecker;
 use crate::relations::subtype::explain_guard::{ExplainFuelState, ExplainRecursionEntryState};
@@ -1202,37 +1203,39 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             };
         if let Some(member_list) = union_member_list {
             let members = self.interner.type_list(member_list);
-            // Base the walk on the union's as-written source order when the
-            // interner recorded one (`get_union_origin`) and it is a pure
-            // reordering of the interned members. tsz's canonical member order
-            // is by `ShapeId`/allocation identity, which can reverse source
-            // order for anonymous object members (#16965); the header already
-            // renders source order from the same side table, so the nested
-            // elaboration must agree. A flatten/collapse origin (a different
-            // member set) is rejected and the interned order is kept — see
-            // `union_source_elaboration_origin_override`.
+            // Name the same first failing member tsc drills beneath the union
+            // line by walking the members in the union *header*'s order. tsc's
+            // relation walk and its `typeToString` iterate one type-id-sorted
+            // array, so header and nested always agree; tsz keeps two orders —
+            // the interner's canonicalization order (`sort_union_members`,
+            // allocation identity) and the header's display order
+            // (`order_union_members_by_source`) — so the walk must be ranked
+            // through the display comparator to match. Feed the comparator the
+            // union's as-written source order when the interner recorded one
+            // (`union_source_elaboration_origin_override`, a pure reordering of
+            // the interned members that fixes anonymous-object source order,
+            // #16965); the comparator then floats named/higher-rank members
+            // ahead of inline anonymous objects exactly as the header does
+            // (`{ z: string } | K` elaborates `K`, not the object — #16980).
             let origin_override =
                 self.union_source_elaboration_origin_override(union_member_source, &members);
-            let base = origin_override.as_deref().unwrap_or(&members);
-            // Pick the first failing member in tsc's *relation* order (nullish
-            // first), not tsz's stored *printer* order (nullish last) — see
-            // `reorder_union_members_nullish_first`. Example: `number | undefined`
-            // -> `string` drills the `undefined` member, matching tsc.
-            let mut ordered = reorder_union_members_nullish_first(base);
-            // Same-rank enum members: `sort_union_members` orders the interned
-            // list by allocation identity (needed so `E1 | E2` and `E2 | E1`
-            // intern to one canonical `TypeId`), which does not track
-            // declaration order — an enum's `DefId`/`TypeId` can be allocated
-            // lazily, in whatever order the checker first requests its type,
-            // independent of source position (issue #16513). tsc always
-            // elaborates the union's first-declared failing member, and the
-            // printer's own tie-break already keeps enum members in
-            // declaration order (`order_union_members_by_source`). Reorder
-            // just the enum members among themselves — by declaration
-            // position, in place, leaving every other member's slot and the
-            // rest of the nullish-first order untouched — so elaboration
-            // selection agrees with what the union header already displays.
-            self.reorder_enum_members_by_declaration(&mut ordered);
+            let base = origin_override.unwrap_or_else(|| members.to_vec());
+            let display_ordered = match self
+                .query_db
+                .and_then(|db| db.definition_store_for_inference())
+            {
+                Some(def_store) => TypeFormatter::new(self.interner)
+                    .with_def_store(def_store)
+                    .order_union_members_for_display(base),
+                None => base,
+            };
+            // tsc's *relation* walk visits the nullish intrinsics first (smallest
+            // type ids) even though the header shows them last, so hoist them
+            // ahead of the display order — see `reorder_union_members_nullish_first`.
+            // Same-rank enum members are already in declaration order: the
+            // display comparator breaks their tie on the declaration span
+            // (#16513) and the nullish hoist preserves their relative order.
+            let ordered = reorder_union_members_nullish_first(&display_ordered);
             for &member in ordered.iter() {
                 if member == source || member == union_member_source {
                     // Defensive: avoid self-recursion on a degenerate union.
