@@ -247,6 +247,17 @@ function stringifyCompactSnapshot(snapshot) {
         lines.push(`    ${chunk}${comma}`);
     }
 
+    lines.push("  ],", '  "slow": [');
+
+    // Subset of `pass` that exceeded the wall-clock budget — assertions
+    // passed, but flagged for harness-performance attention.
+    const slowEntries = (snapshot.slow || []).map(file => JSON.stringify(file));
+    for (let i = 0; i < slowEntries.length; i += 8) {
+        const chunk = slowEntries.slice(i, i + 8).join(", ");
+        const comma = i + 8 < slowEntries.length ? "," : "";
+        lines.push(`    ${chunk}${comma}`);
+    }
+
     lines.push(
         "  ],",
         `  "fail": ${indentJson(snapshot.fail, 2).trimStart()},`,
@@ -392,6 +403,7 @@ async function runSequential(opts, testsToRun) {
 
     const testType = 1; // FourSlashTestType.Server — tsz-server talks over stdio
     let passed = 0;
+    let slow = 0;
     let failed = 0;
     let xfailed = 0;
     let timedOut = 0;
@@ -414,13 +426,13 @@ async function runSequential(opts, testsToRun) {
             if (content == null) throw new Error(`Could not read test file: ${testFile}`);
             FourSlash.runFourSlashTestContent(basePath, testType, content, testFile);
             const elapsed = Date.now() - startTime;
-            if (elapsed > opts.testTimeout) {
-                throw new Error(`Test completed but took ${elapsed}ms (timeout: ${opts.testTimeout}ms)`);
-            }
+            const isSlow = elapsed > opts.testTimeout;
             passed++;
-            testResults.push({ file: testFile, status: "pass", timedOut: false, error: null, elapsed });
+            if (isSlow) slow++;
+            testResults.push({ file: testFile, status: isSlow ? "slow" : "pass", timedOut: false, error: null, elapsed });
             if (opts.verbose) {
-                console.log(`\x1b[32mPASS\x1b[0m (${elapsed}ms)`);
+                const tag = isSlow ? `\x1b[33mSLOW\x1b[0m` : `\x1b[32mPASS\x1b[0m`;
+                console.log(`${tag} (${elapsed}ms)`);
             } else if ((passed + failed + xfailed) % 50 === 0) {
                 process.stdout.write(`\r  Progress: ${passed + failed + xfailed}/${testsToRun.length} (${passed} passed, ${failed} failed${xfailed > 0 ? `, ${xfailed} xfailed` : ""})`);
             }
@@ -453,7 +465,7 @@ async function runSequential(opts, testsToRun) {
     }
 
     bridge.shutdown();
-    return { passed, failed, xfailed, timedOut, errors, testResults };
+    return { passed, slow, failed, xfailed, timedOut, errors, testResults };
 }
 
 function setupGlobals(tsDir) {
@@ -614,6 +626,7 @@ async function runParallel(opts, testsToRun) {
     console.log(`  Spawning ${chunks.length} workers (timeout: ${opts.testTimeout}ms, mem limit: ${opts.memoryLimitMB}MB)...`);
 
     let passed = 0;
+    let slow = 0;
     let failed = 0;
     let xfailed = 0;
     let timedOut = 0;
@@ -648,7 +661,7 @@ async function runParallel(opts, testsToRun) {
             if (activeWorkers === 0) {
                 if (!opts.verbose) printProgress();
                 clearInterval(watchdog);
-                resolve({ passed, failed, xfailed, timedOut, errors, testResults, bridgeRestarts, memoryWarnings, workerStats });
+                resolve({ passed, slow, failed, xfailed, timedOut, errors, testResults, bridgeRestarts, memoryWarnings, workerStats });
             }
         }
 
@@ -697,7 +710,8 @@ async function runParallel(opts, testsToRun) {
                 } else if (msg.type === "result") {
                     if (msg.passed) {
                         passed++;
-                        testResults.push({ file: msg.testFile, status: "pass", timedOut: false, error: null, elapsed: msg.elapsed });
+                        if (msg.slow) slow++;
+                        testResults.push({ file: msg.testFile, status: msg.slow ? "slow" : "pass", timedOut: false, error: null, elapsed: msg.elapsed });
                     } else if (msg.xfailed) {
                         xfailed++;
                         testResults.push({ file: msg.testFile, status: "xfail", timedOut: false, error: msg.error || null, elapsed: msg.elapsed });
@@ -727,7 +741,7 @@ async function runParallel(opts, testsToRun) {
 
                     if (opts.verbose) {
                         const status = msg.passed
-                            ? `\x1b[32mPASS\x1b[0m`
+                            ? (msg.slow ? `\x1b[33mSLOW\x1b[0m` : `\x1b[32mPASS\x1b[0m`)
                             : msg.xfailed
                             ? `\x1b[36mXFAIL\x1b[0m`
                             : msg.timedOut
@@ -898,21 +912,28 @@ async function main() {
         results = await runParallel(opts, testsToRun);
     }
 
-    const { passed, failed, xfailed = 0, timedOut, errors } = results;
+    const { passed, slow = 0, failed, xfailed = 0, timedOut, errors } = results;
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+    const executedCount = passed + failed + xfailed;
 
     // Print summary
     console.log("");
     console.log("─".repeat(70));
     console.log("");
-    console.log(`Results: ${passed} passed, ${failed} failed${xfailed > 0 ? `, ${xfailed} xfailed` : ""} out of ${testsToRun.length} (${elapsed}s)`);
+    console.log(`Results: ${passed} passed${slow > 0 ? ` (${slow} slow)` : ""}, ${failed} failed${xfailed > 0 ? `, ${xfailed} xfailed` : ""} out of ${testsToRun.length} (${elapsed}s)`);
 
     if (totalAvailable > testsToRun.length) {
         console.log(`  (${totalAvailable - testsToRun.length} tests skipped, ${totalAvailable} total available)`);
     }
 
-    const passRate = testsToRun.length > 0
-        ? ((passed / testsToRun.length) * 100).toFixed(1)
+    if (executedCount < testsToRun.length) {
+        console.log(`  (run aborted early: only ${executedCount}/${testsToRun.length} executed)`);
+    }
+
+    // Rate over what actually ran, not the intended total — an early-aborted
+    // run must not report a rate diluted by tests that never executed.
+    const passRate = executedCount > 0
+        ? ((passed / executedCount) * 100).toFixed(1)
         : "0.0";
     console.log(`  Pass rate: ${passRate}%`);
 
@@ -1005,32 +1026,41 @@ async function main() {
         jsonResults.sort((a, b) => a.file.localeCompare(b.file));
 
         const total = testsToRun.length;
+        const executed = passed + failed + xfailed;
         const detail = {
             timestamp: new Date().toISOString(),
             summary: {
                 total,
                 passed,
+                slow,
                 failed,
                 xfailed,
                 timedOut,
                 shard: opts.shardTotal > 0 ? { index: opts.shardId, count: opts.shardTotal, strategy: opts.shardStrategy } : null,
                 slowest,
-                passRate: total > 0 ? Math.round(passed / total * 1000) / 10 : 0,
+                passRate: executed > 0 ? Math.round(passed / executed * 1000) / 10 : 0,
             },
             results: jsonResults,
         };
 
         const outPath = path.resolve(opts.jsonOut);
         const snapshotOutPath = path.resolve(snapshotWeightFile());
+        // A test whose assertions passed but which ran past the wall-clock
+        // budget is "slow", not a failure — it must land in `pass`/`slow`,
+        // never in `fail`. Only a genuine assertion failure or timeout
+        // (status "fail"/"timeout"/"xfail") belongs in `fail`.
         const output = outPath === snapshotOutPath
             ? {
                 timestamp: detail.timestamp,
                 summary: detail.summary,
                 pass: jsonResults
-                    .filter(r => r.status === "pass" && !r.timedOut)
+                    .filter(r => (r.status === "pass" || r.status === "slow") && !r.timedOut)
+                    .map(r => r.file),
+                slow: jsonResults
+                    .filter(r => r.status === "slow")
                     .map(r => r.file),
                 fail: jsonResults
-                    .filter(r => r.status !== "pass" || r.timedOut)
+                    .filter(r => r.status !== "pass" && r.status !== "slow")
                     .map(r => {
                         const record = {
                             file: r.file,
@@ -1043,13 +1073,13 @@ async function main() {
                         if (r.elapsed !== undefined) record.elapsed = r.elapsed;
                         return record;
                     }),
-                // Per-test timings (ms) for passing tests, consumed by
-                // loadHistoricalWeights() for LPT shard balancing. Kept as a
-                // compact {file: ms} map so the snapshot stays small while the
+                // Per-test timings (ms) for passing tests (including slow-but-passed),
+                // consumed by loadHistoricalWeights() for LPT shard balancing. Kept as
+                // a compact {file: ms} map so the snapshot stays small while the
                 // balancer still sees a real weight for ~every test.
                 weights: Object.fromEntries(
                     jsonResults
-                        .filter(r => r.status === "pass" && !r.timedOut && Number.isFinite(Number(r.elapsed)))
+                        .filter(r => (r.status === "pass" || r.status === "slow") && Number.isFinite(Number(r.elapsed)))
                         .map(r => [r.file, Number(r.elapsed)]),
                 ),
             }

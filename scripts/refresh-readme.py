@@ -174,6 +174,8 @@ def normalize_suite_summary(data, suite):
         }
 
     if suite == "fourslash" and isinstance(data.get("pass"), list):
+        # `pass` already includes slow-but-passing tests (see runner.cjs); `slow`
+        # is a redundant subset kept for visibility, so it must not be added again.
         failed = len(data.get("fail") or [])
         return {
             "passed": len(data["pass"]),
