@@ -78,19 +78,19 @@ impl<'a> CheckerState<'a> {
             }
             let construction_members = construction_members.unwrap_or_else(|| member_types.clone());
 
-            let result = tsz_solver::utils::union_or_single_literal_reduce(
-                self.ctx.types,
-                construction_members.clone(),
-            );
-            // Mirror tsc's `UnionType.origin`: record the as-written input
-            // member list so the diagnostic printer can preserve top-level
-            // alias names that union flattening would otherwise dissolve
-            // (e.g., `T | null` should display as `T | null`, not as T's
-            // expanded body). The interner stores at most one origin per
-            // flattened TypeId; first writer wins.
-            self.ctx
-                .types
-                .store_union_origin(result, construction_members);
+            // Reduce the written union and record its as-written `origin`.
+            // `type_node_annotation_union_with_origin` mirrors tsc's
+            // `UnionType.origin` (so `T | null` displays as `T | null`, not T's
+            // expanded body) and keeps a union of identical inline anonymous
+            // object literals (`{ m: number } | { m: number }`) as a real
+            // multi-member `Union` so every constituent prints, as `tsc` does
+            // (#16509). Shared with the `type_node` union path so both reduce
+            // identically.
+            let result =
+                crate::query_boundaries::type_construction::type_node_annotation_union_with_origin(
+                    self.ctx.types,
+                    construction_members,
+                );
             // Record, per member, whether it was written as an anonymous
             // `{ ... }` literal directly in *this* union — as opposed to a
             // named alias/interface reference whose body happens to reduce
