@@ -23,9 +23,7 @@
 
 use crate::test_utils::check_source_diagnostics;
 
-fn ts2345<'a>(
-    diags: &'a [crate::diagnostics::Diagnostic],
-) -> Vec<&'a crate::diagnostics::Diagnostic> {
+fn ts2345(diags: &[crate::diagnostics::Diagnostic]) -> Vec<&crate::diagnostics::Diagnostic> {
     diags
         .iter()
         .filter(|diagnostic| diagnostic.code == 2345)
