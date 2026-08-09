@@ -1316,60 +1316,91 @@ impl<'a> CheckerState<'a> {
 
     /// Check if an initializer is a valid const initializer for ambient contexts.
     /// Valid initializers are string/numeric/bigint literals and enum references.
-    pub(crate) fn is_valid_ambient_const_initializer(&self, init_idx: NodeIndex) -> bool {
-        use tsz_binder::symbol_flags;
-
+    pub(crate) fn is_valid_ambient_const_initializer(&mut self, init_idx: NodeIndex) -> bool {
         let Some(node) = self.ctx.arena.get(init_idx) else {
             return false;
         };
-        match node.kind {
-            k if k == tsz_scanner::SyntaxKind::StringLiteral as u16
-                || k == tsz_scanner::SyntaxKind::NoSubstitutionTemplateLiteral as u16
-                || k == tsz_scanner::SyntaxKind::NumericLiteral as u16
-                || k == tsz_scanner::SyntaxKind::BigIntLiteral as u16
-                || k == tsz_scanner::SyntaxKind::TrueKeyword as u16
-                || k == tsz_scanner::SyntaxKind::FalseKeyword as u16 =>
-            {
-                true
-            }
-            k if k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION => {
-                if let Some(unary) = self.ctx.arena.get_unary_expr(node)
-                    && unary.operator == tsz_scanner::SyntaxKind::MinusToken as u16
-                    && let Some(operand) = self.ctx.arena.get(unary.operand)
-                {
-                    return operand.kind == tsz_scanner::SyntaxKind::NumericLiteral as u16
-                        || operand.kind == tsz_scanner::SyntaxKind::BigIntLiteral as u16;
-                }
-                false
-            }
-            k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-                || k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION =>
-            {
-                let Some(access) = self.ctx.arena.get_access_expr(node) else {
-                    return false;
-                };
-                let Some(sym_id) = self.resolve_identifier_symbol(access.expression) else {
-                    return false;
-                };
-                let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
-                    return false;
-                };
-                if !symbol.has_any_flags(symbol_flags::ENUM) {
-                    return false;
-                }
-                if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
-                    return true;
-                }
-                let Some(arg_node) = self.ctx.arena.get(access.name_or_argument) else {
-                    return false;
-                };
-                arg_node.kind == tsz_scanner::SyntaxKind::StringLiteral as u16
-                    || arg_node.kind == tsz_scanner::SyntaxKind::NumericLiteral as u16
-                    || arg_node.kind
-                        == tsz_scanner::SyntaxKind::NoSubstitutionTemplateLiteral as u16
-            }
-            _ => false,
+        let kind = node.kind;
+
+        // Literal forms accepted verbatim: string / no-substitution template /
+        // numeric / bigint / `true` / `false`. Mirrors the union of tsc's
+        // `isStringOrNumericLiteralExpression`, `isBigIntLiteralExpression`, and
+        // the `TrueKeyword`/`FalseKeyword` arms of `checkAmbientInitializer`.
+        if kind == tsz_scanner::SyntaxKind::StringLiteral as u16
+            || kind == tsz_scanner::SyntaxKind::NoSubstitutionTemplateLiteral as u16
+            || kind == tsz_scanner::SyntaxKind::NumericLiteral as u16
+            || kind == tsz_scanner::SyntaxKind::BigIntLiteral as u16
+            || kind == tsz_scanner::SyntaxKind::TrueKeyword as u16
+            || kind == tsz_scanner::SyntaxKind::FalseKeyword as u16
+        {
+            return true;
         }
+
+        // A unary minus over a numeric or bigint literal (`-1`, `-1n`) — the
+        // `PrefixUnaryExpression && MinusToken` arm shared by tsc's
+        // `isStringOrNumericLiteralExpression` (numeric) and
+        // `isBigIntLiteralExpression` (bigint).
+        if kind == syntax_kind_ext::PREFIX_UNARY_EXPRESSION {
+            if let Some(unary) = self.ctx.arena.get_unary_expr(node)
+                && unary.operator == tsz_scanner::SyntaxKind::MinusToken as u16
+                && let Some(operand) = self.ctx.arena.get(unary.operand)
+            {
+                return operand.kind == tsz_scanner::SyntaxKind::NumericLiteral as u16
+                    || operand.kind == tsz_scanner::SyntaxKind::BigIntLiteral as u16;
+            }
+            return false;
+        }
+
+        // A "simple literal enum reference" — tsc's `isSimpleLiteralEnumReference`.
+        // A property access, or a string/numeric-literal element access, whose
+        // *object* is an entity-name expression and whose resulting type is an
+        // enum-member (enum-literal) type.
+        if kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            || kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+        {
+            let Some(access) = self.ctx.arena.get_access_expr(node) else {
+                return false;
+            };
+            let object_expr = access.expression;
+            let arg_idx = access.name_or_argument;
+
+            // Element access must key off a string/numeric-literal argument
+            // (tsc's `isStringOrNumberLiteralExpression`); a computed/dynamic
+            // key is never a simple literal enum reference.
+            if kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION {
+                let Some(arg_node) = self.ctx.arena.get(arg_idx) else {
+                    return false;
+                };
+                if arg_node.kind != tsz_scanner::SyntaxKind::StringLiteral as u16
+                    && arg_node.kind != tsz_scanner::SyntaxKind::NumericLiteral as u16
+                    && arg_node.kind
+                        != tsz_scanner::SyntaxKind::NoSubstitutionTemplateLiteral as u16
+                {
+                    return false;
+                }
+            }
+
+            // The object must be an entity-name expression (identifier or a
+            // property-access chain over identifiers), so a qualified enum
+            // reference like `N.E.A` qualifies — not only a bare-identifier
+            // `E.A`.
+            if !self.is_entity_name_expression(object_expr) {
+                return false;
+            }
+
+            // Finally the whole reference must have an enum-member
+            // (enum-literal) type. This is tsc's
+            // `checkExpressionCached(expr).flags & TypeFlags.EnumLiteral`, and
+            // it is what tells a real member (`E.A`, `E["A"]`) apart from a
+            // numeric reverse-mapping index (`E[0]`, whose type is `string`)
+            // or a non-member tail (`E.A.toString`).
+            let ty = self.get_type_of_node(init_idx);
+            return crate::query_boundaries::enum_analysis::is_enum_member_for_widening(
+                &self.ctx, ty,
+            );
+        }
+
+        false
     }
 
     /// Check if a class declaration has the declare modifier (is ambient).
