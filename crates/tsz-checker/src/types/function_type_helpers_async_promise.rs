@@ -157,10 +157,13 @@ impl<'a> CheckerState<'a> {
             // (e.g., `type MyPromise<T> = Promise<T>` with `declare var MyPromise: typeof Promise`).
             // The merged symbol prevents is_global_promise_type from recognizing it.
             false
-        } else if self.return_type_annotation_is_exactly_promise(type_annotation) {
-            // The declared annotation resolves to the lib Promise symbol. Some
-            // evaluated Promise<T> forms lose the lazy base identity and arrive
-            // as an Application over an object shape; tsc still accepts them.
+        } else if self.return_type_annotation_resolves_to_promise(type_annotation) {
+            // The declared annotation resolves to the lib Promise symbol, either
+            // directly or through a chain of type aliases
+            // (`type P = Promise<number>` used as `P`). Some evaluated Promise<T>
+            // forms lose the lazy base identity and arrive as an Application over
+            // an object shape — or, for an alias, a fully flattened object — but
+            // tsc resolves the annotation through the alias and still accepts it.
             false
         } else if self.is_non_promise_application_type(return_type) {
             // Return type is an Application with a non-Promise base (e.g., MyPromise<T>).
@@ -168,11 +171,13 @@ impl<'a> CheckerState<'a> {
             true
         } else if return_type != TypeId::ERROR {
             // Return type evaluated to a non-Application form (e.g., Object).
-            // Fall back to strict syntactic check: only suppress TS1064 if the
-            // annotation literally says `Promise<...>`. TSC uses `isReferenceToType`
-            // which requires exactly the global Promise — not subclasses like
-            // `MyPromise`, not qualified names like `X.MyPromise`, not type aliases.
-            !self.return_type_annotation_is_exactly_promise(type_annotation)
+            // Fall back to the annotation-level check: suppress TS1064 only if the
+            // annotation resolves to the global `Promise` — directly or through a
+            // chain of type aliases. TSC uses `isReferenceToType` over the
+            // alias-resolved type, so `type P = Promise<T>` is accepted while
+            // subclasses like `MyPromise`, qualified names like `X.MyPromise`, and
+            // aliases to non-Promise types are rejected.
+            !self.return_type_annotation_resolves_to_promise(type_annotation)
         } else {
             // Return type is ERROR - use syntactic fallback
             // Check if the type annotation is a primitive keyword (never valid for async function)
@@ -401,7 +406,6 @@ impl<'a> CheckerState<'a> {
     /// among the symbol's declarations.
     pub(crate) fn is_promise_type_through_alias(&mut self, type_id: TypeId) -> bool {
         use crate::query_boundaries::checkers::promise as query;
-        use tsz_binder::symbol_flags;
 
         // Check if the base is a Lazy(DefId) pointing to a type alias
         let Some(def_id) = query::promise_application_base_lazy_def_id(self.ctx.types, type_id)
@@ -412,31 +416,139 @@ impl<'a> CheckerState<'a> {
         let Some(sym_id) = self.ctx.def_to_symbol_id(def_id) else {
             return false;
         };
-        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
-            return false;
-        };
-
         // Only handle type aliases (not classes/interfaces)
-        if !symbol.has_any_flags(symbol_flags::TYPE_ALIAS) {
+        if !self.symbol_is_type_alias(sym_id) {
             return false;
         }
 
-        // Get the alias body type using type_reference_symbol_type_with_params which
-        // correctly handles merged symbols (e.g., `type MyPromise<T> = Promise<T>`
-        // merged with `declare var MyPromise: typeof Promise`). It finds the type
-        // alias declaration in the symbol's declarations list.
+        self.promise_alias_symbol_resolves_to_global(sym_id, 0)
+    }
+
+    /// Whether the async return-type annotation resolves — directly or through a
+    /// chain of type aliases — to the global `Promise`.
+    ///
+    /// tsc's `checkAsyncFunctionReturnType` runs its `isReferenceToType(global
+    /// Promise)` check on `getTypeFromTypeNode(returnTypeNode)`, which unwraps
+    /// type aliases first, so `type P = Promise<number>` referenced as `P` (and
+    /// alias chains `type P1 = P0; type P0 = Promise<number>`) is a valid async
+    /// return type. tsz evaluates such an alias body to a flattened object that
+    /// no longer carries the Promise reference identity, so the type-level
+    /// [`is_global_promise_type`](Self::is_global_promise_type) cannot see it.
+    /// This annotation-level check recovers tsc's answer by resolving the
+    /// annotation's symbol and chasing the alias body through
+    /// [`promise_alias_symbol_resolves_to_global`](Self::promise_alias_symbol_resolves_to_global),
+    /// which compares against the lib `Promise` symbol by identity. It stays
+    /// strict: a `PromiseLike` alias, a primitive alias, or a union alias still
+    /// reports TS1064, matching tsc.
+    pub(crate) fn return_type_annotation_resolves_to_promise(
+        &mut self,
+        type_annotation: NodeIndex,
+    ) -> bool {
+        use crate::symbol_resolver::TypeSymbolResolution;
+
+        let Some(node) = self.ctx.arena.get(type_annotation) else {
+            return false;
+        };
+        let Some(type_ref) = self.ctx.arena.get_type_ref(node) else {
+            return false;
+        };
+        let TypeSymbolResolution::Type(sym_id) =
+            self.resolve_identifier_symbol_in_type_position_without_tracking(type_ref.type_name)
+        else {
+            return false;
+        };
+        // Direct reference to the lib `Promise`.
+        if self.current_symbol_is_lib_promise(sym_id) {
+            return true;
+        }
+        // A type alias whose body resolves — directly or through a chain — to the
+        // global `Promise`. The alias body is chased through
+        // `type_reference_symbol_type_with_params` (the same resolution
+        // `is_promise_type_through_alias` relies on, and which forwards through
+        // alias chains), not the flattened annotation type.
+        self.symbol_is_type_alias(sym_id) && self.promise_alias_symbol_resolves_to_global(sym_id, 0)
+    }
+
+    /// Whether the type-alias symbol `sym_id`'s body resolves — directly or
+    /// through a chain of aliases — to the global `Promise`.
+    ///
+    /// Resolves the body via `type_reference_symbol_type_with_params`, which
+    /// correctly handles merged symbols (`type MyPromise<T> = Promise<T>` merged
+    /// with `declare var MyPromise: typeof Promise`) and forwards through alias
+    /// chains internally. This sees the unflattened alias body even when the
+    /// annotation itself evaluated to a flattened object shape (the
+    /// `type P = Promise<number>` referenced-as-`P` case), which is why the
+    /// annotation-level `return_type_annotation_resolves_to_promise` and the
+    /// type-level `is_promise_type_through_alias` both route through here. The
+    /// `depth` guard bounds a malformed mutually-aliasing pair.
+    pub(crate) fn promise_alias_symbol_resolves_to_global(
+        &mut self,
+        sym_id: tsz_binder::SymbolId,
+        depth: u8,
+    ) -> bool {
+        use crate::query_boundaries::checkers::promise as query;
+
+        if depth > 8 {
+            return false;
+        }
+
         let (body_type, _params) = self.type_reference_symbol_type_with_params(sym_id);
         if self.is_global_promise_type(body_type) {
             return true;
         }
-
-        // The body might itself be an Application (e.g., `Promise<T>`)
-        // Check if the Application base refers to the global Promise type
-        if let Some(body_base) = query::promise_application_base(self.ctx.types, body_type) {
-            // Check if the body's base is Promise
-            return self.is_global_promise_type(body_base);
+        // The body might itself be an Application (e.g., `Promise<T>`); check
+        // whether its base refers to the global Promise type.
+        if let Some(body_base) = query::promise_application_base(self.ctx.types, body_type)
+            && self.is_global_promise_type(body_base)
+        {
+            return true;
         }
+        // Alias chain: forward to the next type alias and re-check. Prefer the
+        // resolved body's own reference (kept lazy for a bare alias); fall back
+        // to walking the alias declaration's AST body, because an intermediate
+        // chain link (`type C = B`) resolves to a flattened object at the type
+        // level and can only be followed syntactically.
+        let next_from_type = query::promise_application_base_lazy_def_id(self.ctx.types, body_type)
+            .or_else(|| query::promise_lazy_def_id(self.ctx.types, body_type))
+            .and_then(|def| self.ctx.def_to_symbol_id(def))
+            .filter(|&next| next != sym_id && self.symbol_is_type_alias(next));
+        // Both producers already exclude `sym_id`, so the next symbol is always a
+        // distinct type alias.
+        let Some(next_sym) = next_from_type.or_else(|| self.next_alias_symbol_via_ast(sym_id))
+        else {
+            return false;
+        };
+        self.promise_alias_symbol_resolves_to_global(next_sym, depth + 1)
+    }
 
-        false
+    /// Follow a bare alias-to-alias link at the AST level: if `sym_id`'s
+    /// type-alias body is a plain reference to another type alias, return that
+    /// alias's symbol. Used to traverse chains such as
+    /// `type C = B; type B = A; type A = Promise<T>` whose intermediate links
+    /// resolve to a flattened object at the type level and so cannot be followed
+    /// through the resolved type.
+    fn next_alias_symbol_via_ast(
+        &self,
+        sym_id: tsz_binder::SymbolId,
+    ) -> Option<tsz_binder::SymbolId> {
+        use crate::symbol_resolver::TypeSymbolResolution;
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        let decl_node = symbol.declarations.iter().find_map(|&decl_idx| {
+            let node = self.ctx.arena.get(decl_idx)?;
+            (node.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION).then_some(node)
+        })?;
+        let type_alias = self.ctx.arena.get_type_alias(decl_node)?;
+        let body_node = self.ctx.arena.get(type_alias.type_node)?;
+        // Only a bare reference is an alias link to follow; `Promise<number>` is
+        // handled at the type level and a union/primitive body is not an alias.
+        let type_ref = self.ctx.arena.get_type_ref(body_node)?;
+        let TypeSymbolResolution::Type(next_sym) =
+            self.resolve_identifier_symbol_in_type_position_without_tracking(type_ref.type_name)
+        else {
+            return None;
+        };
+        (next_sym != sym_id && self.symbol_is_type_alias(next_sym)).then_some(next_sym)
     }
 }

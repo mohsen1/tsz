@@ -76,7 +76,7 @@ impl<'a> CheckerState<'a> {
                     .sym_id_is_current_cloned_lib_promise_or_promise_like(sym_id))
     }
 
-    fn current_symbol_is_lib_promise(&self, sym_id: SymbolId) -> bool {
+    pub(crate) fn current_symbol_is_lib_promise(&self, sym_id: SymbolId) -> bool {
         self.ctx.sym_id_is_lib_promise(sym_id)
             || self.ctx.sym_id_is_current_cloned_lib_promise(sym_id)
     }
