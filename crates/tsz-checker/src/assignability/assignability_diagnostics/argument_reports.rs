@@ -143,8 +143,18 @@ impl<'a> CheckerState<'a> {
                 .checker_only_assignability_failure_reason(source, target)
                 .is_some();
         }
+        // Gate on `callback_type_params_are_unresolved`: only suppress when
+        // contextual typing genuinely failed to bind the callback's parameters
+        // (they remained `any`/`unknown`). When the parameters DID resolve to
+        // concrete types and the whole-callback relation still fails (e.g. an
+        // untyped arrow `(x) => x` whose body unions the overload parameters to
+        // `string | number` cannot satisfy `{ (x: string): string; (x: number):
+        // number }`), the mismatch is real and `tsc` reports `TS2345` at the
+        // argument — mirroring the identical triple-gate in
+        // `error_argument_not_assignable_at_impl`.
         if !checker_only_mismatch
             && self.arg_is_callback_with_unannotated_params(arg_idx)
+            && self.callback_type_params_are_unresolved(source)
             && self.target_can_contextually_type_callback_params(arg_idx, target)
         {
             return true;
