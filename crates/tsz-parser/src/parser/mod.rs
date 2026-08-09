@@ -219,6 +219,10 @@ mod trailing_comma_tests;
 mod rest_param_trailing_comma_tests;
 
 #[cfg(test)]
+#[path = "../../tests/rest_element_not_last_grammar_tests.rs"]
+mod rest_element_not_last_grammar_tests;
+
+#[cfg(test)]
 #[path = "../../tests/spelling_integration_tests.rs"]
 mod spelling_integration_tests;
 
