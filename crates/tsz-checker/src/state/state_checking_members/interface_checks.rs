@@ -189,9 +189,11 @@ impl<'a> CheckerState<'a> {
         // (public, private, static, etc.)
         self.check_never_valid_type_parameter_modifiers(iface.type_parameters.as_ref());
 
-        // Check for reserved interface names (TS2427)
-        // tsc's checkTypeNameIsReserved uses the same set for both interfaces and
-        // classes. It forbids predefined type names.
+        // Check for reserved interface names (TS2427). The checker owns the soft
+        // predefined-type names (`string`, `number`, ...); the hard-keyword
+        // `void`/`null` copy this also emits is deduplicated by the CLI keep-gate
+        // against the parser's own hard-keyword TS2427. See #16279 and
+        // `checker_diagnostics::keep_checker_diagnostic_when_program_has_real_syntax_errors`.
         if iface.name.is_some()
             && let Some(name_node) = self.ctx.arena.get(iface.name)
             && let Some(ident) = self.ctx.arena.get_identifier(name_node)

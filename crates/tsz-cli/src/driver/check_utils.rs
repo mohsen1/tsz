@@ -348,9 +348,6 @@ pub(super) fn filtered_parse_diagnostics(
     // parse diagnostics (tsc does this in plain JS binder errors), but suppress
     // it for expression-recovery cases where TS1109 is the primary diagnostic.
     let has_expression_expected_parse_error = parse_diagnostics.iter().any(|d| d.code == 1109);
-    let has_hard_keyword_interface_ts2427 = parse_diagnostics
-        .iter()
-        .any(is_hard_keyword_interface_name_2427_parse_diagnostic);
     parse_diagnostics
         .iter()
         .filter(|diagnostic| {
@@ -374,12 +371,6 @@ pub(super) fn filtered_parse_diagnostics(
             if diagnostic.code == 1359
                 && diagnostic.message.contains("'await'")
                 && has_expression_expected_parse_error
-            {
-                return false;
-            }
-            if has_hard_keyword_interface_ts2427
-                && diagnostic.code == 2427
-                && !is_hard_keyword_interface_name_2427_parse_diagnostic(diagnostic)
             {
                 return false;
             }
@@ -427,12 +418,6 @@ pub(super) fn suppress_parameter_grammar_losers(
             .iter()
             .any(|&(start, end)| diagnostic.start >= start && diagnostic.start < end)
     });
-}
-
-fn is_hard_keyword_interface_name_2427_parse_diagnostic(diagnostic: &ParseDiagnostic) -> bool {
-    diagnostic.code == 2427
-        && (diagnostic.message == "Interface name cannot be 'void'."
-            || diagnostic.message == "Interface name cannot be 'null'.")
 }
 
 #[path = "check_utils/parser_grammar_code.rs"]
@@ -567,6 +552,11 @@ pub(super) const fn keep_diagnostic_when_js_only_syntactic_skips_semantic(code: 
     is_real_syntax_error(code)
         || is_ts1xxx_allowed_in_js(code)
         || (code >= 8000 && code < 9000)
+        // Reserved declaration-name diagnostics survive the JS-only semantic
+        // skip. This axis is orthogonal to #16279's parse-error suppression
+        // (which distinguishes 2427 from 2457): here both are kept because a JS
+        // file's reserved-name grammar error is not a suppressible semantic
+        // diagnostic, regardless of which side emits it.
         || matches!(code, 2427 | 2457)
 }
 

@@ -14,7 +14,14 @@ pub(super) fn program_has_real_syntax_errors(program: &MergedProgram) -> bool {
         .files
         .iter()
         .flat_map(|file| file.parse_diagnostics.iter())
-        .any(|diag| is_real_syntax_error(diag.code))
+        // TS2427/TS2457 as *parse* diagnostics are the hard-keyword/numeric
+        // reserved-name rejections the parser owns (`void`/`null`/`123` as an
+        // interface or type-alias name — soft predefined-type names are
+        // checker-emitted and never reach `parse_diagnostics`). tsc treats those
+        // as `hasParseDiagnostics`, short-circuiting the whole file's semantic
+        // phase — e.g. `interface void {}` next to a real type error suppresses
+        // the type error entirely (#16279). Counting them here reproduces that.
+        .any(|diag| is_real_syntax_error(diag.code) || matches!(diag.code, 2427 | 2457))
         || program
             .files
             .iter()
@@ -47,42 +54,36 @@ pub(super) fn program_has_unsupported_js_root(
             .any(|file| is_js_file(Path::new(&file.file_name)))
 }
 
-const fn is_reserved_type_name_declaration_diagnostic(code: u32) -> bool {
-    matches!(code, 2427 | 2457)
-}
-
-/// Returns true if a TS2427 diagnostic message refers to a hard reserved
-/// keyword that triggers a parser error in tsc (`void` or `null`). When such
-/// an interface declaration is present in a source file, tsc only surfaces
-/// the TS2427 for that hard-keyword interface and suppresses TS2427 for any
-/// other reserved-name interfaces in the same file. This mirrors tsc's
-/// behavior in `interfacesWithPredefinedTypesAsNames.ts` and similar tests.
-fn is_hard_keyword_interface_name_2427(diag: &Diagnostic) -> bool {
-    if diag.code != 2427 {
-        return false;
-    }
-    diag.message_text == "Interface name cannot be 'void'."
-        || diag.message_text == "Interface name cannot be 'null'."
+/// The reserved *type-alias*-name diagnostic (TS2457) that survives a sibling
+/// parse error, unlike the reserved *interface*-name diagnostic (TS2427).
+///
+/// tsc emits `type void = ...`'s TS2457 such that it survives alongside an
+/// unrelated parse error (oracle: `type void = number` survives Direction B),
+/// and tsz emits even that hard-keyword form from the checker
+/// (`statement_callback_bridge`), never from the parser — and never for a soft
+/// name. TS2427 is the opposite: its hard-keyword `void`/`null` form is now
+/// parser-owned (`state_declarations.rs`) so it never reaches a checker gate,
+/// and the soft form that does reach one is a checker `grammarErrorOnNode` that
+/// tsc suppresses under a sibling parse error. So the two codes are gated
+/// differently everywhere the checker-diagnostic pipeline consults them (#16279).
+const fn checker_reserved_type_alias_name_survives_parse_error(code: u32) -> bool {
+    code == 2457
 }
 
 pub(super) fn keep_checker_diagnostic_when_program_has_real_syntax_errors(code: u32) -> bool {
     // tsc suppresses type-level semantic diagnostics when any source file in the
-    // program has a real syntax error, but it still reports declaration-name
-    // diagnostics such as TS2427/TS2457 alongside parse errors because the parser
-    // accepts those names and defers validation to the checker.
-    //
-    // `code < 2000` is only a proxy for "the parser emitted this". It is wrong
-    // for every `TS1xxx` code that tsz emits from the checker's or binder's
-    // grammar phase: tsc routes those through `getSemanticDiagnostics`, so the
-    // syntactic phase short-circuits them program-wide. Both this gate and the
-    // JS-only (`TS8xxx`) gate model that same tsc short-circuit, so they share
-    // one list.
+    // program has a real syntax error. `code < 2000` is a proxy for "the parser
+    // emitted this"; `is_checker_routed_ts1xxx_grammar` corrects the TS1xxx codes
+    // tsz emits from the checker/binder that tsc routes through the semantic
+    // phase. TS2457 is kept per its own rule (see the predicate); TS2427 is not
+    // (it is now parser-owned for hard keywords, checker-emitted for soft names
+    // which tsc suppresses here).
     if check_utils::is_checker_routed_ts1xxx_grammar(code) {
         return false;
     }
     code < 2000
         || tsz::checker::diagnostics::is_js_grammar_diagnostic(code)
-        || is_reserved_type_name_declaration_diagnostic(code)
+        || checker_reserved_type_alias_name_survives_parse_error(code)
 }
 
 /// `TS1xxx` codes that tsc routes through `getSemanticDiagnostics`. They are in
@@ -193,29 +194,13 @@ pub(super) fn post_process_checker_diagnostics(
         checker_diagnostics.retain(|diag| diag.code < 2000);
     }
 
-    // When the file contains an `interface void {}` or `interface null {}`
-    // declaration, tsc only emits TS2427 for that hard-keyword interface and
-    // suppresses TS2427 for ANY other interfaces in the same file (including
-    // ones with predefined-type names like `any`, `number`, etc.). This is
-    // because tsc's parser produces a parse error for hard-keyword names,
-    // which prevents the lazy diagnostic queue from running for the other
-    // interface declarations. We don't currently emit a parse error in our
-    // parser for `void`/`null` as interface names, so we model the same
-    // suppression by filtering out non-hard-keyword TS2427 when a
-    // hard-keyword TS2427 is present.
-    let has_hard_keyword_ts2427 = checker_diagnostics
-        .iter()
-        .any(is_hard_keyword_interface_name_2427);
-    if has_hard_keyword_ts2427 {
-        checker_diagnostics.retain(|diag| {
-            // Keep all non-TS2427 diagnostics untouched.
-            if diag.code != 2427 {
-                return true;
-            }
-            // Among TS2427, keep only the hard-keyword (`void`/`null`) ones.
-            is_hard_keyword_interface_name_2427(diag)
-        });
-    }
+    // The `interface void {}` / `interface null {}` same-file suppression that
+    // used to live here is now handled structurally: the parser owns the
+    // hard-keyword TS2427 (a `ParseDiagnostic`), which makes
+    // `program_has_real_syntax_errors` true and suppresses every *checker*
+    // TS2427 (the soft predefined-type-name form) in the file via the keep-gate
+    // above — exactly tsc's `hasParseDiagnostics` short-circuit, with no
+    // message-text matching (#16279).
 
     // TS2499 ("An interface can only extend an identifier/qualified-name
     // with optional type arguments") is grammar-decidable at parse time for
@@ -293,12 +278,9 @@ pub(super) fn post_process_checker_diagnostics(
             if diag.code < 2000 || tsz::checker::diagnostics::is_js_grammar_diagnostic(diag.code) {
                 return true;
             }
-            // Some semantic errors are deliberately emitted alongside
-            // structural parse errors and must not be suppressed.
-            // TS2427 / TS2457 are checker-side validation for reserved type names
-            // in interface/type-alias declarations. TSC keeps them even when the
-            // surrounding file also has structural parse errors.
-            if is_reserved_type_name_declaration_diagnostic(diag.code) {
+            // TS2457 survives a sibling parse error (see the predicate); its
+            // TS2427 sibling does not, so it is not exempted here (#16279).
+            if checker_reserved_type_alias_name_survives_parse_error(diag.code) {
                 return true;
             }
             // Suppress if a structural parse error is within the cascade window
@@ -335,8 +317,16 @@ mod tests {
         assert!(keep_checker_diagnostic_when_program_has_real_syntax_errors(
             1005
         ));
+        // #16279: the reserved interface-name TS2427 is now parser-owned for the
+        // hard keywords `void`/`null` (a `ParseDiagnostic` that never reaches this
+        // checker-diagnostic gate); the only TS2427 that reaches here is the soft
+        // predefined-type-name form, which tsc suppresses under a sibling parse
+        // error — so it must NOT be kept. The reserved type-alias-name TS2457,
+        // whose hard-keyword `void` form tsz emits from the checker, IS kept
+        // (tsc keeps `type void = ...`'s TS2457 alongside a parse error).
+        assert!(!keep_checker_diagnostic_when_program_has_real_syntax_errors(2427));
         assert!(keep_checker_diagnostic_when_program_has_real_syntax_errors(
-            2427
+            2457
         ));
         assert!(!keep_checker_diagnostic_when_program_has_real_syntax_errors(2322));
     }

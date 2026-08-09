@@ -101,17 +101,16 @@
 ///   reports TS2499 twice today regardless of this list. Adding it here
 ///   would fold a real emission-site bug into this suppression-only audit;
 ///   left for its own fix.
-/// - **TS2427/TS2457** (interface/type-alias reserved names) have an
-///   existing bespoke hard-keyword-vs-checker-emitted split
-///   (`is_hard_keyword_interface_name_2427_parse_diagnostic` here,
-///   `is_hard_keyword_interface_name_2427` in `checker_diagnostics.rs`) that
-///   this audit did not have the budget to verify safe to fold in here; a
-///   future slice should re-derive that interaction against the oracle
-///   before touching either code. TS2819 (namespace reserved names, the
-///   third member of this same family) was oracle-tested and rejected: tsc
-///   keeps it alongside an unrelated syntax error in the same file, unlike
-///   its TS2427/TS2457 siblings — so family membership must not be assumed
-///   from a sibling's membership.
+/// - **TS2427/TS2457** (interface/type-alias reserved names) are resolved by
+///   emission site rather than by this list (#16279): the parser owns the
+///   hard-keyword `void`/`null` (and numeric) interface-name TS2427, the checker
+///   owns the soft predefined-type names, and the CLI keep-gate
+///   (`checker_diagnostics.rs`) deduplicates and suppresses per tsc's
+///   `hasParseDiagnostics` — so neither code belongs in this parser-grammar
+///   list. TS2819 (namespace reserved names, the third member of this family)
+///   was oracle-tested and rejected: tsc keeps it alongside an unrelated syntax
+///   error in the same file, unlike its TS2427/TS2457 siblings — so family
+///   membership must not be assumed from a sibling's membership.
 ///
 /// #16279 audit round 5: TS1492 (`'{0}' declarations may not have binding
 /// patterns.`, `state_variable_declarations.rs` — `using {a} = x` / `await

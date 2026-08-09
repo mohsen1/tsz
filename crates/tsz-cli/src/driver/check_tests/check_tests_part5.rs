@@ -379,6 +379,127 @@ interface LibBase {
         );
     }
 
+    // ------------------------------------------------------------------
+    // #16279: the reserved interface/type-alias-name family (TS2427/TS2457)
+    // is split by tsc's emission site. Hard keywords (`void`/`null`) and
+    // numeric names are parser diagnostics (they short-circuit the file's
+    // semantic phase); soft predefined-type names (`string`, `number`, ...)
+    // are checker `grammarErrorOnNode` diagnostics (suppressed by a sibling
+    // parse error, but otherwise coexisting with unrelated grammar errors).
+    // Before the fix tsz emitted the soft-name TS2427 from the parser, which
+    // both double-emitted and, being outside `is_parser_grammar_code`, counted
+    // as a suppressing "real parse error" that silently deleted sibling grammar
+    // diagnostics in the same file.
+
+    #[test]
+    fn soft_reserved_interface_name_does_not_delete_sibling_grammar_diagnostic() {
+        // The headline family-deletion witness. tsc reports BOTH the soft-name
+        // TS2427 and the sibling accessor grammar error (TS1054); tsz used to
+        // drop the TS1054 because the parser-emitted TS2427 was treated as a
+        // suppressing parse error.
+        for soft in ["string", "number", "object"] {
+            let src = format!(
+                "interface {soft} {{}}\nclass C {{ get x(a: number) {{ return a; }} }}\n"
+            );
+            let diagnostics = collect_test_diagnostics(&[("/a.ts", src.as_str())]);
+            assert!(
+                diagnostics.iter().any(|d| d.code == 2427),
+                "expected TS2427 for `interface {soft}`, got: {diagnostics:?}"
+            );
+            assert!(
+                diagnostics.iter().any(|d| d.code == 1054),
+                "sibling TS1054 (get accessor with parameters) must survive \
+                 alongside the soft-name TS2427 for `interface {soft}`, got: {diagnostics:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn soft_reserved_interface_name_is_single_emission() {
+        // No parser/checker double-emission for the soft-name form.
+        for soft in ["string", "number", "boolean"] {
+            let src = format!("interface {soft} {{}}\n");
+            let diagnostics = collect_test_diagnostics(&[("/a.ts", src.as_str())]);
+            assert_eq!(
+                diagnostics.iter().filter(|d| d.code == 2427).count(),
+                1,
+                "exactly one TS2427 expected for `interface {soft}`, got: {diagnostics:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn soft_reserved_interface_name_suppressed_by_sibling_parse_error() {
+        // Direction B: a genuine syntax error elsewhere in the file drops the
+        // soft-name (checker-emitted) TS2427, matching tsc's hasParseDiagnostics.
+        let diagnostics =
+            collect_test_diagnostics(&[("/a.ts", "interface string {}\nlet zzz: = 1;\n")]);
+        assert!(
+            diagnostics.iter().any(|d| d.code == 1110),
+            "the real syntax error (TS1110) must be reported, got: {diagnostics:?}"
+        );
+        assert!(
+            !diagnostics.iter().any(|d| d.code == 2427),
+            "soft-name TS2427 must be suppressed by a sibling parse error, got: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn hard_keyword_interface_name_short_circuits_semantic_phase() {
+        // `interface void {}` is a parser diagnostic (`void` cannot be an
+        // identifier), so tsc suppresses the file's unrelated type error just
+        // as it would for any parse error. The TS2427 itself survives.
+        let diagnostics = collect_test_diagnostics(&[(
+            "/a.ts",
+            "interface void {}\nconst x: number = \"s\";\n",
+        )]);
+        assert!(
+            diagnostics.iter().any(|d| d.code == 2427),
+            "hard-keyword TS2427 for `interface void` must be reported, got: {diagnostics:?}"
+        );
+        assert!(
+            !diagnostics.iter().any(|d| d.code == 2322),
+            "the unrelated type error must be short-circuited by the hard-keyword \
+             parse diagnostic, got: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn hard_keyword_interface_name_suppresses_soft_sibling_same_file() {
+        // `interface void {}` + `interface string {}` in one file: tsc reports
+        // only the `void` TS2427. This falls out of the general
+        // hasParseDiagnostics mechanism (the parser `void`-TS2427 makes
+        // `program_has_real_syntax_errors` true, suppressing the checker's
+        // soft-name TS2427), not a message-text special case.
+        let diagnostics =
+            collect_test_diagnostics(&[("/a.ts", "interface void {}\ninterface string {}\n")]);
+        let ts2427: Vec<_> = diagnostics.iter().filter(|d| d.code == 2427).collect();
+        assert_eq!(
+            ts2427.len(),
+            1,
+            "only the hard-keyword TS2427 should survive, got: {diagnostics:?}"
+        );
+        assert!(
+            ts2427[0].message_text.contains("void"),
+            "the surviving TS2427 must be the `void` one, got: {:?}",
+            ts2427[0]
+        );
+    }
+
+    #[test]
+    fn numeric_and_hard_keyword_interface_names_both_reported() {
+        // Numeric names are parser diagnostics too, and tsc keeps both a numeric
+        // and a hard-keyword TS2427 in the same file (neither suppresses the
+        // other) — the branch the removed bespoke filter would have collapsed.
+        let diagnostics =
+            collect_test_diagnostics(&[("/a.ts", "interface void {}\ninterface 123 {}\n")]);
+        assert_eq!(
+            diagnostics.iter().filter(|d| d.code == 2427).count(),
+            2,
+            "both the `void` and numeric TS2427 must survive, got: {diagnostics:?}"
+        );
+    }
+
     /// End-to-end guard for the property-name span fix in
     /// `parse_property_name_impl`: a parser grammar diagnostic and a checker
     /// diagnostic anchored on the *same* accessor name must interleave by code,
