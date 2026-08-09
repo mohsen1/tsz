@@ -245,3 +245,193 @@ var f: (x: string) => void = (x) => { x.bogusProp; };
         "a single-signature target must still contextually type its parameter, got: {diags:#?}"
     );
 }
+
+// ── noImplicitAny ON: combinable generic overloads produce a *combined* generic
+//    signature, so the arrow adopts one shared `<T>` and stays a generic identity.
+//
+// tsc's `getIntersectedSignatures` combines two-or-more arity-applicable
+// signatures under `noImplicitAny` only when their type parameters are identical
+// (`compareTypeParametersIdentical`), mapping each later signature's own type
+// parameters onto the first's before unioning parameter positions
+// (`combineIntersectionParameters`). Two overloads that each declare their own
+// `<T>` collapse to a single `<T>` — not an undeduped `T | T` — and the function
+// expression adopts that `<T>`, becoming `<T>(x: T) => T`, which every overload
+// can instantiate. Oracle-verified against pinned `typescript@7.0.2` `--strict`
+// for each case below.
+
+#[test]
+fn shared_type_param_position_combines_and_stays_clean() {
+    // `functionLiteralForOverloads.ts` `f3`. The pre-fix bug: the arity-filtered
+    // extractor unioned the two overloads' distinct-but-same-named `T` into an
+    // undeduped `T | T` and left the arrow non-generic, producing a spurious
+    // TS2322 (`Type 'T | T' is not assignable to type 'string'`). #16950.
+    let diags = diagnostics_no_implicit_any(
+        r#"
+var f3: {
+    <T>(x: T): string;
+    <T>(x: T): number;
+} = (x) => x;
+"#,
+    );
+    assert!(
+        diags.is_empty(),
+        "combinable shared-`T` overloads must contextually type the arrow as a generic identity, got: {diags:#?}"
+    );
+}
+
+#[test]
+fn generic_return_overloads_stay_clean() {
+    // `functionLiteralForOverloads.ts` `f4`: a generic return with concrete
+    // parameters. The arrow adopts `<T>` and stays assignable to both overloads.
+    let diags = diagnostics_no_implicit_any(
+        r#"
+var f4: {
+    <T>(x: string): T;
+    <T>(x: number): T;
+} = (x) => x;
+"#,
+    );
+    assert!(
+        diags.is_empty(),
+        "generic-return overloads must stay clean under noImplicitAny, got: {diags:#?}"
+    );
+}
+
+#[test]
+fn renamed_binders_shared_position_stay_clean() {
+    // The combine maps type parameters *positionally*, so two overloads that name
+    // their shared-position parameter differently (`<U>`/`<V>`) still collapse to
+    // one type parameter. Guards against a name-string dependence in the merge.
+    let diags = diagnostics_no_implicit_any(
+        r#"
+var h: {
+    <U>(x: U): string;
+    <V>(x: V): number;
+} = (x) => x;
+"#,
+    );
+    assert!(
+        diags.is_empty(),
+        "renamed shared-position binders must still combine, got: {diags:#?}"
+    );
+}
+
+#[test]
+fn matching_constraint_overloads_stay_clean() {
+    // Identical constraints are combinable (`compareTypeParametersIdentical`).
+    let diags = diagnostics_no_implicit_any(
+        r#"
+var h: {
+    <T extends object>(x: T): string;
+    <T extends object>(x: T): number;
+} = (x) => x;
+"#,
+    );
+    assert!(
+        diags.is_empty(),
+        "matching-constraint overloads must combine, got: {diags:#?}"
+    );
+}
+
+#[test]
+fn three_shared_type_param_overloads_stay_clean() {
+    // The identity check is pairwise across the whole set, not just adjacent.
+    let diags = diagnostics_no_implicit_any(
+        r#"
+var h: {
+    <T>(x: T): string;
+    <T>(x: T): number;
+    <T>(x: T): boolean;
+} = (x) => x;
+"#,
+    );
+    assert!(
+        diags.is_empty(),
+        "three combinable shared-`T` overloads must stay clean, got: {diags:#?}"
+    );
+}
+
+// ── noImplicitAny ON: non-combinable overloads combine to nothing, so the arrow
+//    parameter falls back to implicit `any` (TS7006) — never a synthesized union.
+
+#[test]
+fn mismatched_constraint_overloads_report_ts7006() {
+    // Differing constraints are NOT identical, so tsc yields no contextual
+    // signature at all and the parameter is implicitly `any`.
+    let diags = diagnostics_no_implicit_any(
+        r#"
+var h: {
+    <T extends string>(x: T): string;
+    <T extends number>(x: T): number;
+} = (x) => x;
+"#,
+    );
+    assert!(
+        diags.iter().any(|(code, _)| *code == 7006),
+        "mismatched-constraint overloads must not combine; expected TS7006, got: {diags:#?}"
+    );
+    assert!(
+        !diags.iter().any(|(code, _)| *code == 2322),
+        "mismatched-constraint overloads must not synthesize a unioned parameter (no TS2322), got: {diags:#?}"
+    );
+}
+
+#[test]
+fn mixed_generic_and_non_generic_overloads_report_ts7006() {
+    // A generic/non-generic mix differs in type-parameter arity, so it is not
+    // combinable and the parameter stays implicit `any`.
+    let diags = diagnostics_no_implicit_any(
+        r#"
+var h: {
+    (x: string): string;
+    <T>(x: T): number;
+} = (x) => x;
+"#,
+    );
+    assert!(
+        diags.iter().any(|(code, _)| *code == 7006),
+        "generic/non-generic mix must not combine; expected TS7006, got: {diags:#?}"
+    );
+}
+
+// ── noImplicitAny ON: combinable *non-generic* overloads with disagreeing
+//    concrete positions still combine and still report the return mismatch.
+
+#[test]
+fn disagreeing_concrete_params_report_ts2322() {
+    // `functionLiteralForOverloads.ts` `f`: non-generic overloads combine to
+    // `(x: string | number) => string | number`, which — because the return is
+    // concrete and cannot be re-instantiated — is not assignable to either
+    // overload's `string`/`number` return. tsc reports TS2322 here.
+    let diags = diagnostics_no_implicit_any(
+        r#"
+var f: {
+    (x: string): string;
+    (x: number): number;
+} = (x) => x;
+"#,
+    );
+    assert!(
+        diags.iter().any(|(code, _)| *code == 2322),
+        "disagreeing concrete-parameter overloads must still report TS2322, got: {diags:#?}"
+    );
+}
+
+#[test]
+fn unused_generic_disagreeing_concrete_params_report_ts2322() {
+    // `functionLiteralForOverloads.ts` `f2`: an unused `<T>` on each overload
+    // does not save the concrete `string`/`number` return positions from the
+    // same TS2322 as `f`.
+    let diags = diagnostics_no_implicit_any(
+        r#"
+var f2: {
+    <T>(x: string): string;
+    <T>(x: number): number;
+} = (x) => x;
+"#,
+    );
+    assert!(
+        diags.iter().any(|(code, _)| *code == 2322),
+        "unused-generic disagreeing overloads must still report TS2322, got: {diags:#?}"
+    );
+}

@@ -1113,14 +1113,34 @@ fn extract_contextual_type_params_inner(
         }
         Some(TypeData::Callable(shape_id)) => {
             let shape = db.callable_shape(shape_id);
-            if shape.call_signatures.len() != 1 {
+            let first = shape.call_signatures.first()?;
+            // tsc `getContextualSignature`: an overloaded callable contributes the
+            // *combined* signature's type parameters only when every call
+            // signature is combinable — identical type-parameter arity and
+            // constraints (`getIntersectedSignatures` /
+            // `compareTypeParametersIdentical`). Two overloads that each declare
+            // their own `<T>` are combinable, so a function expression assigned to
+            // `{ <T>(x: T): string; <T>(x: T): number }` adopts a single `<T>` and
+            // stays a generic identity (`<T>(x: T) => T`) that each overload can
+            // instantiate, rather than a non-generic `(x: T) => T` that fails to
+            // satisfy either overload. A non-combinable set (differing arity, e.g.
+            // a generic/non-generic mix) contributes nothing, matching the sibling
+            // gate in the contextual-parameter extractor.
+            if shape.call_signatures.len() > 1
+                && !shape.call_signatures[1..].iter().all(|sig| {
+                    crate::contextual::extractors::type_parameters_identical(
+                        db,
+                        &first.type_params,
+                        &sig.type_params,
+                    )
+                })
+            {
                 return None;
             }
-            let sig = &shape.call_signatures[0];
-            if sig.type_params.is_empty() {
+            if first.type_params.is_empty() {
                 None
             } else {
-                Some(sig.type_params.clone())
+                Some(first.type_params.clone())
             }
         }
         Some(TypeData::Application(app_id)) => {

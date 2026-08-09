@@ -1048,7 +1048,8 @@ impl<'a> CheckerState<'a> {
                     Some(property_type.unwrap_or(TypeId::ERROR))
                 }
                 PropertyAccessResult::IsUnknown => {
-                    let unknown_result = self.unknown_object_access_result(access.expression);
+                    let unknown_result =
+                        self.unknown_object_access_result(access.expression, Some(&property_name));
                     if unknown_result.is_some() {
                         use_index_signature_check = false;
                     }
@@ -1183,7 +1184,8 @@ impl<'a> CheckerState<'a> {
                     Some(property_type.unwrap_or(TypeId::ERROR))
                 }
                 PropertyAccessResult::IsUnknown => {
-                    let unknown_result = self.unknown_object_access_result(access.expression);
+                    let unknown_result =
+                        self.unknown_object_access_result(access.expression, Some(&property_name));
                     if unknown_result.is_some() && !keep_index_signature_check {
                         use_index_signature_check = false;
                     }
@@ -1645,7 +1647,7 @@ impl<'a> CheckerState<'a> {
         if use_index_signature_check
             && !is_fresh_object_literal
             && object_type_for_access == TypeId::UNKNOWN
-            && let Some(result) = self.unknown_object_access_result(access.expression)
+            && let Some(result) = self.unknown_object_access_result(access.expression, None)
         {
             return result;
         }

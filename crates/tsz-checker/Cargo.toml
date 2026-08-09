@@ -531,6 +531,9 @@ path = "tests/tuple_rest_destructuring_slice_tests.rs"
 name = "destructuring_binding_element_source_tests"
 path = "tests/destructuring_binding_element_source_tests.rs"
 [[test]]
+name = "destructuring_assignment_rest_position_tests"
+path = "tests/destructuring_assignment_rest_position_tests.rs"
+[[test]]
 name = "nan_equality_lib_symbol_ids_tests"
 path = "tests/nan_equality_lib_symbol_ids_tests.rs"
 [[test]]
@@ -1758,6 +1761,9 @@ path = "tests/ts2374_jsx_runtime_self_import_no_false_positive_tests.rs"
 [[test]]
 name = "generic_overload_shared_type_param_contextual_tests"
 path = "tests/generic_overload_shared_type_param_contextual_tests.rs"
+[[test]]
+name = "generic_overload_signature_erasure_tests"
+path = "tests/generic_overload_signature_erasure_tests.rs"
 [[test]]
 name = "large_union_index_merge_regression_tests"
 path = "tests/large_union_index_merge_regression_tests.rs"
