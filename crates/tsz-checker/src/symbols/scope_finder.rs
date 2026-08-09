@@ -408,13 +408,10 @@ impl<'a> CheckerState<'a> {
     ///   receiver / an `any` `this`, matching `tsc`.
     pub(crate) fn assignment_rhs_base_this_type(&mut self, base_expr: NodeIndex) -> Option<TypeId> {
         if self.is_js_file() && !self.current_source_file_has_esm_syntax() {
-            if self
-                .ctx
-                .arena
-                .get(base_expr)
-                .is_some_and(|n| n.kind == SyntaxKind::Identifier as u16)
-                && self.is_unshadowed_commonjs_exports_identifier(base_expr)
-            {
+            // `is_unshadowed_commonjs_exports_identifier` already resolves to
+            // `false` for any non-identifier node, so no explicit kind guard is
+            // needed here.
+            if self.is_unshadowed_commonjs_exports_identifier(base_expr) {
                 return None;
             }
             // The bare `exports` identifier is handled above, so the only
