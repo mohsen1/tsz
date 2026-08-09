@@ -1071,6 +1071,8 @@ mod void_undefined_discriminant_narrowing_tests;
 mod well_known_symbol_alias_member_tests;
 #[path = "tests/window_self_globalthis_resolution_tests.rs"]
 mod window_self_globalthis_resolution_tests;
+#[path = "tests/yield_grammar_computed_property_name_tests.rs"]
+mod yield_grammar_computed_property_name_tests;
 #[path = "tests/yieldstar_async_iterable_invalid_thenable_element_tests.rs"]
 mod yieldstar_async_iterable_invalid_thenable_element_tests;
 #[path = "tests/zod_type_query_regression_tests.rs"]
