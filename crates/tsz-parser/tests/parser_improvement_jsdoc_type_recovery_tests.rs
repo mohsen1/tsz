@@ -4,8 +4,12 @@ use crate::parser::test_fixture::parse_source;
 use tsz_common::diagnostics::diagnostic_codes;
 
 #[test]
-fn test_type_argument_with_empty_jsdoc_wildcard_has_no_ts1110() {
-    // `Foo<?>` should emit TS8020 but avoid TS17020/TS1110 cascading.
+fn test_type_argument_with_empty_jsdoc_wildcard_reports_ts1110() {
+    // A bare `?` (no operand) in type-argument position has no JSDoc
+    // meaning left to recover — tsc 7.0.2 reports TS1110 ("Type expected")
+    // at the token after `?`, not TS8020 (oracle-verified: `Foo<?>` -> TS1110
+    // at the `>`). TS8020 stays reserved for genuinely JSDoc-only syntax
+    // (`*`, `Array.<T>`).
     let source = r#"
 type T = Foo<?>;
 "#;
@@ -13,15 +17,15 @@ type T = Foo<?>;
 
     let diagnostics: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();
     assert!(
-        diagnostics.contains(
-            &diagnostic_codes::JSDOC_TYPES_CAN_ONLY_BE_USED_INSIDE_DOCUMENTATION_COMMENTS
-        ),
-        "Expected TS8020 for `Foo<?>`, got {:?}",
+        diagnostics.contains(&diagnostic_codes::TYPE_EXPECTED),
+        "Expected TS1110 for `Foo<?>`, got {:?}",
         parser.get_diagnostics(),
     );
     assert!(
-        !diagnostics.contains(&diagnostic_codes::TYPE_EXPECTED),
-        "Expected no TS1110 for `Foo<?>`, got {:?}",
+        !diagnostics.contains(
+            &diagnostic_codes::JSDOC_TYPES_CAN_ONLY_BE_USED_INSIDE_DOCUMENTATION_COMMENTS
+        ),
+        "Expected no TS8020 for `Foo<?>`, got {:?}",
         parser.get_diagnostics(),
     );
     assert!(
@@ -79,7 +83,9 @@ type T = Foo<?undefined>;
 }
 
 #[test]
-fn test_expression_type_argument_with_empty_jsdoc_wildcard_emits_ts8020_only() {
+fn test_expression_type_argument_with_empty_jsdoc_wildcard_reports_ts1110() {
+    // Same bare-wildcard rule as the type-position case: oracle-verified
+    // (`const WhatFoo = foo<?>;` -> TS1110 at the `>`).
     let source = r#"
 const WhatFoo = foo<?>;
 "#;
@@ -87,15 +93,15 @@ const WhatFoo = foo<?>;
 
     let diagnostics: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();
     assert!(
-        diagnostics.contains(
-            &diagnostic_codes::JSDOC_TYPES_CAN_ONLY_BE_USED_INSIDE_DOCUMENTATION_COMMENTS
-        ),
-        "Expected TS8020 for `foo<?>`, got {:?}",
+        diagnostics.contains(&diagnostic_codes::TYPE_EXPECTED),
+        "Expected TS1110 for `foo<?>`, got {:?}",
         parser.get_diagnostics(),
     );
     assert!(
-        !diagnostics.contains(&diagnostic_codes::TYPE_EXPECTED),
-        "Expected no TS1110 for `foo<?>`, got {:?}",
+        !diagnostics.contains(
+            &diagnostic_codes::JSDOC_TYPES_CAN_ONLY_BE_USED_INSIDE_DOCUMENTATION_COMMENTS
+        ),
+        "Expected no TS8020 for `foo<?>`, got {:?}",
         parser.get_diagnostics(),
     );
     assert!(
@@ -203,5 +209,134 @@ let whatevs: * = 1001;
         vec![diagnostic_codes::JSDOC_TYPES_CAN_ONLY_BE_USED_INSIDE_DOCUMENTATION_COMMENTS],
         "Expected only TS8020 for wildcard type, got {:?}",
         parser.get_diagnostics()
+    );
+}
+
+/// Adjacent-case matrix for the bare `?`/`!` type-position wildcard, oracle-
+/// verified against `typescript@7.0.2`. `?`/`!` with no following type
+/// operand is not a JSDoc-recoverable construct (unlike `*` or `Array.<T>`),
+/// so tsc reports plain TS1110 ("Type expected") at the token after the
+/// wildcard, not TS8020.
+#[test]
+fn test_bare_question_mark_type_annotation_reports_ts1110() {
+    let source = "var x: ?;";
+    let (parser, _root) = parse_source(source);
+
+    let diagnostics: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();
+    assert!(
+        diagnostics.contains(&diagnostic_codes::TYPE_EXPECTED),
+        "Expected TS1110 for `var x: ?;`, got {:?}",
+        parser.get_diagnostics(),
+    );
+    assert!(
+        !diagnostics.contains(
+            &diagnostic_codes::JSDOC_TYPES_CAN_ONLY_BE_USED_INSIDE_DOCUMENTATION_COMMENTS
+        ),
+        "Expected no TS8020 for `var x: ?;`, got {:?}",
+        parser.get_diagnostics(),
+    );
+}
+
+#[test]
+fn test_bare_exclamation_mark_type_annotation_reports_ts1110() {
+    let source = "var y: !;";
+    let (parser, _root) = parse_source(source);
+
+    let diagnostics: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();
+    assert!(
+        diagnostics.contains(&diagnostic_codes::TYPE_EXPECTED),
+        "Expected TS1110 for `var y: !;`, got {:?}",
+        parser.get_diagnostics(),
+    );
+    assert!(
+        !diagnostics.contains(
+            &diagnostic_codes::JSDOC_TYPES_CAN_ONLY_BE_USED_INSIDE_DOCUMENTATION_COMMENTS
+        ),
+        "Expected no TS8020 for `var y: !;`, got {:?}",
+        parser.get_diagnostics(),
+    );
+}
+
+#[test]
+fn test_bare_question_mark_after_union_separator_reports_ts1110() {
+    // Renamed-binder + union-separator variant: the bare `?` follows a
+    // consumed `|`, a *required* constituent position, same as the plain
+    // annotation case.
+    let source = "type Renamed = string | ?;";
+    let (parser, _root) = parse_source(source);
+
+    let diagnostics: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();
+    assert!(
+        diagnostics.contains(&diagnostic_codes::TYPE_EXPECTED),
+        "Expected TS1110 for `string | ?;`, got {:?}",
+        parser.get_diagnostics(),
+    );
+    assert!(
+        !diagnostics.contains(
+            &diagnostic_codes::JSDOC_TYPES_CAN_ONLY_BE_USED_INSIDE_DOCUMENTATION_COMMENTS
+        ),
+        "Expected no TS8020 for `string | ?;`, got {:?}",
+        parser.get_diagnostics(),
+    );
+}
+
+#[test]
+fn test_map_type_argument_with_bare_wildcard_reports_ts1110() {
+    // Renamed generic + multi-argument variant of the type-argument case:
+    // the bare `?` is the second argument, immediately followed by `>`.
+    let source = "let a: RenamedMap<string, ?>;";
+    let (parser, _root) = parse_source(source);
+
+    let diagnostics: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();
+    assert!(
+        diagnostics.contains(&diagnostic_codes::TYPE_EXPECTED),
+        "Expected TS1110 for `RenamedMap<string, ?>;`, got {:?}",
+        parser.get_diagnostics(),
+    );
+    assert!(
+        !diagnostics.contains(
+            &diagnostic_codes::JSDOC_TYPES_CAN_ONLY_BE_USED_INSIDE_DOCUMENTATION_COMMENTS
+        ),
+        "Expected no TS8020 for `RenamedMap<string, ?>;`, got {:?}",
+        parser.get_diagnostics(),
+    );
+}
+
+#[test]
+fn test_prefix_question_mark_with_real_type_still_reports_ts17020_not_ts1110() {
+    // Negative control: the wildcard *followed by* a real type operand stays
+    // the existing TS17020 JSDoc-nullable-prefix recovery — only the bare
+    // (no-operand) wildcard changed in this fix.
+    let source = "type Renamed = ?number;";
+    let (parser, _root) = parse_source(source);
+
+    let diagnostics: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();
+    assert!(
+        diagnostics.contains(&diagnostic_codes::AT_THE_START_OF_A_TYPE_IS_NOT_VALID_TYPESCRIPT_SYNTAX_DID_YOU_MEAN_TO_WRITE),
+        "Expected TS17020 for `?number`, got {:?}",
+        parser.get_diagnostics(),
+    );
+    assert!(
+        !diagnostics.contains(&diagnostic_codes::TYPE_EXPECTED),
+        "Expected no TS1110 for `?number`, got {:?}",
+        parser.get_diagnostics(),
+    );
+}
+
+#[test]
+fn test_prefix_exclamation_mark_with_real_type_still_reports_ts17020_not_ts1110() {
+    let source = "var renamedVar: !number;";
+    let (parser, _root) = parse_source(source);
+
+    let diagnostics: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();
+    assert!(
+        diagnostics.contains(&diagnostic_codes::AT_THE_START_OF_A_TYPE_IS_NOT_VALID_TYPESCRIPT_SYNTAX_DID_YOU_MEAN_TO_WRITE),
+        "Expected TS17020 for `!number`, got {:?}",
+        parser.get_diagnostics(),
+    );
+    assert!(
+        !diagnostics.contains(&diagnostic_codes::TYPE_EXPECTED),
+        "Expected no TS1110 for `!number`, got {:?}",
+        parser.get_diagnostics(),
     );
 }

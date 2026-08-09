@@ -2,7 +2,6 @@
 
 use super::state::ParserState;
 use crate::parser::{NodeIndex, NodeList, node, syntax_kind_ext};
-use tsz_common::interner::IdentText;
 use tsz_scanner::SyntaxKind;
 
 impl ParserState {
@@ -1543,47 +1542,20 @@ impl ParserState {
         use tsz_common::diagnostics::diagnostic_codes;
 
         let question_start = self.token_pos();
-        let question_end = self.token_end();
         self.next_token(); // consume '?'
 
-        if self.is_greater_than_or_compound() || self.is_token(SyntaxKind::CommaToken) {
-            // `foo<?>` should not emit TS1110; consume the `>` path via caller's expected parser.
-            self.parse_error_at(
-                question_start,
-                question_end - question_start,
-                "JSDoc types can only be used inside documentation comments.",
-                diagnostic_codes::JSDOC_TYPES_CAN_ONLY_BE_USED_INSIDE_DOCUMENTATION_COMMENTS,
-            );
-            return self.arena.add_identifier(
-                SyntaxKind::Identifier as u16,
-                question_start,
-                question_end,
-                crate::parser::node::IdentifierData {
-                    atom: tsz_common::interner::AstAtom::NONE,
-                    escaped_text: IdentText::empty(),
-                    original_text: None,
-                },
-            );
-        }
-
-        if !self.can_token_start_type() {
-            // `foo<?` with no valid following type should emit TS8020.
-            self.parse_error_at(
-                question_start,
-                question_end - question_start,
-                "JSDoc types can only be used inside documentation comments.",
-                diagnostic_codes::JSDOC_TYPES_CAN_ONLY_BE_USED_INSIDE_DOCUMENTATION_COMMENTS,
-            );
-            return self.arena.add_identifier(
-                SyntaxKind::Identifier as u16,
-                question_start,
-                question_end,
-                crate::parser::node::IdentifierData {
-                    atom: tsz_common::interner::AstAtom::NONE,
-                    escaped_text: IdentText::empty(),
-                    original_text: None,
-                },
-            );
+        // A bare `?` in type-argument position (`foo<?>`, `foo<?,`, or `foo<?`
+        // followed by anything else that cannot start a type) has no JSDoc
+        // operand, so tsc reports TS1110 ("Type expected") at the token after
+        // the `?` — same rule as the bare `?`/`!` type-position case in
+        // `parse_primary_type_required`. TS8020 stays reserved for genuinely
+        // JSDoc-only constructs (`*`, a dotted legacy generic).
+        if self.is_greater_than_or_compound()
+            || self.is_token(SyntaxKind::CommaToken)
+            || !self.can_token_start_type()
+        {
+            self.error_type_expected();
+            return self.error_node();
         }
 
         // `?T` in type-argument position should emit TS17020 (JSDoc prefix style in types),
