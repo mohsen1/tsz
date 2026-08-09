@@ -310,6 +310,25 @@ impl<'a> CheckerState<'a> {
         current
     }
 
+    /// The declared type from a JSDoc `@type` tag leading the `module.exports
+    /// = X` / `exports = X` statement that owns `rhs_expr`, if any.
+    ///
+    /// tsc treats `@type` on the assignment statement as the export's
+    /// declared type (like a `: T` annotation on a variable declaration) —
+    /// the RHS is contextually typed against it and the *declared* type
+    /// becomes the type of later `module.exports` reads, not a structural
+    /// re-inference of the initializer. `assignment_ops.rs` already applies
+    /// this for the assignment statement's own excess-property checks; this
+    /// mirrors it for the export surface other statements read back.
+    pub(crate) fn commonjs_export_rhs_jsdoc_declared_type(
+        &mut self,
+        rhs_expr: NodeIndex,
+    ) -> Option<TypeId> {
+        let stmt_idx = self.enclosing_expression_statement(rhs_expr)?;
+        let declared_type = self.js_statement_declared_type(stmt_idx)?;
+        (declared_type != TypeId::ERROR).then_some(declared_type)
+    }
+
     pub(crate) fn infer_commonjs_export_rhs_type(
         &mut self,
         target_file_idx: usize,
@@ -318,7 +337,8 @@ impl<'a> CheckerState<'a> {
     ) -> TypeId {
         if target_file_idx == self.ctx.current_file_idx {
             let mut ty = self
-                .literal_type_from_initializer(rhs_expr)
+                .commonjs_export_rhs_jsdoc_declared_type(rhs_expr)
+                .or_else(|| self.literal_type_from_initializer(rhs_expr))
                 .or_else(|| self.commonjs_export_rhs_symbol_type(rhs_expr))
                 .unwrap_or_else(|| self.get_type_of_node(rhs_expr));
             // An error type here means the chain's intermediate target carried
@@ -352,7 +372,8 @@ impl<'a> CheckerState<'a> {
 
         self.with_commonjs_child_checker_for_file(target_file_idx, |checker| {
             let mut ty = checker
-                .literal_type_from_initializer(rhs_expr)
+                .commonjs_export_rhs_jsdoc_declared_type(rhs_expr)
+                .or_else(|| checker.literal_type_from_initializer(rhs_expr))
                 .or_else(|| checker.commonjs_export_rhs_symbol_type(rhs_expr))
                 .unwrap_or_else(|| checker.get_type_of_node(rhs_expr));
             ty = checker.augment_commonjs_export_type_with_expandos(

@@ -181,6 +181,8 @@ mod comlink_row_regression_tests;
 mod commonjs_export_assignment_chain_tests;
 #[path = "tests/commonjs_export_declaration_level_type_tests.rs"]
 mod commonjs_export_declaration_level_type_tests;
+#[path = "tests/commonjs_module_exports_jsdoc_type_declared_tests.rs"]
+mod commonjs_module_exports_jsdoc_type_declared_tests;
 #[path = "tests/commonjs_reentrant_surface_tests.rs"]
 mod commonjs_reentrant_surface_tests;
 #[path = "tests/commonjs_require_binding_type_meaning_tests.rs"]
