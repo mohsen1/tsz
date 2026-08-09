@@ -619,6 +619,84 @@ declare const key: string;
     );
 }
 
+// #16964 residual: the JS/checkJs expando-receiver path for property-
+// assignment `this` (`const o = {}; o.m = function () { this.q = 1; };`)
+// stayed silent after #16978 fixed the `.ts` shape, because a JS-only
+// blanket "dynamic property write on `this`" suppression in
+// `identifier_resolution.rs` predates #16978's assignment-receiver `this`
+// mechanism and doesn't know about it — it unconditionally returned `any`
+// for any direct `this.prop =` write in a JS file unless the write's RHS
+// was `void 0`, even when `this` already had a real, structurally-checked
+// receiver type from the property-assignment rule.
+
+#[test]
+fn js_expando_property_assignment_this_is_base_object_type_ts2339() {
+    let src = r#"
+const o = {};
+o.m = function () {
+    this.q = 1;
+};
+"#;
+    let diags = get_js_diagnostics(src);
+    assert!(
+        diags.iter().any(|d| d.0 == 2339),
+        "Expected TS2339 for a missing member on the base object's type, got: {diags:?}"
+    );
+    assert!(
+        !diags.iter().any(|d| d.0 == 2683),
+        "This is a resolved contextual `this`, not implicit `any` — TS2683 must not fire, got: {diags:?}"
+    );
+}
+
+#[test]
+fn js_expando_property_assignment_this_is_nominal_base_type_ts2339() {
+    let src = r#"
+/** @type {{bar: any}} */
+var foo;
+foo.bar = function () {
+    this.q = 1;
+};
+"#;
+    let diags = get_js_diagnostics(src);
+    assert!(
+        diags.iter().any(|d| d.0 == 2339),
+        "Expected TS2339 against the base object's declared type, got: {diags:?}"
+    );
+}
+
+#[test]
+fn js_expando_property_assignment_this_member_present_no_error() {
+    let src = r#"
+const o = { q: 0 };
+o.m = function () {
+    this.q = 1;
+};
+"#;
+    let diags = get_js_diagnostics(src);
+    assert!(
+        diags.is_empty(),
+        "Expected a clean check when the base type already declares the accessed member, got: {diags:?}"
+    );
+}
+
+#[test]
+fn js_bare_function_this_property_assignment_still_ts2683() {
+    // Adjacent negative case: a plain (not property-assigned) JS function
+    // still gets implicit-any `this` — TypeScript 7 no longer synthesizes a
+    // constructor-style `this` from `this.prop =` assignments in its own
+    // body, so this is unaffected by the property-assignment-receiver fix.
+    let src = r#"
+function plain() {
+    this.q = 1;
+}
+"#;
+    let diags = get_js_diagnostics(src);
+    assert!(
+        diags.iter().any(|d| d.0 == 2683),
+        "Expected TS2683 for a plain JS function's own `this.prop=` body, got: {diags:?}"
+    );
+}
+
 #[test]
 fn bare_identifier_reassignment_still_emits_ts2683() {
     // A bare-identifier reassignment (`f = function () {...}`, no base
