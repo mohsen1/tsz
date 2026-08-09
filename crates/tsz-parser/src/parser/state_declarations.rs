@@ -11,24 +11,6 @@ use crate::parser::{
 use tsz_common::interner::{AstAtom, IdentText};
 use tsz_scanner::SyntaxKind;
 
-fn is_reserved_interface_type_name(name: &str) -> bool {
-    matches!(
-        name,
-        "any"
-            | "unknown"
-            | "never"
-            | "string"
-            | "number"
-            | "boolean"
-            | "symbol"
-            | "bigint"
-            | "void"
-            | "undefined"
-            | "null"
-            | "object"
-    )
-}
-
 enum TypeMemberPropertyOrMethodName {
     Property(NodeIndex),
     IndexSignature(NodeIndex),
@@ -87,9 +69,16 @@ impl ParserState {
                     self.current_token,
                     SyntaxKind::VoidKeyword | SyntaxKind::NullKeyword
                 );
-                let name_text = self.scanner.get_token_value();
-                if is_reserved_interface_type_name(name_text.as_str()) {
+                // Emit TS2427 only for the hard keywords `void`/`null`, which
+                // cannot be identifiers — tsc rejects those at parse time. The
+                // soft predefined-type names (`string`, `number`, ...) are valid
+                // identifiers that tsc (and `interface_checks.rs`) reject from the
+                // checker instead; emitting them here too double-emitted and, being
+                // outside `is_parser_grammar_code`, deleted sibling grammar
+                // diagnostics in the same file (#16279).
+                if has_invalid_hard_keyword_name {
                     use tsz_common::diagnostics::diagnostic_codes;
+                    let name_text = self.scanner.get_token_value();
                     let name_start = self.token_pos();
                     let name_end = self.token_end();
                     self.parse_error_at(
