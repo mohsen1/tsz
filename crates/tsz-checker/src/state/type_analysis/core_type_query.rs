@@ -1827,6 +1827,22 @@ impl<'a> CheckerState<'a> {
         }
 
         let sym_id = self.resolve_named_export_via_export_equals(module_name, next_segment)?;
+
+        // `typeof import("mod").Member` is a VALUE query: a member that exists
+        // but carries no value meaning (an interface, a type alias) must not
+        // resolve here — tsc reports TS2694 for it, matching a genuinely
+        // missing member, not the member's own (type) meaning. Mirrors the
+        // identical value-only gate `resolve_namespace_typeof_member` already
+        // applies to namespace members reached through the ordinary property
+        // path; this helper is the export=-target fallback for the same query
+        // and needs the same filter.
+        let member_is_value = self.get_cross_file_symbol(sym_id).is_some_and(|sym| {
+            sym.has_any_flags(tsz_binder::symbol_flags::VALUE | tsz_binder::symbol_flags::ALIAS)
+        });
+        if !member_is_value {
+            return None;
+        }
+
         Some(self.get_type_of_symbol(sym_id))
     }
 }
