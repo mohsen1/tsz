@@ -387,4 +387,75 @@ impl ParserState {
 
         if ends_in_accessor { count } else { 0 }
     }
+
+    /// Look ahead for the exact shape `[clean-modifier]* HARD out
+    /// (get|set)` — a "hard" modifier (`async`/`declare`/`abstract`/
+    /// `override`) immediately followed by the `out` variance modifier,
+    /// immediately followed by a `get`/`set` accessor. Returns the number of
+    /// modifiers to report (the clean run plus the ONE hard modifier) —
+    /// deliberately NOT including `out`, which is left unconsumed.
+    ///
+    /// `tsc` stops parsing modifiers at the hard modifier: `out` itself is
+    /// not treated as part of the reportable run and gets no TS1131 of its
+    /// own. Both `out` and the accessor keyword instead fall into the
+    /// abandoned-tail statement re-parse, where each independently reports
+    /// its own TS1434 (`out` is a contextual keyword, just like `get`/`set`,
+    /// so the general statement parser treats it the same way). This differs
+    /// from [`Self::look_ahead_clean_prefixed_out_before_accessor`], whose
+    /// confined shape requires `out` to be the run's own last *reported*
+    /// modifier — here `out` is excluded from the count entirely because a
+    /// preceding hard modifier already ends the reportable run in `tsc`.
+    ///
+    /// Only a single hard modifier immediately before `out` is covered (not
+    /// `out` before a hard modifier, and not two hard modifiers) — the
+    /// confined, oracle-verified shape; other combinations keep their
+    /// pre-existing recovery.
+    pub(crate) fn look_ahead_hard_modifier_then_out_before_accessor(&mut self) -> usize {
+        let snapshot = self.scanner.save_state();
+        let current = self.current_token;
+
+        let mut count = 0usize;
+        let mut saw_hard = false;
+        loop {
+            if saw_hard {
+                break;
+            }
+            let kind = self.token();
+            let is_hard = Self::is_hard_accessor_cascade_modifier(kind);
+            if (!Self::is_clean_type_member_modifier(kind) && !is_hard)
+                || self.look_ahead_is_property_name_after_keyword()
+            {
+                break;
+            }
+            if is_hard {
+                saw_hard = true;
+            }
+            self.next_token();
+            count += 1;
+            if self.scanner.has_preceding_line_break() {
+                count = 0;
+                break;
+            }
+        }
+
+        let ends_in_accessor = if saw_hard
+            && count > 0
+            && self.is_token(SyntaxKind::OutKeyword)
+            && !self.look_ahead_is_property_name_after_keyword()
+        {
+            // Peek past `out` (without reporting or permanently consuming it)
+            // to check it is directly followed by the accessor.
+            self.next_token();
+            !self.scanner.has_preceding_line_break()
+                && (self.is_token(SyntaxKind::GetKeyword) || self.is_token(SyntaxKind::SetKeyword))
+                && !self.look_ahead_is_property_name_after_keyword()
+        } else {
+            false
+        };
+
+        self.scanner.restore_state(snapshot);
+        self.current_token = current;
+
+        if ends_in_accessor { count } else { 0 }
+    }
 }
