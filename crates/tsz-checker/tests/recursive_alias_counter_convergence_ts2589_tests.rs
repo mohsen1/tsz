@@ -189,3 +189,65 @@ declare const r: Result;
         "renamed non-tail accumulator recursion must not produce TS2589. Got: {codes:?}"
     );
 }
+
+/// Sharper witness than the reported depth-60 case (independently found during
+/// PR review, oracle-confirmed clean on `typescript@7.0.2`): the old
+/// single-step weight comparison mis-fired on this non-tail nest at a mere
+/// twenty levels, nowhere near any depth `tsc` itself would treat as
+/// excessive.
+#[test]
+fn nest_accumulator_grows_but_terminates_no_ts2589_at_depth_twenty() {
+    let source = r#"
+type Nest<N extends unknown[]> = N["length"] extends 20 ? number : { a: Nest<[unknown, ...N]> };
+type Z = Nest<[]>;
+declare const z: Z;
+"#;
+    let codes = check_source_codes(source);
+    assert!(
+        !codes.contains(&2589),
+        "a non-tail accumulator recursion terminating after 20 real steps must not produce TS2589. Got: {codes:?}"
+    );
+}
+
+/// Load-bearing negative control (independently found during PR review): a
+/// *tail*-recursive, genuinely-terminating counter accumulator stays clean at
+/// 200 and 300 real steps (absorbed by `tsc`'s own tail-recursion
+/// elimination, `MAX_TAIL_RECURSION_DEPTH` parity) but both `tsc` and tsz
+/// still correctly report `TS2589` once it needs 2000 — beyond that budget.
+/// This is the case that would catch a regression where this fix's residual
+/// termination bound was implemented by simply raising or deleting the
+/// divergence threshold instead of re-driving real bounded expansion: such a
+/// change would wrongly clear this row too, and `TS2589` would go dead for
+/// every genuinely divergent tail recursion. Not easy to reconstruct (a
+/// non-tail nest never trips this path at all; 200/300 are both silently
+/// absorbed), so it is pinned here rather than left as a one-off manual check.
+#[test]
+fn tail_recursive_counter_beyond_tail_recursion_budget_still_diverges_ts2589() {
+    let bounded_at = |n: u32| {
+        format!(
+            r#"
+type TailNest<N extends number, A extends any[] = []> = A["length"] extends N ? number : TailNest<N, [...A, unknown]>;
+type Z = TailNest<{n}>;
+declare const z: Z;
+"#
+        )
+    };
+
+    let codes_200 = check_source_codes(&bounded_at(200));
+    assert!(
+        !codes_200.contains(&2589),
+        "a tail-recursive counter terminating at 200 steps must not produce TS2589. Got: {codes_200:?}"
+    );
+
+    let codes_300 = check_source_codes(&bounded_at(300));
+    assert!(
+        !codes_300.contains(&2589),
+        "a tail-recursive counter terminating at 300 steps must not produce TS2589. Got: {codes_300:?}"
+    );
+
+    let codes_2000 = check_source_codes(&bounded_at(2000));
+    assert!(
+        codes_2000.contains(&2589),
+        "a tail-recursive counter needing 2000 real steps must still produce TS2589 (tsc's own tail-recursion budget). Got: {codes_2000:?}"
+    );
+}
