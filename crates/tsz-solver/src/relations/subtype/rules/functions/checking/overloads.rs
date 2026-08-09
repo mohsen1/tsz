@@ -27,8 +27,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         source: &FunctionShape,
         target: &CallSignature,
     ) -> bool {
-        let source = erase_fn_shape_to_any(source, self.interner);
-        let target = erase_call_sig_to_any(target, self.interner);
+        let target_erased = erase_call_sig_to_any(target, &source.type_params, self.interner);
+        let source = erase_fn_shape_to_any(source, &target.type_params, self.interner);
+        let target = target_erased;
         let normalization = self.normalize_erased_target_return(target.return_type);
         if !normalization.contains_conditional {
             return false;
@@ -41,8 +42,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         source: &CallSignature,
         target: &CallSignature,
     ) -> bool {
-        let source = erase_call_sig_to_any(source, self.interner);
-        let target = erase_call_sig_to_any(target, self.interner);
+        let target_erased = erase_call_sig_to_any(target, &source.type_params, self.interner);
+        let source = erase_call_sig_to_any(source, &target.type_params, self.interner);
+        let target = target_erased;
         let normalization = self.normalize_erased_target_return(target.return_type);
         if !normalization.contains_conditional {
             return false;
@@ -75,8 +77,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         s_fn: &FunctionShape,
         t_sig: &CallSignature,
     ) -> SubtypeResult {
-        let s_erased = erase_fn_shape_to_any(s_fn, self.interner);
-        let t_erased = erase_call_sig_to_any(t_sig, self.interner);
+        let s_erased = erase_fn_shape_to_any(s_fn, &t_sig.type_params, self.interner);
+        let t_erased = erase_call_sig_to_any(t_sig, &s_fn.type_params, self.interner);
         if self.erased_return_variance_rejects(s_erased.return_type, t_erased.return_type) {
             return SubtypeResult::False;
         }
@@ -91,8 +93,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         if s_fn.type_params.is_empty() && t_sig.type_params.is_empty() {
             return SubtypeResult::False;
         }
-        let s_erased = erase_fn_shape_to_any(s_fn, self.interner);
-        let t_erased = erase_call_sig_to_any(t_sig, self.interner);
+        let s_erased = erase_fn_shape_to_any(s_fn, &t_sig.type_params, self.interner);
+        let t_erased = erase_call_sig_to_any(t_sig, &s_fn.type_params, self.interner);
         self.check_erased_function_shapes_params_with_matching_return_base(
             s_erased, t_erased, false,
         )
@@ -114,8 +116,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         if s_shape.type_params.is_empty() && t_shape.type_params.is_empty() {
             return SubtypeResult::False;
         }
-        let s_erased = erase_fn_shape_to_any(&s_shape, self.interner);
-        let t_erased = erase_fn_shape_to_any(&t_shape, self.interner);
+        let s_erased = erase_fn_shape_to_any(&s_shape, &t_shape.type_params, self.interner);
+        let t_erased = erase_fn_shape_to_any(&t_shape, &s_shape.type_params, self.interner);
         self.check_erased_function_shapes_params_with_matching_return_base(s_erased, t_erased, true)
     }
 
@@ -139,9 +141,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         ) else {
             return false;
         };
-        let source = erase_fn_shape_to_any(&self.interner.function_shape(s_fn_id), self.interner);
-        let target = self.interner.function_shape(t_fn_id);
-        let target = erase_fn_shape_to_any(&target, self.interner);
+        let s_shape = self.interner.function_shape(s_fn_id);
+        let t_shape = self.interner.function_shape(t_fn_id);
+        let source = erase_fn_shape_to_any(&s_shape, &t_shape.type_params, self.interner);
+        let target = erase_fn_shape_to_any(&t_shape, &s_shape.type_params, self.interner);
         let normalization = self.normalize_erased_target_return(target.return_type);
         if !normalization.contains_conditional {
             return false;
@@ -892,10 +895,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         s_sig: &CallSignature,
         t_fn: &FunctionShape,
     ) -> SubtypeResult {
-        let mut s_erased = erase_call_sig_to_any(s_sig, self.interner);
+        let mut s_erased = erase_call_sig_to_any(s_sig, &t_fn.type_params, self.interner);
         // Preserve constructor-vs-callable intent from the target function shape.
         s_erased.is_constructor = t_fn.is_constructor;
-        let t_erased = erase_fn_shape_to_any(t_fn, self.interner);
+        let t_erased = erase_fn_shape_to_any(t_fn, &s_sig.type_params, self.interner);
         if self.erased_return_variance_rejects(s_erased.return_type, t_erased.return_type) {
             return SubtypeResult::False;
         }
@@ -909,8 +912,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         source: &CallSignature,
         target: &CallSignature,
     ) -> SubtypeResult {
-        let s_erased = erase_call_sig_to_any(source, self.interner);
-        let t_erased = erase_call_sig_to_any(target, self.interner);
+        let s_erased = erase_call_sig_to_any(source, &target.type_params, self.interner);
+        let t_erased = erase_call_sig_to_any(target, &source.type_params, self.interner);
         if self.erased_return_variance_rejects(s_erased.return_type, t_erased.return_type) {
             return SubtypeResult::False;
         }
@@ -925,8 +928,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         if source.type_params.is_empty() && target.type_params.is_empty() {
             return SubtypeResult::False;
         }
-        let s_erased = erase_call_sig_to_any(source, self.interner);
-        let t_erased = erase_call_sig_to_any(target, self.interner);
+        let s_erased = erase_call_sig_to_any(source, &target.type_params, self.interner);
+        let t_erased = erase_call_sig_to_any(target, &source.type_params, self.interner);
         let normalization = self.normalize_erased_target_return(t_erased.return_type);
         // Preserve the hard plain-return variance veto without recursively
         // relating the full returned value here. Conditional returns and the
@@ -964,8 +967,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             }
         }
 
-        let mut s_erased = erase_call_sig_to_any(source, self.interner);
-        let mut t_erased = erase_call_sig_to_any(target, self.interner);
+        let mut s_erased = erase_call_sig_to_any(source, &target.type_params, self.interner);
+        let mut t_erased = erase_call_sig_to_any(target, &source.type_params, self.interner);
         s_erased.is_constructor = true;
         t_erased.is_constructor = true;
         self.check_function_subtype(&s_erased, &t_erased)
@@ -991,12 +994,16 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // rejection once per source signature so a params-only match cannot
         // bypass a determinate conditional return mismatch (and so V tuple
         // variants do not repeat the return walk).
-        let erased_target = erase_call_sig_to_any(target_sig, self.interner);
+        // This tuple/union-rest coverage helper compares per-element candidate
+        // shapes, not a single signature pair, so there is no single "paired"
+        // side to seed identity-shared erasure from; keep the erasure scoped
+        // to each signature's own declared type parameters, as before.
+        let erased_target = erase_call_sig_to_any(target_sig, &[], self.interner);
         let target_normalization = self.normalize_erased_target_return(erased_target.return_type);
         let return_rejections: Vec<bool> = source_sigs
             .iter()
             .map(|source_sig| {
-                let erased_source = erase_call_sig_to_any(source_sig, self.interner);
+                let erased_source = erase_call_sig_to_any(source_sig, &[], self.interner);
                 self.erased_normalized_return_rejects(
                     erased_source.return_type,
                     target_normalization,
