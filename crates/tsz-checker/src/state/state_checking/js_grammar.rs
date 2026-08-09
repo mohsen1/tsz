@@ -397,13 +397,13 @@ impl<'a> CheckerState<'a> {
                         .arena
                         .get_method_decl(node)
                         .and_then(|method| self.ctx.arena.get(method.name))
-                        .map(|name| name.end.saturating_sub(1)),
+                        .map(|name| name.end),
                     syntax_kind_ext::PROPERTY_DECLARATION => self
                         .ctx
                         .arena
                         .get_property_decl(node)
                         .and_then(|prop| self.ctx.arena.get(prop.name))
-                        .map(|name| name.end.saturating_sub(1)),
+                        .map(|name| name.end),
                     _ => None,
                 };
                 if let Some(start) = optional_start {

@@ -515,6 +515,8 @@ mod invocation_signature_detail_tests;
 mod issue_9762_literal_init_callback_inference;
 #[path = "tests/iterable_next_relation_routing_arch_tests.rs"]
 mod iterable_next_relation_routing_arch_tests;
+#[path = "tests/iterator_override_widened_value_tests.rs"]
+mod iterator_override_widened_value_tests;
 #[path = "tests/js_expando_order_sensitivity_tests.rs"]
 mod js_expando_order_sensitivity_tests;
 #[path = "tests/js_file_function_parameters_as_optional_tests.rs"]
@@ -649,6 +651,8 @@ mod narrowed_union_source_display_tests;
 mod narrowing_union_source_display_tests;
 #[path = "tests/nested_function_async_context_scope_tests.rs"]
 mod nested_function_async_context_scope_tests;
+#[path = "tests/nested_generic_call_return_context_baked_tests.rs"]
+mod nested_generic_call_return_context_baked_tests;
 #[path = "tests/nested_tuple_literal_source_display_tests.rs"]
 mod nested_tuple_literal_source_display_tests;
 #[path = "tests/nested_type_parameter_target_elaboration_tests.rs"]

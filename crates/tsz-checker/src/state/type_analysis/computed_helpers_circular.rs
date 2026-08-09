@@ -44,7 +44,12 @@ impl<'a> CheckerState<'a> {
     /// A structurally deferred body (`type Self = { x: Self }`,
     /// `type Self = Self[]`) never collapses to a bare `Lazy(own)` here — it
     /// presents as its object/array wrapper — so this never reclassifies
-    /// legitimate deferred recursion.
+    /// legitimate deferred recursion. Because the `Lazy` chain has already
+    /// confirmed the whole access resolves back to the alias, the object side
+    /// need not be inspected (any eager projection — mapped, object literal,
+    /// nested `[…][…]`, parenthesized — that lands on the alias is a cycle),
+    /// which also covers the paren-wrapped and nested forms a mapped-only
+    /// object-kind check misses.
     fn type_node_unwraps_to_indexed_access(&self, type_node: NodeIndex) -> bool {
         self.unwrap_parenthesized_type(type_node)
             .and_then(|inner| self.ctx.arena.get(inner))
