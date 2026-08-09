@@ -191,12 +191,27 @@ def fourslash_summary(metrics_dir: Path, logs_dir: Path, lines: list[str]) -> No
     if not details:
         details = [load_json(Path("scripts/fourslash/fourslash-snapshot.json")) or {}]
 
-    failures = [
-        result
-        for detail in details
-        for result in (detail.get("results") or detail.get("fail") or [])
-        if result.get("status") != "pass" or result.get("timedOut")
-    ]
+    # A completed-but-slow test passed its assertions; only fail/timeout/unrun
+    # are genuine non-passes worth surfacing here (issue #17010). A shard detail
+    # carries a full `results` array; the compact snapshot splits the failure
+    # family across fail/timeout/unrun (older ones only have `fail`).
+    non_passing_statuses = {"fail", "timeout", "unrun"}
+
+    def failing_rows(detail):
+        results = detail.get("results")
+        if isinstance(results, list):
+            return [
+                r for r in results
+                if r.get("status") in non_passing_statuses or (
+                    r.get("timedOut") and r.get("status") not in ("pass", "slow", "xfail")
+                )
+            ]
+        rows = []
+        for bucket in ("fail", "timeout", "unrun"):
+            rows.extend(detail.get(bucket) or [])
+        return rows
+
+    failures = [result for detail in details for result in failing_rows(detail)]
     if failures:
         lines.append("#### Fourslash Failures")
         lines.append("")

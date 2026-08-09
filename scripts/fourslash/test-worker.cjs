@@ -85,8 +85,7 @@ function isTemporarilyAllowedParityFailure(testName, errMsg) {
         message.includes("isNewIdentifierLocation") ||
         message.includes("Cannot read properties of undefined") ||
         message.includes("Found an error:") ||
-        message.includes("Timeout waiting for tsz-server response") ||
-        message.includes("Test completed but took")
+        message.includes("Timeout waiting for tsz-server response")
     );
 }
 
@@ -222,18 +221,21 @@ function runSingleTest(FourSlash, Harness, testFile, testType) {
 }
 
 /**
- * Run a test with a timeout. Since fourslash tests are synchronous,
- * we can't use setTimeout. Instead we use the bridge's existing timeout
- * (30s per request) as a natural guard. For an additional layer, we
- * track wall-clock time and report timeouts.
+ * Run a test and measure its wall-clock cost. Fourslash tests are
+ * synchronous, so we can't use setTimeout; the bridge's own per-request
+ * timeout (30s) is the hard guard against a genuinely stuck request.
+ *
+ * A test whose assertions pass but that overran `timeoutMs` is reported as
+ * `slow: true` rather than thrown as a failure. "Completed but slow" is a
+ * performance observation about the harness under load, not a correctness
+ * result about the compiler, so it must not be folded into the failure
+ * buckets (issue #17010). Returns { elapsed, slow }.
  */
 function runTestWithTimeout(FourSlash, Harness, testFile, testType, timeoutMs) {
     const start = Date.now();
     runSingleTest(FourSlash, Harness, testFile, testType);
     const elapsed = Date.now() - start;
-    if (elapsed > timeoutMs) {
-        throw new Error(`Test completed but took ${elapsed}ms (timeout: ${timeoutMs}ms)`);
-    }
+    return { elapsed, slow: elapsed > timeoutMs };
 }
 
 async function main() {
@@ -314,13 +316,17 @@ async function main() {
             : "";
 
         try {
-            runTestWithTimeout(FourSlash, Harness, testFile, testType, perTestTimeout);
+            const { slow } = runTestWithTimeout(FourSlash, Harness, testFile, testType, perTestTimeout);
             const elapsed = Date.now() - startTime;
-            process.send({ type: "result", workerId, testFile, testName, passed: true, elapsed });
+            process.send({ type: "result", workerId, testFile, testName, passed: true, slow, elapsed });
         } catch (err) {
             const elapsed = Date.now() - startTime;
             const errMsg = err.message || String(err);
-            const timedOut = elapsed >= perTestTimeout || errMsg.includes("Timeout");
+            // A genuine non-completion is signalled by the bridge's own
+            // "Timeout" error. Overrunning the wall-clock budget on the
+            // success path is "slow" (handled above), not a timeout — so a
+            // slow *assertion failure* stays a plain failure here.
+            const timedOut = errMsg.includes("Timeout");
             const bridgeLikelyUnhealthy =
                 timedOut ||
                 errMsg.includes("Stream closed before complete message was read") ||

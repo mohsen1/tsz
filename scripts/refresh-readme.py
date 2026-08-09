@@ -174,10 +174,21 @@ def normalize_suite_summary(data, suite):
         }
 
     if suite == "fourslash" and isinstance(data.get("pass"), list):
-        failed = len(data.get("fail") or [])
+        # A completed-but-slow test ("slow" bucket) passed its assertions; the
+        # slowness is a harness perf signal, not a correctness failure, so it
+        # counts as passing. Only fail/timeout/unrun are non-passing. Keeping
+        # slow out of the published figure made it move with machine load
+        # (issue #17010). Older snapshots have no slow/timeout/unrun buckets;
+        # ``.get(...) or []`` treats them as empty.
+        passed = len(data["pass"]) + len(data.get("slow") or [])
+        non_passing = (
+            len(data.get("fail") or [])
+            + len(data.get("timeout") or [])
+            + len(data.get("unrun") or [])
+        )
         return {
-            "passed": len(data["pass"]),
-            "total": len(data["pass"]) + failed,
+            "passed": passed,
+            "total": passed + non_passing,
         }
 
     if data.get("suite") != suite:
