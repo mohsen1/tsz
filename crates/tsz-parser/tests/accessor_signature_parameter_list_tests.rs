@@ -181,10 +181,11 @@ fn get_accessor_signature_reports_ts1054_at_the_accessor_name() {
 }
 
 /// The signature arm and the class arm must produce the *same shape* of span for
-/// TS1054, so the two cannot drift. Both read `name.end - name.pos`, and that
-/// length currently overshoots the identifier by one — a property-name node-end
-/// overshoot shared by both arms and out of scope here. Pinning the two against
-/// each other catches a change to either without baking in the wrong number.
+/// TS1054, so the two cannot drift: both read `name.end - name.pos`, and the
+/// container must not change it. The *absolute* width (name only, no trailing
+/// `(` — the #17024 overshoot) is pinned per-container by
+/// `accessor_grammar_diagnostics_underline_exactly_the_name`; this test guards
+/// only that the two arms agree in length and offset.
 #[test]
 fn get_accessor_ts1054_span_agrees_between_the_signature_and_class_arms() {
     let (sig_start, sig_len) = span_of(
@@ -204,6 +205,80 @@ fn get_accessor_ts1054_span_agrees_between_the_signature_and_class_arms() {
         class_start - "class Ky27 { get ".len() as u32,
         "TS1054 must anchor at the same offset within the member in both arms"
     );
+}
+
+/// #17024: the shared property-name node captured its `end` *after* advancing
+/// past the name, so `name.end - name.pos` overshot by the following token's
+/// width. Every accessor grammar diagnostic anchored on the accessor name via
+/// that expression (TS1054/TS1049/TS1095/TS1094) therefore over-underlined the
+/// name plus whatever punctuation followed (`(`, `<`). This pins each member
+/// of the family, across the class / interface / object-literal / type-literal
+/// containers, to underline exactly the name — the fix lives on one node, so all
+/// four codes and all four containers move together. Names vary per row so no
+/// assertion keys on an identifier string.
+#[test]
+fn accessor_grammar_diagnostics_underline_exactly_the_name() {
+    // (source, code, name): the token after the name varies (`(` vs `<`) so a
+    // reintroduced overshoot surfaces as a length off by that token's width.
+    let rows: &[(&str, u32, &str)] = &[
+        // TS1054 — get accessor cannot have parameters. `(` follows the name.
+        (
+            "class Ka { get pa(x: number) { return 1 } }",
+            TS1054_GET_CANNOT_HAVE_PARAMETERS,
+            "pa",
+        ),
+        (
+            "interface Ib { get pb(x: number): number; }",
+            TS1054_GET_CANNOT_HAVE_PARAMETERS,
+            "pb",
+        ),
+        (
+            "type Tc = { get pc(x: number): number };",
+            TS1054_GET_CANNOT_HAVE_PARAMETERS,
+            "pc",
+        ),
+        (
+            "let od = { get pd(x: number) { return 1 } };",
+            TS1054_GET_CANNOT_HAVE_PARAMETERS,
+            "pd",
+        ),
+        // TS1049 — set accessor must have exactly one parameter. `(` follows.
+        (
+            "class Ke { set pe(a: number, b: number) {} }",
+            TS1049_SET_MUST_HAVE_EXACTLY_ONE_PARAMETER,
+            "pe",
+        ),
+        (
+            "let of = { set pf(a: number, b: number) {} };",
+            TS1049_SET_MUST_HAVE_EXACTLY_ONE_PARAMETER,
+            "pf",
+        ),
+        // TS1095 — set accessor cannot have a return type annotation. `(` follows.
+        (
+            "class Kg { set pg(a: number): void {} }",
+            TS1095_SET_CANNOT_HAVE_RETURN_TYPE,
+            "pg",
+        ),
+        // TS1094 — accessor cannot have type parameters. `<` follows the name.
+        (
+            "class Kh { get ph<T>() { return 1 } }",
+            TS1094_ACCESSOR_CANNOT_HAVE_TYPE_PARAMETERS,
+            "ph",
+        ),
+    ];
+    for (source, code, name) in rows {
+        let (start, length) = span_of(source, *code);
+        let name_start = source.find(name).expect("name present") as u32;
+        assert_eq!(
+            start, name_start,
+            "TS{code} must anchor at the accessor name in {source:?}"
+        );
+        assert_eq!(
+            length,
+            name.len() as u32,
+            "TS{code} must underline exactly the accessor name (no overshoot) in {source:?}"
+        );
+    }
 }
 
 #[test]

@@ -1235,8 +1235,13 @@ impl ParserState {
                     } else {
                         None
                     };
-                self.next_token(); // Accept any token as property name (error recovery)
+                // Capture the name token's own end BEFORE advancing: `token_end()`
+                // after `next_token()` reports the *following* token's end,
+                // overshooting this node's span by that token's width (e.g. the `(`
+                // after an accessor name). The literal and computed-name arms above
+                // already capture before advancing; this arm was the outlier.
                 let end_pos = self.token_end();
+                self.next_token(); // Accept any token as property name (error recovery)
 
                 self.arena.add_identifier(
                     SyntaxKind::Identifier as u16,
