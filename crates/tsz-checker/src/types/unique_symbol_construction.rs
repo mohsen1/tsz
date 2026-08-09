@@ -6,6 +6,7 @@ use super::unique_symbol_arena::{
     has_declared_unique_symbol_owner, is_readonly_unique_symbol_property_signature,
 };
 use crate::context::CheckerContext;
+use crate::query_boundaries::type_construction::unique_symbol_ref_from_source_span;
 use tsz_parser::parser::NodeIndex;
 use tsz_solver::{SymbolRef, TypeId};
 
@@ -42,15 +43,9 @@ pub(crate) fn unique_symbol_type_for_operator(
 /// declaration is not itself a binder symbol (interface and object-type-literal
 /// members are resolved structurally, not via `node_symbols`). The position
 /// hash is unique per declaration, so distinct members stay distinct.
+///
+/// Delegates to the solver-owned [`unique_symbol_ref_from_source_span`] so the
+/// checker and the lowering pass mint the same ref for the same declaration.
 pub(crate) fn synthetic_unique_symbol_ref(file_name: &str, pos: u32, end: u32) -> SymbolRef {
-    let mut hash = 0x811c_9dc5u32;
-    for byte in file_name.as_bytes() {
-        hash ^= u32::from(*byte);
-        hash = hash.wrapping_mul(0x0100_0193);
-    }
-    for value in [pos, end] {
-        hash ^= value;
-        hash = hash.wrapping_mul(0x0100_0193);
-    }
-    SymbolRef(hash | 0x8000_0000)
+    unique_symbol_ref_from_source_span(file_name, pos, end)
 }

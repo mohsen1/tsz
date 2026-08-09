@@ -142,42 +142,26 @@ export const t: { [k: symbol]: number } = i;
 }
 
 // ---------------------------------------------------------------------------
-// Known-failing rows (#16605), filed as their own issue rather than fixed here.
+// Well-known-symbol key round-trip (#16605): `keyof` / indexed-access over a
+// WELL-KNOWN symbol key, the `UniqueSymbol(SymbolRef)` <-> `[Symbol.xxx]` atom
+// round-trip. Both directions now hold; the history that shaped these rows:
 //
-// The two rows below are `keyof` / indexed-access over a WELL-KNOWN symbol key,
-// the `UniqueSymbol(SymbolRef)` <-> `[Symbol.xxx]` atom round-trip. The failure
-// is NOT merely that `symbol_named_atom_from_unique_symbol_ref` is unapplied on
-// these paths — applying it is necessary but not sufficient, because of two
-// coupled defects the pins below the rows document and verify:
+//   1. `keyof` (Row 1) projected the member's shape atom as a plain string key
+//      because a well-known-keyed member is a *named* member (`is_symbol_named`
+//      is false by the #16307 rule). `property_name_to_key_type` now recovers
+//      the `UniqueSymbol` key for a well-known `[Symbol.xxx]` named key via the
+//      forward registry, without disturbing mapped-type materialization.
 //
-//   1. The `TypeLowering` fast path (`compute_type_of_symbol` ->
-//      `precompute_symbol_named_computed_property_names`) leaves a well-known
-//      member's `is_symbol_named` unset, disagreeing with the canonical
-//      `is_symbol_property_name` path, so `keyof` projects the member's shape
-//      atom as a plain string key. Flagging it symbol-named (or projecting a
-//      `unique symbol` key in `keyof`) makes `keyof I` a symbol, but routes
-//      well-known members through the ref-based key path a HOMOMORPHIC mapped
-//      type materializes through, regressing `for..of`/`for await..of`/spread
-//      over `DeepReadonly<Iterable<...>>` (TS2488/TS2504). The two are coupled.
-//
-//   2. `crates/tsz-lowering/src/lower/advanced.rs` mints a `unique symbol` ref
-//      from the ARENA-LOCAL node index (`SymbolRef(node_idx.0)`), so well-known
-//      members declared in different lib-file arenas collide on one shared ref
-//      — `typeof Symbol.iterator` and `typeof Symbol.asyncIterator` are the
-//      SAME type to tsz (pinned by `well_known_unique_symbols_are_conflated`).
-//      Under that collision the name<->ref registry cannot address one
-//      canonical `[Symbol.xxx]` atom, so the reverse lookup is ambiguous and
-//      the round-trip misses regardless of where it is applied.
-//
-// The fix is to make `unique symbol` refs globally unique (keyed off the
-// declaring member symbol, not an arena-local node index), after which flagging
-// well-known members symbol-named projects the correct key in both `keyof` and
-// indexed access without disturbing mapped-type materialization. Then the two
-// `#[ignore]`d rows below un-ignore and `well_known_unique_symbols_are_conflated`
-// flips to `contains(&2322)`.
-//
-// Pinned as asserting `#[ignore]`d tests carrying their oracle rows so they
-// flip loudly when the round-trip is fixed, instead of staying a silent absence.
+//   2. `unique symbol` refs were minted from the ARENA-LOCAL node index
+//      (`SymbolRef(node_idx.0)`), so well-known members declared in different
+//      lib-file arenas collided on one shared ref — `typeof Symbol.iterator` and
+//      `typeof Symbol.asyncIterator` were the SAME type to tsz. Under that
+//      collision the name<->ref registry could not address one canonical
+//      `[Symbol.xxx]` atom, so the indexed-access (Row 2) reverse lookup was
+//      ambiguous. The mint now folds the arena's source file name in
+//      (`unique_symbol_ref_from_source_span`), giving each well-known symbol a
+//      distinct, globally-unique ref; the type-position indexed-access
+//      diagnostics then reverse-resolve it through the eagerly-seeded registry.
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -257,23 +241,24 @@ Symbol.nonsense;
 }
 
 #[test]
-#[ignore = "known failure: indexed access by a well-known symbol type leaks the __unique_N placeholder (TS2339/TS2538)"]
 fn indexed_access_by_a_well_known_symbol_type_resolves_the_member() {
     // tsc 7.0.2: exit 0 — `I[typeof Symbol.iterator]` is `number`.
-    // tsz today, three diagnostics, the first of which leaks an internal key
-    // into user-facing text exactly as #16307's title describes:
+    //
+    // This previously produced three diagnostics, the first of which leaked an
+    // internal key into user-facing text exactly as #16307's title describes:
     //   TS2339 "Property '__unique_5' does not exist on type 'I'."
     //   TS2538 "Type 'unique symbol' cannot be used as an index type."
     //   TS2322 "Type 'undefined' is not assignable to type 'number'."
     //
-    // The forward direction (this member's `keyof` key) is fixed; the reverse
-    // direction here (`typeof Symbol.iterator` = `UniqueSymbol(ref)` back to the
-    // `[Symbol.iterator]` atom to find the member) reads the lazily-populated
-    // reverse index, which is still empty when this type alias is evaluated.
-    // It cannot be seeded eagerly like the forward index without regressing the
-    // reverse lookup, because several well-known members share one `SymbolRef`
-    // (lib cross-file `SymbolId` collision), so the reverse map would become
-    // ambiguous. Closing this needs globally-unique lib `SymbolId`s.
+    // The reverse direction (`typeof Symbol.iterator` = `UniqueSymbol(ref)` back
+    // to the `[Symbol.iterator]` atom to find the member) failed because several
+    // well-known members shared one `SymbolRef` — their `unique symbol` nodes
+    // collided on one arena-local node index across lib files — so the reverse
+    // lookup was ambiguous. The mint now folds the source file name in, giving
+    // each well-known symbol a distinct ref; the eagerly-seeded registry then
+    // reverse-resolves it, and the type-position indexed-access diagnostics
+    // (TS2339 via `literal_index_keys`, TS2538 via the concrete-index guard)
+    // consult that registry instead of the `__unique_N` placeholder.
     let codes = diagnostic_codes(
         r#"
 interface I { [Symbol.iterator]: number }
@@ -290,26 +275,26 @@ export const b: number = null as any as V;
     );
 }
 
-// Root-cause pin for the rows above (defect 2). tsz currently CONFLATES
-// distinct well-known unique symbols: `typeof Symbol.iterator` and
-// `typeof Symbol.asyncIterator` intern to the same `SymbolRef` (the arena-local
-// node index of their `unique symbol` type-operator nodes collides across lib
-// files), so assigning one to the other is wrongly accepted where tsc reports
-// TS2322. This asserts the CURRENT (buggy) behaviour so it flips loudly when
-// `unique symbol` refs are made globally unique — the prerequisite for
-// un-ignoring the two rows above. Update it to `contains(&2322)` as part of
-// that fix.
+// Root-cause guard for the row above (defect 2). Distinct well-known unique
+// symbols must have distinct identities: `typeof Symbol.iterator` and
+// `typeof Symbol.asyncIterator` denote different `unique symbol`s, so assigning
+// one to the other is a TS2322 in tsc. Previously tsz conflated them — their
+// `unique symbol` type-operator nodes sat at the same arena-local node index in
+// different lib files, and the mint keyed the `SymbolRef` off that index alone,
+// so the two interned to one type. The mint now folds the source file name in
+// (`unique_symbol_ref_from_source_span`), so the two are distinct and the
+// mismatch is reported.
 #[test]
-fn well_known_unique_symbols_are_conflated() {
+fn distinct_well_known_unique_symbols_are_not_conflated() {
     let codes = diagnostic_codes(
         r#"
 export const a: typeof Symbol.iterator = Symbol.asyncIterator;
 "#,
     );
     assert!(
-        !codes.contains(&2322),
-        "PIN: tsz currently conflates distinct well-known unique symbols; when \
-         this starts reporting TS2322 the ref-collision fix has landed and the \
-         two #[ignore]d rows above should be un-ignored; got: {codes:?}"
+        codes.contains(&2322),
+        "distinct well-known unique symbols must not be conflated; assigning \
+         `Symbol.asyncIterator` to a `typeof Symbol.iterator` is a TS2322 in \
+         tsc; got: {codes:?}"
     );
 }

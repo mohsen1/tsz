@@ -1778,13 +1778,9 @@ impl<'a> CheckerState<'a> {
                     self.ctx.types,
                     object_type,
                 )
-                && let Some(key_atom) =
-                    crate::query_boundaries::type_computation::access::literal_property_name(
-                        self.ctx.types,
-                        index_type_for_check,
-                    )
+                && let Some(key_name) =
+                    self.ctx.resolver_aware_index_key_name(index_type_for_check)
             {
-                let key_name = self.ctx.types.resolve_atom(key_atom);
                 // Only report the key as missing if it genuinely does not resolve
                 // to a property. Some valid accesses (e.g. an enum member via
                 // `(typeof Enum)["Member"]`) can reach this fallback through

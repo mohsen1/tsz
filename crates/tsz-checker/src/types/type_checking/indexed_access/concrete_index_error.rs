@@ -258,6 +258,23 @@ impl CheckerState<'_> {
                 index_type,
             )
         {
+            // A well-known-symbol-keyed member (`[Symbol.iterator]`) is a *named*
+            // member, not a symbol index signature, so the symbol-index key-space
+            // check above does not accept it and the access falls through here.
+            // When the concrete object actually declares that member under its
+            // canonical `[Symbol.xxx]` key the access resolves it — the
+            // value-position `i[Symbol.iterator]` does — so the type-position
+            // access must not report TS2538 either. `tsc` reports nothing.
+            if let Some(sym) =
+                crate::query_boundaries::common::unique_symbol_ref(self.ctx.types, index_type)
+                && let Some(name) = self.ctx.well_known_symbol_name_for_ref(sym)
+                && matches!(
+                    self.resolve_property_access_with_env(concrete_object_type, &name),
+                    tsz_solver::operations::property::PropertyAccessResult::Success { .. }
+                )
+            {
+                return false;
+            }
             let index_type_str = self.format_type(index_type);
             self.emit_index_type_not_usable(error_anchor, &index_type_str);
             return true;

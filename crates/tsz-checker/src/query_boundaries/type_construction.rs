@@ -142,6 +142,19 @@ pub(crate) fn type_node_union(db: &dyn TypeDatabase, members: Vec<TypeId>) -> Ty
     db.union(members)
 }
 
+/// The globally-unique `SymbolRef` for a `unique symbol` declaration at
+/// `(file_name, pos, end)`. Query-boundary wrapper over the solver-owned
+/// `tsz_solver::unique_symbol_identity::unique_symbol_ref_from_source_span` so
+/// checker code mints the same ref as the lowering pass through a sanctioned
+/// boundary.
+pub(crate) fn unique_symbol_ref_from_source_span(
+    file_name: &str,
+    pos: u32,
+    end: u32,
+) -> tsz_solver::SymbolRef {
+    tsz_solver::unique_symbol_identity::unique_symbol_ref_from_source_span(file_name, pos, end)
+}
+
 pub(crate) fn type_node_annotation_union_with_origin(
     db: &dyn TypeDatabase,
     members: Vec<TypeId>,
