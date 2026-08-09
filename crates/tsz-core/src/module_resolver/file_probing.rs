@@ -71,14 +71,17 @@ impl ModuleResolver {
             return None;
         }
         if let Some((base, extension)) = split_path_extension(path) {
-            // A `.json` specifier prefers a sibling `.d.json.ts` declaration
-            // file over the JSON file's own literal shape, matching tsc's
-            // `tryAddingExtensions` `Extension.Json` case: the declaration
-            // extension is tried before the JSON extension, unconditionally
-            // (independent of `resolveJsonModule`). Without this, a resolved
-            // `.json` file with `resolveJsonModule` off is later upgraded to
-            // TS2732 by the caller, and with it on the JSON literal's own
-            // inferred shape shadows the declared type.
+            // A `.json` specifier's sibling `.d.json.ts` declaration file
+            // takes priority over the JSON file's own literal shape,
+            // unconditionally — mirrors tsc's `tryAddingExtensions`
+            // `Extension.Json` case (Declaration tried before Json) and is
+            // independent of both `resolveJsonModule` and
+            // `allowArbitraryExtensions`. Probed regardless of the flag, like
+            // the unknown-extension declaration probe above: when the flag
+            // is off, `is_arbitrary_extension_declaration` in `mod.rs` still
+            // emits TS6263 for the resolved declaration (verified against
+            // pinned `typescript@7.0.2`: both flag states resolve to the
+            // declaration, and only the diagnostic differs).
             if extension == "json"
                 && let Some(resolved) = try_arbitrary_extension_declaration(path, extension)
             {

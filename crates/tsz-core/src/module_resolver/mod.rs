@@ -1300,8 +1300,17 @@ fn is_arbitrary_extension_declaration(specifier: &str, resolved_path: &std::path
         None => return false,
     };
 
-    // Standard TS/JS extensions are not arbitrary
-    let standard = ["ts", "tsx", "js", "jsx", "mts", "cts", "mjs", "cjs", "json"];
+    // Standard TS/JS extensions are not arbitrary. `.json` is deliberately
+    // excluded from this list: unlike the TS/JS tails, tsc's own
+    // `tryAddingExtensions` gives a `.json` specifier's `.d.json.ts`
+    // companion declaration priority over the JSON file's own literal shape
+    // *unconditionally* — resolution still lands on the declaration even
+    // when `allowArbitraryExtensions` is off, and tsc reports TS6263 for
+    // that case (verified against pinned `typescript@7.0.2`). The suffix
+    // check below already scopes this correctly: a `.json` specifier that
+    // resolves to the literal `.json` file never matches the `.d.json.ts`
+    // suffix, so this carve-out only fires for the genuine companion case.
+    let standard = ["ts", "tsx", "js", "jsx", "mts", "cts", "mjs", "cjs"];
     if standard.contains(&spec_ext) {
         return false;
     }
