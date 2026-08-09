@@ -259,7 +259,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             tsz_common::perf_counters::CheckerCreationReason::ImportType,
         );
         child.ctx.current_file_idx = current_file_idx;
-        let resolved = child.resolve_typeof_import_query(expr_name);
+        let resolved = child.resolve_typeof_import_query(type_query_idx, expr_name);
         // Merge namespace bookkeeping back so display/TS2339 receiver and any
         // subsequent property access see the same namespace TypeId.
         for (type_id, module_name) in child.ctx.namespace_module_names.drain() {

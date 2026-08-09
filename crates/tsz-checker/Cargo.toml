@@ -2835,3 +2835,6 @@ path = "tests/ts2540_import_equals_const_member_tests.rs"
 [[test]]
 name = "ts7023_self_recursive_var_reassigned_return_tests"
 path = "tests/ts7023_self_recursive_var_reassigned_return_tests.rs"
+[[test]]
+name = "ts1339_bare_typeof_import_no_value_tests"
+path = "tests/ts1339_bare_typeof_import_no_value_tests.rs"

@@ -1725,7 +1725,7 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    fn is_module_uninstantiated(&self, sym_id: SymbolId) -> bool {
+    pub(crate) fn is_module_uninstantiated(&self, sym_id: SymbolId) -> bool {
         let lib_binders = self.get_lib_binders();
         let symbol = self
             .get_cross_file_symbol(sym_id)
@@ -1751,6 +1751,62 @@ impl<'a> CheckerState<'a> {
             }
             if (ef & symbol_flags::VALUE_MODULE) != 0
                 && !self.is_module_uninstantiated(export_sym_id)
+            {
+                return false;
+            }
+        }
+        true
+    }
+
+    /// Same question as `is_module_uninstantiated`, for a `sym_id` already
+    /// known to live in `binder` rather than the current checking file.
+    ///
+    /// Per-file binders mint colliding raw `SymbolId`s (no `base_offset` in
+    /// production; see `resolved_import_target_symbol`'s doc comment in
+    /// `cross_file.rs`). `get_cross_file_symbol` only resolves a `SymbolId`
+    /// to its true owning binder when that id was previously registered
+    /// through the resolver chain (`resolve_symbol_file_index` /
+    /// `cross_file_symbol_targets`); a `SymbolId` read straight out of a
+    /// target binder's `module_exports` table — as an `export =` proxy is —
+    /// was never registered that way, so `get_cross_file_symbol` falls back
+    /// to scanning the current file's own binder or an O(N) scan over all
+    /// binders and can silently pick up an unrelated same-id symbol from a
+    /// different file. Consulting the known-correct `binder` directly first
+    /// avoids that collision.
+    pub(crate) fn is_module_uninstantiated_in_binder(
+        &self,
+        binder: &tsz_binder::BinderState,
+        sym_id: SymbolId,
+    ) -> bool {
+        let lib_binders = self.get_lib_binders();
+        let symbol = binder
+            .get_symbol(sym_id)
+            .or_else(|| self.get_cross_file_symbol(sym_id))
+            .or_else(|| self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders));
+        let Some(symbol) = symbol else {
+            return false;
+        };
+        let Some(exports) = &symbol.exports else {
+            return true;
+        };
+        for (_, &export_sym_id) in exports.iter() {
+            let export_sym = binder
+                .get_symbol(export_sym_id)
+                .or_else(|| self.get_cross_file_symbol(export_sym_id))
+                .or_else(|| {
+                    self.ctx
+                        .binder
+                        .get_symbol_with_libs(export_sym_id, &lib_binders)
+                });
+            let Some(export_sym) = export_sym else {
+                continue;
+            };
+            let ef = export_sym.flags;
+            if (ef & (symbol_flags::VALUE & !symbol_flags::VALUE_MODULE)) != 0 {
+                return false;
+            }
+            if (ef & symbol_flags::VALUE_MODULE) != 0
+                && !self.is_module_uninstantiated_in_binder(binder, export_sym_id)
             {
                 return false;
             }

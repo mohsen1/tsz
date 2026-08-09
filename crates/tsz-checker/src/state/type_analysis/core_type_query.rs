@@ -92,7 +92,7 @@ impl<'a> CheckerState<'a> {
         if self.is_import_type_query(type_query.expr_name) {
             trace!("get_type_from_type_query: is import type query");
             return self
-                .resolve_typeof_import_query(type_query.expr_name)
+                .resolve_typeof_import_query(idx, type_query.expr_name)
                 .unwrap_or(TypeId::ANY);
         }
 
@@ -1660,7 +1660,11 @@ impl<'a> CheckerState<'a> {
         result
     }
 
-    pub(crate) fn resolve_typeof_import_query(&mut self, expr_name: NodeIndex) -> Option<TypeId> {
+    pub(crate) fn resolve_typeof_import_query(
+        &mut self,
+        anchor_idx: NodeIndex,
+        expr_name: NodeIndex,
+    ) -> Option<TypeId> {
         let (call_idx, segments) = self.decompose_typeof_import_query(expr_name)?;
         let (module_name, specifier_node) = self.get_import_type_module_specifier(call_idx)?;
         let resolution_mode_override = self.get_import_type_resolution_mode_override(call_idx);
@@ -1669,6 +1673,27 @@ impl<'a> CheckerState<'a> {
             specifier_node,
             resolution_mode_override,
         );
+
+        // TS1339: a bare `typeof import("mod")` — no `.Member` qualifier —
+        // resolves to the module's own value. A module with no `export =`
+        // always has one (the module object itself); a module whose
+        // `export =` targets a type-only symbol (interface, type alias,
+        // uninstantiated namespace) does not.
+        if segments.is_empty()
+            && !self.bare_typeof_import_names_a_value(&module_name, resolution_mode_override)
+        {
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+            let message = format_message(
+                diagnostic_messages::MODULE_DOES_NOT_REFER_TO_A_VALUE_BUT_IS_USED_AS_A_VALUE_HERE,
+                &[&module_name],
+            );
+            self.error_at_node(
+                anchor_idx,
+                &message,
+                diagnostic_codes::MODULE_DOES_NOT_REFER_TO_A_VALUE_BUT_IS_USED_AS_A_VALUE_HERE,
+            );
+            return Some(TypeId::ERROR);
+        }
 
         let Some(mut current) =
             self.build_typeof_import_namespace_type(&module_name, resolution_mode_override)
