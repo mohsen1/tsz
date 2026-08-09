@@ -36,7 +36,13 @@ from collections import Counter
 from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from lib.query_snapshot import load_snapshot, print_top_counter, print_truncated_more
+from lib.query_snapshot import (
+    FOURSLASH_NON_PASSING_BUCKETS,
+    FOURSLASH_PASSING_BUCKETS,
+    load_snapshot,
+    print_top_counter,
+    print_truncated_more,
+)
 
 SNAPSHOT_FILE = Path(__file__).parent / "fourslash-snapshot.json"
 
@@ -54,30 +60,32 @@ def normalized_results(data):
         return data["results"]
 
     results = []
-    # `pass` and `slow` hold bare file paths (both are assertion-passes; slow
-    # just overran the wall-clock budget — issue #17010). `timedOut` stays
-    # False for slow because it completed.
-    for status, bucket in (("pass", "pass"), ("slow", "slow")):
+    # Passing buckets (pass, slow) hold bare file paths — both are
+    # assertion-passes; slow just overran the wall-clock budget (issue #17010).
+    # `timedOut` stays False for slow because it completed. The bucket name is
+    # the status.
+    for bucket in FOURSLASH_PASSING_BUCKETS:
         for file_name in data.get(bucket, []):
             if isinstance(file_name, str):
                 results.append({
                     "file": file_name,
                     "name": test_name_from_file(file_name),
-                    "status": status,
+                    "status": bucket,
                     "timedOut": False,
                 })
             elif isinstance(file_name, dict):
                 record = dict(file_name)
                 record.setdefault("file", record.get("name", ""))
                 record.setdefault("name", test_name_from_file(record.get("file", "")))
-                record.setdefault("status", status)
+                record.setdefault("status", bucket)
                 record.setdefault("timedOut", False)
                 results.append(record)
 
     # Failure family. `fail` predates the fail/timeout/unrun split, so a legacy
     # snapshot's `fail` array may still carry timeout rows (status derived from
     # `timedOut`); the newer per-bucket arrays each carry their own status.
-    for bucket, default_status in (("fail", None), ("timeout", "timeout"), ("unrun", "unrun")):
+    for bucket in FOURSLASH_NON_PASSING_BUCKETS:
+        default_status = None if bucket == "fail" else bucket
         for failure in data.get(bucket, []):
             if isinstance(failure, str):
                 failure = {"file": failure}
@@ -102,7 +110,7 @@ def normalized_summary(data, results):
     total = summary.get("total", len(results))
     # Passing = pass + slow (slow completed its assertions). Failed counts only
     # genuine assertion failures; timeout/unrun are their own tallies (#17010).
-    passed = summary.get("passed", sum(1 for r in results if r.get("status") in ("pass", "slow")))
+    passed = summary.get("passed", sum(1 for r in results if r.get("status") in FOURSLASH_PASSING_BUCKETS))
     failed = summary.get("failed", sum(1 for r in results if r.get("status") == "fail"))
     timed_out = summary.get("timedOut", sum(1 for r in results if r.get("status") == "timeout"))
     slow = summary.get("slow", sum(1 for r in results if r.get("status") == "slow"))

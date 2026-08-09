@@ -9,6 +9,29 @@ from collections import Counter
 from pathlib import Path
 
 
+# Fourslash outcome taxonomy (issue #17010). The runner classifies every test
+# into exactly one status; these group which statuses/buckets count as passing.
+# Offline consumers import them instead of each re-encoding the split, so adding
+# or reclassifying a bucket is a one-line change here rather than in three
+# scripts. A completed-but-slow test passed its assertions — the slowness is a
+# harness perf signal, not a correctness failure — so `slow` is a passing bucket.
+FOURSLASH_PASSING_BUCKETS = ("pass", "slow")
+FOURSLASH_NON_PASSING_BUCKETS = ("fail", "timeout", "unrun")
+FOURSLASH_NON_PASSING_STATUSES = frozenset(FOURSLASH_NON_PASSING_BUCKETS)
+
+
+def fourslash_bucket_counts(data: dict) -> tuple:
+    """``(passed, total)`` from a compact snapshot that lacks a ``summary`` block.
+
+    Slow tests count as passing; only fail/timeout/unrun are non-passing.
+    Tolerates older snapshots missing the slow/timeout/unrun buckets —
+    ``data.get(b) or []`` treats an absent bucket as empty.
+    """
+    passed = sum(len(data.get(b) or []) for b in FOURSLASH_PASSING_BUCKETS)
+    non_passing = sum(len(data.get(b) or []) for b in FOURSLASH_NON_PASSING_BUCKETS)
+    return passed, passed + non_passing
+
+
 def load_snapshot(path: Path, run_hint: str = "Run the test suite with --json-out to generate it.") -> dict:
     """Load a JSON snapshot file, printing a helpful error and exiting if missing."""
     if not path.exists():

@@ -11,11 +11,35 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from lib.query_snapshot import (
+    FOURSLASH_NON_PASSING_BUCKETS,
+    FOURSLASH_PASSING_BUCKETS,
     filter_by_name,
+    fourslash_bucket_counts,
     load_snapshot,
     print_top_counter,
     print_truncated_more,
 )
+
+
+class TestFourslashBucketCounts(unittest.TestCase):
+    def test_slow_counts_as_passing(self):
+        data = {
+            "pass": ["a", "b", "c"],
+            "slow": ["d", "e"],
+            "fail": [{"name": "f"}],
+            "timeout": [{"name": "g"}],
+            "unrun": [{"name": "h"}],
+        }
+        self.assertEqual(fourslash_bucket_counts(data), (5, 8))
+
+    def test_tolerates_missing_new_buckets(self):
+        # Older snapshots have only pass/fail.
+        self.assertEqual(fourslash_bucket_counts({"pass": ["a", "b"], "fail": [{}]}), (2, 3))
+
+    def test_taxonomy_partitions_are_disjoint(self):
+        self.assertEqual(
+            set(FOURSLASH_PASSING_BUCKETS) & set(FOURSLASH_NON_PASSING_BUCKETS), set()
+        )
 
 
 class TestLoadSnapshot(unittest.TestCase):

@@ -193,6 +193,12 @@ function snapshotWeightFile() {
     return path.join(__dirname, "fourslash-snapshot.json");
 }
 
+// Compact-snapshot bucket names, single-sourced (issue #17010). File buckets
+// hold bare paths (both are assertion-passes); row buckets hold failure-family
+// detail objects. Everything that splits results by outcome iterates these.
+const SNAPSHOT_FILE_BUCKETS = ["pass", "slow"];
+const SNAPSHOT_ROW_BUCKETS = ["fail", "timeout", "unrun"];
+
 function resultRowsForWeights(parsed) {
     // Legacy uncollapsed snapshot kept a full per-test result array.
     if (Array.isArray(parsed.results)) {
@@ -214,7 +220,7 @@ function resultRowsForWeights(parsed) {
     }
     // `fail` predates the split into fail/timeout/unrun; read all of them so
     // both old and new snapshots contribute their weighted rows.
-    for (const key of ["fail", "timeout", "unrun"]) {
+    for (const key of SNAPSHOT_ROW_BUCKETS) {
         if (Array.isArray(parsed[key])) {
             rows.push(...parsed[key]);
         }
@@ -236,11 +242,6 @@ function indentJson(value, spaces) {
         .map(line => `${prefix}${line}`)
         .join("\n");
 }
-
-// Buckets holding bare file-path strings, packed 8/line.
-const SNAPSHOT_FILE_BUCKETS = ["pass", "slow"];
-// Buckets holding failure-family objects ({file, name, status, ...}).
-const SNAPSHOT_ROW_BUCKETS = ["fail", "timeout", "unrun"];
 
 function stringifyCompactSnapshot(snapshot) {
     const lines = [
@@ -304,8 +305,6 @@ function stringifyCompactSnapshot(snapshot) {
 // `passed` for reporting = pass + slow, because a slow completion is still a
 // correctness pass. Only fail/timeout/unrun are non-passing; unrun additionally
 // means the run was incomplete.
-const OUTCOME_STATUSES = ["pass", "slow", "fail", "xfail", "timeout", "unrun"];
-
 function summarizeResults(testResults) {
     const counts = { passed: 0, slow: 0, failed: 0, xfailed: 0, timedOut: 0, unrun: 0 };
     for (const r of testResults || []) {
@@ -361,18 +360,20 @@ function classifySnapshotBuckets(jsonResults) {
             if (r.elapsed !== undefined) row.elapsed = r.elapsed;
             return row;
         });
-    return {
-        pass: filesFor("pass"),
-        slow: filesFor("slow"),
-        fail: rowsFor("fail"),
-        timeout: rowsFor("timeout"),
-        unrun: rowsFor("unrun"),
-        weights: Object.fromEntries(
-            jsonResults
-                .filter(r => (r.status === "pass" || r.status === "slow") && Number.isFinite(Number(r.elapsed)))
-                .map(r => [r.file, Number(r.elapsed)]),
-        ),
-    };
+    const buckets = {};
+    for (const status of SNAPSHOT_FILE_BUCKETS) buckets[status] = filesFor(status);
+    for (const status of SNAPSHOT_ROW_BUCKETS) buckets[status] = rowsFor(status);
+    // Weights cover every completed test (pass + slow) — the slow ones are
+    // exactly what the LPT balancer most needs, so they must not be dropped.
+    // This leans on the invariant that the file-form buckets are precisely the
+    // completed/passing outcomes; if a future passing outcome ever serialized
+    // as a detail row, this filter would need its own explicit status list.
+    buckets.weights = Object.fromEntries(
+        jsonResults
+            .filter(r => SNAPSHOT_FILE_BUCKETS.includes(r.status) && Number.isFinite(Number(r.elapsed)))
+            .map(r => [r.file, Number(r.elapsed)]),
+    );
+    return buckets;
 }
 
 // When a test timed out at its CI cap (TSZ_CI_FOURSLASH_TIMEOUT_MS,
@@ -499,7 +500,6 @@ async function runSequential(opts, testsToRun) {
     let failed = 0;
     let xfailed = 0;
     let timedOut = 0;
-    const unrun = 0; // sequential runs never abandon queued tests
     const errors = [];
     const testResults = [];
 
@@ -570,7 +570,9 @@ async function runSequential(opts, testsToRun) {
     }
 
     bridge.shutdown();
-    return { passed, slow, failed, xfailed, timedOut, unrun, errors, testResults };
+    // main derives the authoritative tally from testResults (summarizeResults);
+    // the counters above exist only for this function's live progress line.
+    return { errors, testResults };
 }
 
 function setupGlobals(tsDir) {
@@ -767,7 +769,9 @@ async function runParallel(opts, testsToRun) {
             if (activeWorkers === 0) {
                 if (!opts.verbose) printProgress();
                 clearInterval(watchdog);
-                resolve({ passed, slow, failed, xfailed, timedOut, unrun, errors, testResults, bridgeRestarts, memoryWarnings, workerStats });
+                // Counters above feed only the live progress line; main derives
+                // the authoritative tally from testResults (summarizeResults).
+                resolve({ errors, testResults, bridgeRestarts, memoryWarnings, workerStats });
             }
         }
 
@@ -1062,11 +1066,9 @@ async function main() {
     // Pass rate is over the tests that actually produced a verdict (executed),
     // not the full planned set — otherwise an early abort drags the rate down
     // purely because queued tests never ran (issue #17010). Slow completions
-    // count as passing.
-    const passRate = executed > 0
-        ? ((reportedPassed / executed) * 100).toFixed(1)
-        : "0.0";
-    console.log(`  Pass rate: ${passRate}% (${reportedPassed}/${executed} executed)`);
+    // count as passing. Computed once here; the snapshot summary reuses it.
+    const passRate = executed > 0 ? Math.round(reportedPassed / executed * 1000) / 10 : 0;
+    console.log(`  Pass rate: ${passRate.toFixed(1)}% (${reportedPassed}/${executed} executed)`);
     if (unrun > 0) {
         console.log(`  \x1b[33m${unrun} test(s) did not run — figure is over executed tests only\x1b[0m`);
     }
@@ -1164,11 +1166,11 @@ async function main() {
         // `passed` in the summary is the load-independent correctness figure —
         // assertion-passes = pass + slow — which is what the README and the CI
         // floor read via `.summary.passed`. `slow`/`unrun` are exposed as their
-        // own sub-counts so the distinction stays visible (issue #17010).
+        // own sub-counts so the distinction stays visible (issue #17010); the
+        // raw within-budget count is `passed - slow` if ever needed.
         const summary = {
             total,
             passed: reportedPassed,
-            strictPassed: passed,
             slow,
             failed,
             xfailed,
@@ -1176,7 +1178,7 @@ async function main() {
             unrun,
             shard: opts.shardTotal > 0 ? { index: opts.shardId, count: opts.shardTotal, strategy: opts.shardStrategy } : null,
             slowest,
-            passRate: executed > 0 ? Math.round(reportedPassed / executed * 1000) / 10 : 0,
+            passRate,
         };
         const detail = {
             timestamp: new Date().toISOString(),
@@ -1218,7 +1220,6 @@ module.exports = {
     reportedPassCount,
     executedCount,
     runFailedCount,
-    OUTCOME_STATUSES,
     TIMEOUT_WEIGHT_BIAS_MS,
 };
 

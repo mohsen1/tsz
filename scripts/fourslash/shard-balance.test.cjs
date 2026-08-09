@@ -1,24 +1,25 @@
 #!/usr/bin/env node
 //
-// Unit tests for the LPT (longest-processing-time-first) shard balancer
-// in `runner.cjs`. Runs as a standalone Node script: `node shard-balance.test.cjs`.
+// Unit tests for the LPT (longest-processing-time-first) shard balancer and the
+// outcome taxonomy in `runner.cjs`. Runs as a standalone Node script:
+// `node shard-balance.test.cjs`.
 //
-// Re-implements the small helpers under test rather than refactoring runner.cjs
-// to export them — the bias formulas are short enough that two copies is
-// cheaper than the export surface area. Update both sides if you change the
-// formula.
+// runner.cjs guards its main() with `require.main === module`, so requiring it
+// exercises the real exported helpers directly. Only the timeout-bias formula
+// is mirrored below, because runner exports the disk-reading `loadHistoricalWeights`
+// rather than the pure results->weights core; the bias constant it uses is
+// still pulled from runner so the two can't drift on the magnitude.
 
 "use strict";
 
 const assert = require("node:assert/strict");
 
-// runner.cjs guards its main() with `require.main === module`, so requiring it
-// here pulls in the real pure helpers without kicking off a test run.
 const runner = require("./runner.cjs");
+const { defaultUnknownWeight, TIMEOUT_WEIGHT_BIAS_MS } = runner;
 
-// Mirror of runner.cjs constants and helpers under test. Keep in sync.
-const TIMEOUT_WEIGHT_BIAS_MS = 60_000 * 1.5;
-
+// Mirror of the pure core inside runner.loadHistoricalWeights (which reads the
+// snapshot from disk, so it can't be called directly on an in-memory array).
+// Reuses runner's TIMEOUT_WEIGHT_BIAS_MS so only the shape is duplicated here.
 function loadHistoricalWeightsFromResults(results) {
     const weights = new Map();
     for (const result of results || []) {
@@ -32,12 +33,6 @@ function loadHistoricalWeightsFromResults(results) {
         weights.set(result.file.replace(/\\/g, "/"), weight);
     }
     return weights;
-}
-
-function defaultUnknownWeight(weights) {
-    if (weights.size === 0) return 100;
-    const sorted = [...weights.values()].sort((a, b) => a - b);
-    return sorted[Math.floor(sorted.length / 2)];
 }
 
 let failed = 0;

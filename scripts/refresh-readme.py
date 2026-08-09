@@ -30,6 +30,9 @@ import tempfile
 import urllib.request
 from pathlib import Path
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from lib.query_snapshot import fourslash_bucket_counts  # noqa: E402
+
 ROOT = Path(__file__).parent.parent
 README = ROOT / "README.md"
 PERFORMANCE_PNG_DIR = ROOT / "crates" / "tsz-website" / "static" / "benchmark-data"
@@ -174,22 +177,11 @@ def normalize_suite_summary(data, suite):
         }
 
     if suite == "fourslash" and isinstance(data.get("pass"), list):
-        # A completed-but-slow test ("slow" bucket) passed its assertions; the
-        # slowness is a harness perf signal, not a correctness failure, so it
-        # counts as passing. Only fail/timeout/unrun are non-passing. Keeping
-        # slow out of the published figure made it move with machine load
-        # (issue #17010). Older snapshots have no slow/timeout/unrun buckets;
-        # ``.get(...) or []`` treats them as empty.
-        passed = len(data["pass"]) + len(data.get("slow") or [])
-        non_passing = (
-            len(data.get("fail") or [])
-            + len(data.get("timeout") or [])
-            + len(data.get("unrun") or [])
-        )
-        return {
-            "passed": passed,
-            "total": passed + non_passing,
-        }
+        # Summary-less snapshot: count from the buckets. Slow counts as passing
+        # (keeping it out made the published figure move with machine load,
+        # issue #17010); the taxonomy lives in lib.query_snapshot.
+        passed, total = fourslash_bucket_counts(data)
+        return {"passed": passed, "total": total}
 
     if data.get("suite") != suite:
         return None
