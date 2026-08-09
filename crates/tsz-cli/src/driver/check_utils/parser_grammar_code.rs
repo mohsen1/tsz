@@ -178,6 +178,20 @@ pub(super) const fn is_parser_grammar_code(code: u32) -> bool {
              // that is a `CheckerDiagnostic`, never a `ParseDiagnostic`, so it
              // never reaches this filter and is unaffected by this entry.
         | 1014 // A rest parameter must be last in a parameter list
+        | 2462 // A rest element must be last in a destructuring pattern. tsc's
+               // checkGrammarBindingElement reports this from the checker;
+               // #16989 moved tsz's binding-pattern check into the parser
+               // (report_rest_element_not_last) to cover every binding-pattern
+               // position uniformly, which made it a ParseDiagnostic and so
+               // subject to this filter. Unlisted it behaved as a real parse
+               // error: it survived alongside a genuine syntax error (tsc drops
+               // it), and it deleted listed siblings — a file with both a
+               // misplaced binding-pattern rest and a misplaced rest parameter
+               // lost its TS1014 entirely. Sibling of TS1014 in both tsc's
+               // grammar family and this list. The distinct checker-emitted
+               // site for destructuring-*assignment* targets (#16966,
+               // assignment_ops.rs) is a CheckerDiagnostic, never a
+               // ParseDiagnostic, so it never reaches this filter.
         | 1017 // An index signature cannot have a rest parameter
         | 1018 // An index signature parameter cannot have an accessibility modifier
         | 1101 // 'with' statements are not allowed in strict mode. tsc's
