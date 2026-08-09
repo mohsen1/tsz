@@ -285,6 +285,9 @@ path = "tests/tuple_call_argument_elaboration_tests.rs"
 name = "array_source_tuple_target_elaboration_tests"
 path = "tests/array_source_tuple_target_elaboration_tests.rs"
 [[test]]
+name = "ts2345_signature_arity_predicate_elaboration_tests"
+path = "tests/ts2345_signature_arity_predicate_elaboration_tests.rs"
+[[test]]
 name = "array_literal_rest_tuple_drill_cap_tests"
 path = "tests/array_literal_rest_tuple_drill_cap_tests.rs"
 [[test]]
@@ -2808,3 +2811,6 @@ path = "tests/ts7032_zero_parameter_setter_tests.rs"
 [[test]]
 name = "ts2540_import_equals_const_member_tests"
 path = "tests/ts2540_import_equals_const_member_tests.rs"
+[[test]]
+name = "ts7023_self_recursive_var_reassigned_return_tests"
+path = "tests/ts7023_self_recursive_var_reassigned_return_tests.rs"

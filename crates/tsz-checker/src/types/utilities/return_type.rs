@@ -12,6 +12,22 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
+/// Whether a statement is control-flow-transparent as a function body's tail: a
+/// hoisted `function`, a type-erased `class`/`interface`/`type`/`enum`, or an
+/// empty statement. Such a trailing statement neither creates nor blocks a
+/// fall-through path, so `body_tail_may_terminate_control_flow` looks past it.
+const fn is_control_flow_transparent_tail_statement(kind: u16) -> bool {
+    matches!(
+        kind,
+        syntax_kind_ext::FUNCTION_DECLARATION
+            | syntax_kind_ext::CLASS_DECLARATION
+            | syntax_kind_ext::INTERFACE_DECLARATION
+            | syntax_kind_ext::TYPE_ALIAS_DECLARATION
+            | syntax_kind_ext::ENUM_DECLARATION
+            | syntax_kind_ext::EMPTY_STATEMENT
+    )
+}
+
 /// One block-body return contribution, collected *unwidened* so that a union of
 /// distinct fresh literals (`return "a"; return "b"` → `"a" | "b"`) is preserved
 /// rather than widened per branch. `widen_expr` is `Some(expr)` when this
@@ -266,13 +282,29 @@ impl<'a> CheckerState<'a> {
     ///
     /// This gates the (potentially evaluation-triggering)
     /// `function_body_falls_through` query. When the body's last statement is a
-    /// trivially-falling-through statement (a variable/function/class declaration,
-    /// a non-call expression statement, etc.), the body provably falls through, so
-    /// the return type is `void` and we must NOT run the reachability query —
-    /// doing so would evaluate flow-sensitive receivers (e.g. evolving
-    /// implicit-`any` arrays) prematurely and suppress their `TS7005`/`TS7034`
-    /// diagnostics. A never-returning tail call always appears as the terminal
-    /// expression statement, so it is preserved here (#14741).
+    /// trivially-falling-through statement (a variable declaration, a non-call
+    /// expression statement, etc.), the body provably falls through, so the
+    /// return type is `void` and we must NOT run the reachability query — doing so
+    /// would evaluate flow-sensitive receivers (e.g. evolving implicit-`any`
+    /// arrays) prematurely and suppress their `TS7005`/`TS7034` diagnostics. A
+    /// never-returning tail call always appears as the terminal expression
+    /// statement, so it is preserved here (#14741).
+    ///
+    /// When the syntactic last statement is a control-flow-transparent trailing
+    /// declaration (a hoisted `function`, a type-erased `class`/`interface`/
+    /// `type`/`enum`, or an empty statement), the real terminating tail is the
+    /// statement before it, and only an **unconditional terminator**
+    /// (`return`/`throw`) revealed there surfaces as "may terminate" — the shape
+    /// that made `function f(){ return f(); function g(){} }` misreport
+    /// fall-through and infer `void` instead of the reachable `return`'s `never`
+    /// (#16987, whose reassigned-variable case is handled downstream by
+    /// `function_is_nonlazy_circular_return_site`). A call-expression tail revealed
+    /// past a declaration is deliberately NOT surfaced: running
+    /// `function_body_falls_through` over an evolving implicit-`any` array
+    /// (`function f(){ x.push(1); function g(){} }`, `controlFlowArrayErrors.ts`)
+    /// would freeze it and drop `TS7005`/`TS7034`. When the last statement is not
+    /// such a declaration, the original classification (which surfaces a
+    /// never-returning tail call, #14741) is unchanged.
     fn body_tail_may_terminate_control_flow(&self, body_idx: NodeIndex) -> bool {
         let Some(body_node) = self.ctx.arena.get(body_idx) else {
             return false;
@@ -289,6 +321,21 @@ impl<'a> CheckerState<'a> {
         let Some(last) = self.ctx.arena.get(last_idx) else {
             return false;
         };
+        if is_control_flow_transparent_tail_statement(last.kind) {
+            return block
+                .statements
+                .nodes
+                .iter()
+                .rev()
+                .filter_map(|&idx| self.ctx.arena.get(idx))
+                .find(|node| !is_control_flow_transparent_tail_statement(node.kind))
+                .is_some_and(|node| {
+                    matches!(
+                        node.kind,
+                        syntax_kind_ext::RETURN_STATEMENT | syntax_kind_ext::THROW_STATEMENT
+                    )
+                });
+        }
         match last.kind {
             syntax_kind_ext::THROW_STATEMENT
             | syntax_kind_ext::RETURN_STATEMENT
@@ -766,6 +813,27 @@ impl<'a> CheckerState<'a> {
         let result = self.infer_return_type_from_body_inner(body_idx, return_context, self_sym);
         self.ctx.preserve_literal_types = prev_preserve_literals;
         self.ctx.preserve_logical_operand_literals = prev_preserve_logical;
+
+        // A *variable-bound* self-recursive function expression / arrow whose own
+        // binding is genuinely circular — recorded as a non-lazy circular return
+        // site, i.e. the exact condition that fires TS7023 — resolves its return
+        // type to the circular implicit-`any`, mirroring tsc's
+        // `getReturnTypeOfSignature`, which returns `anyType` when re-entered while
+        // the signature is still being computed. When the sole return expression is
+        // a direct self-call (`return f(name)`), return aggregation drops it and the
+        // body degenerates to `void` (fall-through default) or `never`; that
+        // degenerate value must not thread through to the call site (`d = f(1)`),
+        // where tsc sees `any` (#16987). This is distinct from the clean
+        // no-base-case recursion in a *named function declaration*
+        // (`function f(n){ return f(n); }` → `never`) handled below: that is not a
+        // resolving variable, so it is never recorded as a circular return site.
+        if return_context.is_none()
+            && (result == TypeId::VOID || result == TypeId::NEVER)
+            && self.function_is_nonlazy_circular_return_site(function_idx)
+        {
+            snap.rollback(&mut self.ctx.speculation_state());
+            return TypeId::ANY;
+        }
 
         // Direct self-recursive functions with no base case return `never`.
         // Example: `function fn2(n: number) { return fn2(n); }` → return type `never`.

@@ -384,11 +384,45 @@ impl<'a> CheckerState<'a> {
                     return None;
                 }
                 let base_expr_idx = self.ctx.arena.get_access_expr(lhs_node)?.expression;
-                return Some(self.get_type_of_node(base_expr_idx));
+                return self.assignment_rhs_base_this_type(base_expr_idx);
             }
             break;
         }
         None
+    }
+
+    /// The contextual `this` type contributed by the base object of a
+    /// property/element-access assignment target (`<base>.<name> =
+    /// function () {...}`), CommonJS-aware — Mechanism 2 of #16964.
+    ///
+    /// - The bare unshadowed `exports` identifier resolves to the module's own
+    ///   symbol, which `tsc` declines to type `this` as, so this returns `None`
+    ///   and the callback's `this` stays implicitly `any` (TS2683) — unlike a
+    ///   plain `o.m = ...` receiver.
+    /// - `module.exports` types `this` as the file's own exports namespace
+    ///   (`typeof import(self)`); evaluated as a bare expression `module.exports`
+    ///   has no value symbol and yields `ERROR`, so the file's computed CommonJS
+    ///   namespace type is read directly instead.
+    /// - Any other base object contributes its own type, so a missing `this`
+    ///   member is TS2339 against it; an `ERROR` base (or `any`) yields no
+    ///   receiver / an `any` `this`, matching `tsc`.
+    pub(crate) fn assignment_rhs_base_this_type(&mut self, base_expr: NodeIndex) -> Option<TypeId> {
+        if self.is_js_file() && !self.current_source_file_has_esm_syntax() {
+            // `is_unshadowed_commonjs_exports_identifier` already resolves to
+            // `false` for any non-identifier node, so no explicit kind guard is
+            // needed here.
+            if self.is_unshadowed_commonjs_exports_identifier(base_expr) {
+                return None;
+            }
+            // The bare `exports` identifier is handled above, so the only
+            // remaining CommonJS export base here is the `module.exports` access.
+            if self.is_current_file_commonjs_export_base_syntax(base_expr) {
+                let namespace = self.current_file_commonjs_module_exports_namespace_type();
+                return (namespace != TypeId::ERROR).then_some(namespace);
+            }
+        }
+        let receiver = self.get_type_of_node(base_expr);
+        (receiver != TypeId::ERROR).then_some(receiver)
     }
 
     /// Find the nearest enclosing class declaration/expression by walking parents.
