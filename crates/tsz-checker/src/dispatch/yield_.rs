@@ -837,7 +837,10 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
         // Fallback to `any` if no generator context is available.
         // Emit TS7057 when noImplicitAny is enabled, the generator lacks a return type,
         // and the yield result is consumed (not discarded).
-        if self.checker.ctx.no_implicit_any() && !self.expression_result_is_unused(idx) {
+        if self.checker.ctx.no_implicit_any()
+            && !self.expression_result_is_unused(idx)
+            && !self.yield_computed_name_owner_is_method_signature(idx)
+        {
             let yield_type = self.checker.ctx.current_yield_type();
             let contextual = request.contextual_type;
             // Suppress TS7057 when:
@@ -1001,6 +1004,55 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
             }
 
             return false;
+        }
+    }
+
+    /// Whether `idx` (a `yield` expression) sits directly inside the computed
+    /// name of an interface/type-literal METHOD SIGNATURE (`[expr](): T;` —
+    /// bodyless, no `*`).
+    ///
+    /// `tsc` suppresses TS7057 uniformly for every function-LIKE member's
+    /// computed name (method, accessor, method signature) but keeps it for a
+    /// plain property's — oracle-verified, `typescript@7.0.2`. A class/object-
+    /// literal method or accessor already gets this for free: its own node
+    /// kind is `is_function_like()`, so `find_enclosing_function` (used by the
+    /// `is_in_generator` check above) lands on the member itself rather than
+    /// the true enclosing generator, and — since the member itself is never a
+    /// generator — the `!is_in_generator` branch bails before this function
+    /// ever runs. A method SIGNATURE has no body, so it is deliberately absent
+    /// from `is_function_like()` (widening that shared predicate would affect
+    /// every other function-boundary check, e.g. `this`/`return` validity, for
+    /// a node that never has either) — its computed name's `find_enclosing_function`
+    /// walk instead skips straight past it to the real enclosing generator, so
+    /// the same bail never fires. This mirrors that same suppression for the
+    /// one member kind the accidental bail above doesn't already cover, without
+    /// touching `is_function_like()` or the `is_in_generator` walk itself.
+    fn yield_computed_name_owner_is_method_signature(&self, idx: NodeIndex) -> bool {
+        let mut current = idx;
+        loop {
+            let Some(ext) = self.checker.ctx.arena.get_extended(current) else {
+                return false;
+            };
+            let parent_idx = ext.parent;
+            let Some(parent) = self.checker.ctx.arena.get(parent_idx) else {
+                return false;
+            };
+            if parent.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
+                current = parent_idx;
+                continue;
+            }
+            if parent.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+                return false;
+            }
+            let Some(member_ext) = self.checker.ctx.arena.get_extended(parent_idx) else {
+                return false;
+            };
+            return self
+                .checker
+                .ctx
+                .arena
+                .get(member_ext.parent)
+                .is_some_and(|member| member.kind == syntax_kind_ext::METHOD_SIGNATURE);
         }
     }
 
