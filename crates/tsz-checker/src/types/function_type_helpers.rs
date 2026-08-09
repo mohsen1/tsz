@@ -992,37 +992,16 @@ impl<'a> CheckerState<'a> {
         {
             return None;
         }
-        let access = self.ctx.arena.get_access_expr(left_node)?;
         // No prototype special case: TypeScript 7 dropped JS constructor-function
         // inference, so `M.prototype` does not name a synthesized instance type.
         // `M.prototype.m = function () { ... }` takes the ordinary
         // assignment-receiver `this` (the type of `M.prototype`) like any other
-        // `obj.m = function () { ... }`.
-        // A depth-1 write to the CommonJS `exports` object gives its RHS function
-        // no receiver `this`: tsc reports
-        // `TS2683 'this' implicitly has type 'any'` for
-        // `exports.A = function () { this.x = 1 }`. Reading `typeof exports`
-        // here instead pushes a `this` type, which suppresses TS2683 entirely.
-        //
-        // Deliberately keyed on the bare unshadowed `exports` identifier, NOT on
-        // an exports-rooted access: tsc *does* give `module.exports.A = ...` a
-        // receiver `this` (it reports `Property 'x' does not exist on type
-        // 'typeof import(...)'`), and depth-2 `exports.ns.A = ...` likewise keeps
-        // it. Both access kinds are covered — tsc treats `exports["A"] = ...`
-        // the same as `exports.A = ...`.
-        if self.is_js_file()
-            && !self.current_source_file_has_esm_syntax()
-            && self
-                .ctx
-                .arena
-                .get(access.expression)
-                .is_some_and(|n| n.kind == SyntaxKind::Identifier as u16)
-            && self.is_unshadowed_commonjs_exports_identifier(access.expression)
-        {
-            return None;
-        }
-        let receiver = self.get_type_of_node(access.expression);
-        (receiver != TypeId::ERROR).then_some(receiver)
+        // `obj.m = function () { ... }`. The CommonJS `exports.A = ...` /
+        // `module.exports.A = ...` bases are handled by
+        // `assignment_rhs_base_this_type` (Mechanism 2 of #16964), keeping this
+        // return-inference path in step with the diagnostic path.
+        let base_expr = self.ctx.arena.get_access_expr(left_node)?.expression;
+        self.assignment_rhs_base_this_type(base_expr)
     }
 
     fn prototype_assignment_instance_type(&mut self, expr: NodeIndex) -> Option<TypeId> {
