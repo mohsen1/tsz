@@ -667,6 +667,28 @@ impl ParserState {
                 if self.expression_statement_block_function_recovers_conditional_tail(expression) {
                     self.recover_invalid_conditional_tail_after_expression_statement();
                 }
+                // The current token now starts a brand-new statement independent of
+                // this missing-LHS binary-expression recovery (tsc: `<missing> <op>
+                // <rhs>`, e.g. `in get`, `instanceof get`) — its own diagnostic must
+                // not be dropped just for sitting near this statement's TS1005
+                // (#16291). Detected by the statement's own "Expression expected"
+                // diagnostic anchored at its start position, rather than by
+                // `started_with_binary_operator` alone: a reserved word like
+                // `instanceof` is (incorrectly, but out of scope here) also listed
+                // in `is_expression_start()`'s identifier-like set, so it takes the
+                // generic `parse_expression()` path instead — which still recovers
+                // through the same "synthesize a missing left operand, keep parsing
+                // the operator as a binary continuation" shape and reports the same
+                // TS1109 at `start_pos`.
+                let statement_recovered_missing_lhs_at_start =
+                    self.parse_diagnostics.iter().any(|d| {
+                        d.start == start_pos && d.code == diagnostic_codes::EXPRESSION_EXPECTED
+                    });
+                if !started_with_binary_operator_skip_path
+                    && (started_with_binary_operator || statement_recovered_missing_lhs_at_start)
+                {
+                    self.force_next_missing_semicolon_error_once = true;
+                }
             }
             // For malformed JSX heads like `<X -attr={...} />`, tsc reports `';' expected`
             // at `=` and then continues from the `{...}` tail, which can surface
