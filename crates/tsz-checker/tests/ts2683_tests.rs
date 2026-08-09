@@ -525,3 +525,114 @@ function outer() {
         "Expected nested function inside class inside function to emit TS2683, got: {diags:?}"
     );
 }
+
+// #16964: a function expression assigned as the RHS of a property/element
+// write gets a contextual `this` from the assignment's base object
+// expression — matching tsc — instead of being silently `any`.
+
+#[test]
+fn property_assignment_this_is_base_object_type_ts2339() {
+    // `this` inside the assigned function is the *base object's* type
+    // (`{}`, the type of `o`), not `any` — so an absent member access
+    // reports TS2339 against that base type instead of staying silent.
+    let src = r#"
+const o = {};
+o.m = function () {
+    this.q = 1;
+};
+"#;
+    let diags = get_diagnostics(src);
+    assert!(
+        diags.iter().any(|d| d.0 == 2339),
+        "Expected TS2339 for a missing member on the base object's type, got: {diags:?}"
+    );
+    assert!(
+        !diags.iter().any(|d| d.0 == 2683),
+        "This is a resolved contextual `this`, not implicit `any` — TS2683 must not fire, got: {diags:?}"
+    );
+}
+
+#[test]
+fn property_assignment_this_is_nominal_base_type_ts2339() {
+    // Same rule against a nominally-typed base: `this` = `Foo`, and `Foo`
+    // does not declare `q`, so TS2339 fires against `Foo` — not `bar`'s own
+    // (irrelevant) declared type.
+    let src = r#"
+interface Foo {
+    bar: any;
+}
+declare const foo: Foo;
+foo.bar = function () {
+    this.q = 1;
+};
+"#;
+    let diags = get_diagnostics(src);
+    assert!(
+        diags.iter().any(|d| d.0 == 2339),
+        "Expected TS2339 against the base object's declared type, got: {diags:?}"
+    );
+    assert!(
+        !diags.iter().any(|d| d.0 == 2683),
+        "Contextual `this` resolved from the base object — TS2683 must not fire, got: {diags:?}"
+    );
+}
+
+#[test]
+fn property_assignment_this_member_present_on_base_type_no_error() {
+    // Adjacent positive case: the base object's type already declares the
+    // member `this` accesses, so neither TS2339 nor TS2683 fires.
+    let src = r#"
+interface Foo {
+    bar: any;
+    q: number;
+}
+declare const foo: Foo;
+foo.bar = function () {
+    this.q = 1;
+};
+"#;
+    let diags = get_diagnostics(src);
+    assert!(
+        diags.is_empty(),
+        "Expected a clean check when the base type already declares the accessed member, got: {diags:?}"
+    );
+}
+
+#[test]
+fn property_assignment_this_element_access_base_no_error() {
+    // Same rule via an element-access assignment target (`x[y] = function`),
+    // not just dotted property access.
+    let src = r#"
+interface Foo {
+    q: number;
+}
+declare const foo: Foo;
+declare const key: string;
+(foo as any)[key] = function () {
+    this.q = 1;
+};
+"#;
+    let diags = get_diagnostics(src);
+    assert!(
+        diags.is_empty(),
+        "Expected a clean check for an `any`-typed element-access base, got: {diags:?}"
+    );
+}
+
+#[test]
+fn bare_identifier_reassignment_still_emits_ts2683() {
+    // A bare-identifier reassignment (`f = function () {...}`, no base
+    // object) is NOT a property-assignment RHS: tsc still reports plain
+    // implicit-any TS2683, matching an unassigned function expression.
+    let src = r#"
+let f: () => void;
+f = function () {
+    this.q = 1;
+};
+"#;
+    let diags = get_diagnostics(src);
+    assert!(
+        diags.iter().any(|d| d.0 == 2683),
+        "Expected TS2683 for a bare-identifier reassignment (no base object), got: {diags:?}"
+    );
+}

@@ -201,12 +201,19 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                     return self.checker.apply_flow_narrowing(idx, this_type);
                 }
                 TypeId::ANY
+            } else if let Some(base_this_type) = self
+                .checker
+                .enclosing_function_assignment_rhs_this_type(idx)
+            {
+                // The function expression is the direct RHS of a property/
+                // element-access assignment (`x.y = function () {...}`):
+                // `this` is contextually the type of the assignment's base
+                // object expression `x`, not implicit `any` (#16964).
+                self.checker.apply_flow_narrowing(idx, base_this_type)
             } else {
                 // Fall through to TS2683 / TS7041 checks below
-                // Suppress if the nested function has an explicit `this` parameter,
-                // a contextual `this` type from a parent type annotation, or is
-                // itself the direct RHS of an assignment (`x.y = function () {}`
-                // does not warn, even though `this` still resolves to `any` below).
+                // Suppress if the nested function has an explicit `this` parameter
+                // or a contextual `this` type from a parent type annotation.
                 if self.checker.ctx.no_implicit_this()
                     && !self
                         .checker
@@ -214,7 +221,6 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                     && !self
                         .checker
                         .enclosing_function_has_contextual_this_type(idx)
-                    && !self.checker.enclosing_function_is_assignment_rhs(idx)
                 {
                     use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
                     self.checker.error_at_node(
@@ -243,30 +249,39 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
             // synthesizes a `this` for plain JS constructor functions, so a
             // top-level JS function's `this` is implicitly `any` here just like
             // in TS files — not only nested ones.
-            //
-            // The TYPE is `any` regardless of `noImplicitThis` (a plain
-            // function's `this` has no declared receiver either way); only
-            // the *warning* about that implicit `any` is gated by the flag.
-            // Suppress the warning if the enclosing function has an explicit
-            // `this` parameter, a contextual `this` type from a parent type
-            // annotation, or is itself the direct RHS of an assignment.
-            if self.checker.ctx.no_implicit_this()
-                && !self
-                    .checker
-                    .enclosing_function_has_explicit_this_parameter(idx)
-                && !self
-                    .checker
-                    .enclosing_function_has_contextual_this_type(idx)
-                && !self.checker.enclosing_function_is_assignment_rhs(idx)
+            if let Some(base_this_type) = self
+                .checker
+                .enclosing_function_assignment_rhs_this_type(idx)
             {
-                use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-                self.checker.error_at_node(
-                    idx,
-                    diagnostic_messages::THIS_IMPLICITLY_HAS_TYPE_ANY_BECAUSE_IT_DOES_NOT_HAVE_A_TYPE_ANNOTATION,
-                    diagnostic_codes::THIS_IMPLICITLY_HAS_TYPE_ANY_BECAUSE_IT_DOES_NOT_HAVE_A_TYPE_ANNOTATION,
-                );
+                // The function expression is the direct RHS of a property/
+                // element-access assignment (`x.y = function () {...}`):
+                // `this` is contextually the type of the assignment's base
+                // object expression `x`, not implicit `any` (#16964).
+                self.checker.apply_flow_narrowing(idx, base_this_type)
+            } else {
+                // The TYPE is `any` regardless of `noImplicitThis` (a plain
+                // function's `this` has no declared receiver either way); only
+                // the *warning* about that implicit `any` is gated by the flag.
+                // Suppress the warning if the enclosing function has an explicit
+                // `this` parameter or a contextual `this` type from a parent
+                // type annotation.
+                if self.checker.ctx.no_implicit_this()
+                    && !self
+                        .checker
+                        .enclosing_function_has_explicit_this_parameter(idx)
+                    && !self
+                        .checker
+                        .enclosing_function_has_contextual_this_type(idx)
+                {
+                    use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+                    self.checker.error_at_node(
+                        idx,
+                        diagnostic_messages::THIS_IMPLICITLY_HAS_TYPE_ANY_BECAUSE_IT_DOES_NOT_HAVE_A_TYPE_ANNOTATION,
+                        diagnostic_codes::THIS_IMPLICITLY_HAS_TYPE_ANY_BECAUSE_IT_DOES_NOT_HAVE_A_TYPE_ANNOTATION,
+                    );
+                }
+                TypeId::ANY
             }
-            TypeId::ANY
         } else if self.checker.is_js_file() {
             // JS-file top-level/arrow-inherited `this` behavior is
             // unaffected by this change; keep it exactly as before.
