@@ -322,43 +322,52 @@ impl<'a> CheckerState<'a> {
         true
     }
 
-    /// Whether the nearest enclosing non-arrow function *expression* is the
-    /// direct right-hand side of an assignment (`x.y = function () {}`,
-    /// optionally parenthesized), regardless of what `x.y`'s type is.
+    /// If the nearest enclosing non-arrow function *expression* is the direct
+    /// right-hand side of a property/element-access assignment
+    /// (`x.y = function () {}`, `x[y] = function () {}`, optionally
+    /// parenthesized), returns the contextual `this` type tsc gives the
+    /// function body: the type of the assignment's base object expression
+    /// (`x`), evaluated at the assignment site.
     ///
-    /// This is a purely syntactic assignment-target check: tsc does not warn
-    /// about the resulting implicit-`any` `this` in that position (see
-    /// `property_assignment_any_receiver_no_ts2683`), but assignment position
-    /// alone does not establish a contextual `this` TYPE — a real contextual
-    /// receiver still requires `enclosing_function_has_contextual_this_type`
-    /// (e.g. the target actually carries a `this`-parameterized signature).
-    /// Callers must use this only to gate the TS2683 diagnostic, never to
-    /// decide whether the function has its own `this` binding — conflating
-    /// the two previously caused a nested `this.` (e.g.
+    /// A bare-identifier reassignment (`f = function () {}`, no base object)
+    /// is not a property-assignment RHS and returns `None` — tsc still
+    /// reports plain implicit-any TS2683 for that shape, matching an
+    /// unassigned function expression (#16964).
+    ///
+    /// tsc's rule is `this` = the type of the LHS's *base object* expression,
+    /// not the assigned property's own declared type: an `any`-typed base
+    /// still yields `this: any` (`property_assignment_any_receiver_no_ts2683`
+    /// — an `any` base makes this function return `Some(TypeId::ANY)`, which
+    /// is why that test sees no TS2683 either — the type is `any` because the
+    /// contextual receiver genuinely is, not because the diagnostic was
+    /// blanket-suppressed), and a nominally-typed base missing the accessed
+    /// member reports TS2339 against that base type rather than staying
+    /// silent.
+    ///
+    /// Callers must use the returned type as the function's actual `this`
+    /// type, never merely to decide whether the function has its own `this`
+    /// binding — conflating the two previously caused a nested `this.` (e.g.
     /// `obj.onload = function () { this. }` inside a class method) to
     /// silently resolve to the *enclosing class's* instance type instead of
-    /// `any`.
-    pub(crate) fn enclosing_function_is_assignment_rhs(&self, idx: NodeIndex) -> bool {
-        use tsz_parser::parser::syntax_kind_ext::FUNCTION_EXPRESSION;
+    /// the assignment's contextual type.
+    pub(crate) fn enclosing_function_assignment_rhs_this_type(
+        &mut self,
+        idx: NodeIndex,
+    ) -> Option<TypeId> {
+        use tsz_parser::parser::syntax_kind_ext::{
+            ELEMENT_ACCESS_EXPRESSION, FUNCTION_EXPRESSION, PROPERTY_ACCESS_EXPRESSION,
+        };
 
-        let Some(enclosing_fn) = self.find_enclosing_non_arrow_function(idx) else {
-            return false;
-        };
-        let Some(fn_node) = self.ctx.arena.get(enclosing_fn) else {
-            return false;
-        };
+        let enclosing_fn = self.find_enclosing_non_arrow_function(idx)?;
+        let fn_node = self.ctx.arena.get(enclosing_fn)?;
         if fn_node.kind != FUNCTION_EXPRESSION {
-            return false;
+            return None;
         }
 
         let mut current = enclosing_fn;
         for _ in 0..3 {
-            let Some(parent) = self.ctx.arena.parent_of(current) else {
-                break;
-            };
-            let Some(parent_node) = self.ctx.arena.get(parent) else {
-                break;
-            };
+            let parent = self.ctx.arena.parent_of(current)?;
+            let parent_node = self.ctx.arena.get(parent)?;
             if parent_node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
                 current = parent;
                 continue;
@@ -368,11 +377,18 @@ impl<'a> CheckerState<'a> {
                 && binary.right == current
                 && self.is_assignment_operator(binary.operator_token)
             {
-                return true;
+                let lhs_node = self.ctx.arena.get(binary.left)?;
+                if lhs_node.kind != PROPERTY_ACCESS_EXPRESSION
+                    && lhs_node.kind != ELEMENT_ACCESS_EXPRESSION
+                {
+                    return None;
+                }
+                let base_expr_idx = self.ctx.arena.get_access_expr(lhs_node)?.expression;
+                return Some(self.get_type_of_node(base_expr_idx));
             }
             break;
         }
-        false
+        None
     }
 
     /// Find the nearest enclosing class declaration/expression by walking parents.
