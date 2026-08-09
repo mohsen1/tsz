@@ -1590,12 +1590,14 @@ impl<'a> CheckerState<'a> {
             // That type comes from a sibling declaration, not the getter's own
             // inferred type, so it is not self-referential and is safe to check
             // return statements against like a real annotation.
+            let paired_setter_type = if is_getter && !has_type_annotation {
+                self.contextual_getter_return_type_for_class_accessor(accessor)
+            } else {
+                None
+            };
             let effective_return_type = if has_type_annotation {
                 return_type
-            } else if is_getter
-                && let Some(paired_setter_type) =
-                    self.contextual_getter_return_type_for_class_accessor(accessor)
-            {
+            } else if let Some(paired_setter_type) = paired_setter_type {
                 paired_setter_type
             } else {
                 TypeId::ANY
@@ -1610,14 +1612,29 @@ impl<'a> CheckerState<'a> {
             if is_getter {
                 // Check if this is an async getter
                 let is_async = self.has_async_modifier(&accessor.modifiers);
+                // An unannotated getter paired with an annotated setter is checked
+                // for completeness (TS2355/TS2366) against the setter's inherited
+                // type exactly as if it were the getter's own annotation — tsc's
+                // `isGetAccessorWithAnnotatedSetAccessor` treats that inherited
+                // type as the getter's effective declared type for every purpose,
+                // not just contextual typing of its `return` statements.
+                let has_declared_or_inherited_return_type =
+                    has_type_annotation || paired_setter_type.is_some();
+                let completeness_return_type = if has_type_annotation {
+                    return_type
+                } else if let Some(paired_setter_type) = paired_setter_type {
+                    paired_setter_type
+                } else {
+                    return_type
+                };
                 // For async getters, extract the inner type from Promise<T>
                 let mut check_return_type = self.return_type_for_implicit_return_check(
-                    return_type,
+                    completeness_return_type,
                     is_async,
                     false, // getters cannot be generators
                 );
                 if is_async
-                    && check_return_type == return_type
+                    && check_return_type == completeness_return_type
                     && has_type_annotation
                     && self.return_type_annotation_is_exactly_promise(accessor.type_annotation)
                 {
@@ -1640,11 +1657,20 @@ impl<'a> CheckerState<'a> {
                         diagnostic_codes::A_GET_ACCESSOR_MUST_RETURN_A_VALUE,
                     );
                 }
-                if has_type_annotation && requires_return && falls_through {
+                if has_declared_or_inherited_return_type && requires_return && falls_through {
+                    // A getter that inherits its effective type from a paired
+                    // setter has no annotation node of its own to anchor on;
+                    // tsc blames the getter's name instead (matching TS7033 /
+                    // "must return a value" above).
+                    let error_node = if has_type_annotation {
+                        accessor.type_annotation
+                    } else {
+                        accessor.name
+                    };
                     if !has_return {
                         // TS2355: no return statements at all.
                         self.error_at_node(
-                            accessor.type_annotation,
+                            error_node,
                             "A function whose declared type is neither 'undefined', 'void', nor 'any' must return a value.",
                             diagnostic_codes::A_FUNCTION_WHOSE_DECLARED_TYPE_IS_NEITHER_UNDEFINED_VOID_NOR_ANY_MUST_RETURN_A_V,
                         );
@@ -1652,7 +1678,7 @@ impl<'a> CheckerState<'a> {
                         // TS2366: some return statements exist, but not every path returns.
                         use crate::diagnostics::diagnostic_messages;
                         self.error_at_node(
-                            accessor.type_annotation,
+                            error_node,
                             diagnostic_messages::FUNCTION_LACKS_ENDING_RETURN_STATEMENT_AND_RETURN_TYPE_DOES_NOT_INCLUDE_UNDEFINE,
                             diagnostic_codes::FUNCTION_LACKS_ENDING_RETURN_STATEMENT_AND_RETURN_TYPE_DOES_NOT_INCLUDE_UNDEFINE,
                         );

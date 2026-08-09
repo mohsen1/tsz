@@ -10,22 +10,38 @@
 use tsz_checker::test_utils::check_source_strict;
 use tsz_common::diagnostics::Diagnostic;
 
-/// The nested elaboration lines (depth, code, text) of the first TS2322.
-fn ts2322_chain(diags: &[Diagnostic]) -> Vec<(u8, u32, String)> {
+/// The nested elaboration lines' text of the first diagnostic with `code`.
+fn chain_texts_for(diags: &[Diagnostic], code: u32) -> Vec<String> {
     diags
         .iter()
-        .find(|d| d.code == 2322)
+        .find(|d| d.code == code)
         .map(|d| {
             d.related_information
                 .iter()
-                .map(|r| (r.depth, r.code, r.message_text.clone()))
+                .map(|r| r.message_text.clone())
                 .collect()
         })
         .unwrap_or_default()
 }
 
+/// The nested elaboration lines' text of the first TS2322 (assignment mismatch).
 fn chain_texts(diags: &[Diagnostic]) -> Vec<String> {
-    ts2322_chain(diags).into_iter().map(|(_, _, m)| m).collect()
+    chain_texts_for(diags, 2322)
+}
+
+/// Assert the elaboration names `present` as a failing constituent and (when
+/// given) does not name `absent`.
+fn assert_names_constituent(texts: &[String], present: &str, absent: Option<&str>) {
+    assert!(
+        texts.iter().any(|m| m.contains(present)),
+        "expected the source-order constituent `{present}`; got {texts:?}"
+    );
+    if let Some(absent) = absent {
+        assert!(
+            !texts.iter().any(|m| m.contains(absent)),
+            "must not name `{absent}`; got {texts:?}"
+        );
+    }
 }
 
 #[test]
@@ -40,16 +56,10 @@ const y1: boolean = c1;
 type U = { m: number } | { m: number };
 "#,
     );
-    let texts = chain_texts(&diags);
-    assert!(
-        texts
-            .iter()
-            .any(|m| m.contains("Type '{ m: number; }' is not assignable to type 'boolean'")),
-        "expected the anonymous constituent `{{ m: number; }}` in the elaboration; got {texts:?}"
-    );
-    assert!(
-        !texts.iter().any(|m| m.contains("Type 'U'")),
-        "elaboration must not name the unrelated alias `U`; got {texts:?}"
+    assert_names_constituent(
+        &chain_texts(&diags),
+        "Type '{ m: number; }' is not assignable to type 'boolean'",
+        Some("Type 'U'"),
     );
 }
 
@@ -109,12 +119,10 @@ declare const e: { m: number } | { n: string };
 const ee: boolean = e;
 "#,
     );
-    let texts = chain_texts(&diags);
-    assert!(
-        texts
-            .iter()
-            .any(|m| m.contains("Type '{ m: number; }' is not assignable to type 'boolean'")),
-        "expected the first constituent `{{ m: number; }}`; got {texts:?}"
+    assert_names_constituent(
+        &chain_texts(&diags),
+        "Type '{ m: number; }' is not assignable to type 'boolean'",
+        None,
     );
 }
 
@@ -129,12 +137,75 @@ declare const e: { m: number } | E1;
 const ee: boolean = e;
 "#,
     );
-    let texts = chain_texts(&diags);
-    assert!(
-        texts
-            .iter()
-            .any(|m| m.contains("Type '{ m: number; }' is not assignable to type 'boolean'")),
-        "expected the first source-order constituent `{{ m: number; }}`; got {texts:?}"
+    assert_names_constituent(
+        &chain_texts(&diags),
+        "Type '{ m: number; }' is not assignable to type 'boolean'",
+        None,
+    );
+}
+
+#[test]
+fn anonymous_object_union_names_first_source_order_member_when_interning_reverses_it() {
+    // #16965: the leading `preB`/`preA` declarations force `{ b: number }`'s
+    // shape to be content-interned *before* `{ a: string }`, so tsz's canonical
+    // (ShapeId-keyed) union member order is `{ b } , { a }` — reversed from the
+    // written `{ a: string } | { b: number }`. tsc mints a fresh anonymous type
+    // per `TypeLiteral`, so it always names the first *written* failing member.
+    // The union header already prints source order (from `union_origin`); the
+    // nested elaboration must agree.
+    let diags = check_source_strict(
+        r#"
+declare const preB: { b: number };
+declare const preA: { a: string };
+declare const v: { a: string } | { b: number };
+const x: boolean = v;
+"#,
+    );
+    assert_names_constituent(
+        &chain_texts(&diags),
+        "Type '{ a: string; }' is not assignable to type 'boolean'",
+        Some("Type '{ b: number; }' is not assignable to type 'boolean'"),
+    );
+}
+
+#[test]
+fn anonymous_object_union_ts2345_names_first_source_order_member_when_reversed() {
+    // Same reversed-interning shape as above, but the failing relation is a
+    // TS2345 argument mismatch rather than a TS2322 assignment. Both diagnostics
+    // consume the same union-source elaboration, so the fix covers both.
+    let diags = check_source_strict(
+        r#"
+declare const preB: { b: number };
+declare const preA: { a: string };
+declare const v: { a: string } | { b: number };
+declare function f(x: boolean): void;
+f(v);
+"#,
+    );
+    assert_names_constituent(
+        &chain_texts_for(&diags, 2345),
+        "Type '{ a: string; }' is not assignable to type 'boolean'",
+        Some("Type '{ b: number; }' is not assignable to type 'boolean'"),
+    );
+}
+
+#[test]
+fn anonymous_object_union_three_members_names_first_source_order_member_when_reversed() {
+    // Three anonymous members with pre-declarations that scramble the canonical
+    // order: source order `{ a } | { b } | { c }` must still name `{ a }`.
+    let diags = check_source_strict(
+        r#"
+declare const preC: { c: boolean };
+declare const preB: { b: number };
+declare const preA: { a: string };
+declare const v: { a: string } | { b: number } | { c: boolean };
+const x: number = v;
+"#,
+    );
+    assert_names_constituent(
+        &chain_texts(&diags),
+        "Type '{ a: string; }' is not assignable to type 'number'",
+        None,
     );
 }
 

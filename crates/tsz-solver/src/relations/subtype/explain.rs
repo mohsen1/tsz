@@ -1202,11 +1202,23 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             };
         if let Some(member_list) = union_member_list {
             let members = self.interner.type_list(member_list);
+            // Base the walk on the union's as-written source order when the
+            // interner recorded one (`get_union_origin`) and it is a pure
+            // reordering of the interned members. tsz's canonical member order
+            // is by `ShapeId`/allocation identity, which can reverse source
+            // order for anonymous object members (#16965); the header already
+            // renders source order from the same side table, so the nested
+            // elaboration must agree. A flatten/collapse origin (a different
+            // member set) is rejected and the interned order is kept — see
+            // `union_source_elaboration_origin_override`.
+            let origin_override =
+                self.union_source_elaboration_origin_override(union_member_source, &members);
+            let base = origin_override.as_deref().unwrap_or(&members);
             // Pick the first failing member in tsc's *relation* order (nullish
             // first), not tsz's stored *printer* order (nullish last) — see
             // `reorder_union_members_nullish_first`. Example: `number | undefined`
             // -> `string` drills the `undefined` member, matching tsc.
-            let mut ordered = reorder_union_members_nullish_first(&members);
+            let mut ordered = reorder_union_members_nullish_first(base);
             // Same-rank enum members: `sort_union_members` orders the interned
             // list by allocation identity (needed so `E1 | E2` and `E2 | E1`
             // intern to one canonical `TypeId`), which does not track
