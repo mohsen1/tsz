@@ -378,15 +378,15 @@ fn import_alias_through_plain_reexport_to_class_reports_neither() {
 /// the multi-hop case silently read `(has_type: false, has_value: false)`
 /// and neither the TS1291 nor the TS1289 condition ever fired. tsz-org/tsz#17098.
 ///
-/// Filters to the TS1282/1283/1289/1291 family this fix owns rather than
-/// asserting the full diagnostic set: tsc additionally reports TS1484 here
-/// (`'Foo' is a type...`, oracle-verified), but tsz's independent TS1484-vs-
-/// TS1485 picker in `check_verbatim_module_syntax_imports`
-/// (`is_import_specifier_alias_reexport`) still emits TS1485 instead for a
-/// type reached through a plain re-export hop — a separate, pre-existing
-/// gap this PR does not touch.
+/// tsc additionally reports TS1484 on the import statement itself here
+/// (`'Foo' is a type...`, oracle-verified against `typescript@7.0.2`): the
+/// TS1484-vs-TS1485 picker in `check_verbatim_module_syntax_imports` follows
+/// the full re-export chain to the pure-type target (no runtime value), so a
+/// type reached through a plain re-export hop is TS1484 — not TS1485, which
+/// is reserved for a *value* target reached across an explicit type-only
+/// boundary. tsz-org/tsz#17098.
 #[test]
-fn import_alias_through_plain_reexport_to_interface_reports_1282_and_1291_verbatim() {
+fn import_alias_through_plain_reexport_to_interface_reports_1282_1291_and_1484_verbatim() {
     let diagnostics = check(
         &[
             ("/impl.ts", "export interface Foo { x: number }\n"),
@@ -401,24 +401,15 @@ fn import_alias_through_plain_reexport_to_interface_reports_1282_and_1291_verbat
         false,
     );
 
-    let export_assignment_codes: Vec<u32> = diagnostics
-        .iter()
-        .map(|d| d.code)
-        .filter(|code| {
-            [
-                EXPORT_EQUALS_MUST_REFERENCE_A_VALUE,
-                EXPORT_EQUALS_MUST_REFERENCE_A_REAL_VALUE,
-                RESOLVES_TO_A_TYPE,
-                RESOLVES_TO_A_TYPE_ONLY_DECLARATION,
-            ]
-            .contains(code)
-        })
-        .collect();
     assert_eq!(
-        export_assignment_codes,
-        vec![EXPORT_EQUALS_MUST_REFERENCE_A_VALUE, RESOLVES_TO_A_TYPE],
-        "expected TS1282 and TS1291 for an import alias resolving to a pure \
-         type through a plain (non-type-only) re-export hop under \
+        codes(&diagnostics),
+        vec![
+            EXPORT_EQUALS_MUST_REFERENCE_A_VALUE,
+            RESOLVES_TO_A_TYPE,
+            IMPORT_MUST_BE_TYPE_ONLY,
+        ],
+        "expected TS1282, TS1291 and TS1484 for an import alias resolving to a \
+         pure type through a plain (non-type-only) re-export hop under \
          verbatimModuleSyntax, got: {diagnostics:?}"
     );
 }

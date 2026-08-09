@@ -215,6 +215,9 @@ path = "tests/contextual_alias_union_return_inference_tests.rs"
 name = "type_only_import_reexport_tests"
 path = "tests/type_only_import_reexport_tests.rs"
 [[test]]
+name = "ts1205_reexport_chain_code_tests"
+path = "tests/ts1205_reexport_chain_code_tests.rs"
+[[test]]
 name = "variadic_tuple_spread_arity_ts2556_tests"
 path = "tests/variadic_tuple_spread_arity_ts2556_tests.rs"
 [[test]]
@@ -605,6 +608,9 @@ path = "tests/ts1238_experimental_decorator_anchor_tests.rs"
 [[test]]
 name = "ts1238_class_decorator_not_callable_chain_tests"
 path = "tests/ts1238_class_decorator_not_callable_chain_tests.rs"
+[[test]]
+name = "ts1329_class_decorator_zero_arg_factory_tests"
+path = "tests/ts1329_class_decorator_zero_arg_factory_tests.rs"
 [[test]]
 name = "ts2862_keyof_tparam_tests"
 path = "tests/ts2862_keyof_tparam_tests.rs"

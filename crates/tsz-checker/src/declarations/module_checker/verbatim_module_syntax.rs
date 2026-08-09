@@ -95,7 +95,18 @@ impl<'a> CheckerState<'a> {
                 )
             };
             self.error_at_node(anchor, message, code);
-            return;
+            // `module: "preserve"` + `isolatedModules` (TS1293) reports only the
+            // CJS syntax error. Under verbatimModuleSyntax, tsc still reports the
+            // per-specifier re-export type diagnostics (TS1205/TS1448) at their
+            // own anchors *alongside* the ESM-in-CJS syntax error — the same
+            // double-report the import side does (oracle-verified: a plain
+            // re-export of a type in a CommonJS file reports both TS1295 and
+            // TS1205 at the same position). Fall through to the per-specifier
+            // loop so the commonjs slice matches the ESM slice
+            // (tsz-org/tsz#17098).
+            if preserve_isolated {
+                return;
+            }
         }
 
         let module_specifier_text = if module_specifier_idx.is_some() {
@@ -164,17 +175,30 @@ impl<'a> CheckerState<'a> {
             };
 
             if is_type_only_chain {
-                if option_name == "verbatimModuleSyntax" {
-                    let message = format_message(
-                        diagnostic_messages::RE_EXPORTING_A_TYPE_WHEN_IS_ENABLED_REQUIRES_USING_EXPORT_TYPE,
-                        &[option_name],
-                    );
-                    self.error_at_node(
-                        source_name_idx,
-                        &message,
-                        diagnostic_codes::RE_EXPORTING_A_TYPE_WHEN_IS_ENABLED_REQUIRES_USING_EXPORT_TYPE,
-                    );
-                } else {
+                // tsc (`checkAliasSymbol`) selects the code for a plain
+                // (non-type-only) re-export specifier purely on `isType` —
+                // whether the alias, resolved through the FULL re-export chain,
+                // lands on a declaration carrying no runtime value:
+                //   message = isType ? TS1205 : TS1448.
+                // A plain re-export whose chain ends at a pure type
+                // (interface / type alias) is TS1205 at EVERY hop, no matter how
+                // many re-export hops sit between this specifier and the
+                // original declaration; the `is_inherent_type` fast path above
+                // only catches the first hop, where the target is the
+                // declaration itself, so the deeper hops arrive here. TS1448
+                // ("resolves to a type-only declaration") is reserved for a
+                // target that DOES carry a runtime value but was marked
+                // type-only (`import type` / `export type`) somewhere in the
+                // chain. The flag name (`isolatedModules` /
+                // `verbatimModuleSyntax`) is interpolated identically in both
+                // messages, so the choice is `isType`-driven for both options,
+                // not option-driven.
+                let resolved_has_runtime_value = self.reexport_chain_target_has_runtime_value(
+                    module_specifier_text.as_deref(),
+                    &source_name,
+                );
+
+                if resolved_has_runtime_value {
                     let export_name = self
                         .get_identifier_text_from_idx(specifier.name)
                         .unwrap_or_else(|| source_name.clone());
@@ -186,6 +210,16 @@ impl<'a> CheckerState<'a> {
                         source_name_idx,
                         &message,
                         diagnostic_codes::RESOLVES_TO_A_TYPE_ONLY_DECLARATION_AND_MUST_BE_RE_EXPORTED_USING_A_TYPE_ONLY_RE,
+                    );
+                } else {
+                    let message = format_message(
+                        diagnostic_messages::RE_EXPORTING_A_TYPE_WHEN_IS_ENABLED_REQUIRES_USING_EXPORT_TYPE,
+                        &[option_name],
+                    );
+                    self.error_at_node(
+                        source_name_idx,
+                        &message,
+                        diagnostic_codes::RE_EXPORTING_A_TYPE_WHEN_IS_ENABLED_REQUIRES_USING_EXPORT_TYPE,
                     );
                 }
                 continue;
@@ -311,6 +345,44 @@ impl<'a> CheckerState<'a> {
                 return self.is_export_type_only_syntax_across_binders(module_spec, import_name);
             }
         }
+        false
+    }
+
+    /// Whether the fully-resolved target of a re-exported name carries a
+    /// runtime value, following the re-export / import alias chain to the
+    /// ultimate declaration.
+    ///
+    /// This mirrors tsc's `!isType` (`resolveAlias(symbol).flags &
+    /// SymbolFlags.Value`), the discriminator between TS1205 (re-exporting a
+    /// pure type) and TS1448 (re-exporting a value that was marked type-only
+    /// somewhere in the chain). `module_specifier` is `Some` for
+    /// `export { X } from "..."` and `None` for a bare `export { X }` whose
+    /// `X` is a local alias binding (the only local shape that reaches the
+    /// type-only-chain branch — a bare local type declaration is handled by the
+    /// inherent-type fast path).
+    pub(super) fn reexport_chain_target_has_runtime_value(
+        &self,
+        module_specifier: Option<&str>,
+        name: &str,
+    ) -> bool {
+        use tsz_binder::symbol_flags;
+
+        if let Some(module_spec) = module_specifier {
+            let (_has_type, has_value) = self.lookup_imported_target_flags(module_spec, name);
+            return has_value;
+        }
+
+        if let Some(sym_id) = self.ctx.binder.file_locals.get(name)
+            && let Some(sym) = self.ctx.binder.get_symbol(sym_id)
+            && sym.has_any_flags(symbol_flags::ALIAS)
+            && let Some(module_spec) = sym.import_module()
+        {
+            let import_name = sym.import_name().unwrap_or(name);
+            let (_has_type, has_value) =
+                self.lookup_imported_target_flags(module_spec, import_name);
+            return has_value;
+        }
+
         false
     }
 

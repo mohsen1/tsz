@@ -406,11 +406,15 @@ Two files split these checks by direction:
 - **Imports** — `import/verbatim.rs` (`check_verbatim_module_syntax_imports`):
   TS1295 (ESM `import` syntax in a CJS+VMS file, anchored at the binding name),
   TS1484 ("X is a type and must be imported using a type-only import") for a
-  directly-typed import, and TS1485 ("X resolves to a type-only declaration")
-  for an alias/re-export chain. The TS1484-vs-TS1485 split keys on whether the
-  source export is a direct type declaration
-  (`is_import_specifier_type_only && !is_import_specifier_alias_reexport`) or an
-  alias.
+  target that carries no runtime value, and TS1485 ("X resolves to a type-only
+  declaration") for a target that keeps its value but was reached across an
+  explicit `import type`/`export type` boundary. Mirroring tsc's
+  `checkAliasSymbol`, the TS1484-vs-TS1485 split keys on the *fully resolved*
+  target's value-ness (`lookup_imported_target_flags`, which follows the whole
+  re-export chain) and whether that chain crossed a type-only boundary
+  (`is_export_type_only_syntax_across_binders`) — not on whether the immediate
+  export happens to be a re-export alias. In a CJS+VMS file these type-only
+  diagnostics fire *alongside* TS1295 at the same anchor, not instead of it.
 - **Exports** — `module_checker/verbatim_module_syntax.rs`
   (`check_verbatim_module_syntax_named_exports`): TS1205 ("Re-exporting a type
   when '{0}' is enabled requires using 'export type'") and TS1448 (the

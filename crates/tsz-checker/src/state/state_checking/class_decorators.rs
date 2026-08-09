@@ -238,6 +238,15 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
+        // A decorator whose every call signature takes zero parameters is
+        // the "forgot to call the factory" shape (`@d` instead of `@d()`);
+        // tsc reports only the TS1329 hint there, not TS1238 — mirroring the
+        // member/parameter decorator paths in `decorator_signature_checks.rs`.
+        let decorator_expr = self.decorator_expression_anchor(decorator_node);
+        if self.decorator_has_zero_arg_factory_shape(decorator_expr, resolved, decorator_node) {
+            return;
+        }
+
         // Check if the decorator type is callable.
         // TypeData::Function has a single call signature (function declarations/expressions).
         // TypeData::Callable has overloaded call/construct signatures (interfaces).
@@ -311,12 +320,13 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// TS1238 for ES decorators: check that a class decorator doesn't require
-    /// more than 2 parameters.
+    /// TS1238/TS1329 for ES decorators: check that a class decorator's arity
+    /// is compatible with the runtime call.
     ///
-    /// ES decorators receive `(value, context)` — at most 2 arguments.
-    /// If the decorator function's call signature has more than 2 required
-    /// parameters, the call will fail. Emit TS1238.
+    /// ES decorators receive `(value, context)` — at most 2 arguments. A
+    /// zero-parameter decorator is the "forgot to call the factory" shape
+    /// (TS1329, see `decorator_has_zero_arg_factory_shape`); one requiring
+    /// more than 2 required parameters can never be satisfied (TS1238).
     pub(super) fn check_es_class_decorator_arity(
         &mut self,
         decorator_node: NodeIndex,
@@ -345,6 +355,18 @@ impl<'a> CheckerState<'a> {
         let Some(resolved) = self.prepare_decorator_callee(resolved) else {
             return;
         };
+
+        // A decorator whose every call signature takes zero parameters is
+        // the "forgot to call the factory" shape (`@d` instead of `@d()`);
+        // tsc reports only the TS1329 hint there, not TS1238 — same rule as
+        // the legacy (`experimentalDecorators`) class-decorator path above.
+        // A type with no call signature at all (the not-callable case just
+        // below) has no signatures to inspect here, so this is a no-op for
+        // it and falls through correctly.
+        if self.decorator_has_zero_arg_factory_shape(decorator_expression, resolved, decorator_node)
+        {
+            return;
+        }
 
         // No call signature at all (bare primitive, a class used as a
         // decorator, ...): tsc's TS1238 "not callable" chain fires
@@ -375,21 +397,12 @@ impl<'a> CheckerState<'a> {
                 .iter()
                 .filter(|p| !p.optional && !p.rest)
                 .count();
-            // ES decorators are invoked with `(value, context)`.
-            //
-            // * When the factory has no parameters at all, the runtime call
-            //   `f(value, context)` passes extra args; tsc anchors the error
-            //   at the decorator expression (excluding `@`).
-            // * When the factory requires more than two parameters, the call
-            //   cannot supply them; tsc anchors the error at the whole
-            //   decorator (including `@`).
-            if shape.params.is_empty() {
-                self.error_at_node(
-                    decorator_expression,
-                    diagnostic_messages::UNABLE_TO_RESOLVE_SIGNATURE_OF_CLASS_DECORATOR_WHEN_CALLED_AS_AN_EXPRESSION,
-                    diagnostic_codes::UNABLE_TO_RESOLVE_SIGNATURE_OF_CLASS_DECORATOR_WHEN_CALLED_AS_AN_EXPRESSION,
-                );
-            } else if required_params > 2 {
+            // ES decorators are invoked with `(value, context)`. When the
+            // factory requires more than two parameters, the call cannot
+            // supply them; tsc anchors the error at the whole decorator
+            // (including `@`). The zero-parameter case is handled above as
+            // the TS1329 decorator-factory hint, not this arity failure.
+            if required_params > 2 {
                 self.error_at_node(
                     decorator_node,
                     diagnostic_messages::UNABLE_TO_RESOLVE_SIGNATURE_OF_CLASS_DECORATOR_WHEN_CALLED_AS_AN_EXPRESSION,

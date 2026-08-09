@@ -208,6 +208,65 @@ impl<'a> CheckerState<'a> {
         )
     }
 
+    /// Whether a declared type annotation is a structural tuple or
+    /// function/constructor type that tsc always renders through `typeToString`
+    /// (`[number, string]`, `(a: number) => void`) rather than preserving as
+    /// written.
+    ///
+    /// tsz's structural `TypeFormatter` renders these identically to tsc —
+    /// including named / optional / rest tuple members and function parameter
+    /// names — so the declared-annotation source-text fallback
+    /// (`declared_type_annotation_text_for_expression_with_options`) must NOT
+    /// reproduce the written form, which leaks the author's whitespace:
+    /// `[number,string]` or `[number,   string]` instead of `[number, string]`,
+    /// and `(a:number,b:string)=>void` instead of `(a: number, b: string) =>
+    /// void`. Returning `true` here makes the caller fall back to the canonical
+    /// structural formatter, matching tsc. Parenthesized wrappers are unwrapped
+    /// so `([number, string])` is classified by its inner node. Mirrors
+    /// [`Self::annotation_is_keyof_over_degenerate_operand`], which drops the
+    /// written form for the same reason.
+    pub(in crate::error_reporter) fn annotation_is_canonicalized_structural_type(
+        arena: &tsz_parser::NodeArena,
+        annotation_idx: NodeIndex,
+    ) -> bool {
+        let mut idx = annotation_idx;
+        for _ in 0..16 {
+            let Some(node) = arena.get(idx) else {
+                return false;
+            };
+            match node.kind {
+                syntax_kind_ext::PARENTHESIZED_TYPE => {
+                    let Some(wrapped) = arena.get_wrapped_type(node) else {
+                        return false;
+                    };
+                    idx = wrapped.type_node;
+                }
+                syntax_kind_ext::TUPLE_TYPE
+                | syntax_kind_ext::FUNCTION_TYPE
+                | syntax_kind_ext::CONSTRUCTOR_TYPE => return true,
+                _ => return false,
+            }
+        }
+        false
+    }
+
+    /// Whether a declared type annotation is one whose written form `tsc` never
+    /// preserves in diagnostics, so the declared-annotation source-text fallback
+    /// must return `None` and let the caller render the canonical structural
+    /// form instead. Combines the three carve-outs — a `typeof`-alias reference,
+    /// a `keyof` over a degenerate `any`/`unknown`/`never` operand, and an
+    /// inline structural tuple / function / constructor type — into one gate so
+    /// the several echo sites cannot drift when a future carve-out is added.
+    pub(in crate::error_reporter) fn annotation_display_must_use_structural_formatter(
+        &self,
+        arena: &tsz_parser::NodeArena,
+        annotation_idx: NodeIndex,
+    ) -> bool {
+        self.annotation_names_type_query_alias(arena, annotation_idx)
+            || Self::annotation_is_keyof_over_degenerate_operand(arena, annotation_idx)
+            || Self::annotation_is_canonicalized_structural_type(arena, annotation_idx)
+    }
+
     pub(in crate::error_reporter) fn annotation_names_type_query_alias(
         &self,
         arena: &tsz_parser::NodeArena,
