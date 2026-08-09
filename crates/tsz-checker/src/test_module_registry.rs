@@ -1063,6 +1063,8 @@ mod variadic_tuple_constraint_literal_preservation_tests;
 mod variadic_tuple_spread_element_inference_tests;
 #[path = "tests/variance_property_function_bivariance_tests.rs"]
 mod variance_property_function_bivariance_tests;
+#[path = "tests/verbatim_module_syntax_commonjs_type_only_import_ts1484_tests.rs"]
+mod verbatim_module_syntax_commonjs_type_only_import_ts1484_tests;
 #[path = "tests/verbatim_module_syntax_export_default_alias_ts1284_tests.rs"]
 mod verbatim_module_syntax_export_default_alias_ts1284_tests;
 #[path = "tests/verbatim_module_syntax_export_default_type_only_import_ts1284_tests.rs"]

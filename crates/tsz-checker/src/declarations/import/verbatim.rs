@@ -222,7 +222,15 @@ impl<'a> CheckerState<'a> {
                 )
             };
             self.error_at_node(error_node, message, code);
-            return;
+            // tsc still runs the VMS-exclusive TS1484/TS1485/TS2748 checks
+            // below on the same named-import specifiers: the CJS-file
+            // ESM-syntax diagnostic (TS1286/TS1295) and the type-only-import
+            // diagnostic are independent defects that both fire on the same
+            // clause (oracle-verified: `main.ts(1,10): TS1295` and
+            // `main.ts(1,10): TS1484` on the same import, tsz-org/tsz#17098).
+            // Fall through instead of returning; `preserve_isolated` (TS1293
+            // mode, which has no VMS-exclusive checks) still gates itself
+            // below.
         }
 
         // `module: "preserve"` + `isolatedModules` (without VMS) has no
