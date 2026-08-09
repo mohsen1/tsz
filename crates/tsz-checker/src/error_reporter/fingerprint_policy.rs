@@ -850,6 +850,30 @@ impl<'a> CheckerState<'a> {
                 // (category + start/length), exactly like the union-target arm.
                 self.reanchored_container_related(reason, source, target, anchor_idx, start, length)
             }
+            SubtypeFailureReason::TooManyParameters { .. }
+            | SubtypeFailureReason::TypePredicateMismatch { .. } => {
+                // Function-signature relation failures whose cause is the
+                // signature *shape* rather than a named member: a source that
+                // declares more required parameters than the target provides
+                // arguments for (`Target signature provides too few arguments.
+                // Expected N or more, but got M.`, TS2849), or an incompatible
+                // type-predicate return (`Type predicate 'x is A' is not
+                // assignable to 'x is B'.` plus its nested leaf). tsc
+                // elaborates both beneath the call's TS2345 head exactly as it
+                // does beneath the direct-assignment TS2322 head; without this
+                // arm they fall through to `_ => return None` and the
+                // elaboration is dropped on the argument surface only (the
+                // assignment surface renders it via `render_failure_reason`).
+                // Reuse that same TS2322 elaboration as the single source of
+                // truth and re-anchor its child lines onto the call site.
+                let related = self.reanchored_container_related(
+                    reason, source, target, anchor_idx, start, length,
+                );
+                if related.is_empty() {
+                    return None;
+                }
+                related
+            }
             _ => return None,
         };
 
