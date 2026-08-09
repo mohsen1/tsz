@@ -1209,7 +1209,24 @@ impl<'a> CheckerState<'a> {
         }
 
         if let Some(property_type) = best_property_type {
-            return Some(self.sanitize_contextual_property_type(property_type));
+            let property_type = self.sanitize_contextual_property_type(property_type);
+            // Under `exactOptionalPropertyTypes`, a *present* value for an
+            // optional property (`y?: number`) is contextually typed against
+            // the bare declared type (`number`), not the read-side type with
+            // `undefined` unioned in. This only changes anything when the
+            // property is sugar-optional with no explicit `undefined` in its
+            // own type — `y?: number | undefined` still contextually types
+            // as `number | undefined`, matching `tsc`.
+            if self.ctx.exact_optional_property_types()
+                && let Some(assignment_type) = self
+                    .ctx
+                    .types
+                    .contextual_property_assignment_type(original_contextual_type, property_name)
+                && assignment_type != property_type
+            {
+                return Some(self.sanitize_contextual_property_type(assignment_type));
+            }
+            return Some(property_type);
         }
 
         // If contextual extraction fails but the parent context is generic/deferred,

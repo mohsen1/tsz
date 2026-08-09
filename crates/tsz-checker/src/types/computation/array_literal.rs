@@ -950,7 +950,27 @@ impl<'a> CheckerState<'a> {
                 {
                     // Per-position contextual typing for tuple, union-of-tuples,
                     // and homomorphic mapped contexts (binds K to the index literal).
-                    match helper.get_tuple_element_type_with_count(index, total_elem_count) {
+                    let elem_ty = helper.get_tuple_element_type_with_count(index, total_elem_count);
+                    // Under `exactOptionalPropertyTypes`, a *present* element value
+                    // for an optional tuple slot (`[number?]`) is contextually typed
+                    // against the bare declared type, not the read-side type with
+                    // `undefined` unioned in — mirroring the object-literal property
+                    // case in `contextual_object_literal_property_type`. Only takes
+                    // effect when the slot is sugar-optional with no explicit
+                    // `undefined` in its own type.
+                    let elem_ty = if self.ctx.exact_optional_property_types() {
+                        match helper
+                            .get_tuple_element_assignment_type_with_count(index, total_elem_count)
+                        {
+                            Some(assignment_ty) if Some(assignment_ty) != elem_ty => {
+                                Some(assignment_ty)
+                            }
+                            _ => elem_ty,
+                        }
+                    } else {
+                        elem_ty
+                    };
+                    match elem_ty {
                         Some(ty) => request.read().contextual(ty),
                         None => crate::context::TypingRequest::NONE,
                     }

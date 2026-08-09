@@ -366,3 +366,111 @@ function build<Elem>(): Holder<unknown, Elem> {
         "renamed-binder callback-arg construct should seed Elem from contextual return, got: {diagnostics:?}"
     );
 }
+
+// Regression tests: under `exactOptionalPropertyTypes`, the contextual type
+// fed to a *present* optional object-literal property or tuple element value
+// must be the property/element's bare declared type (e.g. `number` for
+// `y?: number`), not the read-side type with `undefined` unioned in. That
+// contextual type seeds generic inference for an unannotated callback
+// argument placed in the slot (e.g. `match(y => ...)`), so getting it wrong
+// pins the inferred type parameter to `T | undefined` and produces spurious
+// TS18048/TS2322/TS2379 inside and around the callback. `false` (the
+// default) is unaffected: the read-side `T | undefined` is correct there.
+fn exact_optional() -> CheckerOptions {
+    CheckerOptions {
+        exact_optional_property_types: true,
+        ..CheckerOptions::default()
+    }
+}
+
+const MATCH_DECL: &str = "declare function match<T>(cb: (value: T) => boolean): T;";
+
+#[test]
+fn exact_optional_object_property_generic_inference_drops_sugar_undefined() {
+    let source = format!(
+        "{MATCH_DECL}\n\
+         declare function foo(pos: {{ x?: number; y?: number }}): boolean;\n\
+         foo({{ y: match(y => y > 0) }});"
+    );
+    let diagnostics = check_with_options(&source, exact_optional());
+    assert!(
+        diagnostics.is_empty(),
+        "exactOptionalPropertyTypes should type the callback param as plain `number` for a sugar-optional `y?: number` slot, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn exact_optional_object_property_generic_inference_keeps_undefined_without_exact_flag() {
+    // Same source, default (non-exact) options: the callback param must stay
+    // `number | undefined`, so the possibly-undefined comparison still fires.
+    let source = format!(
+        "{MATCH_DECL}\n\
+         declare function foo(pos: {{ x?: number; y?: number }}): boolean;\n\
+         foo({{ y: match(y => y > 0) }});"
+    );
+    let diagnostics = check_with_options(&source, CheckerOptions::default());
+    assert_eq!(
+        diagnostics.iter().filter(|d| d.code == 18048).count(),
+        1,
+        "non-exact optional property should keep `undefined` in the callback's contextual param type, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn exact_optional_tuple_element_generic_inference_drops_sugar_undefined() {
+    let source = format!(
+        "{MATCH_DECL}\n\
+         declare function foo2(point: [number?]): boolean;\n\
+         foo2([match(y => y > 0)]);"
+    );
+    let diagnostics = check_with_options(&source, exact_optional());
+    assert!(
+        diagnostics.is_empty(),
+        "exactOptionalPropertyTypes should type the callback param as plain `number` for a sugar-optional tuple slot, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn exact_optional_tuple_element_generic_inference_keeps_undefined_without_exact_flag() {
+    let source = format!(
+        "{MATCH_DECL}\n\
+         declare function foo2(point: [number?]): boolean;\n\
+         foo2([match(y => y > 0)]);"
+    );
+    let diagnostics = check_with_options(&source, CheckerOptions::default());
+    assert_eq!(
+        diagnostics.iter().filter(|d| d.code == 18048).count(),
+        1,
+        "non-exact optional tuple element should keep `undefined` in the callback's contextual param type, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn exact_optional_required_property_generic_inference_unaffected() {
+    // A required (non-optional) property's contextual type is unaffected by
+    // `exactOptionalPropertyTypes` either way — negative control.
+    let source = format!(
+        "{MATCH_DECL}\n\
+         declare function foo(pos: {{ y: number }}): boolean;\n\
+         foo({{ y: match(y => y > 0) }});"
+    );
+    let diagnostics = check_with_options(&source, exact_optional());
+    assert!(
+        diagnostics.is_empty(),
+        "required property's contextual type must stay plain `number` regardless of exactOptionalPropertyTypes, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn exact_optional_object_property_generic_inference_renamed_binders() {
+    // Structural, not identifier-keyed: rename the generic function, type
+    // parameter, callback parameter, and target property/function names.
+    let source = "declare function pick<Val>(select: (candidate: Val) => boolean): Val;\n\
+         declare function build(opts: { count?: number }): boolean;\n\
+         build({ count: pick(candidate => candidate > 0) });";
+    let diagnostics = check_with_options(source, exact_optional());
+    assert!(
+        diagnostics.is_empty(),
+        "renamed-binder sugar-optional property should still drop `undefined` from the callback's contextual param, got: {diagnostics:?}"
+    );
+}
