@@ -13,6 +13,21 @@ pub(crate) use super::common::{
     array_element_type, callable_shape_for_type as callable_shape, is_string_type, unwrap_readonly,
 };
 
+pub(crate) use tsz_solver::type_queries::PropertyTraversalKind;
+
+/// Classify `type_id` into a property-traversal shape — the object/callable
+/// shape carrying the properties, or the member list to descend into.
+///
+/// Sibling of `common::classify_for_traversal` for callers that need each
+/// property's `PropertyInfo` (name *and* `TypeId`) rather than a name-only
+/// view, such as matching a declared symbol-keyed property by type identity.
+pub(crate) fn classify_property_traversal(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> PropertyTraversalKind {
+    tsz_solver::type_queries::classify_property_traversal(db, type_id)
+}
+
 /// Resolve a named property on a type through the solver's property evaluator.
 ///
 /// This is the canonical boundary for property access resolution. Checker code
