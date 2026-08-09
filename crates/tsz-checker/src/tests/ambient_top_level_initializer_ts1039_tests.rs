@@ -184,23 +184,101 @@ fn ambient_class_readonly_property_still_reports_ts1039() {
     );
 }
 
-/// Regression pin, not a correctness claim: `core.rs` gates this whole check
-/// on `is_in_ambient_context` (explicit `declare` ancestor), which is `false`
-/// for a bare `.d.ts` top-level declaration with no `declare` keyword, so
-/// tsz emits nothing here today. Oracle-verified against pinned
-/// `typescript@7.0.2` while writing this fix: real `tsc` DOES emit TS1039 in
-/// this exact `.d.ts` shape (`case.d.ts(1,19): error TS1039 ...`) — the
-/// pre-existing comment above the `is_in_ambient_context` check ("TSC does
-/// not emit TS1039 for variable initializers in .d.ts files") does not hold
-/// for this shape. That is a separate, pre-existing false-negative in the
-/// `is_in_ambient_context` gate itself, not the pre-contextual-reset drop
-/// this PR fixes, and out of scope here — this test only pins that the
-/// reset fix does not change `.d.ts` behavior one way or the other.
+// ---------------------------------------------------------------------------
+// The `.d.ts` emission gap (follow-up to #17080).
+//
+// A `.d.ts` file is entirely ambient, so tsc's ambient-initializer grammar
+// check fires for every top-level declaration in it — even with no `declare`
+// keyword — exactly as it does for an explicit `declare` in a `.ts` file
+// (oracle: pinned `typescript@7.0.2`, `--noEmit --strict --lib es2022`). The
+// emission was previously gated on `is_in_ambient_context` (explicit `declare`
+// ancestor only), which is `false` for a bare/`export`-modified `.d.ts` member,
+// so tsz dropped TS1039/TS1254 there — a false-negative #17080 identified and
+// deliberately left out of scope. The gate now uses `is_ambient_declaration`
+// (`.d.ts` file OR explicit ambient context), which closes it.
+// ---------------------------------------------------------------------------
+
+/// `const x: number = 1;` in a `.d.ts` (no `declare`) — tsc emits TS1039
+/// (`case.d.ts(1,19): error TS1039`), so tsz now must too.
 #[test]
-fn dts_file_bare_annotated_initializer_unaffected_by_this_fix() {
+fn dts_file_bare_annotated_initializer_reports_ts1039() {
     let got = codes_in_file("test.d.ts", "const x: number = 1;");
     assert!(
-        !got.contains(&INITIALIZERS_NOT_ALLOWED_IN_AMBIENT),
-        "this fix must not change bare-.d.ts TS1039 behavior; got {got:?}"
+        got.contains(&INITIALIZERS_NOT_ALLOWED_IN_AMBIENT),
+        "a bare-.d.ts annotated initializer is ambient — expected TS1039; got {got:?}"
     );
+}
+
+/// `export const x: number = 1;` in a `.d.ts` — an `export` modifier is not a
+/// `declare` keyword, but the file is still ambient. tsc emits TS1039.
+#[test]
+fn dts_file_export_const_annotated_initializer_reports_ts1039() {
+    let got = codes_in_file("test.d.ts", "export const x: number = 1;");
+    assert!(
+        got.contains(&INITIALIZERS_NOT_ALLOWED_IN_AMBIENT),
+        "an exported .d.ts annotated initializer is ambient — expected TS1039; got {got:?}"
+    );
+}
+
+/// `export let x: number = 1;` — a non-`const` binding gets no literal
+/// exception; tsc reports TS1039 in a `.d.ts`.
+#[test]
+fn dts_file_export_let_annotated_initializer_reports_ts1039() {
+    let got = codes_in_file("test.d.ts", "export let x: number = 1;");
+    assert!(
+        got.contains(&INITIALIZERS_NOT_ALLOWED_IN_AMBIENT),
+        "an exported .d.ts `let` initializer is ambient — expected TS1039; got {got:?}"
+    );
+}
+
+/// `export var x = 5;` — `var`/`let` never get the const-literal exception, so
+/// even a bare numeric literal initializer is TS1039 in a `.d.ts`.
+#[test]
+fn dts_file_export_var_literal_initializer_reports_ts1039() {
+    let got = codes_in_file("test.d.ts", "export var x = 5;");
+    assert!(
+        got.contains(&INITIALIZERS_NOT_ALLOWED_IN_AMBIENT),
+        "a `var` literal initializer in a .d.ts is TS1039; got {got:?}"
+    );
+}
+
+/// `let x = 1;` (bare, no `declare`) — non-`const` literal is still TS1039.
+#[test]
+fn dts_file_bare_let_literal_initializer_reports_ts1039() {
+    let got = codes_in_file("test.d.ts", "let x = 1;");
+    assert!(
+        got.contains(&INITIALIZERS_NOT_ALLOWED_IN_AMBIENT),
+        "a bare .d.ts `let` literal initializer is TS1039; got {got:?}"
+    );
+}
+
+/// `const x = 1 + 1;` (bare, no annotation) — the const-with-non-literal path is
+/// TS1254, not TS1039, in a `.d.ts` just as under `declare`.
+#[test]
+fn dts_file_bare_const_computed_initializer_reports_ts1254_not_ts1039() {
+    let got = codes_in_file("test.d.ts", "const x = 1 + 1;");
+    assert!(
+        got.contains(&CONST_INITIALIZER_MUST_BE_LITERAL)
+            && !got.contains(&INITIALIZERS_NOT_ALLOWED_IN_AMBIENT),
+        "a non-literal ambient const initializer is TS1254 in a .d.ts; got {got:?}"
+    );
+}
+
+/// Negative control: the const-literal exception still holds in a `.d.ts`, so a
+/// bare-literal `const` stays clean (no TS1039, no TS1254) — whether written
+/// bare, `export`ed, or `declare`d.
+#[test]
+fn dts_file_const_literal_initializers_stay_clean() {
+    for source in [
+        "const x = 1;",
+        "export const x = 1;",
+        "declare const x = 1;",
+    ] {
+        let got = codes_in_file("test.d.ts", source);
+        assert!(
+            !got.contains(&INITIALIZERS_NOT_ALLOWED_IN_AMBIENT)
+                && !got.contains(&CONST_INITIALIZER_MUST_BE_LITERAL),
+            "a bare-literal ambient const is legal in a .d.ts (`{source}`); got {got:?}"
+        );
+    }
 }
