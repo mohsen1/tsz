@@ -50,6 +50,30 @@ class RefreshReadmeTests(unittest.TestCase):
         self.assertEqual(summary["passed"], 6558)
         self.assertEqual(summary["total"], 6562)
 
+    def test_fourslash_bucket_shape_counts_slow_as_passing(self):
+        # A summary-less snapshot (the fallback shape): completed-but-slow tests
+        # count as passing; only fail/timeout/unrun are non-passing (#17010).
+        summary = refresh_readme.normalize_suite_summary({
+            "pass": ["a", "b", "c"],
+            "slow": ["d", "e"],
+            "fail": [{"name": "f"}],
+            "timeout": [{"name": "g"}],
+            "unrun": [{"name": "h"}],
+        }, "fourslash")
+
+        self.assertEqual(summary["passed"], 5)   # 3 pass + 2 slow
+        self.assertEqual(summary["total"], 8)    # 5 passing + 3 non-passing
+
+    def test_fourslash_bucket_shape_tolerates_missing_new_buckets(self):
+        # Older snapshots have only pass/fail — the new buckets default to empty.
+        summary = refresh_readme.normalize_suite_summary({
+            "pass": ["a", "b"],
+            "fail": [{"name": "f"}],
+        }, "fourslash")
+
+        self.assertEqual(summary["passed"], 2)
+        self.assertEqual(summary["total"], 3)
+
     def test_ci_emit_metric_shape_normalizes_to_readme_summary(self):
         summary = refresh_readme.normalize_emit_summary({
             "suite": "emit",

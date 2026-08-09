@@ -36,7 +36,13 @@ from collections import Counter
 from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from lib.query_snapshot import load_snapshot, print_top_counter, print_truncated_more
+from lib.query_snapshot import (
+    FOURSLASH_NON_PASSING_BUCKETS,
+    FOURSLASH_PASSING_BUCKETS,
+    load_snapshot,
+    print_top_counter,
+    print_truncated_more,
+)
 
 SNAPSHOT_FILE = Path(__file__).parent / "fourslash-snapshot.json"
 
@@ -54,33 +60,46 @@ def normalized_results(data):
         return data["results"]
 
     results = []
-    for file_name in data.get("pass", []):
-        if isinstance(file_name, str):
-            results.append({
-                "file": file_name,
-                "name": test_name_from_file(file_name),
-                "status": "pass",
-                "timedOut": False,
-            })
-        elif isinstance(file_name, dict):
-            record = dict(file_name)
+    # Passing buckets (pass, slow) hold bare file paths — both are
+    # assertion-passes; slow just overran the wall-clock budget (issue #17010).
+    # `timedOut` stays False for slow because it completed. The bucket name is
+    # the status.
+    for bucket in FOURSLASH_PASSING_BUCKETS:
+        for file_name in data.get(bucket, []):
+            if isinstance(file_name, str):
+                results.append({
+                    "file": file_name,
+                    "name": test_name_from_file(file_name),
+                    "status": bucket,
+                    "timedOut": False,
+                })
+            elif isinstance(file_name, dict):
+                record = dict(file_name)
+                record.setdefault("file", record.get("name", ""))
+                record.setdefault("name", test_name_from_file(record.get("file", "")))
+                record.setdefault("status", bucket)
+                record.setdefault("timedOut", False)
+                results.append(record)
+
+    # Failure family. `fail` predates the fail/timeout/unrun split, so a legacy
+    # snapshot's `fail` array may still carry timeout rows (status derived from
+    # `timedOut`); the newer per-bucket arrays each carry their own status.
+    for bucket in FOURSLASH_NON_PASSING_BUCKETS:
+        default_status = None if bucket == "fail" else bucket
+        for failure in data.get(bucket, []):
+            if isinstance(failure, str):
+                failure = {"file": failure}
+            record = dict(failure)
             record.setdefault("file", record.get("name", ""))
             record.setdefault("name", test_name_from_file(record.get("file", "")))
-            record.setdefault("status", "pass")
             record.setdefault("timedOut", False)
+            if default_status is not None:
+                record.setdefault("status", default_status)
+            else:
+                record.setdefault("status", "timeout" if record["timedOut"] else "fail")
+            if "firstFailure" not in record and "output" in record:
+                record["firstFailure"] = record["output"]
             results.append(record)
-
-    for failure in data.get("fail", []):
-        if isinstance(failure, str):
-            failure = {"file": failure}
-        record = dict(failure)
-        record.setdefault("file", record.get("name", ""))
-        record.setdefault("name", test_name_from_file(record.get("file", "")))
-        record.setdefault("timedOut", False)
-        record.setdefault("status", "timeout" if record["timedOut"] else "fail")
-        if "firstFailure" not in record and "output" in record:
-            record["firstFailure"] = record["output"]
-        results.append(record)
 
     results.sort(key=lambda r: r.get("file", ""))
     return results
@@ -89,15 +108,22 @@ def normalized_results(data):
 def normalized_summary(data, results):
     summary = data.get("summary") or {}
     total = summary.get("total", len(results))
-    passed = summary.get("passed", sum(1 for r in results if r.get("status") == "pass"))
-    failed = summary.get("failed", sum(1 for r in results if r.get("status") not in ("pass", "timeout")))
-    timed_out = summary.get("timedOut", sum(1 for r in results if r.get("timedOut")))
-    pass_rate = summary.get("passRate", round((passed / total) * 100, 1) if total else 0)
+    # Passing = pass + slow (slow completed its assertions). Failed counts only
+    # genuine assertion failures; timeout/unrun are their own tallies (#17010).
+    passed = summary.get("passed", sum(1 for r in results if r.get("status") in FOURSLASH_PASSING_BUCKETS))
+    failed = summary.get("failed", sum(1 for r in results if r.get("status") == "fail"))
+    timed_out = summary.get("timedOut", sum(1 for r in results if r.get("status") == "timeout"))
+    slow = summary.get("slow", sum(1 for r in results if r.get("status") == "slow"))
+    unrun = summary.get("unrun", sum(1 for r in results if r.get("status") == "unrun"))
+    executed = total - unrun
+    pass_rate = summary.get("passRate", round((passed / executed) * 100, 1) if executed else 0)
     return {
         "total": total,
         "passed": passed,
         "failed": failed,
+        "slow": slow,
         "timedOut": timed_out,
+        "unrun": unrun,
         "passRate": pass_rate,
     }
 
@@ -108,9 +134,13 @@ def show_overview(data):
     print(f"Fourslash Test Results")
     print(f"  Total: {s['total']}")
     print(f"  Passed: {s['passed']} ({s['passRate']}%)")
+    if s.get("slow", 0) > 0:
+        print(f"    of which slow (completed over budget): {s['slow']}")
     print(f"  Failed: {s['failed']}")
     if s.get("timedOut", 0) > 0:
         print(f"  Timed out: {s['timedOut']}")
+    if s.get("unrun", 0) > 0:
+        print(f"  Did not run: {s['unrun']}")
     print()
 
     fails = [r for r in results if r["status"] == "fail"]

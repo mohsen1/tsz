@@ -193,26 +193,37 @@ function snapshotWeightFile() {
     return path.join(__dirname, "fourslash-snapshot.json");
 }
 
+// Compact-snapshot bucket names, single-sourced (issue #17010). File buckets
+// hold bare paths (both are assertion-passes); row buckets hold failure-family
+// detail objects. Everything that splits results by outcome iterates these.
+const SNAPSHOT_FILE_BUCKETS = ["pass", "slow"];
+const SNAPSHOT_ROW_BUCKETS = ["fail", "timeout", "unrun"];
+
 function resultRowsForWeights(parsed) {
     // Legacy uncollapsed snapshot kept a full per-test result array.
     if (Array.isArray(parsed.results)) {
         return parsed.results;
     }
     // Compact snapshot: `weights` is a {file: elapsedMs} map covering every
-    // passing test, and `fail` carries the failing/timeout rows (with their
-    // own `elapsed` + `timedOut` so the timeout bias still applies). Combine
-    // both so the LPT balancer sees a weight for ~every test rather than the
-    // handful in `summary.slowest`. Before this, collapsing `pass` to bare
-    // strings (#13274) left only ~10 weighted tests and silently degraded
-    // weighted sharding to near-uniform assignment.
+    // completed test (pass + slow), and the failure-family arrays (`fail`,
+    // `timeout`, `unrun`) carry their rows with `elapsed` + `timedOut` so the
+    // timeout bias still applies. Combine them so the LPT balancer sees a
+    // weight for ~every test rather than the handful in `summary.slowest`.
+    // Before this, collapsing `pass` to bare strings (#13274) left only ~10
+    // weighted tests and silently degraded weighted sharding to near-uniform
+    // assignment.
     const rows = [];
     if (parsed.weights && typeof parsed.weights === "object" && !Array.isArray(parsed.weights)) {
         for (const [file, elapsed] of Object.entries(parsed.weights)) {
             rows.push({ file, elapsed });
         }
     }
-    if (Array.isArray(parsed.fail)) {
-        rows.push(...parsed.fail);
+    // `fail` predates the split into fail/timeout/unrun; read all of them so
+    // both old and new snapshots contribute their weighted rows.
+    for (const key of SNAPSHOT_ROW_BUCKETS) {
+        if (Array.isArray(parsed[key])) {
+            rows.push(...parsed[key]);
+        }
     }
     if (rows.length > 0) {
         return rows;
@@ -237,25 +248,31 @@ function stringifyCompactSnapshot(snapshot) {
         "{",
         `  "timestamp": ${JSON.stringify(snapshot.timestamp)},`,
         `  "summary": ${indentJson(snapshot.summary, 2).trimStart()},`,
-        '  "pass": [',
     ];
 
-    const passEntries = snapshot.pass.map(file => JSON.stringify(file));
-    for (let i = 0; i < passEntries.length; i += 8) {
-        const chunk = passEntries.slice(i, i + 8).join(", ");
-        const comma = i + 8 < passEntries.length ? "," : "";
-        lines.push(`    ${chunk}${comma}`);
+    // File-string buckets (pass, slow): bare paths packed 8/line so the
+    // full-corpus set stays well under the 2000-line file cap (#13274).
+    for (const bucket of SNAPSHOT_FILE_BUCKETS) {
+        const entries = (snapshot[bucket] || []).map(file => JSON.stringify(file));
+        lines.push(`  "${bucket}": [`);
+        for (let i = 0; i < entries.length; i += 8) {
+            const chunk = entries.slice(i, i + 8).join(", ");
+            const comma = i + 8 < entries.length ? "," : "";
+            lines.push(`    ${chunk}${comma}`);
+        }
+        lines.push("  ],");
     }
 
-    lines.push(
-        "  ],",
-        `  "fail": ${indentJson(snapshot.fail, 2).trimStart()},`,
-        '  "weights": {',
-    );
+    // Failure-family object buckets (fail, timeout, unrun): small enough to
+    // pretty-print in full.
+    for (const bucket of SNAPSHOT_ROW_BUCKETS) {
+        lines.push(`  "${bucket}": ${indentJson(snapshot[bucket] || [], 2).trimStart()},`);
+    }
 
     // Per-test timings as a compact {file: ms} map. Packed many entries per
     // line so the full-corpus weight set stays well under the 2000-line file
     // cap (the reason #13274 collapsed the old per-test result array).
+    lines.push('  "weights": {');
     const weightEntries = Object.entries(snapshot.weights || {})
         .map(([file, ms]) => `${JSON.stringify(file)}: ${ms}`);
     for (let i = 0; i < weightEntries.length; i += 16) {
@@ -270,6 +287,93 @@ function stringifyCompactSnapshot(snapshot) {
         "",
     );
     return lines.join("\n");
+}
+
+// -----------------------------------------------------------------------------
+// Outcome taxonomy (issue #17010)
+//
+// Every executed test lands in exactly one bucket. "Completed but slow" and
+// "never ran" are split out from the pass/fail axis so the published figure
+// tracks compiler correctness, not machine load:
+//
+//   pass    — assertions passed, within the wall-clock budget
+//   slow    — assertions passed, but overran the budget (harness perf signal)
+//   fail    — assertions failed (a genuine correctness result)
+//   timeout — did not complete (bridge timeout, or in-flight when a worker died)
+//   unrun   — queued behind a dead worker; never started
+//
+// `passed` for reporting = pass + slow, because a slow completion is still a
+// correctness pass. Only fail/timeout/unrun are non-passing; unrun additionally
+// means the run was incomplete.
+function summarizeResults(testResults) {
+    const counts = { passed: 0, slow: 0, failed: 0, xfailed: 0, timedOut: 0, unrun: 0 };
+    for (const r of testResults || []) {
+        switch (r.status) {
+            case "pass": counts.passed++; break;
+            case "slow": counts.slow++; break;
+            case "fail": counts.failed++; break;
+            case "xfail": counts.xfailed++; break;
+            case "timeout": counts.timedOut++; break;
+            case "unrun": counts.unrun++; break;
+            default: break;
+        }
+    }
+    return counts;
+}
+
+// Assertion-passes (load-independent). What the README/CI floor publish.
+function reportedPassCount(counts) {
+    return counts.passed + counts.slow;
+}
+
+// Tests that produced a verdict (everything except the ones that never ran).
+function executedCount(counts) {
+    return counts.passed + counts.slow + counts.failed + counts.xfailed + counts.timedOut;
+}
+
+// A run is "bad" (non-zero exit) on any genuine failure, non-completion, or
+// abandoned test. Slowness alone never fails the run — that was the load
+// dependence in #17010.
+function runFailedCount(counts) {
+    return counts.failed + counts.timedOut + counts.unrun;
+}
+
+// Split per-test results into the compact snapshot buckets. `pass`/`slow` are
+// bare file paths; the failure family keeps its detail rows. `weights` covers
+// every completed test (pass + slow) — the slow ones are exactly what the LPT
+// balancer most needs, so they must not be dropped.
+function classifySnapshotBuckets(jsonResults) {
+    const filesFor = status => jsonResults
+        .filter(r => r.status === status)
+        .map(r => r.file);
+    const rowsFor = status => jsonResults
+        .filter(r => r.status === status)
+        .map(r => {
+            const row = {
+                file: r.file,
+                name: r.name,
+                status: r.status,
+                timedOut: r.timedOut || false,
+                output: r.firstFailure || "",
+            };
+            if (r.bucket) row.bucket = r.bucket;
+            if (r.elapsed !== undefined) row.elapsed = r.elapsed;
+            return row;
+        });
+    const buckets = {};
+    for (const status of SNAPSHOT_FILE_BUCKETS) buckets[status] = filesFor(status);
+    for (const status of SNAPSHOT_ROW_BUCKETS) buckets[status] = rowsFor(status);
+    // Weights cover every completed test (pass + slow) — the slow ones are
+    // exactly what the LPT balancer most needs, so they must not be dropped.
+    // This leans on the invariant that the file-form buckets are precisely the
+    // completed/passing outcomes; if a future passing outcome ever serialized
+    // as a detail row, this filter would need its own explicit status list.
+    buckets.weights = Object.fromEntries(
+        jsonResults
+            .filter(r => SNAPSHOT_FILE_BUCKETS.includes(r.status) && Number.isFinite(Number(r.elapsed)))
+            .map(r => [r.file, Number(r.elapsed)]),
+    );
+    return buckets;
 }
 
 // When a test timed out at its CI cap (TSZ_CI_FOURSLASH_TIMEOUT_MS,
@@ -392,9 +496,9 @@ async function runSequential(opts, testsToRun) {
 
     const testType = 1; // FourSlashTestType.Server — tsz-server talks over stdio
     let passed = 0;
+    let slow = 0;
     let failed = 0;
     let xfailed = 0;
-    let timedOut = 0;
     const errors = [];
     const testResults = [];
 
@@ -414,15 +518,25 @@ async function runSequential(opts, testsToRun) {
             if (content == null) throw new Error(`Could not read test file: ${testFile}`);
             FourSlash.runFourSlashTestContent(basePath, testType, content, testFile);
             const elapsed = Date.now() - startTime;
+            // Assertions passed. Overrunning the wall-clock budget is a "slow"
+            // performance observation about the harness, not a correctness
+            // failure, so it gets its own bucket instead of being thrown as a
+            // failure (issue #17010).
             if (elapsed > opts.testTimeout) {
-                throw new Error(`Test completed but took ${elapsed}ms (timeout: ${opts.testTimeout}ms)`);
+                slow++;
+                testResults.push({ file: testFile, status: "slow", timedOut: false, error: null, elapsed });
+                if (opts.verbose) {
+                    console.log(`\x1b[33mSLOW\x1b[0m (${elapsed}ms)`);
+                }
+            } else {
+                passed++;
+                testResults.push({ file: testFile, status: "pass", timedOut: false, error: null, elapsed });
+                if (opts.verbose) {
+                    console.log(`\x1b[32mPASS\x1b[0m (${elapsed}ms)`);
+                }
             }
-            passed++;
-            testResults.push({ file: testFile, status: "pass", timedOut: false, error: null, elapsed });
-            if (opts.verbose) {
-                console.log(`\x1b[32mPASS\x1b[0m (${elapsed}ms)`);
-            } else if ((passed + failed + xfailed) % 50 === 0) {
-                process.stdout.write(`\r  Progress: ${passed + failed + xfailed}/${testsToRun.length} (${passed} passed, ${failed} failed${xfailed > 0 ? `, ${xfailed} xfailed` : ""})`);
+            if (!opts.verbose && (passed + slow + failed + xfailed) % 50 === 0) {
+                process.stdout.write(`\r  Progress: ${passed + slow + failed + xfailed}/${testsToRun.length} (${passed} passed, ${slow} slow, ${failed} failed${xfailed > 0 ? `, ${xfailed} xfailed` : ""})`);
             }
         } catch (err) {
             const elapsed = Date.now() - startTime;
@@ -432,15 +546,18 @@ async function runSequential(opts, testsToRun) {
                 testResults.push({ file: testFile, status: "pass", timedOut: false, error: null, elapsed });
                 if (opts.verbose) {
                     console.log(`\x1b[36mBASELINE\x1b[0m (${elapsed}ms)`);
-                } else if ((passed + failed + xfailed) % 50 === 0) {
-                    process.stdout.write(`\r  Progress: ${passed + failed + xfailed}/${testsToRun.length} (${passed} passed, ${failed} failed${xfailed > 0 ? `, ${xfailed} xfailed` : ""})`);
+                } else if ((passed + slow + failed + xfailed) % 50 === 0) {
+                    process.stdout.write(`\r  Progress: ${passed + slow + failed + xfailed}/${testsToRun.length} (${passed} passed, ${slow} slow, ${failed} failed${xfailed > 0 ? `, ${xfailed} xfailed` : ""})`);
                 }
                 continue;
             }
 
-            failed++;
-            const isTimeout = elapsed >= opts.testTimeout || errMsg.includes("Timeout");
-            if (isTimeout) timedOut++;
+            // A did-not-complete timeout (bridge "Timeout") is its own outcome
+            // ("timeout"); everything else is a genuine assertion failure
+            // ("fail"). main re-derives the tally from testResults, so only the
+            // failed counter (read by the progress line) is tracked here.
+            const isTimeout = errMsg.includes("Timeout");
+            if (!isTimeout) failed++;
             errors.push({ file: testFile, error: errMsg, timedOut: isTimeout });
             testResults.push({ file: testFile, status: isTimeout ? "timeout" : "fail", timedOut: isTimeout, error: errMsg, elapsed });
 
@@ -453,7 +570,9 @@ async function runSequential(opts, testsToRun) {
     }
 
     bridge.shutdown();
-    return { passed, failed, xfailed, timedOut, errors, testResults };
+    // main derives the authoritative tally from testResults (summarizeResults);
+    // the counters above exist only for this function's live progress line.
+    return { errors, testResults };
 }
 
 function setupGlobals(tsDir) {
@@ -614,9 +733,11 @@ async function runParallel(opts, testsToRun) {
     console.log(`  Spawning ${chunks.length} workers (timeout: ${opts.testTimeout}ms, mem limit: ${opts.memoryLimitMB}MB)...`);
 
     let passed = 0;
+    let slow = 0;
     let failed = 0;
     let xfailed = 0;
     let timedOut = 0;
+    let unrun = 0;
     let completed = 0;
     let bridgeRestarts = 0;
     let memoryWarnings = 0;
@@ -636,8 +757,8 @@ async function runParallel(opts, testsToRun) {
 
         function printProgress() {
             const total = testsToRun.length;
-            const done = passed + failed + xfailed;
-            const msg = `\r  Progress: ${done}/${total} (${passed} passed, ${failed} failed${xfailed > 0 ? `, ${xfailed} xfailed` : ""}${timedOut > 0 ? `, ${timedOut} timeout` : ""}) [${activeWorkers} workers]`;
+            const done = passed + slow + failed + xfailed + timedOut + unrun;
+            const msg = `\r  Progress: ${done}/${total} (${passed} passed${slow > 0 ? `, ${slow} slow` : ""}, ${failed} failed${xfailed > 0 ? `, ${xfailed} xfailed` : ""}${timedOut > 0 ? `, ${timedOut} timeout` : ""}${unrun > 0 ? `, ${unrun} unrun` : ""}) [${activeWorkers} workers]`;
             const padded = msg + " ".repeat(Math.max(0, lastProgressLen - msg.length));
             process.stdout.write(padded);
             lastProgressLen = msg.length;
@@ -648,7 +769,9 @@ async function runParallel(opts, testsToRun) {
             if (activeWorkers === 0) {
                 if (!opts.verbose) printProgress();
                 clearInterval(watchdog);
-                resolve({ passed, failed, xfailed, timedOut, errors, testResults, bridgeRestarts, memoryWarnings, workerStats });
+                // Counters above feed only the live progress line; main derives
+                // the authoritative tally from testResults (summarizeResults).
+                resolve({ errors, testResults, bridgeRestarts, memoryWarnings, workerStats });
             }
         }
 
@@ -696,8 +819,16 @@ async function runParallel(opts, testsToRun) {
                     }
                 } else if (msg.type === "result") {
                     if (msg.passed) {
-                        passed++;
-                        testResults.push({ file: msg.testFile, status: "pass", timedOut: false, error: null, elapsed: msg.elapsed });
+                        // Assertions passed. `slow` means it overran the
+                        // wall-clock budget — a harness perf signal, still a
+                        // pass for correctness (issue #17010).
+                        if (msg.slow) {
+                            slow++;
+                            testResults.push({ file: msg.testFile, status: "slow", timedOut: false, error: null, elapsed: msg.elapsed });
+                        } else {
+                            passed++;
+                            testResults.push({ file: msg.testFile, status: "pass", timedOut: false, error: null, elapsed: msg.elapsed });
+                        }
                     } else if (msg.xfailed) {
                         xfailed++;
                         testResults.push({ file: msg.testFile, status: "xfail", timedOut: false, error: msg.error || null, elapsed: msg.elapsed });
@@ -715,8 +846,9 @@ async function runParallel(opts, testsToRun) {
                             }
                             return;
                         }
-                        failed++;
-                        if (msg.timedOut) timedOut++;
+                        // Disjoint: a did-not-complete timeout is counted as
+                        // timedOut, an assertion failure as failed.
+                        if (msg.timedOut) timedOut++; else failed++;
                         errors.push({ file: msg.testFile, error: msg.error, timedOut: msg.timedOut });
                         testResults.push({ file: msg.testFile, status: msg.timedOut ? "timeout" : "fail", timedOut: msg.timedOut, error: msg.error, elapsed: msg.elapsed });
                     }
@@ -727,7 +859,7 @@ async function runParallel(opts, testsToRun) {
 
                     if (opts.verbose) {
                         const status = msg.passed
-                            ? `\x1b[32mPASS\x1b[0m`
+                            ? (msg.slow ? `\x1b[33mSLOW\x1b[0m` : `\x1b[32mPASS\x1b[0m`)
                             : msg.xfailed
                             ? `\x1b[36mXFAIL\x1b[0m`
                             : msg.timedOut
@@ -780,23 +912,31 @@ async function runParallel(opts, testsToRun) {
                         if (stderr) {
                             console.error(`  Worker ${i} stderr tail:\n${stderr}`);
                         }
-                        // Count remaining tests as failed
-                        failed += remaining;
-                        timedOut += remaining;
+                        // The test in flight when the worker died did not
+                        // complete → "timeout". The rest were still queued and
+                        // never started → "unrun". Conflating the two (the old
+                        // "all timeout") overstated genuine non-completions and
+                        // hid that the run was incomplete (issue #17010).
                         for (let j = wp.completed; j < wp.total; j++) {
-                            const error = stderr ? `Worker crashed (${reason})\n${stderr}` : `Worker crashed (${reason})`;
+                            const inFlight = j === wp.completed;
+                            const detail = stderr ? `Worker crashed (${reason})\n${stderr}` : `Worker crashed (${reason})`;
+                            const error = inFlight
+                                ? detail
+                                : `Not run — worker ${i} died before this test started (${reason})`;
                             errors.push({
                                 file: chunks[i][j],
                                 error,
-                                timedOut: true,
+                                timedOut: inFlight,
+                                unrun: !inFlight,
                             });
                             testResults.push({
                                 file: chunks[i][j],
-                                status: "timeout",
-                                timedOut: true,
+                                status: inFlight ? "timeout" : "unrun",
+                                timedOut: inFlight,
                                 error,
                                 elapsed: 0,
                             });
+                            if (inFlight) timedOut++; else unrun++;
                         }
                     }
                     workerStderr.delete(i);
@@ -898,28 +1038,46 @@ async function main() {
         results = await runParallel(opts, testsToRun);
     }
 
-    const { passed, failed, xfailed = 0, timedOut, errors } = results;
+    const { errors } = results;
+    // Derive the final tally from the per-test results — the single source of
+    // truth — so the summary can never disagree with the recorded buckets.
+    const counts = summarizeResults(results.testResults || []);
+    const { passed, slow, failed, xfailed, timedOut, unrun } = counts;
+    const reportedPassed = reportedPassCount(counts); // pass + slow
+    const executed = executedCount(counts);           // excludes unrun
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
 
     // Print summary
     console.log("");
     console.log("─".repeat(70));
     console.log("");
-    console.log(`Results: ${passed} passed, ${failed} failed${xfailed > 0 ? `, ${xfailed} xfailed` : ""} out of ${testsToRun.length} (${elapsed}s)`);
+    const parts = [`${passed} passed`];
+    if (slow > 0) parts.push(`${slow} slow`);
+    parts.push(`${failed} failed`);
+    if (xfailed > 0) parts.push(`${xfailed} xfailed`);
+    if (timedOut > 0) parts.push(`${timedOut} timed out`);
+    if (unrun > 0) parts.push(`${unrun} did not run`);
+    console.log(`Results: ${parts.join(", ")} out of ${testsToRun.length} (${elapsed}s)`);
 
     if (totalAvailable > testsToRun.length) {
         console.log(`  (${totalAvailable - testsToRun.length} tests skipped, ${totalAvailable} total available)`);
     }
 
-    const passRate = testsToRun.length > 0
-        ? ((passed / testsToRun.length) * 100).toFixed(1)
-        : "0.0";
-    console.log(`  Pass rate: ${passRate}%`);
+    // Pass rate is over the tests that actually produced a verdict (executed),
+    // not the full planned set — otherwise an early abort drags the rate down
+    // purely because queued tests never ran (issue #17010). Slow completions
+    // count as passing. Computed once here; the snapshot summary reuses it.
+    const passRate = executed > 0 ? Math.round(reportedPassed / executed * 1000) / 10 : 0;
+    console.log(`  Pass rate: ${passRate.toFixed(1)}% (${reportedPassed}/${executed} executed)`);
+    if (unrun > 0) {
+        console.log(`  \x1b[33m${unrun} test(s) did not run — figure is over executed tests only\x1b[0m`);
+    }
 
     // Extra stats for parallel mode
     if (!opts.sequential && results.bridgeRestarts !== undefined) {
         const statsLine = [];
         if (timedOut > 0) statsLine.push(`${timedOut} timed out`);
+        if (unrun > 0) statsLine.push(`${unrun} did not run`);
         if (results.bridgeRestarts > 0) statsLine.push(`${results.bridgeRestarts} bridge restarts`);
         if (results.memoryWarnings > 0) statsLine.push(`${results.memoryWarnings} memory warnings`);
         if (statsLine.length > 0) {
@@ -937,13 +1095,13 @@ async function main() {
 
     if (errors.length > 0 && !opts.verbose) {
         console.log("");
-        console.log(`First ${errors.length} failures:`);
-        for (const { file, error, timedOut: to } of errors.slice(0, 20)) {
-            const icon = to ? "\x1b[33m⏱\x1b[0m" : "\x1b[31m✗\x1b[0m";
+        console.log(`First ${errors.length} non-passing:`);
+        for (const { file, error, timedOut: to, unrun: didNotRun } of errors.slice(0, 20)) {
+            const icon = didNotRun ? "\x1b[90m∅\x1b[0m" : to ? "\x1b[33m⏱\x1b[0m" : "\x1b[31m✗\x1b[0m";
             console.log(`  ${icon} ${path.basename(file, ".ts")}: ${error.split("\n")[0].substring(0, 100)}`);
         }
         if (errors.length > 20) {
-            console.log(`  ... and ${errors.length - 20} more failures`);
+            console.log(`  ... and ${errors.length - 20} more`);
         }
     }
 
@@ -1005,54 +1163,36 @@ async function main() {
         jsonResults.sort((a, b) => a.file.localeCompare(b.file));
 
         const total = testsToRun.length;
+        // `passed` in the summary is the load-independent correctness figure —
+        // assertion-passes = pass + slow — which is what the README and the CI
+        // floor read via `.summary.passed`. `slow`/`unrun` are exposed as their
+        // own sub-counts so the distinction stays visible (issue #17010); the
+        // raw within-budget count is `passed - slow` if ever needed.
+        const summary = {
+            total,
+            passed: reportedPassed,
+            slow,
+            failed,
+            xfailed,
+            timedOut,
+            unrun,
+            shard: opts.shardTotal > 0 ? { index: opts.shardId, count: opts.shardTotal, strategy: opts.shardStrategy } : null,
+            slowest,
+            passRate,
+        };
         const detail = {
             timestamp: new Date().toISOString(),
-            summary: {
-                total,
-                passed,
-                failed,
-                xfailed,
-                timedOut,
-                shard: opts.shardTotal > 0 ? { index: opts.shardId, count: opts.shardTotal, strategy: opts.shardStrategy } : null,
-                slowest,
-                passRate: total > 0 ? Math.round(passed / total * 1000) / 10 : 0,
-            },
+            summary,
             results: jsonResults,
         };
 
         const outPath = path.resolve(opts.jsonOut);
         const snapshotOutPath = path.resolve(snapshotWeightFile());
+        // The compact snapshot splits results into pass/slow/fail/timeout/unrun
+        // buckets and a `weights` map (pass + slow, the timings the LPT balancer
+        // needs). classifySnapshotBuckets owns that split.
         const output = outPath === snapshotOutPath
-            ? {
-                timestamp: detail.timestamp,
-                summary: detail.summary,
-                pass: jsonResults
-                    .filter(r => r.status === "pass" && !r.timedOut)
-                    .map(r => r.file),
-                fail: jsonResults
-                    .filter(r => r.status !== "pass" || r.timedOut)
-                    .map(r => {
-                        const record = {
-                            file: r.file,
-                            name: r.name,
-                            status: r.status,
-                            timedOut: r.timedOut || false,
-                            output: r.firstFailure || "",
-                        };
-                        if (r.bucket) record.bucket = r.bucket;
-                        if (r.elapsed !== undefined) record.elapsed = r.elapsed;
-                        return record;
-                    }),
-                // Per-test timings (ms) for passing tests, consumed by
-                // loadHistoricalWeights() for LPT shard balancing. Kept as a
-                // compact {file: ms} map so the snapshot stays small while the
-                // balancer still sees a real weight for ~every test.
-                weights: Object.fromEntries(
-                    jsonResults
-                        .filter(r => r.status === "pass" && !r.timedOut && Number.isFinite(Number(r.elapsed)))
-                        .map(r => [r.file, Number(r.elapsed)]),
-                ),
-            }
+            ? { timestamp: detail.timestamp, summary, ...classifySnapshotBuckets(jsonResults) }
             : detail;
         fs.mkdirSync(path.dirname(outPath), { recursive: true });
         const jsonText = outPath === snapshotOutPath
@@ -1062,10 +1202,30 @@ async function main() {
         console.log(`\nJSON results written to ${outPath}`);
     }
 
-    process.exit(failed > 0 ? 1 : 0);
+    // Slowness alone never fails the run (that was the load dependence in
+    // #17010); genuine failures, non-completions, and abandoned tests do.
+    process.exit(runFailedCount(counts) > 0 ? 1 : 0);
 }
 
-main().catch(err => {
-    console.error("Fatal error:", err);
-    process.exit(2);
-});
+// Pure helpers are exported so unit tests exercise the real classification
+// code rather than a drifting mirror. Only run the suite when invoked directly.
+module.exports = {
+    resultRowsForWeights,
+    loadHistoricalWeights,
+    defaultUnknownWeight,
+    weightedShardTests,
+    stringifyCompactSnapshot,
+    classifySnapshotBuckets,
+    summarizeResults,
+    reportedPassCount,
+    executedCount,
+    runFailedCount,
+    TIMEOUT_WEIGHT_BIAS_MS,
+};
+
+if (require.main === module) {
+    main().catch(err => {
+        console.error("Fatal error:", err);
+        process.exit(2);
+    });
+}

@@ -30,6 +30,9 @@ import tempfile
 import urllib.request
 from pathlib import Path
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from lib.query_snapshot import fourslash_bucket_counts  # noqa: E402
+
 ROOT = Path(__file__).parent.parent
 README = ROOT / "README.md"
 PERFORMANCE_PNG_DIR = ROOT / "crates" / "tsz-website" / "static" / "benchmark-data"
@@ -174,11 +177,11 @@ def normalize_suite_summary(data, suite):
         }
 
     if suite == "fourslash" and isinstance(data.get("pass"), list):
-        failed = len(data.get("fail") or [])
-        return {
-            "passed": len(data["pass"]),
-            "total": len(data["pass"]) + failed,
-        }
+        # Summary-less snapshot: count from the buckets. Slow counts as passing
+        # (keeping it out made the published figure move with machine load,
+        # issue #17010); the taxonomy lives in lib.query_snapshot.
+        passed, total = fourslash_bucket_counts(data)
+        return {"passed": passed, "total": total}
 
     if data.get("suite") != suite:
         return None
