@@ -19,14 +19,31 @@
 //! `async`-ness. Here the same "evaluated in the enclosing scope" principle
 //! decides which container a `yield` belongs to.
 //!
-//! Every expectation below is pinned against the compiled `tsz` CLI
-//! (`--noEmit --strict --pretty false --target es2022 --module esnext`) — the
-//! same oracle-cross-checked behavior the await suite pins — and read through
-//! this crate's parse-health harness. The TS1163 grammar axis reproduces
-//! identically in both; the one place the harness and CLI can drift is the
-//! *type-inference* TS7057 row, which is why the class-method TS7057 gap is
-//! documented as an `#[ignore]`d row at the end rather than asserted live (see
-//! its comment and the linked follow-up issue).
+//! Every expectation below is pinned against the pinned `typescript@7.0.2`
+//! oracle (`--noEmit --strict --pretty false --target es2022 --module
+//! esnext`), the same oracle-cross-checked behavior the await suite pins,
+//! and read through this crate's parse-health harness.
+//!
+//! The TS1163 *grammar* axis is uniform across every member kind: the
+//! container jump reaches the enclosing generator for methods, accessors,
+//! properties, object literals and interface signatures alike. The
+//! *type-inference* TS7057 axis (`'yield' expression implicitly results in
+//! an 'any' type because its containing generator lacks a return-type
+//! annotation`) is **not** uniform, and — unlike the grammar axis — this is
+//! genuine `tsc` behavior, not a tsz gap: oracle-verified, `tsc` reports
+//! TS7057 for a computed name owned by a plain **property** (object-literal
+//! property, class property, i.e. never itself a function scope), but never
+//! for one owned by a **function-like** member (class/object-literal method,
+//! getter, setter, static method) — even though the exact same yield is
+//! legal there (no TS1163) and resolves to the identical enclosing
+//! generator. #17057 originally read this split as a tsz false negative on
+//! the function-like side; the oracle matrix below (added while closing that
+//! issue) shows tsz already matches `tsc` on every row. A type-literal
+//! member is its own separate case: it is outside await/generator context
+//! entirely (see `check_computed_property_name_await`'s doc comment for the
+//! same rule on the async axis), so its `yield` gets BOTH TS1163 (illegal
+//! here) and TS7057 (still typed as implicit-any) together — the pairing
+//! that first suggested TS7057 might track legality, which it does not.
 
 use crate::test_utils::check_source_codes_with_parse_health;
 
@@ -292,41 +309,101 @@ class Holder { [key]() {} }
 }
 
 // ---------------------------------------------------------------------------
-// Documented follow-up: the TS7057 type-inference gap for function-body class
-// members.
+// #17057, closed as not-a-bug: the TS7057 split between plain-property and
+// function-like computed-name owners is genuine `tsc` behavior.
 //
-// The TS1163 *grammar* axis above is uniform across every member kind: the
-// container jump reaches the enclosing generator for methods, accessors,
-// properties, object literals and interface signatures alike. The
-// type-inference axis is not. Inside an unannotated generator, a `yield` in a
-// computed name whose type cannot be pinned should raise TS7057 (`'yield'
-// expression implicitly results in an 'any' type because its containing
-// generator lacks a return-type annotation`). The compiled CLI already does so
-// for object-literal computed names, class *property* computed names, and
-// *interface* method-signature computed names — but drops it for the
-// function-body class members (method / getter / setter / static method),
-// whose own function-type construction resets the enclosing generator's
-// yield-collection state before the name is evaluated.
-//
-// This is a genuine tsz false negative (verified against the CLI, not just this
-// harness), tracked separately from the do-not-patch #16104 await parity as
-// #17057. The row below asserts the correct target and is `#[ignore]`d so it
-// documents the gap without gating CI, following the repo's established pattern
-// (`generator_yield_self_similar_nesting_tests.rs`).
+// Oracle-verified (`typescript@7.0.2`, `--strict`): TS7057 fires for an
+// object-literal PROPERTY and a class PROPERTY computed name, never for a
+// class/object-literal method, getter, setter, or static method — despite
+// the `yield` being equally legal (no TS1163) and resolving to the same
+// enclosing generator in every row. tsz already matches this split; these
+// are the rows #17057's own isolation matrix got backwards (it asserted
+// interface/method-signature TS7057 without oracle verification — see the
+// header comment above).
+
 #[test]
-#[ignore = "#17057 open: a `yield` in a function-body class member's computed \
-name inside an unannotated generator should raise TS7057 like the object-literal \
-/ class-property / interface-signature siblings do, but the member's \
-function-type construction resets the generator's yield-collection state before \
-the name is checked."]
-fn generator_class_method_computed_name_yield_should_report_ts7057() {
+fn generator_class_method_computed_name_yield_does_not_report_ts7057() {
     let codes = check_source_codes_with_parse_health(
         r#"
 function* gen() { class Holder { [yield 1]() {} } }
 "#,
     );
-    assert!(
-        codes.contains(&7057),
-        "a function-body class member's computed-name yield should raise TS7057 like its siblings; got {codes:?}"
+    assert!(!codes.contains(&7057), "got {codes:?}");
+}
+
+#[test]
+fn generator_class_getter_computed_name_yield_does_not_report_ts7057() {
+    let codes = check_source_codes_with_parse_health(
+        r#"
+function* gen() { class Holder { get [yield 1]() { return 1; } } }
+"#,
     );
+    assert!(!codes.contains(&7057), "got {codes:?}");
+}
+
+#[test]
+fn generator_class_setter_computed_name_yield_does_not_report_ts7057() {
+    let codes = check_source_codes_with_parse_health(
+        r#"
+function* gen() { class Holder { set [yield 1](value: number) {} } }
+"#,
+    );
+    assert!(!codes.contains(&7057), "got {codes:?}");
+}
+
+#[test]
+fn generator_class_static_method_computed_name_yield_does_not_report_ts7057() {
+    let codes = check_source_codes_with_parse_health(
+        r#"
+function* gen() { class Holder { static [yield 1]() {} } }
+"#,
+    );
+    assert!(!codes.contains(&7057), "got {codes:?}");
+}
+
+#[test]
+fn generator_object_literal_method_computed_name_yield_does_not_report_ts7057() {
+    // The split is keyed on function-likeness, not on class-vs-object-literal:
+    // an object-literal shorthand METHOD behaves like a class method, not like
+    // the object-literal PROPERTY case below.
+    let codes = check_source_codes_with_parse_health(
+        r#"
+function* gen() { const bag = { [yield 1]() {} }; }
+"#,
+    );
+    assert!(!codes.contains(&7057), "got {codes:?}");
+}
+
+#[test]
+fn generator_object_literal_property_computed_name_yield_reports_ts7057() {
+    // Positive control: the plain-property sibling DOES get TS7057 — the
+    // split is real, not a harness artifact.
+    let codes = check_source_codes_with_parse_health(
+        r#"
+function* gen() { const bag = { [yield 1]: 1 }; }
+"#,
+    );
+    assert!(codes.contains(&7057), "got {codes:?}");
+}
+
+#[test]
+fn generator_class_property_computed_name_yield_reports_ts7057() {
+    // Positive control, class-property form.
+    let codes = check_source_codes_with_parse_health(
+        r#"
+function* gen() { class Holder { [yield 1] = 2; } }
+"#,
+    );
+    assert!(codes.contains(&7057), "got {codes:?}");
+}
+
+#[test]
+fn renamed_binder_generator_class_method_computed_name_yield_does_not_report_ts7057() {
+    // Anti-hardcoding: no identifier-spelling predicate drives the rule.
+    let codes = check_source_codes_with_parse_health(
+        r#"
+function* makeContainer() { class ConnectionPool { [yield token]() {} } }
+"#,
+    );
+    assert!(!codes.contains(&7057), "got {codes:?}");
 }
