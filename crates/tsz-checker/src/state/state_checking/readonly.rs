@@ -920,28 +920,160 @@ impl<'a> CheckerState<'a> {
         let sym_id = self.resolve_identifier_symbol(object_expr)?;
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
 
-        // Must be a namespace/module symbol
-        if !symbol.has_any_flags(symbol_flags::MODULE) {
-            return Some(false);
+        // Same-file namespace/module value: `namespace M { export const x = 0 }`
+        // accessed as `M.x`. Look the member up directly in the symbol's exports.
+        if symbol.has_any_flags(symbol_flags::MODULE) {
+            let member_sym_id = symbol.exports.as_ref()?.get(prop_name)?;
+            return Some(
+                self.namespace_export_member_is_const(member_sym_id, self.ctx.current_file_idx),
+            );
         }
 
-        // Look up the property in the namespace's exports
-        let member_sym_id = symbol.exports.as_ref()?.get(prop_name)?;
-        let member_symbol = self.ctx.binder.get_symbol(member_sym_id)?;
+        // Import-equals module binding: `import m = require('./mod')` or
+        // `import m = OtherNamespace`. tsc binds `m` to the target module
+        // namespace, whose `export const` members are readonly — the same rule
+        // as the same-file `namespace M` case above, so `m.x` must behave like
+        // `M.x`. The alias itself is not a MODULE symbol and, for a plain
+        // named-export target, `resolve_alias_symbol` does not reach the member,
+        // so the export is resolved through cross-file resolution instead.
+        //
+        // Excluded by the `import_name().is_none()` gate:
+        // - `import * as m` (namespace import; `import_name` is `Some("*")`),
+        //   whose writes — const or not — are already blanket-rejected earlier by
+        //   `is_namespace_import_binding` (an ES namespace object is immutable);
+        // - named/default value imports (`import { x }`, `import x from`;
+        //   `import_name` is `Some`), which bind a single value, so `x.member` is
+        //   ordinary property access, not a module export.
+        if symbol.has_any_flags(symbol_flags::ALIAS) && symbol.import_name().is_none() {
+            return Some(self.import_equals_const_member(sym_id, prop_name));
+        }
+
+        Some(false)
+    }
+
+    /// Resolve whether `prop_name` is a `const` export of the module an
+    /// import-equals binding refers to. `alias_sym_id` is the alias symbol for
+    /// the binding (`import m = require('...')` or `import m = Ns`).
+    ///
+    /// Const exports of a module are readonly (TS2540) when written through the
+    /// binding, exactly as they are through a same-file `namespace`. `let`/`var`
+    /// exports, functions, and classes are not const, so they are not reported
+    /// here — an import-equals binding leaves them writable (unlike an
+    /// `import * as` namespace import, whose members are all readonly and are
+    /// handled separately by `is_namespace_import_binding`).
+    fn import_equals_const_member(
+        &self,
+        alias_sym_id: tsz_binder::SymbolId,
+        prop_name: &str,
+    ) -> bool {
+        use tsz_binder::symbol_flags;
+
+        let Some(symbol) = self.ctx.binder.get_symbol(alias_sym_id) else {
+            return false;
+        };
+
+        // `import m = require('./mod')`: the alias carries the module specifier.
+        // Resolve the named export cross-file — this also follows re-export
+        // chains, `export =`, and ambient modules.
+        if let Some(module_name) = symbol.import_module() {
+            let source_file_idx = self
+                .ctx
+                .resolve_symbol_file_index_stable(alias_sym_id)
+                .unwrap_or(self.ctx.current_file_idx);
+            let resolution_mode_override: Option<crate::context::ResolutionModeOverride> =
+                symbol.import_resolution_mode().map(Into::into);
+            let Some(member_sym_id) = self.resolve_cross_file_export_from_file_with_mode(
+                module_name,
+                prop_name,
+                Some(source_file_idx),
+                resolution_mode_override,
+            ) else {
+                return false;
+            };
+            let member_file_idx = self
+                .ctx
+                .resolve_symbol_file_index_stable(member_sym_id)
+                .unwrap_or(source_file_idx);
+            return self.namespace_export_member_is_const(member_sym_id, member_file_idx);
+        }
+
+        // `import m = SomeNamespace`: no module specifier — resolve the alias to
+        // the namespace/module symbol and look the member up in its exports.
+        let Some(resolved_sym_id) =
+            self.resolve_alias_symbol(alias_sym_id, &mut AliasCycleTracker::new())
+        else {
+            return false;
+        };
+        let resolved_file_idx = self
+            .ctx
+            .resolve_symbol_file_index_stable(resolved_sym_id)
+            .unwrap_or(self.ctx.current_file_idx);
+        let Some(resolved_symbol) = self
+            .ctx
+            .get_binder_for_file(resolved_file_idx)
+            .and_then(|binder| binder.get_symbol(resolved_sym_id))
+            .or_else(|| self.ctx.binder.get_symbol(resolved_sym_id))
+        else {
+            return false;
+        };
+        if !resolved_symbol.has_any_flags(symbol_flags::MODULE) {
+            return false;
+        }
+        let Some(member_sym_id) = resolved_symbol
+            .exports
+            .as_ref()
+            .and_then(|exports| exports.get(prop_name))
+        else {
+            return false;
+        };
+        let member_file_idx = self
+            .ctx
+            .resolve_symbol_file_index_stable(member_sym_id)
+            .unwrap_or(resolved_file_idx);
+        self.namespace_export_member_is_const(member_sym_id, member_file_idx)
+    }
+
+    /// Whether `member_sym_id` (owned by `member_file_idx`) is a `const`
+    /// block-scoped variable, reading its declaration through the owning file's
+    /// binder and arena so the check stays correct across arenas (the member's
+    /// `value_declaration` `NodeIndex` is relative to its own file's arena).
+    fn namespace_export_member_is_const(
+        &self,
+        member_sym_id: tsz_binder::SymbolId,
+        member_file_idx: usize,
+    ) -> bool {
+        use tsz_binder::symbol_flags;
+
+        // Prefer the owning file's binder/arena; fall back to the current file's
+        // when the multi-file registry is not populated (single-file runs).
+        let (member_symbol, arena) = match self
+            .ctx
+            .get_binder_for_file(member_file_idx)
+            .and_then(|binder| binder.get_symbol(member_sym_id))
+        {
+            Some(member_symbol) => (
+                member_symbol,
+                self.ctx.get_arena_for_file(member_file_idx as u32),
+            ),
+            None => match self.ctx.binder.get_symbol(member_sym_id) {
+                Some(member_symbol) => (member_symbol, self.ctx.arena),
+                None => return false,
+            },
+        };
 
         // Check if the member is a block-scoped variable (const/let)
         if !member_symbol.has_any_flags(symbol_flags::BLOCK_SCOPED_VARIABLE) {
-            return Some(false);
+            return false;
         }
-
         // Check if its value declaration has the CONST flag
         let value_decl = member_symbol.value_declaration;
         if value_decl.is_none() {
-            return Some(false);
+            return false;
         }
-
-        self.ctx.arena.get(value_decl)?;
-        Some(self.ctx.arena.is_const_variable_declaration(value_decl))
+        if arena.get(value_decl).is_none() {
+            return false;
+        }
+        arena.is_const_variable_declaration(value_decl)
     }
 
     /// Check if a property access refers to an enum member.
