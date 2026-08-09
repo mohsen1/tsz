@@ -114,6 +114,9 @@ mod assertion_overlap_object_primitive_tests;
 #[path = "../tests/assertion_overlap_template_literal_tests.rs"]
 mod assertion_overlap_template_literal_tests;
 #[cfg(test)]
+#[path = "../tests/async_generator_yield_awaited_type_tests.rs"]
+mod async_generator_yield_awaited_type_tests;
+#[cfg(test)]
 #[path = "../tests/async_imported_promise_tests.rs"]
 mod async_imported_promise_tests;
 #[cfg(test)]
