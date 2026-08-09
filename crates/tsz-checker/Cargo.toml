@@ -215,6 +215,9 @@ path = "tests/contextual_alias_union_return_inference_tests.rs"
 name = "type_only_import_reexport_tests"
 path = "tests/type_only_import_reexport_tests.rs"
 [[test]]
+name = "ts1205_reexport_chain_code_tests"
+path = "tests/ts1205_reexport_chain_code_tests.rs"
+[[test]]
 name = "variadic_tuple_spread_arity_ts2556_tests"
 path = "tests/variadic_tuple_spread_arity_ts2556_tests.rs"
 [[test]]
