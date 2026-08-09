@@ -301,6 +301,16 @@ impl<'a> CheckerState<'a> {
                     self.ctx.diagnostics.retain(|diag| {
                         diag.code
                             == crate::diagnostics::diagnostic_codes::STATIC_MEMBERS_CANNOT_REFERENCE_CLASS_TYPE_PARAMETERS
+                            // TS1039: an ambient declaration's "initializers are
+                            // not allowed" grammar check is anchored at the
+                            // initializer node (same span this retain otherwise
+                            // clears), but it is a structural check that ran
+                            // once before the contextual re-evaluation below —
+                            // not a stale artifact of the pre-contextual type
+                            // computation. It must survive the reset the same
+                            // way the other structural checks below do.
+                            || diag.code
+                                == crate::diagnostics::diagnostic_codes::INITIALIZERS_ARE_NOT_ALLOWED_IN_AMBIENT_CONTEXTS
                             // TS2693/TS2585/TS1361/TS1362: type-only keywords and
                             // type-only import/export used as values are structural
                             // errors, not contextual-typing artifacts.

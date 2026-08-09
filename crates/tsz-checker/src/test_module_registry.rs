@@ -29,6 +29,8 @@ mod ambient_declare_async_modifier_tests;
 mod ambient_declare_async_static_modifier_tests;
 #[path = "tests/ambient_declare_override_modifier_tests.rs"]
 mod ambient_declare_override_modifier_tests;
+#[path = "tests/ambient_top_level_initializer_ts1039_tests.rs"]
+mod ambient_top_level_initializer_ts1039_tests;
 #[path = "tests/any_parameter_never_opposite_tests.rs"]
 mod any_parameter_never_opposite_tests;
 #[path = "tests/application_arg_concrete_index_access_display_tests.rs"]
