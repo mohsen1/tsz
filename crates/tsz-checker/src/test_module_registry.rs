@@ -829,6 +829,8 @@ mod remapped_missing_property_relation_routing_arch_tests;
 mod rest_parameter_relation_routing_arch_tests;
 #[path = "tests/return_alias_unknown_eval_assignability_tests.rs"]
 mod return_alias_unknown_eval_assignability_tests;
+#[path = "tests/return_context_object_shape_alias_tests.rs"]
+mod return_context_object_shape_alias_tests;
 #[path = "tests/return_context_promise_identity_tests.rs"]
 mod return_context_promise_identity_tests;
 #[path = "tests/return_context_type_param_shadowing_tests.rs"]

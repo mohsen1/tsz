@@ -898,9 +898,22 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // Object-Object: match properties by name and recurse into their types.
         // This handles cases where applications are evaluated to structural object
         // types (e.g., Box<void, B> → { a: void, b: B }).
-        if let (Some(TypeData::Object(s_shape_id)), Some(TypeData::Object(t_shape_id))) =
-            (self.interner.lookup(source), self.interner.lookup(target))
-        {
+        //
+        // Match on the *evaluated* forms, not the raw source/target. A generic
+        // return that is a type-alias application (e.g. `type Box<T> = { from: (x:
+        // T) => void }`, returned as `Box<T>`) reaches here as an unevaluated
+        // `Application`, while the contextual target may already have been
+        // materialized to its structural object shape (a callee parameter type is
+        // reduced eagerly, whereas a variable annotation of the same type keeps
+        // its `Application` form). Evaluating both sides recovers the property
+        // structure so the tracked type parameter still binds through the shared
+        // members, regardless of which representation the contextual type happens
+        // to carry. `evaluate` is idempotent on an already-structural object, so
+        // this does not change the raw object-vs-object case.
+        if let (Some(TypeData::Object(s_shape_id)), Some(TypeData::Object(t_shape_id))) = (
+            self.interner.lookup(source_eval),
+            self.interner.lookup(target_eval),
+        ) {
             let s_shape = self.interner.object_shape(s_shape_id);
             let t_shape = self.interner.object_shape(t_shape_id);
             for s_prop in &s_shape.properties {
