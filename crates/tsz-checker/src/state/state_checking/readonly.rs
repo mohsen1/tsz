@@ -924,35 +924,26 @@ impl<'a> CheckerState<'a> {
         // accessed as `M.x`. Look the member up directly in the symbol's exports.
         if symbol.has_any_flags(symbol_flags::MODULE) {
             let member_sym_id = symbol.exports.as_ref()?.get(prop_name)?;
-            let member_symbol = self.ctx.binder.get_symbol(member_sym_id)?;
-
-            // Check if the member is a block-scoped variable (const/let)
-            if !member_symbol.has_any_flags(symbol_flags::BLOCK_SCOPED_VARIABLE) {
-                return Some(false);
-            }
-
-            // Check if its value declaration has the CONST flag
-            let value_decl = member_symbol.value_declaration;
-            if value_decl.is_none() {
-                return Some(false);
-            }
-
-            self.ctx.arena.get(value_decl)?;
-            return Some(self.ctx.arena.is_const_variable_declaration(value_decl));
+            return Some(
+                self.namespace_export_member_is_const(member_sym_id, self.ctx.current_file_idx),
+            );
         }
 
-        // Whole-module import binding: `import m = require('./mod')`,
-        // `import m = OtherNamespace`, or `import * as m from './mod'`. tsc binds
-        // `m` to the target module namespace, whose `export const` members are
-        // readonly — the same rule as the same-file `namespace M` case above, so
-        // `m.x` must behave like `M.x`. The alias itself is not a MODULE symbol
-        // and, for a plain named-export target, `resolve_alias_symbol` does not
-        // reach the member, so the export is resolved through cross-file
-        // resolution instead.
+        // Import-equals module binding: `import m = require('./mod')` or
+        // `import m = OtherNamespace`. tsc binds `m` to the target module
+        // namespace, whose `export const` members are readonly — the same rule
+        // as the same-file `namespace M` case above, so `m.x` must behave like
+        // `M.x`. The alias itself is not a MODULE symbol and, for a plain
+        // named-export target, `resolve_alias_symbol` does not reach the member,
+        // so the export is resolved through cross-file resolution instead.
         //
-        // A *named* or *default* value import (`import { x }`, `import x from`)
-        // is excluded (`import_name` is `Some`): it binds a single value, so
-        // `x.member` is ordinary property access, not a module export.
+        // Excluded by the `import_name().is_none()` gate:
+        // - `import * as m` (namespace import; `import_name` is `Some("*")`),
+        //   whose writes — const or not — are already blanket-rejected earlier by
+        //   `is_namespace_import_binding` (an ES namespace object is immutable);
+        // - named/default value imports (`import { x }`, `import x from`;
+        //   `import_name` is `Some`), which bind a single value, so `x.member` is
+        //   ordinary property access, not a module export.
         if symbol.has_any_flags(symbol_flags::ALIAS) && symbol.import_name().is_none() {
             return Some(self.import_equals_const_member(sym_id, prop_name));
         }
@@ -960,17 +951,16 @@ impl<'a> CheckerState<'a> {
         Some(false)
     }
 
-    /// Resolve whether `prop_name` is a `const` export of the module a
-    /// whole-module import binding refers to. `alias_sym_id` is the alias symbol
-    /// for the binding (`import m = require('...')`, `import m = Ns`, or
-    /// `import * as m`).
+    /// Resolve whether `prop_name` is a `const` export of the module an
+    /// import-equals binding refers to. `alias_sym_id` is the alias symbol for
+    /// the binding (`import m = require('...')` or `import m = Ns`).
     ///
     /// Const exports of a module are readonly (TS2540) when written through the
     /// binding, exactly as they are through a same-file `namespace`. `let`/`var`
     /// exports, functions, and classes are not const, so they are not reported
-    /// here. (For an `import * as` namespace import, the surrounding
-    /// `is_namespace_import_binding` check additionally rejects writes to those
-    /// non-const members; an import-equals binding intentionally does not.)
+    /// here — an import-equals binding leaves them writable (unlike an
+    /// `import * as` namespace import, whose members are all readonly and are
+    /// handled separately by `is_namespace_import_binding`).
     fn import_equals_const_member(
         &self,
         alias_sym_id: tsz_binder::SymbolId,
@@ -982,9 +972,9 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
-        // `import m = require('./mod')` / `import * as m from './mod'`: the alias
-        // carries the module specifier. Resolve the named export cross-file —
-        // this also follows re-export chains, `export =`, and ambient modules.
+        // `import m = require('./mod')`: the alias carries the module specifier.
+        // Resolve the named export cross-file — this also follows re-export
+        // chains, `export =`, and ambient modules.
         if let Some(module_name) = symbol.import_module() {
             let source_file_idx = self
                 .ctx
