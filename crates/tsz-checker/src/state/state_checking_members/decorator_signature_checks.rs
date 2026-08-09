@@ -1,6 +1,8 @@
 //! Class-member decorator signature validation helpers.
 
-use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+use crate::diagnostics::{
+    Diagnostic, DiagnosticRelatedInformation, diagnostic_codes, diagnostic_messages, format_message,
+};
 use crate::query_boundaries::checkers::decorators as decorator_query;
 use crate::query_boundaries::common::CallResult;
 use crate::state::CheckerState;
@@ -17,6 +19,77 @@ const fn decorator_type_is_unchecked(t: TypeId) -> bool {
 }
 
 impl<'a> CheckerState<'a> {
+    /// TS1278/TS1279 elaboration for a decorator signature-resolution
+    /// failure: "The runtime will invoke the decorator with {1} arguments,
+    /// but the decorator expects {0}[ at least]." tsc always attaches this as
+    /// a message-chain link (no location of its own) alongside the primary
+    /// TS1238/1239/1240/1241 when the failure is an argument-count mismatch.
+    /// Other failure shapes (type mismatch, no overload match, ...) get no
+    /// elaboration here: tsc attaches a different, not-yet-wired shape there
+    /// (a `TS2345`-style "not assignable" line), so this deliberately leaves
+    /// those diagnostics exactly as before rather than attaching the wrong
+    /// kind of related information.
+    ///
+    /// "At least N" (TS1279) fires only when the decorator's own declared
+    /// arity is genuinely open-ended (`expected_max` is `None`, e.g. a
+    /// trailing `...rest: any[]`) and too few arguments were supplied; a
+    /// fixed-length rest tuple (`...rest: [string, number]`) still has a
+    /// concrete `expected_max` and takes the exact-N wording (TS1278).
+    fn decorator_arity_related_info(
+        &self,
+        result: &CallResult,
+    ) -> Vec<DiagnosticRelatedInformation> {
+        let &CallResult::ArgumentCountMismatch {
+            expected_min,
+            expected_max,
+            actual,
+        } = result
+        else {
+            return Vec::new();
+        };
+        let actual_str = actual.to_string();
+        let (code, message_template, expected) = if actual < expected_min && expected_max.is_none()
+        {
+            (
+                    diagnostic_codes::THE_RUNTIME_WILL_INVOKE_THE_DECORATOR_WITH_ARGUMENTS_BUT_THE_DECORATOR_EXPECTS_A,
+                    diagnostic_messages::THE_RUNTIME_WILL_INVOKE_THE_DECORATOR_WITH_ARGUMENTS_BUT_THE_DECORATOR_EXPECTS_A,
+                    expected_min,
+                )
+        } else {
+            (
+                    diagnostic_codes::THE_RUNTIME_WILL_INVOKE_THE_DECORATOR_WITH_ARGUMENTS_BUT_THE_DECORATOR_EXPECTS,
+                    diagnostic_messages::THE_RUNTIME_WILL_INVOKE_THE_DECORATOR_WITH_ARGUMENTS_BUT_THE_DECORATOR_EXPECTS,
+                    expected_max.unwrap_or(expected_min),
+                )
+        };
+        let expected_str = expected.to_string();
+        vec![Diagnostic::related_message(
+            code,
+            self.ctx.file_name.clone(),
+            0,
+            0,
+            format_message(message_template, &[&expected_str, &actual_str]),
+        )]
+    }
+
+    /// Emit a decorator signature-resolution error, attaching
+    /// [`Self::decorator_arity_related_info`] when `result` is an
+    /// argument-count mismatch.
+    pub(crate) fn emit_decorator_signature_error(
+        &mut self,
+        anchor: NodeIndex,
+        message: &str,
+        code: u32,
+        result: &CallResult,
+    ) {
+        let related = self.decorator_arity_related_info(result);
+        if related.is_empty() {
+            self.error_at_node(anchor, message, code);
+        } else {
+            self.error_at_node_with_related(anchor, message, code, related);
+        }
+    }
+
     /// tsc anchors member/parameter decorator failures (TS1239/TS1240/TS1241)
     /// at the decorator's EXPRESSION (one column after the `@`) for
     /// type-mismatch and extra-argument failures, but at the whole DECORATOR
@@ -110,10 +183,11 @@ impl<'a> CheckerState<'a> {
             self.resolve_call_with_checker_adapter(resolved, args, false, None, actual_this_type);
 
         if !matches!(result, CallResult::Success(_)) {
-            self.error_at_node(
+            self.emit_decorator_signature_error(
                 self.decorator_failure_anchor(decorator_node, resolved, args.len()),
                 diagnostic_messages::UNABLE_TO_RESOLVE_SIGNATURE_OF_PROPERTY_DECORATOR_WHEN_CALLED_AS_AN_EXPRESSION,
                 diagnostic_codes::UNABLE_TO_RESOLVE_SIGNATURE_OF_PROPERTY_DECORATOR_WHEN_CALLED_AS_AN_EXPRESSION,
+                &result,
             );
         }
     }
@@ -351,10 +425,11 @@ impl<'a> CheckerState<'a> {
         let return_type = match &result {
             CallResult::Success(return_type) => Some(*return_type),
             _ => {
-                self.error_at_node(
+                self.emit_decorator_signature_error(
                     self.decorator_failure_anchor(decorator_node, resolved, arg_types.len()),
                     diagnostic_messages::UNABLE_TO_RESOLVE_SIGNATURE_OF_METHOD_DECORATOR_WHEN_CALLED_AS_AN_EXPRESSION,
                     diagnostic_codes::UNABLE_TO_RESOLVE_SIGNATURE_OF_METHOD_DECORATOR_WHEN_CALLED_AS_AN_EXPRESSION,
+                    &result,
                 );
                 self.recover_decorator_return_type_with_any_args(resolved)
                     .or_else(|| {
@@ -724,13 +799,14 @@ impl<'a> CheckerState<'a> {
             actual_this_type,
         );
 
-        let return_type = match result {
-            CallResult::Success(return_type) => Some(return_type),
+        let return_type = match &result {
+            CallResult::Success(return_type) => Some(*return_type),
             _ => {
-                self.error_at_node(
+                self.emit_decorator_signature_error(
                     self.decorator_failure_anchor(decorator_node, resolved, arg_types.len()),
                     diagnostic_messages::UNABLE_TO_RESOLVE_SIGNATURE_OF_PROPERTY_DECORATOR_WHEN_CALLED_AS_AN_EXPRESSION,
                     diagnostic_codes::UNABLE_TO_RESOLVE_SIGNATURE_OF_PROPERTY_DECORATOR_WHEN_CALLED_AS_AN_EXPRESSION,
+                    &result,
                 );
                 self.recover_decorator_return_type_with_any_args(resolved)
                     .or_else(|| {
@@ -856,13 +932,14 @@ impl<'a> CheckerState<'a> {
             actual_this_type,
         );
 
-        let return_type = match result {
-            CallResult::Success(return_type) => Some(return_type),
+        let return_type = match &result {
+            CallResult::Success(return_type) => Some(*return_type),
             _ => {
-                self.error_at_node(
+                self.emit_decorator_signature_error(
                     self.decorator_failure_anchor(decorator_node, resolved, 3),
                     diagnostic_messages::UNABLE_TO_RESOLVE_SIGNATURE_OF_PARAMETER_DECORATOR_WHEN_CALLED_AS_AN_EXPRESSION,
                     diagnostic_codes::UNABLE_TO_RESOLVE_SIGNATURE_OF_PARAMETER_DECORATOR_WHEN_CALLED_AS_AN_EXPRESSION,
+                    &result,
                 );
                 // tsc keeps checking the return type after a failed signature
                 // resolution — `@bad` whose call fails AND whose return type is

@@ -597,6 +597,9 @@ path = "tests/decorator_method_tdz_tests.rs"
 name = "ts1238_generic_decorator_tests"
 path = "tests/ts1238_generic_decorator_tests.rs"
 [[test]]
+name = "ts1278_ts1279_decorator_arity_elaboration_tests"
+path = "tests/ts1278_ts1279_decorator_arity_elaboration_tests.rs"
+[[test]]
 name = "ts2862_keyof_tparam_tests"
 path = "tests/ts2862_keyof_tparam_tests.rs"
 [[test]]
