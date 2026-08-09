@@ -663,31 +663,18 @@ impl ParserState {
             } else if self.suppress_next_jsx_head_missing_semicolon {
                 self.suppress_next_jsx_head_missing_semicolon = false;
             } else if !has_numeric_follow_error && !arrow_or_func_block_followed_by_equals {
+                // The missing-semicolon diagnostic emitted here anchors at the
+                // first token of the next statement, which is fully independent
+                // of this one (e.g. the missing-LHS binary form `in set y(v:
+                // number);` -> `<missing> in set` then `y(v: number)`, #16291 /
+                // #17062). `parse_error_for_missing_semicolon_after` resets the
+                // proximity window at that boundary, so the next statement's own
+                // first diagnostic is not dropped for proximity regardless of
+                // whether it surfaces as a missing semicolon, an argument-list
+                // `,` expected, or any other emit site — no per-site flag needed.
                 self.parse_error_for_missing_semicolon_after(expression);
                 if self.expression_statement_block_function_recovers_conditional_tail(expression) {
                     self.recover_invalid_conditional_tail_after_expression_statement();
-                }
-                // The current token now starts a brand-new statement independent of
-                // this missing-LHS binary-expression recovery (tsc: `<missing> <op>
-                // <rhs>`, e.g. `in get`, `instanceof get`) — its own diagnostic must
-                // not be dropped just for sitting near this statement's TS1005
-                // (#16291). Detected by the statement's own "Expression expected"
-                // diagnostic anchored at its start position, rather than by
-                // `started_with_binary_operator` alone: a reserved word like
-                // `instanceof` is (incorrectly, but out of scope here) also listed
-                // in `is_expression_start()`'s identifier-like set, so it takes the
-                // generic `parse_expression()` path instead — which still recovers
-                // through the same "synthesize a missing left operand, keep parsing
-                // the operator as a binary continuation" shape and reports the same
-                // TS1109 at `start_pos`.
-                let statement_recovered_missing_lhs_at_start =
-                    self.parse_diagnostics.iter().any(|d| {
-                        d.start == start_pos && d.code == diagnostic_codes::EXPRESSION_EXPECTED
-                    });
-                if !started_with_binary_operator_skip_path
-                    && (started_with_binary_operator || statement_recovered_missing_lhs_at_start)
-                {
-                    self.force_next_missing_semicolon_error_once = true;
                 }
             }
             // For malformed JSX heads like `<X -attr={...} />`, tsc reports `';' expected`
