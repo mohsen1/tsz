@@ -167,6 +167,123 @@ pub(crate) fn well_known_symbol_property_name(
     }
 }
 
+/// Does `expr_idx` denote the global `Symbol` constructor value, either
+/// directly (the unshadowed `Symbol` identifier) or through a `const` alias
+/// chain (`const S = Symbol;`, `const S = globalThis.Symbol;`)?
+///
+/// Unlike [`well_known_symbol_property_name`], which stays purely syntactic
+/// for computed-property-NAME declarations (tsc's own
+/// `isWellKnownSymbolSyntactically`, #16307), an element-access READ of
+/// `<expr>.wellKnownName` follows ordinary value identity in `tsc`: `S.iterator`
+/// types the same as `Symbol.iterator` regardless of how many `const` aliases
+/// separate `S` from the global. [`well_known_symbol_property_name_for_read`]
+/// is the read-side counterpart that uses this. #16961.
+fn expr_denotes_global_symbol_value(
+    ctx: &CheckerContext<'_>,
+    arena: &NodeArena,
+    binder: &BinderState,
+    expr_idx: NodeIndex,
+    depth: u32,
+) -> bool {
+    // Bound alias-chasing depth; a real program never nests this deep and the
+    // binder graph has no cycle-guard here.
+    if depth > 8 {
+        return false;
+    }
+    let mut idx = expr_idx;
+    while let Some(node) = arena.get(idx)
+        && node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
+        && let Some(paren) = arena.get_parenthesized(node)
+    {
+        idx = paren.expression;
+    }
+    let Some(node) = arena.get(idx) else {
+        return false;
+    };
+
+    if arena.get_identifier(node).is_some() {
+        if identifier_resolves_to_unshadowed_global_in_context(ctx, arena, binder, idx, "Symbol") {
+            return true;
+        }
+        let Some(sym_id) = binder.resolve_identifier(arena, idx) else {
+            return false;
+        };
+        let Some(symbol) = binder.get_symbol(sym_id) else {
+            return false;
+        };
+        if symbol.value_declaration.is_none()
+            || !arena.is_const_variable_declaration(symbol.value_declaration)
+        {
+            return false;
+        }
+        let Some(decl_node) = arena.get(symbol.value_declaration) else {
+            return false;
+        };
+        let Some(var_decl) = arena.get_variable_declaration(decl_node) else {
+            return false;
+        };
+        if var_decl.initializer.is_none() {
+            return false;
+        }
+        return expr_denotes_global_symbol_value(
+            ctx,
+            arena,
+            binder,
+            var_decl.initializer,
+            depth + 1,
+        );
+    }
+
+    // `<base>.Symbol` / `<base>["Symbol"]`, e.g. `globalThis.Symbol`.
+    if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+        || node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+    {
+        let Some(access) = arena.get_access_expr(node) else {
+            return false;
+        };
+        let Some(name_node) = arena.get(access.name_or_argument) else {
+            return false;
+        };
+        let member_is_symbol = arena
+            .get_identifier(name_node)
+            .is_some_and(|ident| ident.escaped_text == "Symbol")
+            || (matches!(
+                name_node.kind,
+                k if k == SyntaxKind::StringLiteral as u16
+                    || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+            ) && arena
+                .get_literal(name_node)
+                .is_some_and(|lit| lit.text == "Symbol"));
+        if member_is_symbol {
+            return identifier_resolves_to_unshadowed_global_in_context(
+                ctx,
+                arena,
+                binder,
+                access.expression,
+                "globalThis",
+            );
+        }
+    }
+
+    false
+}
+
+/// Read-side counterpart of [`well_known_symbol_property_name`]: recover the
+/// canonical `[Symbol.<member>]` key for an ELEMENT ACCESS whose base resolves
+/// to the global `Symbol` value through any number of `const` alias
+/// indirections, not only the literal `Symbol` spelling. #16961.
+pub(crate) fn well_known_symbol_property_name_for_read(
+    ctx: &CheckerContext<'_>,
+    arena: &NodeArena,
+    binder: &BinderState,
+    expr_idx: NodeIndex,
+) -> Option<String> {
+    let parts = member_access_parts(arena, expr_idx)?;
+    let member = parts.member?;
+    expr_denotes_global_symbol_value(ctx, arena, binder, parts.base, 0)
+        .then(|| format!("[Symbol.{member}]"))
+}
+
 /// Is `expr_idx` a resolved `Symbol.<member>` (or `Symbol["<member>"]`)
 /// syntactic access — the shape that always mints the canonical
 /// `[Symbol.<member>]` named key regardless of `<member>`'s declared kind?

@@ -350,3 +350,156 @@ value["size"];
         "Expected TS2576 for inherited static field and accessor element access, got: {errors:?}"
     );
 }
+
+/// Element-access reads of a well-known symbol reached through a `const`
+/// alias must resolve identically to the literal `Symbol.<name>` spelling
+/// (#16961). These need the real `Array<T>`/`SymbolConstructor` lib shape
+/// (not a hand-stub), so they route through [`check_source_with_libs`] with
+/// [`load_default_lib_files`] and skip gracefully when the vendored
+/// TypeScript lib assets aren't present in this checkout, matching the
+/// established pattern for lib-dependent unit tests in this crate.
+mod well_known_symbol_element_access_through_alias_tests {
+    use crate::context::CheckerOptions;
+    use crate::test_utils::{check_source_with_libs, load_default_lib_files};
+
+    fn check_with_default_libs(source: &str) -> Option<Vec<crate::diagnostics::Diagnostic>> {
+        let libs = load_default_lib_files();
+        if libs.is_empty() {
+            return None;
+        }
+        Some(check_source_with_libs(
+            source,
+            "test.ts",
+            CheckerOptions::default(),
+            &libs,
+        ))
+    }
+
+    fn semantic_errors(diags: &[crate::diagnostics::Diagnostic]) -> Vec<u32> {
+        diags.iter().map(|d| d.code).collect()
+    }
+
+    /// A well-known symbol read directly off the literal `Symbol` identifier
+    /// is the baseline this whole family compares against.
+    #[test]
+    fn direct_symbol_iterator_access_is_clean() {
+        let Some(diags) = check_with_default_libs(
+            "export {};\ndeclare const a: unknown[];\na[Symbol.iterator];\n",
+        ) else {
+            return;
+        };
+        assert_eq!(
+            semantic_errors(&diags),
+            Vec::<u32>::new(),
+            "direct `Symbol.iterator` element access must stay clean: {diags:?}"
+        );
+    }
+
+    /// `const S = Symbol; a[S.iterator]` — one `const` alias indirection.
+    /// tsc resolves this identically to the direct form; tsz previously
+    /// false-positived TS7015 because the read fell through to a raw
+    /// `SymbolId` reinterpreted through the wrong binder (#16961).
+    #[test]
+    fn single_const_alias_iterator_access_is_clean() {
+        let Some(diags) = check_with_default_libs(
+            "export {};\ndeclare const a: unknown[];\nconst S = Symbol;\na[S.iterator];\n",
+        ) else {
+            return;
+        };
+        assert_eq!(
+            semantic_errors(&diags),
+            Vec::<u32>::new(),
+            "`const S = Symbol; a[S.iterator]` must stay clean like the direct form: {diags:?}"
+        );
+    }
+
+    /// Binder-name independence: the alias must work under an arbitrary
+    /// identifier, not just names that look related to `Symbol`.
+    #[test]
+    fn arbitrary_binder_name_alias_iterator_access_is_clean() {
+        let Some(diags) = check_with_default_libs(
+            "export {};\ndeclare const a: unknown[];\nconst zzTop = Symbol;\na[zzTop.iterator];\n",
+        ) else {
+            return;
+        };
+        assert_eq!(
+            semantic_errors(&diags),
+            Vec::<u32>::new(),
+            "an arbitrarily-named alias must resolve the well-known symbol just like `S`: {diags:?}"
+        );
+    }
+
+    /// `const S = globalThis.Symbol; a[S.iterator]` — alias through a
+    /// `globalThis.Symbol` property access initializer, not a bare identifier.
+    #[test]
+    fn globalthis_alias_iterator_access_is_clean() {
+        let Some(diags) = check_with_default_libs(
+            "export {};\ndeclare const a: unknown[];\nconst S = globalThis.Symbol;\na[S.iterator];\n",
+        ) else {
+            return;
+        };
+        assert_eq!(
+            semantic_errors(&diags),
+            Vec::<u32>::new(),
+            "`const S = globalThis.Symbol; a[S.iterator]` must stay clean: {diags:?}"
+        );
+    }
+
+    /// `const Symbol = globalThis.Symbol; a[Symbol.iterator]` — the local
+    /// binding shadows the global name `Symbol` but is itself an alias chain
+    /// back to the real global, so the read must still resolve.
+    #[test]
+    fn shadowed_symbol_name_aliased_to_global_iterator_access_is_clean() {
+        let Some(diags) = check_with_default_libs(
+            "export {};\ndeclare const a: unknown[];\nconst Symbol = globalThis.Symbol;\na[Symbol.iterator];\n",
+        ) else {
+            return;
+        };
+        assert_eq!(
+            semantic_errors(&diags),
+            Vec::<u32>::new(),
+            "a `Symbol`-shadowing alias of the real global must still resolve `.iterator`: {diags:?}"
+        );
+    }
+
+    /// `String.prototype` declares its own `[Symbol.iterator]` member (added
+    /// by `lib.es2015.iterable.d.ts`), so an aliased well-known-symbol read
+    /// against a `string` receiver resolves cleanly too — `tsc` reports no
+    /// diagnostic here (per the oracle in #16961); this same alias fix
+    /// recovers this receiver-independent case, which predates #16958 and
+    /// was out of that issue's scope but shares the exact mechanism.
+    #[test]
+    fn string_receiver_aliased_iterator_access_is_clean() {
+        let Some(diags) = check_with_default_libs(
+            "export {};\ndeclare const s: string;\nconst S = globalThis.Symbol;\ns[S.iterator];\n",
+        ) else {
+            return;
+        };
+        assert_eq!(
+            semantic_errors(&diags),
+            Vec::<u32>::new(),
+            "an aliased well-known symbol against `string` must resolve `String.prototype[Symbol.iterator]` \
+             cleanly, matching tsc: {diags:?}"
+        );
+    }
+
+    /// Declaration-time computed member NAMES must stay purely syntactic
+    /// (tsc's `isWellKnownSymbolSyntactically`, #16307): an alias-reached
+    /// `[S.iterator]` in a declaration position must NOT bind under the
+    /// canonical `[Symbol.iterator]` name, unlike the read-side fix above.
+    #[test]
+    fn aliased_computed_name_declaration_stays_syntactic_not_well_known() {
+        let Some(diags) = check_with_default_libs(
+            "export {};\nconst S = Symbol;\nclass C {\n  [S.iterator]() { return 1; }\n}\ndeclare const c: C;\nconst x: IterableIterator<number> = c[Symbol.iterator]();\n",
+        ) else {
+            return;
+        };
+        let errors = semantic_errors(&diags);
+        assert!(
+            errors.contains(&2322),
+            "an alias-reached computed member NAME must stay off the well-known `[Symbol.iterator]` \
+             slot (tsc's #16307 syntactic rule), so `c[Symbol.iterator]()` must not see the aliased \
+             declaration's `number` return type as an `IterableIterator<number>`: {errors:?}"
+        );
+    }
+}

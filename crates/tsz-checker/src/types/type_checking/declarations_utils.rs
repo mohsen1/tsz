@@ -375,28 +375,50 @@ impl<'a> CheckerState<'a> {
     /// literal-type key declared by the shadowing const object member
     /// instead (a `CheckerState`-only recovery: it needs the expression's
     /// computed literal type, which the lowering layer cannot ask for).
+    ///
+    /// This is a READ-side query (element access, `delete`, readonly/exact-
+    /// optional checks — never computed-property-NAME declaration binding),
+    /// so when neither the direct nor the shadow recovery applies, it also
+    /// follows `const` alias chains to the global `Symbol` value
+    /// (`const S = Symbol; a[S.iterator]`, #16961) — a read has no syntactic
+    /// reason to stay alias-blind the way `tsc`'s late-bound NAME binding
+    /// intentionally does (#16307).
     pub(crate) fn get_symbol_property_name_from_expr(&self, expr_idx: NodeIndex) -> Option<String> {
         use crate::types_domain::computed_names::{
             WellKnownSymbolName, well_known_symbol_property_name,
+            well_known_symbol_property_name_for_read,
         };
 
-        match well_known_symbol_property_name(&self.ctx, self.ctx.arena, self.ctx.binder, expr_idx)?
+        if let Some(name) =
+            well_known_symbol_property_name(&self.ctx, self.ctx.arena, self.ctx.binder, expr_idx)
         {
-            WellKnownSymbolName::Global(name) => Some(name),
-            WellKnownSymbolName::Shadowed => {
-                // `Symbol` is shadowed by a local binding: recover the
-                // literal-type key from the shadowing const object member,
-                // e.g. `[Symbol.obs]` with `const Symbol = { obs: "x" }`
-                // names the property "x".
-                let literal_type = self.const_object_member_literal_type_query(expr_idx)?;
-                let name =
-                    crate::query_boundaries::type_computation::access::literal_property_name(
-                        self.ctx.types,
-                        literal_type,
-                    )?;
-                Some(self.ctx.types.resolve_atom_ref(name).to_string())
+            match name {
+                WellKnownSymbolName::Global(name) => return Some(name),
+                WellKnownSymbolName::Shadowed => {
+                    // `Symbol` is shadowed by a local binding: recover the
+                    // literal-type key from the shadowing const object member,
+                    // e.g. `[Symbol.obs]` with `const Symbol = { obs: "x" }`
+                    // names the property "x".
+                    if let Some(literal_type) =
+                        self.const_object_member_literal_type_query(expr_idx)
+                        && let Some(name) =
+                            crate::query_boundaries::type_computation::access::literal_property_name(
+                                self.ctx.types,
+                                literal_type,
+                            )
+                    {
+                        return Some(self.ctx.types.resolve_atom_ref(name).to_string());
+                    }
+                }
             }
         }
+
+        well_known_symbol_property_name_for_read(
+            &self.ctx,
+            self.ctx.arena,
+            self.ctx.binder,
+            expr_idx,
+        )
     }
 
     // 22. Node Containment

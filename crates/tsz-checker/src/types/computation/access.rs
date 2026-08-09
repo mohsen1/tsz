@@ -1264,31 +1264,30 @@ impl<'a> CheckerState<'a> {
 
             // Fallback: well-known symbols (Symbol.hasInstance, Symbol.iterator, etc.)
             // are stored as "[Symbol.xxx]" in class/interface types, not "__unique_N".
-            // When the __unique_N lookup fails, try the [Symbol.xxx] format.
-            if result_type.is_none() {
-                let sym_id =
-                    crate::query_boundaries::definition_identity::symbol_ref_to_symbol_id(sym_ref);
-                if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
-                    let sym_name = &symbol.escaped_name;
-                    // Check if the parent is the Symbol global constructor
-                    if symbol.parent.is_some()
-                        && let Some(parent_sym) = self.ctx.binder.get_symbol(symbol.parent)
-                        && parent_sym.escaped_name == "Symbol"
-                    {
-                        let well_known_name = format!("[Symbol.{sym_name}]");
-                        let result =
-                            self.resolve_property_access_with_env(resolved_type, &well_known_name);
-                        if let PropertyAccessResult::Success {
-                            type_id,
-                            write_type,
-                            ..
-                        } = result
-                            && !union_member_missing_symbol
-                        {
-                            use_index_signature_check = false;
-                            result_type = Some(effective_write_result(type_id, write_type));
-                        }
-                    }
+            // When the __unique_N lookup fails, try the [Symbol.xxx] format, recovered
+            // from the solver's well-known-symbol registry (populated whenever a
+            // well-known-symbol-keyed member, e.g. `Array<T>`'s own
+            // `[Symbol.iterator]`, is constructed) rather than by reinterpreting
+            // `sym_ref` as a raw `SymbolId` — that ordinal is per-binder and a
+            // well-known symbol's identity is minted in whichever binder built the
+            // `SymbolConstructor` interface member (typically a lib file's, not the
+            // current file's), so reinterpreting it through the wrong binder can
+            // silently hit an unrelated symbol (#16961).
+            if result_type.is_none()
+                && let Some(well_known_name) =
+                    self.ctx.types.well_known_symbol_name_for_ref(sym_ref)
+            {
+                let well_known_name = well_known_name.to_string();
+                let result = self.resolve_property_access_with_env(resolved_type, &well_known_name);
+                if let PropertyAccessResult::Success {
+                    type_id,
+                    write_type,
+                    ..
+                } = result
+                    && !union_member_missing_symbol
+                {
+                    use_index_signature_check = false;
+                    result_type = Some(effective_write_result(type_id, write_type));
                 }
             }
 
