@@ -719,8 +719,11 @@ pub fn parse_tsconfig_with_diagnostics_deferred(
             ));
         }
 
-        // Group 2: mapRoot requires 'sourceMap' or 'declarationMap'
-        if compiler_opts.contains_key("mapRoot")
+        // Group 2: mapRoot requires 'sourceMap' or 'declarationMap'.
+        // tsc gates this on `if (options.mapRoot)`, so an empty-string value is
+        // falsy and treated as unset (no diagnostic); only a non-empty mapRoot
+        // triggers the dependency.
+        if option_is_truthy(compiler_opts.get("mapRoot"))
             && !option_is_effectively_enabled(compiler_opts, &ts5024_keys, "sourceMap")
             && !option_is_effectively_enabled(compiler_opts, &ts5024_keys, "declarationMap")
         {
@@ -858,10 +861,12 @@ pub fn parse_tsconfig_with_diagnostics_deferred(
         }
 
         // TS5052: jsxFragmentFactory requires jsxFactory. Presence-based like
-        // checkJs/allowJs above, not a boolean flag, so a non-empty string
-        // value (any value at all, since option_is_truthy treats a present
-        // string as truthy) is enough to trigger the dependency regardless of
-        // whether that value later fails the TS18035 identifier check below.
+        // checkJs/allowJs above, not a boolean flag: a non-empty string value
+        // triggers the dependency regardless of whether that value later fails
+        // the TS18035 identifier check below. An empty string is falsy in
+        // `option_is_truthy` (matching tsc's `if (options.jsxFragmentFactory)`
+        // gate), so `jsxFragmentFactory: ""` is treated as unset and draws
+        // neither TS5052 nor TS18035.
         if option_is_truthy(compiler_opts.get("jsxFragmentFactory"))
             && !option_is_truthy(compiler_opts.get("jsxFactory"))
         {
@@ -931,7 +936,7 @@ pub fn parse_tsconfig_with_diagnostics_deferred(
         // TS5067: Invalid value for 'jsxFactory' — must be a valid identifier or qualified name.
         // A qualified name is one or more identifiers separated by dots (e.g. React.createElement, h).
         // Spaces, = signs, and other non-identifier characters make the value invalid.
-        if let Some(serde_json::Value::String(jsx_factory_val)) = compiler_opts.get("jsxFactory")
+        if let Some(jsx_factory_val) = nonempty_string_option(compiler_opts.get("jsxFactory"))
             && !is_valid_identifier_or_qualified_name(jsx_factory_val)
         {
             let start = find_value_offset_in_source(&stripped, "jsxFactory");
@@ -952,8 +957,8 @@ pub fn parse_tsconfig_with_diagnostics_deferred(
         // qualified-name rule as jsxFactory (TS5067) above, independent
         // diagnostic. tsc reports this regardless of whether jsxFactory is
         // present, so it does not gate on the TS5052 dependency check above.
-        if let Some(serde_json::Value::String(jsx_fragment_factory_val)) =
-            compiler_opts.get("jsxFragmentFactory")
+        if let Some(jsx_fragment_factory_val) =
+            nonempty_string_option(compiler_opts.get("jsxFragmentFactory"))
             && !is_valid_identifier_or_qualified_name(jsx_fragment_factory_val)
         {
             let start = find_value_offset_in_source(&stripped, "jsxFragmentFactory");
@@ -970,8 +975,8 @@ pub fn parse_tsconfig_with_diagnostics_deferred(
             ));
         }
 
-        if let Some(serde_json::Value::String(react_namespace_val)) =
-            compiler_opts.get("reactNamespace")
+        if let Some(react_namespace_val) =
+            nonempty_string_option(compiler_opts.get("reactNamespace"))
             && !is_valid_identifier(react_namespace_val)
         {
             let start = find_value_offset_in_source(&stripped, "reactNamespace");
