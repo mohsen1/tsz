@@ -552,16 +552,23 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                     // query rather than defaulting the aggregate to `any`.
                     match async_info {
                         Some(ref i) if i.yield_type != TypeId::ANY => {
+                            // Same `getAwaitedType` wrap tsc applies uniformly in
+                            // `getYieldedTypeOfYieldExpression`: the contribution that
+                            // builds this generator's own inferred `TYield` must match
+                            // the awaited value the consumer actually observes, not the
+                            // delegate's raw iterated-element type.
+                            let awaited = self.checker.compute_awaited_type(i.yield_type, 0);
                             self.checker.ctx.push_generator_yield_star_contribution(
-                                i.yield_type,
+                                awaited,
                                 yield_star_next_type,
                             );
                         }
                         resolved_via_solver => {
                             let resolved = self.checker.for_of_element_type(expression_type, true);
                             if resolved != TypeId::ANY {
+                                let awaited = self.checker.compute_awaited_type(resolved, 0);
                                 self.checker.ctx.push_generator_yield_star_contribution(
-                                    resolved,
+                                    awaited,
                                     yield_star_next_type,
                                 );
                             } else if resolved_via_solver.is_some() {
@@ -579,7 +586,17 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                             }
                         }
                     }
-                    element
+                    // tsc's `getYieldedTypeOfYieldExpression` unconditionally wraps an
+                    // async generator's `yield*` result in `getAwaitedType(...)`. The
+                    // delegated iterable's element type by itself is not yet the
+                    // yielded value: when the delegate is a plain (sync) iterable of
+                    // promises, `AsyncFromSyncIteratorObject` awaits each item before
+                    // handing it to the async generator's consumer, so
+                    // `yield* [Promise.resolve(1)]` yields `number`, not
+                    // `Promise<number>`. Wrapping the already-computed `element` here
+                    // (rather than changing how it is derived above) keeps the
+                    // solver-only resolution this block deliberately preserves.
+                    self.checker.compute_awaited_type(element, 0)
                 } else {
                     let info = tsz_solver::operations::get_iterator_info(
                         self.checker.ctx.types,
@@ -662,7 +679,16 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                         diagnostic_codes::TYPE_OF_YIELD_OPERAND_IN_AN_ASYNC_GENERATOR_MUST_EITHER_BE_A_VALID_PROMISE_OR_MU,
                     );
                 }
-                expression_type
+                // tsc's `getYieldedTypeOfYieldExpression` returns
+                // `getAwaitedType(expressionType)` for a plain `yield` in an async
+                // generator: the async-generator runtime awaits a yielded value
+                // before delivering it to the consumer, so `yield promise` yields
+                // the promise's resolved type, not the promise itself.
+                if is_async_generator {
+                    self.checker.compute_awaited_type(expression_type, 0)
+                } else {
+                    expression_type
+                }
             }
         };
 
