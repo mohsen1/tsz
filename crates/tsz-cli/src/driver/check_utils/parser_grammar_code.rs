@@ -88,22 +88,10 @@
 /// counted as a "real" non-grammar parse error and could silently delete an
 /// unrelated *listed* sibling (e.g. TS1091 itself) from the same file.
 ///
-/// Three adjacent candidates from the same scan were investigated and
+/// Two adjacent candidates from the same scan were investigated and
 /// deliberately left OUT of this round, each for a different reason —
-/// worth reading before extending this list, since none of the three
-/// failure modes is obvious from a synthetic-diagnostic unit test alone:
-/// - **TS1313** (`the body of an 'if' statement cannot be the empty
-///   statement`) is Direction-B-confirmed suppressible in isolation, but
-///   this exact code number is ALSO a pre-existing (mislabeled-comment)
-///   member of `is_real_syntax_error`/`is_structural_parse_error` below —
-///   so a file whose *only* diagnostic is TS1313 already counts as
-///   "the program has a real syntax error" through that other list, and
-///   adding TS1313 here made it suppress *itself*, confirmed as a real
-///   regression by rebuilding `tsz` and rerunning `if (true) ;` before and
-///   after (present on `main`, silently dropped with the naive fix). Fixing
-///   this needs auditing whether 1313 genuinely belongs in
-///   `is_real_syntax_error`/`is_structural_parse_error` first — left as a
-///   NOTE on the coordination board, not folded into this PR.
+/// worth reading before extending this list, since neither failure mode is
+/// obvious from a synthetic-diagnostic unit test alone:
 /// - **TS2499** (`an interface can only extend an identifier/qualified-name
 ///   with optional type arguments`) is Direction-B-confirmed suppressible,
 ///   but has a pre-existing, unrelated double-emission bug: both the parser
@@ -164,6 +152,24 @@
 /// alongside its five parser sites — the same double-emission shape that
 /// blocked TS2499 in round 3. Adding it here only patches the parser-emitted
 /// occurrences and needs the checker-side sites audited first, same caveat.
+///
+/// #16279 audit round 10: TS1313 (`the body of an 'if' statement cannot be
+/// the empty statement`, `state_declarations_exports.rs`) was round 3's
+/// deferred "adjacent candidate" — Direction-B-confirmed suppressible, but
+/// adding it here previously made it suppress *itself*, because it was
+/// simultaneously a member of `is_real_syntax_error`/`is_structural_parse_error`
+/// (`check_utils.rs`) under an unrelated, non-existent message ("'else' is
+/// not allowed after rest element" matches no tsc diagnostic anywhere in
+/// `crates/tsz-common/src/diagnostics`) — a stale mislabel, not a deliberate
+/// classification. The `then_statement` node TS1313 is reported on is a
+/// well-formed `EMPTY_STATEMENT`, not an error-recovery placeholder, so it
+/// was never a structural parse failure. Oracle-confirmed against
+/// `typescript@7.0.2`: `if (true);` alone reports TS1313 (Direction A);
+/// `if (true); let x: = 1;` drops TS1313 and keeps only the real error
+/// (Direction B); `if (true); undeclaredName;` reports BOTH TS1313 and
+/// TS2304 (TS1313 does not itself suppress cascading semantic diagnostics,
+/// unlike a genuine structural failure). Fix removed 1313 from the two
+/// structural-error lists and added it here instead.
 pub(super) const fn is_parser_grammar_code(code: u32) -> bool {
     matches!(
         code,
@@ -290,6 +296,7 @@ pub(super) const fn is_parser_grammar_code(code: u32) -> bool {
         | 1275 // 'accessor' modifier can only appear on a property declaration
         | 1276 // An 'accessor' property cannot be declared optional
         | 1156 // '{0}' declarations can only be declared inside a block
+        | 1313 // The body of an 'if' statement cannot be the empty statement
         | 1358 // Tagged template expressions are not permitted in an optional chain
         | 18024 // An enum member cannot be named with a private identifier
         | 18016 // Private identifiers are not allowed outside class bodies.
