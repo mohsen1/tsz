@@ -880,6 +880,7 @@ impl<'a> CheckerState<'a> {
             && !annotation.contains('|')
             && !matches!(annotation.trim(), "any" | "unknown")
             && !receiver_reduces_to_never
+            && !self.receiver_annotation_is_conditional_alias(idx)
             && crate::query_boundaries::common::union_members(self.ctx.types, type_id).is_none()
             && (crate::query_boundaries::common::is_generic_application(self.ctx.types, type_id)
                 || self.ctx.types.get_display_alias(type_id).is_some()
