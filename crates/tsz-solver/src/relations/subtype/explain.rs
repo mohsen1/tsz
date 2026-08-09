@@ -526,26 +526,22 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             }
         }
 
-        // Handle `object` intrinsic (non-primitive type) as source when target is an object.
-        // `object` has no own properties, so all required target properties are "missing".
-        // This produces TS2741/TS2739 instead of generic TS2322.
-        if resolved_source == TypeId::OBJECT
-            || intrinsic_kind(self.interner, resolved_source) == Some(IntrinsicKind::Object)
-        {
-            if let Some(t_shape_id) = object_shape_id(self.interner, resolved_target) {
-                let t_shape = self.interner.object_shape(t_shape_id);
-                return self.explain_object_failure(source, target, &[], None, &t_shape.properties);
-            }
-            if let Some(t_shape_id) = object_with_index_shape_id(self.interner, resolved_target) {
-                let t_shape = self.interner.object_shape(t_shape_id);
-                return self.explain_indexed_object_failure(
-                    source,
-                    target,
-                    &ObjectShape::default(),
-                    None,
-                    &t_shape,
-                );
-            }
+        // The `object` intrinsic is `NonPrimitive`, not `StructuredType`, so
+        // tsc's structural property comparison (which owns TS2741/TS2739/TS2740)
+        // is never reached for an `object` source; a failed relation surfaces
+        // the generic `TypeMismatch` (TS2322) naming `object` verbatim, not a
+        // `{}`-rendered missing-property line (see nonPrimitiveAssignError.ts,
+        // and the test header for the full rationale). The empty object type
+        // `{}` and members-less interfaces are structured sources and keep the
+        // missing-property elaboration through the object-shape arms below.
+        // Placed before the union/array/callable-target arms so the generic
+        // reason wins regardless of target shape. `intrinsic_kind == Object`
+        // already subsumes the `TypeId::OBJECT` identity.
+        if intrinsic_kind(self.interner, resolved_source) == Some(IntrinsicKind::Object) {
+            return Some(SubtypeFailureReason::TypeMismatch {
+                source_type: source,
+                target_type: target,
+            });
         }
 
         if let (Some(s_shape_id), Some(t_shape_id)) = (
