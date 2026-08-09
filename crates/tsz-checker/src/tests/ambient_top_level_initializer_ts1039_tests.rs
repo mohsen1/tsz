@@ -184,23 +184,66 @@ fn ambient_class_readonly_property_still_reports_ts1039() {
     );
 }
 
-/// Regression pin, not a correctness claim: `core.rs` gates this whole check
-/// on `is_in_ambient_context` (explicit `declare` ancestor), which is `false`
-/// for a bare `.d.ts` top-level declaration with no `declare` keyword, so
-/// tsz emits nothing here today. Oracle-verified against pinned
-/// `typescript@7.0.2` while writing this fix: real `tsc` DOES emit TS1039 in
-/// this exact `.d.ts` shape (`case.d.ts(1,19): error TS1039 ...`) — the
-/// pre-existing comment above the `is_in_ambient_context` check ("TSC does
-/// not emit TS1039 for variable initializers in .d.ts files") does not hold
-/// for this shape. That is a separate, pre-existing false-negative in the
-/// `is_in_ambient_context` gate itself, not the pre-contextual-reset drop
-/// this PR fixes, and out of scope here — this test only pins that the
-/// reset fix does not change `.d.ts` behavior one way or the other.
+/// Fixed by #17086: every top-level declaration in a `.d.ts` file is
+/// implicitly ambient, so a bare (no explicit `declare`) `.d.ts` top-level
+/// initializer is an ambient-initializer grammar error just like an explicit
+/// `declare`. `core.rs` now gates on `is_ambient_declaration` (declare
+/// keyword ancestor OR `.d.ts` file), matching tsc.
 #[test]
-fn dts_file_bare_annotated_initializer_unaffected_by_this_fix() {
+fn dts_file_bare_annotated_initializer_reports_ts1039() {
     let got = codes_in_file("test.d.ts", "const x: number = 1;");
     assert!(
+        got.contains(&INITIALIZERS_NOT_ALLOWED_IN_AMBIENT),
+        "expected TS1039 for a bare .d.ts top-level initializer, got {got:?}"
+    );
+}
+
+/// Adjacent case: the no-annotation const sibling picks TS1254, not TS1039,
+/// for a bare `.d.ts` top-level declaration too.
+#[test]
+fn dts_file_bare_no_annotation_non_literal_reports_ts1254() {
+    let got = codes_in_file("test.d.ts", "export const x = {};");
+    assert!(
+        got.contains(&CONST_INITIALIZER_MUST_BE_LITERAL),
+        "expected TS1254, got {got:?}"
+    );
+    assert!(
         !got.contains(&INITIALIZERS_NOT_ALLOWED_IN_AMBIENT),
-        "this fix must not change bare-.d.ts TS1039 behavior; got {got:?}"
+        "did not expect TS1039 for the no-annotation case, got {got:?}"
+    );
+}
+
+/// Adjacent case: a `.d.ts` declaration without an initializer stays clean.
+#[test]
+fn dts_file_no_initializer_is_clean() {
+    let got = codes_in_file("test.d.ts", "export const x: number;");
+    assert!(
+        !got.contains(&INITIALIZERS_NOT_ALLOWED_IN_AMBIENT)
+            && !got.contains(&CONST_INITIALIZER_MUST_BE_LITERAL),
+        "expected no ambient-initializer diagnostics, got {got:?}"
+    );
+}
+
+/// Adjacent case: an explicit `declare` inside a `.d.ts` file must still emit
+/// exactly one TS1039 — no double-report from the `.d.ts`-file gate stacking
+/// with the explicit `declare` ancestor gate.
+#[test]
+fn dts_file_explicit_declare_reports_ts1039_once() {
+    let got = codes_in_file("test.d.ts", "declare const x: number = 1;");
+    let ts1039_count = got
+        .iter()
+        .filter(|&&c| c == INITIALIZERS_NOT_ALLOWED_IN_AMBIENT)
+        .count();
+    assert_eq!(ts1039_count, 1, "expected exactly one TS1039, got {got:?}");
+}
+
+/// Adjacent case: renamed binder, `let` instead of `const`, in a bare `.d.ts`
+/// file.
+#[test]
+fn dts_file_bare_let_reports_ts1039() {
+    let got = codes_in_file("test.d.ts", "export let totallyDifferentName: number = 1;");
+    assert!(
+        got.contains(&INITIALIZERS_NOT_ALLOWED_IN_AMBIENT),
+        "expected TS1039, got {got:?}"
     );
 }
