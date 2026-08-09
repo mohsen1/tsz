@@ -13,6 +13,7 @@ mod lazy_impossible_pruning;
 mod property_access_visited;
 mod published_program_alias;
 mod source_location;
+mod ts2589_probe;
 mod type_node_resolution;
 mod type_params;
 

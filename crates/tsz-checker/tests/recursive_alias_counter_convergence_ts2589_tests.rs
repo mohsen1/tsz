@@ -131,3 +131,84 @@ type X = Grow<[1]>;
         "unbounded tuple growth must still produce TS2589. Got: {codes:?}"
     );
 }
+
+/// #17028 item 2: a tuple-length-bounded recursion whose self-reference sits
+/// in a NON-TAIL position (an object property, not the alias body itself) is
+/// the shape the single-round residual-growth check flagged after exactly one
+/// evaluation round: the evaluator only expands one property lookup per round
+/// (`{ a: Nest<[...N, unknown]> }` grows the tuple by one element per round),
+/// so a single round of growth looks identical to genuine divergence unless
+/// the probe keeps following it toward the base case. tsc accepts this up to
+/// its real `instantiationDepth`; a length target trivially inside that bound
+/// must not raise TS2589.
+#[test]
+fn numeric_length_bounded_nest_no_ts2589() {
+    let source = r#"
+type Nest<N extends unknown[]> =
+    N["length"] extends 8 ? number : { a: Nest<[unknown, ...N]> };
+type Z = Nest<[]>;
+declare const z: Z;
+"#;
+    let codes = check_source_codes(source);
+    assert!(
+        !codes.contains(&2589),
+        "length-bounded non-tail object recursion must not produce TS2589. Got: {codes:?}"
+    );
+}
+
+/// Same shape at the exact depth-1 boundary from #17028's own repro: a single
+/// round of tuple growth reaching the base case on the very next round. This
+/// is the shape that used to fire TS2589 unconditionally regardless of the
+/// target depth, since the old check compared only the first round's residual
+/// against the original input.
+#[test]
+fn numeric_length_bounded_nest_no_ts2589_at_depth_one() {
+    let source = r#"
+type Nest<N extends unknown[]> =
+    N["length"] extends 1 ? number : { a: Nest<[unknown, ...N]> };
+type Z = Nest<[]>;
+declare const z: Z;
+"#;
+    let codes = check_source_codes(source);
+    assert!(
+        !codes.contains(&2589),
+        "depth-1 non-tail object recursion must not produce TS2589. Got: {codes:?}"
+    );
+}
+
+/// Renamed-binder variant confirms the fix is structural, not keyed to any
+/// particular alias / type-parameter / property identifier.
+#[test]
+fn numeric_length_bounded_nest_no_ts2589_renamed() {
+    let source = r#"
+type Recurse<Args extends unknown[]> =
+    Args["length"] extends 8 ? string : { wrapped: Recurse<[unknown, ...Args]> };
+type Done = Recurse<[]>;
+declare const done: Done;
+"#;
+    let codes = check_source_codes(source);
+    assert!(
+        !codes.contains(&2589),
+        "renamed length-bounded non-tail object recursion must not produce TS2589. Got: {codes:?}"
+    );
+}
+
+/// Guard against over-correction: the same non-tail object-property shape
+/// with no reachable base case (the length target is far past the real
+/// instantiation-depth bound) must still raise TS2589 — sustained growth all
+/// the way to the bound is still divergence evidence, not just the first
+/// round of growth.
+#[test]
+fn numeric_length_unbounded_nest_still_diverges_ts2589() {
+    let source = r#"
+type Nest<N extends unknown[]> =
+    N["length"] extends 999999 ? number : { a: Nest<[unknown, ...N]> };
+type Z = Nest<[]>;
+declare const z: Z;
+"#;
+    let codes = check_source_codes(source);
+    assert!(
+        codes.contains(&2589),
+        "non-tail object recursion with no reachable base case must still produce TS2589. Got: {codes:?}"
+    );
+}
