@@ -272,16 +272,17 @@ impl<'a> CheckerState<'a> {
             None,
         );
 
-        let crate::query_boundaries::common::CallResult::Success(return_type) = result else {
-            self.error_at_node(
+        let crate::query_boundaries::common::CallResult::Success(return_type) = &result else {
+            self.emit_decorator_signature_error(
                 decorator_node,
                 diagnostic_messages::UNABLE_TO_RESOLVE_SIGNATURE_OF_CLASS_DECORATOR_WHEN_CALLED_AS_AN_EXPRESSION,
                 diagnostic_codes::UNABLE_TO_RESOLVE_SIGNATURE_OF_CLASS_DECORATOR_WHEN_CALLED_AS_AN_EXPRESSION,
+                &result,
             );
             return;
         };
 
-        let return_type = self.evaluate_type_for_assignability(return_type);
+        let return_type = self.evaluate_type_for_assignability(*return_type);
         if matches!(return_type, TypeId::ERROR | TypeId::ANY | TypeId::UNKNOWN) {
             return;
         }
