@@ -303,6 +303,53 @@ fn test_map_type_argument_with_bare_wildcard_reports_ts1110() {
 }
 
 #[test]
+fn test_bare_wildcard_tuple_element_reports_ts1110() {
+    // Tuple-element variant: a bare `?` as a whole tuple element (not a
+    // postfix-optional marker on a preceding element) is still the
+    // no-operand wildcard case, oracle-verified `type T = [?];` -> TS1110.
+    let source = "type T = [?];";
+    let (parser, _root) = parse_source(source);
+
+    let diagnostics: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();
+    assert!(
+        diagnostics.contains(&diagnostic_codes::TYPE_EXPECTED),
+        "Expected TS1110 for `[?]`, got {:?}",
+        parser.get_diagnostics(),
+    );
+    assert!(
+        !diagnostics.contains(
+            &diagnostic_codes::JSDOC_TYPES_CAN_ONLY_BE_USED_INSIDE_DOCUMENTATION_COMMENTS
+        ),
+        "Expected no TS8020 for `[?]`, got {:?}",
+        parser.get_diagnostics(),
+    );
+}
+
+#[test]
+fn test_bare_wildcard_before_comma_then_real_type_reports_ts1110() {
+    // The comma-terminated type-argument branch, but with a real type
+    // argument following the comma (distinguishes the bare-`?`-then-comma
+    // path from one that only fires when the list ends immediately).
+    // Oracle: `type T = Map<?, string>;` -> TS1110 at the `,`.
+    let source = "type T = Map<?, string>;";
+    let (parser, _root) = parse_source(source);
+
+    let diagnostics: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();
+    assert!(
+        diagnostics.contains(&diagnostic_codes::TYPE_EXPECTED),
+        "Expected TS1110 for `Map<?, string>`, got {:?}",
+        parser.get_diagnostics(),
+    );
+    assert!(
+        !diagnostics.contains(
+            &diagnostic_codes::JSDOC_TYPES_CAN_ONLY_BE_USED_INSIDE_DOCUMENTATION_COMMENTS
+        ),
+        "Expected no TS8020 for `Map<?, string>`, got {:?}",
+        parser.get_diagnostics(),
+    );
+}
+
+#[test]
 fn test_prefix_question_mark_with_real_type_still_reports_ts17020_not_ts1110() {
     // Negative control: the wildcard *followed by* a real type operand stays
     // the existing TS17020 JSDoc-nullable-prefix recovery — only the bare
