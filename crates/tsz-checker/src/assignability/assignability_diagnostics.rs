@@ -1881,8 +1881,21 @@ impl<'a> CheckerState<'a> {
         let Some(shape) = object_shape_for_type(self.ctx.types, type_id) else {
             return false;
         };
-        let done_name = self.ctx.types.intern_string("done");
         let value_name = self.ctx.types.intern_string("value");
+        let value_prop = shape.properties.iter().find(|prop| prop.name == value_name);
+        // An `any`-typed `value` makes the object assignable to *either*
+        // `IteratorResult` arm (`IteratorYieldResult<TYield>` /
+        // `IteratorReturnResult<TReturn>`) regardless of its `done` discriminant —
+        // `any` satisfies both `TYield` and `TReturn`. So a broad `done` is not a
+        // genuine override mismatch here: `tsc` accepts a `next()` override whose
+        // inferred return is `{ done: boolean; value: any }`, which is exactly the
+        // shape produced by an unannotated iterator override under
+        // `strictNullChecks: false` (`value: undefined` widens to `any`, #17003).
+        // Defer to the general relation for these instead of forcing a TS2416.
+        if value_prop.is_some_and(|prop| self.type_evaluates_to(prop.type_id, TypeId::ANY)) {
+            return false;
+        }
+        let done_name = self.ctx.types.intern_string("done");
         let Some(done_prop) = shape.properties.iter().find(|prop| prop.name == done_name) else {
             return false;
         };
@@ -1894,11 +1907,7 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        !shape
-            .properties
-            .iter()
-            .find(|prop| prop.name == value_name)
-            .is_some_and(|prop| self.type_evaluates_to(prop.type_id, TypeId::UNDEFINED))
+        !value_prop.is_some_and(|prop| self.type_evaluates_to(prop.type_id, TypeId::UNDEFINED))
     }
 }
 
