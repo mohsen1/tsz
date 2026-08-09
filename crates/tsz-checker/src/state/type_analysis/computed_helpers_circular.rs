@@ -28,33 +28,32 @@ impl<'a> CheckerState<'a> {
         )
     }
 
-    /// True when `type_node` is an indexed access into a mapped type
-    /// (`{ [P in K]: X }[Key]`) at the alias's own top level.
+    /// True when `type_node`, after unwrapping parentheses, is an indexed-access
+    /// type (`Obj[K]`).
     ///
-    /// Indexing a mapped type at a literal key forces eager resolution of
-    /// that one property — the same "eager position" `keyof` already gets
-    /// elsewhere in this function — unlike an ordinary deferred object or
-    /// mapped-type property access. Oracle-verified: `type Rec = { [P in
-    /// "x"]: Rec }` is accepted (deferred recursion, a linked-list shape),
-    /// but `type Rec = { [P in "x"]: Rec }["x"]` is `TS2456`. This check is
-    /// purely syntactic (object side is a `MAPPED_TYPE` node); the caller
-    /// only reaches it after the type-level `Lazy` chain has already
-    /// confirmed the whole indexed access resolves back to the alias being
-    /// defined, so no separate key/template inspection is needed here.
-    fn type_node_is_indexed_mapped_type_self_access(&self, type_node: NodeIndex) -> bool {
-        let Some(node) = self.ctx.arena.get(type_node) else {
-            return false;
-        };
-        if node.kind != syntax_kind_ext::INDEXED_ACCESS_TYPE {
-            return false;
-        }
-        let Some(iat) = self.ctx.arena.get_indexed_access_type(node) else {
-            return false;
-        };
-        self.ctx
-            .arena
-            .get(iat.object_type)
-            .is_some_and(|obj_node| obj_node.kind == syntax_kind_ext::MAPPED_TYPE)
+    /// An indexed access is an *eager* projection: it resolves to the selected
+    /// property's type immediately. So when an alias body is one and the alias's
+    /// resolved type has collapsed all the way to the alias itself
+    /// (`Lazy(own)` — the only way [`Self::is_direct_circular_reference_inner`]'s
+    /// top-level, non-union arm reaches this test with `target == sym`), the
+    /// projection resolved directly back to the alias: a direct self-cycle that
+    /// `tsc` reports as TS2456. This is the mapped-type twin of the concrete
+    /// object case: `type Self = { [P in "x"]: Self }["x"]` collapses to
+    /// `Lazy(Self)` exactly like `type Self = { x: Self }["x"]`, but its body is
+    /// not the bare type reference [`Self::is_simple_type_reference`] looks for.
+    /// A structurally deferred body (`type Self = { x: Self }`,
+    /// `type Self = Self[]`) never collapses to a bare `Lazy(own)` here — it
+    /// presents as its object/array wrapper — so this never reclassifies
+    /// legitimate deferred recursion. Because the `Lazy` chain has already
+    /// confirmed the whole access resolves back to the alias, the object side
+    /// need not be inspected (any eager projection — mapped, object literal,
+    /// nested `[…][…]`, parenthesized — that lands on the alias is a cycle),
+    /// which also covers the paren-wrapped and nested forms a mapped-only
+    /// object-kind check misses.
+    fn type_node_unwraps_to_indexed_access(&self, type_node: NodeIndex) -> bool {
+        self.unwrap_parenthesized_type(type_node)
+            .and_then(|inner| self.ctx.arena.get(inner))
+            .is_some_and(|node| node.kind == syntax_kind_ext::INDEXED_ACCESS_TYPE)
     }
 
     /// Look through enclosing parentheses to the first non-parenthesized type
@@ -610,7 +609,7 @@ impl<'a> CheckerState<'a> {
                 }
             } else {
                 self.is_simple_type_reference(type_node)
-                    || self.type_node_is_indexed_mapped_type_self_access(type_node)
+                    || self.type_node_unwraps_to_indexed_access(type_node)
             };
 
             if is_direct {

@@ -573,6 +573,28 @@ pub fn contains_lazy_def_id(types: &dyn TypeDatabase, root: TypeId, target_def_i
     found
 }
 
+/// Whether `type_id` is itself an `Application` whose base is
+/// `Lazy(target_def_id)` and whose arguments are all concrete (no free type
+/// parameters or infer types). A concrete self-referential `Application` that
+/// survives evaluation is the residual shape the TS2589 convergence checks look
+/// for. Shared by the three walkers below so the match stays in one place.
+fn is_concrete_application_of(
+    types: &dyn TypeDatabase,
+    type_id: TypeId,
+    target_def_id: DefId,
+) -> bool {
+    let Some(TypeData::Application(app_id)) = types.lookup(type_id) else {
+        return false;
+    };
+    let app = types.type_application(app_id);
+    if types.lookup(app.base) != Some(TypeData::Lazy(target_def_id)) {
+        return false;
+    }
+    !app.args
+        .iter()
+        .any(|&arg| super::visitor_predicates::contains_type_parameters(types, arg))
+}
+
 /// Check if `root` contains an Application whose base is `Lazy(target_def_id)`
 /// and whose arguments are all concrete (no type parameters or infer types).
 /// A concrete self-referential Application that survives evaluation indicates
@@ -584,23 +606,7 @@ pub fn contains_concrete_application_with_def(
 ) -> bool {
     let mut found = false;
     walk_referenced_types(types, root, |type_id| {
-        if found {
-            return;
-        }
-        if let Some(TypeData::Application(app_id)) = types.lookup(type_id) {
-            let app = types.type_application(app_id);
-            if let Some(TypeData::Lazy(def_id)) = types.lookup(app.base)
-                && def_id == target_def_id
-            {
-                let args_are_concrete = !app
-                    .args
-                    .iter()
-                    .any(|&arg| super::visitor_predicates::contains_type_parameters(types, arg));
-                if args_are_concrete {
-                    found = true;
-                }
-            }
-        }
+        found = found || is_concrete_application_of(types, type_id, target_def_id);
     });
     found
 }
@@ -621,22 +627,143 @@ pub fn collect_concrete_applications_with_def(
     let mut out = Vec::new();
     let mut seen = FxHashSet::default();
     walk_referenced_types(types, root, |type_id| {
-        if let Some(TypeData::Application(app_id)) = types.lookup(type_id) {
-            let app = types.type_application(app_id);
-            if let Some(TypeData::Lazy(def_id)) = types.lookup(app.base)
-                && def_id == target_def_id
-            {
-                let args_are_concrete = !app
-                    .args
-                    .iter()
-                    .any(|&arg| super::visitor_predicates::contains_type_parameters(types, arg));
-                if args_are_concrete && seen.insert(type_id) {
-                    out.push(type_id);
-                }
-            }
+        if is_concrete_application_of(types, type_id, target_def_id) && seen.insert(type_id) {
+            out.push(type_id);
         }
     });
     out
+}
+
+/// Like [`collect_concrete_applications_with_def`], but only collects residual
+/// self-applications reachable through *eager* type positions — it prunes the
+/// structural-deferral boundaries `tsc` never eagerly instantiates: object and
+/// callable property/index value types, function/constructor signature bodies,
+/// and a mapped type's template and key metadata.
+///
+/// The use-site TS2589 convergence check treats a residual whose argument
+/// weight grew as evidence of infinite instantiation. That is only sound when
+/// the residual sits at a position `tsc` eagerly expands — a tuple/array
+/// element, a union/intersection member, an indexed-access/`keyof` operand, a
+/// resolved conditional branch, or an application argument. A residual left in
+/// a *deferred* position is exactly how `tsc` ties a finite knot for recursive
+/// object/function/mapped types: `type Rec<T> = { a: Rec<[T]> }` and
+/// `type Nest<N extends unknown[]> = N["length"] extends 60 ? number : { a:
+/// Nest<[unknown, ...N]> }` both resolve to a concrete object with the
+/// recursive call deferred in a property, and `tsc` reports no error at the
+/// definition/use site whether or not that recursion is bounded. Counting such
+/// a deferred residual as divergence produced a spurious `TS2589` (#17028).
+pub fn collect_eager_concrete_applications_with_def(
+    types: &dyn TypeDatabase,
+    root: TypeId,
+    target_def_id: DefId,
+) -> Vec<TypeId> {
+    let mut out = Vec::new();
+    let mut seen = FxHashSet::default();
+    let mut stack = vec![root];
+    while let Some(type_id) = stack.pop() {
+        if type_id.is_intrinsic() || !seen.insert(type_id) {
+            continue;
+        }
+        let Some(data) = types.lookup(type_id) else {
+            continue;
+        };
+        // `seen` already dedups each `type_id` on pop, so collect unconditionally.
+        if is_concrete_application_of(types, type_id, target_def_id) {
+            out.push(type_id);
+        }
+        push_eager_children(types, &data, &mut stack);
+    }
+    out
+}
+
+/// Push the children of `data` that occupy *eager* type positions onto `stack`,
+/// pruning the structural-deferral boundaries `tsc` never eagerly instantiates.
+/// The eager set is the child surface of [`collect_concrete_applications_with_def`]
+/// minus object/callable member value types, function/constructor signature
+/// bodies, and mapped-type template/key metadata (see
+/// [`collect_eager_concrete_applications_with_def`]).
+///
+/// This deliberately does not route through the central
+/// `try_for_each_child_with_policy` enumerator: no `ChildPolicy` flag can
+/// express this prune. Object/callable member *value* types and non-generic
+/// signature bodies are always visited (no gating flag), and a mapped type's
+/// `template` is gated only by `deferred_operations` — which also controls the
+/// conditional/indexed-access/`keyof`/template descent the eager walk must keep,
+/// so mapped cannot be dropped without dropping those too. The arms below are
+/// exhaustive (no `_`) so a new `TypeData` variant is a compile error here, not
+/// a silent misclassification.
+fn push_eager_children(types: &dyn TypeDatabase, data: &TypeData, stack: &mut Vec<TypeId>) {
+    match data {
+        TypeData::Array(inner) | TypeData::ReadonlyType(inner) | TypeData::NoInfer(inner) => {
+            stack.push(*inner);
+        }
+        TypeData::Substitution {
+            base_type,
+            constraint,
+        } => {
+            stack.push(*base_type);
+            stack.push(*constraint);
+        }
+        TypeData::KeyOf(inner) => stack.push(*inner),
+        TypeData::Union(list_id) | TypeData::Intersection(list_id) => {
+            for &member in types.type_list(*list_id).iter() {
+                stack.push(member);
+            }
+        }
+        TypeData::Tuple(tuple_id) => {
+            for elem in types.tuple_list(*tuple_id).iter() {
+                stack.push(elem.type_id);
+            }
+        }
+        TypeData::Application(app_id) => {
+            let app = types.type_application(*app_id);
+            for &arg in &app.args {
+                stack.push(arg);
+            }
+        }
+        TypeData::Conditional(cond_id) => {
+            let cond = types.get_conditional(*cond_id);
+            stack.push(cond.check_type);
+            stack.push(cond.extends_type);
+            stack.push(cond.true_type);
+            stack.push(cond.false_type);
+        }
+        TypeData::IndexAccess(obj, idx) => {
+            stack.push(*obj);
+            stack.push(*idx);
+        }
+        TypeData::TemplateLiteral(template_id) => {
+            for span in types.template_list(*template_id).iter() {
+                if let crate::types::TemplateSpan::Type(type_id) = span {
+                    stack.push(*type_id);
+                }
+            }
+        }
+        TypeData::StringIntrinsic { type_arg, .. } => stack.push(*type_arg),
+        TypeData::Enum(_def_id, member_type) => stack.push(*member_type),
+        // Deferred boundaries: `tsc` never eagerly instantiates object/callable
+        // member value types, function/constructor signatures, or a mapped
+        // template, so a residual reachable only through them is not divergence
+        // evidence. Everything else below is a leaf or a bound position.
+        TypeData::Object(_)
+        | TypeData::ObjectWithIndex(_)
+        | TypeData::Function(_)
+        | TypeData::Callable(_)
+        | TypeData::Mapped(_)
+        | TypeData::TypeParameter(_)
+        | TypeData::Infer(_)
+        | TypeData::Intrinsic(_)
+        | TypeData::Literal(_)
+        | TypeData::Lazy(_)
+        | TypeData::Recursive(_)
+        | TypeData::BoundParameter(_)
+        | TypeData::TypeQuery(_)
+        | TypeData::UniqueSymbol(_)
+        | TypeData::ThisType
+        | TypeData::ModuleNamespace(_)
+        | TypeData::UnresolvedTypeName(_)
+        | TypeData::Error => {}
+    }
 }
 
 /// Cheap structural-weight estimate of a single recursive type argument — the
