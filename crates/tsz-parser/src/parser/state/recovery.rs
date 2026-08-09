@@ -415,8 +415,11 @@ impl ParserState {
             // emitted. This happens when a prior parse failure (e.g., missing identifier,
             // unsupported syntax) causes the parser to not consume tokens, then
             // parse_semicolon is called and fails too.
-            // Use centralized error suppression heuristic
-            if self.should_report_error() {
+            // Use centralized error suppression heuristic — except immediately after a
+            // missing-LHS binary-expression statement (#16291), where the following
+            // statement's own diagnostic must never be dropped just for proximity.
+            let force_emit = std::mem::take(&mut self.force_next_missing_semicolon_error_once);
+            if force_emit || self.should_report_error() {
                 self.error_token_expected(";");
             }
         }
@@ -468,8 +471,13 @@ impl ParserState {
                 .rev()
                 .take(4)
                 .any(|diag| diag.start == token_pos);
+            // Immediately after a missing-LHS binary-expression statement
+            // (#16291), this following statement's own diagnostic must never be
+            // dropped just for proximity to that recovery's diagnostic.
+            let force_emit = std::mem::take(&mut self.force_next_missing_semicolon_error_once);
             if !already_reported_here
-                && (self.should_report_error()
+                && (force_emit
+                    || self.should_report_error()
                     || self.last_error_was_leading_zero_at_other_pos()
                     || self.last_error_was_element_access_missing_argument_at_other_pos())
             {

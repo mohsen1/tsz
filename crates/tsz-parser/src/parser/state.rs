@@ -361,6 +361,20 @@ pub struct ParserState {
     /// Set when the current function declaration parameter list yielded a hard
     /// reserved keyword back to the statement parser.
     pub(crate) reserved_parameter_yielded_to_statement: bool,
+    /// Set when an expression statement recovered a missing left operand of a
+    /// reserved-keyword binary operator (`in`/`instanceof`/...) at statement
+    /// start (tsc: `<missing> <op> <rhs>`, TS1109 at the operator). tsc's
+    /// statement-list loop then re-parses the *next* token as a fresh
+    /// statement independent of that recovery, so a missing-semicolon
+    /// diagnostic for that following statement must not be suppressed just
+    /// because it sits within `ERROR_SUPPRESSION_DISTANCE` of the missing-LHS
+    /// statement's own diagnostic — tsc's `parseErrorAtPosition` dedups by
+    /// exact start position only (#16291: `in get x(): number;` dropped tsc's
+    /// third diagnostic through this proximity heuristic). Consumed by the
+    /// very next `parse_semicolon()` / `parse_error_for_missing_semicolon_after()`
+    /// check, so it only ever bypasses suppression for that one, immediately
+    /// following statement.
+    pub(crate) force_next_missing_semicolon_error_once: bool,
 }
 
 impl ParserState {
@@ -473,6 +487,7 @@ impl ParserState {
             namespace_import_yielded_to_statement: false,
             recover_reserved_parameter_as_statement_tail_allowed: false,
             reserved_parameter_yielded_to_statement: false,
+            force_next_missing_semicolon_error_once: false,
         }
     }
 
@@ -530,6 +545,7 @@ impl ParserState {
         self.namespace_import_yielded_to_statement = false;
         self.recover_reserved_parameter_as_statement_tail_allowed = false;
         self.reserved_parameter_yielded_to_statement = false;
+        self.force_next_missing_semicolon_error_once = false;
         // The high-water mark tracks the count of scanner diagnostics that
         // have been considered by the parser-side dedup at `parse_error_at`.
         // When the parser is reused via `reset()` the caller passes a fresh
