@@ -398,6 +398,40 @@ impl<'a> CheckerState<'a> {
         self.declared_type_annotation_node_for_symbol(sym_id)
     }
 
+    /// True when the property-access receiver at `idx` has a declared annotation
+    /// that is a conditional-type alias application (its base alias body is a
+    /// `Conditional`), e.g. `part: DeepReadonly<Part>`.
+    ///
+    /// A conditional alias is a name-dropping reducing operator: `tsc` resolves
+    /// `DeepReadonly<Part>` *into* its taken branch and stamps the branch's alias,
+    /// so it renders `DeepReadonlyObject<Part>`, never the written
+    /// `DeepReadonly<Part>`. The evaluated receiver type already carries that
+    /// resolved alias, so the source-text annotation bridge in
+    /// `property_receiver_display_for_node` must NOT override it back to the
+    /// conditional alias. Plain generic/utility aliases (`Bar<Foo>`,
+    /// `Omit<Foo, "c">`) survive instantiation and keep their name, so they are
+    /// not matched here.
+    pub(in crate::error_reporter) fn receiver_annotation_is_conditional_alias(
+        &mut self,
+        idx: NodeIndex,
+    ) -> bool {
+        let Some(annotation_node) =
+            self.access_receiver_for_diagnostic_node(idx)
+                .and_then(|receiver| {
+                    self.declared_type_annotation_node_for_expression(receiver)
+                        .map(|(_, node)| node)
+                })
+        else {
+            return false;
+        };
+        let annotation_type = self.get_type_from_type_node(annotation_node);
+        crate::query_boundaries::diagnostics::application_base_has_conditional_alias_body(
+            self.ctx.types,
+            &self.ctx.definition_store,
+            annotation_type,
+        )
+    }
+
     /// True when `annotation_idx` is an inline / anonymous *composite* type
     /// annotation — a type literal (`{ … }`), or a union/intersection whose
     /// constituents are all themselves anonymous composites — with no named

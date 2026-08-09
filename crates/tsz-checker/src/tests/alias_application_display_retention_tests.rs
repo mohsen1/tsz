@@ -339,3 +339,92 @@ const sink_qx: 0 = probe_qx;
         "self-referential unroll must keep the annotation surface, got: {message}"
     );
 }
+
+// ── Property-receiver (TS2339) display follows the same alias-drop rule ──
+//
+// The `Property 'p' does not exist on type 'X'` receiver renders the same way a
+// TS2322 target does: a conditional-type alias whose branch is taken drops its
+// own name and shows the resolved branch application, while a plain
+// generic/utility alias keeps its name. Varied binder names guard against a
+// fixture-scoped display shortcut (issue #14141).
+
+/// The single TS2339 message produced by `source`.
+fn ts2339_message(source: &str) -> String {
+    let diags = check_source_diagnostics(source);
+    let ts2339: Vec<_> = diags.iter().filter(|d| d.code == 2339).collect();
+    assert_eq!(
+        ts2339.len(),
+        1,
+        "Expected exactly one TS2339. Got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+    ts2339[0].message_text.clone()
+}
+
+#[test]
+fn conditional_alias_receiver_renders_resolved_branch_application() {
+    // `Frozen<Widget>` resolves (Widget matches the `{ id: number }` check) to
+    // the taken branch `FrozenObject<Widget>`; the conditional alias `Frozen` is
+    // dropped, exactly as tsc renders the `conditionalTypes1` `DeepReadonly<Part>`
+    // / `DeepReadonlyObject<Part>` receiver.
+    let message = ts2339_message(
+        r#"
+interface Widget { id: number; render: number; }
+type Frozen<A> = A extends { id: number } ? FrozenObject<A> : A;
+type FrozenObject<A> = { readonly [P in keyof A]: A[P] };
+
+function use_frozen(w: Frozen<Widget>) {
+    w.missing;
+}
+"#,
+    );
+    assert_eq!(
+        message,
+        "Property 'missing' does not exist on type 'FrozenObject<Widget>'."
+    );
+}
+
+#[test]
+fn conditional_alias_receiver_resolved_branch_survives_renamed_binders() {
+    // Same shape, entirely different binder names: the resolved branch alias is
+    // computed structurally, not matched against a fixture identifier.
+    let message = ts2339_message(
+        r#"
+interface Zeta { count: number; tick: number; }
+type Sealed<Q> = Q extends { count: number } ? SealedRec<Q> : Q;
+type SealedRec<Q> = { readonly [P in keyof Q]: Q[P] };
+
+function use_sealed(z: Sealed<Zeta>) {
+    z.absent;
+}
+"#,
+    );
+    assert_eq!(
+        message,
+        "Property 'absent' does not exist on type 'SealedRec<Zeta>'."
+    );
+}
+
+#[test]
+fn non_conditional_generic_alias_receiver_keeps_its_name() {
+    // Control: a plain generic mapped-type alias survives instantiation and
+    // keeps its own name in the receiver display (it is not a reducing operator),
+    // so the alias-drop rule must NOT strip it.
+    let message = ts2339_message(
+        r#"
+interface Widget { id: number; render: number; }
+type Frozen<A> = { readonly [P in keyof A]: A[P] };
+
+function use_frozen(w: Frozen<Widget>) {
+    w.missing;
+}
+"#,
+    );
+    assert_eq!(
+        message,
+        "Property 'missing' does not exist on type 'Frozen<Widget>'."
+    );
+}
