@@ -928,12 +928,13 @@ impl<'a> CheckerState<'a> {
             if getter_body == NodeIndex::NONE {
                 continue;
             }
-            // See the class-accessor variant above: a getter body that doesn't
-            // return on every path is owned by the completeness check, not this
-            // compatibility check.
-            if self.ctx.strict_null_checks() && self.function_body_falls_through(getter_body) {
-                continue;
-            }
+            // Unlike the class-accessor variant above, object literals don't
+            // wire up their own completeness check (TS2355/TS2366) for this
+            // pairing yet (a separate, pre-existing gap — see #16968's
+            // follow-up), so a fallthrough guard here would silently drop the
+            // only diagnostic tsz has for the case instead of deferring to a
+            // completeness check that doesn't exist. Left reporting TS2322
+            // (wrong code, but present) until that gap is closed.
 
             let getter_return_type = self.infer_getter_return_type(getter_body);
             let setter_param_type = self.get_type_from_type_node(setter_type_ann);

@@ -77,14 +77,18 @@ fn unannotated_getter_paired_setter_no_return_reports_ts2355_and_ts2378() {
     );
 }
 
-/// Object-literal analogue of the class case: the compat check must not
-/// double-report `TS2322` once it defers a falling-through getter body to
-/// the completeness family — even though object literals do not (yet) wire
-/// up their own `TS2366` for this pairing (a separate, pre-existing gap).
-/// The point under test is the absence of the spurious `TS2322`.
+/// Object-literal analogue of the class case, but the fallthrough guard does
+/// NOT apply here: object literals don't (yet) wire up their own `TS2366` for
+/// this pairing (a separate, pre-existing gap — tracked as follow-up to
+/// #16968), so suppressing the compat check's `TS2322` would leave the getter
+/// silently unchecked instead of deferring to a completeness check that
+/// doesn't exist. `tsc` reports `TS2366` here; tsz keeps reporting `TS2322`
+/// (wrong code, but present) until the object-literal completeness gap is
+/// closed — a false negative (accepting code tsc rejects) is worse than a
+/// wrong-code false positive.
 #[test]
-fn object_literal_getter_paired_setter_fallthrough_reports_no_ts2322() {
-    let found = codes(
+fn object_literal_getter_paired_setter_fallthrough_reports_ts2322() {
+    assert_codes(
         r"
         declare const flagQb3: boolean;
         const qb3 = {
@@ -96,10 +100,27 @@ fn object_literal_getter_paired_setter_fallthrough_reports_no_ts2322() {
             set val(v: number) {}
         };
         ",
+        &[2322],
     );
-    assert!(
-        !found.contains(&2322),
-        "expected no spurious TS2322, found: {found:?}"
+}
+
+/// Object-literal analogue of the no-return-statements class case (above):
+/// `tsc` reports `TS2355` + `TS2378`. Object literals still lack their own
+/// `TS2355`, but `TS2378` ("a 'get' accessor must return a value") is a
+/// separate, already-wired check, and the compat check's `TS2322` still fires
+/// alongside it since the fallthrough guard does not apply to object
+/// literals — see `object_literal_getter_paired_setter_fallthrough_reports_ts2322`.
+#[test]
+fn object_literal_getter_paired_setter_no_return_reports_ts2322_and_ts2378() {
+    assert_codes(
+        r"
+        const qb3b = {
+            get val() {
+            },
+            set val(v: number) {}
+        };
+        ",
+        &[2322, 2378],
     );
 }
 
