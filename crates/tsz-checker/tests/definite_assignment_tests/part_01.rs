@@ -537,3 +537,39 @@ fn test_ts2454_assignment_in_nullish_coalescing_right_operand_still_reported() {
         "`??` right-operand assignment is not guaranteed evaluated, so TS2454 must still fire, got: {diags:?}"
     );
 }
+
+/// Regression: TS1255/TS1263/TS1264 must anchor on the `!` token itself
+/// (`grammarErrorOnNode`-equivalent, length 1), not on the property name.
+/// The `!` immediately follows the property name, so its position is
+/// `name_node.end`. This previously depended on the property-name parser
+/// overshooting its own node `end` by one (into the `!`) with the checker
+/// compensating via `end - 1` — when the parser overshoot was fixed
+/// (#17024), the compensation became a new off-by-one bug pointing at the
+/// last character of the name instead of the `!`. Binder names vary per row
+/// so no assertion keys on an identifier string.
+#[test]
+fn test_ts1263_anchors_at_exclamation_not_the_property_name() {
+    let source = "class Cq36 { pq36! = 1; }";
+    let diags = full_diagnostics_with_options(source, CheckerOptions::default());
+
+    let ts1263: Vec<_> = diags
+        .iter()
+        .filter(|d| {
+            d.code
+                == diagnostic_codes::DECLARATIONS_WITH_INITIALIZERS_CANNOT_ALSO_HAVE_DEFINITE_ASSIGNMENT_ASSERTIONS
+        })
+        .collect();
+    assert_eq!(ts1263.len(), 1, "unexpected diagnostics: {diags:#?}");
+
+    let excl = source.find('!').expect("definite assignment marker") as u32;
+    assert_eq!(
+        ts1263[0].start, excl,
+        "TS1263 must anchor at the '!' token, not the property name; got: {:#?}",
+        ts1263[0]
+    );
+    assert_eq!(
+        ts1263[0].length, 1,
+        "TS1263 must span exactly the '!' token; got: {:#?}",
+        ts1263[0]
+    );
+}
