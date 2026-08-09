@@ -1518,6 +1518,27 @@ fn load_tsconfig_inner_with_diagnostics(
             // recoverable error: tsc emits TS6053 anchored at the specifier and
             // continues with the remaining (local) options. Emit the same and
             // skip this base instead of failing the whole config load.
+            //
+            // A bare `""` is a distinct diagnosis (`getExtendsConfigPathOrArray`
+            // in `commandLineParser.ts`): every resolution strategy (relative,
+            // absolute, package) is a no-op on an empty specifier, so `tsc`
+            // short-circuits to TS18051 (`Compiler option 'extends' cannot be
+            // given an empty string.`) instead of TS6053's `File '' not found.`.
+            if extends_path_str.is_empty() {
+                let (start, length) = find_extends_specifier_span(&stripped, extends_path_str);
+                let message = format_message(
+                    diagnostic_messages::COMPILER_OPTION_CANNOT_BE_GIVEN_AN_EMPTY_STRING,
+                    &["extends"],
+                );
+                parsed.diagnostics.push(Diagnostic::error(
+                    &file_display,
+                    start,
+                    length,
+                    message,
+                    diagnostic_codes::COMPILER_OPTION_CANNOT_BE_GIVEN_AN_EMPTY_STRING,
+                ));
+                continue;
+            }
             let Some(base_path) = resolve_extends_path(path, extends_path_str)? else {
                 let (start, length) = find_extends_specifier_span(&stripped, extends_path_str);
                 let message =
