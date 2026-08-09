@@ -67,3 +67,7 @@ pub(crate) use fingerprint_policy::{
 #[cfg(test)]
 #[path = "render_request_tests.rs"]
 mod render_request_tests;
+
+#[cfg(test)]
+#[path = "tuple_annotation_display_tests.rs"]
+mod tuple_annotation_display_tests;
