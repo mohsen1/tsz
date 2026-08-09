@@ -2805,3 +2805,6 @@ path = "tests/ts2369_source_order_anchor_tests.rs"
 [[test]]
 name = "ts7032_zero_parameter_setter_tests"
 path = "tests/ts7032_zero_parameter_setter_tests.rs"
+[[test]]
+name = "ts7023_self_recursive_var_reassigned_return_tests"
+path = "tests/ts7023_self_recursive_var_reassigned_return_tests.rs"

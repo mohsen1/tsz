@@ -109,6 +109,42 @@ impl<'a> CheckerState<'a> {
         sites.iter().all(|site| lazy.contains(site))
     }
 
+    /// Whether `function_idx` has been recorded as a *non-lazy* circular return
+    /// site for any resolving variable — the same condition that drives the
+    /// TS7023 emission (a genuine implicit-`any` circularity, not a benign
+    /// deferred self-reference like #10675). Used to resolve such a function's
+    /// inferred return type to the circular `any` rather than the degenerate
+    /// `void`/`never` that return aggregation produces once the direct self-call
+    /// return is dropped.
+    ///
+    /// This is what distinguishes a *variable-bound* self-recursive function
+    /// expression / arrow (`var f = function(n){ return f(n); }` — the variable
+    /// resolution is circular, so tsc's return type is `any`) from a *clean*
+    /// no-base-case recursion in a named function declaration
+    /// (`function f(n){ return f(n); }` → `never`): only the former is a
+    /// resolving *variable*, so only it is ever recorded here.
+    pub(crate) fn function_is_nonlazy_circular_return_site(&self, function_idx: NodeIndex) -> bool {
+        // Fast path for the overwhelming common case: no circular return sites are
+        // recorded at all (only variable-bound self-recursion mid-resolution ever
+        // populates this map), so a void/never return-type inference pays nothing.
+        if self.ctx.pending_circular_return_sites.sites.is_empty() {
+            return false;
+        }
+        self.ctx
+            .pending_circular_return_sites
+            .sites
+            .iter()
+            .any(|(sym_id, sites)| {
+                sites.contains(&function_idx)
+                    && !self
+                        .ctx
+                        .pending_circular_return_sites
+                        .lazy
+                        .get(sym_id)
+                        .is_some_and(|lazy| lazy.contains(&function_idx))
+            })
+    }
+
     pub(super) fn return_body_has_resolving_var_in_call_like(&self, body_idx: NodeIndex) -> bool {
         let resolving_vars: FxHashSet<_> = self
             .ctx
