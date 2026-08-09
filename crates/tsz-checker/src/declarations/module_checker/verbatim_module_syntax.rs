@@ -615,10 +615,130 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// TS1291: `export = <Identifier>` under isolatedModules (or
+    /// verbatimModuleSyntax) when the identifier is an alias whose non-local
+    /// meanings include Type but not Value, and the alias was not declared
+    /// as `import type` in this file.
+    ///
+    /// Sibling of `check_verbatim_module_syntax_export_default`'s TS1292
+    /// branch for `export default`; same tsc source (`checkExportAssignment`)
+    /// picks between the two messages on `isExportEquals`:
+    ///   if (sym.flags & Alias && nonLocalMeanings & Type
+    ///       && !(nonLocalMeanings & Value)) { isExportEquals ? TS1291 : TS1292 }
+    ///
+    /// Unlike the `export default` sibling, `export =` has no VMS-only
+    /// TS1282/TS1283 early-return branch here — those are reported
+    /// independently by `check_vms_export_equals` at the call site, and tsc
+    /// double-reports both TS1282 and TS1291 together for the same
+    /// identifier under verbatimModuleSyntax (oracle-verified).
+    pub(crate) fn check_isolated_modules_export_equals_type_only(&mut self, expression: NodeIndex) {
+        use tsz_binder::symbol_flags;
+        use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+
+        let option_name = if self.ctx.compiler_options.verbatim_module_syntax {
+            "verbatimModuleSyntax"
+        } else if self.ctx.compiler_options.isolated_modules {
+            "isolatedModules"
+        } else {
+            return;
+        };
+
+        let Some(expr_node) = self.ctx.arena.get(expression) else {
+            return;
+        };
+        let Some(ident) = self.ctx.arena.get_identifier(expr_node) else {
+            return;
+        };
+        let name = ident.escaped_text.clone();
+
+        const VALUE: u32 = symbol_flags::VARIABLE
+            | symbol_flags::FUNCTION
+            | symbol_flags::CLASS
+            | symbol_flags::ENUM
+            | symbol_flags::ENUM_MEMBER
+            | symbol_flags::VALUE_MODULE;
+
+        if let Some(sym_id) = self.ctx.binder.file_locals.get(&name)
+            && let Some(sym) = self.ctx.binder.get_symbol(sym_id)
+        {
+            if sym.has_any_flags(VALUE) {
+                return;
+            }
+
+            let sym_is_direct_alias = sym.has_any_flags(symbol_flags::ALIAS);
+            let alias_sym_id = if sym_is_direct_alias {
+                Some(sym_id)
+            } else {
+                self.ctx.alias_partner_for(self.ctx.binder, sym_id)
+            };
+
+            let Some(alias_sym_id) = alias_sym_id else {
+                return;
+            };
+            let Some(alias_sym) = self.ctx.binder.get_symbol(alias_sym_id) else {
+                return;
+            };
+            if !alias_sym.has_any_flags(symbol_flags::ALIAS) {
+                return;
+            }
+            if alias_sym.is_type_only {
+                // `import type` in this file: typeOnlyDeclaration is in the
+                // current file, suppressing TS1291.
+                return;
+            }
+            let Some(module_spec) = alias_sym.import_module() else {
+                return;
+            };
+            let import_name = alias_sym.import_name().unwrap_or(name.as_str()).to_string();
+
+            let (target_has_type, target_has_value) =
+                self.lookup_imported_target_flags(module_spec, &import_name);
+            if target_has_type && !target_has_value {
+                // tsc double-reports here for verbatimModuleSyntax, mirroring
+                // the TS1284+TS1292 double report in
+                // `check_verbatim_module_syntax_export_default`: TS1282 is
+                // evaluated directly against `export = <name>` (the local
+                // binding "only refers to a type") *in addition to* TS1291's
+                // deeper resolve-through-the-import check.
+                // `check_vms_export_equals`'s own PURE_TYPE branch cannot see
+                // this because a plain import alias symbol never carries
+                // INTERFACE/TYPE_ALIAS flags itself — only its resolved
+                // target does. isolatedModules alone does not get TS1282
+                // (verbatimModuleSyntax-only, same gate as that branch).
+                if option_name == "verbatimModuleSyntax" && sym_is_direct_alias {
+                    let message = format_message(
+                        diagnostic_messages::AN_EXPORT_DECLARATION_MUST_REFERENCE_A_VALUE_WHEN_VERBATIMMODULESYNTAX_IS_ENABLE,
+                        &[&name],
+                    );
+                    self.error_at_node(
+                        expression,
+                        &message,
+                        diagnostic_codes::AN_EXPORT_DECLARATION_MUST_REFERENCE_A_VALUE_WHEN_VERBATIMMODULESYNTAX_IS_ENABLE,
+                    );
+                }
+
+                let message = format_message(
+                    diagnostic_messages::RESOLVES_TO_A_TYPE_AND_MUST_BE_MARKED_TYPE_ONLY_IN_THIS_FILE_BEFORE_RE_EXPORTING,
+                    &[&name, option_name],
+                );
+                self.error_at_node(
+                    expression,
+                    &message,
+                    diagnostic_codes::RESOLVES_TO_A_TYPE_AND_MUST_BE_MARKED_TYPE_ONLY_IN_THIS_FILE_BEFORE_RE_EXPORTING,
+                );
+            }
+        }
+    }
+
     /// Best-effort resolution of an imported symbol's non-local meanings.
     /// Returns `(has_type, has_value)` for the target of `import { name } from module_spec`.
-    /// Used by TS1292 / TS2865 isolatedModules checks.
-    fn lookup_imported_target_flags(&self, module_spec: &str, import_name: &str) -> (bool, bool) {
+    /// Used by TS1291 / TS1292 / TS2865 isolatedModules checks, and by
+    /// `check_vms_export_equals`'s TS1282/TS1283 pick (`declarations/import/verbatim.rs`).
+    pub(crate) fn lookup_imported_target_flags(
+        &self,
+        module_spec: &str,
+        import_name: &str,
+    ) -> (bool, bool) {
         use tsz_binder::symbol_flags;
         use tsz_parser::parser::syntax_kind_ext;
         let mut has_type = false;
