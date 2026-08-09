@@ -499,7 +499,6 @@ async function runSequential(opts, testsToRun) {
     let slow = 0;
     let failed = 0;
     let xfailed = 0;
-    let timedOut = 0;
     const errors = [];
     const testResults = [];
 
@@ -553,11 +552,12 @@ async function runSequential(opts, testsToRun) {
                 continue;
             }
 
-            // A did-not-complete timeout (bridge "Timeout") is its own outcome;
-            // everything else is a genuine assertion failure. Disjoint so the
-            // counts sum cleanly.
+            // A did-not-complete timeout (bridge "Timeout") is its own outcome
+            // ("timeout"); everything else is a genuine assertion failure
+            // ("fail"). main re-derives the tally from testResults, so only the
+            // failed counter (read by the progress line) is tracked here.
             const isTimeout = errMsg.includes("Timeout");
-            if (isTimeout) timedOut++; else failed++;
+            if (!isTimeout) failed++;
             errors.push({ file: testFile, error: errMsg, timedOut: isTimeout });
             testResults.push({ file: testFile, status: isTimeout ? "timeout" : "fail", timedOut: isTimeout, error: errMsg, elapsed });
 
