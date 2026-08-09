@@ -526,26 +526,30 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             }
         }
 
-        // Handle `object` intrinsic (non-primitive type) as source when target is an object.
-        // `object` has no own properties, so all required target properties are "missing".
-        // This produces TS2741/TS2739 instead of generic TS2322.
+        // The `object` non-primitive intrinsic as the SOURCE of a failed
+        // relation surfaces the generic TS2322 (assignment) / TS2345 (argument)
+        // naming `object` verbatim — never a `{}`-rendered missing-property
+        // head. `object` carries `TypeFlags.NonPrimitive`, not
+        // `TypeFlags.StructuredType`, so tsc never reaches `propertiesRelatedTo`
+        // (the owner of TS2741/TS2739/TS2740) for it. Routing it into
+        // `explain_object_failure` with an empty source-property list promoted
+        // that missing-property reason to the top-level diagnostic, rendering
+        // `object` as its `{}` apparent shape. Return `TypeMismatch` so the
+        // checker emits the generic head instead, for every target shape and in
+        // both assignment and argument position.
+        //
+        // The empty object `{}` and a members-less interface are genuine
+        // structured object sources (they have an object shape), so they never
+        // reach this arm and keep their correct TS2741 through the object-shape
+        // arms below. Only the `object` intrinsic — which has no object shape of
+        // its own — lands here.
         if resolved_source == TypeId::OBJECT
             || intrinsic_kind(self.interner, resolved_source) == Some(IntrinsicKind::Object)
         {
-            if let Some(t_shape_id) = object_shape_id(self.interner, resolved_target) {
-                let t_shape = self.interner.object_shape(t_shape_id);
-                return self.explain_object_failure(source, target, &[], None, &t_shape.properties);
-            }
-            if let Some(t_shape_id) = object_with_index_shape_id(self.interner, resolved_target) {
-                let t_shape = self.interner.object_shape(t_shape_id);
-                return self.explain_indexed_object_failure(
-                    source,
-                    target,
-                    &ObjectShape::default(),
-                    None,
-                    &t_shape,
-                );
-            }
+            return Some(SubtypeFailureReason::TypeMismatch {
+                source_type: source,
+                target_type: target,
+            });
         }
 
         if let (Some(s_shape_id), Some(t_shape_id)) = (
