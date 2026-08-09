@@ -407,3 +407,111 @@ function* makeContainer() { class ConnectionPool { [yield token]() {} } }
     );
     assert!(!codes.contains(&7057), "got {codes:?}");
 }
+
+// ---------------------------------------------------------------------------
+// #17057 continued: interface/type-literal METHOD SIGNATURES (bodyless — no
+// `is_function_like()` node kind of their own) reach the yield ANY-fallback
+// through the real enclosing generator, unlike a class/object-literal method
+// or accessor, whose own function-like node accidentally short-circuits the
+// `is_in_generator` walk before it ever gets there (see the doc comment on
+// `yield_computed_name_owner_is_method_signature` in `dispatch/yield_.rs`).
+// Oracle-verified (`typescript@7.0.2`): `tsc` suppresses TS7057 for a method
+// signature exactly like it does for a method/accessor with a body.
+
+#[test]
+fn generator_interface_method_signature_computed_name_yield_does_not_report_ts7057() {
+    let codes = check_source_codes_with_parse_health(
+        r#"
+function* gen() { interface Shape { [yield 1](): void } }
+"#,
+    );
+    assert!(!codes.contains(&7057), "got {codes:?}");
+    assert_eq!(codes, vec![1169], "got {codes:?}");
+}
+
+#[test]
+fn generator_type_literal_method_signature_computed_name_yield_does_not_report_ts7057() {
+    let codes = check_source_codes_with_parse_health(
+        r#"
+function* gen() { type Shape2 = { [yield 1](): void }; }
+"#,
+    );
+    assert!(!codes.contains(&7057), "got {codes:?}");
+    assert_eq!(sorted(codes.clone()), vec![1163, 1170], "got {codes:?}");
+}
+
+#[test]
+fn renamed_binder_generator_interface_method_signature_computed_name_yield_does_not_report_ts7057()
+{
+    // Anti-hardcoding: no identifier-spelling predicate drives the rule.
+    let codes = check_source_codes_with_parse_health(
+        r#"
+function* makeContainer() { interface ConnectionOptions { [yield token](): void } }
+"#,
+    );
+    assert!(!codes.contains(&7057), "got {codes:?}");
+}
+
+#[test]
+fn generator_interface_getter_signature_computed_name_yield_stays_clean() {
+    // Negative control: accessor signatures reuse the GET_ACCESSOR/SET_ACCESSOR
+    // node kinds, already `is_function_like()`, so this path was already
+    // correct before this fix — pinned here so a regression on the new
+    // METHOD_SIGNATURE-only helper shows up immediately.
+    let codes = check_source_codes_with_parse_health(
+        r#"
+function* gen() { interface Shape { get [yield 1](): number; } }
+"#,
+    );
+    assert!(codes.is_empty(), "got {codes:?}");
+}
+
+#[test]
+fn generator_interface_setter_signature_computed_name_yield_stays_clean() {
+    let codes = check_source_codes_with_parse_health(
+        r#"
+function* gen() { interface Shape { set [yield 1](v: number); } }
+"#,
+    );
+    assert!(codes.is_empty(), "got {codes:?}");
+}
+
+#[test]
+fn generator_type_literal_getter_signature_computed_name_yield_reports_ts1163_only() {
+    let codes = check_source_codes_with_parse_health(
+        r#"
+function* gen() { type Shape2 = { get [yield 1](): number; }; }
+"#,
+    );
+    assert!(!codes.contains(&7057), "got {codes:?}");
+    assert_eq!(codes, vec![1163], "got {codes:?}");
+}
+
+#[test]
+fn generator_interface_property_computed_name_yield_still_reports_ts7057() {
+    // Positive control: a plain interface PROPERTY signature (not a method
+    // signature) must keep TS7057 — the fix is scoped to METHOD_SIGNATURE
+    // only, not every interface member kind.
+    let codes = check_source_codes_with_parse_health(
+        r#"
+function* gen() { interface Shape { [yield 1]: number; } }
+"#,
+    );
+    assert!(codes.contains(&7057), "got {codes:?}");
+    assert_eq!(sorted(codes.clone()), vec![1169, 7057], "got {codes:?}");
+}
+
+#[test]
+fn generator_type_literal_property_computed_name_yield_still_reports_ts7057() {
+    let codes = check_source_codes_with_parse_health(
+        r#"
+function* gen() { type Shape2 = { [yield 1]: number }; }
+"#,
+    );
+    assert!(codes.contains(&7057), "got {codes:?}");
+    assert_eq!(
+        sorted(codes.clone()),
+        vec![1163, 1170, 7057],
+        "got {codes:?}"
+    );
+}
