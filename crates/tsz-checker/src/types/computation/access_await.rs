@@ -155,12 +155,16 @@ impl<'a> CheckerState<'a> {
     /// before the conditional runs.
     pub(crate) fn try_evaluate_awaited_application(&mut self, type_id: TypeId) -> Option<TypeId> {
         let arg = self.awaited_application_arg_from_type(type_id)?;
-        let (awaited, changed) = self.compute_explicit_awaited_application_type(arg, 0);
+        let mut chain: Vec<TypeId> = Vec::new();
+        let (awaited, changed) =
+            self.compute_explicit_awaited_application_type(arg, 0, &mut chain)?;
         if changed {
             return Some(awaited);
         }
         let alias_body = self.promise_branch_alias_body_from_application(arg)?;
-        let (awaited, changed) = self.compute_explicit_awaited_application_type(alias_body, 0);
+        chain.clear();
+        let (awaited, changed) =
+            self.compute_explicit_awaited_application_type(alias_body, 0, &mut chain)?;
         changed.then_some(awaited)
     }
 
@@ -190,29 +194,38 @@ impl<'a> CheckerState<'a> {
         (folded != type_id).then_some(folded)
     }
 
+    /// Fold one `Awaited<...>` layer, tracking the chain of thenable types
+    /// unwrapped so far so that a cyclic thenable defers to the conditional
+    /// evaluator instead of being folded to a finite value.
+    ///
+    /// Returns `Some((awaited, changed))` when the fold completed, and `None`
+    /// when a thenable cycle was detected in this subtree — the caller then
+    /// leaves the value as the deferred `Awaited<...>` application so the
+    /// conditional evaluator's cycle detection reports `TS2589`, matching tsc's
+    /// `getAwaitedType`/`awaitedTypeStack`. `chain` holds the thenable types on
+    /// the current unwrap path (excluding `type_id` itself until it recurses).
     fn compute_explicit_awaited_application_type(
         &mut self,
         type_id: TypeId,
         depth: u8,
-    ) -> (TypeId, bool) {
+        chain: &mut Vec<TypeId>,
+    ) -> Option<(TypeId, bool)> {
         if depth > 8 {
-            return (type_id, false);
+            return Some((type_id, false));
         }
         if let Some(members) = query::union_members(self.ctx.types, type_id) {
             let mut changed = false;
-            let unwrapped = members
-                .into_iter()
-                .map(|member| {
-                    let (awaited, member_changed) =
-                        self.compute_explicit_awaited_application_type(member, depth + 1);
-                    changed |= member_changed;
-                    awaited
-                })
-                .collect();
-            return (
+            let mut unwrapped = Vec::with_capacity(members.len());
+            for member in members {
+                let (awaited, member_changed) =
+                    self.compute_explicit_awaited_application_type(member, depth + 1, chain)?;
+                changed |= member_changed;
+                unwrapped.push(awaited);
+            }
+            return Some((
                 query::awaited_union_type(self.ctx.types, unwrapped),
                 changed,
-            );
+            ));
         }
         // Unwrap a single thenable layer. The fast path matches the
         // Application form (`Promise<T>` / `PromiseLike<T>`) without
@@ -243,16 +256,26 @@ impl<'a> CheckerState<'a> {
             }
         }
         if let Some(inner) = inner {
-            // A self-referential thenable (`onfulfilled` yields the thenable
-            // itself) must not spin; stop and let the conditional evaluator and
-            // its cycle detection own that case.
-            if inner == type_id {
-                return (type_id, false);
+            // A self-referential thenable must not spin. Two shapes qualify:
+            //   * direct  — `onfulfilled` yields the thenable itself
+            //     (`inner == type_id`);
+            //   * mutual  — `inner` was already unwrapped higher on this path
+            //     (`BadPromise1 -> BadPromise2 -> BadPromise1`), so it appears in
+            //     `chain`.
+            // Both are genuinely infinite: stop folding and defer (return `None`)
+            // so the value stays the deferred `Awaited<...>` application and the
+            // conditional evaluator's cycle detection reports TS2589, mirroring
+            // tsc's `getAwaitedType` guarding on its `awaitedTypeStack`.
+            if inner == type_id || chain.contains(&inner) {
+                return None;
             }
-            let (awaited, _) = self.compute_explicit_awaited_application_type(inner, depth + 1);
-            return (awaited, true);
+            chain.push(type_id);
+            let unwrapped = self.compute_explicit_awaited_application_type(inner, depth + 1, chain);
+            chain.pop();
+            let (awaited, _) = unwrapped?;
+            return Some((awaited, true));
         }
-        (type_id, false)
+        Some((type_id, false))
     }
 
     /// Compute the `Awaited<T>` of a type, mirroring tsc's `getAwaitedType`.
