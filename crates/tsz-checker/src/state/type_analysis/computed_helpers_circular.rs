@@ -28,6 +28,29 @@ impl<'a> CheckerState<'a> {
         )
     }
 
+    /// True when `type_node`, after unwrapping parentheses, is an indexed-access
+    /// type (`Obj[K]`).
+    ///
+    /// An indexed access is an *eager* projection: it resolves to the selected
+    /// property's type immediately. So when an alias body is one and the alias's
+    /// resolved type has collapsed all the way to the alias itself
+    /// (`Lazy(own)` — the only way [`Self::is_direct_circular_reference_inner`]'s
+    /// top-level, non-union arm reaches this test with `target == sym`), the
+    /// projection resolved directly back to the alias: a direct self-cycle that
+    /// `tsc` reports as TS2456. This is the mapped-type twin of the concrete
+    /// object case: `type Self = { [P in "x"]: Self }["x"]` collapses to
+    /// `Lazy(Self)` exactly like `type Self = { x: Self }["x"]`, but its body is
+    /// not the bare type reference [`Self::is_simple_type_reference`] looks for.
+    /// A structurally deferred body (`type Self = { x: Self }`,
+    /// `type Self = Self[]`) never collapses to a bare `Lazy(own)` here — it
+    /// presents as its object/array wrapper — so this never reclassifies
+    /// legitimate deferred recursion.
+    fn type_node_unwraps_to_indexed_access(&self, type_node: NodeIndex) -> bool {
+        self.unwrap_parenthesized_type(type_node)
+            .and_then(|inner| self.ctx.arena.get(inner))
+            .is_some_and(|node| node.kind == syntax_kind_ext::INDEXED_ACCESS_TYPE)
+    }
+
     /// Look through enclosing parentheses to the first non-parenthesized type
     /// node. Used by circular-alias detection so `(A<T>)` is treated like
     /// `A<T>`.
@@ -581,6 +604,7 @@ impl<'a> CheckerState<'a> {
                 }
             } else {
                 self.is_simple_type_reference(type_node)
+                    || self.type_node_unwraps_to_indexed_access(type_node)
             };
 
             if is_direct {

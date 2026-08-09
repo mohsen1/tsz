@@ -266,6 +266,20 @@ pub(crate) fn collect_concrete_applications_with_def(
     tsz_solver::visitor::collect_concrete_applications_with_def(db, type_id, def_id)
 }
 
+/// Like [`collect_concrete_applications_with_def`], but only collects residual
+/// self-applications reachable through eager positions, pruning the
+/// structural-deferral boundaries (object/callable member values, function
+/// signatures, mapped templates) `tsc` never eagerly instantiates. Used by the
+/// use-site TS2589 convergence check so a growing residual `tsc` defers is not
+/// mistaken for an infinite instantiation.
+pub(crate) fn collect_eager_concrete_applications_with_def(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+    def_id: tsz_solver::def::DefId,
+) -> Vec<TypeId> {
+    tsz_solver::visitor::collect_eager_concrete_applications_with_def(db, type_id, def_id)
+}
+
 /// Total structural weight of the arguments of a concrete `Application` of
 /// `def_id`, or `None` if `type_id` is not such an application. The shared
 /// recursion-growth metric used to decide whether a residual self-application

@@ -685,31 +685,29 @@ impl CheckerState<'_> {
         // no input application to compare against (the definition-site pass evaluates
         // the conditional body directly), any surviving concrete self-reference stays
         // divergent, preserving definition-site TS2589.
+        use crate::query_boundaries::state::type_environment as qb;
         let result = eval_result.result;
         if result != type_id && result != TypeId::ERROR {
             let db = self.ctx.types.as_type_database();
-            let residuals = crate::query_boundaries::state::type_environment::collect_concrete_applications_with_def(
-                db,
-                result,
-                alias_def_id,
-            );
-            match crate::query_boundaries::state::type_environment::self_application_arg_weight(
-                db,
-                &*env,
-                type_id,
-                alias_def_id,
-            ) {
-                None => return !residuals.is_empty(),
+            let weight = |t| qb::self_application_arg_weight(db, &*env, t, alias_def_id);
+            match weight(type_id) {
+                // Definition-site pass: any surviving concrete self-reference is
+                // divergent.
+                None => {
+                    let residuals =
+                        qb::collect_concrete_applications_with_def(db, result, alias_def_id);
+                    return !residuals.is_empty();
+                }
+                // Only a residual at an *eager* position is divergence evidence;
+                // one `tsc` defers (object property / function / mapped template)
+                // is a finite knot, not infinite instantiation (#17028). See
+                // `collect_eager_concrete_applications_with_def`.
                 Some(input_weight) => {
-                    let diverges = residuals.iter().any(|&residual| {
-                        crate::query_boundaries::state::type_environment::self_application_arg_weight(
-                            db,
-                            &*env,
-                            residual,
-                            alias_def_id,
-                        )
-                        .is_none_or(|residual_weight| residual_weight > input_weight)
-                    });
+                    let residuals =
+                        qb::collect_eager_concrete_applications_with_def(db, result, alias_def_id);
+                    let diverges = residuals
+                        .iter()
+                        .any(|&r| weight(r).is_none_or(|rw| rw > input_weight));
                     if diverges {
                         return true;
                     }
