@@ -999,6 +999,9 @@ path = "tests/object_literal_accessor_pair_parameter_type_tests.rs"
 name = "accessor_getter_contextual_return_from_setter_tests"
 path = "tests/accessor_getter_contextual_return_from_setter_tests.rs"
 [[test]]
+name = "accessor_missing_body_modifier_suppression_tests"
+path = "tests/accessor_missing_body_modifier_suppression_tests.rs"
+[[test]]
 name = "conditional_optional_infer_default_tests"
 path = "tests/conditional_optional_infer_default_tests.rs"
 [[test]]

@@ -634,8 +634,23 @@ impl ParserState {
                     if (self.context_flags
                         & crate::parser::state::CONTEXT_FLAG_TEMPLATE_SPAN_EXPRESSION)
                         == 0
+                        && self.should_report_error()
                     {
-                        self.error_expression_expected();
+                        // tsc's `createMissingNode` anchors this at the
+                        // position right after the last real token — before
+                        // any trailing trivia (e.g. a final newline) is
+                        // skipped to reach EOF — not at the EOF token's own
+                        // post-trivia position. Compare `a &&;`/`a && ;`
+                        // (anchored at the next real token) with `a &&\n`
+                        // (anchored one column after `&&`, not at the start
+                        // of the following line).
+                        let pos = self.token_full_start();
+                        self.parse_error_at(
+                            pos,
+                            0,
+                            "Expression expected.",
+                            diagnostic_codes::EXPRESSION_EXPECTED,
+                        );
                     }
                     return NodeIndex::NONE;
                 }

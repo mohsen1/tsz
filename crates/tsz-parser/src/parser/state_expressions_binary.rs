@@ -271,10 +271,27 @@ impl ParserState {
         // operator always emits TS1109 even if a prior error (for example,
         // TS1003 from JSX) is nearby.
         if !self.should_suppress_missing_binary_rhs_error() {
-            self.parse_error_at_current_token(
-                "Expression expected.",
-                diagnostic_codes::EXPRESSION_EXPECTED,
-            );
+            if self.is_token(SyntaxKind::EndOfFileToken) {
+                // At EOF, tsc's `createMissingNode` anchors the diagnostic at
+                // the position right after the last real token (before any
+                // trailing trivia, e.g. a final newline, is skipped) rather
+                // than at the EOF token's own post-trivia position — compare
+                // `a &&;`/`a && ;` (mid-line, anchored at the next real
+                // token) with `a &&\n` (anchored one column after `&&`, not
+                // at the start of the following line).
+                let pos = self.token_full_start();
+                self.parse_error_at(
+                    pos,
+                    0,
+                    "Expression expected.",
+                    diagnostic_codes::EXPRESSION_EXPECTED,
+                );
+            } else {
+                self.parse_error_at_current_token(
+                    "Expression expected.",
+                    diagnostic_codes::EXPRESSION_EXPECTED,
+                );
+            }
         }
     }
 

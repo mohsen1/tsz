@@ -133,3 +133,93 @@ fn octal_literal_missing_semicolon_cascade_is_unaffected() {
         ]
     );
 }
+
+// ---------------------------------------------------------------------------
+// #17062 item 1: the same cascading-suppression bug also hits `error_comma_
+// expected` inside a call's argument list — not just `parse_semicolon` — when
+// the following statement's own first diagnostic is a missing `,` rather than
+// a missing `;`. `in set y(v: number);` is `<missing> in set` (first
+// statement, TS1109 + TS1005) followed by `y(v: number)` (second, independent
+// statement: `v` parses as the sole argument, then the argument list hits an
+// unexpected `:` where `,` or `)` was expected).
+#[test]
+fn in_missing_lhs_followed_by_call_with_colon_typed_argument_reports_comma_expected() {
+    assert_eq!(
+        fingerprints("in set y(v: number);"),
+        vec![(TS1109, 1, 1), (TS1005, 1, 8), (TS1005, 1, 11)],
+    );
+}
+
+#[test]
+fn instanceof_missing_lhs_followed_by_call_with_colon_typed_argument_reports_comma_expected() {
+    assert_eq!(
+        fingerprints("instanceof set y(v: number);"),
+        vec![(TS1109, 1, 1), (TS1005, 1, 16), (TS1005, 1, 19)],
+    );
+}
+
+// `get` accessor keeps working the same way (regression guard for the fix's
+// sibling shape, already covered by #17052 but re-asserted here alongside
+// the new `set`/comma-expected cases).
+#[test]
+fn in_missing_lhs_followed_by_get_call_statement_reports_both_semicolons() {
+    assert_eq!(
+        fingerprints("in get x(): number;"),
+        vec![(TS1109, 1, 1), (TS1005, 1, 8), (TS1005, 1, 11)],
+    );
+}
+
+// ---------------------------------------------------------------------------
+// #17062 item 2: `report_missing_binary_rhs` anchored a missing-RHS TS1109 at
+// the EOF token's own (post-trivia) position rather than right after the
+// last real token — before any trailing trivia (e.g. a final newline) is
+// skipped to reach EOF. This is a general binary-expression bug, not
+// specific to the `in`/`instanceof` statement-boundary recovery: it also
+// reproduces for an ordinary `+`/`&&` binary expression whose RHS is missing
+// at EOF.
+
+// Bare `in` at EOF: both diagnostics anchor on line 1 (tsc: col 1, col 3 —
+// right after `in`), not (2, 1).
+#[test]
+fn bare_in_at_eof_anchors_second_diagnostic_after_operator_not_next_line() {
+    assert_eq!(fingerprints("in\n"), vec![(TS1109, 1, 1), (TS1109, 1, 3)]);
+}
+
+#[test]
+fn bare_instanceof_at_eof_anchors_second_diagnostic_after_operator_not_next_line() {
+    assert_eq!(
+        fingerprints("instanceof\n"),
+        vec![(TS1109, 1, 1), (TS1109, 1, 11)],
+    );
+}
+
+// Ordinary (non-statement-boundary) binary expressions with a missing RHS at
+// EOF show the identical anchor bug.
+#[test]
+fn plus_missing_rhs_at_eof_with_trailing_newline_anchors_after_operator() {
+    assert_eq!(fingerprints("a +\n"), vec![(TS1109, 1, 4)]);
+}
+
+#[test]
+fn logical_and_missing_rhs_at_eof_with_trailing_newline_anchors_after_operator() {
+    assert_eq!(fingerprints("a &&\n"), vec![(TS1109, 1, 5)]);
+}
+
+// Negative controls: when a *real* token (not EOF) follows — even across a
+// line break, or separated by whitespace on the same line — tsc anchors at
+// that real token's own position, which already matched before this fix and
+// must stay unchanged.
+#[test]
+fn plus_missing_rhs_at_eof_without_trailing_trivia_is_unaffected() {
+    assert_eq!(fingerprints("a +"), vec![(TS1109, 1, 4)]);
+}
+
+#[test]
+fn logical_and_missing_rhs_before_real_token_same_line_anchors_at_token() {
+    assert_eq!(fingerprints("a && ;"), vec![(TS1109, 1, 6)]);
+}
+
+#[test]
+fn logical_and_missing_rhs_before_real_token_next_line_anchors_at_token() {
+    assert_eq!(fingerprints("a &&\n;"), vec![(TS1109, 2, 1)]);
+}
