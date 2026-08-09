@@ -1123,6 +1123,13 @@ impl<'a> CheckerState<'a> {
                         }
                     }
                 }
+                k if k == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION => self
+                    .collect_js_static_block_this_properties(
+                        member_idx,
+                        class_idx,
+                        &mut properties,
+                        current_sym,
+                    ),
                 _ => {}
             }
         }

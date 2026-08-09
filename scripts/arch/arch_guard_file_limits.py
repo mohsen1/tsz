@@ -643,6 +643,10 @@ FILE_LINE_LIMIT_CHECKS = [
         2896,
     ),
     (
+        # Ratcheted 1981->1982: +1 line for the CLASS_STATIC_BLOCK_DECLARATION
+        # match arm that scans a static block for implicit `this.prop=` static
+        # members in JS/checkJs mode (conformance false positive fixed by
+        # javascriptThisAssignmentInStaticBlock.ts).
         "Checker boundary: types/class_type/constructor.rs size ratchet",
         ROOT
         / "crates"
@@ -651,7 +655,7 @@ FILE_LINE_LIMIT_CHECKS = [
         / "types"
         / "class_type"
         / "constructor.rs",
-        1981,
+        1982,
     ),
     (
         "Solver boundary: diagnostics/format/compound.rs size ratchet",

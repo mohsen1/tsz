@@ -567,6 +567,32 @@ impl CheckerState<'_> {
         None
     }
 
+    /// Scan a class `static { }` block for `this.prop = value` assignments and
+    /// add them as static properties, mirroring the constructor-body handling
+    /// in [`Self::collect_js_constructor_this_properties`] for instance members.
+    /// Checks the class's own file rather than the currently-processed file so
+    /// a TS file referencing a JS class still sees the implicit static members.
+    pub(crate) fn collect_js_static_block_this_properties(
+        &mut self,
+        static_block_idx: NodeIndex,
+        class_idx: NodeIndex,
+        properties: &mut FxHashMap<Atom, PropertyInfo>,
+        parent_sym: Option<SymbolId>,
+    ) {
+        let class_is_in_js_file = self
+            .source_file_data_for_node(class_idx)
+            .map(|sf| crate::context::is_js_file_name(&sf.file_name))
+            .unwrap_or(false);
+        if class_is_in_js_file {
+            self.collect_js_constructor_this_properties(
+                static_block_idx,
+                properties,
+                parent_sym,
+                true,
+            );
+        }
+    }
+
     /// Scan a body (constructor or method) for `this.prop = value` assignments
     /// and add them as instance properties. This implements the JS/checkJs
     /// pattern where assignments serve as implicit property declarations.
