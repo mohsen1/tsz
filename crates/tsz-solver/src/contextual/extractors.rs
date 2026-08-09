@@ -528,6 +528,11 @@ pub(crate) struct TupleElementExtractor<'a> {
     /// Total number of elements in the source array/tuple literal.
     /// When provided, enables correct mapping for variadic tuple types.
     element_count: Option<usize>,
+    /// Mirrors [`PropertyExtractor::strip_optional_undefined`]: when set, an
+    /// optional element's own declared type is returned as-is instead of
+    /// having `undefined` unioned in, for a *present* element value under
+    /// `exactOptionalPropertyTypes`.
+    strip_optional_undefined: bool,
 }
 
 impl<'a> TupleElementExtractor<'a> {
@@ -540,7 +545,18 @@ impl<'a> TupleElementExtractor<'a> {
             db,
             index,
             element_count,
+            strip_optional_undefined: false,
         }
+    }
+
+    pub(crate) fn new_for_assignment(
+        db: &'a dyn TypeDatabase,
+        index: usize,
+        element_count: Option<usize>,
+    ) -> Self {
+        let mut extractor = Self::new(db, index, element_count);
+        extractor.strip_optional_undefined = true;
+        extractor
     }
 
     pub(crate) fn extract(&mut self, type_id: TypeId) -> Option<TypeId> {
@@ -578,7 +594,7 @@ impl TypeVisitor for TupleElementExtractor<'_> {
                 Some(rest_element_contextual_type(self.db, elem.type_id))
             } else {
                 let mut ty = elem.type_id;
-                if elem.optional {
+                if elem.optional && !self.strip_optional_undefined {
                     ty = add_undefined_if_missing(self.db, ty);
                 }
                 Some(ty)
@@ -621,8 +637,12 @@ impl TypeVisitor for TupleElementExtractor<'_> {
         let types: Vec<TypeId> = members
             .iter()
             .filter_map(|&member| {
-                let mut extractor =
-                    TupleElementExtractor::new(self.db, self.index, self.element_count);
+                let mut extractor = TupleElementExtractor {
+                    db: self.db,
+                    index: self.index,
+                    element_count: self.element_count,
+                    strip_optional_undefined: self.strip_optional_undefined,
+                };
                 extractor.extract(member)
             })
             .collect();
@@ -638,8 +658,12 @@ impl TypeVisitor for TupleElementExtractor<'_> {
         let elem_types: Vec<TypeId> = members
             .iter()
             .filter_map(|&member| {
-                let mut extractor =
-                    TupleElementExtractor::new(self.db, self.index, self.element_count);
+                let mut extractor = TupleElementExtractor {
+                    db: self.db,
+                    index: self.index,
+                    element_count: self.element_count,
+                    strip_optional_undefined: self.strip_optional_undefined,
+                };
                 extractor.extract(member)
             })
             .collect();

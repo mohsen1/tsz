@@ -1209,7 +1209,44 @@ impl<'a> CheckerState<'a> {
         }
 
         if let Some(property_type) = best_property_type {
-            return Some(self.sanitize_contextual_property_type(property_type));
+            let property_type = self.sanitize_contextual_property_type(property_type);
+            // Under `exactOptionalPropertyTypes`, a *present* value for an
+            // optional property (`y?: number`) is contextually typed against
+            // the bare declared type (`number`), not the read-side type with
+            // `undefined` unioned in. This only changes anything when the
+            // property is sugar-optional with no explicit `undefined` in its
+            // own type — `y?: number | undefined` still contextually types
+            // as `number | undefined`, matching `tsc`.
+            //
+            // `get_property_assignment_type` (like `get_property_type`) does
+            // not resolve a `Lazy(DefId)` interface/type-alias reference on
+            // its own, so a named target (`interface S { y?: number }`,
+            // `const s: S = ...`) needs the checker-resolved `contextual_type`
+            // below rather than the raw `original_contextual_type` — an
+            // inline object contextual type (a call parameter's `{ y?: T }`)
+            // is already concrete and answers directly. Try
+            // `original_contextual_type` first and only fall back to the
+            // resolved `contextual_type` when it has no answer at all: falling
+            // back unconditionally risks a *different* resolved form (e.g. a
+            // fresh re-evaluation through a call-argument contextual type)
+            // silently overriding an already-correct direct answer — that
+            // regressed the explicit-`y?: number | undefined` control case
+            // during review.
+            if self.ctx.exact_optional_property_types()
+                && let Some(assignment_type) = self
+                    .ctx
+                    .types
+                    .contextual_property_assignment_type(original_contextual_type, property_name)
+                    .or_else(|| {
+                        self.ctx
+                            .types
+                            .contextual_property_assignment_type(contextual_type, property_name)
+                    })
+                && assignment_type != property_type
+            {
+                return Some(self.sanitize_contextual_property_type(assignment_type));
+            }
+            return Some(property_type);
         }
 
         // If contextual extraction fails but the parent context is generic/deferred,

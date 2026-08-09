@@ -1563,6 +1563,25 @@ pub trait QueryDatabase:
         ctx.get_property_type(prop_name)
     }
 
+    /// Like [`QueryDatabase::contextual_property_type`], but for a *present*
+    /// property value under `exactOptionalPropertyTypes`: an optional
+    /// property's own declared type (`number` for `y?: number`) rather than
+    /// the read-side type with `undefined` unioned in (`number | undefined`).
+    /// A property whose type already includes `undefined` explicitly
+    /// (`y?: number | undefined`) is unaffected, since its declared type
+    /// already carries that `undefined`.
+    fn contextual_property_assignment_type(
+        &self,
+        expected: TypeId,
+        prop_name: &str,
+    ) -> Option<TypeId> {
+        let ctx = crate::computation::ContextualTypeContext::with_expected(
+            self.as_type_database(),
+            expected,
+        );
+        ctx.get_property_assignment_type(prop_name)
+    }
+
     fn is_property_readonly(&self, object_type: TypeId, prop_name: &str) -> bool {
         crate::operations::property::property_is_readonly(
             self.as_type_database(),
