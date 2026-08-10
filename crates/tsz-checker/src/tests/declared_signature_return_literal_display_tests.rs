@@ -105,6 +105,89 @@ const s: string = v;
 }
 
 #[test]
+fn declared_top_level_function_param_literal_is_preserved() {
+    // A literal type nested in a top-level FUNCTION_TYPE's parameter list
+    // (not just its return position) must also decline the canonical
+    // structural formatter's widening.
+    assert_source_displays(
+        r#"
+declare const v: (x: 1) => void;
+const s: string = v;
+"#,
+        "(x: 1) => void",
+    );
+}
+
+#[test]
+fn declared_top_level_constructor_return_literal_is_preserved() {
+    assert_source_displays(
+        r#"
+declare const v: new () => 1;
+const s: string = v;
+"#,
+        "new () => 1",
+    );
+}
+
+#[test]
+fn declared_top_level_function_negative_numeric_literal_is_preserved() {
+    assert_source_displays(
+        r#"
+declare const v: () => -1;
+const s: string = v;
+"#,
+        "() => -1",
+    );
+}
+
+#[test]
+fn declared_top_level_function_bigint_literal_is_preserved() {
+    assert_source_displays(
+        r#"
+declare const v: () => 1n;
+const s: string = v;
+"#,
+        "() => 1n",
+    );
+}
+
+#[test]
+fn declared_top_level_function_boolean_literal_is_preserved() {
+    assert_source_displays(
+        r#"
+declare const v: () => true;
+const s: string = v;
+"#,
+        "() => true",
+    );
+}
+
+#[test]
+fn declared_top_level_tuple_literal_element_is_preserved() {
+    assert_source_displays(
+        r#"
+declare const v: [1, string];
+const s: string = v;
+"#,
+        "[1, string]",
+    );
+}
+
+#[test]
+fn declared_top_level_function_no_literal_still_canonicalizes_spacing() {
+    // Control: a signature with no literal member still routes through the
+    // canonical structural formatter and gets tsc's spacing, unaffected by
+    // this fix.
+    assert_source_displays(
+        r#"
+declare const v: (x:number,y:string)=>void;
+const s: string = v;
+"#,
+        "(x: number, y: string) => void",
+    );
+}
+
+#[test]
 fn declared_method_literal_preserved_when_source_is_in_target_role_position() {
     // The mismatching source here is `x` (`{ m(): 2 }`); it must keep `2`.
     assert_source_displays(
