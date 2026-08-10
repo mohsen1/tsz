@@ -997,6 +997,8 @@ mod ts2739_alias_unfold_display_tests;
 mod ts7053_apparent_receiver_display_tests;
 #[path = "tests/ts7053_index_reason_chain_tests.rs"]
 mod ts7053_index_reason_chain_tests;
+#[path = "tests/ts7053_js_constructor_element_access_literal_like_tests.rs"]
+mod ts7053_js_constructor_element_access_literal_like_tests;
 #[path = "tests/ts8030_jsdoc_type_tag_message_tests.rs"]
 mod ts8030_jsdoc_type_tag_message_tests;
 #[path = "tests/tuple_spread_flattening_tests.rs"]

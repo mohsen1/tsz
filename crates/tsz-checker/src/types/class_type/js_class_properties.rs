@@ -1045,6 +1045,23 @@ impl CheckerState<'_> {
                 .is_some_and(|d| self.ctx.arena.get_parameter(d).is_some())
     }
 
+    /// tsc's `isLiteralLikeElementAccess`: an element-access assignment onto
+    /// `this` (or a `this` alias) only counts as a special this-property
+    /// declaration when the bracketed key is itself a string, numeric, or
+    /// no-substitution-template literal written at that site — not any
+    /// expression that merely evaluates to a literal type. A `const`
+    /// reference (`this[_sym] = v` for `const _sym = Symbol(...)` or
+    /// `const _sym = "lit"`) does not late-bind; it stays an ordinary
+    /// element access and reports `TS7053` like any other unmatched key.
+    fn element_access_key_is_literal_like(&self, key_idx: NodeIndex) -> bool {
+        let key_idx = self.ctx.arena.skip_parenthesized(key_idx);
+        self.ctx.arena.get(key_idx).is_some_and(|node| {
+            node.kind == SyntaxKind::StringLiteral as u16
+                || node.kind == SyntaxKind::NumericLiteral as u16
+                || node.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+        })
+    }
+
     /// Extract a `this.propName = rhs`, `alias.propName = rhs`,
     /// `this[computed] = rhs`, or `alias[computed] = rhs` pattern
     /// from an expression statement. The `this_aliases` parameter contains
@@ -1096,9 +1113,13 @@ impl CheckerState<'_> {
         }
 
         if is_element_access {
-            // For element access (this[key] = value), evaluate the key expression's
-            // type to get a property name. Handles Symbol keys, string literal keys,
-            // and const variable references.
+            // For element access (this[key] = value), only a syntactically
+            // literal key late-binds a class property (tsc's
+            // `isLiteralLikeElementAccess`); a const/Symbol reference falls
+            // through to ordinary element-access checking (TS7053).
+            if !self.element_access_key_is_literal_like(access.name_or_argument) {
+                return None;
+            }
             let arg_idx = access.name_or_argument;
             let prev = self.ctx.preserve_literal_types;
             self.ctx.preserve_literal_types = true;
@@ -1167,6 +1188,9 @@ impl CheckerState<'_> {
         }
 
         if is_element_access {
+            if !self.element_access_key_is_literal_like(access.name_or_argument) {
+                return None;
+            }
             let prev_preserve = self.ctx.preserve_literal_types;
             self.ctx.preserve_literal_types = true;
             let key_type = self.get_type_of_node(access.name_or_argument);
