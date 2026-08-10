@@ -612,6 +612,9 @@ path = "tests/ts1238_class_decorator_not_callable_chain_tests.rs"
 name = "ts1329_class_decorator_zero_arg_factory_tests"
 path = "tests/ts1329_class_decorator_zero_arg_factory_tests.rs"
 [[test]]
+name = "ts1329_decorator_parenthesized_expression_gate_tests"
+path = "tests/ts1329_decorator_parenthesized_expression_gate_tests.rs"
+[[test]]
 name = "ts2862_keyof_tparam_tests"
 path = "tests/ts2862_keyof_tparam_tests.rs"
 [[test]]
