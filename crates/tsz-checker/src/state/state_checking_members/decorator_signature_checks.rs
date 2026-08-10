@@ -6,7 +6,7 @@ use crate::diagnostics::{
 use crate::query_boundaries::checkers::decorators as decorator_query;
 use crate::query_boundaries::common::CallResult;
 use crate::state::CheckerState;
-use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_solver::TypeId;
 
 /// Decorator-type sentinels that short-circuit signature validation. `ERROR`
@@ -532,6 +532,19 @@ impl<'a> CheckerState<'a> {
         decorator_node: NodeIndex,
     ) -> bool {
         if decorator_type_is_unchecked(decorator_type) {
+            return false;
+        }
+
+        // tsc's `isPotentiallyUncalledDecorator` only substitutes the TS1329
+        // hint for a bare identifier, property-access chain, or call
+        // expression — a parenthesized decorator expression (`@(() => {})`)
+        // keeps the generic TS1238/1239/1240/1241 arity elaboration instead.
+        let is_parenthesized = self
+            .ctx
+            .arena
+            .get(decorator_expr)
+            .is_some_and(|n| n.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION);
+        if is_parenthesized {
             return false;
         }
 

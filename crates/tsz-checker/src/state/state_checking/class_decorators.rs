@@ -362,7 +362,11 @@ impl<'a> CheckerState<'a> {
         // the legacy (`experimentalDecorators`) class-decorator path above.
         // A type with no call signature at all (the not-callable case just
         // below) has no signatures to inspect here, so this is a no-op for
-        // it and falls through correctly.
+        // it and falls through correctly. `decorator_has_zero_arg_factory_shape`
+        // itself also declines (returns `false`) for a parenthesized decorator
+        // expression (`@(() => {})`), since tsc keeps the generic TS1238 arity
+        // failure there instead — that shape falls through to the
+        // `required_params == 0` arm below.
         if self.decorator_has_zero_arg_factory_shape(decorator_expression, resolved, decorator_node)
         {
             return;
@@ -400,9 +404,10 @@ impl<'a> CheckerState<'a> {
             // ES decorators are invoked with `(value, context)`. When the
             // factory requires more than two parameters, the call cannot
             // supply them; tsc anchors the error at the whole decorator
-            // (including `@`). The zero-parameter case is handled above as
-            // the TS1329 decorator-factory hint, not this arity failure.
-            if required_params > 2 {
+            // (including `@`). Zero required params is normally the TS1329
+            // decorator-factory hint above, but a parenthesized expression
+            // opts out of that hint and still needs the arity failure here.
+            if required_params > 2 || required_params == 0 {
                 self.error_at_node(
                     decorator_node,
                     diagnostic_messages::UNABLE_TO_RESOLVE_SIGNATURE_OF_CLASS_DECORATOR_WHEN_CALLED_AS_AN_EXPRESSION,
