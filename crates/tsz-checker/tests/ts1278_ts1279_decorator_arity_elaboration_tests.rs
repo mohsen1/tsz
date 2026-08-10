@@ -15,11 +15,18 @@
 //! information at all — the elaboration line was silently dropped in both
 //! the too-few and too-many argument shapes, across all five
 //! resolve-call-based decorator-signature-check sites (class, ES member,
-//! method/accessor, legacy property, parameter). A non-arity failure (e.g. an
-//! argument type mismatch) is deliberately left untouched: tsc attaches a
-//! different elaboration there (a `TS2345`-style "not assignable" line) that
-//! this change does not wire, so those diagnostics keep their pre-existing
-//! shape (no related information) rather than attaching the wrong kind.
+//! method/accessor, legacy property, parameter).
+//!
+//! For the **class-decorator** sites (both `--experimentalDecorators` and ES
+//! modes), the non-arity failures now carry their tsc elaboration too (issue
+//! #17108): the TS2345-shaped "Argument of type X is not assignable to
+//! parameter of type Y." line for an argument type mismatch, and the
+//! "This expression is not callable." / "Type 'X' has no call signatures."
+//! chain for a non-callable callee. This is safe there because the class
+//! sites feed the *real* value/context argument types (`typeof C`,
+//! `ClassDecoratorContext<typeof C>`), so the rendered types match tsc. The
+//! member/parameter sites still supply synthetic placeholder arguments, so
+//! their non-arity failures keep the arity-only elaboration.
 //!
 //! Oracle-verified against pinned `typescript@7.0.2` for every shape below.
 
@@ -115,11 +122,12 @@ class C {}
 }
 
 #[test]
-fn ts1238_class_decorator_type_mismatch_stays_unelaborated() {
-    // Control: a non-arity failure (wrong parameter type, not wrong count)
-    // must not gain related information -- tsc's elaboration there is a
-    // different, not-yet-wired shape ("Argument of type X is not assignable
-    // to parameter of type Y."), so this stays exactly as before.
+fn ts1238_class_decorator_type_mismatch_elaborates_argument() {
+    // A non-arity class-decorator failure (wrong parameter type, not wrong
+    // count) attaches tsc's TS2345-shaped "Argument of type X is not
+    // assignable to parameter of type Y." line. The class-decorator sites
+    // feed the real class constructor type (`typeof C`), so the rendered
+    // argument type matches tsc exactly (issue #17108).
     let diags = diagnostics_experimental(
         r#"
 function classDec(target: string) {}
@@ -129,10 +137,47 @@ class C {}
 "#,
     );
     let primary = find(&diags, 1238).expect("expected TS1238");
+    assert_eq!(primary.related_information.len(), 1);
+    assert_eq!(primary.related_information[0].code, 2345);
+    assert_eq!(
+        primary.related_information[0].message_text,
+        "Argument of type 'typeof C' is not assignable to parameter of type 'string'."
+    );
+}
+
+#[test]
+fn ts1238_class_decorator_non_callable_elaborates_chain() {
+    // A non-callable class decorator (a non-function value) attaches tsc's
+    // two-line "This expression is not callable." / "Type 'X' has no call
+    // signatures." chain beneath the primary TS1238 (issue #17108).
+    let diags = diagnostics_experimental(
+        r#"
+const d = 1;
+
+@d
+class C {}
+"#,
+    );
+    let primary = find(&diags, 1238).expect("expected TS1238");
+    assert_eq!(primary.related_information.len(), 2);
+    assert_eq!(primary.related_information[0].code, 2349);
+    assert_eq!(
+        primary.related_information[0].message_text,
+        "This expression is not callable."
+    );
+    // The "has no call signatures" note nests one level deeper (depth 1).
+    // Its rendered type is the callee's apparent type — `Number` against the
+    // full lib the CLI/oracle use, but the reduced unit-test lib renders the
+    // bare `number` primitive, so match on the stable structure rather than
+    // the primitive's casing.
+    assert_eq!(primary.related_information[1].code, 2757);
+    assert_eq!(primary.related_information[1].depth, 1);
     assert!(
-        primary.related_information.is_empty(),
-        "expected no related info for a type-mismatch failure, got: {:?}",
-        primary.related_information
+        primary.related_information[1]
+            .message_text
+            .ends_with("has no call signatures."),
+        "unexpected note: {}",
+        primary.related_information[1].message_text
     );
 }
 

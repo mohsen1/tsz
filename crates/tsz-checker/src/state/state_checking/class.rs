@@ -257,11 +257,17 @@ impl<'a> CheckerState<'a> {
         // TS1042: async modifier cannot be used on class declarations
         self.check_async_modifier_on_declaration(&class.modifiers);
 
-        let mut experimental_class_decorators = Vec::new();
+        let mut class_decorators = Vec::new();
 
         // Evaluate class-level decorator expressions to trigger definite-assignment
         // checks (TS2454) and other diagnostics. tsc evaluates decorator expressions
         // even if the class has other errors.
+        //
+        // The TS1238 call-signature validation itself is deferred until after the
+        // class value side has been refreshed below: it needs the class
+        // constructor type (both the legacy `decorator(classConstructor)` call and
+        // the ES `ClassDecoratorContext<typeof C>` context argument), and doing it
+        // here can see a provisional/re-entrant constructor shape and miss TS1238.
         if let Some(ref modifiers) = class.modifiers {
             for &mod_idx in &modifiers.nodes {
                 if let Some(mod_node) = self.ctx.arena.get(mod_idx)
@@ -272,24 +278,7 @@ impl<'a> CheckerState<'a> {
                     self.check_grammar_decorator(decorator.expression);
 
                     let decorator_type = self.compute_type_of_node(decorator.expression);
-
-                    // TS1238: Validate class decorator call signature.
-                    if self.ctx.compiler_options.experimental_decorators {
-                        // Experimental class decorators receive the class constructor
-                        // value. Save the expression type and validate it after the
-                        // class value side has been refreshed; doing it here can see a
-                        // provisional/re-entrant constructor shape and miss TS1238.
-                        experimental_class_decorators.push((mod_idx, decorator_type));
-                    } else {
-                        // ES decorators: tsc anchors TS1238 at the whole decorator
-                        // (including `@`) when the factory requires too many args, but
-                        // at the expression alone when the factory has zero parameters.
-                        self.check_es_class_decorator_arity(
-                            mod_idx,
-                            decorator.expression,
-                            decorator_type,
-                        );
-                    }
+                    class_decorators.push((mod_idx, decorator.expression, decorator_type));
                 }
             }
         }
@@ -1008,17 +997,18 @@ impl<'a> CheckerState<'a> {
             let _ = self.get_type_of_symbol(sym_id);
         }
 
-        for (decorator_node, decorator_type) in experimental_class_decorators {
-            // Anchor selection (bare identifier vs. call-expression decorator
-            // does NOT matter; tsc anchors both the same way) lives in
-            // `check_class_decorator_call_signature` itself, mirroring the
-            // `decorator_failure_anchor` rule the member/parameter decorator
-            // paths already use.
-            self.check_class_decorator_call_signature(
+        let legacy = self.ctx.compiler_options.experimental_decorators;
+        for (decorator_node, decorator_expr, decorator_type) in class_decorators {
+            // TS1238: validate the class decorator call signature. The anchor
+            // (expression vs. whole decorator) is chosen per failure kind
+            // inside the handler, mirroring tsc's call-node arity anchoring.
+            self.check_class_decorator_signature(
                 decorator_node,
+                decorator_expr,
                 decorator_type,
                 stmt_idx,
                 class,
+                legacy,
             );
         }
     }
