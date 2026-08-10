@@ -365,7 +365,7 @@ impl<'a> CheckerState<'a> {
     /// fixed synthetic argument list cannot reproduce, so the longer 2-argument
     /// form is supplied rather than risk dropping an argument a wider overload
     /// requires.
-    fn es_member_decorator_argument_count(&self, decorator_type: TypeId) -> usize {
+    pub(crate) fn es_member_decorator_argument_count(&self, decorator_type: TypeId) -> usize {
         // `min(max(paramCount, 1), 2)` for a single declared signature; an
         // unknown shape or an overload set falls back to the full two-argument
         // call so exotic callees behave as they did before.
@@ -525,6 +525,12 @@ impl<'a> CheckerState<'a> {
     /// `isPotentiallyUncalledDecorator` for the common zero-parameter case and
     /// applies uniformly to method, accessor, field, and (see
     /// `class_decorators.rs`) class decorators.
+    ///
+    /// The hint is additionally gated on the decorator *expression* being a
+    /// reference the user could plausibly have forgotten to invoke — see
+    /// [`Self::decorator_expression_offers_uncalled_hint`]. A parenthesized
+    /// inline expression (`@(() => {})`) keeps the generic
+    /// TS1238/1239/1240/1241 arity elaboration instead.
     pub(crate) fn decorator_has_zero_arg_factory_shape(
         &mut self,
         decorator_expr: NodeIndex,
@@ -535,7 +541,9 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        if Self::decorator_signature_accepts_no_arguments(self.ctx.types, decorator_type) {
+        if Self::decorator_signature_accepts_no_arguments(self.ctx.types, decorator_type)
+            && self.decorator_expression_offers_uncalled_hint(decorator_expr)
+        {
             let name = self.get_decorator_expression_name(decorator_expr);
             let msg = diagnostic_messages::ACCEPTS_TOO_FEW_ARGUMENTS_TO_BE_USED_AS_A_DECORATOR_HERE_DID_YOU_MEAN_TO_CALL_IT
                 .replace("{0}", &name);
@@ -548,6 +556,36 @@ impl<'a> CheckerState<'a> {
         }
 
         false
+    }
+
+    /// Whether the decorator *expression* is one tsc would offer the TS1329
+    /// "did you mean to call it first and write `@d()`?" hint for.
+    ///
+    /// Oracle-verified rule (`typescript@7.0.2`, see #17121): tsc substitutes
+    /// the TS1329 hint for the generic TS1238/1239/1240/1241 arity failure
+    /// only when the decorator's own expression is a bare `Identifier`
+    /// (`@d`), a `PropertyAccessExpression` chain (`@a.b`), or a top-level
+    /// `CallExpression` (`@factory()`) — and **not** when it is a
+    /// `ParenthesizedExpression` (`@(...)`), which keeps the generic family
+    /// with its normal arity elaboration.
+    ///
+    /// The discriminator is the *wrapper*, not what it wraps: `@(d)`,
+    /// `@(a.b)`, and `@(() => {})` all keep the generic family even though the
+    /// first two wrap a reference. This mirrors what the hint suggests — the
+    /// rewrite `@d()` is a valid decorator only for the bare reference/call
+    /// forms above; a `@(...)` decorator cannot be extended into a
+    /// `@(...)()` decorator call, so tsc offers no "call it first" hint for
+    /// it regardless of the inner expression. Keying on the unwrapped inner
+    /// kind would therefore diverge from tsc for the parenthesized-reference
+    /// cases.
+    ///
+    /// So the gate is exactly "the expression is not a
+    /// `ParenthesizedExpression`". A node we cannot resolve defaults to
+    /// offering the hint, preserving the prior unconditional behavior.
+    fn decorator_expression_offers_uncalled_hint(&self, decorator_expr: NodeIndex) -> bool {
+        self.ctx.arena.get(decorator_expr).is_none_or(|node| {
+            node.kind != tsz_parser::parser::syntax_kind_ext::PARENTHESIZED_EXPRESSION
+        })
     }
 
     /// Whether every call signature of a decorator expression takes zero

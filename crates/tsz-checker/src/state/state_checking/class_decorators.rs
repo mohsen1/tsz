@@ -11,6 +11,7 @@
 //! visibility was widened only to permit the file split.
 
 use crate::query_boundaries::class_type as class_query;
+use crate::query_boundaries::common::CallResult;
 use crate::state::CheckerState;
 use rustc_hash::FxHashMap;
 use tsz_parser::parser::syntax_kind_ext;
@@ -280,7 +281,7 @@ impl<'a> CheckerState<'a> {
             None,
         );
 
-        let crate::query_boundaries::common::CallResult::Success(return_type) = &result else {
+        let CallResult::Success(return_type) = &result else {
             let anchor = self.decorator_failure_anchor(decorator_node, resolved, 1);
             self.emit_decorator_signature_error(
                 anchor,
@@ -388,27 +389,32 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // Check the function shape for required parameter count
-        if let Some(shape) =
-            crate::query_boundaries::class_type::function_shape(self.ctx.types, resolved)
-        {
-            let required_params = shape
-                .params
-                .iter()
-                .filter(|p| !p.optional && !p.rest)
-                .count();
-            // ES decorators are invoked with `(value, context)`. When the
-            // factory requires more than two parameters, the call cannot
-            // supply them; tsc anchors the error at the whole decorator
-            // (including `@`). The zero-parameter case is handled above as
-            // the TS1329 decorator-factory hint, not this arity failure.
-            if required_params > 2 {
-                self.error_at_node(
-                    decorator_node,
-                    diagnostic_messages::UNABLE_TO_RESOLVE_SIGNATURE_OF_CLASS_DECORATOR_WHEN_CALLED_AS_AN_EXPRESSION,
-                    diagnostic_codes::UNABLE_TO_RESOLVE_SIGNATURE_OF_CLASS_DECORATOR_WHEN_CALLED_AS_AN_EXPRESSION,
-                );
-            }
+        // ES decorators are invoked with `(value, context)`, truncated to the
+        // decorator's own declared argument count (tsc's
+        // `getDecoratorArgumentCount` = `min(max(paramCount, 1), 2)`, shared
+        // via `es_member_decorator_argument_count`). Resolve the call the same
+        // way the member-decorator paths do, with `any` for both synthetic
+        // arguments since only arity — not the value/context types — can fail
+        // for a class decorator here. This uniformly catches both a factory
+        // requiring more than the two supplied parameters (too-many-required)
+        // and a zero-parameter decorator that cannot receive the runtime's
+        // arguments at all (too-many-supplied) — the latter reaches this path
+        // only once the TS1329 factory hint has been ruled out above, i.e. for
+        // a parenthesized inline expression like `@(() => {})`. A compatible
+        // 1- or 2-parameter decorator resolves cleanly and draws no error.
+        // `emit_decorator_signature_error` attaches the TS1278/TS1279 arity
+        // elaboration, matching the other four resolve-call-based sites.
+        let all_args = [TypeId::ANY, TypeId::ANY];
+        let args = &all_args[..self.es_member_decorator_argument_count(resolved)];
+        let (result, _, _) =
+            self.resolve_call_with_checker_adapter(resolved, args, false, None, None);
+        if !matches!(result, CallResult::Success(_)) {
+            self.emit_decorator_signature_error(
+                self.decorator_failure_anchor(decorator_node, resolved, args.len()),
+                diagnostic_messages::UNABLE_TO_RESOLVE_SIGNATURE_OF_CLASS_DECORATOR_WHEN_CALLED_AS_AN_EXPRESSION,
+                diagnostic_codes::UNABLE_TO_RESOLVE_SIGNATURE_OF_CLASS_DECORATOR_WHEN_CALLED_AS_AN_EXPRESSION,
+                &result,
+            );
         }
     }
 

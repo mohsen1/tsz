@@ -597,6 +597,9 @@ path = "tests/parameter_initializer_identifier_context_tests.rs"
 name = "decorator_method_tdz_tests"
 path = "tests/decorator_method_tdz_tests.rs"
 [[test]]
+name = "decorator_uncalled_hint_expression_shape_tests"
+path = "tests/decorator_uncalled_hint_expression_shape_tests.rs"
+[[test]]
 name = "ts1238_generic_decorator_tests"
 path = "tests/ts1238_generic_decorator_tests.rs"
 [[test]]
