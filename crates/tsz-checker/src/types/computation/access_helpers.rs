@@ -351,6 +351,49 @@ impl<'a> CheckerState<'a> {
         };
         node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
             && node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+            // `this` (and a `var self = this` alias) inside a class is a nominally
+            // typed instance, not an untyped JS namespace/object-literal value —
+            // tsc never grants it expando-write immunity. A non-literal-like key
+            // there stays a checked miss (`TS7053`), and a literal-like key is
+            // already a real synthesized member (`js_class_properties.rs`), so
+            // this path is only reachable for the non-literal case either way.
+            && !(self.ctx.enclosing_class.is_some()
+                && self.expression_resolves_to_this(object_expr_idx))
+    }
+
+    /// Whether `idx` is `this` itself or a local `const`/`let`/`var` bound
+    /// directly to `this` (the common `var self = this;` alias pattern).
+    /// Single-hop only, matching `collect_this_aliases`'s scope.
+    fn expression_resolves_to_this(&self, idx: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return false;
+        };
+        if node.kind == SyntaxKind::ThisKeyword as u16 {
+            return true;
+        }
+        if node.kind != SyntaxKind::Identifier as u16 {
+            return false;
+        }
+        let Some(sym_id) = self.ctx.binder.resolve_identifier(self.ctx.arena, idx) else {
+            return false;
+        };
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return false;
+        };
+        let decl = symbol.value_declaration;
+        if decl.is_none() {
+            return false;
+        }
+        let Some(decl_node) = self.ctx.arena.get(decl) else {
+            return false;
+        };
+        let Some(var_decl) = self.ctx.arena.get_variable_declaration(decl_node) else {
+            return false;
+        };
+        self.ctx
+            .arena
+            .get(var_decl.initializer)
+            .is_some_and(|init| init.kind == SyntaxKind::ThisKeyword as u16)
     }
 
     pub(crate) fn is_expando_element_access_read(
