@@ -1930,16 +1930,19 @@ impl<'a> CheckerState<'a> {
         // Restore original state if no overload matched
         self.ctx.node_types = original_node_types;
         if all_arg_count_mismatches && !failures.is_empty() {
+            // Expanded count, not `args.len()`: a spread expands to multiple
+            // arguments (`f(1, ...[2, 3])` has 2 `args` nodes but 3 arguments).
+            let actual_count = arg_types.len();
             if !any_has_rest
                 && !exact_expected_counts.is_empty()
-                && !exact_expected_counts.contains(&args.len())
+                && !exact_expected_counts.contains(&actual_count)
             {
                 let mut lower = None;
                 let mut upper = None;
                 for &count in &exact_expected_counts {
-                    if count < args.len() {
+                    if count < actual_count {
                         lower = Some(lower.map_or(count, |prev: usize| prev.max(count)));
-                    } else if count > args.len() {
+                    } else if count > actual_count {
                         upper = Some(upper.map_or(count, |prev: usize| prev.min(count)));
                     }
                 }
@@ -1947,7 +1950,7 @@ impl<'a> CheckerState<'a> {
                     return Some(OverloadResolution {
                         arg_types,
                         result: CallResult::OverloadArgumentCountMismatch {
-                            actual: args.len(),
+                            actual: actual_count,
                             expected_low,
                             expected_high,
                         },
@@ -1967,7 +1970,7 @@ impl<'a> CheckerState<'a> {
                     } else {
                         Some(min_expected)
                     },
-                    actual: args.len(),
+                    actual: actual_count,
                 },
                 selected_type_predicate: None,
             });
