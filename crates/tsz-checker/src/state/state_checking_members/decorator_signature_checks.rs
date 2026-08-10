@@ -535,7 +535,9 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        if Self::decorator_signature_accepts_no_arguments(self.ctx.types, decorator_type) {
+        if Self::decorator_signature_accepts_no_arguments(self.ctx.types, decorator_type)
+            && self.decorator_expression_is_call_target_reference(decorator_expr)
+        {
             let name = self.get_decorator_expression_name(decorator_expr);
             let msg = diagnostic_messages::ACCEPTS_TOO_FEW_ARGUMENTS_TO_BE_USED_AS_A_DECORATOR_HERE_DID_YOU_MEAN_TO_CALL_IT
                 .replace("{0}", &name);
@@ -559,12 +561,32 @@ impl<'a> CheckerState<'a> {
     /// it first" hint for these, so every other decorator diagnostic that
     /// would otherwise fall out of the failed call — the signature failure and
     /// the return-type check alike — must stand down.
-    fn decorator_signature_accepts_no_arguments(
+    pub(crate) fn decorator_signature_accepts_no_arguments(
         db: &dyn tsz_solver::construction::TypeDatabase,
         decorator_type: TypeId,
     ) -> bool {
         Self::decorator_signature_param_counts(db, decorator_type)
             .is_some_and(|counts| !counts.is_empty() && counts.iter().all(|&n| n == 0))
+    }
+
+    /// False only when `expr` is written as a parenthesized expression — the
+    /// one syntactic shape tsc's `isPotentiallyUncalledDecorator` heuristic
+    /// excludes from the TS1329/TS1239/TS1240/TS1241 "did you mean to call
+    /// it first" hint. An identifier (`@d`), a property-access chain
+    /// (`@obj.d`), and a call expression (`@d()`, even when its own callee
+    /// is parenthesized) all still get the hint; only wrapping the
+    /// decorator's own top-level expression in parens — an inline function/
+    /// arrow/class literal (`@(() => {})`) or a parenthesized reference
+    /// (`@(d)`) — suppresses it in favor of the ordinary arity/not-callable
+    /// failure. Oracle-verified (`typescript@7.0.2`) on the same zero-param
+    /// decorator: `@d`, `@obj.d`, and `@d()` all get TS1329, but `@(d)`,
+    /// `@(obj.d)`, and `@(() => {})` get the generic signature failure
+    /// instead.
+    fn decorator_expression_is_call_target_reference(&self, expr: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(expr) else {
+            return false;
+        };
+        node.kind != tsz_parser::parser::syntax_kind_ext::PARENTHESIZED_EXPRESSION
     }
 
     fn es_method_or_accessor_decorator_args(

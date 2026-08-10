@@ -368,6 +368,23 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        // A decorator with zero total parameters that ISN'T a plain
+        // identifier/property-access reference doesn't qualify for the
+        // TS1329 "did you mean to call it first" hint above (see
+        // `decorator_expression_is_call_target_reference`), but tsc still
+        // reports the ordinary TS1238 arity failure here — an inline
+        // zero-param function/arrow literal (`@(() => {})`) genuinely can't
+        // be invoked with the runtime's 2 arguments either (oracle-verified,
+        // typescript@7.0.2).
+        if Self::decorator_signature_accepts_no_arguments(self.ctx.types, resolved) {
+            self.error_at_node(
+                decorator_node,
+                diagnostic_messages::UNABLE_TO_RESOLVE_SIGNATURE_OF_CLASS_DECORATOR_WHEN_CALLED_AS_AN_EXPRESSION,
+                diagnostic_codes::UNABLE_TO_RESOLVE_SIGNATURE_OF_CLASS_DECORATOR_WHEN_CALLED_AS_AN_EXPRESSION,
+            );
+            return;
+        }
+
         // No call signature at all (bare primitive, a class used as a
         // decorator, ...): tsc's TS1238 "not callable" chain fires
         // identically here as it does under `--experimentalDecorators`
