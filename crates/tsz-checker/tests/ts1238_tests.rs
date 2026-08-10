@@ -234,18 +234,25 @@ class Example {
 // === ES decorators (experimental_decorators: false) =======================
 //
 // ES decorators call the decorator factory with `(value, context)`.
-// A factory with zero parameters has no slot for `value`, so tsc flags
-// it as TS1238 even though a structural call would succeed by ignoring
-// the extra args. A factory requiring more than two parameters also
-// cannot be satisfied. 1 or 2 required parameters are fine.
+// A factory with zero parameters is the "forgot to call it" shape: tsc's
+// `isPotentiallyUncalledDecorator` fires (0 declared params is fewer than the
+// arguments the decorator convention supplies), so it reports the TS1329
+// call-it-first hint rather than a TS1238 signature failure. A factory
+// requiring more than two parameters cannot be satisfied and draws TS1238.
+// 1 or 2 required parameters are fine.
 
 #[test]
-fn ts1238_es_decorator_zero_arity_factory_emits_error() {
-    // `() => {}` has no parameter to receive the class target.
+fn ts1329_es_decorator_zero_arity_factory_hint_not_ts1238() {
+    // `() => {}` has no parameter to receive the class target, so it reads as
+    // an uncalled factory: TS1329, not the TS1238 signature failure.
     let codes = tsz_checker::test_utils::check_source_codes("@(() => {})\nclass C {}\n");
     assert!(
-        codes.contains(&1238),
-        "Expected TS1238 for zero-arity ES class decorator, got: {codes:?}"
+        codes.contains(&1329),
+        "Expected TS1329 call-it-first hint for zero-arity ES class decorator, got: {codes:?}"
+    );
+    assert!(
+        !codes.contains(&1238),
+        "Zero-arity ES class decorator should not also emit TS1238, got: {codes:?}"
     );
 }
 
