@@ -1,5 +1,6 @@
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
@@ -243,11 +244,47 @@ impl<'a> CheckerState<'a> {
                 }
                 syntax_kind_ext::TUPLE_TYPE
                 | syntax_kind_ext::FUNCTION_TYPE
-                | syntax_kind_ext::CONSTRUCTOR_TYPE => return true,
+                | syntax_kind_ext::CONSTRUCTOR_TYPE => {
+                    // tsc's `getWidenedType` widens only *fresh* literals — a
+                    // literal type written anywhere inside a declared
+                    // signature (`() => 1`, `(x: 1) => void`) is part of the
+                    // signature's own spelling and must stay verbatim, not
+                    // pass through the canonical structural formatter (which
+                    // renders the type's current, possibly-widened `TypeId`
+                    // and has no notion of "this literal was written, don't
+                    // widen it"). The raw-source-text fallback this predicate
+                    // gates already preserves such literals correctly, so
+                    // decline canonicalization here and let it through.
+                    return !Self::type_subtree_contains_literal_type(arena, idx, 0);
+                }
                 _ => return false,
             }
         }
         false
+    }
+
+    /// Whether `idx`'s type subtree contains a `LiteralType` node (`1`,
+    /// `"x"`, `true`, `-1`, ...) anywhere beneath it. Depth- and
+    /// visit-bounded against pathological nesting, mirroring the bound used
+    /// by `anchor_is_within_object_literal_member`.
+    fn type_subtree_contains_literal_type(
+        arena: &tsz_parser::NodeArena,
+        idx: NodeIndex,
+        depth: u32,
+    ) -> bool {
+        if idx.is_none() || depth > 64 {
+            return false;
+        }
+        let Some(node) = arena.get(idx) else {
+            return false;
+        };
+        if node.kind == syntax_kind_ext::LITERAL_TYPE {
+            return true;
+        }
+        arena
+            .get_children(idx)
+            .into_iter()
+            .any(|child| Self::type_subtree_contains_literal_type(arena, child, depth + 1))
     }
 
     /// Whether a declared type annotation is one whose written form `tsc` never
