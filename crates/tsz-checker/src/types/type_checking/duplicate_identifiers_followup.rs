@@ -340,6 +340,10 @@ impl<'a> CheckerState<'a> {
     ///
     /// - TS2717: Subsequent property declarations with the same name must have identical types.
     /// - TS2413: Merged index signatures must be compatible.
+    /// - TS2687: Property signatures sharing a name across merged declarations
+    ///   must agree on `readonly` / optional (`?`) modifiers (method
+    ///   signatures are exempt — `tsc` only runs this check from
+    ///   `checkVariableLikeDeclaration`, which does not visit methods).
     pub(crate) fn check_merged_interface_declaration_diagnostics(
         &mut self,
         declarations: &[NodeIndex],
@@ -396,6 +400,15 @@ impl<'a> CheckerState<'a> {
             // and method across merged declarations, tsc emits TS2300
             // "Duplicate identifier" on both declarations.
             let mut merged_properties: FxHashMap<String, (TypeId, bool, NodeIndex)> =
+                FxHashMap::default();
+            // TS2687: property-signature nodes (never methods — tsc's
+            // `checkVariableLikeDeclaration` is not run for method signatures)
+            // sharing a canonical name across every declaration in this merged
+            // scope, in source order. `report_property_modifier_disagreements`
+            // (shared with the single-body interface and type-literal paths)
+            // flags every entry whose `readonly`/optional flags disagree with
+            // the first (declarations_in_scope is already position-sorted).
+            let mut merged_property_signatures: FxHashMap<String, Vec<NodeIndex>> =
                 FxHashMap::default();
 
             for &decl_idx in &declarations_in_scope {
@@ -465,6 +478,12 @@ impl<'a> CheckerState<'a> {
                         } else {
                             TypeId::ANY
                         };
+                        if !is_method {
+                            merged_property_signatures
+                                .entry(name.clone())
+                                .or_default()
+                                .push(member_idx);
+                        }
                         local_properties.push((
                             name,
                             sig.name,
@@ -709,6 +728,13 @@ impl<'a> CheckerState<'a> {
                 }
 
                 self.pop_type_parameters(updates);
+            }
+
+            for member_nodes in merged_property_signatures.into_values() {
+                if member_nodes.len() < 2 {
+                    continue;
+                }
+                self.report_property_modifier_disagreements(member_nodes[0], &member_nodes);
             }
         }
     }
