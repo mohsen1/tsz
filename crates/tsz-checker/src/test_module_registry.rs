@@ -747,6 +747,8 @@ mod overlap_relation_helper_routing_arch_tests;
 mod overload_anchor_at_argument_tests;
 #[path = "tests/overload_argument_reason_chain_tests.rs"]
 mod overload_argument_reason_chain_tests;
+#[path = "tests/overload_arity_expanded_spread_count_tests.rs"]
+mod overload_arity_expanded_spread_count_tests;
 #[path = "tests/overload_elaboration_tests.rs"]
 mod overload_elaboration_tests;
 #[path = "tests/overload_generic_wrapper_compat_tests.rs"]
