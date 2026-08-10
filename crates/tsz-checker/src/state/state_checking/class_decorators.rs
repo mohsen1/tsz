@@ -409,30 +409,28 @@ impl<'a> CheckerState<'a> {
             // the TS1329 decorator-factory hint, not this arity failure.
             if required_params > ES_CLASS_DECORATOR_ARGS {
                 // This path never calls `resolve_call_with_checker_adapter`, so
-                // there is no `CallResult` to read; synthesize the equivalent
-                // argument-count mismatch from the shape's own counts so the
-                // shared helper attaches the same TS1278/TS1279 elaboration and
+                // there is no `CallResult` to read; the shared
+                // `emit_decorator_arity_count_error` helper synthesizes the
+                // equivalent argument-count mismatch from these counts and
+                // attaches the same TS1278/TS1279 elaboration and
                 // TS6210/TS6236/TS6211 missing-argument pointer the legacy
                 // (`experimentalDecorators`) class-decorator path already gets.
                 // A trailing rest parameter leaves the arity open-ended (no
-                // concrete max), which is what selects the "expects at least N"
-                // (TS1279) wording over the exact-N (TS1278) form.
+                // concrete max), which selects the "expects at least N" (TS1279)
+                // wording over the exact-N (TS1278) form.
                 let expected_max = if shape.params.iter().any(|p| p.rest) {
                     None
                 } else {
                     Some(shape.params.len())
                 };
-                let result = crate::query_boundaries::common::CallResult::ArgumentCountMismatch {
-                    expected_min: required_params,
-                    expected_max,
-                    actual: ES_CLASS_DECORATOR_ARGS,
-                };
-                self.emit_decorator_signature_error(
+                self.emit_decorator_arity_count_error(
                     decorator_node,
                     decorator_node,
                     diagnostic_messages::UNABLE_TO_RESOLVE_SIGNATURE_OF_CLASS_DECORATOR_WHEN_CALLED_AS_AN_EXPRESSION,
                     diagnostic_codes::UNABLE_TO_RESOLVE_SIGNATURE_OF_CLASS_DECORATOR_WHEN_CALLED_AS_AN_EXPRESSION,
-                    &result,
+                    required_params,
+                    expected_max,
+                    ES_CLASS_DECORATOR_ARGS,
                 );
             }
         }

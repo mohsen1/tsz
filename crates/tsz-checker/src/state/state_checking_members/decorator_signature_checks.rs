@@ -263,6 +263,32 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Emit a decorator arity error whose `ArgumentCountMismatch` is synthesized
+    /// from raw counts rather than read from a real `CallResult` — the ES
+    /// class-decorator path never calls `resolve_call_with_checker_adapter`, so
+    /// it has no `CallResult`. Constructing it here (where `CallResult` is
+    /// already imported) keeps the direct `query_boundaries::common` reference
+    /// out of the class-decorator module while the elaboration and
+    /// missing-argument pointer are attached identically to the resolve-based
+    /// paths via [`Self::emit_decorator_signature_error`].
+    pub(crate) fn emit_decorator_arity_count_error(
+        &mut self,
+        anchor: NodeIndex,
+        decorator_node: NodeIndex,
+        message: &str,
+        code: u32,
+        expected_min: usize,
+        expected_max: Option<usize>,
+        actual: usize,
+    ) {
+        let result = CallResult::ArgumentCountMismatch {
+            expected_min,
+            expected_max,
+            actual,
+        };
+        self.emit_decorator_signature_error(anchor, decorator_node, message, code, &result);
+    }
+
     /// tsc's TS1238 "not callable" shape for a class decorator whose resolved
     /// type carries no call signature at all — a bare primitive, a class
     /// (construct signatures only, no call signatures), or any other
