@@ -1,5 +1,6 @@
 //! Diagnostic source/target expression analysis and formatting.
 
+mod annotation_gated_structural_display;
 mod assignment_annotation_text;
 mod assignment_formatting;
 mod assignment_source_preservation;
