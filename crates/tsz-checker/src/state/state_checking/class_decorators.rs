@@ -284,6 +284,7 @@ impl<'a> CheckerState<'a> {
             let anchor = self.decorator_failure_anchor(decorator_node, resolved, 1);
             self.emit_decorator_signature_error(
                 anchor,
+                decorator_node,
                 diagnostic_messages::UNABLE_TO_RESOLVE_SIGNATURE_OF_CLASS_DECORATOR_WHEN_CALLED_AS_AN_EXPRESSION,
                 diagnostic_codes::UNABLE_TO_RESOLVE_SIGNATURE_OF_CLASS_DECORATOR_WHEN_CALLED_AS_AN_EXPRESSION,
                 &result,
@@ -334,6 +335,10 @@ impl<'a> CheckerState<'a> {
         decorator_type: TypeId,
     ) {
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+
+        // ES (TC39 stage-3) class decorators are invoked with exactly two
+        // runtime arguments: `(value, context)`.
+        const ES_CLASS_DECORATOR_ARGS: usize = 2;
 
         if decorator_type == TypeId::ERROR
             || decorator_type == TypeId::ANY
@@ -402,11 +407,32 @@ impl<'a> CheckerState<'a> {
             // supply them; tsc anchors the error at the whole decorator
             // (including `@`). The zero-parameter case is handled above as
             // the TS1329 decorator-factory hint, not this arity failure.
-            if required_params > 2 {
-                self.error_at_node(
+            if required_params > ES_CLASS_DECORATOR_ARGS {
+                // This path never calls `resolve_call_with_checker_adapter`, so
+                // there is no `CallResult` to read; synthesize the equivalent
+                // argument-count mismatch from the shape's own counts so the
+                // shared helper attaches the same TS1278/TS1279 elaboration and
+                // TS6210/TS6236/TS6211 missing-argument pointer the legacy
+                // (`experimentalDecorators`) class-decorator path already gets.
+                // A trailing rest parameter leaves the arity open-ended (no
+                // concrete max), which is what selects the "expects at least N"
+                // (TS1279) wording over the exact-N (TS1278) form.
+                let expected_max = if shape.params.iter().any(|p| p.rest) {
+                    None
+                } else {
+                    Some(shape.params.len())
+                };
+                let result = crate::query_boundaries::common::CallResult::ArgumentCountMismatch {
+                    expected_min: required_params,
+                    expected_max,
+                    actual: ES_CLASS_DECORATOR_ARGS,
+                };
+                self.emit_decorator_signature_error(
+                    decorator_node,
                     decorator_node,
                     diagnostic_messages::UNABLE_TO_RESOLVE_SIGNATURE_OF_CLASS_DECORATOR_WHEN_CALLED_AS_AN_EXPRESSION,
                     diagnostic_codes::UNABLE_TO_RESOLVE_SIGNATURE_OF_CLASS_DECORATOR_WHEN_CALLED_AS_AN_EXPRESSION,
+                    &result,
                 );
             }
         }
