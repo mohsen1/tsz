@@ -2863,5 +2863,8 @@ path = "tests/ts1339_bare_typeof_import_no_value_tests.rs"
 name = "ts2687_merged_interface_declaration_tests"
 path = "tests/ts2687_merged_interface_declaration_tests.rs"
 [[test]]
+name = "ts2300_merged_interface_property_method_conflict_tests"
+path = "tests/ts2300_merged_interface_property_method_conflict_tests.rs"
+[[test]]
 name = "ts2694_typeof_import_qualified_type_only_member_tests"
 path = "tests/ts2694_typeof_import_qualified_type_only_member_tests.rs"

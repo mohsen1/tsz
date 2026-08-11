@@ -536,42 +536,27 @@ impl<'a> CheckerState<'a> {
                         merged_properties.get(name)
                     {
                         // Handle property-vs-method conflicts across merged declarations.
+                        // tsc's binder cannot merge a property-signature symbol with a
+                        // method-signature symbol under the same name (their `SymbolFlags`
+                        // combination is not mergeable), so this is TS2300 duplicate
+                        // identifier on both declarations regardless of which kind was
+                        // declared first — unlike a same-kind property/property mismatch,
+                        // which is a type comparison (TS2717) handled below.
                         if *is_method != existing_is_method {
-                            if *is_method && !existing_is_method {
-                                // Method after property: TS2300 on both declarations.
-                                // tsc treats a method signature conflicting with an
-                                // existing property signature as a duplicate identifier.
-                                let message = crate::diagnostics::format_message(
-                                    crate::diagnostics::diagnostic_messages::DUPLICATE_IDENTIFIER,
-                                    &[name],
-                                );
-                                self.error_at_node(
-                                    existing_name_idx,
-                                    &message,
-                                    diagnostic_codes::DUPLICATE_IDENTIFIER,
-                                );
-                                self.error_at_node(
-                                    *name_idx,
-                                    &message,
-                                    diagnostic_codes::DUPLICATE_IDENTIFIER,
-                                );
-                            } else {
-                                // Property after method: TS2717 comparing property type
-                                // against the method's function type.
-                                if !self.type_contains_error(*property_type)
-                                    && !self.type_contains_error(existing_type)
-                                    && !self
-                                        .duplicate_decl_types_match(existing_type, *property_type)
-                                {
-                                    let existing_type_str = self.format_type(existing_type);
-                                    let property_type_str = self.format_type(*property_type);
-                                    self.error_at_node_msg(
-                                        *name_idx,
-                                        diagnostic_codes::SUBSEQUENT_PROPERTY_DECLARATIONS_MUST_HAVE_THE_SAME_TYPE_PROPERTY_MUST_BE_OF_TYP,
-                                        &[name, &existing_type_str, &property_type_str],
-                                    );
-                                }
-                            }
+                            let message = crate::diagnostics::format_message(
+                                crate::diagnostics::diagnostic_messages::DUPLICATE_IDENTIFIER,
+                                &[name],
+                            );
+                            self.error_at_node(
+                                existing_name_idx,
+                                &message,
+                                diagnostic_codes::DUPLICATE_IDENTIFIER,
+                            );
+                            self.error_at_node(
+                                *name_idx,
+                                &message,
+                                diagnostic_codes::DUPLICATE_IDENTIFIER,
+                            );
                             continue;
                         }
 
