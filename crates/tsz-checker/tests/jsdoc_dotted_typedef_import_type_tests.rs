@@ -1,20 +1,20 @@
-//! Tests for `import("./mod").Member` references to *qualified* JSDoc
-//! `@typedef`/`@callback` declarations (`@typedef {number} Dotted.Name`,
-//! `@callback Ns.Handler`), plus `@callback` names followed by a
-//! description (`@callback Con - some continuation`).
+//! Tests for the TS-syntax `type X = import("./mod").A.B` path of qualified
+//! JSDoc `@typedef`/`@callback` names, and for the prefix-qualified TS2694
+//! display both import-type resolvers share.
 //!
-//! Structural rule (oracle: typescript@7.0.2): a dotted JSDoc
-//! `@typedef`/`@callback` declares a qualified name, so the reference side
-//! must resolve the whole dotted chain (`import("./m").Dotted.Name`), not
-//! look up the first segment as a plain exported member; and a `@callback`
-//! tag's declared name is only its first whitespace-delimited token — a
-//! trailing description is not part of the name. When a dotted reference
-//! still fails, tsc reports TS2694 against the first segment missing under
-//! the longest declared namespace prefix (`Namespace '"m".Dotted' has no
-//! exported member 'Missing'`), while a reference whose first segment
-//! matches no declared prefix keeps the unqualified form. Covers the
-//! residual of #17162 (conformance rows `callbackCrossModule.ts` and
-//! `jsDeclarationsImportNamespacedType.ts`).
+//! Structural rules (oracle: typescript@7.0.2):
+//! - A dotted JSDoc `@typedef {T} A.B` declares a *qualified* name. The
+//!   TS-syntax import-type resolver joins its already-parsed member segments
+//!   back into that qualified name before the typedef-surface lookup — the
+//!   JSDoc string path's equivalent landed in #17178.
+//! - When a dotted reference still fails, tsc reports the first segment
+//!   missing under the longest declared namespace prefix
+//!   (`Namespace '"m".Dotted' has no exported member 'Missing'`); a
+//!   reference whose first segment matches no declared prefix keeps the
+//!   unqualified root-segment form.
+//!
+//! Complements `jsdoc_typedef_module_export_tests.rs` (#17178/#17180), which
+//! owns the JSDoc string-path positive/negative matrix.
 
 use crate::context::CheckerOptions;
 use crate::state::CheckerState;
@@ -113,60 +113,6 @@ fn diagnostics_with_code(diagnostics: &[Diagnostic], code: u32) -> Vec<&Diagnost
 }
 
 #[test]
-fn jsdoc_type_resolves_dotted_typedef_qualified_name() {
-    // The `jsDeclarationsImportNamespacedType.ts` shape: a dotted `@typedef`
-    // referenced through `import(...)` with the full qualified chain.
-    let diagnostics = check_consumer_with_module_source(
-        "mod1.js",
-        r#"
-/** @typedef {number} Dotted.Name */
-export var dummy = 1
-"#,
-        "consumer.js",
-        r#"
-/** @type {import('./mod1').Dotted.Name} - should work */
-var dot2
-export var y = 1
-"#,
-    );
-    assert!(
-        diagnostics.is_empty(),
-        "Expected no diagnostics for a dotted `@typedef` referenced with its \
-         full qualified chain, got: {diagnostics:?}"
-    );
-}
-
-#[test]
-fn jsdoc_type_dotted_typedef_carries_real_type_not_any() {
-    // The resolved qualified typedef must be the declared base type, not a
-    // silent `any`: assigning a string to `Dotted.Name` (= number) errors.
-    let diagnostics = check_consumer_with_module_source(
-        "mod1.js",
-        r#"
-/** @typedef {number} Dotted.Name */
-export var dummy = 1
-"#,
-        "consumer.js",
-        r#"
-/** @type {import('./mod1').Dotted.Name} */
-var ok = 5
-/** @type {import('./mod1').Dotted.Name} */
-var bad = 'str'
-export var y = 1
-"#,
-    );
-    assert!(
-        !diagnostics_with_code(&diagnostics, 2322).is_empty(),
-        "Expected TS2322 assigning a string to the dotted typedef's number \
-         type, got: {diagnostics:?}"
-    );
-    assert!(
-        diagnostics_with_code(&diagnostics, 2694).is_empty(),
-        "Expected no TS2694 for a resolvable dotted typedef, got: {diagnostics:?}"
-    );
-}
-
-#[test]
 fn ts_import_type_alias_resolves_dotted_typedef_qualified_name() {
     // TS-syntax path, renamed binders and a deeper chain: the segment-joined
     // typedef lookup must not depend on chain length 2 or specific names.
@@ -191,68 +137,71 @@ const s: string = value;
 }
 
 #[test]
-fn jsdoc_type_resolves_dotted_callback_with_description() {
-    // Dotted `@callback` plus a trailing description: both fixes compose.
+fn ts_import_type_alias_dotted_typedef_carries_real_type_not_any() {
+    // The resolved qualified typedef must be the declared base type, not a
+    // silent `any`: assigning it to a mismatched annotation errors.
     let diagnostics = check_consumer_with_module_source(
-        "handlers.js",
+        "mod1.js",
         r#"
-/** @callback Ns.Handler - handles stuff
- * @param {number} n
- * @return {string}
- */
+/** @typedef {number} Dotted.Name */
 export var dummy = 1
 "#,
-        "consumer.js",
+        "consumer.ts",
         r#"
-/** @type {import('./handlers').Ns.Handler} */
-var h
-export var y = 1
+type X = import('./mod1').Dotted.Name;
+declare const value: X;
+const bad: string = value;
 "#,
     );
     assert!(
+        !diagnostics_with_code(&diagnostics, 2322).is_empty(),
+        "Expected TS2322 assigning the dotted typedef's number type to a \
+         string annotation, got: {diagnostics:?}"
+    );
+    assert!(
         diagnostics_with_code(&diagnostics, 2694).is_empty(),
-        "Expected no TS2694 for a dotted `@callback` with a description, \
-         got: {diagnostics:?}"
+        "Expected no TS2694 for a resolvable dotted typedef, got: {diagnostics:?}"
     );
 }
 
 #[test]
-fn jsdoc_param_resolves_callback_with_description() {
-    // The `callbackCrossModule.ts` shape: `@callback Con - description`
-    // referenced through `import(...).Con` in a `@param`. The description
-    // must not become part of the declared callback name.
+fn ts_import_type_alias_dotted_missing_member_reports_qualified_ts2694() {
+    // Negative, TS-syntax path: the chain fails on the segment *under* the
+    // synthesized namespace — tsc qualifies the namespace display with the
+    // prefix and names the failing segment, not the root.
     let diagnostics = check_consumer_with_module_source(
         "mod1.js",
         r#"
-/** @callback Con - some kind of continuation
- * @param {object | undefined} error
- * @return {any} I don't even know what this should return
- */
-module.exports = C
-function C() {
-    this.p = 1
-}
+/** @typedef {number} Dotted.Name */
+export var dummy = 1
 "#,
-        "use.js",
+        "consumer.ts",
         r#"
-/** @param {import('./mod1').Con} k */
-function f(k) {
-    return k({ ok: true})
-}
+type X = import('./mod1').Dotted.Missing;
 "#,
     );
+    let ts2694 = diagnostics_with_code(&diagnostics, 2694);
     assert!(
-        diagnostics_with_code(&diagnostics, 2694).is_empty(),
-        "Expected no TS2694 for a `@callback` whose tag carries a trailing \
-         description, got: {diagnostics:?}"
+        !ts2694.is_empty(),
+        "Expected TS2694 for a missing member under a dotted typedef \
+         namespace, got: {diagnostics:?}"
+    );
+    assert!(
+        ts2694.iter().all(|d| d
+            .message_text
+            .contains(".Dotted' has no exported member 'Missing'")),
+        "Expected every TS2694 to be qualified with the namespace prefix and \
+         name the failing segment, got: {ts2694:?}"
     );
 }
 
 #[test]
 fn jsdoc_type_dotted_missing_member_reports_qualified_ts2694() {
-    // Negative: the chain fails on the segment *under* the synthesized
-    // namespace — tsc qualifies the namespace display with the prefix and
-    // names the failing segment, not the root.
+    // Same qualification rule on the JSDoc string path.
+    // NOTE: the JSDoc `@type` path currently reports the same TS2694 twice
+    // (comment anchor + declaration anchor) where tsc reports once; that
+    // count defect predates this family, so only the message shape is
+    // pinned here.
     let diagnostics = check_consumer_with_module_source(
         "mod1.js",
         r#"
@@ -266,10 +215,6 @@ var x
 export var y = 1
 "#,
     );
-    // NOTE: the JSDoc `@type` path currently reports the same TS2694 twice
-    // (comment anchor + declaration anchor) where tsc reports once; that
-    // count defect predates this family, so only the message shape is
-    // pinned here.
     let ts2694 = diagnostics_with_code(&diagnostics, 2694);
     assert!(
         !ts2694.is_empty(),
@@ -287,8 +232,9 @@ export var y = 1
 
 #[test]
 fn jsdoc_type_dotted_reference_without_declared_prefix_reports_root_ts2694() {
-    // Negative control: no declared name starts with the reference's first
-    // segment, so the diagnostic stays unqualified and names the root.
+    // Negative control for the prefix query: no declared name starts with
+    // the reference's first segment, so the diagnostic stays unqualified
+    // and names the root.
     let diagnostics = check_consumer_with_module_source(
         "mod1.js",
         r#"
@@ -324,7 +270,8 @@ export var y = 1
 fn jsdoc_type_namespace_prefix_alone_still_reports_ts2694() {
     // Negative control: referencing only the synthesized namespace prefix is
     // still TS2694 in tsc (`Namespace '"mod1"' has no exported member
-    // 'Dotted'`) — the prefix is not itself a type.
+    // 'Dotted'`) — the prefix is not itself a type, and the prefix-existence
+    // query must not resolve it.
     let diagnostics = check_consumer_with_module_source(
         "mod1.js",
         r#"

@@ -880,13 +880,16 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
             if let Some(tag_idx) = Self::jsdoc_tag_offset(line, "callback") {
-                // The name is only the first whitespace-delimited token: a
-                // trailing description (`@callback Con - some continuation`)
-                // is not part of the declared name.
+                // The callback's name is the first whitespace-delimited token;
+                // anything after it is description text (`@callback Con - some
+                // continuation` declares `Con`). A token carrying any non-name
+                // character (`Con-`) declares nothing — tsc registers no
+                // callback for it, so neither do we. Mirrors the `@typedef`
+                // name rule in `parse_jsdoc_typedef_definition`.
                 let name = line[tag_idx + "@callback".len()..]
                     .split_whitespace()
                     .next()
-                    .unwrap_or_default()
+                    .unwrap_or("")
                     .to_string();
                 if !name.is_empty()
                     && name
@@ -1826,16 +1829,6 @@ mod parse_jsdoc_import_tag_alias_tests {
             CheckerState::parse_jsdoc_import_type(r#"import("./dep").A.B[]"#),
             Some(("./dep".to_string(), Some("A.B".to_string())))
         );
-    }
-
-    #[test]
-    fn callback_name_excludes_trailing_description() {
-        let typedefs = CheckerState::parse_jsdoc_typedefs(
-            "/** @callback Con - some kind of continuation\n * @param {number} n\n */",
-        );
-        assert_eq!(typedefs.len(), 1);
-        assert_eq!(typedefs[0].0, "Con");
-        assert!(typedefs[0].1.callback.is_some());
     }
 
     #[test]
