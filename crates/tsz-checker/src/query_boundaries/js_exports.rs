@@ -1584,7 +1584,7 @@ impl<'a> CheckerState<'a> {
         Some((ctor_name, member_name))
     }
 
-    fn commonjs_named_export_class_symbol_for_file(
+    pub(crate) fn commonjs_named_export_class_symbol_for_file(
         &self,
         target_file_idx: usize,
         export_name: &str,
