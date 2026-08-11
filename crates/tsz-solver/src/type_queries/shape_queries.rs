@@ -149,42 +149,53 @@ pub fn type_parameter_has_mapped_constraint_db(db: &dyn TypeDatabase, type_id: T
     get_type_parameter_constraint(db, type_id).is_some_and(|c| is_generic_mapped_type_db(db, c))
 }
 
+/// Instantiate a generic alias `Application`'s declared body with its type
+/// arguments (no conditional evaluation), returning the instantiated body.
+/// Returns `None` when `type_id` is not a resolvable generic alias
+/// application. Bridges resolver-backed lazy resolution so callers don't
+/// reimplement the substitute-then-classify pattern.
+fn instantiate_application_body<R: TypeResolver>(
+    db: &dyn crate::construction::QueryDatabase,
+    resolver: &R,
+    type_id: TypeId,
+) -> Option<TypeId> {
+    use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type_cached};
+
+    // Cheap precondition: only `Application` types can satisfy the predicate.
+    // Skip the resolver/substitution work otherwise.
+    if type_id.is_intrinsic() {
+        return None;
+    }
+    let TypeData::Application(app_id) = db.lookup(type_id)? else {
+        return None;
+    };
+    let app = db.type_application(app_id);
+    let def_id = super::classifiers::get_lazy_def_id(db, app.base)?;
+    let type_params = resolver.get_lazy_type_params(def_id)?;
+    if type_params.is_empty() {
+        return None;
+    }
+    let type_db = db.as_type_database();
+    let body = resolver.resolve_lazy(def_id, type_db)?;
+    let substitution = TypeSubstitution::from_args(type_db, &type_params, &app.args);
+    Some(instantiate_type_cached(
+        type_db,
+        Some(db),
+        body,
+        &substitution,
+    ))
+}
+
 /// Returns `true` when `type_id` is a generic `Application` whose aliased
 /// body reduces to a generic mapped type after substituting the supplied
-/// type arguments. Bridges resolver-backed lazy resolution so callers
-/// don't need to reimplement the substitute-then-classify pattern.
+/// type arguments.
 pub fn is_generic_mapped_application_db<R: TypeResolver>(
     db: &dyn crate::construction::QueryDatabase,
     resolver: &R,
     type_id: TypeId,
 ) -> bool {
-    use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type_cached};
-
-    // Cheap precondition: only `Application` types can satisfy the
-    // predicate. Skip the resolver/substitution work otherwise.
-    if type_id.is_intrinsic() {
-        return false;
-    }
-    let Some(TypeData::Application(app_id)) = db.lookup(type_id) else {
-        return false;
-    };
-    let app = db.type_application(app_id);
-    let Some(def_id) = super::classifiers::get_lazy_def_id(db, app.base) else {
-        return false;
-    };
-    let Some(type_params) = resolver.get_lazy_type_params(def_id) else {
-        return false;
-    };
-    if type_params.is_empty() {
-        return false;
-    }
-    let Some(body) = resolver.resolve_lazy(def_id, db.as_type_database()) else {
-        return false;
-    };
-    let substitution = TypeSubstitution::from_args(db.as_type_database(), &type_params, &app.args);
-    let instantiated =
-        instantiate_type_cached(db.as_type_database(), Some(db), body, &substitution);
-    is_generic_mapped_type_db(db.as_type_database(), instantiated)
+    instantiate_application_body(db, resolver, type_id)
+        .is_some_and(|body| is_generic_mapped_type_db(db.as_type_database(), body))
 }
 
 /// Returns `true` when `type_id` is a *deferred generic keyof-mapped index
@@ -223,27 +234,11 @@ fn resolve_alias_body_to_mapped_type<R: TypeResolver>(
     resolver: &R,
     type_id: TypeId,
 ) -> Option<std::sync::Arc<crate::types::MappedType>> {
-    use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type_cached};
-
     let type_db = db.as_type_database();
     if let Some(mapped) = get_mapped_type(type_db, type_id) {
         return Some(mapped);
     }
-    if type_id.is_intrinsic() {
-        return None;
-    }
-    let TypeData::Application(app_id) = db.lookup(type_id)? else {
-        return None;
-    };
-    let app = db.type_application(app_id);
-    let def_id = super::classifiers::get_lazy_def_id(db, app.base)?;
-    let type_params = resolver.get_lazy_type_params(def_id)?;
-    if type_params.is_empty() {
-        return None;
-    }
-    let body = resolver.resolve_lazy(def_id, type_db)?;
-    let substitution = TypeSubstitution::from_args(type_db, &type_params, &app.args);
-    let instantiated = instantiate_type_cached(type_db, Some(db), body, &substitution);
+    let instantiated = instantiate_application_body(db, resolver, type_id)?;
     get_mapped_type(type_db, instantiated)
 }
 

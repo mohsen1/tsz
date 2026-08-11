@@ -3,19 +3,10 @@ use tsz_solver::construction::{QueryDatabase, TypeDatabase};
 use tsz_solver::def::resolver::TypeResolver;
 
 /// `T[K]` where `K extends keyof S` is a valid index (no `TS2536`) when `keyof S`
-/// is a *deferred generic mapped index* — `S` is a mapped type over a generic
-/// `keyof` (`{ [P in keyof <generic> as? N]: … }`), whether the mapped source is
-/// the object parameter itself or a foreign type parameter. tsc resolves such a
-/// `keyof` to a deferred index (`getIndexTypeForMappedType` →
-/// `getIndexTypeForGenericType`) that its relation worker treats as assignable to
-/// `keyof T` for any object type parameter, so a key-remapping `as` clause stays
-/// valid — the remapped keys never leave the deferred index.
-///
-/// Requires the object and index to be type-parameter-like and the index's
-/// constraint to be `keyof S`; the structural mapped-index decision is owned by
-/// the solver (`mapped_index_source_is_deferred_generic_keyof`, instantiation
-/// only, so a conditional alias body stays a deferred *non-mapped* index and
-/// keeps reporting `TS2536`).
+/// is a *deferred generic mapped index*. Gates the object and index to be
+/// type-parameter-like and peels `keyof S` → `S`, then delegates the structural
+/// decision to the solver
+/// (`mapped_index_source_is_deferred_generic_keyof`, which owns the tsc rule).
 pub(crate) fn indexed_access_is_deferred_generic_mapped_index<R: TypeResolver>(
     db: &dyn QueryDatabase,
     resolver: &R,
