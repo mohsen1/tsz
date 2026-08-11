@@ -10,8 +10,8 @@
 
 use tsz_checker::context::CheckerOptions;
 use tsz_checker::test_utils::{
-    check_multi_file_with_libs, check_source_strict_messages, diagnostic_code_messages,
-    load_lib_files,
+    check_multi_file_with_libs_unique_module_locals, check_source_strict_messages,
+    diagnostic_code_messages, load_lib_files,
 };
 
 fn diagnostics(source: &str) -> Vec<(u32, String)> {
@@ -180,9 +180,17 @@ const s: S = true;
 #[test]
 fn cross_file_import_type_member_still_works() {
     // Control: the cross-file (file-backed module) path must keep working
-    // exactly as before.
+    // exactly as before. Uses the unique-module-locals helper because the
+    // plain per-file-binder helper restarts every file's `SymbolId`s at 0
+    // (#15983 family): `Thing` in module.ts and `Member` in main.ts land on
+    // the same raw id by coincidence, and `CheckerState::get_or_create_def_id`
+    // — keyed by that raw id alone — collapses them onto one `DefId`, so
+    // resolving `Member`'s body re-enters its own alias-resolution stack
+    // entry and `mark_cross_arena_alias_cycle` misreports a genuine TS2456
+    // self-cycle. Production never hits this: the driver's bind-result
+    // reducer remaps every file into one globally-unique id space.
     let libs = load_lib_files(&["es5.d.ts"]);
-    let diags = diagnostic_code_messages(check_multi_file_with_libs(
+    let diags = diagnostic_code_messages(check_multi_file_with_libs_unique_module_locals(
         &[
             (
                 "module.ts",
