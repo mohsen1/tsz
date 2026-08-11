@@ -1160,8 +1160,22 @@ impl<'a> CheckerState<'a> {
                     arg_types,
                     index,
                 );
+                // Preserve the parameter's type-parameter display (and emit the
+                // bare TS2345 head that keeps the written `T`/`T[]` name) only
+                // when the target genuinely carries a FREE type parameter — one
+                // unbound in the current context. A concrete target that merely
+                // contains a *bound* signature type parameter (a generic method
+                // `m<S>(x: S): S` or a generic call/construct signature) is a
+                // fully-formed structural type: tsc still promotes the missing
+                // required-property failure to TS2739/TS2740/TS2741 there. The
+                // broad `contains_type_parameters` walk descends into signature
+                // bodies and counts that bound `S` (an index signature on the
+                // interface leaves it as a raw `TypeParameter` rather than a
+                // canonical `BoundParameter`), which wrongly suppressed the
+                // promotion; `contains_free_type_parameters` skips generic
+                // signature bodies and answers the question we actually mean.
                 let preserve_type_parameter_expected_display =
-                    common::contains_type_parameters(self.ctx.types, expected);
+                    common::contains_free_type_parameters(self.ctx.types, expected);
                 let reported_expected = if let Some(expected) = polymorphic_this_expected {
                     expected
                 } else if common::contains_this_type(self.ctx.types, expected) {
