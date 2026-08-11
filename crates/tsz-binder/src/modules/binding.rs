@@ -853,18 +853,53 @@ impl BinderState {
                                                         && let Some(spec) =
                                                             arena.get_specifier(spec_node)
                                                     {
-                                                        let name_idx = if spec.name.is_none() {
-                                                            spec.property_name
-                                                        } else {
-                                                            spec.name
-                                                        };
-                                                        if let Some(name_node) = arena.get(name_idx)
-                                                            && let Some(ident) =
-                                                                arena.get_identifier(name_node)
+                                                        // `export { foo }`: property_name is
+                                                        // NONE, name is "foo" (local == exported).
+                                                        // `export { foo as bar }`: property_name
+                                                        // is "foo" (local), name is "bar"
+                                                        // (exported) — these must resolve the
+                                                        // symbol by the LOCAL name, not the
+                                                        // exported alias.
+                                                        let local_name_idx =
+                                                            if spec.property_name.is_none() {
+                                                                spec.name
+                                                            } else {
+                                                                spec.property_name
+                                                            };
+                                                        let exported_name_idx =
+                                                            if spec.name.is_none() {
+                                                                spec.property_name
+                                                            } else {
+                                                                spec.name
+                                                            };
+                                                        if let Some(local_name_node) =
+                                                            arena.get(local_name_idx)
+                                                            && let Some(local_ident) = arena
+                                                                .get_identifier(local_name_node)
+                                                            && let Some(exported_name_node) =
+                                                                arena.get(exported_name_idx)
+                                                            && let Some(exported_ident) = arena
+                                                                .get_identifier(exported_name_node)
                                                         {
-                                                            exported_names.push(
-                                                                ident.escaped_text.to_string(),
-                                                            );
+                                                            let local_name = local_ident
+                                                                .escaped_text
+                                                                .to_string();
+                                                            let exported_name = exported_ident
+                                                                .escaped_text
+                                                                .to_string();
+                                                            exported_names
+                                                                .push(exported_name.clone());
+                                                            if let Some(sym_id) = self
+                                                                .current_scope()
+                                                                .get(local_name.as_str())
+                                                                .or_else(|| {
+                                                                    self.file_locals
+                                                                        .get(local_name.as_str())
+                                                                })
+                                                            {
+                                                                exported_symbols
+                                                                    .push((exported_name, sym_id));
+                                                            }
                                                         }
                                                     }
                                                 }
