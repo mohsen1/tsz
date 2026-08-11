@@ -880,7 +880,17 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
             if let Some(tag_idx) = Self::jsdoc_tag_offset(line, "callback") {
-                let name = line[tag_idx + "@callback".len()..].trim().to_string();
+                // The callback's name is the first whitespace-delimited token;
+                // anything after it is description text (`@callback Con - some
+                // continuation` declares `Con`). A token carrying any non-name
+                // character (`Con-`) declares nothing — tsc registers no
+                // callback for it, so neither do we. Mirrors the `@typedef`
+                // name rule in `parse_jsdoc_typedef_definition`.
+                let name = line[tag_idx + "@callback".len()..]
+                    .split_whitespace()
+                    .next()
+                    .unwrap_or("")
+                    .to_string();
                 if !name.is_empty()
                     && name
                         .chars()
