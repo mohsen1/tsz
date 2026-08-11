@@ -360,7 +360,9 @@ impl<'a> CheckerState<'a> {
                 .get_identifier(name_node)
                 .map(|ident| ident.escaped_text.clone());
             let can_use_no_flow = if let Some(property_name) = property_name_for_probe.as_deref() {
-                let evaluated_no_flow = self.evaluate_application_type(object_type_no_flow);
+                let evaluated_no_flow = self
+                    .apparent_type_of_receiver_light(object_type_no_flow)
+                    .into_type();
                 let resolved_no_flow = self.resolve_type_for_property_access(evaluated_no_flow);
                 !matches!(
                     self.resolve_property_access_with_env(resolved_no_flow, property_name),
@@ -472,7 +474,7 @@ impl<'a> CheckerState<'a> {
                 if let Some(sym_id) = self.resolve_identifier_symbol(access.expression) {
                     let sym_type = self.get_type_of_symbol(sym_id);
                     if sym_type != TypeId::UNKNOWN && sym_type != TypeId::ERROR {
-                        object_type = self.evaluate_application_type(sym_type);
+                        object_type = self.apparent_type_of_receiver_light(sym_type).into_type();
                     }
                 }
             } else if self.ctx.arena.get_access_expr(expr_node).is_some() {
@@ -481,7 +483,7 @@ impl<'a> CheckerState<'a> {
                     &TypingRequest::NONE,
                 );
                 if inner_type != TypeId::UNKNOWN && inner_type != TypeId::ERROR {
-                    object_type = self.evaluate_application_type(inner_type);
+                    object_type = self.apparent_type_of_receiver_light(inner_type).into_type();
                 }
             }
         }

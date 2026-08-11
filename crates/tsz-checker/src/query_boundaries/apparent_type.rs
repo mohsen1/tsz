@@ -133,8 +133,11 @@ mod raw_entry {
     ];
 
     /// Residual direct raw-entry calls left in `resolve.rs` after routing the
-    /// receiver reduction through the gateway. Shrink-only: never raise it.
-    const BASELINE: usize = 3;
+    /// receiver reduction through the gateway. Now zero: every property-access
+    /// receiver reduction — the primary env/light branches and the three
+    /// `UNKNOWN`-recovery / no-flow-probe re-reductions — routes through
+    /// [`apparent_type`](super). Shrink-only: never raise it.
+    const BASELINE: usize = 0;
 
     fn raw_entry_call_count(src: &str) -> usize {
         RAW_ENTRIES
@@ -146,12 +149,19 @@ mod raw_entry {
     #[test]
     fn property_access_decision_site_stays_shrink_only() {
         let count = raw_entry_call_count(RESOLVE_SRC);
-        assert!(
-            count <= BASELINE,
-            "property-access decision site added a raw evaluation-entry call \
-             ({count} > baseline {BASELINE}); route it through \
-             query_boundaries::apparent_type instead of calling a raw evaluate_* \
-             entry directly. If you migrated a call *out*, lower BASELINE to {count}.",
+        // Exact match, not `<=`: `BASELINE` is `0` (the site is fully behind the
+        // gateway), so a `count <= BASELINE` would be an always-true comparison
+        // against `usize::MIN` (`clippy::absurd_extreme_comparisons`). Any raw
+        // evaluate_* call added to the decision site makes `count > BASELINE` and
+        // fails; migrating one out (only possible if `BASELINE` is later raised)
+        // makes `count < BASELINE` and must be paired with lowering `BASELINE`.
+        assert_eq!(
+            count, BASELINE,
+            "property-access decision site changed its raw evaluation-entry call \
+             count ({count} vs baseline {BASELINE}); route new receiver reductions \
+             through query_boundaries::apparent_type instead of calling a raw \
+             evaluate_* entry directly. If you migrated a call *out*, lower BASELINE \
+             to {count}.",
         );
     }
 
