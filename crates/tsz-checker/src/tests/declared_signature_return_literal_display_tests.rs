@@ -188,6 +188,63 @@ const s: string = v;
 }
 
 #[test]
+fn declared_top_level_function_badly_spaced_return_literal_canonicalizes_spacing() {
+    // #17128: a written signature literal must stay verbatim (`1`, not
+    // `number`) *and* have its author whitespace canonicalized (`()=>1` ->
+    // `() => 1`). #17124 fixed the literal by echoing the raw source text,
+    // which re-leaked the spacing on badly-spaced input; the canonical
+    // formatter under `PreserveSignatureReturnLiteralsScope` reconciles both.
+    assert_source_displays(
+        r#"
+declare const v: ()=>1;
+const s: string = v;
+"#,
+        "() => 1",
+    );
+}
+
+#[test]
+fn declared_top_level_function_badly_spaced_param_literal_canonicalizes_spacing() {
+    // The `(x:1)=>void` row that regressed silently under #17124 (no test
+    // covered a no-space param-position literal).
+    assert_source_displays(
+        r#"
+declare const v: (x:1)=>void;
+const s: string = v;
+"#,
+        "(x: 1) => void",
+    );
+}
+
+#[test]
+fn declared_top_level_constructor_badly_spaced_return_literal_canonicalizes_spacing() {
+    // The construct-signature (`TypeData::Callable`) form of the same rule:
+    // `new()=>1` canonicalizes to `new () => 1` while keeping the return
+    // literal.
+    assert_source_displays(
+        r#"
+declare const v: new()=>1;
+const s: string = v;
+"#,
+        "new () => 1",
+    );
+}
+
+#[test]
+fn declared_top_level_function_badly_spaced_no_literal_canonicalizes_spacing() {
+    // Control: the no-literal signature still canonicalizes its spacing under
+    // the inline-signature source path (it never widens a literal, so the
+    // preserve scope is a no-op for it).
+    assert_source_displays(
+        r#"
+declare const v: (x:number)=>void;
+const s: string = v;
+"#,
+        "(x: number) => void",
+    );
+}
+
+#[test]
 fn declared_method_literal_preserved_when_source_is_in_target_role_position() {
     // The mismatching source here is `x` (`{ m(): 2 }`); it must keep `2`.
     assert_source_displays(

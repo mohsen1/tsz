@@ -1,6 +1,5 @@
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
-use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
@@ -230,61 +229,74 @@ impl<'a> CheckerState<'a> {
         arena: &tsz_parser::NodeArena,
         annotation_idx: NodeIndex,
     ) -> bool {
-        let mut idx = annotation_idx;
-        for _ in 0..16 {
-            let Some(node) = arena.get(idx) else {
-                return false;
-            };
-            match node.kind {
-                syntax_kind_ext::PARENTHESIZED_TYPE => {
-                    let Some(wrapped) = arena.get_wrapped_type(node) else {
-                        return false;
-                    };
-                    idx = wrapped.type_node;
-                }
-                syntax_kind_ext::TUPLE_TYPE
-                | syntax_kind_ext::FUNCTION_TYPE
-                | syntax_kind_ext::CONSTRUCTOR_TYPE => {
-                    // tsc's `getWidenedType` widens only *fresh* literals — a
-                    // literal type written anywhere inside a declared
-                    // signature (`() => 1`, `(x: 1) => void`) is part of the
-                    // signature's own spelling and must stay verbatim, not
-                    // pass through the canonical structural formatter (which
-                    // renders the type's current, possibly-widened `TypeId`
-                    // and has no notion of "this literal was written, don't
-                    // widen it"). The raw-source-text fallback this predicate
-                    // gates already preserves such literals correctly, so
-                    // decline canonicalization here and let it through.
-                    return !Self::type_subtree_contains_literal_type(arena, idx, 0);
-                }
-                _ => return false,
-            }
-        }
-        false
+        Self::unwrapped_annotation_node(arena, annotation_idx)
+            .and_then(|idx| arena.get(idx))
+            .is_some_and(|node| {
+                matches!(
+                    node.kind,
+                    syntax_kind_ext::TUPLE_TYPE
+                        | syntax_kind_ext::FUNCTION_TYPE
+                        | syntax_kind_ext::CONSTRUCTOR_TYPE
+                )
+            })
     }
 
-    /// Whether `idx`'s type subtree contains a `LiteralType` node (`1`,
-    /// `"x"`, `true`, `-1`, ...) anywhere beneath it. Depth- and
-    /// visit-bounded against pathological nesting, mirroring the bound used
-    /// by `anchor_is_within_object_literal_member`.
-    fn type_subtree_contains_literal_type(
+    /// Whether a declared type annotation, after unwrapping parenthesized
+    /// wrappers, is a *non-generic* inline `FUNCTION_TYPE` or `CONSTRUCTOR_TYPE`
+    /// — a bare call/construct signature written directly at a declaration site
+    /// (`() => 1`, `(x: 1) => void`, `new () => 1`).
+    ///
+    /// Such a source is *declared* (non-fresh): tsc's `getWidenedType` widens
+    /// only fresh literals, so a literal written inside a declared signature
+    /// (`() => 1`) renders verbatim while its whitespace is still canonicalized
+    /// by `typeToString` (`()=>1` -> `() => 1`). This predicate gates the
+    /// canonical-formatter-under-preserve-scope source path that reconciles
+    /// those two rules; a fresh function-expression source is not an inline
+    /// signature annotation on a declared binding and never matches here.
+    ///
+    /// A *generic* signature (`<S>() => S[]`, `new <T>(x: T) => T`) is excluded:
+    /// those keep the established `declared_identifier_source_display` handling,
+    /// which owns tsc's alias-name / `?:`-surface rules for type-parameterized
+    /// callables. The generic-ness is read from the signature's own
+    /// `type_parameters` (both node kinds share `FunctionTypeData`).
+    pub(in crate::error_reporter) fn annotation_is_inline_signature_type(
         arena: &tsz_parser::NodeArena,
-        idx: NodeIndex,
-        depth: u32,
+        annotation_idx: NodeIndex,
     ) -> bool {
-        if idx.is_none() || depth > 64 {
-            return false;
-        }
-        let Some(node) = arena.get(idx) else {
+        let Some(node) =
+            Self::unwrapped_annotation_node(arena, annotation_idx).and_then(|idx| arena.get(idx))
+        else {
             return false;
         };
-        if node.kind == syntax_kind_ext::LITERAL_TYPE {
-            return true;
+        if !matches!(
+            node.kind,
+            syntax_kind_ext::FUNCTION_TYPE | syntax_kind_ext::CONSTRUCTOR_TYPE
+        ) {
+            return false;
         }
         arena
-            .get_children(idx)
-            .into_iter()
-            .any(|child| Self::type_subtree_contains_literal_type(arena, child, depth + 1))
+            .get_function_type(node)
+            .is_some_and(|data| data.type_parameters.is_none())
+    }
+
+    /// The `NodeIndex` of `annotation_idx` after peeling parenthesized-type
+    /// wrappers (`([number, string])` is classified by its inner tuple).
+    /// Bounded against pathological wrapper nesting; returns `None` on a
+    /// missing node or when the wrapper depth bound is exceeded.
+    fn unwrapped_annotation_node(
+        arena: &tsz_parser::NodeArena,
+        annotation_idx: NodeIndex,
+    ) -> Option<NodeIndex> {
+        let mut idx = annotation_idx;
+        for _ in 0..16 {
+            let node = arena.get(idx)?;
+            if node.kind == syntax_kind_ext::PARENTHESIZED_TYPE {
+                idx = arena.get_wrapped_type(node)?.type_node;
+                continue;
+            }
+            return Some(idx);
+        }
+        None
     }
 
     /// Whether a declared type annotation is one whose written form `tsc` never
