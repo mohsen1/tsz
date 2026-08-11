@@ -204,6 +204,19 @@ impl<'a> CheckerState<'a> {
             return display;
         }
 
+        // A source whose declared annotation is an inline call/construct
+        // signature (`declare const v: () => 1`, `new () => 1`) renders through
+        // the canonical structural formatter so the author's whitespace is
+        // normalized (`()=>1` -> `() => 1`, `(x:1)=>void` -> `(x: 1) => void`),
+        // while a literal written in the signature stays verbatim: tsc widens
+        // only fresh literals, and a declared signature is non-fresh. See
+        // `inline_signature_annotation_source_display`.
+        if let Some(display) =
+            self.inline_signature_annotation_source_display(anchor_idx, source, target)
+        {
+            return display;
+        }
+
         let has_optional_callable_param =
             crate::query_boundaries::common::function_shape_for_type(self.ctx.types, source)
                 .is_some_and(|shape| shape.params.iter().any(|param| param.optional))
