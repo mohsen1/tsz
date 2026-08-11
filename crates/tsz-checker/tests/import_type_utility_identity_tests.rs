@@ -1,11 +1,21 @@
 use tsz_checker::context::CheckerOptions;
 use tsz_checker::test_utils::{
-    check_multi_file_with_libs, diagnostic_code_messages, load_lib_files,
+    check_multi_file_with_libs_unique_module_locals, diagnostic_code_messages, load_lib_files,
 };
 
+// Uses the unique-module-locals helper, not the plain per-file-binder one:
+// the plain helper restarts every file's `SymbolId`s at 0 (#15983 family), so
+// a `module.ts` declaration (`Wrap`, `Box`, `withArgs`, ...) can land on the
+// same raw id as an unrelated `consumer.ts` local (`ExtractWrapped`, `IsBox`,
+// `Test1`, ...). `CheckerState::get_or_create_def_id` is keyed by that raw id
+// alone, so the collision corrupts cross-file identity for the colliding
+// pair — an `infer` binding resolves to the wrong declaration, or a
+// conditional's checked type is confused with an unrelated import member.
+// Production never hits this: the driver's bind-result reducer remaps every
+// file into one globally-unique id space before checking starts.
 fn diagnostics_for_import_utility(entry: &str) -> Vec<(u32, String)> {
     let libs = load_lib_files(&["es5.d.ts"]);
-    diagnostic_code_messages(check_multi_file_with_libs(
+    diagnostic_code_messages(check_multi_file_with_libs_unique_module_locals(
         &[
             (
                 "module.ts",
