@@ -651,6 +651,132 @@ impl<'a> CheckerState<'a> {
         })
     }
 
+    /// Widened literal return type for a callable sibling whose body is
+    /// exactly `{ return <literal>; }` — its only statement. Reuses the same
+    /// side-effect-free literal recognizer the trailing data-property splice
+    /// uses (`literal_type_from_initializer`), so it never invokes the
+    /// expression checker and cannot populate `node_types`, re-run flow
+    /// analysis, or emit a diagnostic. Any other body shape (multiple
+    /// statements, non-return statement, non-literal return expression)
+    /// yields `None`, leaving the caller's `any` fallback.
+    ///
+    /// Full return-type inference (`infer_return_type_from_body`) was
+    /// considered and rejected here: non-contextual inference is explicitly
+    /// not memoized because a second body-check duplicates solver cache
+    /// warmup and can shift complexity accounting (spurious `TS2590` on
+    /// `intersectionsOfLargeUnions.ts`, see #17157). The literal-only prescan
+    /// sidesteps that hazard entirely by never checking the body.
+    fn object_literal_sibling_body_literal_return_type(
+        &self,
+        body_idx: NodeIndex,
+    ) -> Option<TypeId> {
+        let body_node = self.ctx.arena.get(body_idx)?;
+        let block = self.ctx.arena.get_block(body_node)?;
+        let [stmt_idx] = block.statements.nodes[..] else {
+            return None;
+        };
+        let stmt_node = self.ctx.arena.get(stmt_idx)?;
+        if stmt_node.kind != syntax_kind_ext::RETURN_STATEMENT {
+            return None;
+        }
+        let ret = self.ctx.arena.get_return_statement(stmt_node)?;
+        if ret.expression.is_none() {
+            return None;
+        }
+        let expr_idx = self
+            .ctx
+            .arena
+            .skip_parenthesized_and_assertions(ret.expression);
+        let literal = self.literal_type_from_initializer(expr_idx)?;
+        Some(self.widen_literal_type(literal))
+    }
+
+    /// Parameter list and return type for a callable object-literal sibling
+    /// member (method shorthand or `function`-expression property) that has
+    /// not yet been checked, used when splicing it into another member's
+    /// synthetic `this` type. An explicit return-type annotation is used
+    /// verbatim; otherwise the literal-return prescan above supplies a
+    /// widened literal type when the body allows it, and `any` otherwise —
+    /// matching `this.<sibling>` existing on `this` without asserting a type
+    /// the checker never verified.
+    fn object_literal_sibling_callable_signature(
+        &mut self,
+        other_elem_idx: NodeIndex,
+    ) -> (Vec<tsz_solver::ParamInfo>, TypeId) {
+        let any_fallback = || {
+            (
+                vec![signature_building_boundary::param_info(
+                    None,
+                    TypeId::ANY,
+                    false,
+                    true,
+                )],
+                TypeId::ANY,
+            )
+        };
+        let Some(other_node) = self.ctx.arena.get(other_elem_idx) else {
+            return any_fallback();
+        };
+        let (param_nodes, type_annotation, body): (Vec<NodeIndex>, NodeIndex, NodeIndex) =
+            if let Some(method) = self.ctx.arena.get_method_decl(other_node) {
+                (
+                    method.parameters.nodes.clone(),
+                    method.type_annotation,
+                    method.body,
+                )
+            } else if let Some(func) = self.ctx.arena.get_function(other_node) {
+                (
+                    func.parameters.nodes.clone(),
+                    func.type_annotation,
+                    func.body,
+                )
+            } else {
+                return any_fallback();
+            };
+
+        let params: Vec<tsz_solver::ParamInfo> = param_nodes
+            .iter()
+            .filter_map(|&param_idx| {
+                let param = self
+                    .ctx
+                    .arena
+                    .get(param_idx)
+                    .and_then(|pn| self.ctx.arena.get_parameter(pn))?;
+                if let Some(name_node) = self.ctx.arena.get(param.name)
+                    && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+                    && ident.escaped_text == "this"
+                {
+                    return None;
+                }
+                Some(signature_building_boundary::param_info(
+                    self.ctx
+                        .arena
+                        .get(param.name)
+                        .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
+                        .map(|ident| self.ctx.types.intern_string(&ident.escaped_text)),
+                    if param.type_annotation.is_some() {
+                        self.get_type_from_type_node(param.type_annotation)
+                    } else {
+                        TypeId::ANY
+                    },
+                    param.question_token || param.initializer.is_some(),
+                    param.dot_dot_dot_token,
+                ))
+            })
+            .collect();
+
+        let return_type = if type_annotation.is_some() {
+            self.get_type_from_type_node(type_annotation)
+        } else if body.is_some() {
+            self.object_literal_sibling_body_literal_return_type(body)
+                .unwrap_or(TypeId::ANY)
+        } else {
+            TypeId::ANY
+        };
+
+        (params, return_type)
+    }
+
     pub(super) fn build_object_literal_method_synthetic_this_type(
         &mut self,
         properties: &rustc_hash::FxHashMap<tsz_common::interner::Atom, tsz_solver::PropertyInfo>,
@@ -728,66 +854,8 @@ impl<'a> CheckerState<'a> {
                     placeholder
                 }
             } else {
-                let (other_params, other_return_type) = self
-                    .ctx
-                    .arena
-                    .get(other_elem_idx)
-                    .and_then(|n| self.ctx.arena.get_method_decl(n))
-                    .map(|other_method| {
-                        let params: Vec<tsz_solver::ParamInfo> = other_method
-                            .parameters
-                            .nodes
-                            .iter()
-                            .filter_map(|&param_idx| {
-                                let param = self
-                                    .ctx
-                                    .arena
-                                    .get(param_idx)
-                                    .and_then(|pn| self.ctx.arena.get_parameter(pn))?;
-                                if let Some(name_node) = self.ctx.arena.get(param.name)
-                                    && let Some(ident) = self.ctx.arena.get_identifier(name_node)
-                                    && ident.escaped_text == "this"
-                                {
-                                    return None;
-                                }
-                                Some(signature_building_boundary::param_info(
-                                    self.ctx
-                                        .arena
-                                        .get(param.name)
-                                        .and_then(|name_node| {
-                                            self.ctx.arena.get_identifier(name_node)
-                                        })
-                                        .map(|ident| {
-                                            self.ctx.types.intern_string(&ident.escaped_text)
-                                        }),
-                                    if param.type_annotation.is_some() {
-                                        self.get_type_from_type_node(param.type_annotation)
-                                    } else {
-                                        TypeId::ANY
-                                    },
-                                    param.question_token || param.initializer.is_some(),
-                                    param.dot_dot_dot_token,
-                                ))
-                            })
-                            .collect();
-                        let return_type = if other_method.type_annotation.is_some() {
-                            self.get_type_from_type_node(other_method.type_annotation)
-                        } else {
-                            TypeId::ANY
-                        };
-                        (params, return_type)
-                    })
-                    .unwrap_or_else(|| {
-                        (
-                            vec![signature_building_boundary::param_info(
-                                None,
-                                TypeId::ANY,
-                                false,
-                                true,
-                            )],
-                            TypeId::ANY,
-                        )
-                    });
+                let (other_params, other_return_type) =
+                    self.object_literal_sibling_callable_signature(other_elem_idx);
 
                 object_context_query::synthetic_this_method_callable(
                     self.ctx.types,
@@ -843,62 +911,8 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
-            let (other_params, other_return_type) = self
-                .ctx
-                .arena
-                .get(other_elem_idx)
-                .and_then(|n| self.ctx.arena.get_method_decl(n))
-                .map(|other_method| {
-                    let params: Vec<tsz_solver::ParamInfo> = other_method
-                        .parameters
-                        .nodes
-                        .iter()
-                        .filter_map(|&param_idx| {
-                            let param = self
-                                .ctx
-                                .arena
-                                .get(param_idx)
-                                .and_then(|pn| self.ctx.arena.get_parameter(pn))?;
-                            if let Some(name_node) = self.ctx.arena.get(param.name)
-                                && let Some(ident) = self.ctx.arena.get_identifier(name_node)
-                                && ident.escaped_text == "this"
-                            {
-                                return None;
-                            }
-                            Some(signature_building_boundary::param_info(
-                                self.ctx
-                                    .arena
-                                    .get(param.name)
-                                    .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
-                                    .map(|ident| self.ctx.types.intern_string(&ident.escaped_text)),
-                                if param.type_annotation.is_some() {
-                                    self.get_type_from_type_node(param.type_annotation)
-                                } else {
-                                    TypeId::ANY
-                                },
-                                param.question_token || param.initializer.is_some(),
-                                param.dot_dot_dot_token,
-                            ))
-                        })
-                        .collect();
-                    let return_type = if other_method.type_annotation.is_some() {
-                        self.get_type_from_type_node(other_method.type_annotation)
-                    } else {
-                        TypeId::ANY
-                    };
-                    (params, return_type)
-                })
-                .unwrap_or_else(|| {
-                    (
-                        vec![signature_building_boundary::param_info(
-                            None,
-                            TypeId::ANY,
-                            false,
-                            true,
-                        )],
-                        TypeId::ANY,
-                    )
-                });
+            let (other_params, other_return_type) =
+                self.object_literal_sibling_callable_signature(other_elem_idx);
 
             let method_type = object_context_query::synthetic_this_method_callable(
                 self.ctx.types,
