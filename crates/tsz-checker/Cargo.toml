@@ -1891,6 +1891,9 @@ path = "tests/jsx_multi_construct_overload_tests.rs"
 name = "jsx_overload_anchor_literal_attr_tests"
 path = "tests/jsx_overload_anchor_literal_attr_tests.rs"
 [[test]]
+name = "ts2741_generic_method_index_signature_call_argument_tests"
+path = "tests/ts2741_generic_method_index_signature_call_argument_tests.rs"
+[[test]]
 name = "jsx_spread_assignability_suppresses_ts2741"
 path = "tests/jsx_spread_assignability_suppresses_ts2741.rs"
 [[test]]

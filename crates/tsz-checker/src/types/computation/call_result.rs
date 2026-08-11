@@ -1160,8 +1160,20 @@ impl<'a> CheckerState<'a> {
                     arg_types,
                     index,
                 );
+                // Only a FREE type parameter in `expected` — one from an
+                // enclosing generic scope or the call's own unresolved type
+                // arguments — warrants the verbatim `T`/`Array<T>` display path
+                // (`error_argument_not_assignable_preserving_param_display`),
+                // which renders the parameter as written and skips the
+                // missing-property elaboration. A concrete target whose only
+                // type parameters are BOUND by its own method signatures
+                // (`interface Big { m<S>(x: S): S }`, or `Array<T>`/
+                // `ReadonlyArray<T>`'s `every<S extends T>`) is fully resolved
+                // for this argument, so it must take the ordinary
+                // `check_argument_assignable_or_report` path and promote a sole
+                // missing property to TS2739/TS2740/TS2741 (#17145).
                 let preserve_type_parameter_expected_display =
-                    common::contains_type_parameters(self.ctx.types, expected);
+                    common::contains_free_type_parameters(self.ctx.types, expected);
                 let reported_expected = if let Some(expected) = polymorphic_this_expected {
                     expected
                 } else if common::contains_this_type(self.ctx.types, expected) {
