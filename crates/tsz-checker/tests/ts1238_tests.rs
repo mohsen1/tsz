@@ -250,6 +250,25 @@ fn ts1238_es_decorator_zero_arity_factory_emits_error() {
 }
 
 #[test]
+fn ts1238_es_decorator_zero_arity_parenthesized_factory_anchors_at_expression() {
+    // A parenthesized zero-param decorator (`@(() => {})`) declines the
+    // TS1329 "did you mean to call it" hint (that hint requires a
+    // referenceable decorator expression) and falls through to this
+    // generic TS1238 arity failure. 0 declared params is never "too few"
+    // for a 2-argument `(value, context)` ES call, so tsc anchors at the
+    // decorator EXPRESSION `(2,2)`-style position (one column after the
+    // `@`), not at the whole decorator including `@` — oracle-verified
+    // (typescript@7.0.2) against `esDecorators-arguments.ts`.
+    let source = "@(() => {})\nclass C {}\n";
+    let diagnostics = tsz_checker::test_utils::check_source_diagnostics(source);
+    tsz_checker::test_utils::assert_diagnostic_shape(
+        source,
+        &diagnostics,
+        &tsz_checker::test_utils::DiagnosticShape::code(1238).at(1, 2),
+    );
+}
+
+#[test]
 fn ts1238_es_decorator_one_or_two_required_params_no_error() {
     for source in [
         "@((a: any) => {})\nclass C {}\n",
@@ -275,4 +294,20 @@ fn ts1238_es_decorator_too_many_required_params_emits_error() {
             "Expected TS1238 for >2 required params, got: {codes:?} for {source}"
         );
     }
+}
+
+#[test]
+fn ts1238_es_decorator_too_many_required_params_anchors_at_whole_decorator() {
+    // Adjacent case to the zero-arity anchor fix above: a factory that
+    // requires MORE params than the 2-argument ES call can ever supply is
+    // genuinely "too few arguments", so tsc keeps anchoring at the whole
+    // decorator (including `@`) here — the shared `decorator_failure_anchor`
+    // helper must not flip this case too.
+    let source = "@((a: any, b: any, c: any) => {})\nclass C {}\n";
+    let diagnostics = tsz_checker::test_utils::check_source_diagnostics(source);
+    tsz_checker::test_utils::assert_diagnostic_shape(
+        source,
+        &diagnostics,
+        &tsz_checker::test_utils::DiagnosticShape::code(1238).at(1, 1),
+    );
 }

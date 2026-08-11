@@ -403,13 +403,19 @@ impl<'a> CheckerState<'a> {
                 .count();
             // ES decorators are invoked with `(value, context)`. When the
             // factory requires more than two parameters, the call cannot
-            // supply them; tsc anchors the error at the whole decorator
-            // (including `@`). Zero required params is normally the TS1329
-            // decorator-factory hint above, but a parenthesized expression
-            // opts out of that hint and still needs the arity failure here.
+            // supply them; tsc anchors that "too few arguments" failure at
+            // the whole decorator (including `@`) — same convention as the
+            // shared `decorator_failure_anchor` helper the legacy class- and
+            // member-decorator paths use. Zero required params is normally
+            // the TS1329 decorator-factory hint above, but a parenthesized
+            // expression opts out of that hint and still needs the arity
+            // failure here; since 0 declared params is never "too few" for
+            // a 2-argument call, that case anchors at the decorator
+            // expression instead (oracle-verified, typescript@7.0.2).
             if required_params > 2 || required_params == 0 {
+                let anchor = self.decorator_failure_anchor(decorator_node, resolved, 2);
                 self.error_at_node(
-                    decorator_node,
+                    anchor,
                     diagnostic_messages::UNABLE_TO_RESOLVE_SIGNATURE_OF_CLASS_DECORATOR_WHEN_CALLED_AS_AN_EXPRESSION,
                     diagnostic_codes::UNABLE_TO_RESOLVE_SIGNATURE_OF_CLASS_DECORATOR_WHEN_CALLED_AS_AN_EXPRESSION,
                 );
