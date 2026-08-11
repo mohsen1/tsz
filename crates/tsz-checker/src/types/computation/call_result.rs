@@ -1160,8 +1160,17 @@ impl<'a> CheckerState<'a> {
                     arg_types,
                     index,
                 );
+                // Preserve the bare type-parameter display only for a *free*
+                // type parameter (an unresolved outer `T`). A concrete object
+                // type whose type parameters are all bound by its own generic
+                // method signatures (`{ m<S>(x: S): S; [n: number]: string }`)
+                // is fully structural and must take the ordinary
+                // missing-property elaboration path (TS2739/TS2740/TS2741), like
+                // the assignment path — not the elaboration-free
+                // preserving-param-display path the all-inclusive
+                // `contains_type_parameters` misrouted it to (#17145).
                 let preserve_type_parameter_expected_display =
-                    common::contains_type_parameters(self.ctx.types, expected);
+                    common::contains_free_type_parameters(self.ctx.types, expected);
                 let reported_expected = if let Some(expected) = polymorphic_this_expected {
                     expected
                 } else if common::contains_this_type(self.ctx.types, expected) {
