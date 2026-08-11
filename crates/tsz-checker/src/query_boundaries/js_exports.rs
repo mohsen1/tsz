@@ -1589,6 +1589,13 @@ impl<'a> CheckerState<'a> {
         target_file_idx: usize,
         export_name: &str,
     ) -> Option<(SymbolId, usize)> {
+        // A file with ESM syntax is not a CommonJS module: `module.exports.X`
+        // there is an ordinary property write, not an export, so tsc keeps
+        // reporting the member as missing (TS2694).
+        if self.source_file_idx_has_esm_syntax(target_file_idx) {
+            return None;
+        }
+
         let target_arena = self.ctx.get_arena_for_file(target_file_idx as u32);
         let target_binder = self.ctx.get_binder_for_file(target_file_idx)?;
         let source_file = target_arena.source_files.first()?;

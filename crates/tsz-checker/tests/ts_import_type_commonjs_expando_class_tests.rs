@@ -180,6 +180,32 @@ type X = import('./modf').bar;
 }
 
 #[test]
+fn ts_import_type_alias_expando_class_in_esm_js_file_still_reports_ts2694() {
+    // Negative control for the CommonJS gate: a JS file with ESM syntax is
+    // not a CommonJS module, so `module.exports.C = C` there is an ordinary
+    // property write, not an export — tsc keeps TS2694 (oracle-verified on
+    // typescript@7.0.2).
+    let diagnostics = check_ts_consumer_with_module_source(
+        "mixed.js",
+        r#"
+export const other = 1;
+class C {
+    s() {}
+}
+module.exports.C = C
+"#,
+        r#"
+type X = import('./mixed').C;
+"#,
+    );
+    assert!(
+        !diagnostics_with_code(&diagnostics, 2694).is_empty(),
+        "Expected TS2694 for an expando-shaped assignment inside an ESM-syntax JS file, \
+         got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn ts_import_type_alias_expando_class_in_ts_file_still_reports_ts2694() {
     // Negative control for the JS gate: the same expando-shaped assignment in
     // a TS module is not an export (tsc keeps TS2694; the assignment itself
