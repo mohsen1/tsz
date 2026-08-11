@@ -396,6 +396,9 @@ path = "tests/abstract_constructor_elaboration_tests.rs"
 name = "ts2511_abstract_type_param_tests"
 path = "tests/ts2511_abstract_type_param_tests.rs"
 [[test]]
+name = "ts2512_abstract_overload_consistency_tests"
+path = "tests/ts2512_abstract_overload_consistency_tests.rs"
+[[test]]
 name = "ts2513_abstract_super_access_tests"
 path = "tests/ts2513_abstract_super_access_tests.rs"
 [[test]]
