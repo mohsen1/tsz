@@ -283,6 +283,32 @@ impl<'a> CheckerState<'a> {
             {
                 return Some(typedef_type);
             }
+            // A CommonJS expando export (`module.exports.Member = Member` /
+            // `exports.Member = Member`) records no SymbolId in the binder's
+            // export tables — those only track ES `export` syntax — so the
+            // plain symbol lookup above never sees it. `commonjs_named_export_class_symbol_for_file`
+            // (the synthesized-export-surface query boundary) recognizes the
+            // expando assignment and, when its RHS is a class declaration's own
+            // identifier, hands back that class's real SymbolId. This mirrors
+            // the same fallback already used for the `const { X } = require(...)`
+            // binding-element path in `resolve_jsdoc_commonjs_binding_element_type`.
+            if let Some((export_sym_id, export_file_idx)) = self
+                .resolve_js_export_named_class_symbol(
+                    &module_specifier,
+                    &member_name,
+                    Some(self.ctx.current_file_idx),
+                )
+            {
+                self.ctx
+                    .register_symbol_file_target(export_sym_id, export_file_idx);
+                let resolved = self.resolve_jsdoc_symbol_type_with_mode(
+                    export_sym_id,
+                    JsdocNameMode::BareTypeReference,
+                );
+                if resolved != TypeId::ERROR && resolved != TypeId::UNKNOWN {
+                    return Some(resolved);
+                }
+            }
             // Neither a type-eligible export nor a JSDoc `@typedef` named
             // `member_name` exists on the module: tsc reports TS2694
             // ("Namespace has no exported member") the same way the
