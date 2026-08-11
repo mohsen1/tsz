@@ -269,6 +269,10 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 .or_insert(module_name);
         }
         self.ctx.merge_symbol_file_targets_from(&child.ctx);
+        self.ctx
+            .type_environment
+            .borrow_mut()
+            .merge_from(&child.ctx.type_environment.borrow());
         resolved.filter(|&type_id| type_id != TypeId::ANY && type_id != TypeId::ERROR)
     }
 
@@ -386,6 +390,10 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         checker.ctx.current_file_idx = target_file_idx;
         let resolved = f(&mut checker);
         self.ctx.merge_symbol_file_targets_from(&checker.ctx);
+        self.ctx
+            .type_environment
+            .borrow_mut()
+            .merge_from(&checker.ctx.type_environment.borrow());
         Some(resolved)
     }
 

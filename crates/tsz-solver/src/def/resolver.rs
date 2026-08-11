@@ -1600,6 +1600,11 @@ impl TypeEnvironment {
     }
 }
 
+// `TypeEnvironment::merge_from` lives in `resolver/merge.rs` to keep this
+// file under the arch-size ceiling.
+#[path = "resolver/merge.rs"]
+mod merge;
+
 impl TypeResolver for TypeEnvironment {
     fn resolver_generation(&self) -> u64 {
         self.generation()
