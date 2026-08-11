@@ -92,6 +92,72 @@ impl<'a> CheckerState<'a> {
         self.error_argument_not_assignable_at_impl(arg_type, param_type, idx, true);
     }
 
+    /// Promote a sole/grouped missing-required-property argument failure to the
+    /// PRIMARY diagnostic at the argument node — TS2741 (one property), TS2739
+    /// (a few), TS2740 (many) — replacing the generic TS2345 head, exactly as
+    /// tsc's `reportUnmatchedProperty` runs before the relation head message.
+    ///
+    /// The renderer owns the guard set (intersection targets, index-signature
+    /// member compat, primitive/`object` sources keep the generic wording), so
+    /// this promotes exactly when it selected the property-missing family.
+    ///
+    /// This is shared by every call-argument emitter so the promotion cannot be
+    /// bypassed by a display-only branch: in particular
+    /// `error_argument_not_assignable_preserving_param_display` (the "preserve
+    /// the generic parameter display" fallback) must still honor it, otherwise a
+    /// target that merely *contains* a free type parameter — e.g. a class merged
+    /// with a generic-base interface — would drop the missing-property
+    /// elaboration and emit a bare TS2345 (#17145). Returns `true` when it
+    /// emitted a promoted diagnostic; the caller must then stop.
+    pub(crate) fn try_promote_missing_property_argument(
+        &mut self,
+        analysis: &crate::query_boundaries::assignability::AssignabilityFailureAnalysis,
+        arg_type: TypeId,
+        param_type: TypeId,
+        idx: NodeIndex,
+    ) -> bool {
+        let Some(reason) = analysis.failure_reason.as_ref() else {
+            return false;
+        };
+        if !matches!(
+            reason,
+            tsz_solver::SubtypeFailureReason::MissingProperty { .. }
+                | tsz_solver::SubtypeFailureReason::MissingProperties { .. }
+        ) || !self.missing_property_head_promotion_applies(arg_type, param_type)
+        {
+            return false;
+        }
+        // Render the source through the argument-context display pipeline
+        // (fresh object-literal widening included) — the same policy the
+        // TS2345 head applied to its argument string; the renderer's
+        // assignment-oriented role cannot reproduce it.
+        let source_display = Some(self.format_type_for_diagnostic_role(
+            arg_type,
+            DiagnosticTypeDisplayRole::CallArgument {
+                parameter: param_type,
+                argument_idx: idx,
+            },
+        ));
+        let diag = self.render_failure_reason_with_source_display(
+            reason,
+            arg_type,
+            param_type,
+            idx,
+            0,
+            source_display,
+        );
+        if matches!(
+            diag.code,
+            diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE
+                | diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE
+                | diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE_AND_MORE
+        ) {
+            self.ctx.push_diagnostic(diag);
+            return true;
+        }
+        false
+    }
+
     fn error_argument_not_assignable_at_impl(
         &mut self,
         arg_type: TypeId,
@@ -251,50 +317,10 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // tsc promotes a sole missing-required-property failure to the PRIMARY
-        // diagnostic at the argument node — TS2741 (one property), TS2739
-        // (2-5), TS2740 (more) replace the generic TS2345 head
-        // (`reportUnmatchedProperty` runs before the relation head message).
-        // The renderer owns the guard set (intersection targets,
-        // index-signature member compat, primitive/`object` sources keep the
-        // generic wording), so promote exactly when it selected the
-        // property-missing family.
-        if let Some(reason) = analysis.failure_reason.as_ref()
-            && matches!(
-                reason,
-                tsz_solver::SubtypeFailureReason::MissingProperty { .. }
-                    | tsz_solver::SubtypeFailureReason::MissingProperties { .. }
-            )
-            && self.missing_property_head_promotion_applies(arg_type, param_type)
-        {
-            // Render the source through the argument-context display pipeline
-            // (fresh object-literal widening included) — the same policy the
-            // TS2345 head applied to its argument string; the renderer's
-            // assignment-oriented role cannot reproduce it.
-            let source_display = Some(self.format_type_for_diagnostic_role(
-                arg_type,
-                DiagnosticTypeDisplayRole::CallArgument {
-                    parameter: param_type,
-                    argument_idx: idx,
-                },
-            ));
-            let diag = self.render_failure_reason_with_source_display(
-                reason,
-                arg_type,
-                param_type,
-                idx,
-                0,
-                source_display,
-            );
-            if matches!(
-                diag.code,
-                diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE
-                    | diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE
-                    | diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE_AND_MORE
-            ) {
-                self.ctx.push_diagnostic(diag);
-                return;
-            }
+        // tsc promotes a sole/grouped missing-required-property failure to the
+        // PRIMARY diagnostic at the argument node (TS2741/TS2739/TS2740).
+        if self.try_promote_missing_property_argument(&analysis, arg_type, param_type, idx) {
+            return;
         }
 
         // When the failure reason is NoCommonProperties (weak types with no

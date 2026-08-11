@@ -2553,6 +2553,9 @@ path = "tests/union_property_optional_modifier_tests.rs"
 [[test]]
 name = "call_argument_boolean_literal_array_display_tests"
 path = "tests/call_argument_boolean_literal_array_display_tests.rs"
+[[test]]
+name = "call_argument_index_signature_generic_method_missing_property_tests"
+path = "tests/call_argument_index_signature_generic_method_missing_property_tests.rs"
 
 [[test]]
 name = "call_argument_bound_type_parameter_missing_property_promotion_tests"
