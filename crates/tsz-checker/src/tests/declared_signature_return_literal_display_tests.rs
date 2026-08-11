@@ -174,6 +174,68 @@ const s: string = v;
 }
 
 #[test]
+fn badly_spaced_top_level_function_return_literal_is_normalized() {
+    // Regression (#17128): the raw-source-text fallback that preserves a
+    // declared literal must not also leak the user's exact (possibly
+    // non-canonical) spacing into the diagnostic.
+    assert_source_displays(
+        r#"
+declare const v: ()=>1;
+const s: string = v;
+"#,
+        "() => 1",
+    );
+}
+
+#[test]
+fn badly_spaced_top_level_function_param_literal_is_normalized() {
+    assert_source_displays(
+        r#"
+declare const v: (x:1)=>void;
+const s: string = v;
+"#,
+        "(x: 1) => void",
+    );
+}
+
+#[test]
+fn badly_spaced_top_level_constructor_return_literal_is_normalized() {
+    // The construct-signature sibling shares the same raw-text fallback and
+    // the same asymmetry, just untested with non-canonical spacing before.
+    assert_source_displays(
+        r#"
+declare const v: new()=>1;
+const s: string = v;
+"#,
+        "new () => 1",
+    );
+}
+
+#[test]
+fn badly_spaced_nested_function_type_param_with_literal_is_normalized() {
+    // A higher-order parameter type that is itself a literal-bearing
+    // FUNCTION_TYPE must also normalize, not just the outer signature.
+    assert_source_displays(
+        r#"
+declare const v: (f:(x:1)=>void)=>void;
+const s: string = v;
+"#,
+        "(f: (x: 1) => void) => void",
+    );
+}
+
+#[test]
+fn badly_spaced_rest_param_with_literal_return_is_normalized() {
+    assert_source_displays(
+        r#"
+declare const v: (...args:number[])=>1;
+const s: string = v;
+"#,
+        "(...args: number[]) => 1",
+    );
+}
+
+#[test]
 fn declared_top_level_function_no_literal_still_canonicalizes_spacing() {
     // Control: a signature with no literal member still routes through the
     // canonical structural formatter and gets tsc's spacing, unaffected by

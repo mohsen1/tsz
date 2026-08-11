@@ -42,16 +42,6 @@ impl<'a> CheckerState<'a> {
         expr_idx: NodeIndex,
         allow_object_shapes: bool,
     ) -> Option<String> {
-        let node_text_in_arena = |arena: &tsz_parser::NodeArena, node_idx: NodeIndex| {
-            let node = arena.get(node_idx)?;
-            let source = arena.source_files.first()?.text.as_ref();
-            let start = node.pos as usize;
-            let end = node.end as usize;
-            if start >= end || end > source.len() {
-                return None;
-            }
-            Some(source[start..end].to_string())
-        };
         let expr_idx = self.ctx.arena.skip_parenthesized_and_assertions(expr_idx);
         let node = self.ctx.arena.get(expr_idx)?;
         if node.kind != tsz_scanner::SyntaxKind::Identifier as u16 {
@@ -164,9 +154,13 @@ impl<'a> CheckerState<'a> {
                     return None;
                 }
                 let mut text =
-                    node_text_in_arena(decl_arena, param.type_annotation).and_then(|text| {
-                        self.sanitize_type_annotation_text_for_diagnostic(text, allow_object_shapes)
-                    })?;
+                    Self::declared_annotation_source_text(decl_arena, param.type_annotation)
+                        .and_then(|text| {
+                            self.sanitize_type_annotation_text_for_diagnostic(
+                                text,
+                                allow_object_shapes,
+                            )
+                        })?;
                 let annotation_contains_undefined =
                     type_node_includes_explicit_undefined(decl_arena, param.type_annotation);
                 if param.question_token
@@ -191,9 +185,10 @@ impl<'a> CheckerState<'a> {
                 ) {
                     return None;
                 }
-                return node_text_in_arena(decl_arena, var_decl.type_annotation).and_then(|text| {
-                    self.sanitize_type_annotation_text_for_diagnostic(text, allow_object_shapes)
-                });
+                return Self::declared_annotation_source_text(decl_arena, var_decl.type_annotation)
+                    .and_then(|text| {
+                        self.sanitize_type_annotation_text_for_diagnostic(text, allow_object_shapes)
+                    });
             }
 
             // tsc shows class-property annotation text in TS2322, not the
@@ -207,11 +202,13 @@ impl<'a> CheckerState<'a> {
                 ) {
                     return None;
                 }
-                return node_text_in_arena(decl_arena, prop_decl.type_annotation).and_then(
-                    |text| {
-                        self.sanitize_type_annotation_text_for_diagnostic(text, allow_object_shapes)
-                    },
-                );
+                return Self::declared_annotation_source_text(
+                    decl_arena,
+                    prop_decl.type_annotation,
+                )
+                .and_then(|text| {
+                    self.sanitize_type_annotation_text_for_diagnostic(text, allow_object_shapes)
+                });
             }
         }
 
@@ -271,17 +268,6 @@ impl<'a> CheckerState<'a> {
             .unwrap_or(fallback_arena);
         let decl = decl_arena.get(decl_idx)?;
 
-        let node_text_in_arena = |arena: &tsz_parser::NodeArena, node_idx: NodeIndex| {
-            let node = arena.get(node_idx)?;
-            let source = arena.source_files.first()?.text.as_ref();
-            let start = node.pos as usize;
-            let end = node.end as usize;
-            if start >= end || end > source.len() {
-                return None;
-            }
-            Some(source[start..end].to_string())
-        };
-
         if let Some(param) = decl_arena.get_parameter(decl)
             && param.type_annotation.is_some()
         {
@@ -290,9 +276,10 @@ impl<'a> CheckerState<'a> {
             {
                 return None;
             }
-            return node_text_in_arena(decl_arena, param.type_annotation).and_then(|text| {
-                self.sanitize_type_annotation_text_for_diagnostic(text, allow_object_shapes)
-            });
+            return Self::declared_annotation_source_text(decl_arena, param.type_annotation)
+                .and_then(|text| {
+                    self.sanitize_type_annotation_text_for_diagnostic(text, allow_object_shapes)
+                });
         }
 
         if let Some(var_decl) = decl_arena.get_variable_declaration(decl)
@@ -304,9 +291,10 @@ impl<'a> CheckerState<'a> {
             ) {
                 return None;
             }
-            return node_text_in_arena(decl_arena, var_decl.type_annotation).and_then(|text| {
-                self.sanitize_type_annotation_text_for_diagnostic(text, allow_object_shapes)
-            });
+            return Self::declared_annotation_source_text(decl_arena, var_decl.type_annotation)
+                .and_then(|text| {
+                    self.sanitize_type_annotation_text_for_diagnostic(text, allow_object_shapes)
+                });
         }
 
         None
