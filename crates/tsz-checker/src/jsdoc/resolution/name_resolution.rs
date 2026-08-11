@@ -265,12 +265,43 @@ impl<'a> CheckerState<'a> {
                 &member_name,
                 resolution_mode,
             ) {
-                let resolved = self.resolve_jsdoc_symbol_type(sym_id);
+                // `import(...).Member` (without a leading `typeof`) is a bare
+                // type-position reference: `Member` must be type-eligible
+                // (interface/class/enum/type-alias/namespace/typedef), not a
+                // plain value export. `BareTypeReference` mode rejects a
+                // plain-value symbol (returns `ERROR`) the same way a local
+                // bare name reference already does; `ValuePosition` mode would
+                // silently hand back the value's own type instead.
+                let resolved = self
+                    .resolve_jsdoc_symbol_type_with_mode(sym_id, JsdocNameMode::BareTypeReference);
                 if resolved != TypeId::ERROR && resolved != TypeId::UNKNOWN {
                     return Some(resolved);
                 }
             }
-            return self.resolve_import_type_jsdoc_typedef(&module_specifier, &member_name, None);
+            if let Some(typedef_type) =
+                self.resolve_import_type_jsdoc_typedef(&module_specifier, &member_name, None)
+            {
+                return Some(typedef_type);
+            }
+            // Neither a type-eligible export nor a JSDoc `@typedef` named
+            // `member_name` exists on the module: tsc reports TS2694
+            // ("Namespace has no exported member") the same way the
+            // TS-syntax `import(...).Member` resolver does. This mirrors
+            // that resolver's `report_missing_import_type_member`, which the
+            // string-based JSDoc parse path cannot reach directly.
+            let namespace_name = self.imported_namespace_display_module_name(&module_specifier);
+            let message = crate::diagnostics::format_message(
+                crate::diagnostics::diagnostic_messages::NAMESPACE_HAS_NO_EXPORTED_MEMBER,
+                &[&format!("\"{namespace_name}\""), &member_name],
+            );
+            let anchor = self.ctx.jsdoc_typedef_anchor_pos.get();
+            self.ctx.error(
+                anchor,
+                type_expr.len() as u32,
+                message,
+                crate::diagnostics::diagnostic_codes::NAMESPACE_HAS_NO_EXPORTED_MEMBER,
+            );
+            return None;
         }
 
         self.commonjs_module_value_type(&module_specifier, Some(self.ctx.current_file_idx))

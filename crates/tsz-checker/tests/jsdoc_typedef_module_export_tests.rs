@@ -356,3 +356,113 @@ module.exports = MainThreadTasks;
         "Expected imported JSDoc typedef alias TaskGroup to resolve in later typedefs, got: {task_group_errors:?}"
     );
 }
+
+fn ts2694_diagnostics<'a>(diagnostics: &'a [Diagnostic], member: &str) -> Vec<&'a Diagnostic> {
+    let quoted = format!("'{member}'");
+    diagnostics
+        .iter()
+        .filter(|d| d.code == 2694 && d.message_text.contains(&quoted))
+        .collect()
+}
+
+#[test]
+fn import_type_member_that_is_a_value_only_const_export_reports_ts2694() {
+    // `FOO` is a plain `const` — a value, not a type. `tsc` reports TS2694
+    // ("Namespace '"./types.js"' has no exported member 'FOO'.") because a
+    // value-only export is not a valid `import(...).Member` type target,
+    // unlike a JSDoc `@typedef` (which tsc treats as a type-only export).
+    let diagnostics = check_consumer_with_js_typedef_source(
+        r#"
+export const FOO = "foo";
+"#,
+        "consumer.d.ts",
+        r#"
+type Use = import('./types.js').FOO;
+"#,
+    );
+    assert!(
+        !ts2694_diagnostics(&diagnostics, "FOO").is_empty(),
+        "Expected TS2694 for a value-only const export referenced via import('./js').Member, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn jsdoc_type_comment_member_that_is_a_value_only_const_export_reports_ts2694() {
+    // Same structural rule as above, but through the actual JSDoc `@type`
+    // comment path (`jsdocImportTypeReferenceToStringLiteral.ts` upstream) —
+    // not the TS `type X = import(...).Y` alias-declaration path. These are
+    // parsed/resolved through different entry points, so the TS-syntax
+    // coverage above does not guarantee this one is fixed.
+    let diagnostics = check_consumer_with_js_typedef_source(
+        r#"
+export const FOO = "foo";
+"#,
+        "consumer.js",
+        r#"
+/** @type {import('./types.js').FOO} */
+let x;
+"#,
+    );
+    assert!(
+        !ts2694_diagnostics(&diagnostics, "FOO").is_empty(),
+        "Expected TS2694 for a value-only const export referenced via JSDoc @type import('./js').Member, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn import_type_member_that_is_a_value_only_function_export_reports_ts2694() {
+    let diagnostics = check_consumer_with_js_typedef_source(
+        r#"
+export function bar() {}
+"#,
+        "consumer.d.ts",
+        r#"
+type Use = import('./types.js').bar;
+"#,
+    );
+    assert!(
+        !ts2694_diagnostics(&diagnostics, "bar").is_empty(),
+        "Expected TS2694 for a value-only function export referenced via import('./js').Member, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn import_type_member_that_is_a_value_only_export_with_renamed_binder_reports_ts2694() {
+    // Same structural rule as the `FOO`/`bar` cases above, with a differently
+    // named binder — the diagnostic must not depend on the specific
+    // identifier chosen.
+    let diagnostics = check_consumer_with_js_typedef_source(
+        r#"
+export const zephyr = 42;
+"#,
+        "consumer.d.ts",
+        r#"
+type Use = import('./types.js').zephyr;
+"#,
+    );
+    assert!(
+        !ts2694_diagnostics(&diagnostics, "zephyr").is_empty(),
+        "Expected TS2694 for a renamed value-only export referenced via import('./js').Member, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn import_type_member_that_is_a_type_only_interface_export_does_not_report_ts2694() {
+    // Adjacent positive control: an `interface` export IS type-eligible, so
+    // no TS2694 fires — only the value-only shapes above are rejected.
+    let diagnostics = check_consumer_with_js_typedef_source(
+        r#"
+export interface Shape {
+    a: number;
+}
+"#,
+        "consumer.d.ts",
+        r#"
+type Use = import('./types.js').Shape;
+"#,
+    );
+    assert!(
+        ts2694_diagnostics(&diagnostics, "Shape").is_empty(),
+        "Expected no TS2694 for a type-only interface export, got: {diagnostics:?}"
+    );
+}
