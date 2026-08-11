@@ -3,6 +3,7 @@
 //! Contains the main `get_type_of_object_literal_with_request` function that iterates
 //! over object literal elements and builds the resulting object type.
 
+use super::super::object_literal_circularity::ObjectLiteralSyntheticThisCtx;
 use super::super::object_literal_context::ContextualPropertyPresence;
 use super::super::object_literal_support::{UnionSpreadBranch, merge_spread_index_signatures};
 use super::accessor_element::{ObjectLiteralAccessorContext, ObjectLiteralAccessorState};
@@ -108,6 +109,12 @@ impl<'a> CheckerState<'a> {
         let trailing_member_props = self.object_literal_trailing_member_props(&obj.elements.nodes);
         let circular_return_method_sites =
             self.object_literal_circular_return_method_sites(&obj_all_method_names);
+        // Recursion guard + memoization for on-demand forward-reference return-type
+        // inference (`infer_object_literal_sibling_return_type`): shared across every
+        // synthetic-`this` build for this object literal so a forward-declared
+        // sibling's body is speculatively checked at most once.
+        let mut forward_infer_stack: Vec<NodeIndex> = Vec::new();
+        let mut forward_infer_cache: FxHashMap<NodeIndex, TypeId> = FxHashMap::default();
 
         for &elem_idx in &obj.elements.nodes {
             let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
@@ -409,9 +416,14 @@ impl<'a> CheckerState<'a> {
                             } else {
                                 let synthetic_this_type = self
                                     .build_object_literal_fn_property_synthetic_this_type(
-                                        &properties,
-                                        &obj_all_method_names,
-                                        &trailing_member_props,
+                                        &mut ObjectLiteralSyntheticThisCtx {
+                                            properties: &properties,
+                                            obj_all_method_names: &obj_all_method_names,
+                                            trailing_member_props: &trailing_member_props,
+                                            circular_sites: &circular_return_method_sites,
+                                            forward_infer_stack: &mut forward_infer_stack,
+                                            forward_infer_cache: &mut forward_infer_cache,
+                                        },
                                         &name,
                                     );
                                 self.ctx.this_type_stack.push(synthetic_this_type);
@@ -1380,9 +1392,14 @@ impl<'a> CheckerState<'a> {
                         } else {
                             let synthetic_this_type = self
                                 .build_object_literal_method_synthetic_this_type(
-                                    &properties,
-                                    &obj_all_method_names,
-                                    &trailing_member_props,
+                                    &mut ObjectLiteralSyntheticThisCtx {
+                                        properties: &properties,
+                                        obj_all_method_names: &obj_all_method_names,
+                                        trailing_member_props: &trailing_member_props,
+                                        circular_sites: &circular_return_method_sites,
+                                        forward_infer_stack: &mut forward_infer_stack,
+                                        forward_infer_cache: &mut forward_infer_cache,
+                                    },
                                     elem_idx,
                                     &name,
                                     None,
@@ -1510,9 +1527,14 @@ impl<'a> CheckerState<'a> {
                         .unwrap_or(method_type);
                         let refined_this_type = self
                             .build_object_literal_method_synthetic_this_type(
-                                &properties,
-                                &obj_all_method_names,
-                                &trailing_member_props,
+                                &mut ObjectLiteralSyntheticThisCtx {
+                                    properties: &properties,
+                                    obj_all_method_names: &obj_all_method_names,
+                                    trailing_member_props: &trailing_member_props,
+                                    circular_sites: &circular_return_method_sites,
+                                    forward_infer_stack: &mut forward_infer_stack,
+                                    forward_infer_cache: &mut forward_infer_cache,
+                                },
                                 elem_idx,
                                 &name,
                                 Some(refined_method_type),
