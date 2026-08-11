@@ -853,18 +853,97 @@ impl BinderState {
                                                         && let Some(spec) =
                                                             arena.get_specifier(spec_node)
                                                     {
-                                                        let name_idx = if spec.name.is_none() {
+                                                        // `export { foo }`: no `property_name`;
+                                                        // the local declaration and the published
+                                                        // name are both `foo`. `export { Orig as
+                                                        // Exp }`: `property_name` is the LOCAL
+                                                        // declaration (`Orig`), `name` is the
+                                                        // published alias (`Exp`). The scope
+                                                        // lookup below must always search for the
+                                                        // local declaration name, never the
+                                                        // alias — searching for the alias can find
+                                                        // an unrelated, same-named local
+                                                        // declaration (e.g. a sibling block-local
+                                                        // `namespace Exp`) and re-export it under
+                                                        // the alias instead of `Orig`.
+                                                        let local_name_idx =
+                                                            if spec.property_name.is_none() {
+                                                                spec.name
+                                                            } else {
+                                                                spec.property_name
+                                                            };
+                                                        let export_name_idx = if spec.name.is_none()
+                                                        {
                                                             spec.property_name
                                                         } else {
                                                             spec.name
                                                         };
-                                                        if let Some(name_node) = arena.get(name_idx)
-                                                            && let Some(ident) =
-                                                                arena.get_identifier(name_node)
+                                                        let local_name = arena
+                                                            .get(local_name_idx)
+                                                            .and_then(|n| arena.get_identifier(n))
+                                                            .map(|ident| {
+                                                                ident.escaped_text.to_string()
+                                                            });
+                                                        let export_name = arena
+                                                            .get(export_name_idx)
+                                                            .and_then(|n| arena.get_identifier(n))
+                                                            .map(|ident| {
+                                                                ident.escaped_text.to_string()
+                                                            });
+                                                        if let (
+                                                            Some(local_name),
+                                                            Some(export_name),
+                                                        ) = (local_name, export_name)
                                                         {
-                                                            exported_names.push(
-                                                                ident.escaped_text.to_string(),
-                                                            );
+                                                            if local_name == export_name {
+                                                                exported_names.push(export_name);
+                                                            } else if let Some(mut sym_id) = self
+                                                                .current_scope()
+                                                                .get(&local_name)
+                                                                .or_else(|| {
+                                                                    self.file_locals
+                                                                        .get(&local_name)
+                                                                })
+                                                            {
+                                                                if self
+                                                                    .symbols
+                                                                    .get(sym_id)
+                                                                    .is_some_and(|symbol| {
+                                                                        symbol.has_any_flags(
+                                                                            symbol_flags::ALIAS,
+                                                                        )
+                                                                    })
+                                                                    && let Some(type_sym_id) = self
+                                                                        .symbols
+                                                                        .find_all_by_name(
+                                                                            &local_name,
+                                                                        )
+                                                                        .iter()
+                                                                        .copied()
+                                                                        .find(|&candidate_id| {
+                                                                            candidate_id != sym_id
+                                                                                && self
+                                                                                    .symbols
+                                                                                    .get(
+                                                                                        candidate_id,
+                                                                                    )
+                                                                                    .is_some_and(
+                                                                                        |candidate| {
+                                                                                            candidate.has_any_flags(
+                                                                                                symbol_flags::TYPE_ALIAS,
+                                                                                            ) && !candidate
+                                                                                                .has_any_flags(
+                                                                                                    symbol_flags::VALUE,
+                                                                                                )
+                                                                                        },
+                                                                                    )
+                                                                        })
+                                                                {
+                                                                    sym_id = type_sym_id;
+                                                                }
+                                                                exported_symbols
+                                                                    .push((export_name, sym_id));
+                                                            }
                                                         }
                                                     }
                                                 }
