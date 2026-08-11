@@ -1,5 +1,42 @@
 use tsz_solver::TypeId;
-use tsz_solver::construction::TypeDatabase;
+use tsz_solver::construction::{QueryDatabase, TypeDatabase};
+use tsz_solver::def::resolver::TypeResolver;
+
+/// `T[K]` where `K extends keyof S` is a valid index (no `TS2536`) when `keyof S`
+/// is a *deferred generic mapped index* — `S` is a mapped type over a generic
+/// `keyof` (`{ [P in keyof <generic> as? N]: … }`), whether the mapped source is
+/// the object parameter itself or a foreign type parameter. tsc resolves such a
+/// `keyof` to a deferred index (`getIndexTypeForMappedType` →
+/// `getIndexTypeForGenericType`) that its relation worker treats as assignable to
+/// `keyof T` for any object type parameter, so a key-remapping `as` clause stays
+/// valid — the remapped keys never leave the deferred index.
+///
+/// Requires the object and index to be type-parameter-like and the index's
+/// constraint to be `keyof S`; the structural mapped-index decision is owned by
+/// the solver (`mapped_index_source_is_deferred_generic_keyof`, instantiation
+/// only, so a conditional alias body stays a deferred *non-mapped* index and
+/// keeps reporting `TS2536`).
+pub(crate) fn indexed_access_is_deferred_generic_mapped_index<R: TypeResolver>(
+    db: &dyn QueryDatabase,
+    resolver: &R,
+    object_type: TypeId,
+    index_type: TypeId,
+    index_constraint: Option<TypeId>,
+) -> bool {
+    let type_db = db.as_type_database();
+    if !super::common::is_type_parameter_like(type_db, object_type)
+        || !super::common::is_type_parameter_like(type_db, index_type)
+    {
+        return false;
+    }
+    let Some(constraint) = index_constraint else {
+        return false;
+    };
+    let Some(inner) = super::common::keyof_inner_type(type_db, constraint) else {
+        return false;
+    };
+    tsz_solver::type_queries::mapped_index_source_is_deferred_generic_keyof(db, resolver, inner)
+}
 
 pub(crate) fn is_symbol_only_key_constraint(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     if type_id == TypeId::SYMBOL || tsz_solver::type_queries::is_unique_symbol_type(db, type_id) {
