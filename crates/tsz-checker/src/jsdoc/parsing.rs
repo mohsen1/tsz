@@ -463,21 +463,48 @@ impl<'a> CheckerState<'a> {
         if let Some(member_name) = Self::parse_jsdoc_string_literal(after_dot) {
             return Some((module_specifier, Some(member_name)));
         }
-        let mut end = 0usize;
-        for (idx, ch) in after_dot.char_indices() {
-            if idx == 0 {
-                if !ch.is_ascii_alphabetic() && ch != '_' && ch != '$' {
-                    return None;
-                }
-            } else if !ch.is_ascii_alphanumeric() && ch != '_' && ch != '$' {
-                break;
-            }
-            end = idx + ch.len_utf8();
-        }
+        // Capture the full (possibly qualified) member path — `A`, `A.B`,
+        // `A.B.C`, … A dotted JSDoc `@typedef {T} A.B` declares a *qualified*
+        // type name that `import("./mod").A.B` references as a whole;
+        // truncating to the first segment silently dropped the tail and — once
+        // #17139 added the value-only-export check — misreported a present
+        // qualified typedef as a missing member (spurious TS2694).
+        let end = Self::leading_qualified_ident_len(after_dot);
         if end == 0 {
             return None;
         }
         Some((module_specifier, Some(after_dot[..end].to_string())))
+    }
+
+    /// Byte length of the leading qualified-identifier chain (`A`, `A.B`,
+    /// `A.B.C`, …) at the start of `s`, or `0` when `s` does not begin with an
+    /// identifier. Recognizes the `ident ('.' ident)*` shape: a trailing dot,
+    /// or a dot not followed by another identifier segment, ends the chain and
+    /// is not included. Shared by the JSDoc `import("./mod").A.B` member parser
+    /// and the nameless-`@typedef` host-name scanner
+    /// (`jsdoc_nameless_typedef_host_name`), which read the same shape.
+    pub(super) fn leading_qualified_ident_len(s: &str) -> usize {
+        let mut end = 0usize;
+        let mut expect_segment_start = true;
+        for (idx, ch) in s.char_indices() {
+            if expect_segment_start {
+                if ch.is_ascii_alphabetic() || ch == '_' || ch == '$' {
+                    expect_segment_start = false;
+                    end = idx + ch.len_utf8();
+                } else {
+                    break;
+                }
+            } else if ch.is_ascii_alphanumeric() || ch == '_' || ch == '$' {
+                end = idx + ch.len_utf8();
+            } else if ch == '.' {
+                // Provisional separator: do not extend `end` past it, so a
+                // trailing or dangling dot stops cleanly at the last segment.
+                expect_segment_start = true;
+            } else {
+                break;
+            }
+        }
+        end
     }
 
     pub(super) fn parse_jsdoc_typeof_import_query(

@@ -572,3 +572,121 @@ type Use = import('./types.js').bar;
         "Expected TS2694 for a `module.exports.bar = bar` expando function export, got: {diagnostics:?}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Qualified (dotted) JSDoc `@typedef` member references — #17162.
+//
+// A dotted JSDoc `@typedef {T} A.B` declares a *qualified* type name; the
+// module exports it under its full path. A JSDoc `import("./mod").A.B`
+// reference must resolve to that typedef, not report TS2694 for the first
+// segment `A`. Before the fix, `parse_jsdoc_import_type` truncated the member
+// to the head segment, so #17139's value-only-export check saw a present
+// qualified typedef as a missing member.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn jsdoc_import_type_dotted_typedef_member_suppresses_ts2694() {
+    // The exact #17162 repro shape: a dotted `@typedef {number} Dotted.Name`
+    // referenced through `import("./types.js").Dotted.Name` in a checked-JS
+    // `@type`. tsc reports nothing; tsz must not report TS2694 on `Dotted`.
+    let diagnostics = check_consumer_with_js_typedef_source(
+        r#"
+/** @typedef {number} Dotted.Name */
+export var dummy = 1
+"#,
+        "consumer.js",
+        r#"
+/** @type {import('./types.js').Dotted.Name} */
+var dot
+"#,
+    );
+    assert!(
+        ts2694_diagnostics(&diagnostics, "Dotted").is_empty(),
+        "Expected no TS2694 on the head segment of a dotted `@typedef Dotted.Name`, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn jsdoc_import_type_deep_dotted_typedef_member_suppresses_ts2694() {
+    // Breadth: the fix keeps every `.`-joined segment, so a three-level
+    // qualified typedef `A.B.C` resolves the same way — the head segment `A`
+    // must not be reported as a missing member.
+    let diagnostics = check_consumer_with_js_typedef_source(
+        r#"
+/** @typedef {string} A.B.C */
+export {}
+"#,
+        "consumer.js",
+        r#"
+/** @type {import('./types.js').A.B.C} */
+var deep
+"#,
+    );
+    assert!(
+        ts2694_diagnostics(&diagnostics, "A").is_empty(),
+        "Expected no TS2694 on the head segment of a deep dotted `@typedef A.B.C`, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn jsdoc_import_type_dotted_typedef_member_binder_name_varies() {
+    // Anti-hardcoding: the resolution is structural, not keyed to any specific
+    // identifier. A differently-named qualified typedef resolves identically.
+    let diagnostics = check_consumer_with_js_typedef_source(
+        r#"
+/** @typedef {boolean} Outer9.Flag$ */
+export {}
+"#,
+        "consumer.js",
+        r#"
+/** @type {import('./types.js').Outer9.Flag$} */
+var flag
+"#,
+    );
+    assert!(
+        ts2694_diagnostics(&diagnostics, "Outer9").is_empty(),
+        "Expected no TS2694 for a renamed qualified `@typedef Outer9.Flag$`, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn jsdoc_import_type_qualified_missing_head_still_reports_ts2694() {
+    // Negative control: when the module declares no matching qualified typedef
+    // and no `Nope` export, the head segment is genuinely absent — tsc reports
+    // TS2694 on the first segment, and so must tsz. Guards that the additive
+    // full-path typedef lookup does not swallow real missing-member errors.
+    let diagnostics = check_consumer_with_js_typedef_source(
+        r#"
+export {}
+"#,
+        "consumer.js",
+        r#"
+/** @type {import('./types.js').Nope.Name} */
+var bad
+"#,
+    );
+    assert!(
+        !ts2694_diagnostics(&diagnostics, "Nope").is_empty(),
+        "Expected TS2694 on the head segment `Nope` of an unresolved qualified reference, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn jsdoc_import_type_single_segment_missing_still_reports_ts2694() {
+    // Guard: the single-segment resolution path is byte-for-byte unchanged — a
+    // plain missing member still reports TS2694.
+    let diagnostics = check_consumer_with_js_typedef_source(
+        r#"
+export {}
+"#,
+        "consumer.js",
+        r#"
+/** @type {import('./types.js').Missing} */
+var bad
+"#,
+    );
+    assert!(
+        !ts2694_diagnostics(&diagnostics, "Missing").is_empty(),
+        "Expected TS2694 for a single-segment missing member, got: {diagnostics:?}"
+    );
+}
