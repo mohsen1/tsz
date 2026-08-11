@@ -19,6 +19,7 @@ use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
+use super::super::object_literal_circularity::SiblingReturnResolver;
 use super::computation_request_facts::ObjectLiteralRequestFacts;
 use super::computation_support::{LITERAL_DISPLAY_ORDER_BASE, direct_member_display_order};
 use super::spread_element::{ObjectLiteralSpreadContext, ObjectLiteralSpreadState};
@@ -108,6 +109,16 @@ impl<'a> CheckerState<'a> {
         let trailing_member_props = self.object_literal_trailing_member_props(&obj.elements.nodes);
         let circular_return_method_sites =
             self.object_literal_circular_return_method_sites(&obj_all_method_names);
+        // Memoized spliced callable types for unannotated, acyclic sibling
+        // members, built on demand when a method/function body references a
+        // forward-declared sibling via `this.<name>()`. Shared across every
+        // synthetic-`this` build for this object literal so each sibling's
+        // callable (and its one-shot body inference) is built at most once.
+        let mut sibling_callable_type_cache: FxHashMap<NodeIndex, TypeId> = FxHashMap::default();
+        let mut sibling_resolver = SiblingReturnResolver {
+            circular_return_method_sites: &circular_return_method_sites,
+            sibling_callable_type_cache: &mut sibling_callable_type_cache,
+        };
 
         for &elem_idx in &obj.elements.nodes {
             let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
@@ -412,7 +423,8 @@ impl<'a> CheckerState<'a> {
                                         &properties,
                                         &obj_all_method_names,
                                         &trailing_member_props,
-                                        &name,
+                                        &mut sibling_resolver,
+                                        elem_idx,
                                     );
                                 self.ctx.this_type_stack.push(synthetic_this_type);
                                 pushed_prop_fn_this = true;
@@ -1383,6 +1395,7 @@ impl<'a> CheckerState<'a> {
                                     &properties,
                                     &obj_all_method_names,
                                     &trailing_member_props,
+                                    &mut sibling_resolver,
                                     elem_idx,
                                     &name,
                                     None,
@@ -1513,6 +1526,7 @@ impl<'a> CheckerState<'a> {
                                 &properties,
                                 &obj_all_method_names,
                                 &trailing_member_props,
+                                &mut sibling_resolver,
                                 elem_idx,
                                 &name,
                                 Some(refined_method_type),

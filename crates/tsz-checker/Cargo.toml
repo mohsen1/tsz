@@ -451,6 +451,9 @@ path = "tests/async_return_promise_identity_tests.rs"
 name = "object_literal_getter_widening_tests"
 path = "tests/object_literal_getter_widening_tests.rs"
 [[test]]
+name = "object_literal_forward_method_return_type_tests"
+path = "tests/object_literal_forward_method_return_type_tests.rs"
+[[test]]
 name = "object_literal_method_this_member_order_tests"
 path = "tests/object_literal_method_this_member_order_tests.rs"
 [[test]]

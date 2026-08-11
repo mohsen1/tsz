@@ -10,6 +10,31 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
+/// Shared inputs for resolving a *sibling* callable member's return type when
+/// building an object-literal method's synthetic `this`.
+///
+/// `circular_return_method_sites` names the members that participate in a
+/// genuine `this.<name>()` return cycle (kept at `any` so `TS7023` still
+/// fires); `sibling_callable_type_cache` memoizes each acyclic sibling's spliced
+/// callable `TypeId` so its params/return (including the one-shot body
+/// inference) are built at most once across every synthetic-`this` build for one
+/// object literal.
+pub(crate) struct SiblingReturnResolver<'r> {
+    pub circular_return_method_sites: &'r FxHashSet<NodeIndex>,
+    pub sibling_callable_type_cache: &'r mut FxHashMap<NodeIndex, TypeId>,
+}
+
+/// The declaration nodes a sibling callable's spliced type is built from: its
+/// parameter list, its return-type annotation (`NONE` when unannotated), the
+/// function node whose body backs on-demand return inference, and that body
+/// (`None` for a bodyless declaration).
+struct SiblingSignatureNodes {
+    param_nodes: Vec<NodeIndex>,
+    annotation: NodeIndex,
+    fn_idx: NodeIndex,
+    body_idx: Option<NodeIndex>,
+}
+
 impl<'a> CheckerState<'a> {
     /// Whether an object-literal member, when its body is checked, binds the
     /// synthetic object-literal `this` type — i.e. a member whose `this` refers
@@ -659,6 +684,7 @@ impl<'a> CheckerState<'a> {
             tsz_common::interner::Atom,
             tsz_solver::PropertyInfo,
         >,
+        sibling_resolver: &mut SiblingReturnResolver<'_>,
         current_method_idx: NodeIndex,
         current_method_name: &str,
         current_method_type_override: Option<TypeId>,
@@ -728,72 +754,7 @@ impl<'a> CheckerState<'a> {
                     placeholder
                 }
             } else {
-                let (other_params, other_return_type) = self
-                    .ctx
-                    .arena
-                    .get(other_elem_idx)
-                    .and_then(|n| self.ctx.arena.get_method_decl(n))
-                    .map(|other_method| {
-                        let params: Vec<tsz_solver::ParamInfo> = other_method
-                            .parameters
-                            .nodes
-                            .iter()
-                            .filter_map(|&param_idx| {
-                                let param = self
-                                    .ctx
-                                    .arena
-                                    .get(param_idx)
-                                    .and_then(|pn| self.ctx.arena.get_parameter(pn))?;
-                                if let Some(name_node) = self.ctx.arena.get(param.name)
-                                    && let Some(ident) = self.ctx.arena.get_identifier(name_node)
-                                    && ident.escaped_text == "this"
-                                {
-                                    return None;
-                                }
-                                Some(signature_building_boundary::param_info(
-                                    self.ctx
-                                        .arena
-                                        .get(param.name)
-                                        .and_then(|name_node| {
-                                            self.ctx.arena.get_identifier(name_node)
-                                        })
-                                        .map(|ident| {
-                                            self.ctx.types.intern_string(&ident.escaped_text)
-                                        }),
-                                    if param.type_annotation.is_some() {
-                                        self.get_type_from_type_node(param.type_annotation)
-                                    } else {
-                                        TypeId::ANY
-                                    },
-                                    param.question_token || param.initializer.is_some(),
-                                    param.dot_dot_dot_token,
-                                ))
-                            })
-                            .collect();
-                        let return_type = if other_method.type_annotation.is_some() {
-                            self.get_type_from_type_node(other_method.type_annotation)
-                        } else {
-                            TypeId::ANY
-                        };
-                        (params, return_type)
-                    })
-                    .unwrap_or_else(|| {
-                        (
-                            vec![signature_building_boundary::param_info(
-                                None,
-                                TypeId::ANY,
-                                false,
-                                true,
-                            )],
-                            TypeId::ANY,
-                        )
-                    });
-
-                object_context_query::synthetic_this_method_callable(
-                    self.ctx.types,
-                    other_params,
-                    other_return_type,
-                )
+                self.object_literal_sibling_callable_type(other_elem_idx, sibling_resolver)
             };
 
             this_props.push(object_context_query::synthetic_this_method_property(
@@ -823,7 +784,8 @@ impl<'a> CheckerState<'a> {
             tsz_common::interner::Atom,
             tsz_solver::PropertyInfo,
         >,
-        _current_property_name: &str,
+        sibling_resolver: &mut SiblingReturnResolver<'_>,
+        current_property_idx: NodeIndex,
     ) -> TypeId {
         let mut this_props: Vec<tsz_solver::PropertyInfo> = properties.values().cloned().collect();
 
@@ -837,74 +799,20 @@ impl<'a> CheckerState<'a> {
         // in `properties`; splice them in so `this.<laterMember>` resolves.
         Self::merge_trailing_member_props(&mut this_props, trailing_member_props);
 
-        // Add placeholder callable types for pre-scanned method declarations
+        // Add callable types for pre-scanned method/function-expression members.
         for (&method_name_atom, &(other_elem_idx, decl_order)) in obj_all_method_names {
             if this_props.iter().any(|p| p.name == method_name_atom) {
                 continue;
             }
 
-            let (other_params, other_return_type) = self
-                .ctx
-                .arena
-                .get(other_elem_idx)
-                .and_then(|n| self.ctx.arena.get_method_decl(n))
-                .map(|other_method| {
-                    let params: Vec<tsz_solver::ParamInfo> = other_method
-                        .parameters
-                        .nodes
-                        .iter()
-                        .filter_map(|&param_idx| {
-                            let param = self
-                                .ctx
-                                .arena
-                                .get(param_idx)
-                                .and_then(|pn| self.ctx.arena.get_parameter(pn))?;
-                            if let Some(name_node) = self.ctx.arena.get(param.name)
-                                && let Some(ident) = self.ctx.arena.get_identifier(name_node)
-                                && ident.escaped_text == "this"
-                            {
-                                return None;
-                            }
-                            Some(signature_building_boundary::param_info(
-                                self.ctx
-                                    .arena
-                                    .get(param.name)
-                                    .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
-                                    .map(|ident| self.ctx.types.intern_string(&ident.escaped_text)),
-                                if param.type_annotation.is_some() {
-                                    self.get_type_from_type_node(param.type_annotation)
-                                } else {
-                                    TypeId::ANY
-                                },
-                                param.question_token || param.initializer.is_some(),
-                                param.dot_dot_dot_token,
-                            ))
-                        })
-                        .collect();
-                    let return_type = if other_method.type_annotation.is_some() {
-                        self.get_type_from_type_node(other_method.type_annotation)
-                    } else {
-                        TypeId::ANY
-                    };
-                    (params, return_type)
-                })
-                .unwrap_or_else(|| {
-                    (
-                        vec![signature_building_boundary::param_info(
-                            None,
-                            TypeId::ANY,
-                            false,
-                            true,
-                        )],
-                        TypeId::ANY,
-                    )
-                });
-
-            let method_type = object_context_query::synthetic_this_method_callable(
-                self.ctx.types,
-                other_params,
-                other_return_type,
-            );
+            let method_type = if other_elem_idx == current_property_idx {
+                // The property whose body is about to be checked: keep a
+                // permissive placeholder — its real signature is computed by the
+                // main pass, and inferring it here would double-evaluate its body.
+                self.permissive_synthetic_this_callable()
+            } else {
+                self.object_literal_sibling_callable_type(other_elem_idx, sibling_resolver)
+            };
             this_props.push(object_context_query::synthetic_this_method_property(
                 method_name_atom,
                 method_type,
@@ -950,5 +858,188 @@ impl<'a> CheckerState<'a> {
             .get_children(idx)
             .into_iter()
             .any(|child| self.object_literal_initializer_references_name(child, name))
+    }
+
+    /// Callable type spliced into a synthetic object-literal `this` for a
+    /// *sibling* callable member (method shorthand or `function`-expression
+    /// property). Parameters mirror the declaration (an explicit `this`
+    /// parameter is dropped). The return type is the annotation when present;
+    /// otherwise the on-demand-inferred body return type for an acyclic member
+    /// and `any` for a member in a genuine circular-return cycle, which keeps
+    /// the `TS7023` circular-return diagnostic intact.
+    ///
+    /// A sibling's callable is invariant across every synthetic-`this` build for
+    /// one object literal, so the whole `TypeId` is memoized per member node —
+    /// the O(methods) builds each spliced O(methods) siblings, and this collapses
+    /// the param construction, interning, and one-shot body inference to once per
+    /// sibling.
+    fn object_literal_sibling_callable_type(
+        &mut self,
+        other_elem_idx: NodeIndex,
+        sibling_resolver: &mut SiblingReturnResolver<'_>,
+    ) -> TypeId {
+        if let Some(&cached) = sibling_resolver
+            .sibling_callable_type_cache
+            .get(&other_elem_idx)
+        {
+            return cached;
+        }
+        let callable = self.build_object_literal_sibling_callable_type(
+            other_elem_idx,
+            sibling_resolver.circular_return_method_sites,
+        );
+        sibling_resolver
+            .sibling_callable_type_cache
+            .insert(other_elem_idx, callable);
+        callable
+    }
+
+    /// Uncached construction backing [`Self::object_literal_sibling_callable_type`].
+    fn build_object_literal_sibling_callable_type(
+        &mut self,
+        other_elem_idx: NodeIndex,
+        circular_return_method_sites: &FxHashSet<NodeIndex>,
+    ) -> TypeId {
+        // Resolve the callable's parameter nodes, its return-type annotation, the
+        // function node whose body backs on-demand inference, and that body node.
+        let sig = if let Some(other_method) = self
+            .ctx
+            .arena
+            .get(other_elem_idx)
+            .and_then(|n| self.ctx.arena.get_method_decl(n))
+        {
+            SiblingSignatureNodes {
+                param_nodes: other_method.parameters.nodes.clone(),
+                annotation: other_method.type_annotation,
+                fn_idx: other_elem_idx,
+                body_idx: other_method.body.into_option(),
+            }
+        } else if let Some(sig) = self.object_literal_fn_property_signature_nodes(other_elem_idx) {
+            sig
+        } else {
+            // Non-resolvable callable (e.g. an arrow property, whose `this` is
+            // lexical): permissive `(...args: any) => any` placeholder.
+            return self.permissive_synthetic_this_callable();
+        };
+
+        let params = self.object_literal_sibling_param_infos(&sig.param_nodes);
+        let return_type = self.object_literal_sibling_return_type(
+            other_elem_idx,
+            sig.fn_idx,
+            sig.annotation,
+            sig.body_idx,
+            circular_return_method_sites,
+        );
+        object_context_query::synthetic_this_method_callable(self.ctx.types, params, return_type)
+    }
+
+    /// A permissive `(...args: any) => any` callable used for a synthetic-`this`
+    /// member whose real signature is deliberately not resolved here (an arrow
+    /// property, or the member whose own body is about to be checked).
+    fn permissive_synthetic_this_callable(&mut self) -> TypeId {
+        object_context_query::synthetic_this_method_callable(
+            self.ctx.types,
+            vec![signature_building_boundary::param_info(
+                None,
+                TypeId::ANY,
+                false,
+                true,
+            )],
+            TypeId::ANY,
+        )
+    }
+
+    /// Resolve the `SiblingSignatureNodes` of an object-literal
+    /// `function`-expression property member. Returns `None` for any other
+    /// member kind (a method declaration is handled by the caller; an arrow
+    /// property falls through to the permissive placeholder).
+    fn object_literal_fn_property_signature_nodes(
+        &self,
+        elem_idx: NodeIndex,
+    ) -> Option<SiblingSignatureNodes> {
+        let elem_node = self.ctx.arena.get(elem_idx)?;
+        let prop = self.ctx.arena.get_property_assignment(elem_node)?;
+        let initializer = self
+            .ctx
+            .arena
+            .skip_parenthesized_and_assertions(prop.initializer);
+        let init_node = self.ctx.arena.get(initializer)?;
+        if init_node.kind != syntax_kind_ext::FUNCTION_EXPRESSION {
+            return None;
+        }
+        let func = self.ctx.arena.get_function(init_node)?;
+        Some(SiblingSignatureNodes {
+            param_nodes: func.parameters.nodes.clone(),
+            annotation: func.type_annotation,
+            fn_idx: initializer,
+            body_idx: func.body.into_option(),
+        })
+    }
+
+    /// Build `ParamInfo`s for a sibling callable's parameter node list, dropping
+    /// an explicit `this` parameter (which is not part of the callable's
+    /// apparent signature).
+    fn object_literal_sibling_param_infos(
+        &mut self,
+        param_nodes: &[NodeIndex],
+    ) -> Vec<tsz_solver::ParamInfo> {
+        param_nodes
+            .iter()
+            .filter_map(|&param_idx| {
+                let param = self
+                    .ctx
+                    .arena
+                    .get(param_idx)
+                    .and_then(|pn| self.ctx.arena.get_parameter(pn))?;
+                let name_atom = self
+                    .ctx
+                    .arena
+                    .get(param.name)
+                    .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
+                    .map(|ident| ident.escaped_text.clone());
+                if name_atom.as_deref() == Some("this") {
+                    return None;
+                }
+                Some(signature_building_boundary::param_info(
+                    name_atom.map(|name| self.ctx.types.intern_string(&name)),
+                    if param.type_annotation.is_some() {
+                        self.get_type_from_type_node(param.type_annotation)
+                    } else {
+                        TypeId::ANY
+                    },
+                    param.question_token || param.initializer.is_some(),
+                    param.dot_dot_dot_token,
+                ))
+            })
+            .collect()
+    }
+
+    /// Return type spliced for a sibling callable: the annotation when present,
+    /// else the on-demand-inferred body return type for an acyclic member, else
+    /// `any` (a genuine circular-return cycle keeps `any` so `TS7023` fires, and
+    /// a bodyless/unresolvable member has no inferable return).
+    fn object_literal_sibling_return_type(
+        &mut self,
+        other_elem_idx: NodeIndex,
+        fn_idx: NodeIndex,
+        annotation: NodeIndex,
+        body_idx: Option<NodeIndex>,
+        circular_return_method_sites: &FxHashSet<NodeIndex>,
+    ) -> TypeId {
+        if annotation.is_some() {
+            return self.get_type_from_type_node(annotation);
+        }
+        if circular_return_method_sites.contains(&other_elem_idx) {
+            return TypeId::ANY;
+        }
+        let Some(body_idx) = body_idx else {
+            return TypeId::ANY;
+        };
+        // Non-contextual inference; `infer_return_type_from_body` snapshots and
+        // restores diagnostic, node-type, and flow-cache state internally, so it
+        // adds no diagnostics here. A nested `this.<other>()` in the sibling body
+        // degrades to `any` (the other sibling's synthetic `this` is not on the
+        // stack at this point) rather than resolving — never a wrong type.
+        self.infer_return_type_from_body(fn_idx, body_idx, None)
     }
 }
