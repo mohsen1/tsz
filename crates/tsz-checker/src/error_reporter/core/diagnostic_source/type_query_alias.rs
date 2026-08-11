@@ -504,4 +504,123 @@ impl<'a> CheckerState<'a> {
             None
         })
     }
+
+    /// Verbatim source text of a leaf annotation node (a parameter name, a
+    /// non-signature type, a type-parameter clause). Shared by
+    /// [`Self::declared_annotation_source_text`] for the parts of a
+    /// `FUNCTION_TYPE`/`CONSTRUCTOR_TYPE` skeleton that are not themselves
+    /// rebuilt canonically.
+    fn declared_annotation_leaf_text(
+        arena: &tsz_parser::NodeArena,
+        idx: NodeIndex,
+    ) -> Option<String> {
+        let node = arena.get(idx)?;
+        let source = arena.source_files.first()?.text.as_ref();
+        let start = node.pos as usize;
+        let end = node.end as usize;
+        if start >= end || end > source.len() {
+            return None;
+        }
+        Some(source[start..end].to_string())
+    }
+
+    /// Declared-annotation text for a parameter/return type position: recurses
+    /// into [`Self::canonical_function_type_annotation_text`] when the type at
+    /// `idx` is itself a `FUNCTION_TYPE`/`CONSTRUCTOR_TYPE` (a higher-order
+    /// signature, e.g. the parameter type in `(f: (x:1)=>void) => void`), and
+    /// falls back to the verbatim leaf text otherwise.
+    fn declared_annotation_type_text(
+        arena: &tsz_parser::NodeArena,
+        idx: NodeIndex,
+    ) -> Option<String> {
+        let node = arena.get(idx)?;
+        if matches!(
+            node.kind,
+            syntax_kind_ext::FUNCTION_TYPE | syntax_kind_ext::CONSTRUCTOR_TYPE
+        ) {
+            return Self::canonical_function_type_annotation_text(arena, idx);
+        }
+        Self::declared_annotation_leaf_text(arena, idx)
+    }
+
+    /// Rebuild the canonical source spelling of a `FUNCTION_TYPE` /
+    /// `CONSTRUCTOR_TYPE` annotation from its parsed structure instead of
+    /// echoing the raw source substring.
+    ///
+    /// `tsc`'s printer always emits canonical signature spacing (`() => 1`,
+    /// `(x: 1) => void`) regardless of how the user wrote it. The declared-
+    /// annotation echo path this feeds (`annotation_is_canonicalized_structural_type`
+    /// declining canonicalization when a literal is present, to avoid
+    /// re-materializing a possibly-widened `TypeId`) otherwise leaks the
+    /// exact written spacing into the diagnostic, so a badly-spaced source
+    /// (`()=>1`, `(x:1)=>void`) renders unspaced. Rebuilding the skeleton
+    /// (`new`, generics, parens, `:`, `,`, `=>`) canonically while taking
+    /// each parameter/return type's own text verbatim from source keeps a
+    /// written literal untouched, matching tsc's output for both
+    /// canonically- and badly-spaced source.
+    pub(in crate::error_reporter) fn canonical_function_type_annotation_text(
+        arena: &tsz_parser::NodeArena,
+        node_idx: NodeIndex,
+    ) -> Option<String> {
+        let node = arena.get(node_idx)?;
+        let func = arena.get_function_type(node)?;
+        let mut out = String::new();
+        if func.is_abstract {
+            out.push_str("abstract ");
+        }
+        if node.kind == syntax_kind_ext::CONSTRUCTOR_TYPE {
+            out.push_str("new ");
+        }
+        if let Some(type_params) = &func.type_parameters {
+            out.push('<');
+            for (i, &tp_idx) in type_params.nodes.iter().enumerate() {
+                if i > 0 {
+                    out.push_str(", ");
+                }
+                out.push_str(&Self::declared_annotation_leaf_text(arena, tp_idx)?);
+            }
+            out.push('>');
+        }
+        out.push('(');
+        for (i, &param_idx) in func.parameters.nodes.iter().enumerate() {
+            if i > 0 {
+                out.push_str(", ");
+            }
+            let param_node = arena.get(param_idx)?;
+            let param = arena.get_parameter(param_node)?;
+            if param.dot_dot_dot_token {
+                out.push_str("...");
+            }
+            out.push_str(&Self::declared_annotation_leaf_text(arena, param.name)?);
+            if param.question_token {
+                out.push('?');
+            }
+            if param.type_annotation.is_some() {
+                out.push_str(": ");
+                out.push_str(&Self::declared_annotation_type_text(
+                    arena,
+                    param.type_annotation,
+                )?);
+            }
+        }
+        out.push_str(") => ");
+        out.push_str(&Self::declared_annotation_type_text(
+            arena,
+            func.type_annotation,
+        )?);
+        Some(out)
+    }
+
+    /// Declared-annotation source text for `annotation_idx`, taking the
+    /// canonical `FUNCTION_TYPE`/`CONSTRUCTOR_TYPE` skeleton reconstruction
+    /// over the raw substring when applicable. Shared by every call site that
+    /// currently reads the annotation node's source text verbatim, so a
+    /// badly-spaced signature normalizes everywhere the raw-echo fallback
+    /// applies rather than only at one call site.
+    pub(in crate::error_reporter) fn declared_annotation_source_text(
+        arena: &tsz_parser::NodeArena,
+        annotation_idx: NodeIndex,
+    ) -> Option<String> {
+        Self::declared_annotation_type_text(arena, annotation_idx)
+    }
 }
