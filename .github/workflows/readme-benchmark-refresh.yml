@@ -33,6 +33,25 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Persist the automation token, not the default GITHUB_TOKEN, so the
+          # heal path's `git push --force-with-lease` below triggers CI.
+          #
+          # GitHub deliberately suppresses workflow triggers for pushes made
+          # with GITHUB_TOKEN, to stop workflows from recursively triggering
+          # themselves. Creating the PR is unaffected -- `gh pr create` already
+          # runs under TSZ_PR_AUTOMATION_TOKEN, so the `opened` event fires and
+          # CI runs on a brand-new refresh branch. But a *healed* branch is
+          # updated by push alone, which raises `synchronize`, and that event
+          # was being swallowed: the PR ended up with zero check runs and
+          # `CI Summary` (the only required context) could never report, so the
+          # PR was permanently unmergeable -- "the base branch policy prohibits
+          # the merge" -- even though the heal itself worked.
+          #
+          # Falls back to github.token when the secret is absent, matching the
+          # `Open refresh PR` step. In that configuration a healed PR still gets
+          # no checks and needs a manual close/reopen to run them.
+          token: ${{ secrets.TSZ_PR_AUTOMATION_TOKEN || github.token }}
 
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
@@ -108,6 +127,30 @@ jobs:
             echo "Healing existing branch ${branch} (was ${remote_tip}) onto current main."
             git push --force-with-lease="${branch}:${remote_tip}" origin "${branch}"
             echo "Updated the open refresh PR in place; not opening a second one."
+
+            # A healed PR is only useful if CI actually runs on the new head:
+            # `CI Summary` is the sole required context, so a head with zero
+            # check runs is unmergeable no matter how correct its contents are.
+            # The checkout token above normally makes the push raise
+            # `synchronize`, but when TSZ_PR_AUTOMATION_TOKEN is absent we fall
+            # back to GITHUB_TOKEN and that event is suppressed. Verify rather
+            # than assume, and recover by reopening -- CI listens for
+            # `reopened`.
+            pr_number="$(gh pr list --head "${branch}" --state open --json number --jq '.[0].number')"
+            new_head="$(git rev-parse "${branch}")"
+            checks=0
+            for _ in 1 2 3 4 5 6; do
+              sleep 10
+              checks="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${new_head}/check-runs" --jq '.total_count' 2>/dev/null || echo 0)"
+              [ "${checks}" != "0" ] && break
+            done
+            if [ "${checks}" = "0" ]; then
+              echo "Healed head ${new_head} has no check runs; reopening PR #${pr_number} to trigger CI."
+              gh pr close "${pr_number}"
+              gh pr reopen "${pr_number}"
+            else
+              echo "Healed head ${new_head} has ${checks} check run(s)."
+            fi
             exit 0
           fi
 
