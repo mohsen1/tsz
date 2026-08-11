@@ -280,27 +280,10 @@ impl<'a> CheckerState<'a> {
     fn jsdoc_nameless_typedef_host_name(source_text: &str, comment_end: u32) -> Option<String> {
         let after = source_text.get(comment_end as usize..)?;
         let after = after.trim_start_matches([' ', '\t', '\r', '\n']);
-        let mut end = 0usize;
-        let mut expect_segment_start = true;
-        for (offset, ch) in after.char_indices() {
-            if expect_segment_start {
-                if ch == '_' || ch == '$' || ch.is_ascii_alphabetic() {
-                    expect_segment_start = false;
-                    end = offset + ch.len_utf8();
-                    continue;
-                }
-                break;
-            }
-            if ch == '_' || ch == '$' || ch.is_ascii_alphanumeric() {
-                end = offset + ch.len_utf8();
-                continue;
-            }
-            if ch == '.' {
-                expect_segment_start = true;
-                continue;
-            }
-            break;
-        }
+        // The host name is an `ident ('.' ident)*` chain — the same shape the
+        // JSDoc `import("./mod").A.B` member parser reads — so both share
+        // `leading_qualified_ident_len`.
+        let end = Self::leading_qualified_ident_len(after);
         // A bare (undotted) host name declares a plain type alias, not a
         // namespace; only qualified hosts are of interest to callers asking
         // about namespace roots, but returning both keeps the query honest and

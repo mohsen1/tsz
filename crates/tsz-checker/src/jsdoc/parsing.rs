@@ -441,21 +441,6 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(super) fn parse_jsdoc_import_type(type_expr: &str) -> Option<(String, Option<String>)> {
-        let (module_specifier, member_chain) =
-            Self::parse_jsdoc_import_type_member_chain(type_expr)?;
-        Some((module_specifier, member_chain.into_iter().next()))
-    }
-
-    /// Like [`Self::parse_jsdoc_import_type`], but keeps every `.Member`
-    /// segment of the qualified reference: `import("./m").A.B` yields
-    /// `["A", "B"]`. A dotted JSDoc `@typedef`/`@callback` declares a
-    /// qualified name, so the reference side must see the whole chain, not
-    /// just its first segment. Trailing non-member syntax (generic
-    /// arguments, array suffixes) ends the chain without failing the parse,
-    /// matching the single-member parser's behavior.
-    pub(super) fn parse_jsdoc_import_type_member_chain(
-        type_expr: &str,
-    ) -> Option<(String, Vec<String>)> {
         let expr = type_expr.trim();
         let rest = expr.strip_prefix("import(")?;
         let mut rest = rest.trim_start();
@@ -471,39 +456,55 @@ impl<'a> CheckerState<'a> {
         let after_quote = Self::skip_jsdoc_import_attributes_argument(after_quote);
         let after_quote = after_quote.strip_prefix(')')?.trim_start();
         if after_quote.is_empty() {
-            return Some((module_specifier, Vec::new()));
+            return Some((module_specifier, None));
         }
         let after_dot = after_quote.strip_prefix('.')?;
-        let mut cursor = after_dot.trim_start();
-        if let Some(member_name) = Self::parse_jsdoc_string_literal(cursor) {
-            return Some((module_specifier, vec![member_name]));
+        let after_dot = after_dot.trim_start();
+        if let Some(member_name) = Self::parse_jsdoc_string_literal(after_dot) {
+            return Some((module_specifier, Some(member_name)));
         }
-        let mut segments = Vec::new();
-        loop {
-            let mut end = 0usize;
-            for (idx, ch) in cursor.char_indices() {
-                if idx == 0 {
-                    if !ch.is_ascii_alphabetic() && ch != '_' && ch != '$' {
-                        break;
-                    }
-                } else if !ch.is_ascii_alphanumeric() && ch != '_' && ch != '$' {
-                    break;
-                }
-                end = idx + ch.len_utf8();
-            }
-            if end == 0 {
-                break;
-            }
-            segments.push(cursor[..end].to_string());
-            let Some(next) = cursor[end..].trim_start().strip_prefix('.') else {
-                break;
-            };
-            cursor = next.trim_start();
-        }
-        if segments.is_empty() {
+        // Capture the full (possibly qualified) member path — `A`, `A.B`,
+        // `A.B.C`, … A dotted JSDoc `@typedef {T} A.B` declares a *qualified*
+        // type name that `import("./mod").A.B` references as a whole;
+        // truncating to the first segment silently dropped the tail and — once
+        // #17139 added the value-only-export check — misreported a present
+        // qualified typedef as a missing member (spurious TS2694).
+        let end = Self::leading_qualified_ident_len(after_dot);
+        if end == 0 {
             return None;
         }
-        Some((module_specifier, segments))
+        Some((module_specifier, Some(after_dot[..end].to_string())))
+    }
+
+    /// Byte length of the leading qualified-identifier chain (`A`, `A.B`,
+    /// `A.B.C`, …) at the start of `s`, or `0` when `s` does not begin with an
+    /// identifier. Recognizes the `ident ('.' ident)*` shape: a trailing dot,
+    /// or a dot not followed by another identifier segment, ends the chain and
+    /// is not included. Shared by the JSDoc `import("./mod").A.B` member parser
+    /// and the nameless-`@typedef` host-name scanner
+    /// (`jsdoc_nameless_typedef_host_name`), which read the same shape.
+    pub(super) fn leading_qualified_ident_len(s: &str) -> usize {
+        let mut end = 0usize;
+        let mut expect_segment_start = true;
+        for (idx, ch) in s.char_indices() {
+            if expect_segment_start {
+                if ch.is_ascii_alphabetic() || ch == '_' || ch == '$' {
+                    expect_segment_start = false;
+                    end = idx + ch.len_utf8();
+                } else {
+                    break;
+                }
+            } else if ch.is_ascii_alphanumeric() || ch == '_' || ch == '$' {
+                end = idx + ch.len_utf8();
+            } else if ch == '.' {
+                // Provisional separator: do not extend `end` past it, so a
+                // trailing or dangling dot stops cleanly at the last segment.
+                expect_segment_start = true;
+            } else {
+                break;
+            }
+        }
+        end
     }
 
     pub(super) fn parse_jsdoc_typeof_import_query(
@@ -1806,32 +1807,24 @@ mod parse_jsdoc_import_tag_alias_tests {
     }
 
     #[test]
-    fn import_type_member_chain_keeps_all_dotted_segments() {
+    fn import_type_member_keeps_full_qualified_path() {
         assert_eq!(
-            CheckerState::parse_jsdoc_import_type_member_chain(r#"import("./dep").A.B.C"#),
-            Some((
-                "./dep".to_string(),
-                vec!["A".to_string(), "B".to_string(), "C".to_string()]
-            ))
-        );
-        // The single-member wrapper still yields only the first segment.
-        assert_eq!(
-            CheckerState::parse_jsdoc_import_type(r#"import("./dep").A.B"#),
-            Some(("./dep".to_string(), Some("A".to_string())))
+            CheckerState::parse_jsdoc_import_type(r#"import("./dep").A.B.C"#),
+            Some(("./dep".to_string(), Some("A.B.C".to_string())))
         );
     }
 
     #[test]
-    fn import_type_member_chain_stops_at_non_member_syntax() {
-        // Generic arguments and array suffixes end the chain without
-        // failing the parse.
+    fn import_type_member_stops_at_non_member_syntax() {
+        // Generic arguments and array suffixes end the qualified path
+        // without failing the parse.
         assert_eq!(
-            CheckerState::parse_jsdoc_import_type_member_chain(r#"import("./dep").Foo<string>"#),
-            Some(("./dep".to_string(), vec!["Foo".to_string()]))
+            CheckerState::parse_jsdoc_import_type(r#"import("./dep").Foo<string>"#),
+            Some(("./dep".to_string(), Some("Foo".to_string())))
         );
         assert_eq!(
-            CheckerState::parse_jsdoc_import_type_member_chain(r#"import("./dep").A.B[]"#),
-            Some(("./dep".to_string(), vec!["A".to_string(), "B".to_string()]))
+            CheckerState::parse_jsdoc_import_type(r#"import("./dep").A.B[]"#),
+            Some(("./dep".to_string(), Some("A.B".to_string())))
         );
     }
 

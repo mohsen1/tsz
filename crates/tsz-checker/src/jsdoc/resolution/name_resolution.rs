@@ -252,10 +252,6 @@ impl<'a> CheckerState<'a> {
     // NOTE: validate_jsdoc_generic_constraints_at_node, jsdoc_type_annotation_for_node_direct,
     // jsdoc_satisfies_annotation_with_pos are in lookup.rs
 
-    // NOTE: resolve_jsdoc_import_type_reference and
-    // resolve_jsdoc_typeof_import_reference_parts are in
-    // import_type_reference.rs
-
     /// Parse a JSDoc-style `@type` expression into a concrete type.
     ///
     /// This is the *structural* step only: unions, intersections, arrays,

@@ -15,6 +15,6 @@
 //! - Import type resolution (`resolve_jsdoc_import_type_reference`)
 
 mod generic_typedef;
-mod import_type_reference;
+mod import_reference;
 mod name_resolution;
 mod type_construction;

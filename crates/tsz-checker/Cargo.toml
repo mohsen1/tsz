@@ -396,6 +396,9 @@ path = "tests/abstract_constructor_elaboration_tests.rs"
 name = "ts2511_abstract_type_param_tests"
 path = "tests/ts2511_abstract_type_param_tests.rs"
 [[test]]
+name = "ts2512_abstract_overload_consistency_tests"
+path = "tests/ts2512_abstract_overload_consistency_tests.rs"
+[[test]]
 name = "ts2513_abstract_super_access_tests"
 path = "tests/ts2513_abstract_super_access_tests.rs"
 [[test]]
@@ -2566,6 +2569,10 @@ path = "tests/call_argument_index_signature_generic_method_missing_property_test
 [[test]]
 name = "call_argument_bound_type_parameter_missing_property_promotion_tests"
 path = "tests/call_argument_bound_type_parameter_missing_property_promotion_tests.rs"
+
+[[test]]
+name = "call_argument_readonly_array_missing_property_promotion_tests"
+path = "tests/call_argument_readonly_array_missing_property_promotion_tests.rs"
 
 [[test]]
 name = "type_param_pick_subset_assignability_tests"
