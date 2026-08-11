@@ -24,14 +24,29 @@ impl<'a> CheckerState<'a> {
     /// evaluation caches when the body changes, so results computed before
     /// this registration cannot shadow it.
     ///
-    /// Scope: program-module files only (not ambient declaration files), and
-    /// only interfaces whose direct heritage bases all resolve to
-    /// program-file symbols. A lib base (`extends Response`,
-    /// `extends Omit<RequestInit, ..>`) already merges through the lib-aware
-    /// path on both sides; publishing those bodies additionally exposes a
-    /// pre-existing union-normalization defect (a resolver-less evaluator
-    /// mis-distributing still-generic conditionals, #13232) at relation
-    /// sites.
+    /// Scope: program-module files only (not ambient declaration files). The
+    /// heritage-merged body is published when *either* every direct heritage
+    /// base resolves to a program-file symbol, *or* the merged body is
+    /// inference-inert — it carries no conditional structure through alias
+    /// applications. The conditional-free relaxation lets an interface that
+    /// extends an inference-inert lib generic (`interface Registry<V> extends
+    /// Map<string, V>`) publish its inherited members, so an importing file
+    /// whose own arena-local lib-aware merge cannot resolve the lib base reads
+    /// the complete member set instead of a heritage-dropped body — the
+    /// conditional-free arm of #16308.
+    ///
+    /// The conditional-free guard is the same #13232-safety criterion the
+    /// consume side (`try_consume_published_heritage_body`) already applies, so
+    /// the two gates stay symmetric: a body an importer is allowed to consume
+    /// is one a declarer is allowed to publish. Publishing a body that carries
+    /// a conditional would instead expose a pre-existing union-normalization
+    /// defect (a resolver-less evaluator mis-distributing still-generic
+    /// conditionals, #13232) at relation sites, so those bodies stay
+    /// unpublished unless all bases are program symbols (already merged the
+    /// same way on both sides). A lib base whose own member set carries a
+    /// conditional — e.g. `Array<T>` via `flat`/`flatMap`'s `FlatArray<..>`
+    /// return — is therefore still excluded; that shape stays tracked by
+    /// #16308 (it also needs cross-arena def unification, #14345).
     pub(crate) fn publish_heritage_merged_interface_body(
         &mut self,
         def_id: tsz_solver::DefId,
@@ -46,7 +61,8 @@ impl<'a> CheckerState<'a> {
             && merged != interface_type
             && merged != TypeId::ERROR
             && merged != TypeId::UNKNOWN
-            && self.local_interface_heritage_bases_are_program_symbols(declarations)
+            && (self.local_interface_heritage_bases_are_program_symbols(declarations)
+                || !self.body_feeds_conditional_inference(merged))
             && self.ctx.definition_store.get_body(def_id) != Some(merged)
         {
             self.ctx
@@ -124,16 +140,8 @@ impl<'a> CheckerState<'a> {
         // (`interface D<T> extends Base<T>` with a method on `Base`). Detect the
         // conditional *through* alias applications, since the standard content
         // walk treats an applied alias base as an opaque leaf.
-        let published_feeds_conditional_inference = {
-            let db = self.ctx.types.as_type_database();
-            let def_store = &self.ctx.definition_store;
-            let mut resolve_lazy = |d: tsz_solver::DefId| def_store.get_body(d);
-            type_resolution_query::contains_conditional_through_aliases(
-                db,
-                published,
-                &mut resolve_lazy,
-            )
-        };
+        let published_feeds_conditional_inference =
+            self.body_feeds_conditional_inference(published);
         if published == TypeId::ERROR
             || published == TypeId::UNKNOWN
             || published == merged
@@ -165,6 +173,21 @@ impl<'a> CheckerState<'a> {
             "consumed published heritage body"
         );
         Some((published, owner_params))
+    }
+
+    /// Whether `body` carries a conditional type reachable through alias
+    /// applications. Such bodies feed the pre-existing resolver-less
+    /// union-normalization defect (#13232) when they participate in
+    /// contextual-inference/relation sites, so both the heritage publish gate
+    /// and the heritage consume gate refuse them: publishing keeps them out of
+    /// the shared `DefinitionStore`, consuming keeps an importing file from
+    /// reading one. Inference-inert bodies (a method-bearing generic interface
+    /// with no conditional in its signatures) are safe on both sides.
+    pub(crate) fn body_feeds_conditional_inference(&self, body: TypeId) -> bool {
+        let db = self.ctx.types.as_type_database();
+        let def_store = &self.ctx.definition_store;
+        let mut resolve_lazy = |d: tsz_solver::DefId| def_store.get_body(d);
+        type_resolution_query::contains_conditional_through_aliases(db, body, &mut resolve_lazy)
     }
 
     /// Whether `published` (a candidate definition body from the shared

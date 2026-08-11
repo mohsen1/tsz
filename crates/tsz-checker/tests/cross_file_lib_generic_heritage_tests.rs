@@ -355,3 +355,101 @@ const n: number = b.unwrap();
          external-module lib generic `Boxed<T>`; got {offending:#?}"
     );
 }
+
+/// An interface that extends a *lib* generic (`Map<K, V>`), declared in one
+/// file and consumed from another, must expose every inherited lib member at
+/// the cross-file use site. `Map`'s member set is inference-inert (no
+/// conditional in any signature), so the declaring file's heritage-merged body
+/// is eligible for the shared `DefinitionStore` under the publish gate's
+/// inference-inert branch — the same #13232-safety criterion the consume gate
+/// applies. This keeps the publish and consume gates symmetric: a body a
+/// consumer would accept is one a declarer is allowed to publish.
+///
+/// Regression guard for the conditional-free arm of the #16308 family. (The
+/// `extends Array<T>` shape from the mobx row stays open under #16308 itself:
+/// `Array`'s body carries the `FlatArray` conditional through `flat`/`flatMap`,
+/// so both gates correctly refuse it and the inherited members are dropped
+/// through the deep cross-arena delegation path — a distinct blocker.)
+#[test]
+fn cross_file_interface_extends_lib_map_keeps_inherited_members() {
+    let diags = check(
+        &[
+            (
+                "decl.ts",
+                r#"
+export interface Registry<V> extends Map<string, V> {
+    describe(): string;
+}
+"#,
+            ),
+            (
+                "use.ts",
+                r#"
+import { Registry } from "./decl";
+declare const r: Registry<number>;
+const n: number | undefined = r.get("k");
+r.set("k", 1);
+const size: number = r.size;
+const own: string = r.describe();
+"#,
+            ),
+        ],
+        "use.ts",
+        ts_options(),
+    );
+    let offending: Vec<(u32, String)> = diags
+        .iter()
+        .filter(|d| d.code == 2339)
+        .map(|d| (d.code, d.message_text.clone()))
+        .collect();
+    assert!(
+        offending.is_empty(),
+        "inherited `Map` members (`get`/`set`/`size`) and the interface's own \
+         `describe` must all resolve on `Registry<V> extends Map<string, V>` \
+         across files; got {offending:#?}"
+    );
+}
+
+/// Renamed-binder twin of the `Map` case (different interface/param/member
+/// names, a `Set` base) so the rule cannot be keyed to any identifier or to
+/// `Map` specifically — it is about inference-inert lib-generic heritage
+/// surviving cross-file, whatever the names are.
+#[test]
+fn cross_file_interface_extends_lib_set_keeps_inherited_members_renamed() {
+    let diags = check(
+        &[
+            (
+                "shapes.ts",
+                r#"
+export interface Bucket<E> extends Set<E> {
+    tag(): number;
+}
+"#,
+            ),
+            (
+                "consume.ts",
+                r#"
+import { Bucket } from "./shapes";
+declare const b: Bucket<string>;
+const present: boolean = b.has("x");
+b.add("y");
+const count: number = b.size;
+const t: number = b.tag();
+"#,
+            ),
+        ],
+        "consume.ts",
+        ts_options(),
+    );
+    let offending: Vec<(u32, String)> = diags
+        .iter()
+        .filter(|d| d.code == 2339)
+        .map(|d| (d.code, d.message_text.clone()))
+        .collect();
+    assert!(
+        offending.is_empty(),
+        "inherited `Set` members (`has`/`add`/`size`) and the interface's own \
+         `tag` must all resolve on `Bucket<E> extends Set<E>` across files; \
+         got {offending:#?}"
+    );
+}
