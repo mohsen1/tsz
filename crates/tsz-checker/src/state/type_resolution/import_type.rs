@@ -188,6 +188,22 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // A CommonJS expando export (`module.exports.Member = Member` /
+        // `exports.Member = Member`) records no `SymbolId` in the binder's
+        // export tables — those only track ES `export` syntax — so none of
+        // the lookups above see it. When the target is a JS module and the
+        // expando RHS is a class declaration's own identifier, the exported
+        // member carries type meaning: resolve it through the synthesized JS
+        // export surface, mirroring the JSDoc `import(...).Member` path.
+        // The same-shaped assignment inside a TS file is not an export
+        // (tsc keeps TS2694 there), hence the JS-file gate.
+        if crate::context::is_js_file_name(&target_file_name)
+            && let Some((sym_id, _)) =
+                self.commonjs_named_export_class_symbol_for_file(target_file_idx, member_name)
+        {
+            return record_and_return(sym_id);
+        }
+
         None
     }
 

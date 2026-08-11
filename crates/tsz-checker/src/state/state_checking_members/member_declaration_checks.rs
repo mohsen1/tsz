@@ -1268,8 +1268,16 @@ impl<'a> CheckerState<'a> {
                             // group with the same name, so skip ahead to find it.
                             let method_name = self.get_method_name_from_node(member_idx);
                             if let Some(name) = method_name {
-                                // Advance past consecutive bodyless method overloads with the same name.
+                                // Advance past consecutive bodyless method overloads with the same name,
+                                // tracking whether the LAST one is `abstract` as we go. tsc suppresses
+                                // the missing-implementation diagnostic when the group's last signature
+                                // is abstract — an abstract member needs no implementation, exactly like
+                                // the constructor arm above (`abstract m(x: string): void;` after a
+                                // non-abstract overload reports only TS2512, never TS2391). The starting
+                                // member here is always non-abstract (gated above), so a group with no
+                                // abstract siblings keeps reporting as before.
                                 let mut last_overload_i = i;
+                                let mut last_is_abstract = false;
                                 let mut j = i + 1;
                                 while j < members.len() {
                                     let next_idx = members[j];
@@ -1284,6 +1292,8 @@ impl<'a> CheckerState<'a> {
                                         let next_name = self.get_method_name_from_node(next_idx);
                                         if next_name.as_deref() == Some(name.as_str()) {
                                             last_overload_i = j;
+                                            last_is_abstract =
+                                                self.has_abstract_modifier(&next_method.modifiers);
                                             j += 1;
                                             continue;
                                         }
@@ -1304,7 +1314,7 @@ impl<'a> CheckerState<'a> {
 
                                 let (has_impl, impl_name, impl_idx) =
                                     self.find_method_impl(members, last_overload_i + 1, &name);
-                                if !has_impl {
+                                if !has_impl && !last_is_abstract {
                                     self.error_at_node(
                                         report_error_node,
                                         "Function implementation is missing or not immediately following the declaration.",

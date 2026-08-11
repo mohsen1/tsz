@@ -707,6 +707,8 @@ mod object_global_identity_helper_tests;
 mod object_literal_computed_symbol_member_tests;
 #[path = "tests/object_literal_enclosing_this_type_marker_tests.rs"]
 mod object_literal_enclosing_this_type_marker_tests;
+#[path = "tests/object_literal_forward_method_return_type_tests.rs"]
+mod object_literal_forward_method_return_type_tests;
 #[path = "tests/object_literal_method_body_check_tests.rs"]
 mod object_literal_method_body_check_tests;
 #[path = "tests/object_literal_method_this_parameter_contextual_tests.rs"]

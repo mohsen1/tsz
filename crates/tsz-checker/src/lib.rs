@@ -672,6 +672,9 @@ mod ts18048_unary_arithmetic_nullish_tests;
 #[path = "../tests/ts7032_zero_parameter_setter_tests.rs"]
 mod ts7032_zero_parameter_setter_tests;
 #[cfg(test)]
+#[path = "../tests/ts_import_type_commonjs_expando_class_tests.rs"]
+mod ts_import_type_commonjs_expando_class_tests;
+#[cfg(test)]
 #[path = "../tests/variadic_tuple_elaboration_tests.rs"]
 mod variadic_tuple_elaboration_tests;
 #[cfg(test)]

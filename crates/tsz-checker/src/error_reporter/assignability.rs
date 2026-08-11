@@ -1459,6 +1459,19 @@ impl<'a> CheckerState<'a> {
             source_str = display;
             source_from_annotation = true;
         }
+        // An inline tuple / function / constructor source annotation
+        // (`[number, string]`, `(a: number) => void`, `new () => T`) carries no
+        // `aliasSymbol`, so tsc renders its expanded structural form rather than
+        // a coincidentally-shaped alias name reached through the reverse
+        // type-to-def lookup (#17119) — the head-line-renderer twin of the guard
+        // in `format_assignment_source_type_for_diagnostic`.
+        if !source_from_annotation
+            && let Some(display) =
+                self.inline_structural_type_annotation_source_display(anchor_idx, source)
+        {
+            source_str = display;
+            source_from_annotation = true;
+        }
         if !source_from_annotation
             && let Some(expr_idx) = expr_idx
             && !self.declared_identifier_has_literal_only_alias_source(expr_idx)

@@ -395,6 +395,34 @@ const s: string = v;
 }
 
 #[test]
+fn generic_template_literal_signature_source_with_coincidental_alias_expands() {
+    // #17119 (templateLiteralTypes7.ts shape): `v`'s inline generic signature
+    // annotation has no `aliasSymbol`, even though it is structurally
+    // identical to `G1`. tsc renders the expanded signature for the source;
+    // it must never substitute the coincidentally-shaped alias name.
+    let messages = ts2322_messages(
+        r#"
+type NMap = { 1: string; 2: number; 3: boolean };
+type G1 = <T extends 1 | 2 | 3>(x: `${T}`) => NMap[T];
+type G2 = (x: string) => void;
+declare const v: <T extends 1 | 2 | 3>(x: `${T}`) => NMap[T];
+const bad: G2 = v;
+"#,
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|m| m.contains("<T extends 1 | 2 | 3>(x: `${T}`) => NMap[T]")),
+        "generic template-literal signature source must expand, not show the coincidental \
+         alias `G1`, got: {messages:?}"
+    );
+    assert!(
+        !messages.iter().any(|m| m.contains("Type 'G1'")),
+        "must not substitute the coincidental alias `G1`, got: {messages:?}"
+    );
+}
+
+#[test]
 fn declared_unit_literal_source_still_widens_control() {
     // A declared *scalar* unit-literal source widens to its base against a
     // non-literal target (unchanged by this fix; literals have no signature).

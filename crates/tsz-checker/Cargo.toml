@@ -2888,3 +2888,6 @@ path = "tests/ts2694_typeof_import_qualified_type_only_member_tests.rs"
 [[test]]
 name = "constructor_implementation_missing_ts2390_tests"
 path = "tests/constructor_implementation_missing_ts2390_tests.rs"
+[[test]]
+name = "abstract_method_overload_ts2391_suppression_tests"
+path = "tests/abstract_method_overload_ts2391_suppression_tests.rs"
