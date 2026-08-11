@@ -85,6 +85,61 @@ fn constructor_type_annotation_renders_canonical_spacing() {
 }
 
 #[test]
+fn inline_function_source_with_coincidental_alias_expands() {
+    // #17119: `g` is annotated with an INLINE function type, not with `Fn`.
+    // tsc renders the expanded signature for the source, never a coincidental
+    // structurally-identical alias name.
+    let message = ts2322_message(
+        "type Fn = () => string; declare const g: () => string; \
+         type Want = () => number; const bad: Want = g;",
+    );
+    assert!(
+        message.contains("Type '() => string'"),
+        "inline function-type source must expand, not show the coincidental alias: {message}"
+    );
+    assert!(
+        !message.contains("'Fn'"),
+        "must not substitute the coincidental alias `Fn`: {message}"
+    );
+}
+
+#[test]
+fn inline_tuple_source_with_coincidental_alias_expands() {
+    // A tuple annotation is the same family: `t`'s inline `[number, string]`
+    // has no `aliasSymbol`, so it must expand rather than render as `Pair`.
+    let message = ts2322_message(
+        "type Pair = [number, string]; declare const t: [number, string]; \
+         const a: number[] = t;",
+    );
+    assert!(
+        message.contains("Type '[number, string]'"),
+        "inline tuple source must expand, not show the coincidental alias: {message}"
+    );
+    assert!(
+        !message.contains("'Pair'"),
+        "must not substitute the coincidental alias `Pair`: {message}"
+    );
+}
+
+#[test]
+fn inline_tuple_target_with_coincidental_alias_expands() {
+    // The target mirror: `t`'s inline tuple annotation has no `aliasSymbol`, so
+    // the target renders expanded, not as `Pair`.
+    let message = ts2322_message(
+        "type Pair = [number, string]; declare const s: [string, number]; \
+         const t: [number, string] = s;",
+    );
+    assert!(
+        message.contains("type '[number, string]'"),
+        "inline tuple target must expand, not show the coincidental alias: {message}"
+    );
+    assert!(
+        !message.contains("'Pair'"),
+        "must not substitute the coincidental alias `Pair` on the target: {message}"
+    );
+}
+
+#[test]
 fn tuple_type_alias_annotation_keeps_its_name() {
     // A *reference* to a tuple alias must still display the alias name, not the
     // expanded structural form — the fix is scoped to inline structural

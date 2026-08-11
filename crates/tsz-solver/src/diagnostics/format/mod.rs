@@ -1360,6 +1360,12 @@ impl<'a> TypeFormatter<'a> {
                         | TypeData::Tuple(_)
                         | TypeData::Union(_)
                         | TypeData::Intersection(_)
+                        // An inline function / constructor annotation
+                        // (`(a: number) => void`, `new () => T`) likewise carries
+                        // no `aliasSymbol`, so a coincidentally-shaped alias body
+                        // must not repaint it (#17119).
+                        | TypeData::Callable(_)
+                        | TypeData::Function(_)
                 );
             let skip_alias = if !def_kind_matches_type_shape {
                 true
