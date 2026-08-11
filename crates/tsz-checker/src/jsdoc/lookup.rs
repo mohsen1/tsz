@@ -859,6 +859,41 @@ impl<'a> CheckerState<'a> {
         if let Some(source_file_idx) = source_file_idx {
             self.ctx.current_file_idx = source_file_idx;
         }
+        // A bare (non-`typeof`) `import("./mod").Member` reference is
+        // resolved and, on failure, diagnosed here directly so the TS2694
+        // anchors at the member-name token inside the comment — matching
+        // tsc. Falling through to the generic string resolver below would
+        // still resolve the same shape, but through the coarse
+        // `jsdoc_typedef_anchor_pos` cell (this function's own `node.pos`)
+        // spanning the whole type expression; see
+        // `resolve_jsdoc_import_type_member_result`'s doc comment (#17176).
+        if let Some(result) = self.resolve_jsdoc_import_type_member_result(type_expr) {
+            let outcome = match result {
+                Ok(ty) => Some(ty),
+                Err((namespace_display, member_name)) => {
+                    let message = crate::diagnostics::format_message(
+                        crate::diagnostics::diagnostic_messages::NAMESPACE_HAS_NO_EXPORTED_MEMBER,
+                        &[&namespace_display, &member_name],
+                    );
+                    let member_offset = type_expr
+                        .find(&format!(".{member_name}"))
+                        .map_or(0, |offset| offset + 1);
+                    let expr_start = self
+                        .jsdoc_type_expression_span_for_node(idx)
+                        .map_or(node.pos, |(start, _)| start);
+                    self.ctx.error(
+                        expr_start + member_offset as u32,
+                        member_name.len() as u32,
+                        message,
+                        crate::diagnostics::diagnostic_codes::NAMESPACE_HAS_NO_EXPORTED_MEMBER,
+                    );
+                    None
+                }
+            };
+            self.ctx.file_name = prev_file_name;
+            self.ctx.current_file_idx = prev_file_idx;
+            return outcome;
+        }
         self.ctx.jsdoc_typedef_anchor_pos.set(node.pos);
         // Use the authoritative resolution kernel — no fallback chain needed.
         let result = self.resolve_jsdoc_reference(type_expr);

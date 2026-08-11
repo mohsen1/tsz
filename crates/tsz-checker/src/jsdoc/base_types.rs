@@ -111,9 +111,21 @@ impl<'a> CheckerState<'a> {
                 }
                 let prev_anchor = self.ctx.jsdoc_typedef_anchor_pos.get();
                 self.ctx.jsdoc_typedef_anchor_pos.set(comment.pos);
+                // Probe only, same as the `@type`-tag scan above: discard any
+                // TS2694 this resolve incidentally emits at this scan's
+                // coarse `comment.pos` anchor. The authoritative per-param
+                // resolver (`resolve_jsdoc_param_type_with_pos`) already
+                // reports the real failure; this call only needs the
+                // resolved-or-not boolean (#17176).
+                let snap =
+                    crate::context::speculation::DiagnosticSpeculationSnapshot::new(&self.ctx);
                 let unresolved_type = self
                     .resolve_jsdoc_type_str(simple_expr)
                     .is_none_or(|ty| self.jsdoc_resolved_type_is_unresolved(simple_expr, ty));
+                snap.rollback_filtered(&mut self.ctx.diagnostic_state(), |diag| {
+                    diag.code
+                        != crate::diagnostics::diagnostic_codes::NAMESPACE_HAS_NO_EXPORTED_MEMBER
+                });
                 self.ctx.jsdoc_typedef_anchor_pos.set(prev_anchor);
                 if Self::is_simple_type_name(simple_expr) && unresolved_type {
                     if let Some(angle_idx) = Self::find_top_level_char(simple_expr, '<')
@@ -639,7 +651,22 @@ impl<'a> CheckerState<'a> {
 
                 let prev_anchor = self.ctx.jsdoc_typedef_anchor_pos.get();
                 self.ctx.jsdoc_typedef_anchor_pos.set(comment.pos);
+                // This probe only needs the resolved-or-not boolean below to
+                // decide between TS2304 and the unresolved-inner-type-leaves
+                // path; it must not itself emit. `resolve_jsdoc_type_str` can
+                // reach `resolve_jsdoc_import_type_reference`, whose failure
+                // branch emits TS2694 as a side effect of resolution at this
+                // probe's coarse `comment.pos` anchor. The authoritative
+                // per-declaration resolver (`jsdoc_type_annotation_for_node`)
+                // already reports that failure precisely; roll this
+                // redundant copy back so the type doesn't double-report (#17176).
+                let snap =
+                    crate::context::speculation::DiagnosticSpeculationSnapshot::new(&self.ctx);
                 let resolved = self.resolve_jsdoc_type_str(expr);
+                snap.rollback_filtered(&mut self.ctx.diagnostic_state(), |diag| {
+                    diag.code
+                        != crate::diagnostics::diagnostic_codes::NAMESPACE_HAS_NO_EXPORTED_MEMBER
+                });
                 self.ctx.jsdoc_typedef_anchor_pos.set(prev_anchor);
                 let unresolved = resolved.is_none()
                     || resolved.is_some_and(|ty| self.jsdoc_resolved_type_is_unresolved(expr, ty));
