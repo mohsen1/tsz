@@ -1307,6 +1307,25 @@ impl<'a> CheckerState<'a> {
         )
     }
 
+    /// `T[K]` where `K extends keyof S` and `S` is a generic key-remapping
+    /// mapped type is a valid index: tsc keeps `keyof S` a deferred mapped index
+    /// assignable to `keyof T` for any object type parameter `T`. See
+    /// `key_constraints::indexed_access_is_deferred_generic_mapped_index`.
+    pub(crate) fn indexed_access_is_deferred_generic_mapped_index(
+        &self,
+        object_type: TypeId,
+        index_type: TypeId,
+        index_constraint: Option<TypeId>,
+    ) -> bool {
+        crate::query_boundaries::key_constraints::indexed_access_is_deferred_generic_mapped_index(
+            self.ctx.types,
+            &self.ctx,
+            object_type,
+            index_type,
+            index_constraint,
+        )
+    }
+
     /// `T[K]` where `K`'s constraint is `keyof F<T>` (a transform of the object
     /// type parameter `T`) is still a valid index when the transformed key space
     /// is assignable to `keyof T`. Key-preserving transforms keep

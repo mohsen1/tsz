@@ -187,6 +187,66 @@ pub fn is_generic_mapped_application_db<R: TypeResolver>(
     is_generic_mapped_type_db(db.as_type_database(), instantiated)
 }
 
+/// Returns `true` when `type_id` is a *deferred generic keyof-mapped index
+/// source*: a mapped type — or an `Application` whose aliased body instantiates
+/// to a mapped type — whose key source (the `in` clause) is a *generic* `keyof`
+/// (`{ [P in keyof <generic> as? N]: ... }`).
+///
+/// Mirrors `tsc`'s `getIndexTypeForMappedType`: for such a mapped type, `keyof`
+/// resolves to a *deferred* index (`getIndexTypeForGenericType`) rather than a
+/// concrete key union, and the relation worker treats that deferred mapped index
+/// as assignable to `keyof T` for any object type parameter `T`. The alias body
+/// is reached by *instantiation only* — conditionals are **not** evaluated — so a
+/// conditional alias (`T extends … ? … : …`) that would otherwise reduce to a
+/// mapped type does not qualify (tsc keeps its `keyof` a deferred *non-mapped*
+/// index). A bare-parameter key source (`[P in K]`) or a concrete key source
+/// (`[P in "a" | "b"]`, `[P in keyof { a: 1 }]`) also does not qualify.
+pub fn mapped_index_source_is_deferred_generic_keyof<R: TypeResolver>(
+    db: &dyn crate::construction::QueryDatabase,
+    resolver: &R,
+    type_id: TypeId,
+) -> bool {
+    let Some(mapped) = resolve_alias_body_to_mapped_type(db, resolver, type_id) else {
+        return false;
+    };
+    // The key source must be a *generic* `keyof` — `isGenericIndexType` +
+    // `isMappedTypeWithKeyofConstraintDeclaration` in tsc terms.
+    super::mapped::keyof_inner_type(db.as_type_database(), mapped.constraint).is_some()
+        && contains_type_parameters_db(db.as_type_database(), mapped.constraint)
+}
+
+/// Resolve `type_id` to a mapped type: directly when it already is one, or by
+/// instantiating a generic alias `Application`'s declared body with its type
+/// arguments (no conditional evaluation). Returns `None` otherwise.
+fn resolve_alias_body_to_mapped_type<R: TypeResolver>(
+    db: &dyn crate::construction::QueryDatabase,
+    resolver: &R,
+    type_id: TypeId,
+) -> Option<std::sync::Arc<crate::types::MappedType>> {
+    use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type_cached};
+
+    let type_db = db.as_type_database();
+    if let Some(mapped) = get_mapped_type(type_db, type_id) {
+        return Some(mapped);
+    }
+    if type_id.is_intrinsic() {
+        return None;
+    }
+    let TypeData::Application(app_id) = db.lookup(type_id)? else {
+        return None;
+    };
+    let app = db.type_application(app_id);
+    let def_id = super::classifiers::get_lazy_def_id(db, app.base)?;
+    let type_params = resolver.get_lazy_type_params(def_id)?;
+    if type_params.is_empty() {
+        return None;
+    }
+    let body = resolver.resolve_lazy(def_id, type_db)?;
+    let substitution = TypeSubstitution::from_args(type_db, &type_params, &app.args);
+    let instantiated = instantiate_type_cached(type_db, Some(db), body, &substitution);
+    get_mapped_type(type_db, instantiated)
+}
+
 /// Returns `true` when `type_id` is a generic `Application` whose aliased body
 /// is a mapped type (e.g. `Partial<X>`, `Readonly<X>`, or a user
 /// `type F<T> = { [K in keyof T]... }`), regardless of whether the concrete

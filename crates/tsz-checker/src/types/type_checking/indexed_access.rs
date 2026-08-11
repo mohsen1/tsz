@@ -561,6 +561,23 @@ impl<'a> CheckerState<'a> {
         }
         let error_anchor = node_idx;
         let concrete_error_anchor = data.index_type;
+        // `T[K]` where `K extends keyof S` and `S` is a generic key-remapping
+        // mapped type (`{ [P in keyof <generic> as? N]: ... }`) is a valid index:
+        // tsc resolves such a `keyof` to a *deferred mapped index*
+        // (`getIndexTypeForMappedType` → `getIndexTypeForGenericType`) that its
+        // relation worker treats as assignable to `keyof T` for any object type
+        // parameter `T`, whether the mapped source is `T` itself or a foreign type
+        // parameter. The remapped keys (`` `N` ``) never leave the deferred index,
+        // so they are never compared structurally against `keyof T`. A
+        // concrete-key mapped type (`[P in "a" | "b"]`, `[P in keyof { a: 1 }]`)
+        // is not deferred and still reports `TS2536`.
+        if self.indexed_access_is_deferred_generic_mapped_index(
+            object_type,
+            index_type,
+            index_constraint,
+        ) {
+            return;
+        }
         if crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, object_type)
             && index_constraint.is_some_and(|constraint| {
                 constraint == object_type
