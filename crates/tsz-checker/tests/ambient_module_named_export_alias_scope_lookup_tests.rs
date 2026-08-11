@@ -149,6 +149,35 @@ declare module "deep-mod-2" {
     );
 }
 
+/// Three merged blocks: the leak must not reach a sibling separated by an
+/// intervening block, not just the immediately adjacent one.
+#[test]
+fn leak_does_not_reach_a_non_adjacent_merged_block() {
+    let codes = check_source_codes(
+        r#"
+declare module "m9" {
+    namespace X {
+        interface I { }
+    }
+    function Y(): void;
+    export { Y as X };
+}
+
+declare module "m9" {
+    function unrelated(): void;
+}
+
+declare module "m9" {
+    function Z2(): X.I;
+}
+"#,
+    );
+    assert!(
+        codes.contains(&TS2503),
+        "the leak must not skip past an intervening block either: {codes:?}"
+    );
+}
+
 // ───────────────────────── 2. positive controls ────────────────────────────
 
 /// A genuinely exported local (`export namespace X`, not merely reachable
@@ -197,6 +226,58 @@ declare module "m2d" {
     assert!(
         !codes.contains(&TS2503),
         "a non-renamed export specifier must be unaffected by the fix: {codes:?}"
+    );
+}
+
+/// When the alias does not collide with any block-local declaration, the
+/// aliased export must still correctly publish the target VALUE across
+/// sibling blocks — the fix must not break the (already working) non-colliding
+/// case while fixing the colliding one.
+#[test]
+fn non_colliding_aliased_value_export_still_crosses_sibling_blocks() {
+    let codes = check_source_codes(
+        r#"
+declare module "m2f" {
+    function Y(): void;
+    export { Y as W };
+}
+
+declare module "m2f" {
+    const w: typeof W;
+}
+"#,
+    );
+    assert!(
+        !codes.contains(&TS2503),
+        "a non-colliding aliased value export must still cross sibling blocks: {codes:?}"
+    );
+}
+
+/// A block with no `export` statement at all is in tsc's implicit-export
+/// mode (`ambient_module_body_disables_export_context`'s doc comment): every
+/// top-level declaration, including a plain `namespace X`, counts as
+/// exported and does cross into sibling blocks. This isolates the bug: it is
+/// specifically the presence of an unrelated `export { ... }` specifier in
+/// the block (as in the tests above) that disables implicit export and turns
+/// the plain `namespace X` block-local.
+#[test]
+fn block_with_no_export_at_all_implicitly_exports_across_sibling_blocks() {
+    let codes = check_source_codes(
+        r#"
+declare module "m2g" {
+    namespace X {
+        interface I { }
+    }
+}
+
+declare module "m2g" {
+    function Z2(): X.I;
+}
+"#,
+    );
+    assert!(
+        !codes.contains(&TS2503),
+        "an implicit-export block's namespace must still cross into a sibling block: {codes:?}"
     );
 }
 
