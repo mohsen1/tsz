@@ -185,6 +185,15 @@ impl<'a> CheckerState<'a> {
                 Ok(resolved) => resolved,
                 Err((member_offset, member_name)) => {
                     if let Some(comment_start) = jsdoc_comment_start {
+                        // NOTE (#17177 follow-up): for a *relative* specifier this
+                        // still renders the un-resolved stem, unlike the TS-syntax
+                        // `import(...).Member` and JSDoc `@type`/`@typedef` paths,
+                        // which now name the module by its resolved file path via
+                        // `resolved_import_type_module_path`. Routing this
+                        // `typeof import(...).member` export= site through that
+                        // helper is deferred: its `.export=` namespace naming has a
+                        // separate, unverified `tsc` divergence, so a display change
+                        // here needs its own oracle check before it can land.
                         let display_name =
                             self.imported_namespace_display_module_name(&module_specifier);
                         let resolved_qualifier = segments

@@ -155,7 +155,18 @@ impl<'a> CheckerState<'a> {
                 return Some(Ok(resolved));
             }
         }
-        let namespace_name = self.imported_namespace_display_module_name(&module_specifier);
+        // tsc names the module by its resolved file path (the module symbol's
+        // name), so a relative import whose resolved path differs from the
+        // written specifier — index resolution (`./pkg` -> `pkg/index`), parent
+        // traversal — must render the resolved path, matching the TS-syntax
+        // `import(...).Member` path. Non-relative and unresolved specifiers keep
+        // the existing display (which owns the careful `node_modules`/ambient
+        // forms). (#17177)
+        let is_relative = module_specifier.starts_with("./") || module_specifier.starts_with("../");
+        let namespace_name = is_relative
+            .then(|| self.resolved_import_type_module_path(&module_specifier, None))
+            .flatten()
+            .unwrap_or_else(|| self.imported_namespace_display_module_name(&module_specifier));
         // When a leading portion of a dotted reference names a namespace
         // synthesized by dotted `@typedef`/`@callback` declarations
         // (`Dotted.Missing` with a declared `Dotted.Name`), tsc reports the
@@ -163,7 +174,7 @@ impl<'a> CheckerState<'a> {
         // namespace display accordingly (oracle-verified:
         // `Namespace '"m".Dotted' has no exported member 'Missing'`). When no
         // declared name starts with the reference's head segment, the display
-        // stays unqualified and names the root segment.
+        // stays unqualified and names the root segment. (#17162)
         let segments: Vec<&str> = full_member_path.split('.').collect();
         let mut prefix_len = 0usize;
         for candidate_len in (1..segments.len()).rev() {

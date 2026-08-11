@@ -215,12 +215,68 @@ impl<'a> CheckerState<'a> {
         tsz_common::file_extensions::strip_known_extension(stripped).to_string()
     }
 
-    fn import_type_namespace_name(&self, module_specifier: &str) -> String {
+    /// The module symbol's name for the TS2694 namespace text.
+    ///
+    /// `tsc` names a module's synthetic namespace symbol by its *resolved file
+    /// path* with the extension removed — `bindSourceFileAsExternalModule`
+    /// binds it as `"${removeFileExtension(fileName)}"` — so
+    /// `import("./pkg").Missing`, where `./pkg` resolves to `pkg/index.ts`,
+    /// renders `Namespace '"…/pkg/index"'`, not the bare specifier stem
+    /// `"pkg"`. The resolved path is what disambiguates index resolution
+    /// (`./pkg` -> `pkg/index`), parent traversal (`../a/b`), and extension
+    /// differences, none of which the written specifier reflects.
+    ///
+    /// Diagnostic paths are normalized against the project root by the same
+    /// harness pass that produced the `tsc` baseline, so returning the raw
+    /// resolved path here mirrors `tsc`'s own (identically normalized) output
+    /// rather than reproducing that normalization locally. A specifier that
+    /// does not resolve to a real file — an ambient `declare module "x"`, an
+    /// unresolved import — keeps its written form, matching how `tsc` names
+    /// an ambient module symbol.
+    fn import_type_module_display_name(
+        &self,
+        module_specifier: &str,
+        resolution_mode_override: Option<crate::context::ResolutionModeOverride>,
+    ) -> String {
+        self.resolved_import_type_module_path(module_specifier, resolution_mode_override)
+            .unwrap_or_else(|| self.import_type_display_name(module_specifier))
+    }
+
+    /// The extension-stripped resolved file path for `module_specifier`, or
+    /// `None` when it does not resolve to a real file (ambient/unresolved).
+    ///
+    /// Shared with the JSDoc import-type TS2694 path so both the TS-syntax and
+    /// JSDoc `import("...").Member` diagnostics name the module by its resolved
+    /// file path, exactly as `tsc` does.
+    pub(crate) fn resolved_import_type_module_path(
+        &self,
+        module_specifier: &str,
+        resolution_mode_override: Option<crate::context::ResolutionModeOverride>,
+    ) -> Option<String> {
+        let target_idx = self
+            .ctx
+            .resolve_import_target_from_file_with_mode(
+                self.ctx.current_file_idx,
+                module_specifier,
+                resolution_mode_override,
+            )
+            .or_else(|| self.ctx.resolve_import_target(module_specifier))?;
+        let arena = self.ctx.get_arena_for_file(target_idx as u32);
+        let file_name = arena.source_files.first()?.file_name.replace('\\', "/");
+        Some(tsz_common::file_extensions::strip_known_extension(&file_name).to_string())
+    }
+
+    fn import_type_namespace_name(
+        &self,
+        module_specifier: &str,
+        resolution_mode_override: Option<crate::context::ResolutionModeOverride>,
+    ) -> String {
         // tsc adds a synthetic `.export=` qualifier to the namespace path
         // when the target module uses `export = ...` (or the JS-equivalent
         // `module.exports = ...`). For modules without export-assignment,
         // emit just the module path.
-        let display_name = self.import_type_display_name(module_specifier);
+        let display_name =
+            self.import_type_module_display_name(module_specifier, resolution_mode_override);
         if self.target_module_has_export_equals(module_specifier) {
             format!("\"{display_name}\".export=")
         } else {
@@ -232,15 +288,17 @@ impl<'a> CheckerState<'a> {
         &self,
         module_specifier: &str,
         segments: &[String],
+        resolution_mode_override: Option<crate::context::ResolutionModeOverride>,
     ) -> String {
         if segments.is_empty() {
-            return self.import_type_namespace_name(module_specifier);
+            return self.import_type_namespace_name(module_specifier, resolution_mode_override);
         }
 
         // Nested access: segments already traverse into the export= namespace,
         // so `.export=` must not appear in the display string.
         // e.g. `import("mod").Bar.Q` missing → `"mod".Bar` (not `"mod".export=.Bar`)
-        let display_name = self.import_type_display_name(module_specifier);
+        let display_name =
+            self.import_type_module_display_name(module_specifier, resolution_mode_override);
         format!("\"{display_name}\".{}", segments.join("."))
     }
 
@@ -308,13 +366,17 @@ impl<'a> CheckerState<'a> {
                                     self.import_type_namespace_name_with_segments(
                                         module_specifier,
                                         &segments[..candidate_len],
+                                        resolution_mode_override,
                                     ),
                                     segments[candidate_len].clone(),
                                 ));
                             }
                         }
                         return Some((
-                            self.import_type_namespace_name(module_specifier),
+                            self.import_type_namespace_name(
+                                module_specifier,
+                                resolution_mode_override,
+                            ),
                             first_segment,
                         ));
                     }
@@ -332,6 +394,7 @@ impl<'a> CheckerState<'a> {
                                     self.import_type_namespace_name_with_segments(
                                         module_specifier,
                                         &resolved_segments,
+                                        resolution_mode_override,
                                     ),
                                     segment.clone(),
                                 ));
@@ -372,6 +435,7 @@ impl<'a> CheckerState<'a> {
                     self.import_type_namespace_name_with_segments(
                         module_specifier,
                         &resolved_segments,
+                        resolution_mode_override,
                     ),
                     segment.clone(),
                 ));
@@ -850,7 +914,7 @@ impl<'a> CheckerState<'a> {
                 )
                 .unwrap_or_else(|| {
                     (
-                        checker.import_type_namespace_name(&module_name),
+                        checker.import_type_namespace_name(&module_name, resolution_mode_override),
                         first_segment.clone(),
                     )
                 });
