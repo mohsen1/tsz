@@ -441,6 +441,21 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(super) fn parse_jsdoc_import_type(type_expr: &str) -> Option<(String, Option<String>)> {
+        let (module_specifier, member_chain) =
+            Self::parse_jsdoc_import_type_member_chain(type_expr)?;
+        Some((module_specifier, member_chain.into_iter().next()))
+    }
+
+    /// Like [`Self::parse_jsdoc_import_type`], but keeps every `.Member`
+    /// segment of the qualified reference: `import("./m").A.B` yields
+    /// `["A", "B"]`. A dotted JSDoc `@typedef`/`@callback` declares a
+    /// qualified name, so the reference side must see the whole chain, not
+    /// just its first segment. Trailing non-member syntax (generic
+    /// arguments, array suffixes) ends the chain without failing the parse,
+    /// matching the single-member parser's behavior.
+    pub(super) fn parse_jsdoc_import_type_member_chain(
+        type_expr: &str,
+    ) -> Option<(String, Vec<String>)> {
         let expr = type_expr.trim();
         let rest = expr.strip_prefix("import(")?;
         let mut rest = rest.trim_start();
@@ -456,28 +471,39 @@ impl<'a> CheckerState<'a> {
         let after_quote = Self::skip_jsdoc_import_attributes_argument(after_quote);
         let after_quote = after_quote.strip_prefix(')')?.trim_start();
         if after_quote.is_empty() {
-            return Some((module_specifier, None));
+            return Some((module_specifier, Vec::new()));
         }
         let after_dot = after_quote.strip_prefix('.')?;
-        let after_dot = after_dot.trim_start();
-        if let Some(member_name) = Self::parse_jsdoc_string_literal(after_dot) {
-            return Some((module_specifier, Some(member_name)));
+        let mut cursor = after_dot.trim_start();
+        if let Some(member_name) = Self::parse_jsdoc_string_literal(cursor) {
+            return Some((module_specifier, vec![member_name]));
         }
-        let mut end = 0usize;
-        for (idx, ch) in after_dot.char_indices() {
-            if idx == 0 {
-                if !ch.is_ascii_alphabetic() && ch != '_' && ch != '$' {
-                    return None;
+        let mut segments = Vec::new();
+        loop {
+            let mut end = 0usize;
+            for (idx, ch) in cursor.char_indices() {
+                if idx == 0 {
+                    if !ch.is_ascii_alphabetic() && ch != '_' && ch != '$' {
+                        break;
+                    }
+                } else if !ch.is_ascii_alphanumeric() && ch != '_' && ch != '$' {
+                    break;
                 }
-            } else if !ch.is_ascii_alphanumeric() && ch != '_' && ch != '$' {
+                end = idx + ch.len_utf8();
+            }
+            if end == 0 {
                 break;
             }
-            end = idx + ch.len_utf8();
+            segments.push(cursor[..end].to_string());
+            let Some(next) = cursor[end..].trim_start().strip_prefix('.') else {
+                break;
+            };
+            cursor = next.trim_start();
         }
-        if end == 0 {
+        if segments.is_empty() {
             return None;
         }
-        Some((module_specifier, Some(after_dot[..end].to_string())))
+        Some((module_specifier, segments))
     }
 
     pub(super) fn parse_jsdoc_typeof_import_query(
@@ -853,7 +879,14 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
             if let Some(tag_idx) = Self::jsdoc_tag_offset(line, "callback") {
-                let name = line[tag_idx + "@callback".len()..].trim().to_string();
+                // The name is only the first whitespace-delimited token: a
+                // trailing description (`@callback Con - some continuation`)
+                // is not part of the declared name.
+                let name = line[tag_idx + "@callback".len()..]
+                    .split_whitespace()
+                    .next()
+                    .unwrap_or_default()
+                    .to_string();
                 if !name.is_empty()
                     && name
                         .chars()
@@ -1770,6 +1803,46 @@ mod parse_jsdoc_import_tag_alias_tests {
             CheckerState::parse_jsdoc_import_type(r#"import("./dep")."a,b""#),
             Some(("./dep".to_string(), Some("a,b".to_string())))
         );
+    }
+
+    #[test]
+    fn import_type_member_chain_keeps_all_dotted_segments() {
+        assert_eq!(
+            CheckerState::parse_jsdoc_import_type_member_chain(r#"import("./dep").A.B.C"#),
+            Some((
+                "./dep".to_string(),
+                vec!["A".to_string(), "B".to_string(), "C".to_string()]
+            ))
+        );
+        // The single-member wrapper still yields only the first segment.
+        assert_eq!(
+            CheckerState::parse_jsdoc_import_type(r#"import("./dep").A.B"#),
+            Some(("./dep".to_string(), Some("A".to_string())))
+        );
+    }
+
+    #[test]
+    fn import_type_member_chain_stops_at_non_member_syntax() {
+        // Generic arguments and array suffixes end the chain without
+        // failing the parse.
+        assert_eq!(
+            CheckerState::parse_jsdoc_import_type_member_chain(r#"import("./dep").Foo<string>"#),
+            Some(("./dep".to_string(), vec!["Foo".to_string()]))
+        );
+        assert_eq!(
+            CheckerState::parse_jsdoc_import_type_member_chain(r#"import("./dep").A.B[]"#),
+            Some(("./dep".to_string(), vec!["A".to_string(), "B".to_string()]))
+        );
+    }
+
+    #[test]
+    fn callback_name_excludes_trailing_description() {
+        let typedefs = CheckerState::parse_jsdoc_typedefs(
+            "/** @callback Con - some kind of continuation\n * @param {number} n\n */",
+        );
+        assert_eq!(typedefs.len(), 1);
+        assert_eq!(typedefs[0].0, "Con");
+        assert!(typedefs[0].1.callback.is_some());
     }
 
     #[test]
