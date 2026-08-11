@@ -292,6 +292,15 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        // Preserving the parameter display governs only the fallback TS2345
+        // rendering — a missing-property failure still promotes to TS2741/2739/
+        // 2740, even when the target merely contains a free type parameter (a
+        // class merged with a generic-base interface leaks the base's `T`; #17145).
+        let analysis = self.analyze_assignability_failure(arg_type, param_type);
+        if self.try_promote_missing_property_argument(&analysis, arg_type, param_type, arg_idx) {
+            return;
+        }
+
         let display_arg_type =
             diagnostics::widen_argument_type_for_display(self.ctx.types, arg_type);
         // Widen a fresh boolean-literal array element to `boolean` structurally
