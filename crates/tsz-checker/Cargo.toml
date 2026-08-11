@@ -2894,3 +2894,6 @@ path = "tests/constructor_implementation_missing_ts2390_tests.rs"
 [[test]]
 name = "abstract_method_overload_ts2391_suppression_tests"
 path = "tests/abstract_method_overload_ts2391_suppression_tests.rs"
+[[test]]
+name = "ts2694_namespace_resolved_path_tests"
+path = "tests/ts2694_namespace_resolved_path_tests.rs"

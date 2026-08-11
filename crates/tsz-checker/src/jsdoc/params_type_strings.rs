@@ -185,8 +185,15 @@ impl<'a> CheckerState<'a> {
                 Ok(resolved) => resolved,
                 Err((member_offset, member_name)) => {
                     if let Some(comment_start) = jsdoc_comment_start {
+                        // `import_type_resolved_display_name`, not
+                        // `imported_namespace_display_module_name`: tsc's
+                        // TS2694 text names the resolved file path for a real
+                        // module even under a relative specifier, unlike the
+                        // literal-specifier rule `typeof import("...")` type
+                        // printing uses (see the sibling comment in
+                        // `jsdoc/resolution/import_reference.rs`).
                         let display_name =
-                            self.imported_namespace_display_module_name(&module_specifier);
+                            self.import_type_resolved_display_name(&module_specifier, None);
                         let resolved_qualifier = segments
                             .iter()
                             .filter_map(|(offset, segment)| {

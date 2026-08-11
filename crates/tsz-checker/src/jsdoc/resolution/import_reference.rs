@@ -96,7 +96,16 @@ impl<'a> CheckerState<'a> {
             // TS-syntax `import(...).Member` resolver does. This mirrors
             // that resolver's `report_missing_import_type_member`, which the
             // string-based JSDoc parse path cannot reach directly.
-            let namespace_name = self.imported_namespace_display_module_name(&module_specifier);
+            //
+            // `import_type_resolved_display_name` — not
+            // `imported_namespace_display_module_name` — because tsc's
+            // TS2694 text always names the *resolved file path* (extension
+            // stripped) for a real module, even a relative specifier;
+            // `imported_namespace_display_module_name` instead preserves the
+            // literal specifier for relative imports, which is the correct
+            // (but different) rule for `typeof import("...")` type printing.
+            let namespace_name =
+                self.import_type_resolved_display_name(&module_specifier, resolution_mode);
             let message = crate::diagnostics::format_message(
                 crate::diagnostics::diagnostic_messages::NAMESPACE_HAS_NO_EXPORTED_MEMBER,
                 &[&format!("\"{namespace_name}\""), member_name],

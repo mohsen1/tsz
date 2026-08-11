@@ -215,12 +215,55 @@ impl<'a> CheckerState<'a> {
         tsz_common::file_extensions::strip_known_extension(stripped).to_string()
     }
 
-    fn import_type_namespace_name(&self, module_specifier: &str) -> String {
+    /// tsc's synthesized external-module symbol carries the *resolved* file
+    /// path (extension stripped) as its name — not the literal specifier —
+    /// for every specifier that resolves to a real file, relative or bare
+    /// alike. This is what TS2694's "Namespace '{0}' has no exported member"
+    /// text renders (verified against tsc 7.0.2: `import('./types.js')` from
+    /// `/tmp/repro1/main2.ts` reports `Namespace '"/tmp/repro1/types"'`, and a
+    /// bare specifier resolving into `node_modules` behaves the same way). An
+    /// ambient `declare module "x"` has no backing file, so its symbol name
+    /// really is the literal specifier — `import_type_display_name` is the
+    /// correct fallback there.
+    ///
+    /// This deliberately does NOT reuse `imported_namespace_display_module_name`,
+    /// which backs `typeof import("...")` type *printing* and, by design,
+    /// keeps the literal specifier for relative imports there (a different
+    /// tsc rule for a different rendering site).
+    pub(crate) fn import_type_resolved_display_name(
+        &self,
+        module_specifier: &str,
+        resolution_mode_override: Option<crate::context::ResolutionModeOverride>,
+    ) -> String {
+        if let Some(target_file_idx) = self
+            .ctx
+            .resolve_import_target_from_file_with_mode(
+                self.ctx.current_file_idx,
+                module_specifier,
+                resolution_mode_override,
+            )
+            .or_else(|| self.ctx.resolve_import_target(module_specifier))
+        {
+            let target_arena = self.ctx.get_arena_for_file(target_file_idx as u32);
+            if let Some(sf) = target_arena.source_files.first() {
+                let resolved = sf.file_name.replace('\\', "/");
+                return tsz_common::file_extensions::strip_known_extension(&resolved).to_string();
+            }
+        }
+        self.import_type_display_name(module_specifier)
+    }
+
+    fn import_type_namespace_name(
+        &self,
+        module_specifier: &str,
+        resolution_mode_override: Option<crate::context::ResolutionModeOverride>,
+    ) -> String {
         // tsc adds a synthetic `.export=` qualifier to the namespace path
         // when the target module uses `export = ...` (or the JS-equivalent
         // `module.exports = ...`). For modules without export-assignment,
         // emit just the module path.
-        let display_name = self.import_type_display_name(module_specifier);
+        let display_name =
+            self.import_type_resolved_display_name(module_specifier, resolution_mode_override);
         if self.target_module_has_export_equals(module_specifier) {
             format!("\"{display_name}\".export=")
         } else {
@@ -232,15 +275,17 @@ impl<'a> CheckerState<'a> {
         &self,
         module_specifier: &str,
         segments: &[String],
+        resolution_mode_override: Option<crate::context::ResolutionModeOverride>,
     ) -> String {
         if segments.is_empty() {
-            return self.import_type_namespace_name(module_specifier);
+            return self.import_type_namespace_name(module_specifier, resolution_mode_override);
         }
 
         // Nested access: segments already traverse into the export= namespace,
         // so `.export=` must not appear in the display string.
         // e.g. `import("mod").Bar.Q` missing → `"mod".Bar` (not `"mod".export=.Bar`)
-        let display_name = self.import_type_display_name(module_specifier);
+        let display_name =
+            self.import_type_resolved_display_name(module_specifier, resolution_mode_override);
         format!("\"{display_name}\".{}", segments.join("."))
     }
 
@@ -293,7 +338,10 @@ impl<'a> CheckerState<'a> {
                     }
                     None => {
                         return Some((
-                            self.import_type_namespace_name(module_specifier),
+                            self.import_type_namespace_name(
+                                module_specifier,
+                                resolution_mode_override,
+                            ),
                             first_segment,
                         ));
                     }
@@ -311,6 +359,7 @@ impl<'a> CheckerState<'a> {
                                     self.import_type_namespace_name_with_segments(
                                         module_specifier,
                                         &resolved_segments,
+                                        resolution_mode_override,
                                     ),
                                     segment.clone(),
                                 ));
@@ -351,6 +400,7 @@ impl<'a> CheckerState<'a> {
                     self.import_type_namespace_name_with_segments(
                         module_specifier,
                         &resolved_segments,
+                        resolution_mode_override,
                     ),
                     segment.clone(),
                 ));
@@ -797,7 +847,7 @@ impl<'a> CheckerState<'a> {
                 )
                 .unwrap_or_else(|| {
                     (
-                        checker.import_type_namespace_name(&module_name),
+                        checker.import_type_namespace_name(&module_name, resolution_mode_override),
                         first_segment.clone(),
                     )
                 });
