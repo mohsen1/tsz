@@ -691,6 +691,91 @@ var bad
     );
 }
 
+// #17176: a JSDoc `@type`/`@param` annotation whose `import(...).Member`
+// reference fails to resolve used to report TS2694 twice — once from the
+// eager per-file `@type`/`@param`-tag validation probe (which only needs a
+// resolved-or-not boolean for an unrelated TS2304 decision, but leaked the
+// import resolver's own diagnostic as a side effect) and once from the
+// authoritative per-declaration/per-parameter resolver, at two positions
+// that both differed from tsc's single report anchored at the member-name
+// token inside the comment. The tests below pin the count for each shape
+// from the issue's adjacent-case matrix, plus the exact anchor for the
+// `@type` shapes where the fix also corrected the position.
+
+#[test]
+fn jsdoc_type_tag_import_member_not_found_reports_once_at_member_token() {
+    let consumer_source = r#"
+/** @type {import('./types.js').Missing} */
+let w;
+"#;
+    let diagnostics =
+        check_consumer_with_js_typedef_source("export {}\n", "consumer.js", consumer_source);
+    let hits = ts2694_diagnostics(&diagnostics, "Missing");
+    assert_eq!(
+        hits.len(),
+        1,
+        "Expected exactly one TS2694 for an unresolved @type import-type member, got: {diagnostics:?}"
+    );
+    let member_start = consumer_source.find("Missing").unwrap() as u32;
+    assert_eq!(
+        hits[0].start, member_start,
+        "Expected TS2694 anchored at the `Missing` token inside the comment, got: {:?}",
+        hits[0]
+    );
+}
+
+#[test]
+fn jsdoc_type_tag_two_annotations_each_report_once_at_their_own_member_token() {
+    // Renamed binders across two independent `@type` tags in the same file:
+    // each must report its own TS2694 exactly once, at its own comment's
+    // member token — not each other's, and not doubled.
+    let consumer_source = r#"
+/** @type {import('./types.js').Missing} */
+let firstVar;
+/** @type {import('./types.js').Missing} */
+let secondVar;
+"#;
+    let diagnostics =
+        check_consumer_with_js_typedef_source("export {}\n", "consumer.js", consumer_source);
+    let hits = ts2694_diagnostics(&diagnostics, "Missing");
+    assert_eq!(
+        hits.len(),
+        2,
+        "Expected exactly two TS2694s, one per @type annotation, got: {diagnostics:?}"
+    );
+    let first_start = consumer_source.find("Missing").unwrap() as u32;
+    let second_start = consumer_source.rfind("Missing").unwrap() as u32;
+    let mut starts: Vec<u32> = hits.iter().map(|d| d.start).collect();
+    starts.sort_unstable();
+    assert_eq!(
+        starts,
+        vec![first_start, second_start],
+        "Expected each TS2694 anchored at its own `Missing` token, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn jsdoc_param_tag_import_member_not_found_reports_once() {
+    // Same structural rule as the `@type` case, through the `@param` path.
+    // The eager `@param`/`@return` validation scan (`check_jsdoc_typedef_base_types`)
+    // must not leak a second TS2694 alongside the authoritative per-parameter
+    // resolver (`resolve_jsdoc_param_type_with_pos`).
+    let diagnostics = check_consumer_with_js_typedef_source(
+        "export {}\n",
+        "consumer.js",
+        r#"
+/** @param {import('./types.js').Missing} x */
+function f(x) {}
+"#,
+    );
+    let hits = ts2694_diagnostics(&diagnostics, "Missing");
+    assert_eq!(
+        hits.len(),
+        1,
+        "Expected exactly one TS2694 for an unresolved @param import-type member, got: {diagnostics:?}"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // `@callback` names followed by description text — #17162 residual
 // (`conformance/jsdoc/callbackCrossModule.ts`).
