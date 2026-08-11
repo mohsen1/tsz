@@ -5,6 +5,7 @@ use crate::query_boundaries::state::type_resolution as query;
 use crate::state::CheckerState;
 use crate::symbol_resolver::TypeSymbolResolution;
 use tsz_binder::symbol_flags;
+use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::{NodeIndex, NodeList, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
@@ -60,6 +61,29 @@ impl CheckerState<'_> {
     }
 
     fn type_arg_needs_checker_resolution(&self, arg_idx: NodeIndex) -> bool {
+        // A *bare* `import("mod").X` type argument (no type arguments of its own)
+        // must be re-resolved by the checker. `TypeLowering`, which lowered the
+        // generic base, cannot perform module resolution: it binds the
+        // import-type qualifier through the syntactic `resolve_def_id` path to
+        // the *defining* file's arena-local instance. A direct checker reference
+        // instead routes through `check_import_type_and_resolve`, yielding the
+        // importing file's canonical instance. Left as the lowered form the two
+        // diverge — a structurally-equal but non-identical instance — and an
+        // identity-keyed decision goes wrong: a conditional `T extends X ? _ : _`
+        // instantiated with `import("mod").X` compares the stale build against
+        // the canonical reference of a plain `X` in the extends clause, reads the
+        // relation as undetermined, and stays deferred as `boolean`.
+        //
+        // Restricted to bare references on purpose. A *generic* import-type
+        // application (`import("mod").Wrap<A>`) keeps both the extends operand
+        // (resolved via the conditional body's `collect_import_type_overrides`
+        // pass) and the argument on the same lowering-based identity, so they
+        // already agree; re-resolving only the argument through a different path
+        // would instead introduce a divergence in the `infer`-matching base.
+        if self.type_arg_contains_bare_import_type(arg_idx, 0) {
+            return true;
+        }
+
         let Some(type_lit) = self
             .ctx
             .arena
@@ -77,6 +101,36 @@ impl CheckerState<'_> {
                 .and_then(|sig| self.ctx.arena.get(sig.name))
                 .is_some_and(|name| name.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME)
         })
+    }
+
+    /// Whether the type node subtree rooted at `idx` contains a bare
+    /// `TYPE_REFERENCE` whose `type_name` roots in an `import(...)` call and
+    /// carries no type arguments of its own (`import("mod").X`,
+    /// `import("mod").A.B`, or such a reference nested inside another type
+    /// argument like `LocalBox<import("mod").X>`). Bounded to match the
+    /// codebase's AST-walker depth convention.
+    fn type_arg_contains_bare_import_type(&self, idx: NodeIndex, depth: u32) -> bool {
+        if depth > 64 {
+            return false;
+        }
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return false;
+        };
+        if node.kind == syntax_kind_ext::TYPE_REFERENCE
+            && let Some(type_ref) = self.ctx.arena.get_type_ref(node)
+            && type_ref
+                .type_arguments
+                .as_ref()
+                .is_none_or(|args| args.nodes.is_empty())
+            && self.find_leftmost_import_call(type_ref.type_name).is_some()
+        {
+            return true;
+        }
+        self.ctx
+            .arena
+            .get_children(idx)
+            .into_iter()
+            .any(|child_idx| self.type_arg_contains_bare_import_type(child_idx, depth + 1))
     }
 
     /// Get type from a type reference node (e.g., "number", "string", "`MyType`").
