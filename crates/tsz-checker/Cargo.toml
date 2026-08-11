@@ -2881,3 +2881,6 @@ path = "tests/ts2300_merged_interface_property_method_conflict_tests.rs"
 [[test]]
 name = "ts2694_typeof_import_qualified_type_only_member_tests"
 path = "tests/ts2694_typeof_import_qualified_type_only_member_tests.rs"
+[[test]]
+name = "constructor_implementation_missing_ts2390_tests"
+path = "tests/constructor_implementation_missing_ts2390_tests.rs"
