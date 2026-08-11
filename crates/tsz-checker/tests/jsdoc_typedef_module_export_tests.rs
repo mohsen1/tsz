@@ -775,3 +775,169 @@ function f(x) {}
         "Expected exactly one TS2694 for an unresolved @param import-type member, got: {diagnostics:?}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// `@callback` names followed by description text — #17162 residual
+// (`conformance/jsdoc/callbackCrossModule.ts`).
+//
+// tsc takes a `@callback` tag's name as the first whitespace-delimited token
+// and treats everything after it as description text, so
+// `@callback Con - some kind of continuation` declares `Con` as a type-only
+// exported member of the module. tsz's typedef surface parser took the whole
+// line remainder as the name, rejected it as a non-identifier, and never
+// registered the callback — making `import('./mod').Con` a spurious TS2694.
+// A token that itself carries a non-name character (`Con-`) declares nothing
+// in tsc (oracle-verified on 7.0.2), and must keep reporting TS2694.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn jsdoc_callback_with_dash_description_import_type_member_suppresses_ts2694() {
+    // The `callbackCrossModule.ts` shape: name, dash, free-text description,
+    // then `@param`/`@return` lines, consumed cross-file via a JSDoc `@param`.
+    let diagnostics = check_consumer_with_js_typedef_source(
+        r#"
+/** @callback Con - some kind of continuation
+ * @param {object | undefined} error
+ * @return {any} I don't even know what this should return
+ */
+module.exports = C
+function C() {
+    this.p = 1
+}
+"#,
+        "consumer.js",
+        r#"
+/** @param {import('./types.js').Con} k */
+function f(k) {
+    return k({ ok: true })
+}
+"#,
+    );
+    assert!(
+        ts2694_diagnostics(&diagnostics, "Con").is_empty(),
+        "Expected no TS2694 for a `@callback Con - description` export, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn jsdoc_callback_with_plain_description_renamed_binder_suppresses_ts2694() {
+    // Adjacent case: description without a leading dash, differently named
+    // binder — the name rule is "first whitespace token", not "text before a
+    // dash", and must not be keyed to the fixture's identifier.
+    let diagnostics = check_consumer_with_js_typedef_source(
+        r#"
+/** @callback Kont9$ fires when the frobnicator settles
+ * @param {number} x
+ * @return {string}
+ */
+export var dummy = 1
+"#,
+        "consumer.js",
+        r#"
+/** @type {import('./types.js').Kont9$} */
+var cb
+"#,
+    );
+    assert!(
+        ts2694_diagnostics(&diagnostics, "Kont9$").is_empty(),
+        "Expected no TS2694 for a `@callback Kont9$ description` export, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn jsdoc_callback_dotted_name_with_description_suppresses_ts2694() {
+    // Adjacent case: a dotted (qualified) callback name followed by a
+    // description — the first-token rule composes with the qualified-name
+    // support, so the head segment must not be reported missing.
+    let diagnostics = check_consumer_with_js_typedef_source(
+        r#"
+/** @callback Outer3.Inner - nested continuation
+ * @param {number} x
+ * @return {string}
+ */
+export var dummy = 1
+"#,
+        "consumer.js",
+        r#"
+/** @type {import('./types.js').Outer3.Inner} */
+var cb
+"#,
+    );
+    assert!(
+        ts2694_diagnostics(&diagnostics, "Outer3").is_empty(),
+        "Expected no TS2694 for a dotted `@callback Outer3.Inner - description` export, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn jsdoc_callback_bare_name_still_resolves() {
+    // Guard: a `@callback` with no description (the previously-working shape)
+    // keeps resolving.
+    let diagnostics = check_consumer_with_js_typedef_source(
+        r#"
+/** @callback Plain
+ * @param {number} x
+ * @return {string}
+ */
+export var dummy = 1
+"#,
+        "consumer.js",
+        r#"
+/** @type {import('./types.js').Plain} */
+var cb
+"#,
+    );
+    assert!(
+        ts2694_diagnostics(&diagnostics, "Plain").is_empty(),
+        "Expected no TS2694 for a bare `@callback Plain` export, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn jsdoc_callback_name_with_attached_dash_still_reports_ts2694() {
+    // Negative control (oracle-pinned): `@callback Con- attached-dash text`
+    // declares nothing in tsc — the first token `Con-` is not a valid name and
+    // there is no fallback to its identifier prefix. Referencing `Con` must
+    // keep reporting TS2694.
+    let diagnostics = check_consumer_with_js_typedef_source(
+        r#"
+/** @callback Con- attached-dash description
+ * @param {number} x
+ * @return {string}
+ */
+export var dummy = 1
+"#,
+        "consumer.js",
+        r#"
+/** @type {import('./types.js').Con} */
+var cb
+"#,
+    );
+    assert!(
+        !ts2694_diagnostics(&diagnostics, "Con").is_empty(),
+        "Expected TS2694 when the `@callback` name token carries an attached dash, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn jsdoc_callback_with_description_does_not_swallow_other_missing_members() {
+    // Negative control: registering the described callback must not make other
+    // genuinely-missing members resolve.
+    let diagnostics = check_consumer_with_js_typedef_source(
+        r#"
+/** @callback Con - some kind of continuation
+ * @param {number} x
+ */
+export var dummy = 1
+"#,
+        "consumer.js",
+        r#"
+/** @type {import('./types.js').Missing} */
+var bad
+"#,
+    );
+    assert!(
+        !ts2694_diagnostics(&diagnostics, "Missing").is_empty(),
+        "Expected TS2694 for a missing member alongside a described callback, got: {diagnostics:?}"
+    );
+}
