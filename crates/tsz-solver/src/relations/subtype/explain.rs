@@ -639,9 +639,15 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             }
         }
 
-        // Object source vs array target: resolve Array<T> to its interface properties
-        // and find missing members. TSC emits TS2740 here (missing properties from array).
-        if let Some(t_elem) = array_element_type(self.interner, resolved_target) {
+        // Object source vs array target: resolve the array interface to its
+        // members and find those missing on the source. tsc emits TS2740 here.
+        // Both the mutable `Array<T>` surface and the `readonly T[]` /
+        // `ReadonlyArray<T>` surface (the mutable set minus its mutating methods)
+        // are handled; without the readonly peel the readonly target previously
+        // fell through to a bare TS2322/TS2345.
+        if let Some((t_elem, target_readonly)) =
+            self.array_or_readonly_array_element(target, resolved_target)
+        {
             let s_shape_id = object_shape_id(self.interner, resolved_source)
                 .or_else(|| object_with_index_shape_id(self.interner, resolved_source));
             if let Some(s_sid) = s_shape_id
@@ -655,33 +661,36 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     instantiate_type(self.interner, array_base, &subst)
                 };
                 let resolved_inst = self.resolve_lazy_type(instantiated);
-                // The Array interface may resolve to an object shape or a callable shape
-                // (with properties like length, push, concat, etc.)
+                // The Array interface may resolve to an object shape or a callable
+                // shape (with properties like length, push, concat, etc.).
                 let s_shape = self.interner.object_shape(s_sid);
-                if let Some(t_obj_sid) = object_shape_id(self.interner, resolved_inst)
+                let target_props = object_shape_id(self.interner, resolved_inst)
                     .or_else(|| object_with_index_shape_id(self.interner, resolved_inst))
-                {
-                    let t_shape = self.interner.object_shape(t_obj_sid);
+                    .map(|sid| self.interner.object_shape(sid).properties.clone())
+                    .or_else(|| {
+                        callable_shape_id(self.interner, resolved_inst).and_then(|sid| {
+                            let callable = self.interner.callable_shape(sid);
+                            (!callable.properties.is_empty()).then(|| callable.properties.clone())
+                        })
+                    });
+                if let Some(mut target_props) = target_props {
+                    // A readonly-array target omits the mutating methods, so they
+                    // are never "missing" — strip them to match tsc's readonly
+                    // member list (the mutable arm keeps the full surface).
+                    if target_readonly {
+                        target_props.retain(|p| {
+                            !crate::operations::property::property_helpers::is_array_mutating_method(
+                                self.interner.resolve_atom_ref(p.name).as_ref(),
+                            )
+                        });
+                    }
                     return self.explain_object_failure(
                         source,
                         target,
                         &s_shape.properties,
                         Some(s_sid),
-                        &t_shape.properties,
+                        &target_props,
                     );
-                }
-                // Array interface resolved to a callable shape — use its properties
-                if let Some(callable_sid) = callable_shape_id(self.interner, resolved_inst) {
-                    let callable = self.interner.callable_shape(callable_sid);
-                    if !callable.properties.is_empty() {
-                        return self.explain_object_failure(
-                            source,
-                            target,
-                            &s_shape.properties,
-                            Some(s_sid),
-                            &callable.properties,
-                        );
-                    }
                 }
             }
         }

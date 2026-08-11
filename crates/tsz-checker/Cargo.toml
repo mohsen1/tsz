@@ -2571,6 +2571,10 @@ name = "call_argument_bound_type_parameter_missing_property_promotion_tests"
 path = "tests/call_argument_bound_type_parameter_missing_property_promotion_tests.rs"
 
 [[test]]
+name = "call_argument_readonly_array_missing_property_promotion_tests"
+path = "tests/call_argument_readonly_array_missing_property_promotion_tests.rs"
+
+[[test]]
 name = "type_param_pick_subset_assignability_tests"
 path = "tests/type_param_pick_subset_assignability_tests.rs"
 

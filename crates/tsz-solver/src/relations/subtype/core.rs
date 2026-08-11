@@ -1403,6 +1403,26 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         array_element_type(self.interner, inner)
     }
 
+    /// The element type of an array-like `target` together with whether the
+    /// target is `readonly` (`readonly T[]` syntax or a `ReadonlyArray<T>`
+    /// application). Mirrors the extraction the boolean readonly-array dispatch
+    /// performs, so the failure explainer can reach the array member surface for
+    /// readonly targets — not just mutable `Array<T>`.
+    pub(crate) fn array_or_readonly_array_element(
+        &self,
+        target: TypeId,
+        resolved_target: TypeId,
+    ) -> Option<(TypeId, bool)> {
+        if let Some(elem) = array_element_type(self.interner, resolved_target) {
+            return Some((elem, false));
+        }
+        self.readonly_array_syntax_element(resolved_target)
+            .or_else(|| self.readonly_array_application_element(resolved_target))
+            .or_else(|| self.readonly_array_syntax_element(target))
+            .or_else(|| self.readonly_array_application_element(target))
+            .map(|elem| (elem, true))
+    }
+
     pub(crate) fn type_contains_readonly_array_syntax(&self, type_id: TypeId) -> bool {
         if self.readonly_array_syntax_element(type_id).is_some() {
             return true;
