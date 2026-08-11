@@ -475,6 +475,10 @@ impl<'a> CheckerState<'a> {
 
     /// Check that all method overload signatures in a group share the same abstract modifier
     /// (TS2512: Overload signatures must all be abstract or non-abstract).
+    ///
+    /// Constructors form their own nameless overload set and are checked
+    /// separately by [`Self::check_constructor_abstract_overload_consistency`],
+    /// invoked at the end of this pass.
     pub(crate) fn check_abstract_overload_consistency(
         &mut self,
         members: &[tsz_parser::parser::NodeIndex],
@@ -556,6 +560,78 @@ impl<'a> CheckerState<'a> {
             }
 
             i += group.len();
+        }
+
+        self.check_constructor_abstract_overload_consistency(members);
+    }
+
+    /// Check that all constructor overload signatures share the same abstract
+    /// modifier (TS2512), the nameless-overload-set analogue of
+    /// [`Self::check_abstract_overload_consistency`].
+    ///
+    /// A class has a single constructor symbol, so every `constructor`
+    /// declaration in `members` belongs to one overload set regardless of
+    /// contiguity — matching tsc's `checkFunctionOrConstructorSymbol`, which
+    /// gathers the symbol's declarations rather than a syntactic run. tsc takes
+    /// the canonical abstractness from `implementation ?? overloads[0]` and
+    /// flags every signature that deviates.
+    ///
+    /// Because tsc reports on `getNameOfDeclaration(o)` and a constructor has no
+    /// name, that anchor resolves to `undefined`, so the diagnostic is emitted
+    /// with no source location (see [`Self::error_program_level`]) — unlike the
+    /// method case above, which anchors on each deviating method's name. tsc's
+    /// repeated location-less `error(undefined, ...)` calls collapse to a single
+    /// entry, so one program-level TS2512 is reported for the set.
+    pub(crate) fn check_constructor_abstract_overload_consistency(
+        &mut self,
+        members: &[tsz_parser::parser::NodeIndex],
+    ) {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+        use tsz_parser::parser::syntax_kind_ext;
+
+        // Gather every constructor declaration in declaration order, recording
+        // whether each is `abstract` and whether it is the implementation (has a
+        // body).
+        let mut ctors: Vec<(bool /* is_abstract */, bool /* has_body */)> = Vec::new();
+        for &member_idx in members {
+            let Some(node) = self.ctx.arena.get(member_idx) else {
+                continue;
+            };
+            if node.kind != syntax_kind_ext::CONSTRUCTOR {
+                continue;
+            }
+            let Some(ctor) = self.ctx.arena.get_constructor(node) else {
+                continue;
+            };
+            let is_abstract = self.has_abstract_modifier(&ctor.modifiers);
+            let has_body = ctor.body.is_some();
+            ctors.push((is_abstract, has_body));
+        }
+
+        // An overload set needs at least two signatures to disagree.
+        if ctors.len() < 2 {
+            return;
+        }
+
+        // Canonical abstractness: the implementation's when one exists, else the
+        // first signature's (tsc: `implementation ?? overloads[0]`).
+        let canonical_abstract = ctors
+            .iter()
+            .find(|&&(_, has_body)| has_body)
+            .map_or(ctors[0].0, |&(is_abstract, _)| is_abstract);
+
+        // tsc reports a single location-less TS2512 for the set as soon as any
+        // signature deviates from the canonical abstractness (its repeated
+        // `error(undefined, ...)` calls collapse to one entry).
+        if ctors
+            .iter()
+            .any(|&(is_abstract, _)| is_abstract != canonical_abstract)
+        {
+            self.error_program_level(
+                diagnostic_messages::OVERLOAD_SIGNATURES_MUST_ALL_BE_ABSTRACT_OR_NON_ABSTRACT
+                    .to_string(),
+                diagnostic_codes::OVERLOAD_SIGNATURES_MUST_ALL_BE_ABSTRACT_OR_NON_ABSTRACT,
+            );
         }
     }
 
