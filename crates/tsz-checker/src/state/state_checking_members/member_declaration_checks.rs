@@ -1197,15 +1197,55 @@ impl<'a> CheckerState<'a> {
                     if let Some(ctor) = self.ctx.arena.get_constructor(node)
                         && ctor.body.is_none()
                     {
-                        // Constructor overload signature - check for implementation
-                        let has_impl = self.find_constructor_impl(members, i + 1);
-                        if !has_impl {
+                        // Constructor overload signature. Like methods (and like
+                        // tsc's `checkFunctionOrConstructorSymbol`), the
+                        // missing-implementation diagnostic belongs to the *last*
+                        // declaration of the overload set, reported once — not once
+                        // per bodyless signature. Advance past all consecutive
+                        // bodyless constructor signatures to that last one before
+                        // deciding, tracking whether that last signature is
+                        // `abstract` as we go (tsc suppresses the diagnostic on an
+                        // abstract last declaration — an abstract member needs no
+                        // implementation, exactly as the method arm below skips
+                        // abstract methods. `abstract` on a constructor is itself a
+                        // grammar error, TS1242, but tsc still honours it here, so
+                        // `abstract constructor()` reports only TS1242, never
+                        // TS2390).
+                        let mut last_overload_i = i;
+                        let mut last_is_abstract = self.has_abstract_modifier(&ctor.modifiers);
+                        let mut j = i + 1;
+                        while j < members.len() {
+                            let next_idx = members[j];
+                            let Some(next_node) = self.ctx.arena.get(next_idx) else {
+                                break;
+                            };
+                            if next_node.kind == syntax_kind_ext::CONSTRUCTOR
+                                && let Some(next_ctor) = self.ctx.arena.get_constructor(next_node)
+                                && next_ctor.body.is_none()
+                            {
+                                last_overload_i = j;
+                                last_is_abstract = self.has_abstract_modifier(&next_ctor.modifiers);
+                                j += 1;
+                                continue;
+                            }
+                            break;
+                        }
+
+                        // tsc anchors the missing-implementation error on the last
+                        // overload signature.
+                        let report_member_idx = members[last_overload_i];
+                        let has_impl = self.find_constructor_impl(members, last_overload_i + 1);
+                        if !has_impl && !last_is_abstract {
                             self.error_at_node(
-                                member_idx,
+                                report_member_idx,
                                 "Constructor implementation is missing.",
                                 diagnostic_codes::CONSTRUCTOR_IMPLEMENTATION_IS_MISSING,
                             );
                         }
+
+                        // Skip past every overload we just folded into this group.
+                        i = last_overload_i + 1;
+                        continue;
                     }
                 }
                 syntax_kind_ext::METHOD_DECLARATION => {
