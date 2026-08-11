@@ -466,3 +466,109 @@ type Use = import('./types.js').Shape;
         "Expected no TS2694 for a type-only interface export, got: {diagnostics:?}"
     );
 }
+
+// Adjacent matrix for #17162: a CommonJS expando export
+// (`module.exports.Member = Member` / `exports.Member = Member`) records no
+// SymbolId in the binder's export tables — those only track ES `export`
+// syntax — so the plain symbol lookup in `resolve_jsdoc_import_type_reference`
+// never sees it. When the expando's RHS is a class declaration's own
+// identifier, the reference is type-eligible and must not report TS2694.
+
+#[test]
+fn jsdoc_typedef_import_type_member_resolves_module_exports_expando_class() {
+    let diagnostics = check_consumer_with_js_typedef_source(
+        r#"
+class C {
+    s() {}
+}
+module.exports.C = C
+"#,
+        "consumer.js",
+        r#"
+/** @typedef {import('./types.js').C} X */
+/** @param {X} c */
+function demo(c) {
+    c.s()
+}
+"#,
+    );
+    assert!(
+        ts2694_diagnostics(&diagnostics, "C").is_empty(),
+        "Expected no TS2694 for a `module.exports.C = C` expando class export, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn jsdoc_type_comment_member_resolves_module_exports_expando_class() {
+    // Same structural rule as above, but through the actual JSDoc `@type`
+    // comment path (matches the upstream repro exactly) rather than a
+    // `@typedef` indirection.
+    let diagnostics = check_consumer_with_js_typedef_source(
+        r#"
+class C {
+    s() {}
+}
+module.exports.C = C
+"#,
+        "consumer.js",
+        r#"
+/** @type {import('./types.js').C} */
+let x;
+"#,
+    );
+    assert!(
+        ts2694_diagnostics(&diagnostics, "C").is_empty(),
+        "Expected no TS2694 for a `module.exports.C = C` expando class export via @type, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn jsdoc_import_type_member_resolves_bare_exports_expando_class_renamed_binder() {
+    // Adjacent case: the short `exports.X = X` form (no `module.` prefix),
+    // with a differently named binder — the fix must not depend on the
+    // specific identifier `C` or the `module.exports.` spelling. Exercised
+    // through the same JSDoc `@typedef`/`import(...).Member` string-parsing
+    // path as #17162's actual repro (the TS-syntax `type X = import(...).Y`
+    // alias-declaration path is a separate resolver, untouched by this fix).
+    let diagnostics = check_consumer_with_js_typedef_source(
+        r#"
+class Widget {
+    render() {}
+}
+exports.Widget = Widget
+"#,
+        "consumer.js",
+        r#"
+/** @typedef {import('./types.js').Widget} X */
+/** @param {X} w */
+function demo(w) {
+    w.render()
+}
+"#,
+    );
+    assert!(
+        ts2694_diagnostics(&diagnostics, "Widget").is_empty(),
+        "Expected no TS2694 for an `exports.Widget = Widget` expando class export, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn jsdoc_import_type_member_expando_function_export_still_reports_ts2694() {
+    // Negative control: an expando export whose RHS is a plain function (not
+    // a class) is still value-only — TS7 dropped constructor-function
+    // inference, so a bare type-position reference must still report TS2694.
+    let diagnostics = check_consumer_with_js_typedef_source(
+        r#"
+function bar() {}
+module.exports.bar = bar
+"#,
+        "consumer.d.ts",
+        r#"
+type Use = import('./types.js').bar;
+"#,
+    );
+    assert!(
+        !ts2694_diagnostics(&diagnostics, "bar").is_empty(),
+        "Expected TS2694 for a `module.exports.bar = bar` expando function export, got: {diagnostics:?}"
+    );
+}
