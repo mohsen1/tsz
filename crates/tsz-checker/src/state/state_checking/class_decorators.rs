@@ -2,14 +2,14 @@
 //! accessor-pair decorator rules, ES decorator call-signature/arity checks, and
 //! the decorator grammar check.
 //!
-//! Extracted verbatim from `class.rs` to keep that module under the 2000-LOC
-//! architecture cap; behavior is unchanged. The four helpers called from the
-//! class-declaration/expression paths in `class.rs`
-//! (`first_decorator_in_modifiers`, `check_decorators_on_accessor_pairs`,
-//! `check_class_decorator_call_signature`, `check_es_class_decorator_arity`)
+//! Extracted from `class.rs` to keep that module under the 2000-LOC
+//! architecture cap. The helpers called from the class-declaration path in
+//! `class.rs` (`first_decorator_in_modifiers`,
+//! `check_decorators_on_accessor_pairs`, `check_class_decorator_signature`)
 //! are `pub(super)` so those sibling-module callers keep reaching them; their
 //! visibility was widened only to permit the file split.
 
+use crate::query_boundaries::checkers::decorators as decorator_query;
 use crate::query_boundaries::class_type as class_query;
 use crate::state::CheckerState;
 use rustc_hash::FxHashMap;
@@ -197,26 +197,46 @@ impl<'a> CheckerState<'a> {
         })
     }
 
-    /// TS1238: Check that a class decorator expression has a compatible call signature.
+    /// TS1238: check that a class decorator resolves as a call
+    /// `decorator(value[, context])`, emitting "Unable to resolve signature of
+    /// class decorator when called as an expression." with tsc's full
+    /// elaboration chain on failure.
     ///
-    /// For experimental decorators, the decorator is called as `decoratorExpr(classConstructor)`.
-    /// If the decorator type has no call signatures, or if call resolution against the class
-    /// constructor type fails, emit TS1238.
-    pub(super) fn check_class_decorator_call_signature(
+    /// This is the single owner for both decorator modes:
+    ///
+    /// - **`--experimentalDecorators` (legacy):** the decorator is invoked
+    ///   `decorator(classConstructor)`, and the resolved return type is
+    ///   additionally checked against `void | typeof C` (TS1270).
+    /// - **ES (TC39 stage-3):** the decorator is invoked
+    ///   `decorator(value, context)` where `value: typeof C` and
+    ///   `context: ClassDecoratorContext<typeof C>`, truncated to the
+    ///   decorator's own declared arity (tsc's `getDecoratorArgumentCount`).
+    ///
+    /// A bare-reference zero-argument factory used uncalled (`@d`, `@ns.d`)
+    /// draws the TS1329 "did you mean to call it first" hint; a
+    /// parenthesized/inline factory (`@(() => {})`) instead falls through to
+    /// the arity failure below, matching tsc's `isPotentiallyUncalledDecorator`.
+    /// A callee with no call signatures at all (a non-function value, or a
+    /// class with only construct signatures) reports the not-callable chain
+    /// directly, exactly as tsc's `resolveDecorator` does before it ever
+    /// reaches `resolveCall`.
+    pub(super) fn check_class_decorator_signature(
         &mut self,
         decorator_node: NodeIndex,
+        decorator_expression: NodeIndex,
         decorator_type: TypeId,
         class_idx: NodeIndex,
         class: &tsz_parser::parser::node::ClassData,
+        legacy: bool,
     ) {
-        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
-        use crate::query_boundaries::common::call_signatures_for_type;
+        use crate::query_boundaries::common::{CallResult, call_signatures_for_type};
 
-        // Skip validation for error types or any — these won't produce meaningful diagnostics
-        if decorator_type == TypeId::ERROR
-            || decorator_type == TypeId::ANY
-            || decorator_type == TypeId::UNKNOWN
-        {
+        // Skip validation for error/any/unknown — these won't produce
+        // meaningful diagnostics.
+        if matches!(
+            decorator_type,
+            TypeId::ERROR | TypeId::ANY | TypeId::UNKNOWN
+        ) {
             return;
         }
 
@@ -224,9 +244,7 @@ impl<'a> CheckerState<'a> {
         // type queries can see the underlying type shape.
         self.ensure_relation_input_ready(decorator_type);
         let resolved = self.evaluate_type_for_assignability(decorator_type);
-
-        // After evaluation, any/unknown/error → skip
-        if resolved == TypeId::ERROR || resolved == TypeId::ANY || resolved == TypeId::UNKNOWN {
+        if matches!(resolved, TypeId::ERROR | TypeId::ANY | TypeId::UNKNOWN) {
             return;
         }
 
@@ -238,69 +256,106 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
-        // A decorator whose every call signature takes zero parameters is
-        // the "forgot to call the factory" shape (`@d` instead of `@d()`);
-        // tsc reports only the TS1329 hint there, not TS1238 — mirroring the
-        // member/parameter decorator paths in `decorator_signature_checks.rs`.
-        let decorator_expr = self.decorator_expression_anchor(decorator_node);
-        if self.decorator_has_zero_arg_factory_shape(decorator_expr, resolved, decorator_node) {
+        // TS1329: a bare-reference zero-argument factory used without its
+        // call. Parenthesized/inline factories are excluded and fall through
+        // to the arity/signature failure below.
+        if self.decorator_expression_is_reference(decorator_expression)
+            && self.decorator_has_zero_arg_factory_shape(
+                decorator_expression,
+                resolved,
+                decorator_node,
+            )
+        {
             return;
         }
 
-        // Check if the decorator type is callable.
-        // TypeData::Function has a single call signature (function declarations/expressions).
-        // TypeData::Callable has overloaded call/construct signatures (interfaces).
+        // No call signatures at all (a non-function value, or a class used as
+        // a decorator — construct signatures but no call signatures). tsc
+        // reports the not-callable chain directly from `resolveDecorator`,
+        // before it ever reaches `resolveCall`, and anchors it at the
+        // decorator expression.
         let has_call_signatures = class_query::has_function_shape(self.ctx.types, resolved)
             || call_signatures_for_type(self.ctx.types, resolved)
                 .is_some_and(|sigs| !sigs.is_empty());
-
         if !has_call_signatures {
-            // No call signatures at all (e.g., a class used as decorator — has construct
-            // signatures but no call signatures, or a bare primitive). tsc attaches the
-            // "This expression is not callable." / "Type 'X' has no call signatures."
-            // chain beneath TS1238 (oracle-verified, typescript@7.0.2).
-            let anchor = self.decorator_failure_anchor(decorator_node, resolved, 1);
-            self.emit_class_decorator_not_callable(anchor, resolved);
+            self.emit_class_decorator_not_callable(
+                self.decorator_expression_anchor(decorator_node),
+                resolved,
+            );
             return;
         }
 
-        // Has call signatures — try to resolve the call with the class constructor type.
-        // resolve_call handles both Function and Callable types internally.
-        // If resolution fails (type mismatch, arity error), emit TS1238.
         let class_constructor_type = self.get_class_constructor_type(class_idx, class);
         if class_constructor_type == TypeId::ERROR {
             return;
         }
 
-        let (result, _, _) = self.resolve_call_with_checker_adapter(
-            resolved,
-            &[class_constructor_type],
-            false,
-            None,
-            None,
-        );
+        let args = self.class_decorator_argument_types(resolved, class_constructor_type, legacy);
+        let (result, _, _) =
+            self.resolve_call_with_checker_adapter(resolved, &args, false, None, None);
 
-        let crate::query_boundaries::common::CallResult::Success(return_type) = &result else {
-            let anchor = self.decorator_failure_anchor(decorator_node, resolved, 1);
-            self.emit_decorator_signature_error(
-                anchor,
-                diagnostic_messages::UNABLE_TO_RESOLVE_SIGNATURE_OF_CLASS_DECORATOR_WHEN_CALLED_AS_AN_EXPRESSION,
-                diagnostic_codes::UNABLE_TO_RESOLVE_SIGNATURE_OF_CLASS_DECORATOR_WHEN_CALLED_AS_AN_EXPRESSION,
-                &result,
-            );
+        let CallResult::Success(return_type) = &result else {
+            self.emit_class_decorator_signature_error(decorator_node, &result, resolved);
             return;
         };
 
-        let return_type = self.evaluate_type_for_assignability(*return_type);
+        if legacy {
+            self.check_legacy_class_decorator_return_type(
+                decorator_node,
+                class_constructor_type,
+                *return_type,
+            );
+        }
+    }
+
+    /// The runtime argument list a class decorator is invoked with:
+    /// `[classConstructor]` under `--experimentalDecorators`, or the ES
+    /// `[value, ClassDecoratorContext<typeof C>]` truncated to the decorator's
+    /// own declared arity (tsc's `getDecoratorArgumentCount`, so a
+    /// single-parameter ES decorator receives only `value`).
+    fn class_decorator_argument_types(
+        &mut self,
+        resolved: TypeId,
+        class_constructor_type: TypeId,
+        legacy: bool,
+    ) -> Vec<TypeId> {
+        if legacy {
+            return vec![class_constructor_type];
+        }
+        // A single-parameter ES decorator receives only `value`, so skip the
+        // `ClassDecoratorContext<typeof C>` lib lookup entirely when the
+        // context argument would be truncated away.
+        if self.es_member_decorator_argument_count(resolved) <= 1 {
+            return vec![class_constructor_type];
+        }
+        let context = self
+            .resolve_decorator_context_type("ClassDecoratorContext", vec![class_constructor_type])
+            .unwrap_or(TypeId::OBJECT);
+        vec![class_constructor_type, context]
+    }
+
+    /// TS1270 for legacy class decorators: the resolved return type must be
+    /// assignable to `void | typeof C`. `any`/`unknown`/error short-circuit.
+    fn check_legacy_class_decorator_return_type(
+        &mut self,
+        decorator_node: NodeIndex,
+        class_constructor_type: TypeId,
+        return_type: TypeId,
+    ) {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+
+        let return_type = self.evaluate_type_for_assignability(return_type);
         if matches!(return_type, TypeId::ERROR | TypeId::ANY | TypeId::UNKNOWN) {
             return;
         }
 
-        let expected_return = self
-            .ctx
-            .types
-            .factory()
-            .union2(TypeId::VOID, class_constructor_type);
+        // The legacy class decorator may return `void` or a replacement
+        // constructor (`typeof C`); reuse the shared `void | replacement`
+        // builder rather than open-coding the union.
+        let expected_return = decorator_query::decorator_void_or_replacement_type(
+            self.ctx.types,
+            class_constructor_type,
+        );
         if !self
             .return_relation_outcome(return_type, expected_return)
             .related
@@ -311,115 +366,16 @@ impl<'a> CheckerState<'a> {
                 diagnostic_messages::DECORATOR_FUNCTION_RETURN_TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                 &[&return_str, &expected_str],
             );
-            let anchor = self.decorator_failure_anchor(decorator_node, resolved, 1);
+            // The call itself resolved successfully (only the return type is
+            // wrong), so this is never a "too few arguments" shape; tsc
+            // anchors at the decorator expression, not the whole `@decorator`
+            // span (oracle-verified, see
+            // `ts1238_experimental_decorator_anchor_tests`).
             self.error_at_node(
-                anchor,
+                self.decorator_expression_anchor(decorator_node),
                 &message,
                 diagnostic_codes::DECORATOR_FUNCTION_RETURN_TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
             );
-        }
-    }
-
-    /// TS1238/TS1329 for ES decorators: check that a class decorator's arity
-    /// is compatible with the runtime call.
-    ///
-    /// ES decorators receive `(value, context)` — at most 2 arguments. A
-    /// zero-parameter decorator is the "forgot to call the factory" shape
-    /// (TS1329, see `decorator_has_zero_arg_factory_shape`); one requiring
-    /// more than 2 required parameters can never be satisfied (TS1238).
-    pub(super) fn check_es_class_decorator_arity(
-        &mut self,
-        decorator_node: NodeIndex,
-        decorator_expression: NodeIndex,
-        decorator_type: TypeId,
-    ) {
-        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-
-        if decorator_type == TypeId::ERROR
-            || decorator_type == TypeId::ANY
-            || decorator_type == TypeId::UNKNOWN
-        {
-            return;
-        }
-
-        let resolved = self.evaluate_type_for_assignability(decorator_type);
-        if resolved == TypeId::ERROR || resolved == TypeId::ANY || resolved == TypeId::UNKNOWN {
-            return;
-        }
-
-        // Mirror tsc's `isUntypedFunctionCall`: a decorator typed as the
-        // global `Function` interface has no explicit call signatures but is
-        // still callable (see `check_class_decorator_call_signature`, whose
-        // legacy-mode counterpart of this same check applies the identical
-        // fallback).
-        let Some(resolved) = self.prepare_decorator_callee(resolved) else {
-            return;
-        };
-
-        // A decorator whose every call signature takes zero parameters is
-        // the "forgot to call the factory" shape (`@d` instead of `@d()`);
-        // tsc reports only the TS1329 hint there, not TS1238 — same rule as
-        // the legacy (`experimentalDecorators`) class-decorator path above.
-        // A type with no call signature at all (the not-callable case just
-        // below) has no signatures to inspect here, so this is a no-op for
-        // it and falls through correctly. `decorator_has_zero_arg_factory_shape`
-        // itself also declines (returns `false`) for a parenthesized decorator
-        // expression (`@(() => {})`), since tsc keeps the generic TS1238 arity
-        // failure there instead — that shape falls through to the
-        // `required_params == 0` arm below.
-        if self.decorator_has_zero_arg_factory_shape(decorator_expression, resolved, decorator_node)
-        {
-            return;
-        }
-
-        // No call signature at all (bare primitive, a class used as a
-        // decorator, ...): tsc's TS1238 "not callable" chain fires
-        // identically here as it does under `--experimentalDecorators`
-        // (oracle-verified, typescript@7.0.2). Previously this whole
-        // function only inspected `function_shape`, so any decorator type
-        // without a single-signature function shape (a primitive, a class,
-        // an overloaded callable) silently passed arity validation with no
-        // diagnostic at all.
-        let has_call_signatures =
-            crate::query_boundaries::class_type::has_function_shape(self.ctx.types, resolved)
-                || crate::query_boundaries::common::call_signatures_for_type(
-                    self.ctx.types,
-                    resolved,
-                )
-                .is_some_and(|sigs| !sigs.is_empty());
-        if !has_call_signatures {
-            self.emit_class_decorator_not_callable(decorator_expression, resolved);
-            return;
-        }
-
-        // Check the function shape for required parameter count
-        if let Some(shape) =
-            crate::query_boundaries::class_type::function_shape(self.ctx.types, resolved)
-        {
-            let required_params = shape
-                .params
-                .iter()
-                .filter(|p| !p.optional && !p.rest)
-                .count();
-            // ES decorators are invoked with `(value, context)`. When the
-            // factory requires more than two parameters, the call cannot
-            // supply them; tsc anchors that "too few arguments" failure at
-            // the whole decorator (including `@`) — same convention as the
-            // shared `decorator_failure_anchor` helper the legacy class- and
-            // member-decorator paths use. Zero required params is normally
-            // the TS1329 decorator-factory hint above, but a parenthesized
-            // expression opts out of that hint and still needs the arity
-            // failure here; since 0 declared params is never "too few" for
-            // a 2-argument call, that case anchors at the decorator
-            // expression instead (oracle-verified, typescript@7.0.2).
-            if required_params > 2 || required_params == 0 {
-                let anchor = self.decorator_failure_anchor(decorator_node, resolved, 2);
-                self.error_at_node(
-                    anchor,
-                    diagnostic_messages::UNABLE_TO_RESOLVE_SIGNATURE_OF_CLASS_DECORATOR_WHEN_CALLED_AS_AN_EXPRESSION,
-                    diagnostic_codes::UNABLE_TO_RESOLVE_SIGNATURE_OF_CLASS_DECORATOR_WHEN_CALLED_AS_AN_EXPRESSION,
-                );
-            }
         }
     }
 

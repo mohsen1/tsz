@@ -3,6 +3,7 @@
 use crate::diagnostics::{
     Diagnostic, DiagnosticRelatedInformation, diagnostic_codes, diagnostic_messages, format_message,
 };
+use crate::error_reporter::DiagnosticAnchorKind;
 use crate::query_boundaries::checkers::decorators as decorator_query;
 use crate::query_boundaries::common::CallResult;
 use crate::state::CheckerState;
@@ -35,8 +36,13 @@ impl<'a> CheckerState<'a> {
     /// trailing `...rest: any[]`) and too few arguments were supplied; a
     /// fixed-length rest tuple (`...rest: [string, number]`) still has a
     /// concrete `expected_max` and takes the exact-N wording (TS1278).
+    ///
+    /// When the failure is *too few* arguments, a second cross-location
+    /// pointer is attached at the first parameter the runtime cannot supply
+    /// (see [`Self::decorator_missing_argument_pointer`]).
     fn decorator_arity_related_info(
         &self,
+        decorator_node: NodeIndex,
         result: &CallResult,
     ) -> Vec<DiagnosticRelatedInformation> {
         let &CallResult::ArgumentCountMismatch {
@@ -63,26 +69,189 @@ impl<'a> CheckerState<'a> {
                 )
         };
         let expected_str = expected.to_string();
-        vec![Diagnostic::related_message(
+        let mut related = vec![Diagnostic::related_message(
             code,
             self.ctx.file_name.clone(),
             0,
             0,
             format_message(message_template, &[&expected_str, &actual_str]),
-        )]
+        )];
+        // Only a *too-few-arguments* failure attaches the "argument not
+        // provided" pointer; a "too many" failure supplies every declared
+        // parameter, so tsc adds no second line there.
+        if actual < expected_min
+            && let Some(pointer) = self.decorator_missing_argument_pointer(decorator_node, actual)
+        {
+            related.push(pointer);
+        }
+        related
     }
 
-    /// Emit a decorator signature-resolution error, attaching
-    /// [`Self::decorator_arity_related_info`] when `result` is an
-    /// argument-count mismatch.
-    pub(crate) fn emit_decorator_signature_error(
+    /// Cross-location pointer (`tsc`'s `relatedInformation`) beneath the
+    /// decorator signature-resolution error, anchored at the first declared
+    /// parameter the runtime invocation cannot supply.
+    ///
+    /// Mirrors tsc's `getArgumentArityError`, which — after the primary
+    /// TS1238/1239/1240/1241 and its TS1278/TS1279 elaboration — attaches a
+    /// pointer at `parameters[argCount]` (the first position the fixed decorator
+    /// calling convention leaves unfilled):
+    /// - TS6210 `An argument for '{0}' was not provided.` for an ordinary
+    ///   named parameter,
+    /// - TS6236 `Arguments for the rest parameter '{0}' were not provided.`
+    ///   when that parameter is variadic,
+    /// - TS6211 `An argument matching this binding pattern was not provided.`
+    ///   when it is a destructured (binding-pattern) parameter.
+    ///
+    /// Returns `None` when the decorator does not reference a single locatable
+    /// function-like declaration (an overloaded, imported, factory-call, or
+    /// property-access decorator): tsc anchors at the resolved signature's
+    /// declaration there, but without a unique local one the exact anchor
+    /// cannot be reproduced, so no pointer is attached rather than a wrong one.
+    fn decorator_missing_argument_pointer(
+        &self,
+        decorator_node: NodeIndex,
+        actual: usize,
+    ) -> Option<DiagnosticRelatedInformation> {
+        let params = self.decorator_declaration_value_parameter_nodes(decorator_node)?;
+        let param_idx = *params.get(actual)?;
+        let param_node = self.ctx.arena.get(param_idx)?;
+        let param = self.ctx.arena.get_parameter(param_node)?;
+        let anchor = self.resolve_diagnostic_anchor(param_idx, DiagnosticAnchorKind::Exact)?;
+
+        let name_node = self.ctx.arena.get(param.name);
+        let name_ident = name_node.and_then(|n| self.ctx.arena.get_identifier(n));
+        let (code, message) = if param.dot_dot_dot_token {
+            let name = name_ident?.escaped_text.to_string();
+            (
+                diagnostic_codes::ARGUMENTS_FOR_THE_REST_PARAMETER_WERE_NOT_PROVIDED,
+                format_message(
+                    diagnostic_messages::ARGUMENTS_FOR_THE_REST_PARAMETER_WERE_NOT_PROVIDED,
+                    &[&name],
+                ),
+            )
+        } else if let Some(ident) = name_ident {
+            let name = ident.escaped_text.to_string();
+            (
+                diagnostic_codes::AN_ARGUMENT_FOR_WAS_NOT_PROVIDED,
+                format_message(
+                    diagnostic_messages::AN_ARGUMENT_FOR_WAS_NOT_PROVIDED,
+                    &[&name],
+                ),
+            )
+        } else {
+            // A destructured parameter has no single name to quote.
+            (
+                diagnostic_codes::AN_ARGUMENT_MATCHING_THIS_BINDING_PATTERN_WAS_NOT_PROVIDED,
+                diagnostic_messages::AN_ARGUMENT_MATCHING_THIS_BINDING_PATTERN_WAS_NOT_PROVIDED
+                    .to_string(),
+            )
+        };
+        Some(Diagnostic::related_pointer(
+            code,
+            self.ctx.file_name.clone(),
+            anchor.start,
+            anchor.length,
+            message,
+        ))
+    }
+
+    /// The value-parameter declaration nodes (any leading explicit `this`
+    /// parameter removed, so the list is indexed the way the runtime supplies
+    /// value arguments) of the single function-like declaration a decorator
+    /// expression references, or `None` when the decorator is not a bare
+    /// `@name` bound to exactly one locatable function-like declaration.
+    fn decorator_declaration_value_parameter_nodes(
+        &self,
+        decorator_node: NodeIndex,
+    ) -> Option<Vec<NodeIndex>> {
+        let ident = self.decorator_callee_reference_identifier(decorator_node)?;
+        let sym_id = self.resolve_identifier_symbol_without_tracking(ident)?;
+        let decls = self.ctx.binder.get_symbol(sym_id)?.declarations.clone();
+        let mut found: Option<Vec<NodeIndex>> = None;
+        for decl in decls {
+            if let Some(params) = self.function_like_value_parameter_nodes(decl) {
+                if found.is_some() {
+                    // Overloaded / multiply-declared: the resolved signature is
+                    // ambiguous from the node alone, so decline rather than guess.
+                    return None;
+                }
+                found = Some(params);
+            }
+        }
+        found
+    }
+
+    /// Parameter declaration nodes of a function-like declaration — a function,
+    /// function expression, arrow, or method, or a variable initialized with
+    /// one — with any leading explicit `this` parameter removed.
+    fn function_like_value_parameter_nodes(&self, decl: NodeIndex) -> Option<Vec<NodeIndex>> {
+        let node = self.ctx.arena.get(decl)?;
+        let params = match node.kind {
+            k if k == syntax_kind_ext::FUNCTION_DECLARATION
+                || k == syntax_kind_ext::FUNCTION_EXPRESSION
+                || k == syntax_kind_ext::ARROW_FUNCTION =>
+            {
+                &self.ctx.arena.get_function(node)?.parameters
+            }
+            k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                &self.ctx.arena.get_method_decl(node)?.parameters
+            }
+            k if k == syntax_kind_ext::VARIABLE_DECLARATION => {
+                let init = self.ctx.arena.get_variable_declaration(node)?.initializer;
+                if init.is_none() {
+                    return None;
+                }
+                return self.function_like_value_parameter_nodes(init);
+            }
+            _ => return None,
+        };
+        Some(
+            params
+                .nodes
+                .iter()
+                .copied()
+                .filter(|&p| !self.parameter_is_this(p))
+                .collect(),
+        )
+    }
+
+    /// Whether a parameter declaration is an explicit `this: T` parameter,
+    /// which tsc excludes from the value-argument positions. The `this` name
+    /// parses as a `ThisKeyword` (not an ordinary identifier), so this defers
+    /// to the shared [`Self::is_this_parameter_name`] check.
+    fn parameter_is_this(&self, param_idx: NodeIndex) -> bool {
+        self.ctx
+            .arena
+            .get(param_idx)
+            .and_then(|n| self.ctx.arena.get_parameter(n))
+            .is_some_and(|p| self.is_this_parameter_name(p.name))
+    }
+
+    /// The identifier a decorator expression directly references, for a bare
+    /// `@name` (optionally parenthesized). Property-access (`@ns.dec`),
+    /// factory-call (`@make()`), and other forms return `None`.
+    fn decorator_callee_reference_identifier(
+        &self,
+        decorator_node: NodeIndex,
+    ) -> Option<NodeIndex> {
+        let node = self.ctx.arena.get(decorator_node)?;
+        let expr = self.ctx.arena.get_decorator(node)?.expression;
+        let expr = self.ctx.arena.skip_parenthesized(expr);
+        let expr_node = self.ctx.arena.get(expr)?;
+        (expr_node.kind == tsz_scanner::SyntaxKind::Identifier as u16).then_some(expr)
+    }
+
+    /// Emit `message`/`code` at `anchor`, attaching `related` as an
+    /// elaboration chain only when it is non-empty. Centralizes the
+    /// "diagnostic with optional related information" branch shared by every
+    /// decorator signature-error emitter.
+    fn error_at_node_maybe_related(
         &mut self,
         anchor: NodeIndex,
         message: &str,
         code: u32,
-        result: &CallResult,
+        related: Vec<DiagnosticRelatedInformation>,
     ) {
-        let related = self.decorator_arity_related_info(result);
         if related.is_empty() {
             self.error_at_node(anchor, message, code);
         } else {
@@ -90,23 +259,39 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// tsc's TS1238 "not callable" shape for a class decorator whose resolved
-    /// type carries no call signature at all — a bare primitive, a class
-    /// (construct signatures only, no call signatures), or any other
-    /// non-callable value. `This expression is not callable.` (TS2349) is
-    /// attached as an elaboration chain link beneath TS1238, with `Type 'X'
-    /// has no call signatures.` (TS2757) nested one level deeper. Oracle-
-    /// verified (`typescript@7.0.2`) to render identically under
-    /// `--experimentalDecorators` and ES (TC39 stage-3) class decorators;
-    /// shared by both call sites in `class_decorators.rs`. Chain-link
-    /// entries carry no real position (matching
-    /// [`Self::decorator_arity_related_info`]'s `(0, 0)` convention) since
-    /// `RelatedInformationKind::ChainLink` renders by depth, not location.
-    pub(crate) fn emit_class_decorator_not_callable(
+    /// Emit a decorator signature-resolution error, attaching
+    /// [`Self::decorator_arity_related_info`] when `result` is an
+    /// argument-count mismatch. `decorator_node` is the `@`-decorator syntax
+    /// node, used to locate the declared parameter the missing-argument pointer
+    /// anchors at.
+    pub(crate) fn emit_decorator_signature_error(
         &mut self,
         anchor: NodeIndex,
-        resolved: TypeId,
+        decorator_node: NodeIndex,
+        message: &str,
+        code: u32,
+        result: &CallResult,
     ) {
+        let related = self.decorator_arity_related_info(decorator_node, result);
+        self.error_at_node_maybe_related(anchor, message, code, related);
+    }
+
+    /// Related-information chain for a decorator whose callee has no call
+    /// signatures, mirroring tsc's `invocationErrorDetails` beneath the
+    /// TS1238/TS1239/TS1240/TS1241 head:
+    ///
+    /// ```text
+    ///   This expression is not callable.
+    ///     Type 'X' has no call signatures.
+    /// ```
+    ///
+    /// Chain-link entries carry no real position (matching
+    /// [`Self::decorator_arity_related_info`]'s `(0, 0)` convention) since
+    /// `RelatedInformationKind::ChainLink` renders by depth, not location.
+    fn decorator_not_callable_related_info(
+        &mut self,
+        resolved: TypeId,
+    ) -> Vec<DiagnosticRelatedInformation> {
         let mut related = vec![Diagnostic::related_message(
             diagnostic_codes::THIS_EXPRESSION_IS_NOT_CALLABLE,
             self.ctx.file_name.clone(),
@@ -123,12 +308,159 @@ impl<'a> CheckerState<'a> {
             detail.depth = 1;
             related.push(detail);
         }
-        self.error_at_node_with_related(
+        related
+    }
+
+    /// Related-information line for a decorator whose call fails because an
+    /// argument type is not assignable to the corresponding parameter: tsc's
+    /// `TS2345`-shaped "Argument of type '{0}' is not assignable to parameter
+    /// of type '{1}'." chained beneath the primary TS1238/… head. Returns
+    /// empty for every other [`CallResult`] shape so the arity and
+    /// not-callable paths keep ownership of theirs.
+    fn decorator_argument_mismatch_related_info(
+        &mut self,
+        result: &CallResult,
+    ) -> Vec<DiagnosticRelatedInformation> {
+        let &CallResult::ArgumentTypeMismatch {
+            expected, actual, ..
+        } = result
+        else {
+            return Vec::new();
+        };
+        let actual_str = self.format_type_diagnostic(actual);
+        let expected_str = self.format_type_diagnostic(expected);
+        vec![Diagnostic::related_message(
+            diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE,
+            self.ctx.file_name.clone(),
+            0,
+            0,
+            format_message(
+                diagnostic_messages::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE,
+                &[&actual_str, &expected_str],
+            ),
+        )]
+    }
+
+    /// Emit a class-decorator signature-resolution failure (TS1238) with the
+    /// full tsc elaboration for the specific [`CallResult`] shape:
+    ///
+    /// - argument-count mismatch -> TS1278/TS1279 ("The runtime will invoke
+    ///   the decorator with {1} arguments, but the decorator expects {0}[ at
+    ///   least]."), plus the TS6210/TS6236 missing-argument pointer;
+    /// - non-callable callee -> the not-callable / no-call-signatures chain;
+    /// - argument type mismatch -> the TS2345 "not assignable" line.
+    ///
+    /// Any other shape falls back to the bare primary message. The class-
+    /// decorator sites feed the *real* value/context argument types
+    /// (`typeof C`, `ClassDecoratorContext<typeof C>`), so the rendered
+    /// argument-mismatch type matches tsc exactly — unlike the legacy member
+    /// paths, which supply synthetic placeholders and therefore keep using
+    /// [`Self::emit_decorator_signature_error`] (arity elaboration only).
+    pub(crate) fn emit_class_decorator_signature_error(
+        &mut self,
+        decorator_node: NodeIndex,
+        result: &CallResult,
+        resolved: TypeId,
+    ) {
+        let anchor = self.class_decorator_failure_anchor(decorator_node, result);
+        // Each failure shape owns exactly one elaboration; dispatch directly
+        // rather than probing each helper in turn.
+        let related = match result {
+            CallResult::ArgumentCountMismatch { .. }
+            | CallResult::OverloadArgumentCountMismatch { .. } => {
+                self.decorator_arity_related_info(decorator_node, result)
+            }
+            CallResult::ArgumentTypeMismatch { .. } => {
+                self.decorator_argument_mismatch_related_info(result)
+            }
+            CallResult::NotCallable { .. } => self.decorator_not_callable_related_info(resolved),
+            _ => Vec::new(),
+        };
+        self.error_at_node_maybe_related(
             anchor,
             diagnostic_messages::UNABLE_TO_RESOLVE_SIGNATURE_OF_CLASS_DECORATOR_WHEN_CALLED_AS_AN_EXPRESSION,
             diagnostic_codes::UNABLE_TO_RESOLVE_SIGNATURE_OF_CLASS_DECORATOR_WHEN_CALLED_AS_AN_EXPRESSION,
             related,
         );
+    }
+
+    /// The anchor tsc uses for a class-decorator call failure, keyed on the
+    /// failure kind rather than a parameter-count heuristic: the whole
+    /// decorator (spanning the leading `@`) only when the decorator was given
+    /// *too few* arguments (`decorator(classConstructor[, context])` cannot
+    /// supply a required parameter), and the decorator expression alone for a
+    /// too-many-arguments count, an argument type mismatch, or a non-callable
+    /// callee. This mirrors tsc's call-node anchoring and, unlike the
+    /// parameter-count heuristic used for member decorators, is not fooled by
+    /// a rest parameter inflating the declared count on a type-mismatch
+    /// failure.
+    fn class_decorator_failure_anchor(
+        &self,
+        decorator_node: NodeIndex,
+        result: &CallResult,
+    ) -> NodeIndex {
+        let too_few = match result {
+            CallResult::ArgumentCountMismatch {
+                expected_min,
+                actual,
+                ..
+            } => actual < expected_min,
+            CallResult::OverloadArgumentCountMismatch {
+                actual,
+                expected_low,
+                ..
+            } => actual < expected_low,
+            _ => false,
+        };
+        if too_few {
+            decorator_node
+        } else {
+            self.decorator_expression_anchor(decorator_node)
+        }
+    }
+
+    /// tsc's TS1238 "not callable" shape for a class decorator whose resolved
+    /// type carries no call signature at all — a bare primitive, a class
+    /// (construct signatures only, no call signatures), or any other
+    /// non-callable value. Emits the primary TS1238 anchored at `anchor` with
+    /// the "This expression is not callable." / "Type 'X' has no call
+    /// signatures." chain beneath it. Oracle-verified (`typescript@7.0.2`) to
+    /// render identically under `--experimentalDecorators` and ES (TC39
+    /// stage-3) class decorators.
+    pub(crate) fn emit_class_decorator_not_callable(
+        &mut self,
+        anchor: NodeIndex,
+        resolved: TypeId,
+    ) {
+        let related = self.decorator_not_callable_related_info(resolved);
+        self.error_at_node_maybe_related(
+            anchor,
+            diagnostic_messages::UNABLE_TO_RESOLVE_SIGNATURE_OF_CLASS_DECORATOR_WHEN_CALLED_AS_AN_EXPRESSION,
+            diagnostic_codes::UNABLE_TO_RESOLVE_SIGNATURE_OF_CLASS_DECORATOR_WHEN_CALLED_AS_AN_EXPRESSION,
+            related,
+        );
+    }
+
+    /// Whether a decorator expression is a bare referenceable entity — an
+    /// identifier, a (possibly nested) property-access chain, or a call
+    /// expression (`@d()`, whose zero-arg *result* can itself be the
+    /// "forgot to call it" shape one level deeper) — rather than a
+    /// parenthesized or inline function expression.
+    ///
+    /// Observed tsc behavior (oracle-verified against `typescript@7.0.2`): the
+    /// TS1329 "did you mean to call it first" hint fires for referenceable
+    /// decorators (`@d`, `@ns.d`, `@d()`). A parenthesized/inline factory
+    /// (`@(() => {})`, `@(d)`) instead reports the plain arity/signature
+    /// failure. The class path gates the shared zero-argument-factory check
+    /// ([`Self::decorator_has_zero_arg_factory_shape`]) on this predicate; the
+    /// member/parameter paths do not front-guard it, so this deliberately does
+    /// not attempt to unify their (separate) handling.
+    pub(crate) fn decorator_expression_is_reference(&self, expr: NodeIndex) -> bool {
+        self.ctx.arena.get(expr).is_some_and(|node| {
+            node.kind == tsz_scanner::SyntaxKind::Identifier as u16
+                || node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                || node.kind == syntax_kind_ext::CALL_EXPRESSION
+        })
     }
 
     /// tsc anchors member/parameter decorator failures (TS1239/TS1240/TS1241)
@@ -147,9 +479,7 @@ impl<'a> CheckerState<'a> {
             .unwrap_or(decorator_node)
     }
 
-    /// Shared with the class-decorator TS1238 path in `class_decorators.rs`,
-    /// which anchors legacy class-decorator call failures the same way.
-    pub(crate) fn decorator_failure_anchor(
+    fn decorator_failure_anchor(
         &self,
         decorator_node: NodeIndex,
         resolved: TypeId,
@@ -228,6 +558,7 @@ impl<'a> CheckerState<'a> {
         if !matches!(result, CallResult::Success(_)) {
             self.emit_decorator_signature_error(
                 self.decorator_failure_anchor(decorator_node, resolved, args.len()),
+                decorator_node,
                 diagnostic_messages::UNABLE_TO_RESOLVE_SIGNATURE_OF_PROPERTY_DECORATOR_WHEN_CALLED_AS_AN_EXPRESSION,
                 diagnostic_codes::UNABLE_TO_RESOLVE_SIGNATURE_OF_PROPERTY_DECORATOR_WHEN_CALLED_AS_AN_EXPRESSION,
                 &result,
@@ -365,7 +696,7 @@ impl<'a> CheckerState<'a> {
     /// fixed synthetic argument list cannot reproduce, so the longer 2-argument
     /// form is supplied rather than risk dropping an argument a wider overload
     /// requires.
-    fn es_member_decorator_argument_count(&self, decorator_type: TypeId) -> usize {
+    pub(crate) fn es_member_decorator_argument_count(&self, decorator_type: TypeId) -> usize {
         // `min(max(paramCount, 1), 2)` for a single declared signature; an
         // unknown shape or an overload set falls back to the full two-argument
         // call so exotic callees behave as they did before.
@@ -470,6 +801,7 @@ impl<'a> CheckerState<'a> {
             _ => {
                 self.emit_decorator_signature_error(
                     self.decorator_failure_anchor(decorator_node, resolved, arg_types.len()),
+                    decorator_node,
                     diagnostic_messages::UNABLE_TO_RESOLVE_SIGNATURE_OF_METHOD_DECORATOR_WHEN_CALLED_AS_AN_EXPRESSION,
                     diagnostic_codes::UNABLE_TO_RESOLVE_SIGNATURE_OF_METHOD_DECORATOR_WHEN_CALLED_AS_AN_EXPRESSION,
                     &result,
@@ -626,7 +958,11 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn resolve_decorator_context_type(&mut self, name: &str, args: Vec<TypeId>) -> Option<TypeId> {
+    pub(crate) fn resolve_decorator_context_type(
+        &mut self,
+        name: &str,
+        args: Vec<TypeId>,
+    ) -> Option<TypeId> {
         let lib_binders = self.get_lib_binders();
         let sym_id = self
             .ctx
@@ -861,6 +1197,7 @@ impl<'a> CheckerState<'a> {
             _ => {
                 self.emit_decorator_signature_error(
                     self.decorator_failure_anchor(decorator_node, resolved, arg_types.len()),
+                    decorator_node,
                     diagnostic_messages::UNABLE_TO_RESOLVE_SIGNATURE_OF_PROPERTY_DECORATOR_WHEN_CALLED_AS_AN_EXPRESSION,
                     diagnostic_codes::UNABLE_TO_RESOLVE_SIGNATURE_OF_PROPERTY_DECORATOR_WHEN_CALLED_AS_AN_EXPRESSION,
                     &result,
@@ -994,6 +1331,7 @@ impl<'a> CheckerState<'a> {
             _ => {
                 self.emit_decorator_signature_error(
                     self.decorator_failure_anchor(decorator_node, resolved, 3),
+                    decorator_node,
                     diagnostic_messages::UNABLE_TO_RESOLVE_SIGNATURE_OF_PARAMETER_DECORATOR_WHEN_CALLED_AS_AN_EXPRESSION,
                     diagnostic_codes::UNABLE_TO_RESOLVE_SIGNATURE_OF_PARAMETER_DECORATOR_WHEN_CALLED_AS_AN_EXPRESSION,
                     &result,
