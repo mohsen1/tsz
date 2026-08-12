@@ -135,6 +135,12 @@ mod class_property_constructor_flow_inference_tests;
 #[path = "../tests/class_property_typed_const_initializer_tests.rs"]
 mod class_property_typed_const_initializer_tests;
 #[cfg(test)]
+#[path = "../tests/commonjs_circular_alias_ts2303_tests.rs"]
+mod commonjs_circular_alias_ts2303_tests;
+#[cfg(test)]
+#[path = "../tests/commonjs_export_assignment_reference_tests.rs"]
+mod commonjs_export_assignment_reference_tests;
+#[cfg(test)]
 #[path = "../tests/comparability_indexed_access_reduce_tests.rs"]
 mod comparability_indexed_access_reduce_tests;
 #[cfg(test)]
