@@ -185,17 +185,31 @@ impl<'a> CheckerState<'a> {
                 Ok(resolved) => resolved,
                 Err((member_offset, member_name)) => {
                     if let Some(comment_start) = jsdoc_comment_start {
-                        // NOTE (#17177 follow-up): for a *relative* specifier this
-                        // still renders the un-resolved stem, unlike the TS-syntax
-                        // `import(...).Member` and JSDoc `@type`/`@typedef` paths,
-                        // which now name the module by its resolved file path via
-                        // `resolved_import_type_module_path`. Routing this
-                        // `typeof import(...).member` export= site through that
-                        // helper is deferred: its `.export=` namespace naming has a
-                        // separate, unverified `tsc` divergence, so a display change
-                        // here needs its own oracle check before it can land.
-                        let display_name =
-                            self.imported_namespace_display_module_name(&module_specifier);
+                        // `resolved_import_type_module_path`, not
+                        // `imported_namespace_display_module_name`: tsc's
+                        // TS2694 text names the resolved file path (extension
+                        // stripped) for a real module even under a relative
+                        // specifier — the same rule the TS-syntax
+                        // `import(...).Member` and JSDoc `@type`/`@typedef`
+                        // paths already apply (see the sibling comments in
+                        // `import_type.rs` and `jsdoc/resolution/import_reference.rs`).
+                        // An ambient/unresolved specifier has no backing file,
+                        // so it falls back to the literal-specifier display,
+                        // matching how `tsc` names an ambient module symbol.
+                        //
+                        // This does NOT touch the `.export=` suffix below,
+                        // which this site appends unconditionally regardless
+                        // of whether the target module actually has an
+                        // `export =`/`module.exports =` — oracle-verified
+                        // still wrong for a plain named-export CommonJS
+                        // module (`tsc` omits `.export=` there). That is a
+                        // separate emission bug, not a display-path bug; left
+                        // for a follow-up.
+                        let display_name = self
+                            .resolved_import_type_module_path(&module_specifier, None)
+                            .unwrap_or_else(|| {
+                                self.imported_namespace_display_module_name(&module_specifier)
+                            });
                         let resolved_qualifier = segments
                             .iter()
                             .filter_map(|(offset, segment)| {
