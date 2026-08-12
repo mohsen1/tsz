@@ -2897,3 +2897,6 @@ path = "tests/abstract_method_overload_ts2391_suppression_tests.rs"
 [[test]]
 name = "ts2694_namespace_resolved_path_tests"
 path = "tests/ts2694_namespace_resolved_path_tests.rs"
+[[test]]
+name = "ts_import_type_namespace_meaning_gate_tests"
+path = "tests/ts_import_type_namespace_meaning_gate_tests.rs"
