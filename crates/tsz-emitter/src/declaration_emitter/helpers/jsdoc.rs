@@ -1423,12 +1423,59 @@ impl<'a> DeclarationEmitter<'a> {
         })
     }
 
+    /// Split one normalized JSDoc line into per-tag segments.
+    ///
+    /// tsc's JSDoc scanner ends a tag's comment at an `@` that follows
+    /// whitespace and starts a tag name, so one physical line can carry
+    /// several tags (`@param {number} [a] @param {number} b`). An `@`
+    /// inside a braced group (`{@link ...}`, type expressions) or a
+    /// backtick code span stays part of the current segment, and an `@`
+    /// glued to preceding text (`user@host`) never starts a tag.
+    pub(in crate::declaration_emitter) fn split_jsdoc_tag_segments(line: &str) -> Vec<&str> {
+        let mut segments = Vec::new();
+        let mut start = 0usize;
+        let mut brace_depth = 0usize;
+        let mut in_backticks = false;
+        let mut prev_char = ' ';
+        let mut chars = line.char_indices().peekable();
+        while let Some((idx, ch)) = chars.next() {
+            match ch {
+                '`' => in_backticks = !in_backticks,
+                '{' if !in_backticks => brace_depth += 1,
+                '}' if !in_backticks => brace_depth = brace_depth.saturating_sub(1),
+                '@' if !in_backticks
+                    && brace_depth == 0
+                    && prev_char.is_whitespace()
+                    && chars
+                        .peek()
+                        .is_some_and(|&(_, next)| next.is_ascii_alphabetic()) =>
+                {
+                    if idx > start {
+                        let segment = line[start..idx].trim_end();
+                        if !segment.is_empty() {
+                            segments.push(segment);
+                        }
+                        start = idx;
+                    }
+                }
+                _ => {}
+            }
+            prev_char = ch;
+        }
+        let tail = line[start..].trim_end();
+        if !tail.is_empty() {
+            segments.push(tail);
+        }
+        segments
+    }
+
     pub(in crate::declaration_emitter) fn parse_jsdoc_param_decls(
         jsdoc: &str,
     ) -> Vec<JsdocParamDecl> {
         jsdoc
             .lines()
             .map(|raw_line| raw_line.trim_start_matches('*').trim())
+            .flat_map(Self::split_jsdoc_tag_segments)
             .filter_map(Self::parse_jsdoc_param_decl)
             .collect()
     }
