@@ -377,14 +377,14 @@ interface StringTreeArray extends Array<StringTree> { }
 /// not as its own entry in the flat diagnostics list.
 ///
 /// tsz's `TS2322` chain-link elaboration already matches the oracle exactly
-/// (verified byte-for-byte). Its `TS2720` does **not** yet carry an
-/// elaboration line at all — `tsc` attaches one there too (either the same
-/// "is missing" form, when the implementing class has no member of that name,
-/// or `"Types have separate declarations of a private property 'x'."` when it
-/// does — oracle-verified on the adjacent `case6` shape, tracked as a
-/// follow-up rather than fixed here since it needs the fuller member-by-member
-/// analysis this early-exit branch skips). This test asserts only the
-/// oracle-verified, currently-correct half.
+/// (verified byte-for-byte). Its `TS2720` now carries the matching elaboration
+/// too (#17216): the whole-type relation names the offending member, so this
+/// implementing class (no member of that name) gets the "is missing" form,
+/// while the adjacent `case6` shape — a class with its own same-named private
+/// member — gets `"Types have separate declarations of a private property
+/// 'x'."`. The class-target private/protected branch used to early-exit with a
+/// bare TS2720 and no member line; it now routes through the structural
+/// relation exactly like the assignment path above.
 #[test]
 fn test_class_implements_class4_full_conformance() {
     let source = r#"
@@ -405,9 +405,17 @@ c2 = c;
 "#;
     let raw = compile_and_get_raw_diagnostics_named("test.ts", source, CheckerOptions::default());
     let codes: Vec<u32> = raw.iter().map(|d| d.code).collect();
+    let implements_diag = raw.iter().find(|d| d.code == 2720).unwrap_or_else(|| {
+        panic!("Expected TS2720 for 'class C implements A'. Got codes: {codes:?}")
+    });
+    // #17216: the class-target private branch now nests the missing-member line
+    // under TS2720, matching the oracle's message chain (`C` has no member `x`).
     assert!(
-        raw.iter().any(|d| d.code == 2720),
-        "Expected TS2720 for 'class C implements A'. Got codes: {codes:?}"
+        implements_diag
+            .message_text
+            .contains("Property 'x' is missing in type 'C' but required in type 'A'."),
+        "TS2720 must nest the missing-member elaboration, got: {:?}",
+        implements_diag.message_text
     );
     let assignment_diag = raw
         .iter()

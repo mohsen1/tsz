@@ -2506,6 +2506,9 @@ path = "tests/class_interface_namespace_merge_tests.rs"
 name = "class_interface_self_merge_implements_tests"
 path = "tests/class_interface_self_merge_implements_tests.rs"
 [[test]]
+name = "class_implements_ts2720_elaboration_tests"
+path = "tests/class_implements_ts2720_elaboration_tests.rs"
+[[test]]
 name = "order_independent_alias_resolution_tests"
 path = "tests/order_independent_alias_resolution_tests.rs"
 [[test]]

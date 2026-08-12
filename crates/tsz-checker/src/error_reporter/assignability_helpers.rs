@@ -1086,6 +1086,162 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Report TS2720 for a class that `implements` another class carrying
+    /// private/protected (nominal) members, driven by the whole-type relation.
+    ///
+    /// `tsc` runs the structural relation here rather than a member-by-member
+    /// walk: the nominal brand is satisfiable only by a subclass that inherits
+    /// the declaration, so `class C extends A implements A` relates and stays
+    /// silent, while any independent `implements` fails and reports TS2720 with
+    /// the specific member elaboration that named the break (missing /
+    /// separate-declaration / visibility). The old branch fired an
+    /// elaboration-less TS2720 unconditionally, dropping the member line and
+    /// over-reporting the assignable extends-the-same-base case (#17216).
+    pub(crate) fn report_class_implements_nominal_failure(
+        &mut self,
+        class_instance_type: TypeId,
+        interface_type: TypeId,
+        class_this_type: Option<TypeId>,
+        class_error_idx: NodeIndex,
+        class_name: &str,
+        interface_name: &str,
+        interface_display_name: &str,
+    ) {
+        // Substitute the implementing class's `this` into the target before the
+        // relation, matching the per-property substitution the member walk does.
+        let target_type = crate::query_boundaries::class::maybe_substitute_this_type(
+            self.ctx.types,
+            interface_type,
+            class_this_type,
+        );
+        let Some(reason) = self
+            .analyze_assignability_failure(class_instance_type, target_type)
+            .failure_reason
+        else {
+            return;
+        };
+        let primary = format!(
+            "Class '{class_name}' incorrectly implements class '{interface_name}'. Did you mean to extend '{interface_name}' and inherit its members as a subclass?"
+        );
+        let full = match self.class_target_nominal_elaboration(
+            &reason,
+            class_instance_type,
+            target_type,
+            class_name,
+            interface_display_name,
+        ) {
+            Some(line) => format!("{primary}\n  {line}"),
+            None => primary,
+        };
+        self.error_at_node(
+            class_error_idx,
+            &full,
+            diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_CLASS_DID_YOU_MEAN_TO_EXTEND_AND_INHERIT_ITS_MEMBER,
+        );
+    }
+
+    /// The elaboration line tsc nests under a class-target TS2720, naming the
+    /// specific member whose absence or nominal (private/protected) identity
+    /// broke the whole-type relation between the implementing class and the
+    /// class it `implements`. Returns `None` when the structural failure carries
+    /// no such per-member line, leaving the bare TS2720 to stand alone.
+    ///
+    /// The mapping mirrors tsc's own `propertiesRelatedTo` reporting order:
+    /// truly-absent members (`MissingProperty`/`MissingProperties`) win over a
+    /// present-but-nominally-mismatched one, and a present private/protected
+    /// member is rendered through the same helpers every other assignability
+    /// site uses (`nominal_mismatch_detail` for the separate-declaration forms,
+    /// the shadowed-visibility fallback for a public member masking a non-public
+    /// slot).
+    pub(crate) fn class_target_nominal_elaboration(
+        &mut self,
+        reason: &tsz_solver::SubtypeFailureReason,
+        source: TypeId,
+        target: TypeId,
+        class_display: &str,
+        target_display: &str,
+    ) -> Option<String> {
+        use tsz_solver::SubtypeFailureReason as Reason;
+        match reason {
+            Reason::MissingProperty { property_name, .. } => {
+                let prop = self.ctx.types.resolve_atom(*property_name);
+                Some(format_message(
+                    diagnostic_messages::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
+                    &[&prop, class_display, target_display],
+                ))
+            }
+            Reason::MissingProperties { property_names, .. } => {
+                // Reuse the crate's canonical truncation + message so the
+                // >5-only "and N more" rule and enum-key rendering match every
+                // other TS2739/TS2740 site (not a hand-rolled >4 threshold).
+                let ordered = self.sort_missing_property_names_for_display(target, property_names);
+                let (list, more) = self.truncated_missing_property_list(&ordered, target);
+                Some(match more {
+                    Some(more_count) => format_message(
+                        diagnostic_messages::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE_AND_MORE,
+                        &[class_display, target_display, &list, &more_count.to_string()],
+                    ),
+                    None => format_message(
+                        diagnostic_messages::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE,
+                        &[class_display, target_display, &list],
+                    ),
+                })
+            }
+            Reason::PropertyNominalMismatch { property_name } => self
+                .nominal_mismatch_detail(source, target, *property_name)
+                .or_else(|| self.class_target_shadowed_member_line(source, target, *property_name)),
+            Reason::PropertyVisibilityMismatch { property_name, .. } => {
+                self.class_target_shadowed_member_line(source, target, *property_name)
+            }
+            _ => None,
+        }
+    }
+
+    /// The `Property 'x' is private in type 'A' but not in type 'C'` (TS2325) or
+    /// the protected-brand `Property 'x' is protected but type 'C' is not a class
+    /// derived from 'A'` (TS2443) line for a class target whose non-public member
+    /// is shadowed by a *differently-visible* same-named member on the
+    /// implementing class. `nominal_mismatch_detail` declines this shape because
+    /// the two sides disagree on visibility, so there is no shared
+    /// separate-declaration story to tell.
+    fn class_target_shadowed_member_line(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        property_name: tsz_common::interner::Atom,
+    ) -> Option<String> {
+        let target_prop = self.property_info_for_display(target, property_name)?;
+        let prop = self.ctx.types.resolve_atom(property_name);
+        match target_prop.visibility {
+            tsz_solver::Visibility::Private => {
+                let owner = target_prop
+                    .parent_id
+                    .and_then(|sym_id| self.ctx.binder.get_symbol(sym_id))
+                    .map(|sym| sym.escaped_name.clone())
+                    .unwrap_or_else(|| self.format_type_diagnostic(target));
+                let widened = self.widen_type_for_display(source);
+                let source_display = self.format_type_diagnostic(widened);
+                Some(format_message(
+                    diagnostic_messages::PROPERTY_IS_PRIVATE_IN_TYPE_BUT_NOT_IN_TYPE,
+                    &[&prop, &owner, &source_display],
+                ))
+            }
+            tsz_solver::Visibility::Protected => {
+                let source_parent = self
+                    .property_info_for_display(source, property_name)
+                    .and_then(|sp| sp.parent_id);
+                self.protected_brand_mismatch_error(
+                    &prop,
+                    source,
+                    target,
+                    source_parent,
+                    target_prop.parent_id,
+                )
+            }
+            tsz_solver::Visibility::Public => None,
+        }
+    }
+
     pub(super) fn canonical_array_display_rank(name: &str) -> Option<usize> {
         match name {
             "length" => Some(0),

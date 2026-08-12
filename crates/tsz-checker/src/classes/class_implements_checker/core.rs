@@ -1194,14 +1194,6 @@ impl<'a> CheckerState<'a> {
                     let report_inaccessible_privates =
                         any_inaccessible_privates && !any_accessible_privates;
 
-                    if has_private_members && !is_self_merge {
-                        let message = format!(
-                            "Class '{class_name}' incorrectly implements class '{interface_name}'. Did you mean to extend '{interface_name}' and inherit its members as a subclass?"
-                        );
-                        self.error_at_node(class_error_idx, &message, diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_CLASS_DID_YOU_MEAN_TO_EXTEND_AND_INHERIT_ITS_MEMBER);
-                        continue;
-                    }
-
                     // Check that all interface members are implemented with compatible types
                     let mut missing_members: Vec<String> = Vec::new();
                     let mut incompatible_members: Vec<(NodeIndex, String, TypeId, TypeId)> =
@@ -1354,6 +1346,30 @@ impl<'a> CheckerState<'a> {
                         .get_node_symbol(class_idx)
                         .and_then(|sym_id| self.class_instance_type_from_symbol(sym_id))
                         .or_else(|| self.current_this_type());
+
+                    // A class target carrying private/protected members is
+                    // nominal: its brand can only be satisfied by a subclass that
+                    // inherits the declaration, never by an independent
+                    // `implements`. This case owns its TS2720 report through the
+                    // whole-type relation (so `class C extends A implements A`
+                    // stays silent, and the offending member is named), then skips
+                    // the member-by-member walk, which cannot see nominal identity.
+                    // See `report_class_implements_nominal_failure` (#17216).
+                    if has_private_members && !is_self_merge {
+                        let class_instance_type =
+                            self.get_class_instance_type(class_idx, class_data);
+                        self.report_class_implements_nominal_failure(
+                            class_instance_type,
+                            interface_type,
+                            class_this_type,
+                            class_error_idx,
+                            &class_name,
+                            &interface_name,
+                            &interface_display_name,
+                        );
+                        self.pop_type_parameters(interface_type_param_updates);
+                        continue;
+                    }
 
                     for prop in &interface_properties {
                         let member_name = self.ctx.types.resolve_atom(prop.name);
