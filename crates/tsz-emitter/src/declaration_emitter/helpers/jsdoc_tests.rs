@@ -294,3 +294,69 @@ fn ambient_module_relative_specifier_drops_unmatched_parent_segments() {
         "x"
     );
 }
+
+#[test]
+fn tag_segments_split_at_whitespace_preceded_at_signs() {
+    assert_eq!(
+        DeclarationEmitter::split_jsdoc_tag_segments("@param {number} [a] @param {number} b"),
+        vec!["@param {number} [a]", "@param {number} b"]
+    );
+    // Leading description text becomes its own (non-tag) segment.
+    assert_eq!(
+        DeclarationEmitter::split_jsdoc_tag_segments("Computes a thing @param {number} seed"),
+        vec!["Computes a thing", "@param {number} seed"]
+    );
+}
+
+#[test]
+fn tag_segments_protect_braced_groups_backticks_and_glued_at() {
+    // `{@link ...}` stays inside the current segment.
+    assert_eq!(
+        DeclarationEmitter::split_jsdoc_tag_segments(
+            "@param {number} first - see {@link other} @param {string} second"
+        ),
+        vec![
+            "@param {number} first - see {@link other}",
+            "@param {string} second"
+        ]
+    );
+    // A backtick code span protects tag-like text.
+    assert_eq!(
+        DeclarationEmitter::split_jsdoc_tag_segments(
+            "@param {number} real - use `@param {string} fake` in docs"
+        ),
+        vec!["@param {number} real - use `@param {string} fake` in docs"]
+    );
+    // A glued `@` (email) is not a tag boundary.
+    assert_eq!(
+        DeclarationEmitter::split_jsdoc_tag_segments(
+            "@param {string} addr mail user@host.example @param {string} subject"
+        ),
+        vec![
+            "@param {string} addr mail user@host.example",
+            "@param {string} subject"
+        ]
+    );
+    // `@` followed by whitespace or punctuation is comment text, not a tag.
+    assert_eq!(
+        DeclarationEmitter::split_jsdoc_tag_segments("@param {string} sigil - an @ alone @!bang"),
+        vec!["@param {string} sigil - an @ alone @!bang"]
+    );
+}
+
+#[test]
+fn param_decls_parse_every_tag_on_one_line() {
+    let decls =
+        DeclarationEmitter::parse_jsdoc_param_decls("@param {number=} lo @param {string} [hi]");
+    let summary: Vec<(String, String, bool)> = decls
+        .into_iter()
+        .map(|d| (d.name, d.type_text, d.optional))
+        .collect();
+    assert_eq!(
+        summary,
+        vec![
+            ("lo".to_string(), "number".to_string(), true),
+            ("hi".to_string(), "string".to_string(), true),
+        ]
+    );
+}
