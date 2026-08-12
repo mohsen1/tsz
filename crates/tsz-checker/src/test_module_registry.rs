@@ -519,6 +519,8 @@ mod issue_9762_literal_init_callback_inference;
 mod iterable_next_relation_routing_arch_tests;
 #[path = "tests/iterator_override_widened_value_tests.rs"]
 mod iterator_override_widened_value_tests;
+#[path = "tests/js_cross_file_expando_declaration_tests.rs"]
+mod js_cross_file_expando_declaration_tests;
 #[path = "tests/js_expando_order_sensitivity_tests.rs"]
 mod js_expando_order_sensitivity_tests;
 #[path = "tests/js_file_function_parameters_as_optional_tests.rs"]

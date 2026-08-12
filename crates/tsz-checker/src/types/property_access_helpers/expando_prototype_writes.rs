@@ -78,6 +78,113 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    /// Accumulate a host verdict over the declaring assignments of one
+    /// expando member key: `found` flips when any `<expected_key> = rhs`
+    /// assignment (non-void-zero RHS) exists in this subtree, and `all_host`
+    /// is AND-accumulated with each such RHS being an expando-host shape — an empty
+    /// object literal, a function/arrow expression, or a class expression
+    /// (tsc's `getExpandoInitializer` shapes). A single closed-shape write
+    /// closes the member in either order (oracle-verified), so the verdict
+    /// requires EVERY declaring write to be host-shaped.
+    fn accumulate_expando_assignment_rhs_host_verdict(
+        arena: &NodeArena,
+        idx: NodeIndex,
+        expected_key: &str,
+        found: &mut bool,
+        all_host: &mut bool,
+    ) {
+        let Some(node) = arena.get(idx) else {
+            return;
+        };
+
+        if node.kind == syntax_kind_ext::BINARY_EXPRESSION
+            && let Some(binary) = arena.get_binary_expr(node)
+            && binary.operator_token == SyntaxKind::EqualsToken as u16
+            && Self::expando_assignment_access_key_in_arena(arena, binary.left)
+                .is_some_and(|key| key == expected_key)
+            && !Self::is_void_zero_or_undefined_rhs_in_arena(arena, binary.right)
+        {
+            *found = true;
+            let rhs_is_host = arena.get(binary.right).is_some_and(|rhs| {
+                rhs.is_function_expression_or_arrow()
+                    || rhs.kind == syntax_kind_ext::CLASS_EXPRESSION
+            }) || arena.is_empty_object_literal(binary.right);
+            *all_host &= rhs_is_host;
+        }
+
+        for child_idx in arena.get_children(idx) {
+            Self::accumulate_expando_assignment_rhs_host_verdict(
+                arena,
+                child_idx,
+                expected_key,
+                found,
+                all_host,
+            );
+        }
+    }
+
+    /// Whether the base link of a nested expando chain (`a.b` in `a.b.c`) is
+    /// itself an expando HOST: every syntactically visible declaring write
+    /// `a.b = rhs` has a host-shaped RHS (empty literal, function, or class
+    /// expression). A base with any closed-shape declaring write
+    /// (`a.b = { k: 1 }`) is not a host — tsc types it as its literal shape
+    /// and reports TS2339 on the nested member under `noImplicitAny`, and a
+    /// single closed write closes the member even when a host-shaped write
+    /// also exists (oracle-verified, either order). When NO declaring
+    /// assignment is visible in the root's file or the current file (e.g. it
+    /// lives in a third file, or the member came from an element-access
+    /// write), stay permissive: the member-declared answer stands.
+    pub(super) fn nested_expando_base_link_rhs_is_host(
+        &self,
+        base_expr_idx: NodeIndex,
+        member_name: &str,
+    ) -> bool {
+        let mut file_indices: Vec<usize> = Vec::new();
+        if let Some(file_idx) = self.expando_root_js_file_idx(base_expr_idx) {
+            file_indices.push(file_idx);
+        }
+        let current_file_idx = self.ctx.current_file_idx;
+        if !file_indices.contains(&current_file_idx) {
+            file_indices.push(current_file_idx);
+        }
+
+        // Only the FULL chain key identifies the base link's declaring writes
+        // precisely. The short last-segment key `expando_read_root_keys` also
+        // returns (the import-namespace form) could alias an unrelated
+        // same-named variable's writes into this verdict and close an open
+        // member — a false positive; those chains simply stay on the
+        // permissive no-visible-write path.
+        let Some(base_key) = Self::property_access_chain_in_arena(self.ctx.arena, base_expr_idx)
+        else {
+            return true;
+        };
+        let root_keys = [base_key];
+        let mut found = false;
+        let mut all_host = true;
+        for file_idx in file_indices {
+            let arena = self.ctx.get_arena_for_file(file_idx as u32);
+            let Some(source_file) = arena.source_files.first() else {
+                continue;
+            };
+            for root_key in &root_keys {
+                let expected_key = format!("{root_key}.{member_name}");
+                for &stmt_idx in &source_file.statements.nodes {
+                    Self::accumulate_expando_assignment_rhs_host_verdict(
+                        arena,
+                        stmt_idx,
+                        &expected_key,
+                        &mut found,
+                        &mut all_host,
+                    );
+                    if found && !all_host {
+                        return false;
+                    }
+                }
+            }
+        }
+        !found || all_host
+    }
+
     pub(super) fn js_file_has_expando_assignment_for_keys(
         &self,
         file_idx: usize,

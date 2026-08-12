@@ -133,6 +133,7 @@ impl BinderState {
             file_locals: SymbolTable::new(),
             program_globals: SymbolTable::new(),
             expando_properties: Arc::new(FxHashMap::default()),
+            expando_host_members: FxHashMap::default(),
             declared_modules: Arc::new(FxHashSet::default()),
             is_external_module: false,
             is_strict_scope: false,
@@ -200,6 +201,7 @@ impl BinderState {
         self.file_locals.clear();
         self.program_globals.clear();
         Arc::make_mut(&mut self.expando_properties).clear();
+        self.expando_host_members.clear();
         Arc::make_mut(&mut self.declared_modules).clear();
         self.is_external_module = false;
         self.is_strict_scope = false;
@@ -367,6 +369,7 @@ impl BinderState {
             file_locals,
             program_globals: SymbolTable::new(),
             expando_properties: Arc::new(FxHashMap::default()),
+            expando_host_members: FxHashMap::default(),
             declared_modules: Arc::new(FxHashSet::default()),
             is_external_module: false,
             is_strict_scope: false,
@@ -490,6 +493,7 @@ impl BinderState {
             file_locals,
             program_globals: SymbolTable::new(),
             expando_properties,
+            expando_host_members: FxHashMap::default(),
             declared_modules: Arc::new(FxHashSet::default()),
             is_external_module: false,
             is_strict_scope: false,

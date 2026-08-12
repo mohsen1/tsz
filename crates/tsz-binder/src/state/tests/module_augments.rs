@@ -675,6 +675,34 @@ o.y = void 0;
 }
 
 #[test]
+fn unresolved_root_expando_writes_are_not_recorded() {
+    // tsc 7.0.2 binds an assignment-declared expando member only when the
+    // write appears in the host's own declaring file. A root identifier that
+    // does not resolve in this file's scope is either a cross-file global or
+    // genuinely undeclared; recording its members here fed the checker's
+    // cross-file expando surface and silenced the `TS2339` tsc reports for
+    // foreign-file writes (any RHS shape — the old path recorded
+    // function/class/object-literal RHS).
+    let source = r#"
+ghost.scalar = 1;
+ghost.fn = function () {};
+ghost.cls = class {};
+ghost.obj = {};
+"#;
+
+    let mut parser = ParserState::new("writer.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    assert!(
+        !binder.expando_properties.contains_key("ghost"),
+        "unresolved-root writes must not be recorded: {:?}",
+        binder.expando_properties
+    );
+}
+
+#[test]
 fn expando_element_assignments_resolve_const_literal_keys() {
     let (binder, _parser) = parse_and_bind(
         r#"
