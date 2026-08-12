@@ -22,6 +22,13 @@ impl<'a> CheckerState<'a> {
     ///
     /// Decorators execute in the surrounding scope, not inside the class/member they
     /// decorate, so bare identifier lookup from this region must not see class members.
+    ///
+    /// Stops (returns `false`) as soon as the upward walk crosses a function-like
+    /// boundary before reaching a `DECORATOR` ancestor: a node reached only through a
+    /// nested function (e.g. `@((x, p, d) => { ...here... })`) is inside that
+    /// function's own self-contained scope, which resolves with ordinary lexical
+    /// rules — tsc fully checks such bodies (including argument callability),
+    /// it does not extend decorator leniency into them.
     pub(crate) fn is_in_decorator_expression(&self, idx: NodeIndex) -> bool {
         use tsz_parser::parser::syntax_kind_ext::DECORATOR;
 
@@ -44,6 +51,9 @@ impl<'a> CheckerState<'a> {
             };
             if node.kind == DECORATOR {
                 return true;
+            }
+            if node.is_function_like() {
+                return false;
             }
         }
         false
@@ -107,16 +117,35 @@ impl<'a> CheckerState<'a> {
         None
     }
 
+    /// Whether `idx` (a candidate declaration) lives inside the decorated member
+    /// `owner_idx`'s own body/parameters — as opposed to inside some *other*
+    /// decorator's expression that merely happens to be stored, structurally, as
+    /// one of `owner_idx`'s AST modifiers.
+    ///
+    /// A declaration reached only by walking through a `DECORATOR` ancestor (e.g.
+    /// a local var/param of an inline arrow function used as the decorator itself,
+    /// `@((x, p, d) => { var a = 1; ... })`) is evaluated in that decorator's own
+    /// self-contained scope, not "inside" the member it decorates, even though the
+    /// `DECORATOR` node is a child of `owner_idx` in the tree. Stop and report
+    /// "not within" as soon as such a boundary is crossed, rather than continuing
+    /// up to `owner_idx` and wrongly excluding the decorator's own declarations.
     pub(crate) fn node_is_within_decorator_owner(
         &self,
         idx: NodeIndex,
         owner_idx: NodeIndex,
     ) -> bool {
+        use tsz_parser::parser::syntax_kind_ext::DECORATOR;
+
         let mut current = idx;
         let mut iterations = 0;
         while current.is_some() {
             if current == owner_idx {
                 return true;
+            }
+            if let Some(node) = self.ctx.arena.get(current)
+                && node.kind == DECORATOR
+            {
+                return false;
             }
             iterations += 1;
             if iterations > MAX_TREE_WALK_ITERATIONS {
