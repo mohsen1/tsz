@@ -424,24 +424,6 @@ impl<'a> CheckerState<'a> {
         self.execute_relation_request(&request)
     }
 
-    /// Execute an explicit alias constraint relation for raw checker types,
-    /// preserving the canonical explicit-alias request shape. Decision-only:
-    /// the sole consumer reads `outcome.related`, so failure analysis is
-    /// skipped.
-    pub(crate) fn explicit_alias_constraint_relation_outcome(
-        &mut self,
-        source: TypeId,
-        target: TypeId,
-    ) -> crate::query_boundaries::assignability::RelationOutcome {
-        let (source, target) = self.prepare_assignability_inputs(source, target);
-        let request =
-            crate::query_boundaries::assignability::RelationRequest::explicit_alias_constraint(
-                source, target,
-            )
-            .with_decision_only();
-        self.execute_relation_request(&request)
-    }
-
     /// Execute an array-like constraint element relation for raw checker
     /// types, preserving the canonical array-like request shape.
     /// Decision-only: the sole consumer reads `outcome.related`, so failure

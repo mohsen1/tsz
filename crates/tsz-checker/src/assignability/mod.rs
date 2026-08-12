@@ -17,6 +17,7 @@ mod callable_union_relation;
 pub(crate) mod compound_assignment;
 mod conditional_infer_alias_helpers;
 mod constrained_type_param_assertion;
+mod explicit_alias_constraint_relation;
 mod failure_memo;
 mod generic_mapped_alias_helpers;
 mod index_access_normalization;
