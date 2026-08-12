@@ -289,10 +289,23 @@ impl<'a> CheckerState<'a> {
         // typed after the window resolves against the real export type and
         // reports correctly. Suppress the merge inside the window so both
         // resolve against the same thing.
-        let surface_is_reentrant_placeholder = self
+        let reentrant_state = self
             .ctx
             .js_export_surface_resolution_set
-            .contains(&current_file_idx);
+            .get(&current_file_idx)
+            .copied();
+        let surface_is_reentrant_placeholder = reentrant_state.is_some();
+        // A read typed inside the resolution window of a file with a bare
+        // `module.exports = X` resolves to `X` directly (published by step 1
+        // of the surface computation): tsc types every same-file
+        // `module.exports` reference as the export= target, including reads
+        // inside a sibling `module.exports.p = function () { ... }` RHS whose
+        // inference is exactly what re-entered here. The placeholder namespace
+        // below would type — and node-cache — the read as `{}`, producing a
+        // spurious TS2349 on `module.exports(...)`.
+        if let Some(Some(direct_export_type)) = reentrant_state {
+            return direct_export_type;
+        }
         let surface = self.resolve_js_export_surface(current_file_idx);
         let can_merge_named_exports = !surface_is_reentrant_placeholder
             && js_exports_query::commonjs_export_surface_can_merge_named_exports(

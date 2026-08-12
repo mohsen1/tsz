@@ -1335,6 +1335,9 @@ path = "tests/commonjs_module_export_alias_tests.rs"
 name = "commonjs_circular_alias_ts2303_tests"
 path = "tests/commonjs_circular_alias_ts2303_tests.rs"
 [[test]]
+name = "commonjs_export_assignment_reference_tests"
+path = "tests/commonjs_export_assignment_reference_tests.rs"
+[[test]]
 name = "conditional_infer_tests"
 path = "tests/conditional_infer_tests.rs"
 [[test]]

@@ -945,9 +945,16 @@ pub struct CheckerContext<'a> {
         FxHashMap<usize, crate::query_boundaries::js_exports::JsExportSurface>,
 
     /// Recursion guard for synthesized JS/CommonJS export surfaces.
-    /// Prevents self-recursive surface construction for files that inspect
-    /// their own `module.exports` shape while the same shape is still pending.
-    pub js_export_surface_resolution_set: FxHashSet<usize>,
+    /// A present key marks a file whose surface construction is still pending,
+    /// preventing self-recursive re-derivation for files that inspect their
+    /// own `module.exports` shape. The value carries the file's direct
+    /// `module.exports = X` type once step 1 of the computation derives it:
+    /// a `module.exports` read typed *during* the rest of the computation
+    /// (e.g. inside a sibling `module.exports.p = function () { ... }` RHS
+    /// whose body reads `module.exports`) resolves to that instead of the
+    /// empty re-entrancy placeholder, matching tsc, which types such reads as
+    /// the export= target.
+    pub js_export_surface_resolution_set: FxHashMap<usize, Option<TypeId>>,
 
     /// Recursion guard for JS expando property reads.
     /// Prevents `NS.K = class { return new NS.K() }`-style self-reference loops

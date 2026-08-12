@@ -1097,13 +1097,16 @@ impl<'a> CheckerState<'a> {
         // `module.exports` asks for the current file's export surface while the
         // same surface is still being derived from `Object.defineProperty(...)`
         // calls in that file.
-        if !self
+        if self
             .ctx
             .js_export_surface_resolution_set
-            .insert(target_file_idx)
+            .contains_key(&target_file_idx)
         {
             return JsExportSurface::empty();
         }
+        self.ctx
+            .js_export_surface_resolution_set
+            .insert(target_file_idx, None);
 
         let surface = self.compute_js_export_surface(target_file_idx);
         self.ctx
@@ -1311,6 +1314,20 @@ impl<'a> CheckerState<'a> {
         surface.direct_export_reads_exports = last_direct_export.is_some_and(|(_, rhs_expr)| {
             Self::commonjs_expression_roots_at_exports(&target_arena, rhs_expr)
         });
+
+        // Publish the direct export type for the rest of this computation:
+        // step 2 below infers sibling `module.exports.p = ...` RHS types, and a
+        // function RHS whose body reads `module.exports` re-enters
+        // `resolve_js_export_surface`, which hands back the empty placeholder.
+        // The read then must not be typed (and node-cached) as an empty
+        // namespace — tsc types it as the export= target. The recursion-guard
+        // entry (and this value with it) is removed by
+        // `resolve_js_export_surface` once the computation finishes.
+        if surface.direct_export_type.is_some() {
+            self.ctx
+                .js_export_surface_resolution_set
+                .insert(target_file_idx, surface.direct_export_type);
+        }
 
         // 2. Seed named exports from a direct object-like export, then collect later
         // property exports (`exports.foo = ...`, `module.exports.foo = ...`) that
