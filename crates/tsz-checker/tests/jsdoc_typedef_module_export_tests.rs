@@ -755,24 +755,87 @@ let secondVar;
 }
 
 #[test]
-fn jsdoc_param_tag_import_member_not_found_reports_once() {
+fn jsdoc_param_tag_import_member_not_found_reports_once_at_member_token() {
     // Same structural rule as the `@type` case, through the `@param` path.
     // The eager `@param`/`@return` validation scan (`check_jsdoc_typedef_base_types`)
     // must not leak a second TS2694 alongside the authoritative per-parameter
-    // resolver (`resolve_jsdoc_param_type_with_pos`).
-    let diagnostics = check_consumer_with_js_typedef_source(
-        "export {}\n",
-        "consumer.js",
-        r#"
+    // resolver (`resolve_jsdoc_param_type_with_pos`), and — the follow-up
+    // #17184 left open — the surviving report must anchor at the
+    // member-name token inside the comment, matching tsc and the sibling
+    // `@type` fix above, not the coarse position it used before.
+    let consumer_source = r#"
 /** @param {import('./types.js').Missing} x */
 function f(x) {}
-"#,
-    );
+"#;
+    let diagnostics =
+        check_consumer_with_js_typedef_source("export {}\n", "consumer.js", consumer_source);
     let hits = ts2694_diagnostics(&diagnostics, "Missing");
     assert_eq!(
         hits.len(),
         1,
         "Expected exactly one TS2694 for an unresolved @param import-type member, got: {diagnostics:?}"
+    );
+    let member_start = consumer_source.find("Missing").unwrap() as u32;
+    assert_eq!(
+        hits[0].start, member_start,
+        "Expected TS2694 anchored at the `Missing` token inside the comment, got: {:?}",
+        hits[0]
+    );
+}
+
+#[test]
+fn jsdoc_param_tag_two_annotations_each_report_once_at_their_own_member_token() {
+    // Renamed binders across two independent `@param` tags on two different
+    // functions in the same file: each must report its own TS2694 exactly
+    // once, at its own comment's member token — not each other's, and not
+    // doubled. Mirrors `jsdoc_type_tag_two_annotations_each_report_once_at_their_own_member_token`.
+    let consumer_source = r#"
+/** @param {import('./types.js').Missing} firstArg */
+function firstFn(firstArg) {}
+/** @param {import('./types.js').Missing} secondArg */
+function secondFn(secondArg) {}
+"#;
+    let diagnostics =
+        check_consumer_with_js_typedef_source("export {}\n", "consumer.js", consumer_source);
+    let hits = ts2694_diagnostics(&diagnostics, "Missing");
+    assert_eq!(
+        hits.len(),
+        2,
+        "Expected exactly two TS2694s, one per @param annotation, got: {diagnostics:?}"
+    );
+    let first_start = consumer_source.find("Missing").unwrap() as u32;
+    let second_start = consumer_source.rfind("Missing").unwrap() as u32;
+    let mut starts: Vec<u32> = hits.iter().map(|d| d.start).collect();
+    starts.sort_unstable();
+    assert_eq!(
+        starts,
+        vec![first_start, second_start],
+        "Expected each TS2694 anchored at its own `Missing` token, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn jsdoc_param_tag_optional_bracket_name_import_member_not_found_anchors_at_member_token() {
+    // Adjacent case: the optional-parameter bracket form (`[name]`) uses a
+    // different literal source-text shape than the plain form — the member-
+    // token search must still find it via the `optional` fallback pattern.
+    let consumer_source = r#"
+/** @param {import('./types.js').Missing} [x] */
+function f(x) {}
+"#;
+    let diagnostics =
+        check_consumer_with_js_typedef_source("export {}\n", "consumer.js", consumer_source);
+    let hits = ts2694_diagnostics(&diagnostics, "Missing");
+    assert_eq!(
+        hits.len(),
+        1,
+        "Expected exactly one TS2694 for an unresolved optional @param import-type member, got: {diagnostics:?}"
+    );
+    let member_start = consumer_source.find("Missing").unwrap() as u32;
+    assert_eq!(
+        hits[0].start, member_start,
+        "Expected TS2694 anchored at the `Missing` token inside the comment, got: {:?}",
+        hits[0]
     );
 }
 
