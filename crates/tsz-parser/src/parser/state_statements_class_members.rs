@@ -55,6 +55,21 @@ pub(crate) struct ClassMemberModifierSet {
     /// report `declare`-invalid-member-kind (TS1031): tsc's walk would have
     /// already stopped at the earlier conflict before ever reaching that check.
     pub(crate) async_declare_order_conflict_reported: bool,
+    /// Start offset of a duplicate `declare` keyword whose TS1030
+    /// (`'declare' modifier already seen.`) must be reported at property
+    /// construction time. tsc's `checkGrammarModifiers` records `declare` as
+    /// `ModifierFlags.Ambient` and reports `_0_modifier_already_seen` on the
+    /// second occurrence, then `return`s — so this is `Some` only when the
+    /// duplicate is the FIRST grammar error on the member's modifier list (no
+    /// earlier diagnostic in the scan, and no `override`/`accessor`/`async`
+    /// preceding it, which tsc would report first). The member must be a
+    /// property for tsc to reach the second `declare` at all — a
+    /// method/accessor/index-signature errors on the FIRST `declare`
+    /// (TS1031/TS1071/TS1801) — so the emission is deferred to the property
+    /// construction path and the recorded duplicate suppresses the
+    /// declare/override, declare/async, and ambient-initializer (TS1039)
+    /// checks, exactly as tsc's post-`return` walk does.
+    pub(crate) declare_duplicate_pos: Option<u32>,
     /// Diagnostic-list length captured just before modifier parsing, used to
     /// selectively roll back modifier-ordering diagnostics when a static block
     /// is discovered after modifiers were already parsed.
@@ -68,8 +83,17 @@ impl ParserState {
     /// conflict or an `async`+`declare` ambient conflict was already reported
     /// during the scan — callers use this to suppress a redundant
     /// declare-invalid-member-kind diagnostic once the member kind is known.
-    pub(crate) fn parse_class_member_modifiers(&mut self) -> (Option<NodeList>, bool) {
+    pub(crate) fn parse_class_member_modifiers(&mut self) -> (Option<NodeList>, bool, Option<u32>) {
         let mut modifiers = Vec::new();
+
+        // Diagnostic-list length at the start of this member's modifier scan.
+        // A duplicate `declare` reports TS1030 only when it is the FIRST grammar
+        // error on the member (tsc's `checkGrammarModifiers` `return`s at the
+        // first problem), so the recording below fires only while this count is
+        // unchanged. Position of the duplicate `declare` keyword, deferred to
+        // the property construction path (see `declare_duplicate_pos`).
+        let diag_len_at_scan_start = self.parse_diagnostics.len();
+        let mut declare_duplicate_pos: Option<u32> = None;
 
         // State tracking for TS1028 (duplicates) and TS1029 (ordering)
         let mut seen_accessibility = false;
@@ -307,7 +331,13 @@ impl ParserState {
                 // private-identifier modifier walk instead — tsc's single
                 // ordered walk reaches that check before it would reach this
                 // pairwise incompatibility. See `upcoming_member_name_is_private`.
-                if seen_declare && !self.upcoming_member_name_is_private() {
+                // Suppressed once a duplicate `declare` has been recorded
+                // (`declare declare accessor`): tsc `return`ed at the duplicate
+                // TS1030 before reaching the accessor pairing.
+                if seen_declare
+                    && declare_duplicate_pos.is_none()
+                    && !self.upcoming_member_name_is_private()
+                {
                     use tsz_common::diagnostics::diagnostic_codes;
                     self.parse_error_at_current_token(
                         "'accessor' modifier cannot be used with 'declare' modifier.",
@@ -389,9 +419,35 @@ impl ParserState {
                         .create_modifier(SyntaxKind::AsyncKeyword, start_pos)
                 }
                 SyntaxKind::DeclareKeyword => {
+                    // TS1030: a repeated `declare` modifier. tsc records `declare`
+                    // as `ModifierFlags.Ambient` and reports
+                    // `_0_modifier_already_seen` on the second occurrence, then
+                    // `return`s. Record it only when it is the first grammar error
+                    // on this member (no earlier diagnostic in this scan) and no
+                    // modifier that conflicts with `declare` (`override`/`accessor`/
+                    // `async`) precedes it — tsc would report that conflict first.
+                    // A private-named member is excluded because tsc's ordered walk
+                    // reaches the private-identifier check (TS1801) on the FIRST
+                    // `declare` before the duplicate. The actual emission is deferred
+                    // to the property construction path because a non-property member
+                    // errors on the FIRST `declare` (TS1031/TS1071) and never reaches
+                    // the duplicate.
+                    if seen_declare
+                        && declare_duplicate_pos.is_none()
+                        && self.parse_diagnostics.len() == diag_len_at_scan_start
+                        && !seen_override
+                        && !seen_accessor
+                        && !seen_async
+                        && !self.upcoming_member_name_is_private()
+                    {
+                        declare_duplicate_pos = Some(start_pos);
+                    }
                     // TS1040: 'override' modifier cannot be used in an ambient context
-                    // When `override` precedes `declare`, report at `declare` position
-                    if seen_override {
+                    // When `override` precedes `declare`, report at `declare` position.
+                    // Only the first `declare` reports it: tsc's `checkGrammarModifiers`
+                    // `return`s at that error, so a trailing duplicate `declare`
+                    // (`override declare declare`) must not report it a second time.
+                    if seen_override && !seen_declare {
                         use tsz_common::diagnostics::diagnostic_codes;
                         self.parse_error_at_current_token(
                             "'override' modifier cannot be used in an ambient context.",
@@ -419,8 +475,10 @@ impl ParserState {
                     // declare keyword — unless the member name is private, in
                     // which case the checker's private-identifier modifier
                     // walk reports TS18019 instead (see the accessor arm's
-                    // mirror check above).
-                    if seen_accessor && !self.upcoming_member_name_is_private() {
+                    // mirror check above). Only the first `declare` reports it:
+                    // tsc `return`s at that error, so a trailing duplicate
+                    // `declare` (`accessor declare declare`) must not repeat it.
+                    if seen_accessor && !seen_declare && !self.upcoming_member_name_is_private() {
                         use tsz_common::diagnostics::diagnostic_codes;
                         self.parse_error_at_current_token(
                             "'declare' modifier cannot be used with 'accessor' modifier.",
@@ -578,6 +636,7 @@ impl ParserState {
                     return (
                         Some(Self::make_node_list(modifiers)),
                         async_declare_order_conflict_reported,
+                        declare_duplicate_pos,
                     );
                 }
                 // `in` / `out` are variance modifiers that only apply to type
@@ -605,7 +664,11 @@ impl ParserState {
         } else {
             Some(Self::make_node_list(modifiers))
         };
-        (modifier_list, async_declare_order_conflict_reported)
+        (
+            modifier_list,
+            async_declare_order_conflict_reported,
+            declare_duplicate_pos,
+        )
     }
 
     /// Peeks past any remaining modifier keywords, without consuming them,
@@ -1090,7 +1153,7 @@ impl ParserState {
     ) -> ClassMemberModifierSet {
         let has_decorators = decorators.is_some();
         let diag_len_before_modifiers = self.parse_diagnostics.len();
-        let (parsed_modifiers, async_declare_order_conflict_reported) =
+        let (parsed_modifiers, async_declare_order_conflict_reported, declare_duplicate_pos) =
             self.parse_class_member_modifiers();
         let had_keyword_modifiers = parsed_modifiers.is_some();
 
@@ -1182,6 +1245,7 @@ impl ParserState {
             declare_before_override,
             declare_before_async,
             async_declare_order_conflict_reported,
+            declare_duplicate_pos,
             diag_len_before_modifiers,
         }
     }
@@ -2215,34 +2279,50 @@ impl ParserState {
             // Return NONE to indicate this is not a valid member
             NodeIndex::NONE
         } else {
-            // TS1243: 'override' modifier cannot be used with 'declare' modifier.
-            // `declare override p` — the member kind is only known now (a plain
-            // property), which is the one member-local-`declare` host tsc
-            // allows for `override` to coexist with at all. The reverse order
-            // (`override declare p`) is already reported eagerly while scanning
-            // modifiers (TS1040, ambient conflict), regardless of member kind.
-            if mods.declare_before_override {
-                self.emit_modifier_error_on_constructor(
-                    &mods.modifiers,
-                    SyntaxKind::OverrideKeyword,
-                    "'override' modifier cannot be used with 'declare' modifier.",
-                    diagnostic_codes::MODIFIER_CANNOT_BE_USED_WITH_MODIFIER,
+            if let Some(dup_pos) = mods.declare_duplicate_pos {
+                // TS1030: duplicate `declare` on a property. tsc's
+                // `checkGrammarModifiers` reports `_0_modifier_already_seen` at
+                // the second `declare` and `return`s, so the declare/override
+                // (TS1243) and declare/async (TS1040) conflicts below — and the
+                // ambient-initializer check (TS1039) in the checker — are all
+                // suppressed. Anchored at the duplicate keyword, width of
+                // `declare`, matching tsc's `grammarErrorOnNode(modifier)`.
+                self.parse_error_at(
+                    dup_pos,
+                    "declare".len() as u32,
+                    "'declare' modifier already seen.",
+                    diagnostic_codes::MODIFIER_ALREADY_SEEN,
                 );
-            }
-            // TS1040: 'async' modifier cannot be used in an ambient context.
-            // `declare async p` — the member kind is only known now (a plain
-            // property), which is the one member-local-`declare` host tsc
-            // allows, so this is where the ambient conflict is decidable. The
-            // reverse order (`async declare p`) is already reported eagerly
-            // while scanning modifiers, regardless of member kind, since tsc
-            // resolves that conflict before member kind is even relevant.
-            if mods.declare_before_async {
-                self.emit_modifier_error_on_constructor(
-                    &mods.modifiers,
-                    SyntaxKind::AsyncKeyword,
-                    "'async' modifier cannot be used in an ambient context.",
-                    diagnostic_codes::MODIFIER_CANNOT_BE_USED_IN_AN_AMBIENT_CONTEXT,
-                );
+            } else {
+                // TS1243: 'override' modifier cannot be used with 'declare' modifier.
+                // `declare override p` — the member kind is only known now (a plain
+                // property), which is the one member-local-`declare` host tsc
+                // allows for `override` to coexist with at all. The reverse order
+                // (`override declare p`) is already reported eagerly while scanning
+                // modifiers (TS1040, ambient conflict), regardless of member kind.
+                if mods.declare_before_override {
+                    self.emit_modifier_error_on_constructor(
+                        &mods.modifiers,
+                        SyntaxKind::OverrideKeyword,
+                        "'override' modifier cannot be used with 'declare' modifier.",
+                        diagnostic_codes::MODIFIER_CANNOT_BE_USED_WITH_MODIFIER,
+                    );
+                }
+                // TS1040: 'async' modifier cannot be used in an ambient context.
+                // `declare async p` — the member kind is only known now (a plain
+                // property), which is the one member-local-`declare` host tsc
+                // allows, so this is where the ambient conflict is decidable. The
+                // reverse order (`async declare p`) is already reported eagerly
+                // while scanning modifiers, regardless of member kind, since tsc
+                // resolves that conflict before member kind is even relevant.
+                if mods.declare_before_async {
+                    self.emit_modifier_error_on_constructor(
+                        &mods.modifiers,
+                        SyntaxKind::AsyncKeyword,
+                        "'async' modifier cannot be used in an ambient context.",
+                        diagnostic_codes::MODIFIER_CANNOT_BE_USED_IN_AN_AMBIENT_CONTEXT,
+                    );
+                }
             }
             self.construct_class_member_property(
                 start_pos,
