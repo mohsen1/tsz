@@ -680,11 +680,10 @@ fn union_literal_ladder_enriched_absorbs_intersection_with_present_constituent()
     );
 }
 
-/// Build a `{ narrow-key } | { wide-key } | number` union in literal mode (no
-/// subtype reduction), so the wider object survives for `subtype_reduced` to
-/// remove. The widened `number` primitive bypasses the pairwise reducer's
-/// all-object literal gate (see `object_vs_object_reduces_only_with_primitive`).
-fn literal_mode_object_union(interner: &TypeInterner, k1: &str, k2: &str) -> (TypeId, TypeId) {
+/// Build a narrow object `{ k1: 1 }` and a wider structural subtype
+/// `{ k1: 1, k2: 2 }` (`wide <: narrow`) — the fixture the #15809 reduction tests
+/// share to distinguish literal-mode (keeps both) from subtype-mode (drops `wide`).
+fn narrow_wide_key_objects(interner: &TypeInterner, k1: &str, k2: &str) -> (TypeId, TypeId) {
     let narrow = interner.object(vec![PropertyInfo::new(
         interner.intern_string(k1),
         interner.literal_number(1.0),
@@ -693,6 +692,15 @@ fn literal_mode_object_union(interner: &TypeInterner, k1: &str, k2: &str) -> (Ty
         PropertyInfo::new(interner.intern_string(k1), interner.literal_number(1.0)),
         PropertyInfo::new(interner.intern_string(k2), interner.literal_number(2.0)),
     ]);
+    (narrow, wide)
+}
+
+/// Build a `{ narrow-key } | { wide-key } | number` union in literal mode (no
+/// subtype reduction), so the wider object survives for `subtype_reduced` to
+/// remove. The widened `number` primitive bypasses the pairwise reducer's
+/// all-object literal gate (see `object_vs_object_reduces_only_with_primitive`).
+fn literal_mode_object_union(interner: &TypeInterner, k1: &str, k2: &str) -> (TypeId, TypeId) {
+    let (narrow, wide) = narrow_wide_key_objects(interner, k1, k2);
     let lit_union = interner.union_literal_reduce(vec![narrow, wide, TypeId::NUMBER]);
     (lit_union, narrow)
 }
@@ -733,6 +741,67 @@ fn subtype_reduced_recovers_reduction_dropped_by_literal_default() {
     );
 }
 
+/// #15809 constructor gate: the default `normalize_union` construction path
+/// honors the literal/subtype reduction mode. With `literal_only = false`
+/// (historical `main`, flag OFF) a subsumed structural member is removed at
+/// construction; with `literal_only = true` (flag ON, tsc
+/// `UnionReduction.Literal`) it survives, so the constructor is genuinely
+/// literal-mode — the discipline the evaluate-layer Stage 2 gate assumes when it
+/// re-interns evaluated unions without its own blanket reduce.
+#[test]
+fn normalize_union_construction_gate_skips_subtype_reduction_in_literal_mode() {
+    let interner = TypeInterner::new();
+    let (narrow, wide) = narrow_wide_key_objects(&interner, "a", "b");
+    // `number` keeps the union off the pairwise reducer's all-object-literal gate
+    // so the subtype sweep actually runs in the historical mode.
+    let members = vec![narrow, wide, TypeId::NUMBER];
+
+    // Historical / flag-OFF: `wide` is a shallow subtype of the narrow-keyed
+    // object and is removed at construction, leaving `narrow | number`.
+    let reduced = interner.normalize_union_for_test(members.clone(), false);
+    let Some(TypeData::Union(reduced_list)) = interner.lookup(reduced) else {
+        panic!("subtype-mode construction should leave narrow | number");
+    };
+    let list = interner.type_list(reduced_list);
+    assert_eq!(
+        list.len(),
+        2,
+        "subtype-mode construction drops the subsumed wide object"
+    );
+    assert!(list.contains(&narrow));
+    assert!(list.contains(&TypeId::NUMBER));
+
+    // Flag-ON / literal mode: the subsumed `wide` object survives — tsc's
+    // UnionReduction.Literal, no construction-time pairwise removal.
+    let literal = interner.normalize_union_for_test(members, true);
+    let Some(TypeData::Union(literal_list)) = interner.lookup(literal) else {
+        panic!("literal-mode construction should keep all three members");
+    };
+    assert_eq!(
+        interner.type_list(literal_list).len(),
+        3,
+        "literal-mode construction keeps the subsumed wide object"
+    );
+    assert_ne!(
+        reduced, literal,
+        "the two reduction modes fork distinct union identities"
+    );
+}
+
+/// The gate only removes the pairwise sweep — it never adds, drops, or reorders
+/// members on a union with nothing to subtype-reduce, so a disjoint member set is
+/// byte-identical across both modes.
+#[test]
+fn normalize_union_construction_gate_is_identity_on_irreducible_unions() {
+    let interner = TypeInterner::new();
+    let members = vec![TypeId::STRING, TypeId::NUMBER, TypeId::BOOLEAN];
+    assert_eq!(
+        interner.normalize_union_for_test(members.clone(), false),
+        interner.normalize_union_for_test(members, true),
+        "modes agree when there is no subtype pair to remove"
+    );
+}
+
 #[test]
 fn subtype_reduced_is_idempotent() {
     let interner = TypeInterner::new();
@@ -755,14 +824,7 @@ fn subtype_reduced_returns_non_union_and_complex_unions_unchanged() {
     // is returned unchanged (reducing against an unresolved parameter is unsound).
     use crate::TypeParamInfo;
     let tp = interner.type_param(TypeParamInfo::simple(interner.intern_string("T")));
-    let narrow = interner.object(vec![PropertyInfo::new(
-        interner.intern_string("a"),
-        interner.literal_number(1.0),
-    )]);
-    let wide = interner.object(vec![
-        PropertyInfo::new(interner.intern_string("a"), interner.literal_number(1.0)),
-        PropertyInfo::new(interner.intern_string("b"), interner.literal_number(2.0)),
-    ]);
+    let (narrow, wide) = narrow_wide_key_objects(&interner, "a", "b");
     let complex_union = interner.union_literal_reduce(vec![tp, narrow, wide, TypeId::NUMBER]);
     assert_eq!(
         interner.subtype_reduced(complex_union, 0),
