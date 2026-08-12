@@ -325,12 +325,20 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Resolve the TS2694 missing-member diagnostic's `(namespace_name,
+    /// member_name, blamed_segment_index)` for a qualified `import(...).A.B`
+    /// reference. The third element is the index (into
+    /// `import_type_member_segments`) of the segment `tsc` blames, so the
+    /// caller can anchor the diagnostic on that exact token: the head when a
+    /// non-namespace head is the rejected qualifier, the tail when the missing
+    /// member genuinely is the tail. Anchor and blame are one decision, not
+    /// two.
     pub(crate) fn import_type_missing_member_context(
         &mut self,
         module_specifier: &str,
         type_name_idx: NodeIndex,
         resolution_mode_override: Option<crate::context::ResolutionModeOverride>,
-    ) -> Option<(String, String)> {
+    ) -> Option<(String, String, usize)> {
         let segments = self.import_type_member_segments(type_name_idx)?;
         let first_segment = segments.first()?.clone();
         let mut current_sym = match self.resolve_ts_import_type_member_symbol(
@@ -369,6 +377,7 @@ impl<'a> CheckerState<'a> {
                                         resolution_mode_override,
                                     ),
                                     segments[candidate_len].clone(),
+                                    candidate_len,
                                 ));
                             }
                         }
@@ -378,11 +387,13 @@ impl<'a> CheckerState<'a> {
                                 resolution_mode_override,
                             ),
                             first_segment,
+                            0,
                         ));
                     }
                 };
 
-                for segment in segments.iter().skip(1) {
+                for (offset, segment) in segments.iter().skip(1).enumerate() {
+                    let segment_index = offset + 1;
                     let next_type =
                         match self.resolve_property_access_with_env(current_type, segment) {
                             crate::query_boundaries::common::PropertyAccessResult::Success {
@@ -397,6 +408,7 @@ impl<'a> CheckerState<'a> {
                                         resolution_mode_override,
                                     ),
                                     segment.clone(),
+                                    segment_index,
                                 ));
                             }
                         };
@@ -410,7 +422,9 @@ impl<'a> CheckerState<'a> {
 
         let mut resolved_segments = Vec::new();
         let mut pending_segment = first_segment;
-        for segment in segments.iter().skip(1) {
+        let mut pending_index = 0usize;
+        for (offset, segment) in segments.iter().skip(1).enumerate() {
+            let segment_index = offset + 1;
             let Some(symbol) = self
                 .get_cross_file_symbol(current_sym)
                 .or_else(|| self.ctx.binder.get_symbol(current_sym))
@@ -424,7 +438,10 @@ impl<'a> CheckerState<'a> {
             // rather than walking into its instance member table. The
             // rejected segment is blamed unqualified (or qualified only by
             // the segments already validated before it), never against a
-            // namespace name that includes itself.
+            // namespace name that includes itself. tsc also anchors the
+            // diagnostic on this same rejected segment (`pending_index`), not
+            // on the tail — so a middle rejected segment is blamed *and*
+            // anchored in place.
             if symbol.flags & symbol_flags::NAMESPACE == 0 {
                 return Some((
                     self.import_type_namespace_name_with_segments(
@@ -433,6 +450,7 @@ impl<'a> CheckerState<'a> {
                         resolution_mode_override,
                     ),
                     pending_segment,
+                    pending_index,
                 ));
             }
             resolved_segments.push(pending_segment);
@@ -450,6 +468,7 @@ impl<'a> CheckerState<'a> {
             {
                 current_sym = next_sym;
                 pending_segment = segment.clone();
+                pending_index = segment_index;
             } else {
                 return Some((
                     self.import_type_namespace_name_with_segments(
@@ -458,6 +477,7 @@ impl<'a> CheckerState<'a> {
                         resolution_mode_override,
                     ),
                     segment.clone(),
+                    segment_index,
                 ));
             }
         }
@@ -465,21 +485,12 @@ impl<'a> CheckerState<'a> {
         None
     }
 
-    fn import_type_missing_member_node(&self, idx: NodeIndex) -> NodeIndex {
-        // Anchor at the rightmost (innermost-accessed) member segment.
-        // For `import("foo").Bar.Q` where `Bar` resolves but `Q` doesn't,
-        // tsc anchors at `Q` (the outermost QualifiedName's right child),
-        // not at the first segment after the call expression.
-        if let Some(node) = self.ctx.arena.get(idx)
-            && node.kind == syntax_kind_ext::QUALIFIED_NAME
-            && let Some(qn) = self.ctx.arena.get_qualified_name(node)
-        {
-            return qn.right;
-        }
-        idx
-    }
-
-    fn import_type_member_segments(&self, idx: NodeIndex) -> Option<Vec<String>> {
+    /// The identifier `NodeIndex` for each dotted segment of an import-type
+    /// qualified name. Segment `i`'s node is the `QualifiedName.right` at that
+    /// depth, so anchoring a diagnostic at `nodes[i]` lands on exactly that
+    /// segment's token. `import_type_member_segments` derives its parallel
+    /// string list from this same walk, so the two cannot drift.
+    fn import_type_member_segment_nodes(&self, idx: NodeIndex) -> Option<Vec<NodeIndex>> {
         let node = self.ctx.arena.get(idx)?;
         if node.kind == syntax_kind_ext::CALL_EXPRESSION {
             let call = self.ctx.arena.get_call_expr(node)?;
@@ -489,13 +500,44 @@ impl<'a> CheckerState<'a> {
         if node.kind != syntax_kind_ext::QUALIFIED_NAME {
             return None;
         }
-
         let qn = self.ctx.arena.get_qualified_name(node)?;
-        let mut segments = self.import_type_member_segments(qn.left)?;
-        let right_node = self.ctx.arena.get(qn.right)?;
-        let right_ident = self.ctx.arena.get_identifier(right_node)?;
-        segments.push(right_ident.escaped_text.to_string());
-        Some(segments)
+        let mut nodes = self.import_type_member_segment_nodes(qn.left)?;
+        nodes.push(qn.right);
+        Some(nodes)
+    }
+
+    /// Anchor for the TS2694 missing-member diagnostic: the identifier token of
+    /// the *blamed* segment (`segment_index` from
+    /// `import_type_missing_member_context`). `tsc` anchors TS2694 on the
+    /// segment it blames — the head when a non-namespace head is the rejected
+    /// qualifier, the tail when the missing member genuinely is the tail, or a
+    /// middle segment when a 3+ segment chain is rejected in the middle.
+    /// Defensively falls back to the outermost (tail) segment, then the whole
+    /// reference, if the segment node walk cannot be recovered.
+    fn import_type_missing_member_node_at(
+        &self,
+        type_name_idx: NodeIndex,
+        segment_index: usize,
+    ) -> NodeIndex {
+        self.import_type_member_segment_nodes(type_name_idx)
+            .and_then(|nodes| nodes.get(segment_index).or_else(|| nodes.last()).copied())
+            .unwrap_or(type_name_idx)
+    }
+
+    fn import_type_member_segments(&self, idx: NodeIndex) -> Option<Vec<String>> {
+        // Derived from the single `import_type_member_segment_nodes` walk so the
+        // string list and the node list are the same length and order by
+        // construction — the `blamed_segment_index` anchoring relies on that
+        // correspondence, and deriving one from the other makes it structural
+        // rather than a hand-maintained invariant across two parallel walks.
+        self.import_type_member_segment_nodes(idx)?
+            .iter()
+            .map(|&node_idx| {
+                let node = self.ctx.arena.get(node_idx)?;
+                let ident = self.ctx.arena.get_identifier(node)?;
+                Some(ident.escaped_text.to_string())
+            })
+            .collect()
     }
 
     fn resolve_import_type_reference(
@@ -936,7 +978,7 @@ impl<'a> CheckerState<'a> {
                 return TypeId::ERROR;
             };
 
-            let (namespace_name, member_name) = checker
+            let (namespace_name, member_name, blamed_index) = checker
                 .import_type_missing_member_context(
                     &module_name,
                     type_name_idx,
@@ -946,9 +988,11 @@ impl<'a> CheckerState<'a> {
                     (
                         checker.import_type_namespace_name(&module_name, resolution_mode_override),
                         first_segment.clone(),
+                        0,
                     )
                 });
-            let member_idx = checker.import_type_missing_member_node(type_name_idx);
+            let member_idx =
+                checker.import_type_missing_member_node_at(type_name_idx, blamed_index);
             checker.error_namespace_no_export(&namespace_name, &member_name, member_idx);
             TypeId::ERROR
         };
