@@ -195,6 +195,77 @@ fn matrix_with_options_deferred_def_store_leaves_store_empty() {
     );
 }
 
+#[test]
+fn matrix_with_parent_cache_preserves_opt_outs_and_pushes_index_flags() {
+    // Moved into the pre-resolved family (#17203): `with_parent_cache` always
+    // inherits `compiler_options` from a parent context that already resolved
+    // the strict family, so it now uses `OptionsPolicy::PRE_RESOLVED` instead
+    // of the legacy local-expansion policy — re-expanding here would clobber
+    // an explicit per-member override the parent already resolved, and leak
+    // the clobbered flag into the `QueryDatabase` shared with every other
+    // file in the same compilation. See the constructor's doc comment in
+    // `context/constructors.rs`. This test previously pinned the old
+    // local-expansion policy (`true, false`); that was a stale expectation
+    // of an intentional, documented policy change, not a regression.
+    let f = fixture();
+    let parent_types = TypeInterner::new();
+    let child_types = TypeInterner::new();
+    let parent = CheckerState::new(
+        f.parser.get_arena(),
+        &f.binder,
+        &parent_types,
+        FILE_NAME.to_string(),
+        pinned_input_options(),
+    );
+    let child = CheckerState::with_parent_cache(
+        f.parser.get_arena(),
+        &f.binder,
+        &child_types,
+        FILE_NAME.to_string(),
+        pinned_input_options(),
+        &parent,
+    );
+    assert_matrix_row("with_parent_cache", &child, &child_types, false, true);
+    assert!(
+        Arc::ptr_eq(&child.ctx.definition_store, &parent.ctx.definition_store),
+        "with_parent_cache: child must share the parent's DefinitionStore"
+    );
+}
+
+#[test]
+fn matrix_with_parent_cache_attributed_matches_with_parent_cache() {
+    let f = fixture();
+    let parent_types = TypeInterner::new();
+    let child_types = TypeInterner::new();
+    let parent = CheckerState::new(
+        f.parser.get_arena(),
+        &f.binder,
+        &parent_types,
+        FILE_NAME.to_string(),
+        pinned_input_options(),
+    );
+    let child = CheckerState::with_parent_cache_attributed(
+        f.parser.get_arena(),
+        &f.binder,
+        &child_types,
+        FILE_NAME.to_string(),
+        pinned_input_options(),
+        &parent,
+        tsz_common::perf_counters::CheckerCreationReason::Other,
+    );
+    assert_matrix_row(
+        "with_parent_cache_attributed",
+        &child,
+        &child_types,
+        false,
+        true,
+    );
+    assert!(
+        Arc::ptr_eq(&child.ctx.definition_store, &parent.ctx.definition_store),
+        "with_parent_cache_attributed: child must share the parent's DefinitionStore"
+    );
+}
+
 // =========================================================================
 // Local-expansion family: strict expansion applied here (preserved legacy
 // behavior — clobbers explicit sub-flag opt-outs); index flags NOT pushed.
@@ -254,70 +325,6 @@ fn matrix_with_cache_and_shared_def_store_expands_strict_and_skips_index_flag_pu
     assert!(
         Arc::ptr_eq(&checker.ctx.definition_store, &store),
         "with_cache_and_shared_def_store: must install the provided shared store"
-    );
-}
-
-#[test]
-fn matrix_with_parent_cache_expands_strict_and_shares_parent_store() {
-    let f = fixture();
-    let parent_types = TypeInterner::new();
-    let child_types = TypeInterner::new();
-    let parent = CheckerState::new(
-        f.parser.get_arena(),
-        &f.binder,
-        &parent_types,
-        FILE_NAME.to_string(),
-        pinned_input_options(),
-    );
-    let child = CheckerState::with_parent_cache(
-        f.parser.get_arena(),
-        &f.binder,
-        &child_types,
-        FILE_NAME.to_string(),
-        pinned_input_options(),
-        &parent,
-    );
-    // A dedicated child interner proves the parent path does NOT push index
-    // flags into the QueryDatabase (the parent's `new` already configured the
-    // database the child actually shares in production).
-    assert_matrix_row("with_parent_cache", &child, &child_types, true, false);
-    assert!(
-        Arc::ptr_eq(&child.ctx.definition_store, &parent.ctx.definition_store),
-        "with_parent_cache: child must share the parent's DefinitionStore"
-    );
-}
-
-#[test]
-fn matrix_with_parent_cache_attributed_matches_with_parent_cache() {
-    let f = fixture();
-    let parent_types = TypeInterner::new();
-    let child_types = TypeInterner::new();
-    let parent = CheckerState::new(
-        f.parser.get_arena(),
-        &f.binder,
-        &parent_types,
-        FILE_NAME.to_string(),
-        pinned_input_options(),
-    );
-    let child = CheckerState::with_parent_cache_attributed(
-        f.parser.get_arena(),
-        &f.binder,
-        &child_types,
-        FILE_NAME.to_string(),
-        pinned_input_options(),
-        &parent,
-        tsz_common::perf_counters::CheckerCreationReason::Other,
-    );
-    assert_matrix_row(
-        "with_parent_cache_attributed",
-        &child,
-        &child_types,
-        true,
-        false,
-    );
-    assert!(
-        Arc::ptr_eq(&child.ctx.definition_store, &parent.ctx.definition_store),
-        "with_parent_cache_attributed: child must share the parent's DefinitionStore"
     );
 }
 

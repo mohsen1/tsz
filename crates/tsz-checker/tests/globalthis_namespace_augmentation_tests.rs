@@ -121,6 +121,15 @@ fn plain_module_local_namespace_globalthis_still_shadows() {
     // `namespace globalThis { ... }` is a plain (conflicting) local
     // declaration, not a global augmentation — it must keep shadowing
     // rather than being treated as globalThis-like by the new guard.
+    //
+    // Oracle-confirmed (typescript@7.0.2, re-verified for #17203): tsc does
+    // NOT report TS2551 here — declaring `namespace globalThis` at all is
+    // itself an error (TS2397, the declaration conflicts with the built-in
+    // global identifier), and the property write then goes through the
+    // globalThis-missing-member path (TS7017 under noImplicitAny), never the
+    // generic "did you mean" suggestion. This test previously pinned TS2551,
+    // which tsc never emits for this shape; that was a stale expectation,
+    // not a regression — tsz now matches tsc exactly.
     let codes = same_file_codes(
         r#"
 namespace globalThis {
@@ -130,9 +139,18 @@ globalThis.tests = "a-b";
 "#,
     );
     assert!(
-        codes.iter().any(|(code, ..)| *code == 2551),
-        "a plain module-local namespace globalThis (no declare global) must still shadow \
-         and report a property-not-found diagnostic; got: {codes:?}"
+        codes.iter().any(|(code, ..)| *code == 2397),
+        "declaring `namespace globalThis` must still report TS2397 (conflicts with the \
+         built-in global identifier); got: {codes:?}"
+    );
+    assert!(
+        codes.iter().any(|(code, ..)| *code == 7017),
+        "the property write must still go through the globalThis-missing-member path \
+         (TS7017), not a generic TS2551 suggestion; got: {codes:?}"
+    );
+    assert!(
+        !codes.iter().any(|(code, ..)| *code == 2551),
+        "TS2551 must not fire for a module-local `namespace globalThis`; got: {codes:?}"
     );
 }
 

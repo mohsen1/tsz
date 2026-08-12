@@ -3,12 +3,15 @@
 //!
 //! `tsc` raises TS2687 whenever two or more property declarations resolve to
 //! the same member name but disagree on the `readonly` or optional (`?`)
-//! modifier. The diagnostic is independent of the duplicate-identifier (TS2300)
-//! and same-type (TS2717) checks: it fires for computed names that resolve to
-//! the same value (so TS2300 is suppressed) and when the declared types match
-//! (so TS2717 is absent). Targeting follows `tsc`: the first declaration is the
-//! reference; every later declaration whose flags differ from it is flagged, and
-//! the reference itself is flagged once if any later declaration differs.
+//! modifier. The diagnostic is independent of the same-type (TS2717) check:
+//! it fires even when the declared types match (so TS2717 is absent).
+//! Targeting follows `tsc`: the first declaration is the reference; every
+//! later declaration whose flags differ from it is flagged, and the
+//! reference itself is flagged once if any later declaration differs.
+//!
+//! TS2687 is NOT independent of TS2300: computed names that resolve to the
+//! same value still report TS2300 (duplicate identifier) alongside TS2687,
+//! oracle-confirmed against `typescript@7.0.2` (re-verified for #17203).
 
 use tsz_checker::context::CheckerOptions;
 use tsz_checker::test_utils::check_source;
@@ -114,12 +117,16 @@ fn modifier_disagreement_follows_structure_not_name() {
 }
 
 #[test]
-fn computed_names_resolving_to_same_value_report_ts2687_without_ts2300() {
-    // `[c0]` and `[c1]` both resolve to "a"; tsc suppresses TS2300 for computed
-    // names but still reports TS2687 for the readonly disagreement.
+fn computed_names_resolving_to_same_value_report_ts2687_and_ts2300() {
+    // `[c0]` and `[c1]` both resolve to "a"; oracle-confirmed (typescript@7.0.2,
+    // re-verified for #17203) tsc reports BOTH TS2300 (duplicate identifier)
+    // and TS2687 (readonly disagreement) for this shape — it does not suppress
+    // TS2300 for computed names resolving to the same value. This test
+    // previously pinned zero TS2300s, which was a stale expectation, not a
+    // regression: tsz's TS2300 x2 / TS2687 x2 output matches tsc exactly.
     let source = "const c0 = \"a\";\nconst c1 = \"a\";\n\
         type X = { readonly [c0]: number; [c1]: number };";
     let diagnostics = check_source(source, "test.ts", CheckerOptions::default());
     assert_eq!(diagnostics.iter().filter(|d| d.code == 2687).count(), 2);
-    assert_eq!(diagnostics.iter().filter(|d| d.code == 2300).count(), 0);
+    assert_eq!(diagnostics.iter().filter(|d| d.code == 2300).count(), 2);
 }
