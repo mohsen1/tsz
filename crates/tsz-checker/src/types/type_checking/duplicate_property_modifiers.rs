@@ -101,7 +101,22 @@ impl<'a> CheckerState<'a> {
             // reports `'1'` even though `[c0]` is written first, because a
             // computed name over an entity reference is late-bound and the
             // plain numeric-literal `1` is not (#16258 residual 1).
-            let render_entry = *entries.iter().find(|entry| entry.2).unwrap_or(&entries[0]);
+            // The group's first eagerly-bound declaration, if any. TS2300
+            // requires at least one such member: tsc's binder only collides
+            // eagerly-bound (syntactic / literal-spelled) member names; a
+            // computed name over an entity reference (`[c0]` for `const c0 =
+            // "a"`) is late-bound, and `lateBindMember` reports a duplicate
+            // only on a genuine symbol-flags exclusion (method vs. accessor),
+            // never for two plain property members that merely resolve to the
+            // same key. So a group whose members are *all* late-bound (`{ [c0]:
+            // T; [c1]: T }` with `c0 === c1`) merges silently — no TS2300 —
+            // while the checker-level consistency checks (TS2687 modifiers,
+            // TS2717 type) still fire. A mixed group (`{ [c0]: T; 1: T }`) has
+            // an eager member, so it reports TS2300, rendered at that eager
+            // declaration's spelling.
+            let eager_entry = entries.iter().find(|entry| entry.2);
+            let group_has_eager = eager_entry.is_some();
+            let render_entry = *eager_entry.unwrap_or(&entries[0]);
             let render_idx = render_entry.0;
             let render_name_idx = self
                 .property_signature_name_node(render_idx)
@@ -132,15 +147,18 @@ impl<'a> CheckerState<'a> {
                     continue;
                 };
 
-                // TS2300 on every declaration in the group. How each name was
-                // spelled does not matter — a computed name that reached this
-                // point resolved to a real member key, so it names the same
-                // member as its group siblings.
-                self.error_at_node(
-                    error_node,
-                    &format!("Duplicate identifier '{display_name}'."),
-                    diagnostic_codes::DUPLICATE_IDENTIFIER,
-                );
+                // TS2300 on every declaration in the group, but only when the
+                // group has an eagerly-bound member (see `group_has_eager`).
+                // How each name was spelled does not matter — a computed name
+                // that reached this point resolved to a real member key, so it
+                // names the same member as its group siblings.
+                if group_has_eager {
+                    self.error_at_node(
+                        error_node,
+                        &format!("Duplicate identifier '{display_name}'."),
+                        diagnostic_codes::DUPLICATE_IDENTIFIER,
+                    );
+                }
 
                 // TS2717 on every declaration OTHER than the reference, when
                 // its type differs from the reference's. Use display text

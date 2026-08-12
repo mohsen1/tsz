@@ -123,3 +123,70 @@ fn computed_names_resolving_to_same_value_report_ts2687_without_ts2300() {
     assert_eq!(diagnostics.iter().filter(|d| d.code == 2687).count(), 2);
     assert_eq!(diagnostics.iter().filter(|d| d.code == 2300).count(), 0);
 }
+
+#[test]
+fn interface_computed_names_resolving_to_same_value_report_ts2687_without_ts2300() {
+    // The interface container applies the same rule as the type-literal one:
+    // an all-late-bound computed group merges silently (no TS2300) but the
+    // readonly disagreement still reports TS2687 on both.
+    let source = "const c0 = \"a\";\nconst c1 = \"a\";\n\
+        interface I { readonly [c0]: number; [c1]: number }";
+    let diagnostics = check_source(source, "test.ts", CheckerOptions::default());
+    assert_eq!(diagnostics.iter().filter(|d| d.code == 2687).count(), 2);
+    assert_eq!(diagnostics.iter().filter(|d| d.code == 2300).count(), 0);
+}
+
+#[test]
+fn all_computed_group_with_identical_modifiers_reports_nothing() {
+    // All late-bound, identical modifiers and types: no TS2300, no TS2687,
+    // no TS2717 — the two computed members merge into one property.
+    let source = "const c0 = \"a\";\nconst c1 = \"a\";\n\
+        type X = { [c0]: number; [c1]: number };";
+    let diagnostics = check_source(source, "test.ts", CheckerOptions::default());
+    assert_eq!(diagnostics.iter().filter(|d| d.code == 2300).count(), 0);
+    assert_eq!(diagnostics.iter().filter(|d| d.code == 2687).count(), 0);
+    assert_eq!(diagnostics.iter().filter(|d| d.code == 2717).count(), 0);
+}
+
+#[test]
+fn all_computed_group_binder_name_independent_still_no_ts2300() {
+    // Behaviour keys off the late-bound shape, not the chosen identifiers:
+    // renaming the binders leaves the result unchanged.
+    let source = "const zebra = \"k\";\nconst yak = \"k\";\n\
+        type Renamed = { readonly [zebra]: number; [yak]: number };";
+    let diagnostics = check_source(source, "test.ts", CheckerOptions::default());
+    assert_eq!(diagnostics.iter().filter(|d| d.code == 2687).count(), 2);
+    assert_eq!(diagnostics.iter().filter(|d| d.code == 2300).count(), 0);
+}
+
+#[test]
+fn mixed_group_with_one_eager_member_still_reports_ts2300() {
+    // Regression guard for #16258: a group that mixes a late-bound computed
+    // name with an eagerly-bound literal name (`[c0]` + `1`, `const c0 = "1"`)
+    // still reports TS2300 — the eager member re-arms the duplicate.
+    let source = "const c0 = \"1\";\n\
+        type X = { [c0]: number; 1: number };";
+    let diagnostics = check_source(source, "test.ts", CheckerOptions::default());
+    assert_eq!(diagnostics.iter().filter(|d| d.code == 2300).count(), 2);
+}
+
+#[test]
+fn literal_spelled_computed_name_is_eager_and_reports_ts2300() {
+    // A computed name written with a string *literal* (`["a"]`) is eagerly
+    // bound, so a group of two such names is a normal duplicate: TS2300 fires.
+    let source = "type X = { [\"a\"]: number; [\"a\"]: number };";
+    let diagnostics = check_source(source, "test.ts", CheckerOptions::default());
+    assert_eq!(diagnostics.iter().filter(|d| d.code == 2300).count(), 2);
+}
+
+#[test]
+fn all_computed_group_type_mismatch_still_suppresses_ts2300() {
+    // Two late-bound computed members resolving to the same key with *different*
+    // types are still an all-late-bound group: TS2300 stays suppressed. (The
+    // TS2717 same-type consistency check is a separate, unchanged path and is
+    // not asserted here.)
+    let source = "const c0 = \"a\";\nconst c1 = \"a\";\n\
+        type X = { [c0]: number; [c1]: string };";
+    let diagnostics = check_source(source, "test.ts", CheckerOptions::default());
+    assert_eq!(diagnostics.iter().filter(|d| d.code == 2300).count(), 0);
+}
