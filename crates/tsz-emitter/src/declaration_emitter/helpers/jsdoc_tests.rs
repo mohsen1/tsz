@@ -530,3 +530,163 @@ fn param_decls_parse_every_tag_on_one_line() {
         ]
     );
 }
+
+#[test]
+fn property_list_terminated_by_unknown_tag_falls_back_to_annotation() {
+    // tsc: an unrecognized tag before the `@property` list ends the list, and
+    // the typedef resolves from its braced annotation instead (#17285).
+    let decl = DeclarationEmitter::parse_jsdoc_type_alias_decl(
+        "@typedef {Object} Legacy\n@foo bar\n@property {number} real",
+    )
+    .expect("expected fallback typedef alias");
+    assert_eq!(decl.name, "Legacy");
+
+    let rendered = DeclarationEmitter::render_jsdoc_type_alias_decl(&decl, false)
+        .expect("expected rendered type alias");
+    assert_eq!(rendered, "type Legacy = Object;\n");
+}
+
+#[test]
+fn property_list_terminated_by_near_miss_property_tags() {
+    // `@propertyx` / `@properties` are not property tags, so they terminate
+    // the list exactly like any other unrecognized tag.
+    for stray in ["@propertyx bogus", "@properties nope"] {
+        let jsdoc = format!("@typedef {{Object}} Cfg\n{stray}\n@property {{number}} real");
+        let decl = DeclarationEmitter::parse_jsdoc_type_alias_decl(&jsdoc)
+            .expect("expected fallback typedef alias");
+        let rendered = DeclarationEmitter::render_jsdoc_type_alias_decl(&decl, false)
+            .expect("expected rendered type alias");
+        assert_eq!(rendered, "type Cfg = Object;\n", "stray tag: {stray}");
+    }
+}
+
+#[test]
+fn property_list_terminated_by_known_non_property_tags() {
+    // Known-but-foreign tags (`@see`, `@param`, `@returns`, `@author`)
+    // terminate the list the same way unknown tags do.
+    for stray in [
+        "@see something",
+        "@param {number} x",
+        "@returns {number} nope",
+        "@author someone",
+    ] {
+        let jsdoc = format!("@typedef {{Object}} Rec\n{stray}\n@property {{number}} real");
+        let decl = DeclarationEmitter::parse_jsdoc_type_alias_decl(&jsdoc)
+            .expect("expected fallback typedef alias");
+        let rendered = DeclarationEmitter::render_jsdoc_type_alias_decl(&decl, false)
+            .expect("expected rendered type alias");
+        assert_eq!(rendered, "type Rec = Object;\n", "stray tag: {stray}");
+    }
+}
+
+#[test]
+fn property_list_survives_trailing_unknown_tag() {
+    // An unknown tag after the properties does not break the chain.
+    let decl = DeclarationEmitter::parse_jsdoc_type_alias_decl(
+        "@typedef {Object} Opts\n@property {number} real\n@foo bar",
+    )
+    .expect("expected JSDoc property alias");
+    let rendered = DeclarationEmitter::render_jsdoc_type_alias_decl(&decl, false)
+        .expect("expected rendered type alias");
+    assert_eq!(rendered, "type Opts = {\n    real: number;\n};\n");
+}
+
+#[test]
+fn property_list_keeps_only_prefix_before_terminating_tag() {
+    // A tag between two properties keeps the prefix and discards the rest.
+    let decl = DeclarationEmitter::parse_jsdoc_type_alias_decl(
+        "@typedef {Object} Pair\n@property {number} first\n@foo bar\n@property {string} second",
+    )
+    .expect("expected JSDoc property alias");
+    let rendered = DeclarationEmitter::render_jsdoc_type_alias_decl(&decl, false)
+        .expect("expected rendered type alias");
+    assert_eq!(rendered, "type Pair = {\n    first: number;\n};\n");
+}
+
+#[test]
+fn property_tags_before_typedef_are_ignored_without_terminating() {
+    // A `@property` before the `@typedef` tag is dropped by tsc, and does not
+    // end the list that follows the typedef.
+    let decl = DeclarationEmitter::parse_jsdoc_type_alias_decl(
+        "@property {number} early\n@typedef {Object} Late\n@property {number} real",
+    )
+    .expect("expected JSDoc property alias");
+    let rendered = DeclarationEmitter::render_jsdoc_type_alias_decl(&decl, false)
+        .expect("expected rendered type alias");
+    assert_eq!(rendered, "type Late = {\n    real: number;\n};\n");
+}
+
+#[test]
+fn name_only_typedef_with_terminated_property_list_drops_alias() {
+    // With no braced annotation to fall back to, tsc emits no alias at all.
+    assert!(
+        DeclarationEmitter::parse_jsdoc_type_alias_decl(
+            "@typedef Bare\n@foo bar\n@property {number} real",
+        )
+        .is_none()
+    );
+}
+
+#[test]
+fn non_object_typedef_with_property_tags_falls_back_to_annotation() {
+    // tsc ignores `@property` tags on a non-object typedef and keeps the
+    // annotation; the alias must not be dropped.
+    let decl = DeclarationEmitter::parse_jsdoc_type_alias_decl(
+        "@typedef {string} Label\n@property {number} x",
+    )
+    .expect("expected fallback typedef alias");
+    let rendered = DeclarationEmitter::render_jsdoc_type_alias_decl(&decl, false)
+        .expect("expected rendered type alias");
+    assert_eq!(rendered, "type Label = string;\n");
+}
+
+#[test]
+fn same_line_unknown_tag_after_typedef_terminates_property_list() {
+    // The terminator can share the `@typedef` line: segments, not lines,
+    // drive the scan.
+    let decl = DeclarationEmitter::parse_jsdoc_type_alias_decl(
+        "@typedef {Object} Inline @foo bar\n@property {number} real",
+    )
+    .expect("expected fallback typedef alias");
+    let rendered = DeclarationEmitter::render_jsdoc_type_alias_decl(&decl, false)
+        .expect("expected rendered type alias");
+    assert_eq!(rendered, "type Inline = Object;\n");
+}
+
+#[test]
+fn description_lines_do_not_terminate_property_list() {
+    // Plain description lines between the typedef and its properties are not
+    // tags and leave the list intact.
+    let decl = DeclarationEmitter::parse_jsdoc_type_alias_decl(
+        "@typedef {Object} Doc\nsome description line\n@property {number} real",
+    )
+    .expect("expected JSDoc property alias");
+    let rendered = DeclarationEmitter::render_jsdoc_type_alias_decl(&decl, false)
+        .expect("expected rendered type alias");
+    assert_eq!(rendered, "type Doc = {\n    real: number;\n};\n");
+}
+
+#[test]
+fn type_tag_is_transparent_to_property_list() {
+    // `@type` is a recognized typedef companion tag in tsc: it does not
+    // terminate the property list, whether it precedes the properties or
+    // sits between them.
+    let decl = DeclarationEmitter::parse_jsdoc_type_alias_decl(
+        "@typedef Shape\n@type {object}\n@property {string} id",
+    )
+    .expect("expected JSDoc property alias");
+    let rendered = DeclarationEmitter::render_jsdoc_type_alias_decl(&decl, false)
+        .expect("expected rendered type alias");
+    assert_eq!(rendered, "type Shape = {\n    id: string;\n};\n");
+
+    let decl = DeclarationEmitter::parse_jsdoc_type_alias_decl(
+        "@typedef Wide\n@property {string} a\n@type {object}\n@property {string} b",
+    )
+    .expect("expected JSDoc property alias");
+    let rendered = DeclarationEmitter::render_jsdoc_type_alias_decl(&decl, false)
+        .expect("expected rendered type alias");
+    assert_eq!(
+        rendered,
+        "type Wide = {\n    a: string;\n    b: string;\n};\n"
+    );
+}
