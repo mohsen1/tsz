@@ -930,6 +930,53 @@ u2.email = e;
 }
 
 #[test]
+fn exact_optional_property_write_ts2412_target_reduces_intersection_display() {
+    // Regression for #17235-adjacent: intersecting two object types whose
+    // same-named optional property differs only in whether `undefined` is
+    // written explicitly (`disabled?: boolean` vs `disabled?: boolean |
+    // undefined`) merges that property's read/write type via a raw,
+    // non-distributing intersection to avoid infinite recursion on
+    // structurally-recursive interfaces. That left an absorbable pair like
+    // `boolean & (boolean | undefined)` unreduced, and it leaked into this
+    // diagnostic's target-type display verbatim instead of tsc's reduced
+    // `boolean`. Oracle-verified (typescript@7.0.2): tsc always reports the
+    // plain `boolean`.
+    let source = r#"
+interface A {
+    disabled?: boolean;
+}
+interface B {
+    disabled?: boolean | undefined;
+}
+declare const ab: A & B;
+ab.disabled = undefined;
+"#;
+    let options = CheckerOptions {
+        exact_optional_property_types: true,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = with_lib_contexts(source, "test.ts", options);
+
+    let ts2412 = diagnostics.iter().find(|(code, _)| {
+        *code
+            == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE_WITH_EXACTOPTIONALPROPERTYTYPES_TRUE_CONSIDER_ADD_2
+    });
+    let Some((_, message)) = ts2412 else {
+        panic!("Expected TS2412 for exact-optional property write mismatch, got: {diagnostics:#?}");
+    };
+    assert!(
+        message.contains("not assignable to type 'boolean'"),
+        "Expected the merged intersection property's target type to display as \
+         the reduced 'boolean', not a raw unreduced intersection. Got: {message}"
+    );
+    assert!(
+        !message.contains('&'),
+        "Target type display must not leak the raw, unreduced intersection \
+         (e.g. 'boolean & (boolean | undefined)'). Got: {message}"
+    );
+}
+
+#[test]
 fn exact_optional_property_direct_undefined_write_uses_ts2412() {
     let source = r#"
 function f(obj: { a?: string, b?: string | undefined }) {
