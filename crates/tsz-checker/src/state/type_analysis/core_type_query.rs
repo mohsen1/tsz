@@ -1788,37 +1788,48 @@ impl<'a> CheckerState<'a> {
                         self.error_namespace_no_export(&namespace_name, &segment, segment_idx);
                         return Some(TypeId::ERROR);
                     }
-                    // export=/`module.exports =` modules keep the pre-existing
-                    // `.export=` display scheme (tsc names the export= target
-                    // symbol instead — a separate, tracked divergence).
-                    let mut namespace_name = self
-                        .ctx
-                        .namespace_module_names
-                        .get(&current)
-                        .map(|name| {
-                            format!("\"{}\".export=", name.strip_prefix("./").unwrap_or(name))
-                        })
-                        .unwrap_or_else(|| {
-                            format!(
-                                "\"{}\".export=",
-                                self.imported_namespace_display_module_name(&module_name)
-                            )
-                        });
+                    // export=/`module.exports =` module. tsc names the export=
+                    // target two ways: a NAMED target (`export = shape`) renders
+                    // the target's own symbol name with no module path and no
+                    // `.export=` suffix; an ANONYMOUS target
+                    // (`module.exports = { ... }`) renders the synthesized
+                    // `"mod".export=` member. `base`/`suffix` capture both so the
+                    // nested-qualifier forms below compose uniformly.
+                    let (base, suffix) = match self.export_equals_target_named_display(&module_name)
+                    {
+                        Some(name) => (name, ""),
+                        None => {
+                            let module_display = self
+                                .ctx
+                                .namespace_module_names
+                                .get(&current)
+                                .map(|name| {
+                                    format!("\"{}\"", name.strip_prefix("./").unwrap_or(name))
+                                })
+                                .unwrap_or_else(|| {
+                                    format!(
+                                        "\"{}\"",
+                                        self.imported_namespace_display_module_name(&module_name)
+                                    )
+                                });
+                            (module_display, ".export=")
+                        }
+                    };
                     // For `typeof import("./m").bar.missing` on export= modules,
                     // preserve the nested qualifier path when the first segment
                     // comes from the export= target surface.
                     if resolved_segments.is_empty()
                         && let Some((next_idx, next_segment)) = segments_iter.next()
                     {
-                        let base = namespace_name.trim_end_matches(".export=");
-                        namespace_name = format!("{base}.{segment}.export=");
+                        let namespace_name = format!("{base}.{segment}{suffix}");
                         self.error_namespace_no_export(&namespace_name, &next_segment, next_idx);
                         return Some(TypeId::ERROR);
                     }
-                    if !resolved_segments.is_empty() {
-                        let base = namespace_name.trim_end_matches(".export=");
-                        namespace_name = format!("{base}.{}.export=", resolved_segments.join("."));
-                    }
+                    let namespace_name = if resolved_segments.is_empty() {
+                        format!("{base}{suffix}")
+                    } else {
+                        format!("{base}.{}{suffix}", resolved_segments.join("."))
+                    };
                     self.error_namespace_no_export(&namespace_name, &segment, segment_idx);
                     return Some(TypeId::ERROR);
                 }

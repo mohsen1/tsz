@@ -393,13 +393,22 @@ impl<'a> CheckerState<'a> {
         module_specifier: &str,
         resolution_mode_override: Option<crate::context::ResolutionModeOverride>,
     ) -> String {
-        // tsc adds a synthetic `.export=` qualifier to the namespace path
-        // when the target module uses `export = ...` (or the JS-equivalent
-        // `module.exports = ...`). For modules without export-assignment,
-        // emit just the module path.
+        // A module whose export surface is an `export = ...` (or the
+        // JS-equivalent `module.exports = ...`) is named two ways by tsc: when
+        // the export target is a NAMED declaration, its own symbol name is the
+        // namespace (`export = shape` → `shape`, no module path, no suffix);
+        // when it is ANONYMOUS (`module.exports = { ... }`), the synthesized
+        // `.export=` member under the module path is used. For modules without
+        // export-assignment, emit just the module path.
+        let has_export_equals = self.target_module_has_export_equals(module_specifier);
+        if has_export_equals
+            && let Some(name) = self.export_equals_target_named_display(module_specifier)
+        {
+            return name;
+        }
         let display_name =
             self.import_type_module_display_name(module_specifier, resolution_mode_override);
-        if self.target_module_has_export_equals(module_specifier) {
+        if has_export_equals {
             format!("\"{display_name}\".export=")
         } else {
             format!("\"{display_name}\"")
@@ -418,6 +427,15 @@ impl<'a> CheckerState<'a> {
     ) -> String {
         if segments.is_empty() {
             return self.import_type_namespace_name(module_specifier, resolution_mode_override);
+        }
+
+        // A named `export = <target>` module roots the traversed path at the
+        // target's own symbol name: `import("mod").Bar.Q` missing under
+        // `export = shape` → `shape.Bar` (no module path, no `.export=`).
+        if self.target_module_has_export_equals(module_specifier)
+            && let Some(name) = self.export_equals_target_named_display(module_specifier)
+        {
+            return format!("{name}.{}", segments.join("."));
         }
 
         // Nested access: segments already traverse into the export= namespace,

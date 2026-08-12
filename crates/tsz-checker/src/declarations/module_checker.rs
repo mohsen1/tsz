@@ -518,6 +518,83 @@ impl<'a> CheckerState<'a> {
         name_id.escaped_text == "exports"
     }
 
+    /// The declared name of an `export = <target>` (or JS
+    /// `module.exports = <target>`) module's target, when that target is a
+    /// named declaration — the name tsc renders in a TS2694 namespace path for
+    /// such a module (`export = shape` → `shape`, with no module path and no
+    /// `.export=` qualifier). Covers a namespace/class/function/const target
+    /// and an aliased target (`const t = ...; export = t` → `t`).
+    ///
+    /// Returns `None` when the export target is anonymous (e.g.
+    /// `module.exports = { ... }`), where tsc keeps the synthesized
+    /// `"mod".export=` form. The named/anonymous decision turns on whether the
+    /// export target is a plain identifier (a named symbol reference) versus an
+    /// anonymous initializer — not on any rendered text or file-name predicate.
+    pub(crate) fn export_equals_target_named_display(
+        &self,
+        module_specifier: &str,
+    ) -> Option<String> {
+        use tsz_parser::parser::syntax_kind_ext;
+        let target_idx = self.ctx.resolve_import_target(module_specifier)?;
+        let target_arena = self.ctx.get_arena_for_file(target_idx as u32);
+        let sf = target_arena.source_files.first()?;
+        for &stmt_idx in &sf.statements.nodes {
+            let Some(stmt_node) = target_arena.get(stmt_idx) else {
+                continue;
+            };
+            // The export target's expression: the RHS of `export = <expr>` or
+            // of a top-level JS `module.exports = <expr>`.
+            let target_expr = if stmt_node.kind == syntax_kind_ext::EXPORT_ASSIGNMENT {
+                match target_arena.get_export_assignment(stmt_node) {
+                    Some(assign) if assign.is_export_equals => assign.expression,
+                    _ => continue,
+                }
+            } else if stmt_node.kind == syntax_kind_ext::EXPRESSION_STATEMENT {
+                let Some(expr_stmt) = target_arena.get_expression_statement(stmt_node) else {
+                    continue;
+                };
+                let Some(expr_node) = target_arena.get(expr_stmt.expression) else {
+                    continue;
+                };
+                if expr_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+                    continue;
+                }
+                let Some(binary) = target_arena.get_binary_expr(expr_node) else {
+                    continue;
+                };
+                if binary.operator_token != tsz_scanner::SyntaxKind::EqualsToken as u16
+                    || !Self::is_module_dot_exports_target(target_arena, binary.left)
+                {
+                    continue;
+                }
+                binary.right
+            } else {
+                continue;
+            };
+
+            // A named target is a plain identifier (`export = shape`); anything
+            // else — an object literal, a call, a qualified name — is anonymous
+            // and keeps the `"mod".export=` form. When the target module's
+            // binder is resident its symbol `escaped_name` is authoritative;
+            // otherwise the source identifier (the declared name) is used.
+            let node = target_arena.get(target_expr)?;
+            let ident_name = target_arena.get_identifier(node)?.escaped_text.as_str();
+            let name = self
+                .ctx
+                .get_binder_for_file(target_idx)
+                .and_then(|binder| {
+                    binder
+                        .file_locals
+                        .get(ident_name)
+                        .and_then(|sym_id| binder.get_symbol(sym_id))
+                        .map(|symbol| symbol.escaped_name.clone())
+                })
+                .unwrap_or_else(|| ident_name.to_string());
+            return Some(name);
+        }
+        None
+    }
+
     /// Validate that named re-exports exist in the target module.
     ///
     /// For `export { foo, bar as baz } from './module'`, validates that
