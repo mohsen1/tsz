@@ -1543,33 +1543,8 @@ impl<'a> CheckerState<'a> {
             syntax_kind_ext::INDEX_SIGNATURE => {
                 // Index signatures are metadata used during type resolution, not members
                 // with their own types. They're handled separately by get_index_signatures.
-                // TS1071: Accessibility modifiers cannot appear on index signatures.
-                if let Some(index_sig) = self.ctx.arena.get_index_signature(node)
-                    && let Some(ref mods) = index_sig.modifiers
-                {
-                    use crate::diagnostics::diagnostic_codes;
-                    use tsz_scanner::SyntaxKind;
-                    for &mod_idx in &mods.nodes {
-                        if let Some(mod_node) = self.ctx.arena.get(mod_idx) {
-                            let modifier_name = match mod_node.kind {
-                                k if k == SyntaxKind::PublicKeyword as u16 => Some("public"),
-                                k if k == SyntaxKind::PrivateKeyword as u16 => Some("private"),
-                                k if k == SyntaxKind::ProtectedKeyword as u16 => Some("protected"),
-                                k if k == SyntaxKind::ExportKeyword as u16 => Some("export"),
-                                _ => None,
-                            };
-                            if let Some(name) = modifier_name {
-                                self.error_at_node(
-                                    mod_idx,
-                                    &format!(
-                                        "'{name}' modifier cannot appear on an index signature."
-                                    ),
-                                    diagnostic_codes::MODIFIER_CANNOT_APPEAR_ON_AN_INDEX_SIGNATURE,
-                                );
-                            }
-                        }
-                    }
-                }
+                // TS1071: grammar-check the modifier run (see the helper).
+                self.check_class_index_signature_modifiers(member_idx);
             }
             _ => {
                 // Other class member types (semicolons, etc.)
@@ -1586,6 +1561,60 @@ impl<'a> CheckerState<'a> {
         }
 
         self.pop_enclosing_jsdoc_class_template_types(class_jsdoc_template_updates);
+    }
+
+    /// TS1071: grammar-check the modifier run on a **class** index signature.
+    ///
+    /// Only `readonly` and `static` are legal on a class index signature; every
+    /// other modifier is rejected. tsc's `checkGrammarModifiers` reports a single
+    /// TS1071 (`'{0}' modifier cannot appear on an index signature.`) at the first
+    /// offending modifier and returns, so we emit exactly one and stop rather than
+    /// one-per-modifier. Decorators share the modifier list but are not modifiers,
+    /// so they are skipped here (their own validity is checked elsewhere).
+    ///
+    /// The object/interface index-signature path is grammar-checked earlier, in the
+    /// parser (`is_illegal_type_member_modifier`); this covers only the class-member
+    /// walk, which previously hardcoded the illegal set to the accessibility
+    /// modifiers plus `export`.
+    fn check_class_index_signature_modifiers(&mut self, member_idx: NodeIndex) {
+        use crate::diagnostics::diagnostic_codes;
+        use tsz_scanner::keyword_to_text_static;
+
+        let Some(node) = self.ctx.arena.get(member_idx) else {
+            return;
+        };
+        let Some(index_sig) = self.ctx.arena.get_index_signature(node) else {
+            return;
+        };
+        let Some(mods) = index_sig.modifiers.as_ref() else {
+            return;
+        };
+        for &mod_idx in &mods.nodes {
+            let Some(mod_node) = self.ctx.arena.get(mod_idx) else {
+                continue;
+            };
+            // Decorators live in the same list but are not modifiers.
+            if mod_node.kind == syntax_kind_ext::DECORATOR {
+                continue;
+            }
+            // The only two modifiers a class index signature may carry.
+            if mod_node.kind == SyntaxKind::ReadonlyKeyword as u16
+                || mod_node.kind == SyntaxKind::StaticKeyword as u16
+            {
+                continue;
+            }
+            // First illegal modifier wins: emit one TS1071 and stop, matching
+            // tsc's single-pass return.
+            let name = SyntaxKind::try_from_u16(mod_node.kind)
+                .and_then(keyword_to_text_static)
+                .unwrap_or_default();
+            self.error_at_node_msg(
+                mod_idx,
+                diagnostic_codes::MODIFIER_CANNOT_APPEAR_ON_AN_INDEX_SIGNATURE,
+                &[name],
+            );
+            break;
+        }
     }
 
     fn check_class_member_decorator_expressions(&mut self, member_idx: NodeIndex) {
