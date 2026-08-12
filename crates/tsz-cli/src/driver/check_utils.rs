@@ -1290,7 +1290,15 @@ pub(super) const fn is_real_syntax_error(code: u32) -> bool {
         | 1138 // Parameter declaration expected
         | 1141 // Type parameter declaration expected
         | 1146 // Declaration expected
-        | 1155 // 'const' declarations must be initialized
+        // Note: TS1155 ('{0}' declarations must be initialized) is intentionally
+        // excluded (#16279 audit round 12 / #17253). Like TS1313 in round 10, it
+        // is a `checkGrammarVariableDeclaration` grammar check on a well-formed
+        // AST (`const x;` parses cleanly), not a structural parse failure — tsc
+        // reports it via `grammarErrorOnNode` and still runs the file's other
+        // semantic checks (oracle: `const x;` reports TS1155 AND TS7005;
+        // `const x` reassigned reports TS1155 AND TS2588). It moved to
+        // `is_parser_grammar_code`; leaving it here made #17251's parser wiring
+        // set `has_real_syntax_errors` and delete every co-occurring diagnostic.
         | 1160 // Unterminated template literal
         | 1161 // Unterminated regular expression literal
         | 1180 // Property destructuring pattern expected
@@ -1399,7 +1407,10 @@ pub(super) const fn is_structural_parse_error(code: u32) -> bool {
         | 1144 // '{' or ';' expected
         | 1145 // '{' or JSX element expected
         | 1146 // Declaration expected
-        | 1155 // 'const' declarations must be initialized
+        // TS1155 is intentionally excluded — see the matching note in
+        // `is_real_syntax_error` above. It is a grammar check on a well-formed
+        // AST and moved to `is_parser_grammar_code` (#16279 audit round 12 /
+        // #17253).
         | 1160 // Unterminated template literal
         | 1161 // Unterminated regular expression literal
         | 1180 // Property destructuring pattern expected
@@ -1653,3 +1664,7 @@ mod jsdoc_star_type_grammar_tests;
 #[cfg(test)]
 #[path = "check_utils/private_identifier_parse_error_suppression_tests.rs"]
 mod private_identifier_parse_error_suppression_tests;
+
+#[cfg(test)]
+#[path = "check_utils/variable_declaration_initializer_grammar_tests.rs"]
+mod variable_declaration_initializer_grammar_tests;

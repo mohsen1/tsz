@@ -268,6 +268,29 @@ pub(super) const fn is_parser_grammar_code(code: u32) -> bool {
         | 1114 // Duplicate label
         | 1120 // An export assignment cannot have modifiers
         | 1123 // Variable declaration list cannot be empty
+        | 1155 // '{0}' declarations must be initialized. tsc's
+               // `checkGrammarVariableDeclaration` reports this via
+               // `grammarErrorOnNode` (checker-side) when `isVarConstLike(node)`
+               // holds and the declarator has no initializer — the same function
+               // and `else if` chain as the already-listed TS1182 (destructuring
+               // declaration) and TS1492/TS1493/TS1494 (`using` binding-pattern /
+               // `for...in` `using`). tsz emits it from the parser instead
+               // (`state_variable_declarations.rs`,
+               // `state_declarations_exports.rs`), sole emission site — no
+               // checker/solver/binder counterpart, so no double-emission risk.
+               //
+               // #16279 audit round 12 (the #17251 TS1155-wiring regression,
+               // #17253): like TS1313 in round 10, TS1155 was misclassified as a
+               // structural parse error (stale entries in `is_real_syntax_error`
+               // / `is_structural_parse_error`, `check_utils.rs`) that only #17251
+               // made live — so on a well-formed AST it both survived a genuine
+               // syntax error and set `has_syntax_parse_errors`, deleting every
+               // co-occurring diagnostic (regressed 11 conformance rows, e.g.
+               // `for-of2` `e=[TS1155, TS2588, TS7005]` collapsed to `[TS1155]`).
+               // The stale structural-list entries move here in the same fix.
+               // Oracle transcript (Direction A/B + self-suppression witness) and
+               // the round-12 rationale live in the test module doc,
+               // `variable_declaration_initializer_grammar_tests.rs`.
         | 1162 // An object member cannot be declared optional
         | 1163 // A 'yield' expression is only allowed in a generator body
         | 1171 // A comma expression is not allowed in a computed property name
