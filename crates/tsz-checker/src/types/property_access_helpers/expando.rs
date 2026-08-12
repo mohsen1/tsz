@@ -484,10 +484,10 @@ impl<'a> CheckerState<'a> {
                         read_pos,
                     )
                     .is_some_and(|declares| !declares)
-                // Mirrors the TS2339 site: only a JS constructor's prototype is
-                // closed by its object literal. On a plain function the write
-                // stays an expando declaration.
-                && self.js_prototype_owner_is_js_constructor(prototype_root_expr)
+                // Mirrors the TS2339 site (`resolve.rs`): constructor evidence
+                // is irrelevant to prototype closure — only `noImplicitAny`
+                // gates it. #17226 gap 2.
+                && self.ctx.no_implicit_any()
             {
                 return false;
             }

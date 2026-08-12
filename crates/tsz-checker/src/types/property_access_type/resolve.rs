@@ -739,11 +739,16 @@ impl<'a> CheckerState<'a> {
                         read_pos,
                     )
                     .is_some_and(|declares| !declares)
-                // Only a JS *constructor*'s prototype is closed by its object
-                // literal. On a plain function, `X.prototype.y = ...` is an
-                // ordinary prototype-property declaration that merges with the
-                // literal, and reporting it is a false positive.
-                && self.js_prototype_owner_is_js_constructor(prototype_access.expression)
+                // Every function's prototype closes from a non-empty object
+                // literal, regardless of `isJSConstructor` evidence (JSDoc
+                // `@constructor` / `this.x =` assignments) — oracle-verified
+                // (tsconfig-sentinel, typescript@7.0.2): a plain
+                // `function F() {}` behaves identically to a real JS
+                // constructor here. The only gate tsc applies is
+                // `noImplicitAny`: the write is `TS2339` when it is on, and
+                // silently accepted (the JS open-container leniency) when it
+                // is off. #17226 gap 2.
+                && self.ctx.no_implicit_any()
             {
                 let type_display = self
                     .prior_js_prototype_object_literal_assignment_display(
