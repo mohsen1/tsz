@@ -79,7 +79,7 @@ impl<'a> CheckerState<'a> {
     /// following properties" message. tsc lists up to 5 names inline; for 6+ it
     /// lists the first 4 then "and N more". Returns the joined list and the
     /// "and N more" count (present only when truncated).
-    pub(super) fn truncated_missing_property_list(
+    pub(crate) fn truncated_missing_property_list(
         &mut self,
         ordered: &[tsz_common::interner::Atom],
         owner: TypeId,
