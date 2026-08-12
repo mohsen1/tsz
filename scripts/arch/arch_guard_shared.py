@@ -300,7 +300,6 @@ _CRATE_SRC_LINE_LIMIT_ALLOWLISTS = [
         "crates/tsz-solver/src/def/core.rs",
         "crates/tsz-solver/src/intern/core/constructors.rs",
         "crates/tsz-solver/src/relations/subtype/explain.rs",
-        "crates/tsz-solver/src/contextual/extractors.rs",
     }),
     ("tsz-wasm", "WASM", set()),
     ("tsz-website", "Website", set()),
