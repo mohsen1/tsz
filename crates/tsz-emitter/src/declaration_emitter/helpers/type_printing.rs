@@ -65,27 +65,12 @@ impl<'a> DeclarationEmitter<'a> {
             if decl_node.kind != syntax_kind_ext::TYPE_ALIAS_DECLARATION {
                 return false;
             }
-
-            let mut current = decl_idx;
-            for _ in 0..32 {
-                let Some(parent_idx) = self.arena.parent_of(current) else {
-                    return false;
-                };
-                if !parent_idx.is_some() {
-                    return false;
-                }
-                let Some(parent_node) = self.arena.get(parent_idx) else {
-                    return false;
-                };
-                if self.arena.get_source_file(parent_node).is_some() {
-                    return false;
-                }
-                if self.arena.get_function(parent_node).is_some() {
-                    return true;
-                }
-                current = parent_idx;
-            }
-            false
+            // This check tracks only *function* nesting: a `type` alias is
+            // function-local when a function/arrow node lies between it and the
+            // source file. A bare lexical `BLOCK` (a module-level or `if` block)
+            // does not count here, preserving the original function-only walk,
+            // so `block_is_boundary` is `false`.
+            self.node_is_inside_value_scope(decl_idx, false)
         })
     }
 

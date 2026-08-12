@@ -927,7 +927,7 @@ impl<'a> DeclarationEmitter<'a> {
             .arena
             .get(expr_idx)
             .is_some_and(|node| node.kind == SyntaxKind::Identifier as u16)
-            && self.value_reference_symbol_can_use_typeof(expr_idx, sym_id, resolved_sym_id, symbol)
+            && self.value_reference_symbol_can_use_typeof(sym_id, resolved_sym_id, symbol)
             && let Some(name) = self.get_identifier_text(expr_idx)
         {
             return Some(format!("typeof {name}"));
