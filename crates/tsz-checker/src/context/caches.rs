@@ -208,6 +208,11 @@ pub struct TypeReferenceValidationCaches {
     /// source/target types in the current file session. Failures are uncached
     /// so diagnostic relation requests still produce structured failure data.
     pub type_arg_constraint_relation_successes: FxHashSet<(TypeId, TypeId, u16, bool)>,
+    /// Successful explicit-alias constraint relations for prepared
+    /// source/target types in the current file session, mirroring
+    /// `type_arg_constraint_relation_successes`. Failures are uncached so
+    /// diagnostic relation requests still produce structured failure data.
+    pub explicit_alias_constraint_relation_successes: FxHashSet<(TypeId, TypeId, u16, bool)>,
     /// Declared type-parameter lists keyed by reference symbol identity, valid
     /// for the lifetime of the current source file. `SymbolId` values are
     /// arena-local in project checks, so imported aliases from different files
@@ -272,6 +277,8 @@ pub struct SharedConstraintProofCache {
     pub type_arg_relation_successes: dashmap::DashSet<(TypeId, TypeId, u16, bool)>,
     /// Mirror of `conditional_true_branch_relation_successes`.
     pub conditional_true_branch_relation_successes: dashmap::DashSet<(TypeId, TypeId, u16, bool)>,
+    /// Mirror of `explicit_alias_constraint_relation_successes`.
+    pub explicit_alias_relation_successes: dashmap::DashSet<(TypeId, TypeId, u16, bool)>,
 }
 
 /// Sparse cache for node-index-keyed `TypeId` lookups.
