@@ -2,13 +2,135 @@
 
 use crate::import::core::ModuleNotFoundSite;
 use crate::state::CheckerState;
+use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use tsz_binder::symbol_flags;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
+/// Outcome of the meaning-checked qualifier walk over
+/// `import("mod").A.B[.C…]` segments (#17186).
+enum ImportTypeQualifiedWalk {
+    /// Every segment resolved with its required meaning; the final symbol.
+    Resolved(tsz_binder::SymbolId),
+    /// The walk stopped at `segments[fail_idx]`: either the segment was not
+    /// found in its qualifier's export surface, or the symbol it named lacks
+    /// the meaning its position requires. Blame that segment under the
+    /// prefix `segments[..fail_idx]`.
+    Failed { fail_idx: usize },
+}
+
 impl<'a> CheckerState<'a> {
+    /// Whether `sym_id` carries one of `required_flags`, following an alias
+    /// symbol to its target first when needed — tsc's `getSymbol` resolves
+    /// an alias and re-checks the requested meaning, so
+    /// `export import Al = RealNs` is a valid namespace qualifier.
+    fn import_type_symbol_meets_meaning(
+        &self,
+        sym_id: tsz_binder::SymbolId,
+        required_flags: u32,
+    ) -> bool {
+        let flags = |checker: &Self, sym: tsz_binder::SymbolId| {
+            checker
+                .get_cross_file_symbol(sym)
+                .or_else(|| checker.ctx.binder.get_symbol(sym))
+                .map(|symbol| symbol.flags)
+        };
+        let Some(sym_flags) = flags(self, sym_id) else {
+            return false;
+        };
+        if sym_flags & required_flags != 0 {
+            return true;
+        }
+        if sym_flags & symbol_flags::ALIAS != 0 {
+            let mut visited = AliasCycleTracker::new();
+            return self
+                .resolve_alias_symbol(sym_id, &mut visited)
+                .and_then(|resolved| flags(self, resolved))
+                .is_some_and(|resolved_flags| resolved_flags & required_flags != 0);
+        }
+        false
+    }
+
+    /// The symbol to step *through* when walking past `sym_id`: an alias's
+    /// own symbol has no export table, so stepping continues from its
+    /// resolved target.
+    fn import_type_step_symbol(&self, sym_id: tsz_binder::SymbolId) -> tsz_binder::SymbolId {
+        let is_alias = self
+            .get_cross_file_symbol(sym_id)
+            .or_else(|| self.ctx.binder.get_symbol(sym_id))
+            .is_some_and(|symbol| symbol.flags & symbol_flags::ALIAS != 0);
+        if !is_alias {
+            return sym_id;
+        }
+        let mut visited = AliasCycleTracker::new();
+        self.resolve_alias_symbol(sym_id, &mut visited)
+            .unwrap_or(sym_id)
+    }
+
+    /// Walk a resolved head symbol through the remaining qualifier segments,
+    /// enforcing tsc's per-segment meaning: every segment but the last must
+    /// resolve in *namespace* meaning (`ValueModule | NamespaceModule |
+    /// Enum` — tsc's `SymbolFlags.Namespace`), and the last in type-or-
+    /// namespace meaning. A class/interface/type-alias qualifier fails at
+    /// its own segment even when the next segment exists on its static
+    /// side, and a value-only final segment (a `const` inside a namespace)
+    /// fails at itself. Each stepped symbol inherits its qualifier's
+    /// registered file target so cross-arena type resolution can locate its
+    /// declaring file.
+    fn walk_import_type_qualified_segments(
+        &self,
+        head_sym: tsz_binder::SymbolId,
+        segments: &[String],
+    ) -> ImportTypeQualifiedWalk {
+        const LAST_SEGMENT_MEANING: u32 = symbol_flags::TYPE | symbol_flags::NAMESPACE;
+
+        let mut current_sym = head_sym;
+        for (i, segment) in segments.iter().enumerate() {
+            if i > 0 {
+                let step_sym = self.import_type_step_symbol(current_sym);
+                let parent_file_idx = self
+                    .ctx
+                    .resolve_symbol_file_index(step_sym)
+                    .or_else(|| self.ctx.resolve_symbol_file_index(current_sym));
+                let Some(next_sym) = self
+                    .get_cross_file_symbol(step_sym)
+                    .or_else(|| self.ctx.binder.get_symbol(step_sym))
+                    .and_then(|symbol| {
+                        symbol
+                            .exports
+                            .as_ref()
+                            .and_then(|exports| exports.get(segment))
+                            .or_else(|| {
+                                symbol
+                                    .members
+                                    .as_ref()
+                                    .and_then(|members| members.get(segment))
+                            })
+                    })
+                else {
+                    return ImportTypeQualifiedWalk::Failed { fail_idx: i };
+                };
+                if self.ctx.resolve_symbol_file_index(next_sym).is_none()
+                    && let Some(file_idx) = parent_file_idx
+                {
+                    self.ctx.register_symbol_file_target(next_sym, file_idx);
+                }
+                current_sym = next_sym;
+            }
+            let is_last = i + 1 == segments.len();
+            let required_flags = if is_last {
+                LAST_SEGMENT_MEANING
+            } else {
+                symbol_flags::NAMESPACE
+            };
+            if !self.import_type_symbol_meets_meaning(current_sym, required_flags) {
+                return ImportTypeQualifiedWalk::Failed { fail_idx: i };
+            }
+        }
+        ImportTypeQualifiedWalk::Resolved(current_sym)
+    }
     fn resolve_ts_import_type_member_symbol(
         &self,
         module_specifier: &str,
@@ -325,15 +447,22 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// The missing-member context for a failed qualified import type:
+    /// `(namespace display, missing member, anchor node)`. The anchor is the
+    /// failing segment's own identifier when the meaning-checked symbol walk
+    /// identified one (tsc anchors TS2694 at the segment where resolution
+    /// stopped, which for a non-namespace qualifier is the qualifier itself,
+    /// not the rightmost segment); `None` means the caller falls back to the
+    /// rightmost segment.
     pub(crate) fn import_type_missing_member_context(
         &mut self,
         module_specifier: &str,
         type_name_idx: NodeIndex,
         resolution_mode_override: Option<crate::context::ResolutionModeOverride>,
-    ) -> Option<(String, String)> {
+    ) -> Option<(String, String, Option<NodeIndex>)> {
         let segments = self.import_type_member_segments(type_name_idx)?;
         let first_segment = segments.first()?.clone();
-        let mut current_sym = match self.resolve_ts_import_type_member_symbol(
+        let current_sym = match self.resolve_ts_import_type_member_symbol(
             module_specifier,
             &first_segment,
             resolution_mode_override,
@@ -369,6 +498,7 @@ impl<'a> CheckerState<'a> {
                                         resolution_mode_override,
                                     ),
                                     segments[candidate_len].clone(),
+                                    None,
                                 ));
                             }
                         }
@@ -378,6 +508,7 @@ impl<'a> CheckerState<'a> {
                                 resolution_mode_override,
                             ),
                             first_segment,
+                            None,
                         ));
                     }
                 };
@@ -397,6 +528,7 @@ impl<'a> CheckerState<'a> {
                                         resolution_mode_override,
                                     ),
                                     segment.clone(),
+                                    None,
                                 ));
                             }
                         };
@@ -408,41 +540,53 @@ impl<'a> CheckerState<'a> {
             }
         };
 
-        let mut resolved_segments = vec![first_segment];
-        for segment in segments.iter().skip(1) {
-            let Some(symbol) = self
-                .get_cross_file_symbol(current_sym)
-                .or_else(|| self.ctx.binder.get_symbol(current_sym))
-            else {
-                break;
-            };
-
-            if let Some(next_sym) = symbol
-                .exports
-                .as_ref()
-                .and_then(|exports| exports.get(segment))
-                .or_else(|| {
-                    symbol
-                        .members
-                        .as_ref()
-                        .and_then(|members| members.get(segment))
-                })
-            {
-                current_sym = next_sym;
-                resolved_segments.push(segment.clone());
-            } else {
-                return Some((
-                    self.import_type_namespace_name_with_segments(
-                        module_specifier,
-                        &resolved_segments,
-                        resolution_mode_override,
-                    ),
-                    segment.clone(),
-                ));
+        if segments.len() > 1 {
+            match self.walk_import_type_qualified_segments(current_sym, &segments) {
+                ImportTypeQualifiedWalk::Resolved(_) => {}
+                ImportTypeQualifiedWalk::Failed { fail_idx } => {
+                    return Some((
+                        self.import_type_namespace_name_with_segments(
+                            module_specifier,
+                            &segments[..fail_idx],
+                            resolution_mode_override,
+                        ),
+                        segments[fail_idx].clone(),
+                        self.import_type_member_segment_node(
+                            type_name_idx,
+                            fail_idx,
+                            segments.len(),
+                        ),
+                    ));
+                }
             }
         }
 
         None
+    }
+
+    /// The identifier node of qualifier segment `segment_idx` (0-based, out
+    /// of `segment_count`) in an `import("mod").A.B[.C…]` chain. Segment
+    /// `segment_count - 1` is the outermost `QualifiedName`'s right child;
+    /// each earlier segment sits one `left` deeper.
+    fn import_type_member_segment_node(
+        &self,
+        type_name_idx: NodeIndex,
+        segment_idx: usize,
+        segment_count: usize,
+    ) -> Option<NodeIndex> {
+        let mut idx = type_name_idx;
+        for _ in 0..(segment_count - 1 - segment_idx) {
+            let node = self.ctx.arena.get(idx)?;
+            if node.kind != syntax_kind_ext::QUALIFIED_NAME {
+                return None;
+            }
+            idx = self.ctx.arena.get_qualified_name(node)?.left;
+        }
+        let node = self.ctx.arena.get(idx)?;
+        if node.kind != syntax_kind_ext::QUALIFIED_NAME {
+            return None;
+        }
+        Some(self.ctx.arena.get_qualified_name(node)?.right)
     }
 
     fn import_type_missing_member_node(&self, idx: NodeIndex) -> NodeIndex {
@@ -505,20 +649,16 @@ impl<'a> CheckerState<'a> {
             &segments[0],
             resolution_mode_override,
         )?;
-        for segment in segments.iter().skip(1) {
-            let symbol = self
-                .get_cross_file_symbol(current_sym)
-                .or_else(|| self.ctx.binder.get_symbol(current_sym))?;
-            current_sym = symbol
-                .exports
-                .as_ref()
-                .and_then(|exports| exports.get(segment))
-                .or_else(|| {
-                    symbol
-                        .members
-                        .as_ref()
-                        .and_then(|members| members.get(segment))
-                })?;
+        if segments.len() > 1 {
+            match self.walk_import_type_qualified_segments(current_sym, &segments) {
+                ImportTypeQualifiedWalk::Resolved(final_sym) => {
+                    // Dispatch on the alias target: a re-export inside a
+                    // namespace steps to an alias symbol, whose own flags
+                    // carry no type meaning.
+                    current_sym = self.import_type_step_symbol(final_sym);
+                }
+                ImportTypeQualifiedWalk::Failed { .. } => return None,
+            }
         }
 
         let symbol_flags = self
@@ -531,6 +671,7 @@ impl<'a> CheckerState<'a> {
                 | symbol_flags::CLASS
                 | symbol_flags::INTERFACE
                 | symbol_flags::ENUM
+                | symbol_flags::ENUM_MEMBER
                 | symbol_flags::TYPE_PARAMETER))
             != 0
         {
@@ -906,7 +1047,7 @@ impl<'a> CheckerState<'a> {
                 return TypeId::ERROR;
             };
 
-            let (namespace_name, member_name) = checker
+            let (namespace_name, member_name, anchor_idx) = checker
                 .import_type_missing_member_context(
                     &module_name,
                     type_name_idx,
@@ -916,9 +1057,11 @@ impl<'a> CheckerState<'a> {
                     (
                         checker.import_type_namespace_name(&module_name, resolution_mode_override),
                         first_segment.clone(),
+                        None,
                     )
                 });
-            let member_idx = checker.import_type_missing_member_node(type_name_idx);
+            let member_idx = anchor_idx
+                .unwrap_or_else(|| checker.import_type_missing_member_node(type_name_idx));
             checker.error_namespace_no_export(&namespace_name, &member_name, member_idx);
             TypeId::ERROR
         };
@@ -1204,20 +1347,13 @@ impl<'a> CheckerState<'a> {
             &segments[0],
             resolution_mode_override,
         )?;
-        for segment in segments.iter().skip(1) {
-            let symbol = self
-                .get_cross_file_symbol(current_sym)
-                .or_else(|| self.ctx.binder.get_symbol(current_sym))?;
-            current_sym = symbol
-                .exports
-                .as_ref()
-                .and_then(|exports| exports.get(segment))
-                .or_else(|| {
-                    symbol
-                        .members
-                        .as_ref()
-                        .and_then(|members| members.get(segment))
-                })?;
+        if segments.len() > 1 {
+            match self.walk_import_type_qualified_segments(current_sym, &segments) {
+                ImportTypeQualifiedWalk::Resolved(final_sym) => {
+                    current_sym = self.import_type_step_symbol(final_sym);
+                }
+                ImportTypeQualifiedWalk::Failed { .. } => return None,
+            }
         }
         let sym_flags = self
             .get_cross_file_symbol(current_sym)

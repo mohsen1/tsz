@@ -183,6 +183,9 @@ mod heritage_type_only_tests;
 #[path = "../tests/import_equals_referenced_alias_resolution_tests.rs"]
 mod import_equals_referenced_alias_resolution_tests;
 #[cfg(test)]
+#[path = "../tests/import_type_qualifier_namespace_meaning_tests.rs"]
+mod import_type_qualifier_namespace_meaning_tests;
+#[cfg(test)]
 #[path = "../tests/imported_generator_iterable_tests.rs"]
 mod imported_generator_iterable_tests;
 #[cfg(test)]
