@@ -830,10 +830,18 @@ b3 = {
         .find(|diag| diag.code == 2741)
         .expect("expected TS2741 for missing property 'm'");
 
+    // TypeScript 7.0.2 (pinned oracle): under `strictNullChecks: false`, an
+    // arrow body that returns only `null` (`k: (a) => { return null; }`)
+    // infers a return type of `any`, not `null` — non-strict null checks
+    // widen a bare `null` return the same way `let x = null;` widens `x` to
+    // `any`. The oracle's source-object display is
+    // `k: (a: any) => any`, not `k: (a: any) => null`; tsz's current output
+    // already matches it exactly. The old expectation encoded an unverified
+    // guess at the return-type display.
     assert!(
         missing_m
             .message_text
-            .contains("type '{ f: (n: number) => number; g: (s: string) => number; n: number; k: (a: any) => null; }'"),
+            .contains("type '{ f: (n: number) => number; g: (s: string) => number; n: number; k: (a: any) => any; }'"),
         "expected object-literal source display to preserve the function literal return type: {missing_m:#?}"
     );
 }

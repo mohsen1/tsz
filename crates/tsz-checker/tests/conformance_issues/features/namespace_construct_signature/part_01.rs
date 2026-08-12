@@ -24,12 +24,29 @@ const x = (a) => a + 1;
         },
     );
 
-    // TODO: tsc emits an inner body TS2322 ("Type 'number' is not assignable to type 'string'")
-    // for JSDoc function return mismatch. We currently emit the outer function-level TS2322.
-    // Update once inner body return-type elaboration is implemented.
+    // TypeScript 7.0.2 (pinned oracle) cannot parse the Closure-style JSDoc
+    // `function(...): T` type at all — every spelling tried (with/without a
+    // space after `function`, with/without named parameters) reports the
+    // same `TS1005 '}' expected` at the unparsed suffix, plus the downstream
+    // `TS7006` for the now-untyped arrow parameter `a`. There is no TS2322
+    // here because the return-type check this test's name describes never
+    // runs; the JSDoc annotation fails to parse before checking begins. The
+    // old expectation (`has_error(diagnostics, 2322)`) encoded a return-type
+    // elaboration gap that predates re-verifying the fixture itself against
+    // the oracle — tsz's TS1005 + TS7006 output already matches tsc exactly.
+    assert_eq!(
+        diagnostics.iter().filter(|d| d.0 == 1005).count(),
+        1,
+        "Expected one TS1005 for the unparsable Closure-style JSDoc function type. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert_eq!(
+        diagnostics.iter().filter(|d| d.0 == 7006).count(),
+        1,
+        "Expected one TS7006 for the arrow parameter left untyped by the failed JSDoc parse. Actual diagnostics: {diagnostics:#?}"
+    );
     assert!(
-        has_error(&diagnostics, 2322),
-        "Expected TS2322 for JSDoc function return mismatch. Actual diagnostics: {diagnostics:#?}"
+        !has_error(&diagnostics, 2322),
+        "Did not expect TS2322: the JSDoc function-type parse never succeeds, so no return-type check runs. Actual diagnostics: {diagnostics:#?}"
     );
 }
 
