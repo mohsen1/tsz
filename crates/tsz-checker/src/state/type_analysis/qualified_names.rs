@@ -301,6 +301,17 @@ impl<'a> CheckerState<'a> {
                                 if target.has_any_flags(valid_namespace_flags) {
                                     return Some(true);
                                 }
+                                // A namespace-style alias (`export * as NS` /
+                                // `import * as NS`) is a namespace anchor even
+                                // without a `NAMESPACE_MODULE` flag: its members
+                                // are the re-exported module's exports. A named
+                                // import that reaches such an alias carries
+                                // namespace meaning, so `NS.Member` resolves
+                                // through it and a *missing* member is TS2694,
+                                // not TS2702. (#17197)
+                                if target.is_namespace_style_alias() {
+                                    return Some(true);
+                                }
                                 if let Some(has_meaning) =
                                     default_export_alias_target_has_namespace_meaning(
                                         target_id, target,

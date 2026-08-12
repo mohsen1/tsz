@@ -362,6 +362,19 @@ impl Symbol {
             .and_then(|data| data.import_name.as_deref())
     }
 
+    /// Whether this is a *namespace-style alias* — an `import * as NS` or
+    /// `export * as NS from "..."` binding: an alias (`symbol_flags::ALIAS`)
+    /// with a module specifier and an import name of `"*"`. Such a symbol has
+    /// no `NAMESPACE_MODULE` flag of its own, but acts as a namespace anchor
+    /// whose members are the re-exported module's exports.
+    #[inline]
+    #[must_use]
+    pub fn is_namespace_style_alias(&self) -> bool {
+        self.has_any_flags(symbol_flags::ALIAS)
+            && self.import_module().is_some()
+            && self.import_name() == Some("*")
+    }
+
     /// Explicit `resolution-mode` override declared on this import alias, if any.
     ///
     /// Reads through the out-of-lined [`Self::import_alias`] payload (#13072).
