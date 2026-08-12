@@ -1921,6 +1921,10 @@ impl<'a> CheckerState<'a> {
                 let export = self.ctx.arena.get_export_assignment(node)?;
                 Some(export.expression)
             }
+            syntax_kind_ext::TYPE_PARAMETER => {
+                let type_param = self.ctx.arena.get_type_parameter(node)?;
+                Some(type_param.name)
+            }
             _ => None,
         }
     }

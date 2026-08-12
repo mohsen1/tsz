@@ -265,6 +265,9 @@ impl<'a> CheckerState<'a> {
         if (flags & symbol_flags::TYPE_ALIAS) != 0 {
             return symbol_flags::TYPE_ALIAS_EXCLUDES;
         }
+        if (flags & symbol_flags::TYPE_PARAMETER) != 0 {
+            return symbol_flags::TYPE_PARAMETER_EXCLUDES;
+        }
         if (flags & symbol_flags::REGULAR_ENUM) != 0 {
             return symbol_flags::REGULAR_ENUM_EXCLUDES;
         }

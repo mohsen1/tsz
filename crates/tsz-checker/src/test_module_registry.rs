@@ -615,6 +615,8 @@ mod libtype_structural_name_lookup_arch_tests;
 mod literal_spelled_computed_key_index_signature_code_tests;
 #[path = "tests/local_type_alias_shadowing_tests.rs"]
 mod local_type_alias_shadowing_tests;
+#[path = "tests/local_type_vs_type_parameter_declaration_space_tests.rs"]
+mod local_type_vs_type_parameter_declaration_space_tests;
 #[path = "tests/logical_assignment_member_narrowing_tests.rs"]
 mod logical_assignment_member_narrowing_tests;
 #[path = "tests/loop_self_referential_property_read_tests.rs"]

@@ -1,7 +1,7 @@
 //! Scope entry/exit helpers for `BinderState`.
 
 use super::super::state::BinderState;
-use crate::{ContainerKind, SymbolTable, symbol_flags};
+use crate::{ContainerKind, SymbolId, SymbolTable, symbol_flags};
 use rustc_hash::FxHashSet;
 use tsz_parser::NodeIndex;
 use tsz_parser::parser::node::NodeArena;
@@ -10,6 +10,33 @@ use tsz_scanner::SyntaxKind;
 impl BinderState {
     pub(crate) fn enter_scope(&mut self, kind: ContainerKind, node: NodeIndex) {
         self.enter_scope_with_capacity(kind, node, 0);
+    }
+
+    /// A same-named `TYPE_PARAMETER` symbol in the enclosing function scope,
+    /// when the scope currently being bound is that function's own top-level
+    /// body block. tsc's binder gives that block no container of its own, so a
+    /// type parameter and a top-level local type share one declaration space
+    /// (`TS2300`); tsz keeps them in two persistent scopes, so `declare_symbol`
+    /// needs this cross-scope lookup to see the collision. A genuinely nested
+    /// block (`if`/`for`/further-nested `{ }`) is excluded via
+    /// `is_function_body_block`.
+    pub(crate) fn function_type_parameter_collision(
+        &self,
+        arena: &NodeArena,
+        name: &str,
+    ) -> Option<SymbolId> {
+        let scope = self.current_persistent_scope()?;
+        if scope.kind != ContainerKind::Block
+            || !self.is_function_body_block(arena, scope.container_node)
+        {
+            return None;
+        }
+        let parent_scope = self.scopes.get(scope.parent.0 as usize)?;
+        let candidate = parent_scope.table.get(name)?;
+        self.symbols
+            .get(candidate)
+            .is_some_and(|sym| (sym.flags & symbol_flags::TYPE_PARAMETER) != 0)
+            .then_some(candidate)
     }
 
     /// Enter a new scope with pre-allocated capacity for the symbol table.
