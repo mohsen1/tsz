@@ -202,7 +202,7 @@ fn union_annotation_preserving_anonymous_multiplicity(
     db: &dyn TypeDatabase,
     members: &[TypeId],
 ) -> TypeId {
-    let reduced = db.union_literal_reduce(members.to_vec());
+    let reduced = tsz_solver::utils::union_or_single_literal_reduce(db, members.to_vec());
     // Anonymous object = a direct object shape carrying no declaration symbol.
     // `get_object_shape_id` resolves only object/substitution forms, never a
     // type parameter's constraint, so a constrained `T | T` (whose reduced form

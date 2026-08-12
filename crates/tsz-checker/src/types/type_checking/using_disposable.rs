@@ -345,14 +345,16 @@ impl<'a> CheckerState<'a> {
 
         let is_disposable = self
             .resolve_disposable_interface_type(false)
-            .is_some_and(|target| self.is_assignable_to(source, target));
+            .is_some_and(|target| self.disposable_relation_outcome(source, target).related);
 
         if is_await_using {
             // await using accepts either Symbol.asyncDispose or Symbol.dispose
             return is_disposable
                 || self
                     .resolve_disposable_interface_type(true)
-                    .is_some_and(|target| self.is_assignable_to(source, target));
+                    .is_some_and(|target| {
+                        self.disposable_relation_outcome(source, target).related
+                    });
         }
 
         is_disposable

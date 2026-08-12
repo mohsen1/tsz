@@ -92,6 +92,7 @@ impl<'a> CheckerState<'a> {
         ty: TypeId,
     ) -> TypeId {
         use crate::query_boundaries::common;
+        use crate::query_boundaries::diagnostics;
         let db = self.ctx.types.as_type_database();
         let Some(indexed) = common::get_indexed_access_type(db, ty) else {
             return ty;
@@ -121,7 +122,7 @@ impl<'a> CheckerState<'a> {
         // the residual policy #16461 / #16469 already established for the deferred
         // rows — rather than risk repainting it with an unrelated name.
         let index_is_keyof = common::is_keyof_type(db, indexed.index_type);
-        if !common::is_display_reducible_index_key(db, indexed.index_type) && !index_is_keyof {
+        if !diagnostics::is_display_reducible_index_key(db, indexed.index_type) && !index_is_keyof {
             return ty;
         }
         // A free type parameter anywhere in the object or index means the

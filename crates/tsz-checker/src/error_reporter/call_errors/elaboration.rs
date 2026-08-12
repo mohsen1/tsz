@@ -1433,7 +1433,10 @@ impl<'a> CheckerState<'a> {
         match return_types.len() {
             0 => None,
             1 => Some(return_types[0]),
-            _ => Some(self.ctx.types.union(return_types)),
+            _ => Some(diagnostic_query::display_union_type(
+                self.ctx.types,
+                return_types,
+            )),
         }
     }
 

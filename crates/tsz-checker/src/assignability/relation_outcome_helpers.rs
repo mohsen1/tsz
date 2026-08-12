@@ -271,6 +271,23 @@ impl<'a> CheckerState<'a> {
         self.execute_relation_request(&request)
     }
 
+    /// Execute a `using`/`await using` initializer relation against the global
+    /// `Disposable`/`AsyncDisposable` interface, preserving the canonical
+    /// disposable request shape. Decision-only: the caller reads only
+    /// `outcome.related` to gate TS2850, so the boundary skips failure
+    /// analysis and property classification.
+    pub(crate) fn disposable_relation_outcome(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> crate::query_boundaries::assignability::RelationOutcome {
+        let (source, target) = self.prepare_assignability_inputs(source, target);
+        let request =
+            crate::query_boundaries::assignability::RelationRequest::disposable(source, target)
+                .with_decision_only();
+        self.execute_relation_request(&request)
+    }
+
     /// Execute a diagnostic-bearing destructuring-assignment relation for raw
     /// checker types, preserving the canonical destructuring request shape.
     pub(crate) fn destructuring_relation_outcome(

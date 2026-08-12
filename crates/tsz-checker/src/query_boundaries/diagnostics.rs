@@ -55,6 +55,19 @@ pub(crate) fn get_object_symbol(
     tsz_solver::type_queries::get_object_symbol(db, type_id)
 }
 
+/// True when a type is an index-access key shape tsc reduces eagerly during
+/// type construction: a literal, a union, a unique symbol, a `typeof` query,
+/// or the bare `string`/`number` primitive (the array/tuple element idiom,
+/// `Arr[number]`). Does not by itself guarantee the key is free of type
+/// parameters — a union member can still carry one; pair with
+/// [`contains_free_type_parameters`]. Used only by the assignment-display
+/// indexed-access reduction gate (`error_reporter/type_display_policy.rs`),
+/// so it is owned by the diagnostics boundary rather than the catch-all
+/// `common` boundary (issue #12947).
+pub(crate) fn is_display_reducible_index_key(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::type_queries::extended::is_display_reducible_index_key(db, type_id)
+}
+
 pub(crate) fn object_type_from_properties(
     db: &dyn TypeDatabase,
     properties: Vec<PropertyInfo>,
