@@ -1077,6 +1077,8 @@ mod verbatim_module_syntax_export_default_alias_ts1284_tests;
 mod verbatim_module_syntax_export_default_type_only_import_ts1284_tests;
 #[path = "tests/verbatim_module_syntax_export_default_type_only_reexport_ts1290_tests.rs"]
 mod verbatim_module_syntax_export_default_type_only_reexport_ts1290_tests;
+#[path = "tests/verbatim_module_syntax_export_equals_require_ts1282_ts1283_tests.rs"]
+mod verbatim_module_syntax_export_equals_require_ts1282_ts1283_tests;
 #[path = "tests/verbatim_module_syntax_export_equals_ts1291_tests.rs"]
 mod verbatim_module_syntax_export_equals_ts1291_tests;
 #[path = "tests/verbatim_module_syntax_reexport_chain_ts1484_ts1485_tests.rs"]

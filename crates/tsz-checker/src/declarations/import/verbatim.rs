@@ -575,6 +575,43 @@ impl<'a> CheckerState<'a> {
         !sym.declarations.is_empty()
     }
 
+    /// Whether a type-only import alias's FULL merged meaning (across the
+    /// alias chain, ignoring this file's own `import type`) still carries a
+    /// Value — the choice between the "only refers to a type" and "resolves
+    /// to a type-only declaration" diagnostic variants (TS1282/TS1283 here,
+    /// TS1284/TS1285 in `check_verbatim_module_syntax_export_default`).
+    ///
+    /// A named import (`import type { X } from './mod'`, un-renamed or not)
+    /// resolves `name`/`import_name()` as a member of `module_spec`. A
+    /// whole-module `import [type] X = require(module_spec)` has no member
+    /// literally called `X` in the target module — `X` aliases the module's
+    /// own `export =` target as a unit, so that target's type-only-ness must
+    /// be consulted instead of a (always-missing) member lookup for `X`.
+    /// Distinguished by the alias's own declaration node kind, since
+    /// `import_name()` returns `None` for both an un-renamed named import and
+    /// a whole-module require (its contract is "matches `escaped_name`", not
+    /// "no target").
+    pub(crate) fn type_only_import_alias_target_has_value(
+        &self,
+        sym: &tsz_binder::Symbol,
+        name: &str,
+    ) -> bool {
+        let Some(module_spec) = sym.import_module() else {
+            return true;
+        };
+        let is_whole_module_require = self
+            .ctx
+            .arena
+            .get(sym.value_declaration)
+            .is_some_and(|d| d.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION);
+        if is_whole_module_require {
+            return !self.is_module_export_equals_type_only(module_spec);
+        }
+        let import_name = sym.import_name().unwrap_or(name);
+        self.lookup_imported_target_flags(module_spec, import_name)
+            .1
+    }
+
     /// TS1282/TS1283: VMS check for `export = X`.
     /// TS1282: X only refers to a type (interface/type alias, no value).
     /// TS1283: X resolves to a type-only declaration (import type).
@@ -620,14 +657,7 @@ impl<'a> CheckerState<'a> {
             // target's flags can. Mirrors the identical fix already applied
             // to `check_verbatim_module_syntax_export_default`'s TS1284/1285
             // pick.
-            let target_has_value = sym
-                .import_module()
-                .map(|module_spec| {
-                    let import_name = sym.import_name().unwrap_or(name.as_str());
-                    self.lookup_imported_target_flags(module_spec, import_name)
-                        .1
-                })
-                .unwrap_or(true);
+            let target_has_value = self.type_only_import_alias_target_has_value(sym, &name);
             let (msg_key, code) = if target_has_value {
                 (
                     diagnostic_messages::AN_EXPORT_DECLARATION_MUST_REFERENCE_A_REAL_VALUE_WHEN_VERBATIMMODULESYNTAX_IS_E,
