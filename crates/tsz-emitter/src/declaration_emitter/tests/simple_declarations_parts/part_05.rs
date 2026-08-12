@@ -328,9 +328,9 @@ class C {
 
     assert!(
         output.contains(
-            "    /** @param {string=} value */\n    set value(value: string | undefined);"
+            "    /** @param {string=} value */\n    set value(value?: string | undefined);"
         ),
-        "Expected reordered setter comment to stay single-line and optional param to emit as a union: {output}"
+        "Expected reordered setter comment to stay single-line and optional param to emit as an optional union (tsc prints the `?` even though TS1051 rejects it): {output}"
     );
     assert!(
         output.contains("    /** @type {string=} */\n    get value(): string | undefined;"),
@@ -361,7 +361,7 @@ class C {
     );
 
     assert!(
-        output.contains("    /**\n     * @param {string=} value\n     */\n    set value(value: string | undefined);"),
+        output.contains("    /**\n     * @param {string=} value\n     */\n    set value(value?: string | undefined);"),
         "Expected reordered setter comment to stay multiline: {output}"
     );
     assert!(

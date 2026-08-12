@@ -1812,7 +1812,15 @@ impl<'a> DeclarationEmitter<'a> {
                 self.write("...");
             }
             self.emit_node(param.name);
-            if param.question_token {
+            // tsc marks a JS setter parameter optional from its JSDoc
+            // (`[name]` or `{T=}`) even though TS1051 rejects the result.
+            if param.question_token
+                || (self.source_is_js_file
+                    && param.type_annotation.is_none()
+                    && self
+                        .jsdoc_param_decl_for_parameter(param_idx, 0)
+                        .is_some_and(|decl| decl.optional && !decl.rest))
+            {
                 self.write("?");
             }
             self.write(": ");
@@ -1831,7 +1839,7 @@ impl<'a> DeclarationEmitter<'a> {
         let param_idx = *params.nodes.first()?;
         let decl = self.jsdoc_param_decl_for_parameter(param_idx, 0)?;
         let mut type_text = decl.type_text;
-        if decl.optional && !Self::type_text_has_undefined_branch(&type_text) {
+        if decl.optional_type_marker && !Self::type_text_has_undefined_branch(&type_text) {
             type_text.push_str(" | undefined");
         }
         Some(type_text)

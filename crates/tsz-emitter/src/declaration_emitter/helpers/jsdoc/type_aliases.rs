@@ -515,6 +515,15 @@ impl<'a> DeclarationEmitter<'a> {
                     return None;
                 }
 
+                // The `{T=}` optional-type marker is part of the type: it
+                // serializes as `T | undefined` and makes the member optional,
+                // matching tsc. The bracketed `[name]` form only adds `?`.
+                let type_expr = type_expr.trim();
+                let (type_expr, optional_type_marker) = match type_expr.strip_suffix('=') {
+                    Some(stripped) => (stripped.trim_end(), true),
+                    None => (type_expr, false),
+                };
+
                 let (property_name, optional) =
                     if property_name.starts_with('[') && property_name.ends_with(']') {
                         let trimmed = property_name
@@ -524,7 +533,7 @@ impl<'a> DeclarationEmitter<'a> {
                             .to_string();
                         (trimmed, true)
                     } else {
-                        (property_name.to_string(), false)
+                        (property_name.to_string(), optional_type_marker)
                     };
 
                 let inline_description = parts.collect::<Vec<_>>().join(" ");
@@ -533,12 +542,13 @@ impl<'a> DeclarationEmitter<'a> {
                     description_lines.push(inline_description);
                 }
 
-                current_property = Some((
-                    property_name,
-                    optional,
-                    Self::normalize_jsdoc_primitive_type_name(type_expr),
-                    description_lines,
-                ));
+                let mut property_type = Self::normalize_jsdoc_primitive_type_name(type_expr);
+                if optional_type_marker && !Self::type_text_has_undefined_branch(&property_type) {
+                    property_type.push_str(" | undefined");
+                }
+
+                current_property =
+                    Some((property_name, optional, property_type, description_lines));
                 continue;
             }
 

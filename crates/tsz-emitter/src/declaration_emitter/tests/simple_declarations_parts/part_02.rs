@@ -840,9 +840,12 @@ function foo({ a, b }) {
 "#,
     );
 
+    // Oracle: tsc prints the bracket-optional property as `b?: number;` with
+    // no `| undefined` (strict on and off alike); `undefined` joins the type
+    // only for the `{T=}` marker or when written in the type.
     assert!(
         output.contains(
-            "declare function foo({ a, b }: {\n    a: number;\n    b?: number | undefined;\n}): number;"
+            "declare function foo({ a, b }: {\n    a: number;\n    b?: number;\n}): number;"
         ),
         "Expected JSDoc object property tags to type the destructured parameter: {output}"
     );

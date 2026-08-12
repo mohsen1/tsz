@@ -155,7 +155,11 @@ impl<'a> DeclarationEmitter<'a> {
                     let type_text =
                         self.jsdoc_type_text_for_declaration_emit(&jsdoc_param.type_text);
                     self.write(&type_text);
-                    if jsdoc_param.optional && !Self::type_text_has_undefined_branch(&type_text) {
+                    // tsc adds `undefined` only for the `{T=}` optional-type
+                    // marker; the bracketed `[name]` form prints `T` unchanged.
+                    if jsdoc_param.optional_type_marker
+                        && !Self::type_text_has_undefined_branch(&type_text)
+                    {
                         self.write(" | undefined");
                     }
                 } else if let Some(jsdoc_param) = effective_jsdoc_param

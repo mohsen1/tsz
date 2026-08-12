@@ -1418,6 +1418,7 @@ impl<'a> DeclarationEmitter<'a> {
             name,
             type_text: Self::normalize_jsdoc_type_text(base_type, rest_param),
             optional: optional_name || optional_type,
+            optional_type_marker: optional_type,
             rest: rest_param,
         })
     }
