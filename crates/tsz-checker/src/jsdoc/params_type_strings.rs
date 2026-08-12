@@ -191,20 +191,16 @@ impl<'a> CheckerState<'a> {
                         // stripped) for a real module even under a relative
                         // specifier — the same rule the TS-syntax
                         // `import(...).Member` and JSDoc `@type`/`@typedef`
-                        // paths already apply (see the sibling comments in
-                        // `import_type.rs` and `jsdoc/resolution/import_reference.rs`).
-                        // An ambient/unresolved specifier has no backing file,
-                        // so it falls back to the literal-specifier display,
-                        // matching how `tsc` names an ambient module symbol.
+                        // paths already apply. An ambient/unresolved specifier
+                        // has no backing file, so it falls back to the
+                        // literal-specifier display, matching how `tsc` names an
+                        // ambient module symbol.
                         //
-                        // This does NOT touch the `.export=` suffix below,
-                        // which this site appends unconditionally regardless
-                        // of whether the target module actually has an
-                        // `export =`/`module.exports =` — oracle-verified
-                        // still wrong for a plain named-export CommonJS
-                        // module (`tsc` omits `.export=` there). That is a
-                        // separate emission bug, not a display-path bug; left
-                        // for a follow-up.
+                        // The export= naming rule (named target → its own name;
+                        // anonymous → `"<path>".export=`; plain module → no
+                        // suffix) is applied by `jsdoc_import_namespace_display`,
+                        // shared with the JSDoc `import(...)` walk (#17208) — so
+                        // this site no longer appends `.export=` unconditionally.
                         let display_name = self
                             .resolved_import_type_module_path(&module_specifier, None)
                             .unwrap_or_else(|| {
@@ -216,17 +212,17 @@ impl<'a> CheckerState<'a> {
                                 (*offset < member_offset).then_some(segment.as_str())
                             })
                             .collect::<Vec<_>>();
-                        let namespace_qualifier = if resolved_qualifier.is_empty() {
-                            format!("\"{display_name}\"")
-                        } else {
-                            format!("\"{display_name}\".{}", resolved_qualifier.join("."))
-                        };
+                        let namespace_qualifier = self.jsdoc_import_namespace_display(
+                            &module_specifier,
+                            &display_name,
+                            &resolved_qualifier,
+                        );
                         let anchored_member_offset = effective_type_expr
                             .rfind(&format!(".{member_name}"))
                             .map(|offset| offset + 1)
                             .unwrap_or(member_offset);
                         let message = format!(
-                            "Namespace '{namespace_qualifier}.export=' has no exported member '{member_name}'."
+                            "Namespace '{namespace_qualifier}' has no exported member '{member_name}'."
                         );
                         let source_start = self
                             .ctx

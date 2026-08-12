@@ -190,6 +190,43 @@ impl<'a> CheckerState<'a> {
     /// reports `Namespace '"m".Dotted' has no exported member 'Missing'`,
     /// not the unqualified root. When no declared name starts with the
     /// reference's head segment, the display stays unqualified.
+    /// The TS2694 namespace text for a JSDoc `import(...)` reference, applying
+    /// the export= naming rule on top of the JSDoc walk's already-resolved
+    /// `module_path`. `resolved_segments` are the qualifier segments that
+    /// resolved before the missing member (empty for a head/single-segment
+    /// miss).
+    ///
+    /// Mirrors the TS-syntax `import_type_namespace_name{,_with_segments}`
+    /// naming (#17208) so every TS2694 walk agrees: a named `export = <target>`
+    /// roots at the target's own symbol name (`shape` / `shape.Bar`); an
+    /// anonymous export= target uses `"<path>".export=` at the root and
+    /// `"<path>".Bar` once segments traverse into it; a module without an
+    /// export assignment uses `"<path>"` / `"<path>".Bar`.
+    pub(crate) fn jsdoc_import_namespace_display(
+        &self,
+        module_specifier: &str,
+        module_path: &str,
+        resolved_segments: &[&str],
+    ) -> String {
+        let base = if self.target_module_has_export_equals(module_specifier) {
+            self.export_equals_target_named_display(module_specifier)
+                .unwrap_or_else(|| {
+                    if resolved_segments.is_empty() {
+                        format!("\"{module_path}\".export=")
+                    } else {
+                        format!("\"{module_path}\"")
+                    }
+                })
+        } else {
+            format!("\"{module_path}\"")
+        };
+        if resolved_segments.is_empty() {
+            base
+        } else {
+            format!("{base}.{}", resolved_segments.join("."))
+        }
+    }
+
     fn jsdoc_import_type_missing_member_display(
         &mut self,
         module_specifier: &str,
@@ -201,6 +238,18 @@ impl<'a> CheckerState<'a> {
             .flatten()
             .unwrap_or_else(|| self.imported_namespace_display_module_name(module_specifier));
         let segments: Vec<&str> = full_member_path.split('.').collect();
+
+        // A module whose export surface is an export assignment is named by its
+        // export= target (named target's own name, else `"<path>".export=`),
+        // shared with the TS import-type walks (#17208). The dotted-`@typedef`
+        // prefix qualification below is specific to modules without an export
+        // assignment, so short-circuit here on the head/single-segment miss.
+        if self.target_module_has_export_equals(module_specifier) {
+            return (
+                self.jsdoc_import_namespace_display(module_specifier, &namespace_name, &[]),
+                segments[0].to_string(),
+            );
+        }
         let mut prefix_len = 0usize;
         for candidate_len in (1..segments.len()).rev() {
             if self.import_type_jsdoc_typedef_namespace_prefix_exists(
@@ -279,32 +328,36 @@ impl<'a> CheckerState<'a> {
             .flatten()
             .unwrap_or_else(|| self.imported_namespace_display_module_name(module_specifier));
 
+        // The traversed-path root follows the same export= naming rule as
+        // every other TS2694 walk (#17208), via `jsdoc_import_namespace_display`
+        // — a named `export = <target>` roots at the target's own symbol name
+        // (`shape.Bar`), a plain module at the quoted `"<path>"`. The head
+        // reached here is namespace-like, so an anonymous export= target (whose
+        // object-literal members are not namespace-like) never lands here.
         let mut resolved_segments = vec![head];
         for segment in &segments[1..] {
-            let Some(symbol) = self
+            let next = self
                 .get_cross_file_symbol(current_sym)
                 .or_else(|| self.ctx.binder.get_symbol(current_sym))
-            else {
-                return Err((
-                    format!("\"{namespace_name}\".{}", resolved_segments.join(".")),
-                    (*segment).to_string(),
-                ));
-            };
-            let Some(next_sym) = symbol
-                .exports
-                .as_ref()
-                .and_then(|exports| exports.get(segment))
-                .or_else(|| {
+                .and_then(|symbol| {
                     symbol
-                        .members
+                        .exports
                         .as_ref()
-                        .and_then(|members| members.get(segment))
-                })
-            else {
-                return Err((
-                    format!("\"{namespace_name}\".{}", resolved_segments.join(".")),
-                    (*segment).to_string(),
-                ));
+                        .and_then(|exports| exports.get(segment))
+                        .or_else(|| {
+                            symbol
+                                .members
+                                .as_ref()
+                                .and_then(|members| members.get(segment))
+                        })
+                });
+            let Some(next_sym) = next else {
+                let display = self.jsdoc_import_namespace_display(
+                    module_specifier,
+                    &namespace_name,
+                    &resolved_segments,
+                );
+                return Err((display, (*segment).to_string()));
             };
             current_sym = next_sym;
             resolved_segments.push(segment);
@@ -316,10 +369,12 @@ impl<'a> CheckerState<'a> {
             Ok(resolved)
         } else {
             let last = resolved_segments.pop().unwrap_or(head);
-            Err((
-                format!("\"{namespace_name}\".{}", resolved_segments.join(".")),
-                last.to_string(),
-            ))
+            let display = self.jsdoc_import_namespace_display(
+                module_specifier,
+                &namespace_name,
+                &resolved_segments,
+            );
+            Err((display, last.to_string()))
         }
     }
 
