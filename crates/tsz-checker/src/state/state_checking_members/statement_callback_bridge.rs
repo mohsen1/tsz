@@ -811,13 +811,23 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                     false
                 }
             } else if node.kind == syntax_kind_ext::MODULE_DECLARATION {
-                // Skip only ambient (declare) modules; namespace with executable code is instantiated
+                // Skip ambient (declare) modules and non-instantiated namespaces.
+                // tsc reports an unreachable module declaration only when
+                // `isInstantiatedModule(node, preserveConstEnums)` holds: a
+                // namespace containing only interfaces/type aliases (or only
+                // const enums without `preserveConstEnums`) produces no runtime
+                // code, so it neither reports nor extends an unreachable range.
                 if let Some(module_data) = self.ctx.arena.get_module(node) {
                     let is_ambient = self
                         .ctx
                         .arena
                         .has_modifier(&module_data.modifiers, SyntaxKind::DeclareKeyword);
-                    is_ambient || self.ctx.arena.get(module_data.body).is_none()
+                    is_ambient
+                        || self.ctx.arena.get(module_data.body).is_none()
+                        || !self.ctx.arena.is_namespace_instantiated_with_const_enums(
+                            stmt_idx,
+                            self.ctx.compiler_options.preserve_const_enums,
+                        )
                 } else {
                     false
                 }

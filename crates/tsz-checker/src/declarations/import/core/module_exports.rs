@@ -40,6 +40,24 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // Module blocks are control-flow containers in tsc: the body starts a
+        // fresh reachable flow regardless of the surrounding statement list.
+        // When the module declaration itself sits in unreachable code, tsc
+        // reports (or filters, for non-instantiated modules) at the
+        // declaration and checks the body with `withinUnreachableCode` set, so
+        // no statement inside an unreachable namespace ever reports its own
+        // TS7027 — but the body is still type-checked for other diagnostics.
+        let prev_unreachable = self.ctx.is_unreachable;
+        let prev_reported = self.ctx.has_reported_unreachable;
+        let prev_allow_unreachable = self.ctx.compiler_options.allow_unreachable_code;
+        if prev_unreachable {
+            self.ctx.has_reported_unreachable = true;
+            self.ctx.compiler_options.allow_unreachable_code = Some(true);
+        } else {
+            self.ctx.is_unreachable = false;
+            self.ctx.has_reported_unreachable = false;
+        }
+
         if body_node.kind == syntax_kind_ext::MODULE_BLOCK {
             if let Some(block) = self.ctx.arena.get_module_block(body_node)
                 && let Some(ref statements) = block.statements
@@ -72,6 +90,9 @@ impl<'a> CheckerState<'a> {
                         continue;
                     }
                     self.check_statement(stmt_idx);
+                    if !prev_unreachable && !self.statement_falls_through(stmt_idx) {
+                        self.ctx.is_unreachable = true;
+                    }
                 }
                 self.check_function_implementations(&statements.nodes);
                 // Check for duplicate export assignments (TS2300) and conflicts (TS2309)
@@ -98,6 +119,10 @@ impl<'a> CheckerState<'a> {
         } else if body_node.kind == syntax_kind_ext::MODULE_DECLARATION {
             self.check_statement(body_idx);
         }
+
+        self.ctx.is_unreachable = prev_unreachable;
+        self.ctx.has_reported_unreachable = prev_reported;
+        self.ctx.compiler_options.allow_unreachable_code = prev_allow_unreachable;
     }
 
     // =========================================================================

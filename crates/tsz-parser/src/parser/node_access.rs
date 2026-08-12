@@ -460,6 +460,25 @@ impl NodeArenaInner {
     /// wrappers to find the innermost `MODULE_BLOCK`, then checks each statement.
     #[must_use]
     pub fn is_namespace_instantiated(&self, namespace_idx: NodeIndex) -> bool {
+        self.is_namespace_instantiated_with_const_enums(namespace_idx, true)
+    }
+
+    /// Const-enum-aware variant of [`is_namespace_instantiated`], mirroring
+    /// tsc's `isInstantiatedModule(node, preserveConstEnums)`.
+    ///
+    /// In tsc's `getModuleInstanceState`, a `const enum` contributes
+    /// `ConstEnumOnly` rather than `Instantiated`; a module whose only runtime
+    /// members are const enums counts as instantiated only when const enums
+    /// are preserved. Callers that model tsc's symbol flags (`ValueModule` vs
+    /// `NamespaceModule`, i.e. `state != NonInstantiated`) should use
+    /// [`is_namespace_instantiated`]; reachability-style callers pass their
+    /// `preserveConstEnums` setting here.
+    #[must_use]
+    pub fn is_namespace_instantiated_with_const_enums(
+        &self,
+        namespace_idx: NodeIndex,
+        const_enum_instantiates: bool,
+    ) -> bool {
         let Some(node) = self.get(namespace_idx) else {
             return false;
         };
@@ -475,14 +494,18 @@ impl NodeArenaInner {
         let Some(module_decl) = self.get_module(node) else {
             return false;
         };
-        self.module_body_has_runtime_members(module_decl.body)
+        self.module_body_has_runtime_members(module_decl.body, const_enum_instantiates)
     }
 
     /// Check whether a module body contains runtime value declarations.
     ///
     /// Helper for [`is_namespace_instantiated`]. Handles dotted namespaces
     /// (body is another `MODULE_DECLARATION`) and `MODULE_BLOCK` bodies.
-    fn module_body_has_runtime_members(&self, body_idx: NodeIndex) -> bool {
+    fn module_body_has_runtime_members(
+        &self,
+        body_idx: NodeIndex,
+        const_enum_instantiates: bool,
+    ) -> bool {
         if body_idx.is_none() {
             return false;
         }
@@ -492,7 +515,8 @@ impl NodeArenaInner {
 
         // Dotted namespace: `namespace Foo.Bar { ... }` — recurse into inner module
         if body_node.kind == MODULE_DECLARATION {
-            return self.is_namespace_instantiated(body_idx);
+            return self
+                .is_namespace_instantiated_with_const_enums(body_idx, const_enum_instantiates);
         }
 
         if body_node.kind != MODULE_BLOCK {
@@ -510,7 +534,7 @@ impl NodeArenaInner {
             let Some(stmt_node) = self.get(stmt_idx) else {
                 continue;
             };
-            if self.is_runtime_module_statement(stmt_node, stmt_idx) {
+            if self.is_runtime_module_statement(stmt_node, stmt_idx, const_enum_instantiates) {
                 return true;
             }
         }
@@ -524,10 +548,22 @@ impl NodeArenaInner {
     /// type-level declarations (interfaces, type aliases, non-exported imports).
     /// Any other statement (try, if, for, expression, variable, etc.) makes the
     /// module instantiated.
-    fn is_runtime_module_statement(&self, node: &Node, node_idx: NodeIndex) -> bool {
+    fn is_runtime_module_statement(
+        &self,
+        node: &Node,
+        node_idx: NodeIndex,
+        const_enum_instantiates: bool,
+    ) -> bool {
         match node.kind {
             // Type-only declarations — never instantiate a module
             k if k == INTERFACE_DECLARATION || k == TYPE_ALIAS_DECLARATION => false,
+
+            // Const enums are `ConstEnumOnly` in tsc's `getModuleInstanceState`:
+            // they instantiate the module only when const enums are preserved.
+            // Non-const enums always instantiate.
+            k if k == ENUM_DECLARATION => {
+                const_enum_instantiates || !self.is_const_enum_declaration(node)
+            }
 
             // Import declarations — non-instantiated (they don't produce runtime code
             // in the namespace itself, even if exported)
@@ -541,14 +577,18 @@ impl NodeArenaInner {
                     match clause.kind {
                         k if k == VARIABLE_STATEMENT
                             || k == FUNCTION_DECLARATION
-                            || k == CLASS_DECLARATION
-                            || k == ENUM_DECLARATION =>
+                            || k == CLASS_DECLARATION =>
                         {
                             true
                         }
-                        k if k == MODULE_DECLARATION => {
-                            self.is_namespace_instantiated(export_decl.export_clause)
+                        k if k == ENUM_DECLARATION => {
+                            const_enum_instantiates || !self.is_const_enum_declaration(clause)
                         }
+                        k if k == MODULE_DECLARATION => self
+                            .is_namespace_instantiated_with_const_enums(
+                                export_decl.export_clause,
+                                const_enum_instantiates,
+                            ),
                         // Named exports (`export { name }`) make a namespace instantiated.
                         // tsc resolves each specifier to check if it has a value meaning,
                         // but at the parser level we conservatively treat all named exports
@@ -563,12 +603,23 @@ impl NodeArenaInner {
             }
 
             // Nested namespace — recurse
-            k if k == MODULE_DECLARATION => self.is_namespace_instantiated(node_idx),
+            k if k == MODULE_DECLARATION => {
+                self.is_namespace_instantiated_with_const_enums(node_idx, const_enum_instantiates)
+            }
 
-            // Everything else (variables, functions, classes, enums, try/catch, if,
-            // for, while, switch, expression statements, etc.) is runtime code
+            // Everything else (variables, functions, classes, non-const enums,
+            // try/catch, if, for, while, switch, expression statements, etc.)
+            // is runtime code
             _ => true,
         }
+    }
+
+    /// Check whether an `ENUM_DECLARATION` node carries the `const` modifier.
+    fn is_const_enum_declaration(&self, node: &Node) -> bool {
+        use tsz_scanner::SyntaxKind;
+        self.get_enum(node).is_some_and(|enum_data| {
+            self.has_modifier(&enum_data.modifiers, SyntaxKind::ConstKeyword)
+        })
     }
 
     /// Get the modifier list for a declaration node, if it has one.
