@@ -164,3 +164,128 @@ const guardAlways = () => {
         "expected TS7027 after `if (true) {{ throw }}` inside a renamed arrow function, got {codes:?}"
     );
 }
+
+// tsc's constant-condition rule for reachability is narrower than constant
+// folding. `binder.ts`'s `createFlowCondition` tests
+// `expression.kind === SyntaxKind.TrueKeyword` on the condition **as written**:
+// it neither skips parentheses nor folds a prefix `!`. `&&`/`||` still compose,
+// but through `bindCondition` recursing into each operand rather than through
+// folding — so the literal `true` inside `true && true` is what reaches the
+// kind check, while `(true)` and `!false` never do.
+//
+// Verified against typescript@7.0.2 with `--allowUnreachableCode false`:
+// `if (true)` reports TS7027; `if ((true))`, `if (!false)` and `if (!!true)`
+// report nothing.
+
+#[test]
+fn if_parenthesized_true_return_no_else_does_not_report_unreachable() {
+    let codes = unreachable_codes(
+        r#"
+function f() {
+    if ((true)) {
+        return;
+    }
+    console.log("reachable");
+}
+"#,
+    );
+    assert!(
+        !codes.contains(&7027),
+        "a parenthesized `(true)` is not the TrueKeyword node tsc tests, so the \
+         implicit else stays reachable; got {codes:?}"
+    );
+}
+
+#[test]
+fn if_negated_false_return_no_else_does_not_report_unreachable() {
+    let codes = unreachable_codes(
+        r#"
+function f() {
+    if (!false) {
+        return;
+    }
+    console.log("reachable");
+}
+"#,
+    );
+    assert!(
+        !codes.contains(&7027),
+        "tsc does not fold a prefix `!` for this reachability rule; got {codes:?}"
+    );
+}
+
+#[test]
+fn if_double_negated_true_no_else_does_not_report_unreachable() {
+    let codes = unreachable_codes(
+        r#"
+function f() {
+    let x = 0;
+    if (!!true) {
+        x = 1;
+        return;
+    }
+    if (!!true) {
+        x = 2;
+        throw 0;
+    }
+}
+"#,
+    );
+    assert!(
+        !codes.contains(&7027),
+        "`!!true` is a prefix-unary node, not TrueKeyword — this is the shape \
+         that regressed `tryCatchFinallyControlFlow` in the corpus; got {codes:?}"
+    );
+}
+
+#[test]
+fn while_parenthesized_true_does_not_swallow_following_code() {
+    let codes = unreachable_codes(
+        r#"
+function f() {
+    while ((true)) {
+    }
+    console.log("reachable");
+}
+"#,
+    );
+    assert!(
+        !codes.contains(&7027),
+        "the loop path shares `is_true_condition`, so `(true)` must not make \
+         `while` non-completing either; got {codes:?}"
+    );
+}
+
+#[test]
+fn while_parenthesized_true_leaves_function_falling_off_the_end() {
+    let codes = unreachable_codes(
+        r#"
+function f(): number {
+    while ((true)) {
+    }
+}
+"#,
+    );
+    assert!(
+        codes.contains(&2355),
+        "`while ((true))` is not an infinite loop for tsc, so the function can \
+         fall off the end and must report TS2355; got {codes:?}"
+    );
+}
+
+#[test]
+fn while_true_still_suppresses_the_missing_return() {
+    let codes = unreachable_codes(
+        r#"
+function f(): number {
+    while (true) {
+    }
+}
+"#,
+    );
+    assert!(
+        !codes.contains(&2355),
+        "the bare `while (true)` must stay non-completing — this is the \
+         positive control for the narrowing; got {codes:?}"
+    );
+}
