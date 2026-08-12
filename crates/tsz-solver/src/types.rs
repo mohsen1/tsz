@@ -14,6 +14,7 @@ use tsz_common::interner::Atom;
 /// per-field identity decisions made explicit via exhaustive destructuring.
 mod relation_cache;
 mod shape_identity;
+mod spread_literal;
 
 pub use relation_cache::{
     CachedAnyMode, RelationCacheConfig, RelationCacheKey, RelationCacheKind, RelationCacheValue,
@@ -1033,6 +1034,10 @@ bitflags::bitflags! {
         /// `typeof globalThis` display even when the surface appears as a member
         /// of an intersection such as `Window & typeof globalThis`.
         const GLOBAL_THIS_SURFACE = 1 << 13;
+
+        /// Produced by an object spread (`{ ...base }`); see
+        /// `types/spread_literal.rs` for the rule this backs.
+        const SPREAD_LITERAL = 1 << 14;
     }
 }
 

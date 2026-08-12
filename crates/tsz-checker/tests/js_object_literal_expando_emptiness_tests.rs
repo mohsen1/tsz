@@ -236,3 +236,98 @@ fn spread_only_literal_is_not_empty_host() {
         "spread-only literal has one element, so it is not an empty host, got {codes:?}"
     );
 }
+
+// ===========================================================================
+// Spread-derived receivers stay closed under noImplicitAny-OFF too (#17226
+// gap 3): `tsc`'s `getSpreadType` never marks its result `ObjectFlags.JSLiteral`
+// the way a hand-written object literal is, so the open-container leniency
+// (`js_open_object_receiver_under_implicit_any`, which fires only when
+// `noImplicitAny` is off) must not extend to a spread-derived shape even
+// though it is anonymous and symbol-less like a genuine open container.
+// Oracle-verified against pinned `typescript@7.0.2` in both configs.
+// ===========================================================================
+
+/// noImplicitAny OFF: an undeclared WRITE through a spread-derived receiver
+/// stays TS2339 — this was the false negative (previously silent).
+#[test]
+fn spread_literal_write_reports_ts2339_without_no_implicit_any() {
+    let codes = codes_no_implicit_any_off("var src = { a: 1 };\nvar o = { ...src };\no.zag = 2;\n");
+    assert_eq!(
+        codes,
+        vec![2339],
+        "spread-derived receiver must stay closed even without noImplicitAny, got {codes:?}"
+    );
+}
+
+/// noImplicitAny OFF: the READ side mirrors the write side.
+#[test]
+fn spread_literal_read_reports_ts2339_without_no_implicit_any() {
+    let codes = codes_no_implicit_any_off("var src = { a: 1 };\nvar o = { ...src };\no.zag;\n");
+    assert_eq!(
+        codes,
+        vec![2339],
+        "reading an undeclared member through a spread receiver is TS2339 in both configs, got {codes:?}"
+    );
+}
+
+/// A spread literal mixed with an explicit own property (`{ ...src, extra: 1
+/// }`) is still spread-derived end to end — same closed-shape rule, both
+/// configs, and the declared members (`a` from the spread, `extra` own) read
+/// clean.
+#[test]
+fn spread_plus_own_property_literal_write_ts2339_both_configs() {
+    let src = "var src = { a: 1 };\nvar o = { ...src, extra: 1 };\no.zag = 2;\n";
+    assert_eq!(
+        codes_no_implicit_any_on(src),
+        vec![2339],
+        "spread+own-property receiver must be TS2339 under noImplicitAny"
+    );
+    assert_eq!(
+        codes_no_implicit_any_off(src),
+        vec![2339],
+        "spread+own-property receiver must stay TS2339 without noImplicitAny too"
+    );
+}
+
+/// Declared members — one from the spread, one own — read clean in both
+/// configs; only the undeclared member is affected.
+#[test]
+fn spread_plus_own_property_declared_members_read_clean_both_configs() {
+    let src =
+        "var src = { a: 1 };\nvar o = { ...src, extra: 1 };\nlet n = o.a;\nlet m = o.extra;\n";
+    assert!(
+        codes_no_implicit_any_on(src).is_empty(),
+        "declared spread/own members must read clean under noImplicitAny, got {:?}",
+        codes_no_implicit_any_on(src)
+    );
+    assert!(
+        codes_no_implicit_any_off(src).is_empty(),
+        "declared spread/own members must read clean without noImplicitAny, got {:?}",
+        codes_no_implicit_any_off(src)
+    );
+}
+
+/// Renamed binders — no name-based fast path. A differently-named
+/// spread-derived receiver still reports TS2339 without noImplicitAny.
+#[test]
+fn spread_literal_write_ts2339_renamed_binders_without_no_implicit_any() {
+    let codes =
+        codes_no_implicit_any_off("var zqz = { qbq: 1 };\nvar zzz = { ...zqz };\nzzz.wxw = 2;\n");
+    assert_eq!(
+        codes,
+        vec![2339],
+        "renamed spread-derived receiver must still report TS2339, got {codes:?}"
+    );
+}
+
+/// Control: a hand-written non-spread open container keeps its leniency —
+/// this fix must not widen the closed-shape rule to plain empty/non-empty
+/// literals that never went through a spread.
+#[test]
+fn non_spread_empty_literal_write_stays_silent_without_no_implicit_any_control() {
+    let codes = codes_no_implicit_any_off("var p = {};\np.zag = 2;\n");
+    assert!(
+        codes.is_empty(),
+        "a genuine (non-spread) empty-literal expando host must stay open, got {codes:?}"
+    );
+}

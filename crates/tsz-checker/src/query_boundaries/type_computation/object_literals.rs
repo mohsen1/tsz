@@ -65,8 +65,11 @@ pub(crate) fn spread_object_type(
     properties: Vec<PropertyInfo>,
     display_properties: Vec<PropertyInfo>,
 ) -> TypeId {
-    let result =
-        db.object_with_flags_and_symbol(properties, ObjectFlags::PRESERVE_DECLARATION_ORDER, None);
+    let result = db.object_with_flags_and_symbol(
+        properties,
+        ObjectFlags::PRESERVE_DECLARATION_ORDER | ObjectFlags::SPREAD_LITERAL,
+        None,
+    );
     db.store_display_properties(result, display_properties);
     result
 }
@@ -146,6 +149,7 @@ pub(crate) fn indexed_object_type(
     };
     if has_spread {
         shape.mark_preserve_declaration_order();
+        shape.mark_spread_literal();
     } else {
         shape.mark_fresh_literal();
         if all_properties_context_sensitive {
