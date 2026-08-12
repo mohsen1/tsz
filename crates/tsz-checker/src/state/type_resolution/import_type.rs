@@ -406,7 +406,11 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn import_type_namespace_name_with_segments(
+    /// Shared with the TS-syntax `typeof import(...)` walk in
+    /// `core_type_query.rs`, whose TS2694 for a module without an export
+    /// assignment follows the same naming rule as the type-position path:
+    /// resolved module path, traversed segments appended, no `.export=`.
+    pub(crate) fn import_type_namespace_name_with_segments(
         &self,
         module_specifier: &str,
         segments: &[String],

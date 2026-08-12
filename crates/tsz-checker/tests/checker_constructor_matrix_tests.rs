@@ -195,18 +195,20 @@ fn matrix_with_options_deferred_def_store_leaves_store_empty() {
     );
 }
 
+/// `with_parent_cache`'s sole production callers (`CheckerState::delegate_for_arena`
+/// and every direct `with_parent_cache_attributed` call site) always pass
+/// `parent.ctx.compiler_options.clone()` — already fully resolved by the
+/// driver/config layer — never a raw `strict` umbrella. Re-expanding here
+/// (the pre-#17110 `EXPAND_STRICT_LOCALLY` policy) silently clobbered an
+/// explicit per-file sub-flag opt-out (e.g. `strictNullChecks: false` with
+/// no bare `--strict`) back to the umbrella's value, and because `types` is
+/// one `QueryDatabase` shared with the parent and every other file in the
+/// compilation, the clobber leaked past the one child. `with_parent_cache`
+/// moved to `PRE_RESOLVED` for this reason; `with_cache_pre_resolved` is its
+/// non-delegation sibling for the same pre-resolved-options family. See
+/// `CheckerContext::with_parent_cache`'s doc comment.
 #[test]
 fn matrix_with_parent_cache_preserves_opt_outs_and_pushes_index_flags() {
-    // Moved into the pre-resolved family (#17203): `with_parent_cache` always
-    // inherits `compiler_options` from a parent context that already resolved
-    // the strict family, so it now uses `OptionsPolicy::PRE_RESOLVED` instead
-    // of the legacy local-expansion policy — re-expanding here would clobber
-    // an explicit per-member override the parent already resolved, and leak
-    // the clobbered flag into the `QueryDatabase` shared with every other
-    // file in the same compilation. See the constructor's doc comment in
-    // `context/constructors.rs`. This test previously pinned the old
-    // local-expansion policy (`true, false`); that was a stale expectation
-    // of an intentional, documented policy change, not a regression.
     let f = fixture();
     let parent_types = TypeInterner::new();
     let child_types = TypeInterner::new();
@@ -225,6 +227,10 @@ fn matrix_with_parent_cache_preserves_opt_outs_and_pushes_index_flags() {
         pinned_input_options(),
         &parent,
     );
+    // A dedicated child interner proves the parent path DOES push index
+    // flags into the QueryDatabase under PRE_RESOLVED (redundant with the
+    // parent's own push in production, where child and parent share one
+    // QueryDatabase instance, but still the policy's actual behavior).
     assert_matrix_row("with_parent_cache", &child, &child_types, false, true);
     assert!(
         Arc::ptr_eq(&child.ctx.definition_store, &parent.ctx.definition_store),

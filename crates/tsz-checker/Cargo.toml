@@ -41,6 +41,9 @@ path = "tests/interface_simultaneous_extend_suppresses_incorrectly_extends_tests
 name = "evolving_array_assignment_contextual_inference_tests"
 path = "tests/evolving_array_assignment_contextual_inference_tests.rs"
 [[test]]
+name = "arithmetic_nullish_operand_non_strict_tests"
+path = "tests/arithmetic_nullish_operand_non_strict_tests.rs"
+[[test]]
 name = "enum_member_binding_widening_tests"
 path = "tests/enum_member_binding_widening_tests.rs"
 [[test]]
@@ -1692,6 +1695,9 @@ path = "tests/import_type_ambient_module_member_tests.rs"
 [[test]]
 name = "import_type_ts2694_namespace_module_path_tests"
 path = "tests/import_type_ts2694_namespace_module_path_tests.rs"
+[[test]]
+name = "typeof_import_ts2694_namespace_module_path_tests"
+path = "tests/typeof_import_ts2694_namespace_module_path_tests.rs"
 [[test]]
 name = "json_namespace_import_tests"
 path = "tests/json_namespace_import_tests.rs"

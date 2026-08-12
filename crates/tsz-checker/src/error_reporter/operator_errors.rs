@@ -1084,7 +1084,30 @@ impl<'a> CheckerState<'a> {
         // never TS2362/TS2363. But if null/undefined operands already got TS18050,
         // don't also emit TS2365 - tsc only emits the per-operand TS18050 errors.
         if op == "+" {
-            if !emitted_nullish_error {
+            // Under strictNullChecks-off a bare `null`/`undefined` operand
+            // borrows its numeric/string kind from the *other* operand: paired
+            // with a real numeric/string/`any`/enum operand it is a well-typed
+            // addition/concatenation and must not report TS2365 — `x + 1` for
+            // `x: undefined` and the uncovered-optional IIFE param
+            // `((k?) => k + 1)()` are both clean in tsc. The allowance requires
+            // an actual operand to borrow from: two nullish operands
+            // (`null + undefined`, `undefined + undefined`) have no numeric or
+            // string side and still report TS2365, as does a nullish operand
+            // paired with a genuinely invalid one (symbol, object). The mixed
+            // `number + bigint` case (no nullish operand) is unaffected.
+            // `left_is_valid_arithmetic` already folds in the snc-off nullish
+            // allowance for the numeric side; the string check covers the
+            // concatenation side.
+            let left_ok_for_plus = left_is_valid_arithmetic || self.is_string_like_type(eval_left);
+            let right_ok_for_plus =
+                right_is_valid_arithmetic || self.is_string_like_type(eval_right);
+            // Exactly one nullish operand: it borrows the other (real) operand's
+            // numeric/string kind. Both nullish → nothing to borrow → still
+            // TS2365; neither nullish → no allowance applies at all.
+            let exactly_one_nullish = left_is_nullish != right_is_nullish;
+            let plus_valid_via_snc_off_nullish =
+                snc_off && exactly_one_nullish && left_ok_for_plus && right_ok_for_plus;
+            if !emitted_nullish_error && !plus_valid_via_snc_off_nullish {
                 self.emit_render_request(
                     node_idx,
                     DiagnosticRenderRequest::simple_msg(

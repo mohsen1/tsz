@@ -265,7 +265,10 @@ impl<'a> CheckerState<'a> {
             if self.is_js_file()
                 && self.ctx.compiler_options.check_js
                 && let Some(jsdoc) = self.find_jsdoc_for_function(decl_idx)
-                && self.resolve_jsdoc_return_type(&jsdoc) == Some(TypeId::NEVER)
+                && {
+                    let comment_start = self.get_jsdoc_comment_pos_for_function(decl_idx);
+                    self.resolve_jsdoc_return_type(&jsdoc, comment_start) == Some(TypeId::NEVER)
+                }
             {
                 return true;
             }
