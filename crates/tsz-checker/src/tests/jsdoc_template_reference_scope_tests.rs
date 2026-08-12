@@ -203,3 +203,129 @@ function mix(x, y) { return x; }
 ";
     assert_eq!(cannot_find_name_count(source), 1);
 }
+
+// --- Case-collision: an out-of-scope template reference must stay a bare
+// TS2304, even when a same-spelled-but-differently-cased VALUE symbol exists
+// in file scope. `find_jsdoc_type_spelling_suggestion`'s meaning-unfiltered
+// fallback pass used to match such a value by case alone and upgrade the
+// diagnostic to a TS2552 "did you mean" tsc never emits (oracle-verified
+// against typescript@7.0.2 on the `constructorFunctionMethodTypeParameters`
+// conformance fixture: a constructor's `@template {string} T`, referenced out
+// of scope from a prototype method's `@param {T} t`, reports plain TS2304 at
+// every site — no suggestion, despite the file also declaring `const t`). ---
+
+fn find_diag<'a>(diags: &'a [crate::diagnostics::Diagnostic], code: u32) -> Option<&'a str> {
+    diags
+        .iter()
+        .find(|d| d.code == code)
+        .map(|d| d.message_text.as_str())
+}
+
+/// The exact oracle witness: `T` out of scope in a prototype method, with a
+/// same-file top-level `const t` for the spelling scan to wrongly latch onto.
+#[test]
+fn out_of_scope_template_case_collision_stays_bare_ts2304() {
+    let source = r"
+/**
+ * @template {string} T
+ * @param {T} t
+ */
+function Cls(t) { this.t = t; }
+
+/**
+ * @param {T} t
+ */
+Cls.prototype.method = function (t) { return t; };
+
+var c = new Cls('a');
+const t = c.method('a');
+";
+    let diags = crate::test_utils::check_source(
+        source,
+        "test.js",
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            ..CheckerOptions::default()
+        },
+    );
+    let message = find_diag(&diags, 2304).expect("expected a TS2304 for out-of-scope 'T'");
+    assert!(
+        !message.contains("Did you mean"),
+        "tsc reports a bare TS2304 with no suggestion here, got: {message:?} (full: {diags:?})"
+    );
+    assert!(
+        find_diag(&diags, 2552).is_none(),
+        "expected no TS2552 upgrade, got: {diags:?}"
+    );
+}
+
+/// Renamed-binder adjacent case: the rule is structural (meaning mismatch
+/// between the type-position lookup and a value-only candidate), not keyed on
+/// the specific spelling `T`/`t`.
+#[test]
+fn out_of_scope_template_case_collision_stays_bare_ts2304_renamed() {
+    let source = r"
+/**
+ * @template {string} Elem
+ * @param {Elem} elem
+ */
+function Widget(elem) { this.elem = elem; }
+
+/**
+ * @param {Elem} elem
+ */
+Widget.prototype.render = function (elem) { return elem; };
+
+var w = new Widget('a');
+const elem = w.render('a');
+";
+    let diags = crate::test_utils::check_source(
+        source,
+        "test.js",
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            ..CheckerOptions::default()
+        },
+    );
+    let message = find_diag(&diags, 2304).expect("expected a TS2304 for out-of-scope 'Elem'");
+    assert!(
+        !message.contains("Did you mean"),
+        "tsc reports a bare TS2304 with no suggestion here, got: {message:?} (full: {diags:?})"
+    );
+}
+
+/// Positive control: a genuine TYPE-meaning typo inside a JSDoc type position
+/// must still be upgraded to TS2552 — the meaning-widened fallback must not
+/// regress the ordinary in-file class-as-type spelling-suggestion path (a
+/// class declaration's symbol carries both `VALUE` and `TYPE` flags, so it
+/// stays reachable through the same `file_locals` scan the case-collision
+/// fix narrows).
+#[test]
+fn jsdoc_class_typo_still_suggests() {
+    let source = r"
+class Point {
+  constructor() { this.x = 0; }
+}
+
+/**
+ * @param {Pont} p
+ */
+function usePoint(p) { return p; }
+";
+    let diags = crate::test_utils::check_source(
+        source,
+        "test.js",
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            ..CheckerOptions::default()
+        },
+    );
+    let message = find_diag(&diags, 2552).expect("expected a TS2552 'Pont' -> 'Point' upgrade");
+    assert!(
+        message.contains("'Pont'") && message.contains("'Point'"),
+        "expected 'Pont' -> 'Point' suggestion, got: {message:?} (full: {diags:?})"
+    );
+}

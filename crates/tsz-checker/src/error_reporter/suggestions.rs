@@ -646,9 +646,23 @@ impl<'a> CheckerState<'a> {
 
         // For JSDoc `@type` in declaration emit, tsc may suggest global namespace-like
         // names (e.g. `class` -> `CSS`, `int` -> `Intl`) even when TYPE-only search
-        // found no candidate. Run a fallback pass without meaning filtering to mirror it.
+        // found no candidate: a bare namespace symbol (`declare namespace Intl`)
+        // carries `NAMESPACE`, not `TYPE`, so the primary pass misses it. Widen to
+        // `TYPE | NAMESPACE` rather than dropping meaning filtering entirely — an
+        // unfiltered pass also matches plain VALUE-only symbols (a local variable,
+        // a function parameter) by case alone, which tsc never suggests for a type
+        // reference (oracle-verified: `@template {string} T` on a constructor,
+        // referenced out of scope in a prototype method as `@param {T} t`, reports
+        // plain TS2304 — not a "did you mean 't'" upgrade to TS2552).
         if best_candidate.is_none() {
-            for (symbol_name, _sym_id) in self.ctx.binder.file_locals.iter() {
+            let fallback_meaning =
+                tsz_binder::symbol_flags::TYPE | tsz_binder::symbol_flags::NAMESPACE;
+            for (symbol_name, sym_id) in self.ctx.binder.file_locals.iter() {
+                if let Some(sym) = self.ctx.binder.get_symbol(*sym_id)
+                    && !sym.has_any_flags(fallback_meaning)
+                {
+                    continue;
+                }
                 Self::consider_identifier_suggestion(
                     name,
                     symbol_name,
@@ -663,7 +677,7 @@ impl<'a> CheckerState<'a> {
                 name,
                 name_len,
                 maximum_length_difference,
-                0,
+                fallback_meaning,
                 &self.ctx.lib_contexts,
                 &mut best_distance,
                 &mut best_candidate,
