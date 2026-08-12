@@ -1032,17 +1032,21 @@ declare namespace JSX {
     );
 
     // TypeScript 7.0.2 (pinned oracle) never emits any diagnostic for this
-    // fixture: with only `@types/react` on disk and no real `react` runtime
-    // package, the automatic `jsxImportSource: "react"` resolution for
-    // `react/jsx-runtime` does not resolve to `@types/react/jsx-runtime.d.ts`
-    // at all under `moduleResolution: nodenext` (confirmed via
-    // `--listFilesOnly`: that file is never loaded). So `jsx-runtime.d.ts`'s
-    // `import './';` self-import — the mechanism this test's name describes
-    // as causing the duplicate — never runs, `index.d.ts`'s
-    // `JSX.IntrinsicElements` merges exactly once, and no TS2374 fires. tsz's
-    // current empty-diagnostics output already matches tsc exactly; the old
-    // expectation of one TS2374 was never oracle-verified against this exact
-    // (types-only, no runtime package) fixture shape.
+    // fixture, confirmed by running it directly through the pinned oracle
+    // binary against this exact on-disk layout: no TS2374, no diagnostics at
+    // all. tsz's current empty-diagnostics output already matches tsc
+    // exactly; the old expectation of one TS2374 was never oracle-verified.
+    //
+    // The MECHANISM is deliberately left unstated here: `@types/react/jsx-
+    // runtime.d.ts` does load under `--listFiles` (so its `import './';`
+    // self-import does run), yet still no duplicate fires — the reason is
+    // unconfirmed. A follow-up attempt to plant a deliberate duplicate index
+    // signature in `index.d.ts` and reproduce TS2374 under this same
+    // `--noLib` layout was also inconclusive (it never fired there either),
+    // so this specific harness/fixture shape may not exercise the check
+    // `tsc` and this test's name describe at all. See #17203 for the
+    // discussion; do not assert a specific resolution mechanism here without
+    // re-deriving it from scratch.
     let ts2374: Vec<_> = diagnostics
         .iter()
         .filter(|(code, message)| {
@@ -1051,7 +1055,7 @@ declare namespace JSX {
         .collect();
     assert!(
         ts2374.is_empty(),
-        "Did not expect TS2374: without a real `react` runtime package, the automatic jsx-runtime import never resolves to @types/react/jsx-runtime.d.ts, so its self-import never re-merges JSX.IntrinsicElements. Actual diagnostics: {diagnostics:#?}"
+        "Did not expect TS2374: tsc emits no diagnostics for this fixture, and tsz's current output matches. Actual diagnostics: {diagnostics:#?}"
     );
 }
 
