@@ -917,18 +917,26 @@ impl<'a> DeclarationEmitter<'a> {
             .unwrap_or_else(|| self.resolve_portability_symbol(sym_id, binder));
         let symbol = binder.symbols.get(resolved_sym_id)?;
 
-        // A bare identifier referencing a function/class/enum/namespace symbol
-        // widens to that symbol's own type; tsc's declaration emitter prefers
-        // `typeof Name` over expanding the structural shape (`typeof_prefix_for_value_entity`
-        // applies the identical rule for variable initializers). Without this,
-        // a return position or other non-variable expression context loses the
-        // symbol reference and expands the callable structurally instead.
-        if self
-            .arena
-            .get(expr_idx)
-            .is_some_and(|node| node.kind == SyntaxKind::Identifier as u16)
-            && self.value_reference_symbol_can_use_typeof(sym_id, resolved_sym_id, symbol)
-            && let Some(name) = self.get_identifier_text(expr_idx)
+        // A bare identifier or qualified name (`M.sm`) referencing a
+        // function/class/enum/namespace/method symbol widens to that symbol's
+        // own type; tsc's declaration emitter prefers `typeof Name` /
+        // `typeof M.sm` over expanding the structural shape
+        // (`typeof_prefix_for_value_entity` applies the identical rule for
+        // variable initializers, and `direct_value_reference_typeof_text`
+        // for direct references). Without this, a return position or other
+        // non-variable expression context loses the symbol reference and
+        // expands the callable structurally instead — this used to only
+        // trigger for a bare identifier, so a qualified reference to a
+        // module/namespace-scoped function or method (unlike a class, whose
+        // constructor type already prints nominally) fell through to the
+        // structural expansion.
+        if self.arena.get(expr_idx).is_some_and(|node| {
+            node.kind == SyntaxKind::Identifier as u16
+                || node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+        }) && self.value_reference_symbol_can_use_typeof(sym_id, resolved_sym_id, symbol)
+            && let Some(name) = self
+                .nameable_constructor_expression_text(expr_idx)
+                .map(|text| self.relative_value_reference_text(&text))
         {
             return Some(format!("typeof {name}"));
         }

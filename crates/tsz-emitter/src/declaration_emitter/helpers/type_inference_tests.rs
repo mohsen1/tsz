@@ -1780,3 +1780,100 @@ export namespace N {
         "a namespace-level `nf` is in scope, so `typeof nf` is preferred; got {output:?}"
     );
 }
+
+/// #17281: a *qualified* reference (`M.sm`) to a module-scoped static method
+/// stays `typeof M.sm`, matching the bare-identifier case above — tsc prints
+/// `typeof` regardless of whether the reference is dotted. Before this fix
+/// the qualified path fell through to the structural function-type expansion
+/// because `value_reference_symbol_type_text`'s `typeof` shortcut only
+/// matched a bare `Identifier` node, not a `PropertyAccessExpression`.
+#[test]
+fn returned_qualified_static_method_still_uses_typeof() {
+    let output = emit_test_dts_with_binding(
+        r"
+export class M {
+    static sm(x: number) {
+        return x;
+    }
+}
+export function h2() {
+    return M.sm;
+}
+",
+    );
+    assert!(
+        output.contains("declare function h2(): typeof M.sm;"),
+        "a qualified reference to a module-scoped static method is in scope, \
+         so `typeof M.sm` is preferred over the structural expansion; got {output:?}"
+    );
+}
+
+/// #17281 adjacent case: a qualified reference to a *namespace-level*
+/// function (`P.pf`) also stays `typeof`, not just the class-static shape.
+#[test]
+fn returned_qualified_namespace_function_still_uses_typeof() {
+    let output = emit_test_dts_with_binding(
+        r"
+export namespace P {
+    export function pf(x: number): number {
+        return x;
+    }
+}
+export function h3() {
+    return P.pf;
+}
+",
+    );
+    assert!(
+        output.contains("declare function h3(): typeof P.pf;"),
+        "a qualified reference to a namespace-level function is in scope, \
+         so `typeof P.pf` is preferred over the structural expansion; got {output:?}"
+    );
+}
+
+/// #17281 adjacent case: a qualified reference to a *nested-namespace*
+/// function (`R.T.tf`) preserves the full dotted path in the `typeof`.
+#[test]
+fn returned_qualified_nested_namespace_function_still_uses_typeof() {
+    let output = emit_test_dts_with_binding(
+        r"
+export namespace R {
+    export namespace T {
+        export function tf(x: number): number {
+            return x;
+        }
+    }
+}
+export function h4() {
+    return R.T.tf;
+}
+",
+    );
+    assert!(
+        output.contains("declare function h4(): typeof R.T.tf;"),
+        "a qualified reference to a nested-namespace function is in scope, \
+         so `typeof R.T.tf` is preferred over the structural expansion; got {output:?}"
+    );
+}
+
+/// #17281 negative control: a qualified reference to a namespace-level
+/// *class* (`Q.QC`) already worked before this fix (the class's constructor
+/// type prints nominally); this pins that the fix does not disturb it.
+#[test]
+fn returned_qualified_namespace_class_still_uses_typeof() {
+    let output = emit_test_dts_with_binding(
+        r"
+export namespace Q {
+    export class QC {}
+}
+export function h5() {
+    return Q.QC;
+}
+",
+    );
+    assert!(
+        output.contains("declare function h5(): typeof Q.QC;"),
+        "a qualified reference to a namespace-level class already printed \
+         `typeof Q.QC`; got {output:?}"
+    );
+}
