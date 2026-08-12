@@ -438,6 +438,7 @@ impl<'a> CheckerContext<'a> {
         self.class_member_body_depth = 0;
         self.is_unreachable = false;
         self.has_reported_unreachable = false;
+        self.suppress_unreachable_reporting = false;
         self.label_stack.clear();
         self.had_outer_loop = false;
         self.suppress_definite_assignment_errors = false;

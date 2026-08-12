@@ -649,6 +649,8 @@ mod module_scoped_var_shadows_lib_global_ts2300_tests;
 mod multi_overload_infer_capture_tests;
 #[path = "tests/mutable_binding_widening_from_const_literal_tests.rs"]
 mod mutable_binding_widening_from_const_literal_tests;
+#[path = "tests/namespace_body_reachability_tests.rs"]
+mod namespace_body_reachability_tests;
 #[path = "tests/namespace_property_mismatch_boundary_arch_tests.rs"]
 mod namespace_property_mismatch_boundary_arch_tests;
 #[path = "tests/narrowed_union_source_display_tests.rs"]

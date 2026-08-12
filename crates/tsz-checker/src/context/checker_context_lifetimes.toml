@@ -255,6 +255,7 @@ function_depth = { lifetime = "DiagnosticsOnly", capability = "DiagnosticState",
 class_member_body_depth = { lifetime = "DiagnosticsOnly", capability = "DiagnosticState", reason = "function_depth baseline of the enclosing class member body; drives grammar/boundary diagnostics; clear at file-session boundary" }
 is_unreachable = { lifetime = "DiagnosticsOnly", capability = "DiagnosticState", reason = "diagnostic emission, dedupe, or suppression state; clear at file-session boundary" }
 has_reported_unreachable = { lifetime = "DiagnosticsOnly", capability = "DiagnosticState", reason = "diagnostic emission, dedupe, or suppression state; clear at file-session boundary" }
+suppress_unreachable_reporting = { lifetime = "DiagnosticsOnly", capability = "DiagnosticState", reason = "diagnostic emission, dedupe, or suppression state; clear at file-session boundary" }
 label_stack = { lifetime = "DiagnosticsOnly", capability = "DiagnosticState", reason = "diagnostic emission, dedupe, or suppression state; clear at file-session boundary" }
 had_outer_loop = { lifetime = "DiagnosticsOnly", capability = "DiagnosticState", reason = "diagnostic emission, dedupe, or suppression state; clear at file-session boundary" }
 suppress_definite_assignment_errors = { lifetime = "DiagnosticsOnly", capability = "DiagnosticState", reason = "diagnostic emission, dedupe, or suppression state; clear at file-session boundary" }

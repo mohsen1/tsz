@@ -39,6 +39,20 @@ use super::syntax_kind_ext::{
     VARIABLE_DECLARATION_LIST, VARIABLE_STATEMENT,
 };
 
+/// tsc's `ModuleInstanceState`: how much of a namespace/module declaration
+/// survives erasure. Computed syntactically by
+/// [`NodeArenaInner::module_instance_state`].
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum ModuleInstanceState {
+    /// Only type-level declarations; the namespace is fully erased.
+    NonInstantiated,
+    /// Has runtime members; the namespace emits a value.
+    Instantiated,
+    /// The only runtime members are `const enum`s, which are erased unless
+    /// `preserveConstEnums` keeps them.
+    ConstEnumOnly,
+}
+
 /// Generate the single-condition typed getter bodies (`get_X(&Node) ->
 /// Option<&XData>`) that were previously hand-written ~per node kind. Each
 /// arm checks `has_data()` and that the node's kind is one of `[KIND, ..]`
@@ -516,6 +530,131 @@ impl NodeArenaInner {
         }
 
         false
+    }
+
+    /// tsc's `GetModuleInstanceState` for a namespace/module declaration.
+    ///
+    /// Distinguishes the three states tsc's classifier produces:
+    /// - `NonInstantiated`: the body holds only type-level declarations
+    ///   (interfaces, type aliases, non-exported imports, other
+    ///   non-instantiated modules) — the namespace is fully erased.
+    /// - `ConstEnumOnly`: the only runtime members are `const enum`
+    ///   declarations, which are erased unless `preserveConstEnums` keeps
+    ///   them.
+    /// - `Instantiated`: anything else, including a bodyless declaration
+    ///   (`declare module "m";`), which tsc treats as instantiated.
+    ///
+    /// Purely syntactic, like [`Self::is_namespace_instantiated`]: named
+    /// re-export specifiers (`export { name }`) are conservatively treated as
+    /// instantiating instead of resolving each alias target the way tsc's
+    /// `getModuleInstanceStateForAliasTarget` does.
+    #[must_use]
+    pub fn module_instance_state(&self, module_idx: NodeIndex) -> ModuleInstanceState {
+        let Some(node) = self.get(module_idx) else {
+            return ModuleInstanceState::NonInstantiated;
+        };
+        if node.kind != MODULE_DECLARATION {
+            return ModuleInstanceState::NonInstantiated;
+        }
+        let Some(module_decl) = self.get_module(node) else {
+            return ModuleInstanceState::NonInstantiated;
+        };
+        if module_decl.body.is_none() {
+            // `declare module "m";` with no body is instantiated in tsc.
+            return ModuleInstanceState::Instantiated;
+        }
+        self.module_body_instance_state(module_decl.body)
+    }
+
+    /// Instance state of a module body (dotted-namespace chain or block).
+    fn module_body_instance_state(&self, body_idx: NodeIndex) -> ModuleInstanceState {
+        let Some(body_node) = self.get(body_idx) else {
+            return ModuleInstanceState::NonInstantiated;
+        };
+        // Dotted namespace: `namespace Foo.Bar { ... }` — the state is the
+        // inner module's state.
+        if body_node.kind == MODULE_DECLARATION {
+            return self.module_instance_state(body_idx);
+        }
+        if body_node.kind != MODULE_BLOCK {
+            return ModuleInstanceState::NonInstantiated;
+        }
+        let Some(module_block) = self.get_module_block(body_node) else {
+            return ModuleInstanceState::NonInstantiated;
+        };
+        let Some(statements) = &module_block.statements else {
+            return ModuleInstanceState::NonInstantiated;
+        };
+        let mut state = ModuleInstanceState::NonInstantiated;
+        for &stmt_idx in &statements.nodes {
+            match self.module_statement_instance_state(stmt_idx) {
+                ModuleInstanceState::Instantiated => return ModuleInstanceState::Instantiated,
+                ModuleInstanceState::ConstEnumOnly => state = ModuleInstanceState::ConstEnumOnly,
+                ModuleInstanceState::NonInstantiated => {}
+            }
+        }
+        state
+    }
+
+    /// Instance state contributed by one statement of a module block,
+    /// mirroring tsc's `getModuleInstanceStateWorker`.
+    fn module_statement_instance_state(&self, stmt_idx: NodeIndex) -> ModuleInstanceState {
+        use tsz_scanner::SyntaxKind;
+        let Some(node) = self.get(stmt_idx) else {
+            return ModuleInstanceState::NonInstantiated;
+        };
+        match node.kind {
+            k if k == INTERFACE_DECLARATION || k == TYPE_ALIAS_DECLARATION => {
+                ModuleInstanceState::NonInstantiated
+            }
+            ENUM_DECLARATION => {
+                let is_const = self.get_enum(node).is_some_and(|enum_data| {
+                    self.has_modifier(&enum_data.modifiers, SyntaxKind::ConstKeyword)
+                });
+                if is_const {
+                    ModuleInstanceState::ConstEnumOnly
+                } else {
+                    ModuleInstanceState::Instantiated
+                }
+            }
+            k if k == IMPORT_DECLARATION || k == IMPORT_EQUALS_DECLARATION => {
+                // tsc: a non-exported import never instantiates; an exported
+                // one falls through to the instantiated default.
+                let exported = self.get_declaration_modifiers(node).is_some_and(|mods| {
+                    self.has_modifier_ref(Some(mods), SyntaxKind::ExportKeyword)
+                });
+                if exported {
+                    ModuleInstanceState::Instantiated
+                } else {
+                    ModuleInstanceState::NonInstantiated
+                }
+            }
+            EXPORT_DECLARATION => {
+                if let Some(export_decl) = self.get_export_decl(node)
+                    && export_decl.export_clause.is_some()
+                {
+                    let Some(clause) = self.get(export_decl.export_clause) else {
+                        return ModuleInstanceState::NonInstantiated;
+                    };
+                    if clause.kind == NAMED_EXPORTS {
+                        // Conservative: tsc resolves each specifier's alias
+                        // target; treat named re-exports as instantiating.
+                        ModuleInstanceState::Instantiated
+                    } else {
+                        // `export <declaration>` — classify the wrapped
+                        // declaration itself.
+                        self.module_statement_instance_state(export_decl.export_clause)
+                    }
+                } else {
+                    ModuleInstanceState::Instantiated
+                }
+            }
+            MODULE_DECLARATION => self.module_instance_state(stmt_idx),
+            // Everything else (variables, functions, classes, expression
+            // statements, control flow, `export as namespace`, export
+            // assignments, ...) is runtime code.
+            _ => ModuleInstanceState::Instantiated,
+        }
     }
 
     /// Check if a statement inside a module block is a runtime value declaration.

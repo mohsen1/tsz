@@ -779,6 +779,12 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
     }
 
     fn report_unreachable_statement(&mut self, stmt_idx: NodeIndex) {
+        // tsc's `withinUnreachableCode`: an ancestor statement is already
+        // covered by a reported unreachable range, so nothing beneath it
+        // reports TS7027 (normal checking still runs).
+        if self.ctx.suppress_unreachable_reporting {
+            return;
+        }
         if !self.ctx.is_unreachable {
             return;
         }
@@ -811,15 +817,20 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                     false
                 }
             } else if node.kind == syntax_kind_ext::MODULE_DECLARATION {
-                // Skip only ambient (declare) modules; namespace with executable code is instantiated
-                if let Some(module_data) = self.ctx.arena.get_module(node) {
-                    let is_ambient = self
-                        .ctx
-                        .arena
-                        .has_modifier(&module_data.modifiers, SyntaxKind::DeclareKeyword);
-                    is_ambient || self.ctx.arena.get(module_data.body).is_none()
-                } else {
-                    false
+                // tsc reports an unreachable module declaration only when it
+                // is instantiated (`isSourceElementUnreachable` ->
+                // `IsInstantiatedModule`): a namespace holding only types is
+                // erased, and a const-enum-only namespace is erased unless
+                // `preserveConstEnums` keeps it. Ambient modules get no
+                // exemption — `declare namespace D { let q: number; }` in
+                // unreachable code reports (verified against tsc 7.0.2).
+                use tsz_parser::parser::ModuleInstanceState;
+                match self.ctx.arena.module_instance_state(stmt_idx) {
+                    ModuleInstanceState::Instantiated => false,
+                    ModuleInstanceState::ConstEnumOnly => {
+                        !self.ctx.compiler_options.preserve_const_enums
+                    }
+                    ModuleInstanceState::NonInstantiated => true,
                 }
             } else {
                 CheckerState::is_var_without_initializer(self, stmt_idx, node)
@@ -828,23 +839,33 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
             false
         };
 
-        if !should_skip && !self.ctx.has_reported_unreachable {
-            if self.ctx.compiler_options.allow_unreachable_code != Some(false) {
-                return;
-            }
-            self.error_at_node(
-                stmt_idx,
-                crate::diagnostics::diagnostic_messages::UNREACHABLE_CODE_DETECTED,
-                crate::diagnostics::diagnostic_codes::UNREACHABLE_CODE_DETECTED,
-            );
-            self.ctx.has_reported_unreachable = true;
-        } else if should_skip {
+        if should_skip {
             // tsc resets the "already reported" marker after a statement that
             // doesn't affect runtime control flow (function declaration, etc.).
             // This lets a subsequent unreachable statement emit a fresh TS7027,
             // matching tsc's one-per-unreachable-group behavior where hoisted
             // declarations separate groups. See `unreachableJavascriptChecked`.
             self.ctx.has_reported_unreachable = false;
+            return;
+        }
+
+        // This statement is covered by an unreachable range — either it is the
+        // range's first statement (and reports below) or a preceding range
+        // statement already reported for it. Either way tsc suppresses TS7027
+        // for everything beneath a covered statement (`withinUnreachableCode`);
+        // `StatementChecker::check_with_request` restores the caller's scope
+        // once this statement's subtree is done.
+        self.ctx.suppress_unreachable_reporting = true;
+
+        if !self.ctx.has_reported_unreachable
+            && self.ctx.compiler_options.allow_unreachable_code == Some(false)
+        {
+            self.error_at_node(
+                stmt_idx,
+                crate::diagnostics::diagnostic_messages::UNREACHABLE_CODE_DETECTED,
+                crate::diagnostics::diagnostic_codes::UNREACHABLE_CODE_DETECTED,
+            );
+            self.ctx.has_reported_unreachable = true;
         }
     }
 
@@ -1130,6 +1151,14 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
 
     fn set_reported_unreachable(&mut self, value: bool) {
         self.ctx.has_reported_unreachable = value;
+    }
+
+    fn suppress_unreachable_reporting(&self) -> bool {
+        self.ctx.suppress_unreachable_reporting
+    }
+
+    fn set_suppress_unreachable_reporting(&mut self, value: bool) {
+        self.ctx.suppress_unreachable_reporting = value;
     }
 
     fn statement_falls_through(&mut self, stmt_idx: NodeIndex) -> bool {

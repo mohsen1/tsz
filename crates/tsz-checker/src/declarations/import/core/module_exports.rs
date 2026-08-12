@@ -44,6 +44,19 @@ impl<'a> CheckerState<'a> {
             if let Some(block) = self.ctx.arena.get_module_block(body_node)
                 && let Some(ref statements) = block.statements
             {
+                // tsc treats a module block as its own control-flow container
+                // (`bindContainer`, `ContainerFlagsIsControlFlowContainer`):
+                // the body starts a fresh, reachable flow, and the outer
+                // statement walk resumes its own reachability state once the
+                // body is done — a namespace body ending in `while (true);`
+                // never makes the statements after the namespace unreachable.
+                // (When the namespace itself sits in reported-unreachable
+                // code, `suppress_unreachable_reporting` is already set for
+                // this subtree by `report_unreachable_statement`.)
+                let prev_unreachable = self.ctx.is_unreachable;
+                let prev_reported = self.ctx.has_reported_unreachable;
+                self.ctx.is_unreachable = false;
+                self.ctx.has_reported_unreachable = false;
                 let is_ambient_body = self.ctx.is_ambient_declaration(body_idx);
                 for &stmt_idx in &statements.nodes {
                     // TS1063: export assignment cannot be used in a namespace.
@@ -72,7 +85,14 @@ impl<'a> CheckerState<'a> {
                         continue;
                     }
                     self.check_statement(stmt_idx);
+                    // Thread reachability between the body's statements the
+                    // same way the top-level source-file walk does.
+                    if !self.statement_falls_through(stmt_idx) {
+                        self.ctx.is_unreachable = true;
+                    }
                 }
+                self.ctx.is_unreachable = prev_unreachable;
+                self.ctx.has_reported_unreachable = prev_reported;
                 self.check_function_implementations(&statements.nodes);
                 // Check for duplicate export assignments (TS2300) and conflicts (TS2309)
                 // Filter out export assignments in namespace bodies since they're already

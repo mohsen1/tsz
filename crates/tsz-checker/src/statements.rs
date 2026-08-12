@@ -348,6 +348,18 @@ pub trait StatementCheckCallbacks {
     /// Set current reported state
     fn set_reported_unreachable(&mut self, value: bool);
 
+    /// Whether TS7027 reporting is suppressed for the current subtree.
+    ///
+    /// Mirrors tsc's `withinUnreachableCode`: once a statement is covered by
+    /// an unreachable range (it reported, or a preceding range statement
+    /// did), everything beneath it stays TS7027-silent while normal checking
+    /// continues.
+    fn suppress_unreachable_reporting(&self) -> bool;
+
+    /// Set the TS7027 subtree-suppression state (see
+    /// [`Self::suppress_unreachable_reporting`]).
+    fn set_suppress_unreachable_reporting(&mut self, value: bool);
+
     /// Check if a statement falls through
     fn statement_falls_through(&mut self, stmt_idx: NodeIndex) -> bool;
 
@@ -469,7 +481,20 @@ impl StatementChecker {
         // funnel through; see `CheckerState::reset_per_statement_fuel_budgets`
         // for the full rationale and safety argument.
         state.reset_between_statements();
+        // tsc scopes `withinUnreachableCode` per source element:
+        // `report_unreachable_statement` may switch suppression on for this
+        // statement's subtree, and the caller's scope resumes afterwards.
+        let saved_suppress = state.suppress_unreachable_reporting();
         state.report_unreachable_statement(stmt_idx);
+        Self::dispatch_with_request(stmt_idx, state, request);
+        state.set_suppress_unreachable_reporting(saved_suppress);
+    }
+
+    fn dispatch_with_request<S: StatementCheckCallbacks>(
+        stmt_idx: NodeIndex,
+        state: &mut S,
+        request: &TypingRequest,
+    ) {
         let non_contextual_request = request.contextual_opt(None);
 
         // Get node kind and extract needed data before any mutable operations

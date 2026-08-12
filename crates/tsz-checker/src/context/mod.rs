@@ -1931,6 +1931,13 @@ pub struct CheckerContext<'a> {
     /// Track whether we have already reported an unreachable error in this block/scope.
     pub has_reported_unreachable: bool,
 
+    /// TS7027 subtree suppression, mirroring tsc's `withinUnreachableCode`:
+    /// once a statement is covered by a reported unreachable range, every
+    /// statement beneath it (namespace bodies, class member bodies, nested
+    /// blocks) stays TS7027-silent while normal checking continues.
+    /// Scoped per statement by `StatementChecker::check_with_request`.
+    pub suppress_unreachable_reporting: bool,
+
     /// Stack of labels in scope.
     /// Each entry contains (`label_name`, `is_iteration`, `function_depth_when_defined`).
     /// Used for labeled break/continue validation.
