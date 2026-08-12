@@ -1365,6 +1365,7 @@ impl<'a> TypePrinter<'a> {
                 &display_params,
                 func_shape.type_predicate.as_ref(),
                 func_shape.return_type,
+                func_shape.this_type,
             ));
         }
 
@@ -1390,6 +1391,7 @@ impl<'a> TypePrinter<'a> {
             &sig.params,
             sig.type_predicate.as_ref(),
             sig.return_type,
+            sig.this_type,
         ))
     }
 

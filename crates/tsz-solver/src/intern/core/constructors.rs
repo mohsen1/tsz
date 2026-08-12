@@ -319,16 +319,26 @@ impl TypeInterner {
         self.union_from_iter([left, right])
     }
 
-    /// Try to insert a single non-union type into an existing union without full normalization.
+    /// Fast path for `union2` that resolves *only* the cases where adding
+    /// `single` to `existing` leaves the union unchanged, so the already-interned
+    /// `existing` `TypeId` can be returned without re-normalizing.
     ///
-    /// Returns `Some(result)` if the fast path applies, `None` otherwise.
-    /// The fast path applies when:
-    /// - `single` is not a union, not NEVER/ANY/UNKNOWN/ERROR (special types need full handling)
-    /// - `existing` is a union
-    /// - `single` is not a literal that could be absorbed by a primitive in the union
-    /// - `single` is not a type that requires subtype reduction
+    /// Returns `Some(existing)` for those no-op cases and `None` otherwise, which
+    /// routes the pair through `union2`'s documented contract — `union_from_iter`
+    /// → `normalize_union` (the same path the non-fast branch takes).
+    ///
+    /// It deliberately does **not** try to compute an inserted-member result
+    /// itself. Doing so requires reproducing `normalize_union`'s content-canonical
+    /// member ordering *and* its literal/subtype reduction, and the previous
+    /// hand-rolled insertion did neither: it ordered non-builtin members by
+    /// allocation order (thread- and interning-order dependent, not content), and
+    /// it skipped both primitive-absorbs-literal and structural subtype reduction.
+    /// That minted a different `TypeId` than `union` for the same member set —
+    /// breaking the one-semantic-universe identity invariant. Only the two
+    /// no-change cases below are canonical by construction, so only they stay on
+    /// the fast path.
     fn try_union2_insert(&self, single: TypeId, existing: TypeId) -> Option<TypeId> {
-        // single must not be a union or special type
+        // single must not be a special type
         if single == TypeId::ANY
             || single == TypeId::UNKNOWN
             || single == TypeId::ERROR
@@ -337,81 +347,35 @@ impl TypeInterner {
             return None;
         }
 
-        // Check single is not a union
-        if matches!(self.lookup(single), Some(TypeData::Union(_))) {
+        // single must not be a union.
+        let single_data = self.lookup(single);
+        if matches!(&single_data, Some(TypeData::Union(_))) {
             return None;
         }
 
-        // existing must be a union
+        // existing must be a union.
         let Some(TypeData::Union(list_id)) = self.lookup(existing) else {
             return None;
         };
-
-        // Skip if single is a literal that could be absorbed by a primitive in the union.
-        // e.g., "hello" | string -> string (literal absorbed)
-        if let Some(TypeData::Literal(lit)) = self.lookup(single) {
-            let base_primitive = match lit {
-                crate::types::LiteralValue::String(_) => TypeId::STRING,
-                crate::types::LiteralValue::Number(_) => TypeId::NUMBER,
-                crate::types::LiteralValue::Boolean(_) => TypeId::BOOLEAN,
-                crate::types::LiteralValue::BigInt(_) => TypeId::BIGINT,
-            };
-            let members = self.type_list(list_id);
-            if members.contains(&base_primitive) {
-                // Literal absorbed by primitive - return existing union
-                return Some(existing);
-            }
-        }
-
         let members = self.type_list(list_id);
 
-        // Check if single is already in the union (dedup)
+        // No-change case 1: `single` is a literal absorbed by a primitive already
+        // in the union (`"hello" | string` → `string`). The primitive is present,
+        // so the normalized member set is exactly `existing`.
+        if let Some(TypeData::Literal(lit)) = single_data
+            && members.contains(&lit.primitive_type_id())
+        {
+            return Some(existing);
+        }
+
+        // No-change case 2: `single` is already a member (dedup).
         if members.contains(&single) {
             return Some(existing);
         }
 
-        // Build new member list with single inserted.
-        // The existing members are already sorted and deduped.
-        // Use the allocation-order sort key: non-builtin types are sorted by
-        // their TypeId (which correlates with allocation order for user types).
-        let mut new_members: TypeListBuffer = SmallVec::with_capacity(members.len() + 1);
-
-        // Find insertion point using sort key comparison
-        let single_key = Self::builtin_sort_key(single);
-        let single_alloc = self.lookup_alloc_order(single);
-        let mut inserted = false;
-
-        for &m in members.iter() {
-            if !inserted {
-                let should_insert_before = {
-                    let m_key = Self::builtin_sort_key(m);
-                    match (single_key, m_key) {
-                        (Some(sk), Some(mk)) => sk < mk,
-                        (Some(_), None) => true, // builtins before non-builtins
-                        (None, Some(_)) => false, // non-builtins after builtins
-                        (None, None) => {
-                            // Both non-builtin: compare by allocation order
-                            let m_alloc = self.lookup_alloc_order(m);
-                            match (single_alloc, m_alloc) {
-                                (Some(sa), Some(ma)) => sa < ma,
-                                _ => single.0 < m.0,
-                            }
-                        }
-                    }
-                };
-                if should_insert_before {
-                    new_members.push(single);
-                    inserted = true;
-                }
-            }
-            new_members.push(m);
-        }
-        if !inserted {
-            new_members.push(single);
-        }
-
-        let list_id = self.intern_type_list_from_slice(&new_members);
-        Some(self.intern(TypeData::Union(list_id)))
+        // Any genuine insertion may reorder or reduce the member set; defer to the
+        // canonical normalizer so `union2 == union` holds.
+        None
     }
 
     /// Fast path for three-member unions without heap allocations.
