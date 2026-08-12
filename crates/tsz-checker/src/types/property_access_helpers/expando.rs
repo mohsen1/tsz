@@ -1807,11 +1807,17 @@ impl<'a> CheckerState<'a> {
     /// `Event.prototype.removeChildren = ...` and `new C().q` keep reporting
     /// TS2339. Arrays and primitives have no object shape at all and are
     /// excluded before the `symbol` test is reached.
+    ///
+    /// A receiver produced by an object spread (`{ ...base }`) is excluded even
+    /// though it is anonymous and symbol-less: `tsc`'s `getSpreadType` never
+    /// marks its result `ObjectFlags.JSLiteral` the way a hand-written object
+    /// literal is marked, so a spread-derived container stays a strict TS2339
+    /// target rather than joining the open-container leniency.
     pub(crate) fn js_open_object_receiver_under_implicit_any(&self, type_id: TypeId) -> bool {
         self.is_js_file()
             && self.ctx.compiler_options.check_js
             && !self.ctx.no_implicit_any()
             && crate::query_boundaries::common::object_shape_for_type(self.ctx.types, type_id)
-                .is_some_and(|shape| shape.symbol.is_none())
+                .is_some_and(|shape| shape.symbol.is_none() && !shape.is_spread_literal())
     }
 }
