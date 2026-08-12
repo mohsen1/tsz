@@ -1592,3 +1592,93 @@ export const publicValue = make()
         "export declare const publicValue: (value: {\n    maybe?: string | undefined;\n    nil?: undefined;\n} & {\n    count: number;\n}) => any;"
     );
 }
+
+// #17262: `typeof <name>` in a `.d.ts` is emittable only when `<name>`'s
+// declaration is reachable at the emit position — module, namespace, or global
+// scope. A function/block-local `function`/`class` has no declaration in the
+// emitted declaration file, so tsc structurally expands the shape instead of
+// printing a dangling `typeof`. #17260 generalized the `typeof` preference from
+// variable-initializer position to every expression position but dropped that
+// scope constraint, regressing `declFileTypeofFunction` and three sibling rows.
+
+/// A function returning a function-*local* function must not print a dangling
+/// `typeof bar` — the local `bar` has no `.d.ts` declaration. tsc expands the
+/// structural signature instead (verified end-to-end on `declFileTypeofFunction`
+/// in the emit suite; this lightweight harness carries no solver type info, so
+/// it only pins the scope gate's negative half here).
+#[test]
+fn returned_function_local_function_does_not_use_typeof() {
+    let output = emit_test_dts_with_binding(
+        r"
+function foo5(x: number) {
+    function bar(x: number) {
+        return x;
+    }
+    return bar;
+}
+",
+    );
+    assert!(
+        !output.contains("typeof bar"),
+        "a function-local declaration is not in scope in the .d.ts; got {output:?}"
+    );
+}
+
+/// A function returning a function-*local* class must not print `typeof <local
+/// class>`. Matches tsc on `autoAccessor8` (structural expansion verified in the
+/// emit suite; here we pin only that the dangling `typeof` is gone).
+#[test]
+fn returned_function_local_class_does_not_use_typeof() {
+    let output = emit_test_dts_with_binding(
+        r"
+function make() {
+    class Local {
+        value: number = 1;
+    }
+    return Local;
+}
+",
+    );
+    assert!(
+        !output.contains("typeof Local"),
+        "a function-local class is not in scope in the .d.ts; got {output:?}"
+    );
+}
+
+/// The #17260 win must survive the scope narrowing: a returned *module-level*
+/// function stays `typeof f`, because `f` is reachable in the emitted `.d.ts`.
+#[test]
+fn returned_module_level_function_still_uses_typeof() {
+    let output = emit_test_dts_with_binding(
+        r"
+function f(x: number): number;
+function f(x: string): string;
+function f(x: any): any { return x; }
+function h() { return f; }
+",
+    );
+    assert!(
+        output.contains("declare function h(): typeof f;"),
+        "a module-level `f` is in scope, so `typeof f` is preferred; got {output:?}"
+    );
+}
+
+/// A *namespace*-level function returned from a sibling function stays `typeof`:
+/// namespace scope is a `MODULE_BLOCK`, which the `.d.ts` reproduces.
+#[test]
+fn returned_namespace_level_function_still_uses_typeof() {
+    let output = emit_test_dts_with_binding(
+        r"
+export namespace N {
+    export function nf(x: number): number;
+    export function nf(x: string): string;
+    export function nf(x: any): any { return x; }
+    export function g() { return nf; }
+}
+",
+    );
+    assert!(
+        output.contains("typeof nf"),
+        "a namespace-level `nf` is in scope, so `typeof nf` is preferred; got {output:?}"
+    );
+}
