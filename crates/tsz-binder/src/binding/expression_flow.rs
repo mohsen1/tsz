@@ -240,7 +240,7 @@ impl BinderState {
                     }
                     // Detect expando property assignments (X.prop = value)
                     if bin.operator_token == SyntaxKind::EqualsToken as u16 {
-                        self.detect_expando_assignment(arena, bin.left, bin.right);
+                        self.detect_expando_assignment(arena, bin.left);
                     }
                     return;
                 }
@@ -497,7 +497,7 @@ impl BinderState {
     /// Detect expando property assignments of the form `X.prop = value`.
     /// Tracks both simple identifiers (`X.prop`) and dotted receiver chains
     /// (`A.B.prop`) so function members on namespaces can collect expandos.
-    fn detect_expando_assignment(&mut self, arena: &NodeArena, lhs: NodeIndex, rhs: NodeIndex) {
+    fn detect_expando_assignment(&mut self, arena: &NodeArena, lhs: NodeIndex) {
         fn symbol_call(arena: &NodeArena, idx: NodeIndex) -> bool {
             let Some(node) = arena.get(idx) else {
                 return false;
@@ -721,24 +721,15 @@ impl BinderState {
         };
         let Some(sym_id) = self.resolve_identifier(arena, root_ident) else {
             // The root identifier is not bound in this file's scope: it is a
-            // cross-file global (JS script files share top-level `var`s), a
-            // forward/out-of-order declaration, or declared in a sibling file.
-            // Single-file binding cannot see that root, so `resolve_identifier`
-            // returns `None` even though the write legitimately extends an
-            // object/function host in another file (e.g. `Outer.Inner = class
-            // {}` in one file over `var Outer = {}` in another). Record the
-            // syntactic write keyed by `obj_key` so the checker's cross-file
-            // expando surface can consume it; the checker re-gates host
-            // capability at read time (`root_symbol_supports_js_expando_read`
-            // resolves the root cross-file), so a non-object/non-callable or
-            // genuinely undeclared root still reports TS2339.
-            self.record_unresolved_root_expando_write(
-                arena,
-                lhs_node.kind,
-                &obj_key,
-                &prop_name,
-                rhs,
-            );
+            // cross-file global (JS script files share top-level `var`s) or
+            // genuinely undeclared. tsc 7.0.2 declares an assignment-declared
+            // expando member only when the write appears in the host's OWN
+            // declaring file (oracle-pinned: `var Outer = {}` in one file plus
+            // `Outer.Inner = class {}` in another is `TS2339` under
+            // `noImplicitAny` for every RHS shape), so a foreign-file write
+            // must not record a member here. An earlier unresolved-root
+            // recording path encoded the strada-era cross-file merge; see
+            // `js_cross_file_expando_declaration_tests` in `tsz-checker`.
             return;
         };
         let Some(symbol) = self.symbols.get(sym_id) else {
@@ -926,79 +917,5 @@ impl BinderState {
                     .insert(prop_name);
             }
         }
-    }
-
-    /// Record an expando write whose root identifier does not resolve in this
-    /// file's scope during single-file binding — a cross-file global, a
-    /// forward/out-of-order declaration, or a sibling-file host. The checker
-    /// aggregates `expando_properties` across every file's binder by string
-    /// key and re-resolves the root cross-file before honoring the read, so
-    /// recording the raw syntactic write here is safe: a non-object /
-    /// non-callable or genuinely undeclared root still fails the checker's
-    /// `root_symbol_supports_js_expando_read` gate and reports TS2339.
-    ///
-    /// Recording is restricted to JS-like sources and to the
-    /// class-expression / function / object-literal RHS shapes that make the
-    /// member an assignment-declared type or callable host, mirroring the
-    /// positive shape the co-located object-var branch requires. Element-access
-    /// writes and prototype members keep their dedicated handling.
-    fn record_unresolved_root_expando_write(
-        &mut self,
-        arena: &NodeArena,
-        lhs_kind: u16,
-        obj_key: &str,
-        prop_name: &str,
-        rhs: NodeIndex,
-    ) {
-        if lhs_kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
-            return;
-        }
-        // Only a *simple* root (`Root.member = …`, no interior dots) is a
-        // genuinely cross-file top-level host whose bare-read member access has
-        // no other resolution and would otherwise surface a spurious TS2339. A
-        // nested base (`Root.ns.member = …`, `obj_key` contains a dot) is itself
-        // an assignment-declared expando member resolved by the checker's
-        // cross-file nested-expando walk, which already sees every member
-        // regardless of RHS. Recording a partial member set under the nested key
-        // here would shadow that walk with an incomplete, closed object type and
-        // drop the members this predicate cannot classify (e.g. IIFE-call
-        // initializers), so leave nested hosts to the existing walk.
-        if obj_key.contains('.') {
-            return;
-        }
-        // The CommonJS `module` / `exports` sentinels never resolve as user
-        // symbols, so they would otherwise reach this unresolved-root path.
-        // `module.exports = …` is a whole-module export assignment (and
-        // `module.exports.x = …` / `exports.x = …` are handled by the dedicated
-        // CommonJS branch above), not an object-var expando; recording an
-        // `expando["module"] = {"exports"}` entry here would shadow that export
-        // machinery and break callable `module.exports()` / `require(...)`.
-        if obj_key == "module" || obj_key == "exports" {
-            return;
-        }
-        let is_js_like_source = arena.source_files.first().is_some_and(|source_file| {
-            let file_name = source_file.file_name.to_ascii_lowercase();
-            !source_file.is_declaration_file
-                && (file_name.ends_with(".js")
-                    || file_name.ends_with(".jsx")
-                    || file_name.ends_with(".mjs")
-                    || file_name.ends_with(".cjs"))
-        });
-        if !is_js_like_source {
-            return;
-        }
-        let Some(rhs_node) = arena.get(rhs) else {
-            return;
-        };
-        let rhs_is_expando_host = rhs_node.is_function_expression_or_arrow()
-            || rhs_node.kind == syntax_kind_ext::CLASS_EXPRESSION
-            || rhs_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION;
-        if !rhs_is_expando_host {
-            return;
-        }
-        Arc::make_mut(&mut self.expando_properties)
-            .entry(obj_key.to_string())
-            .or_default()
-            .insert(prop_name.to_string());
     }
 }

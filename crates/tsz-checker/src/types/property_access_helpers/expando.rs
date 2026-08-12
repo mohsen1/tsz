@@ -230,7 +230,24 @@ impl<'a> CheckerState<'a> {
             || arena.is_empty_object_literal(var_decl.initializer)
     }
 
+    /// tsc 7.0.2 binds an assignment-declared expando member only when the
+    /// write appears in the host's OWN declaring file (oracle-pinned for
+    /// function, class, and `var X = {}` hosts, TS and JS script files alike;
+    /// see `js_cross_file_expando_declaration_tests`). A foreign-file write is
+    /// an ordinary property assignment against the host's declared shape:
+    /// `TS2339` under `noImplicitAny`, with the open-container leniency still
+    /// silencing `{}`-typed receivers when it is off.
+    pub(crate) fn expando_write_host_is_foreign_file(&self, sym_id: SymbolId) -> bool {
+        self.ctx
+            .resolve_symbol_file_index(sym_id)
+            .is_some_and(|file_idx| file_idx != self.ctx.current_file_idx)
+    }
+
     fn root_symbol_supports_js_direct_expando_write(&self, sym_id: SymbolId) -> bool {
+        if self.expando_write_host_is_foreign_file(sym_id) {
+            return false;
+        }
+
         let Some(symbol) = self
             .get_cross_file_symbol(sym_id)
             .or_else(|| self.ctx.binder.get_symbol(sym_id))
@@ -390,6 +407,12 @@ impl<'a> CheckerState<'a> {
         // the inferred `const f = () => {}` still does.
         if let Some(sym_id) = sym_id
             && self.expando_root_symbol_has_type_annotation(sym_id)
+        {
+            return false;
+        }
+
+        if let Some(sym_id) = sym_id
+            && self.expando_write_host_is_foreign_file(sym_id)
         {
             return false;
         }
