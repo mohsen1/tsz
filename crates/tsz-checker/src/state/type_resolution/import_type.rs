@@ -383,6 +383,17 @@ impl<'a> CheckerState<'a> {
                 resolution_mode_override,
             )
             .or_else(|| self.ctx.resolve_import_target(module_specifier))?;
+        self.resolved_module_path_for_file(target_idx)
+    }
+
+    /// File-index variant of `resolved_import_type_module_path`, for a
+    /// namespace-identity crossing discovered via symbol resolution rather
+    /// than specifier text — e.g. an `export =` target whose own declared
+    /// type is `typeof import(...)`, which redirects a nested TS2694 walk
+    /// into the module the resolved member is actually declared in (see
+    /// `resolve_typeof_import_query`'s redirect tracking in
+    /// `core_type_query.rs`).
+    pub(crate) fn resolved_module_path_for_file(&self, target_idx: usize) -> Option<String> {
         let arena = self.ctx.get_arena_for_file(target_idx as u32);
         let file_name = arena.source_files.first()?.file_name.replace('\\', "/");
         Some(tsz_common::file_extensions::strip_known_extension(&file_name).to_string())

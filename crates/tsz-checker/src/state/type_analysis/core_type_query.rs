@@ -1773,6 +1773,34 @@ impl<'a> CheckerState<'a> {
                         self.error_property_not_exist_at(&segment, current, segment_idx);
                         return Some(TypeId::ERROR);
                     }
+                    // `current` may itself be a namespace merged in from a
+                    // module OTHER than `module_name` — e.g. `export = x`
+                    // where `x: typeof import("./other")` structurally
+                    // flattens `./other`'s props into `module_name`'s own
+                    // namespace type, but a member that is itself a nested
+                    // namespace symbol (`export namespace bar {...}`) keeps
+                    // its declaring module's identity, registered in
+                    // `namespace_module_names` when the props were built
+                    // (`append_export_equals_import_type_namespace_props`).
+                    // That registration takes priority over `module_name`'s
+                    // own export=-target naming: once the walk has crossed
+                    // into `bar`'s own module, `tsc` names a miss below it by
+                    // that module, not by the outer alias. Gated on a prior
+                    // segment already having resolved (`resolved_segments`
+                    // non-empty) so a miss on the FIRST segment — where
+                    // `current` is still `module_name`'s own top-level
+                    // namespace type, which is unconditionally registered
+                    // too — keeps using the export=-target naming below.
+                    if let Some(last) = resolved_segments.last()
+                        && let Some(owner_module) = self.ctx.namespace_module_names.get(&current)
+                    {
+                        let namespace_name = format!(
+                            "\"{}\".{last}",
+                            owner_module.strip_prefix("./").unwrap_or(owner_module)
+                        );
+                        self.error_namespace_no_export(&namespace_name, &segment, segment_idx);
+                        return Some(TypeId::ERROR);
+                    }
                     // A module without an export assignment follows the same
                     // TS2694 naming rule as the type-position
                     // `import(...).Member` path: resolved module path,
