@@ -577,6 +577,9 @@ mod jsdoc_recursive_generic_typedef_tests;
 #[path = "../tests/jsdoc_reference_kernel_tests.rs"]
 mod jsdoc_reference_kernel_tests;
 #[cfg(test)]
+#[path = "../tests/jsdoc_returns_typedef_import_type_anchor_tests.rs"]
+mod jsdoc_returns_typedef_import_type_anchor_tests;
+#[cfg(test)]
 #[path = "../tests/jsdoc_satisfies_tests.rs"]
 mod jsdoc_satisfies_tests;
 #[cfg(test)]

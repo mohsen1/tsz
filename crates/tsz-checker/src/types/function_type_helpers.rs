@@ -1260,7 +1260,18 @@ impl<'a> CheckerState<'a> {
     /// This handles cases like `@return {false}`, `@return {void}`, `@return {number}`, etc.
     /// Returns `None` if no `@return` tag is found or the type expression can't be resolved.
     /// Type predicate returns (like `@return {x is string}`) are excluded.
-    pub(crate) fn resolve_jsdoc_return_type(&mut self, jsdoc: &str) -> Option<TypeId> {
+    ///
+    /// `comment_start` anchors a bare (non-`typeof`) `import("./mod").Member`
+    /// type expression's TS2694 at the member-name token inside the comment,
+    /// matching tsc — mirroring `resolve_jsdoc_param_type_with_pos`'s
+    /// identical `@param` precise-anchor path (#17193). Passing `None` keeps
+    /// the coarse `jsdoc_typedef_anchor_pos` fallback `resolve_jsdoc_reference`
+    /// uses for every other shape.
+    pub(crate) fn resolve_jsdoc_return_type(
+        &mut self,
+        jsdoc: &str,
+        comment_start: Option<u32>,
+    ) -> Option<TypeId> {
         for line in jsdoc.lines() {
             let trimmed = line.trim().trim_start_matches('*').trim();
             let Some(rest) = Self::strip_jsdoc_return_tag_prefix(trimmed) else {
@@ -1279,6 +1290,10 @@ impl<'a> CheckerState<'a> {
             // Skip type predicates — handled separately
             if Self::jsdoc_returns_type_predicate_from_type_expr(type_expr).is_some() {
                 return None;
+            }
+            if let Some(ty) = self.resolve_jsdoc_return_type_import_member(type_expr, comment_start)
+            {
+                return Some(ty);
             }
             return self.resolve_jsdoc_reference(type_expr);
         }

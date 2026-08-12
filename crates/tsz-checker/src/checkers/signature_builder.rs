@@ -119,7 +119,7 @@ impl<'a> CheckerState<'a> {
                     signature.type_predicate = Some(predicate);
                 } else {
                     signature.return_type = self
-                        .resolve_jsdoc_return_type(&jsdoc)
+                        .resolve_jsdoc_return_type(&jsdoc, Some(comment_pos))
                         .unwrap_or(TypeId::ANY);
                     signature.type_predicate = None;
                 }
@@ -264,7 +264,8 @@ impl<'a> CheckerState<'a> {
                 // Without this, body inference widens literal return types (e.g., `false`
                 // → `boolean`), which breaks union predicate narrowing that requires
                 // non-predicate members to return only `false` or `never`.
-                if let Some(jsdoc_ret_type) = self.resolve_jsdoc_return_type(jsdoc) {
+                let comment_start = self.get_jsdoc_comment_pos_for_function(method_idx);
+                if let Some(jsdoc_ret_type) = self.resolve_jsdoc_return_type(jsdoc, comment_start) {
                     return_type = jsdoc_ret_type;
                 }
             }

@@ -1606,7 +1606,7 @@ impl<'a> CheckerState<'a> {
         let result = if let Some(cb) = info.callback {
             self.type_from_jsdoc_callback(cb)
         } else {
-            self.type_from_jsdoc_object_typedef(info)
+            self.type_from_jsdoc_object_typedef(info, comment_pos)
         };
 
         for (name, previous) in scope_updates.into_iter().rev() {
@@ -1764,13 +1764,42 @@ impl<'a> CheckerState<'a> {
         ))
     }
 
-    fn type_from_jsdoc_object_typedef(&mut self, info: JsdocTypedefInfo) -> Option<TypeId> {
+    fn type_from_jsdoc_object_typedef(
+        &mut self,
+        info: JsdocTypedefInfo,
+        comment_pos: u32,
+    ) -> Option<TypeId> {
         let base_type = if let Some(base_type_expr) = &info.base_type {
             let expr = base_type_expr.trim();
-            if expr != "Object" && expr != "object" {
+            if expr == "Object" || expr == "object" {
+                None
+            } else if let Some(result) = self.resolve_jsdoc_import_type_member_result(expr) {
+                // A bare (non-`typeof`) `@typedef {import("./mod").Member}`
+                // base type, resolved directly so a failure anchors the
+                // TS2694 at the member-name token inside the comment
+                // (matching tsc) instead of the coarse `comment_pos` the
+                // generic `resolve_jsdoc_type_str` fallback below would use
+                // (#17193). A failed resolution still returns `ANY` rather
+                // than `None`: `type_from_jsdoc_typedef_inner` treats a
+                // `None` body from an import-alias typedef as "not a
+                // typedef at all" and skips registering it, which cascades
+                // into a spurious TS2304 on every later reference to the
+                // typedef name — tsc keeps the (error-typed) alias visible.
+                return Some(match result {
+                    Ok(ty) => ty,
+                    Err((namespace_display, member_name)) => {
+                        self.emit_jsdoc_typedef_import_member_error(
+                            comment_pos,
+                            expr,
+                            &namespace_display,
+                            &member_name,
+                        );
+                        TypeId::ANY
+                    }
+                });
+            } else {
                 return self.resolve_jsdoc_type_str(expr);
             }
-            None
         } else {
             None
         };
@@ -1840,6 +1869,68 @@ impl<'a> CheckerState<'a> {
             (None, Some(base)) => Some(base),
             (None, None) => None,
         }
+    }
+
+    /// Emit TS2694 for a `@typedef {import("./mod").Member}` base type whose
+    /// member failed to resolve, anchored at the member-name token inside
+    /// the comment. Falls back to `comment_pos` (the `/**` start) when the
+    /// literal `@typedef {expr}` text cannot be located — e.g. a
+    /// multi-line-wrapped typedef body — matching the coarse anchor this
+    /// path used before #17193.
+    fn emit_jsdoc_typedef_import_member_error(
+        &mut self,
+        comment_pos: u32,
+        expr: &str,
+        namespace_display: &str,
+        member_name: &str,
+    ) {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+
+        let message = format_message(
+            diagnostic_messages::NAMESPACE_HAS_NO_EXPORTED_MEMBER,
+            &[namespace_display, member_name],
+        );
+        let member_offset = expr
+            .find(&format!(".{member_name}"))
+            .map_or(0, |offset| offset + 1);
+        let start = self
+            .jsdoc_typedef_base_type_tag_offset(comment_pos, expr)
+            .map(|tag_offset| tag_offset + member_offset as u32)
+            .unwrap_or(comment_pos);
+        let length = member_name.len() as u32;
+        let already_reported = self.ctx.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == diagnostic_codes::NAMESPACE_HAS_NO_EXPORTED_MEMBER
+                && diagnostic.start == start
+                && diagnostic.length == length
+                && diagnostic.message_text == message
+        });
+        if !already_reported {
+            self.error_at_position(
+                start,
+                length,
+                &message,
+                diagnostic_codes::NAMESPACE_HAS_NO_EXPORTED_MEMBER,
+            );
+        }
+    }
+
+    /// The source offset immediately after the `{` that opens `@typedef
+    /// {expr}`'s type-expression braces, searching from `comment_pos`.
+    /// Returns `None` when the literal tag text cannot be found (a
+    /// multi-line-wrapped body, or the comment source has since shifted).
+    fn jsdoc_typedef_base_type_tag_offset(&self, comment_pos: u32, expr: &str) -> Option<u32> {
+        let source_text: String = self.ctx.arena.source_files.first()?.text.to_string();
+        let start = comment_pos as usize;
+        let slice = source_text.get(start..)?;
+        let tag_rel = slice.find("@typedef")?;
+        let after_tag = &slice[tag_rel + "@typedef".len()..];
+        let open_rel = after_tag.find('{')?;
+        let after_open = &after_tag[open_rel + 1..];
+        if !after_open.trim_start().starts_with(expr) {
+            return None;
+        }
+        let ws = after_open.len() - after_open.trim_start().len();
+        Some((start + tag_rel + "@typedef".len() + open_rel + 1 + ws) as u32)
     }
 
     // NOTE: jsdoc_has_readonly_tag, jsdoc_access_level, find_orphaned_extends_tags_for_statements,

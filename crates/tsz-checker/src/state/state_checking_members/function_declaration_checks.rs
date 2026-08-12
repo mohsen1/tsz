@@ -339,10 +339,17 @@ impl<'a> CheckerState<'a> {
                     )
                 })
                 .or_else(|| {
-                    // Second try: @returns/@return tag (e.g., @returns {T})
+                    // Second try: @returns/@return tag (e.g., @returns {T}).
+                    // `resolve_jsdoc_return_type_import_member` anchors a
+                    // bare `import("./mod").Member` reference's TS2694 at
+                    // the member-name token on failure, matching tsc
+                    // (#17193).
                     func_decl_jsdoc.as_ref().and_then(|jsdoc| {
-                        Self::jsdoc_returns_type_expression(jsdoc)
-                            .and_then(|expr| self.resolve_jsdoc_reference(&expr))
+                        Self::jsdoc_returns_type_expression(jsdoc).and_then(|expr| {
+                            let comment_start = self.get_jsdoc_comment_pos_for_function(func_idx);
+                            self.resolve_jsdoc_return_type_import_member(&expr, comment_start)
+                                .or_else(|| self.resolve_jsdoc_reference(&expr))
+                        })
                     })
                 })
         } else {
