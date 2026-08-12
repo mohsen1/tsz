@@ -2933,3 +2933,7 @@ path = "tests/js_object_literal_expando_emptiness_tests.rs"
 [[test]]
 name = "js_nested_expando_member_host_tests"
 path = "tests/js_nested_expando_member_host_tests.rs"
+
+[[test]]
+name = "decorator_inline_closure_scope_tests"
+path = "tests/decorator_inline_closure_scope_tests.rs"
