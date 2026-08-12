@@ -659,19 +659,46 @@ impl CheckerState<'_> {
 
     /// Detects circular aliases in CommonJS export property assignments.
     ///
-    /// In JS files, `exports.X = exports.Y` creates an alias from X to Y on
-    /// the same module. tsc emits TS2303 when:
-    /// - The alias chain is explicitly circular (X -> Y -> X)
-    /// - The alias target doesn't resolve to a concrete (non-alias) value
-    ///   (e.g., `exports.blah = exports.someProp` where someProp is not defined)
+    /// In JS files, `exports.X = exports.Y` (or the `module.exports.X`
+    /// spelling of either side) creates an alias from X to Y on the same
+    /// module. tsc emits TS2303 only for a *genuine* alias cycle
+    /// (X -> ... -> X), at every alias statement on the cycle, each named by
+    /// its own alias. Two shapes that look adjacent are NOT circular:
+    /// - a chain that merely *ends* at an undefined name
+    ///   (`exports.blah = exports.someProp` with no `someProp` anywhere) —
+    ///   the failing RHS read surfaces TS2339 through ordinary property
+    ///   checking instead;
+    /// - a chain that leads *into* a cycle without being on it
+    ///   (`exports.x = exports.a` beside an `a <-> b` cycle) — only the
+    ///   cycle members report.
+    ///
+    /// When the module also mixes a bare `module.exports = X` export
+    /// assignment with these property exports (the TS2309 surface), tsc
+    /// disables CommonJS alias classification wholesale: no TS2303 fires and
+    /// the sibling writes/reads surface TS2339 against `X`.
     pub(crate) fn check_commonjs_circular_aliases(&mut self, statements: &[NodeIndex]) {
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
         use tsz_parser::parser::syntax_kind_ext;
         use tsz_scanner::SyntaxKind;
 
-        // alias_map: property_name -> (target_property_name, lhs_node_index)
-        // for `exports.X = exports.Y` patterns
-        let mut alias_map: FxHashMap<String, (String, NodeIndex)> = FxHashMap::default();
+        // A bare `module.exports = X` beside sibling property exports is the
+        // TS2309 export-assignment mix; the property statements are then not
+        // alias declarations at all, so no TS2303 can fire.
+        let file_idx = self.ctx.current_file_idx;
+        if self
+            .resolve_js_export_surface(file_idx)
+            .has_commonjs_export_assignment_conflict()
+        {
+            return;
+        }
+
+        // alias_map: property_name -> target_property_name for
+        // `exports.X = exports.Y` patterns (functional graph: one outgoing
+        // edge per name, last assignment wins).
+        let mut alias_map: FxHashMap<String, String> = FxHashMap::default();
+        // Every alias statement's LHS site in source order; each site whose
+        // name lands on a cycle reports its own TS2303.
+        let mut alias_sites: Vec<(String, NodeIndex)> = Vec::new();
         // concrete_props: properties assigned a concrete (non-exports-ref) value
         // e.g., `exports.foo = 42` or `exports.bar = someFunction`
         let mut concrete_props: FxHashSet<String> = FxHashSet::default();
@@ -706,67 +733,79 @@ impl CheckerState<'_> {
 
             // Check if RHS is `exports.Y` (alias) or a concrete value
             if let Some(rhs_prop) = self.get_exports_property_name(bin.right) {
-                alias_map.insert(lhs_prop, (rhs_prop, bin.left));
+                alias_map.insert(lhs_prop.clone(), rhs_prop);
+                alias_sites.push((lhs_prop, bin.left));
             } else {
                 concrete_props.insert(lhs_prop);
             }
         }
 
-        // For each alias, follow the chain. If it resolves to a concrete
-        // property, it's not circular. If it cycles or reaches a name that
-        // has no definition (neither alias nor concrete), it's circular.
-        let mut reported: FxHashSet<String> = FxHashSet::default();
-        for start_name in alias_map.keys().cloned().collect::<Vec<_>>() {
-            if reported.contains(&start_name) {
+        // Mark the names that sit on a genuine cycle. The alias graph is
+        // functional (one outgoing edge per name), so walking from any name
+        // either terminates (concrete property or undefined target — both
+        // non-circular) or repeats a name; the repeated suffix of the walk is
+        // the cycle, and only those names report.
+        let mut on_cycle: FxHashSet<String> = FxHashSet::default();
+        for start_name in alias_map.keys() {
+            if on_cycle.contains(start_name) {
                 continue;
             }
-
-            let mut visited = FxHashSet::default();
+            let mut walk_order: Vec<String> = Vec::new();
+            let mut walked: FxHashSet<String> = FxHashSet::default();
             let mut current = start_name.clone();
-            let mut is_circular = false;
-
             loop {
-                // If we reach a concrete property, chain is resolved
-                if concrete_props.contains(&current) {
+                // A concrete property or an already-classified cycle member
+                // ends the walk: nothing new on this path is circular (a
+                // chain *into* a known cycle is not itself on it).
+                if concrete_props.contains(&current) || on_cycle.contains(&current) {
                     break;
                 }
-                if !visited.insert(current.clone()) {
-                    // Visited this name before → cycle detected
-                    is_circular = true;
-                    break;
-                }
-                match alias_map.get(&current) {
-                    Some((next, _)) => current = next.clone(),
-                    None => {
-                        // Target doesn't exist as alias or concrete → unresolvable
-                        is_circular = true;
-                        break;
+                if !walked.insert(current.clone()) {
+                    // Repeat found: the walk from `current`'s first
+                    // occurrence onward is the cycle.
+                    let cycle_start = walk_order
+                        .iter()
+                        .position(|name| name == &current)
+                        .unwrap_or(0);
+                    for name in &walk_order[cycle_start..] {
+                        on_cycle.insert(name.clone());
                     }
+                    break;
                 }
-            }
-
-            if is_circular && let Some((_, error_node)) = alias_map.get(&start_name) {
-                let message = format_message(
-                    diagnostic_messages::CIRCULAR_DEFINITION_OF_IMPORT_ALIAS,
-                    &[&start_name],
-                );
-                self.error_at_node(
-                    *error_node,
-                    &message,
-                    diagnostic_codes::CIRCULAR_DEFINITION_OF_IMPORT_ALIAS,
-                );
-                for name in &visited {
-                    reported.insert(name.clone());
+                walk_order.push(current.clone());
+                match alias_map.get(&current) {
+                    Some(next) => current = next.clone(),
+                    // Undefined target: the chain dangles, it does not cycle.
+                    // The failing RHS read is ordinary property checking's
+                    // TS2339, not TS2303.
+                    None => break,
                 }
             }
         }
+
+        // tsc reports at every alias declaration on the cycle, in source
+        // order, each named by its own alias.
+        for (name, error_node) in &alias_sites {
+            if !on_cycle.contains(name) {
+                continue;
+            }
+            let message = format_message(
+                diagnostic_messages::CIRCULAR_DEFINITION_OF_IMPORT_ALIAS,
+                &[name],
+            );
+            self.error_at_node(
+                *error_node,
+                &message,
+                diagnostic_codes::CIRCULAR_DEFINITION_OF_IMPORT_ALIAS,
+            );
+        }
     }
 
-    /// Helper: if `idx` points to `exports.X` (property access where the
-    /// object is `exports`), return `Some("X")`. Otherwise `None`.
+    /// Helper: if `idx` points to `exports.X` or `module.exports.X`
+    /// (property access on the CommonJS export container), return
+    /// `Some("X")`. Otherwise `None`.
     fn get_exports_property_name(&self, idx: NodeIndex) -> Option<String> {
         use tsz_parser::parser::syntax_kind_ext;
-        use tsz_scanner::SyntaxKind;
 
         let node = self.ctx.arena.get(idx)?;
         if node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
@@ -774,13 +813,9 @@ impl CheckerState<'_> {
         }
         let access = self.ctx.arena.get_access_expr(node)?;
 
-        // Check that the object is `exports`
-        let obj_node = self.ctx.arena.get(access.expression)?;
-        if obj_node.kind != SyntaxKind::Identifier as u16 {
-            return None;
-        }
-        let obj_ident = self.ctx.arena.get_identifier(obj_node)?;
-        if obj_ident.escaped_text != "exports" {
+        // The object must be the module's export container: either the bare
+        // `exports` identifier or the `module.exports` property access.
+        if !self.is_commonjs_exports_container(access.expression) {
             return None;
         }
 
@@ -788,5 +823,42 @@ impl CheckerState<'_> {
         let name_node = self.ctx.arena.get(access.name_or_argument)?;
         let name_ident = self.ctx.arena.get_identifier(name_node)?;
         Some(name_ident.escaped_text.to_string())
+    }
+
+    /// Whether `idx` is the CommonJS export container expression: the bare
+    /// `exports` identifier or the `module.exports` property access.
+    fn is_commonjs_exports_container(&self, idx: NodeIndex) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+        use tsz_scanner::SyntaxKind;
+
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return false;
+        };
+        if node.kind == SyntaxKind::Identifier as u16 {
+            return self
+                .ctx
+                .arena
+                .get_identifier(node)
+                .is_some_and(|ident| ident.escaped_text == "exports");
+        }
+        if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && let Some(access) = self.ctx.arena.get_access_expr(node)
+        {
+            let base_is_module = self
+                .ctx
+                .arena
+                .get(access.expression)
+                .filter(|base| base.kind == SyntaxKind::Identifier as u16)
+                .and_then(|base| self.ctx.arena.get_identifier(base))
+                .is_some_and(|ident| ident.escaped_text == "module");
+            let member_is_exports = self
+                .ctx
+                .arena
+                .get(access.name_or_argument)
+                .and_then(|name| self.ctx.arena.get_identifier(name))
+                .is_some_and(|ident| ident.escaped_text == "exports");
+            return base_is_module && member_is_exports;
+        }
+        false
     }
 }
