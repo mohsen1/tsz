@@ -311,7 +311,7 @@ impl<'a> CheckerContext<'a> {
             application_symbols_resolution_set: FxHashSet::default(),
             namespace_module_names: FxHashMap::default(),
             js_export_surface_cache: FxHashMap::default(),
-            js_export_surface_resolution_set: FxHashSet::default(),
+            js_export_surface_resolution_set: FxHashMap::default(),
             expando_property_resolution_set: crate::context::CowCache::default(),
             module_specifiers: Arc::new(FxHashMap::default()),
             module_path_specifiers: Arc::new(FxHashMap::default()),

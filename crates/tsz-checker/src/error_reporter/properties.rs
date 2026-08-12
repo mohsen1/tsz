@@ -1654,15 +1654,15 @@ impl<'a> CheckerState<'a> {
                 let recomputed_surface_type = {
                     let current_file_idx = self.ctx.current_file_idx;
                     self.ctx.js_export_surface_cache.remove(&current_file_idx);
-                    let was_in_resolution = self
+                    let saved_resolution_state = self
                         .ctx
                         .js_export_surface_resolution_set
                         .remove(&current_file_idx);
                     let result = self.js_export_surface_namespace_type(current_file_idx);
-                    if was_in_resolution {
+                    if let Some(saved_state) = saved_resolution_state {
                         self.ctx
                             .js_export_surface_resolution_set
-                            .insert(current_file_idx);
+                            .insert(current_file_idx, saved_state);
                     }
                     result
                 };
