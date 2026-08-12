@@ -1918,6 +1918,7 @@ fn test_evaluated_callable_assignable_to_all_any_application_via_display_alias()
             type_id: TypeId::UNKNOWN,
             optional: false,
             rest: false,
+            arity_only_optional: false,
         }],
         return_type: TypeId::UNKNOWN,
         this_type: None,

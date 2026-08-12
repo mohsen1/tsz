@@ -1764,7 +1764,6 @@ impl<'a> TypeLowering<'a> {
                     self.lower_type(param_data.type_annotation)
                 })
             };
-            let optional = param_data.question_token || param_data.initializer != NodeIndex::NONE;
             // For `?`-optional params, tsc includes `| undefined` in the
             // signature type unconditionally (for display). Default-value
             // params keep the base type.
@@ -1781,8 +1780,9 @@ impl<'a> TypeLowering<'a> {
             lowered.push(ParamInfo {
                 name: self.lower_parameter_name(param_data.name),
                 type_id: sig_type_id,
-                optional,
+                optional: param_data.question_token || param_data.initializer != NodeIndex::NONE,
                 rest: param_data.dot_dot_dot_token,
+                arity_only_optional: false,
             });
         }
 

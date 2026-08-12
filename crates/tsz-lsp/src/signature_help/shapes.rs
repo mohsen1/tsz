@@ -159,6 +159,7 @@ impl<'a> SignatureHelpProvider<'a> {
                     type_id,
                     optional: spec.optional,
                     rest: spec.rest,
+                    arity_only_optional: false,
                 }
             })
             .collect();

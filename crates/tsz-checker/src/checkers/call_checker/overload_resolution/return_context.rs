@@ -292,10 +292,8 @@ impl<'a> CheckerState<'a> {
                 .params
                 .iter()
                 .map(|param| tsz_solver::ParamInfo {
-                    name: param.name,
                     type_id: instantiate_type(self.ctx.types, param.type_id, &substitution),
-                    optional: param.optional,
-                    rest: param.rest,
+                    ..*param
                 })
                 .collect(),
             return_type: instantiate_type(self.ctx.types, sig.return_type, &substitution),

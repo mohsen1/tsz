@@ -386,6 +386,7 @@ pub(crate) fn synthetic_single_param_function_shape(
             type_id: param_type,
             optional: false,
             rest: false,
+            arity_only_optional: false,
         }],
         this_type: None,
         return_type,

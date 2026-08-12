@@ -22,6 +22,57 @@ impl<'a> CheckerState<'a> {
         Self::extract_jsdoc_param_type_string(jsdoc, param_name).is_some()
     }
 
+    /// Compute `(optional, arity_only_optional)` for a function parameter.
+    ///
+    /// In a JS file, an unannotated parameter is implicitly optional for call
+    /// arity unless a JSDoc `@param {type} name` / `@type` function annotation
+    /// pins it (`tsc`'s `IsUntypedSignatureInJSFile` relaxation). `optional`
+    /// carries exactly that signal — identical to the historical
+    /// `question || initializer || js_implicit_optional` — so `is_required` and
+    /// structural subtyping are unchanged.
+    ///
+    /// `arity_only_optional` is the display/emit counterpart: it is set only
+    /// when the optionality is *solely* the untyped-JS leniency (no `?` token,
+    /// no initializer, and no JSDoc `[bracket]`/`=`-suffix optional marker), so
+    /// the printer and `.d.ts` emitter render the parameter as required, exactly
+    /// as `tsc`'s `isOptionalParameter` reports `false` for such a parameter.
+    ///
+    /// `type_pinned` is `true` when a type annotation or `@type` function
+    /// annotation fixes the signature (either disables the untyped-JS rule).
+    pub(crate) fn js_param_optionality(
+        &self,
+        func_idx: NodeIndex,
+        param_name: NodeIndex,
+        type_pinned: bool,
+        has_question_or_initializer: bool,
+        jsdoc_param_names: &[String],
+        contextual_index: usize,
+        func_jsdoc: Option<&str>,
+    ) -> (bool, bool) {
+        if !self.is_js_file() || type_pinned {
+            return (has_question_or_initializer, false);
+        }
+        let jsdoc_text = func_jsdoc
+            .map(str::to_owned)
+            .or_else(|| self.find_jsdoc_for_function(func_idx));
+        let pname =
+            self.effective_jsdoc_param_name(param_name, jsdoc_param_names, contextual_index);
+        let js_implicit_optional = !jsdoc_text
+            .as_deref()
+            .is_some_and(|jsdoc| Self::jsdoc_has_required_param_tag(jsdoc, &pname));
+        let jsdoc_optional = js_implicit_optional
+            && jsdoc_text.as_deref().is_some_and(|jsdoc| {
+                Self::is_jsdoc_param_optional_by_brackets(jsdoc, &pname)
+                    || Self::extract_jsdoc_param_type_string(jsdoc, &pname)
+                        .is_some_and(|t| t.trim().ends_with('='))
+            });
+        let genuine_optional = has_question_or_initializer || jsdoc_optional;
+        (
+            genuine_optional || js_implicit_optional,
+            js_implicit_optional && !genuine_optional,
+        )
+    }
+
     /// Returns true if the JSDoc contains a `@param` tag for `param_name` that
     /// makes the parameter required (not optional).
     ///

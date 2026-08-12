@@ -580,10 +580,8 @@ fn erase_signature_for_assertion(
         .params
         .iter()
         .map(|param| ParamInfo {
-            name: param.name,
             type_id: instantiate_type(db, param.type_id, &substitution),
-            optional: param.optional,
-            rest: param.rest,
+            ..*param
         })
         .collect();
     let return_type = instantiate_type(db, sig.return_type, &substitution);

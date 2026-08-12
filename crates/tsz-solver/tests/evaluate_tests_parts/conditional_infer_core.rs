@@ -203,6 +203,7 @@ fn test_rest_unknown_bivariant_conditional_evaluate_strict() {
             type_id: rest_unknown,
             optional: false,
             rest: true,
+arity_only_optional: false,
         }],
         this_type: None,
         return_type: TypeId::VOID,

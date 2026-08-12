@@ -1670,10 +1670,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             .params
             .iter()
             .map(|p| crate::types::ParamInfo {
-                name: p.name,
                 type_id: instantiate_type(self.interner, p.type_id, &substitution),
-                optional: p.optional,
-                rest: p.rest,
+                ..*p
             })
             .collect();
 

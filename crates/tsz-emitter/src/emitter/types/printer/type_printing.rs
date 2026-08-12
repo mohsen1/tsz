@@ -215,6 +215,7 @@ impl<'a> TypePrinter<'a> {
                     type_id,
                     optional: param.question_token,
                     rest: param.dot_dot_dot_token,
+                    arity_only_optional: false,
                 })
             })
             .collect()
@@ -710,12 +711,12 @@ impl<'a> TypePrinter<'a> {
             }
             if let Some(name) = param.name {
                 result.push_str(&scoped.resolve_atom(name));
-                if param.optional {
+                if param.is_display_optional() {
                     result.push('?');
                 }
                 result.push_str(": ");
             }
-            if param.optional {
+            if param.is_display_optional() {
                 result.push_str(&scoped.print_optional_param_type(param.type_id));
             } else {
                 result.push_str(&scoped.print_type(param.type_id));
@@ -945,7 +946,7 @@ impl<'a> TypePrinter<'a> {
                     part.push_str("...");
                 }
                 part.push_str(&self.resolve_atom(name));
-                if param.optional {
+                if param.is_display_optional() {
                     part.push('?');
                 }
                 part.push_str(": ");
@@ -953,12 +954,12 @@ impl<'a> TypePrinter<'a> {
                 part.push_str("...");
             }
 
-            if param.optional {
+            if param.is_display_optional() {
                 part.push_str(&self.print_optional_param_type(param.type_id));
             } else {
                 part.push_str(&self.print_type(param.type_id));
             }
-            if param.name.is_none() && param.optional && !param.rest {
+            if param.name.is_none() && param.is_display_optional() && !param.rest {
                 part.push('?');
             }
             parts.push(part);

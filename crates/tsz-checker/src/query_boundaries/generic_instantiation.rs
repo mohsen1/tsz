@@ -87,10 +87,8 @@ pub(crate) fn instantiate_function_shape(
             .params
             .iter()
             .map(|param| ParamInfo {
-                name: param.name,
                 type_id: instantiate(param.type_id),
-                optional: param.optional,
-                rest: param.rest,
+                ..*param
             })
             .collect(),
         return_type: instantiate(func.return_type),

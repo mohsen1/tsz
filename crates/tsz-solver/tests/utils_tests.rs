@@ -242,6 +242,7 @@ fn required_param_count_filters_optional_and_rest() {
         type_id: TypeId::NUMBER,
         optional: false,
         rest: false,
+        arity_only_optional: false,
     };
     let optional = ParamInfo {
         optional: true,

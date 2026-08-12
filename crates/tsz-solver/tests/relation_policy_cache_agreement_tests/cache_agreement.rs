@@ -1261,6 +1261,7 @@ fn assignability_cache_allow_bivariant_rest_matches_uncached_relation_policy() {
             type_id: rest_any,
             optional: false,
             rest: true,
+            arity_only_optional: false,
         }],
         TypeId::VOID,
     ));

@@ -8,6 +8,16 @@ use crate::types::{ObjectShapeId, ParamInfo, PropertyInfo, PropertyLookup, Tuple
 use crate::visitor::{array_element_type, readonly_inner_type, tuple_list_id};
 use tsz_common::interner::Atom;
 
+impl ParamInfo {
+    /// Returns `true` if this parameter renders (and `.d.ts`-emits) with a `?`
+    /// marker. An [`arity_only_optional`](ParamInfo::arity_only_optional)
+    /// parameter is optional for call arity but prints as required, matching
+    /// `tsc`'s treatment of an untyped JavaScript function parameter.
+    pub const fn is_display_optional(&self) -> bool {
+        self.optional && !self.arity_only_optional
+    }
+}
+
 /// Count the number of required (non-optional, non-rest) parameters.
 pub(crate) fn required_param_count(params: &[ParamInfo]) -> usize {
     params.iter().filter(|p| p.is_required()).count()

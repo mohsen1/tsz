@@ -662,13 +662,13 @@ impl<'a> TypePrinter<'a> {
             // Parameter name (optional in function types)
             if let Some(name) = param.name {
                 param_str.push_str(&scoped.resolve_atom(name));
-                if param.optional {
+                if param.is_display_optional() {
                     param_str.push('?');
                 }
                 param_str.push_str(": ");
             }
 
-            if param.optional {
+            if param.is_display_optional() {
                 param_str.push_str(&scoped.print_optional_param_type(param.type_id));
             } else {
                 param_str.push_str(&scoped.print_type(param.type_id));

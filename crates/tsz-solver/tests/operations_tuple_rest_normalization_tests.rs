@@ -39,6 +39,7 @@ fn infer_generic_tuple_rest_from_rest_argument_returns_array() {
             type_id: tuple_t,
             optional: false,
             rest: false,
+            arity_only_optional: false,
         }],
         this_type: None,
         return_type: t_type,

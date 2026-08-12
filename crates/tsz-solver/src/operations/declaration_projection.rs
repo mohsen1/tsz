@@ -441,6 +441,7 @@ mod tests {
             type_id,
             optional: false,
             rest: false,
+            arity_only_optional: false,
         }
     }
 

@@ -1756,6 +1756,7 @@ mod tests {
                 type_id: TypeId(100), // ReadonlyArray<T> with T=TypeId(100)
                 optional: false,
                 rest: false,
+                arity_only_optional: false,
             }],
             this_type: Some(TypeId(100)),
             return_type: TypeId(8), // boolean
@@ -1776,6 +1777,7 @@ mod tests {
                 type_id: TypeId(200), // ReadonlyArray<T> with different T=TypeId(200)
                 optional: false,
                 rest: false,
+                arity_only_optional: false,
             }],
             this_type: Some(TypeId(200)),
             return_type: TypeId(8),
@@ -1812,6 +1814,7 @@ mod tests {
                 type_id: TypeId(100),
                 optional: false,
                 rest: false,
+                arity_only_optional: false,
             }],
             this_type: None,
             return_type: TypeId(8),
@@ -1832,6 +1835,7 @@ mod tests {
                 type_id: TypeId(200),
                 optional: false,
                 rest: false,
+                arity_only_optional: false,
             }],
             this_type: None,
             return_type: TypeId(8),
@@ -1858,6 +1862,7 @@ mod tests {
                 type_id: TypeId(100),
                 optional: false,
                 rest: false,
+                arity_only_optional: false,
             }],
             this_type: None,
             return_type: TypeId(8),
@@ -1872,6 +1877,7 @@ mod tests {
                 type_id: TypeId(200),
                 optional: false,
                 rest: false,
+                arity_only_optional: false,
             }],
             this_type: None,
             return_type: TypeId(8),

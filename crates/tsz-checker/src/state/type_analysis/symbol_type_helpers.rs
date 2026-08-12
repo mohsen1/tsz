@@ -475,6 +475,7 @@ impl<'a> CheckerState<'a> {
                 type_id: TypeId::ANY,
                 optional: param.question_token || param.initializer.is_some(),
                 rest: param.dot_dot_dot_token,
+                arity_only_optional: false,
             });
         }
 

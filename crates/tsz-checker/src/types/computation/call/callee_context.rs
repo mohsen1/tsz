@@ -252,6 +252,7 @@ impl<'a> CheckerState<'a> {
                 type_id: self.get_type_of_node_with_request(arg_idx, &TypingRequest::NONE),
                 optional: false,
                 rest: false,
+                arity_only_optional: false,
             })
             .collect();
         snap.rollback(&mut self.ctx.diagnostic_state());

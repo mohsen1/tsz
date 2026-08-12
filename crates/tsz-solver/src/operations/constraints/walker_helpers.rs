@@ -389,6 +389,7 @@ mod tests {
                 type_id: ty,
                 optional: false,
                 rest: false,
+                arity_only_optional: false,
             }],
             TypeId::UNKNOWN,
         );

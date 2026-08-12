@@ -1091,6 +1091,7 @@ pub fn unpack_tuple_rest_parameter(
                     type_id: elem.type_id,
                     optional: elem.optional,
                     rest: false,
+                    arity_only_optional: false,
                 });
                 continue;
             }
@@ -1102,6 +1103,7 @@ pub fn unpack_tuple_rest_parameter(
                     type_id: fixed.type_id,
                     optional: fixed.optional,
                     rest: false,
+                    arity_only_optional: false,
                 });
             }
             if let Some(variadic) = expansion.variadic {
@@ -1110,6 +1112,7 @@ pub fn unpack_tuple_rest_parameter(
                     type_id: db.array(variadic),
                     optional: false,
                     rest: true,
+                    arity_only_optional: false,
                 });
             }
             for tail in expansion.tail {
@@ -1118,6 +1121,7 @@ pub fn unpack_tuple_rest_parameter(
                     type_id: tail.type_id,
                     optional: tail.optional,
                     rest: tail.rest,
+                    arity_only_optional: false,
                 });
             }
         }
@@ -1206,6 +1210,7 @@ fn unpack_union_of_prefix_tuples(
                 type_id: e.type_id,
                 optional: e.optional,
                 rest: false,
+                arity_only_optional: false,
             })
             .collect(),
     )

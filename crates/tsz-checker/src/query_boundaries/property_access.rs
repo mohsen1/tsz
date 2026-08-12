@@ -364,6 +364,7 @@ pub(crate) fn strict_bind_call_apply_this_arg_param(
         type_id,
         optional: false,
         rest: false,
+        arity_only_optional: false,
     }
 }
 
@@ -376,6 +377,7 @@ pub(crate) fn strict_bind_call_apply_args_param(
         type_id,
         optional: true,
         rest: false,
+        arity_only_optional: false,
     }
 }
 

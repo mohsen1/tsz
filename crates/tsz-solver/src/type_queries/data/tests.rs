@@ -14,12 +14,7 @@ fn make_callable_with_construct_sig(
         call_signatures: vec![],
         construct_signatures: vec![CallSignature {
             type_params,
-            params: vec![ParamInfo {
-                name: None,
-                type_id: TypeId::STRING,
-                optional: false,
-                rest: false,
-            }],
+            params: vec![ParamInfo::unnamed(TypeId::STRING)],
             this_type: None,
             return_type,
             type_predicate: None,
@@ -38,12 +33,7 @@ fn make_callable_with_call_sig(interner: &TypeInterner, return_type: TypeId) -> 
     let shape = CallableShape {
         call_signatures: vec![CallSignature {
             type_params: vec![],
-            params: vec![ParamInfo {
-                name: None,
-                type_id: TypeId::NUMBER,
-                optional: false,
-                rest: false,
-            }],
+            params: vec![ParamInfo::unnamed(TypeId::NUMBER)],
             this_type: None,
             return_type,
             type_predicate: None,
@@ -1736,12 +1726,7 @@ fn content_walk_agreement_corpus(interner: &TypeInterner) -> Vec<TypeId> {
             ..ObjectShape::default()
         }));
         corpus.push(interner.function(crate::types::FunctionShape::new(
-            vec![ParamInfo {
-                name: None,
-                type_id: leaf,
-                optional: false,
-                rest: false,
-            }],
+            vec![ParamInfo::unnamed(leaf)],
             TypeId::VOID,
         )));
         corpus.push(interner.callable(CallableShape {

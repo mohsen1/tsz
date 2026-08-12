@@ -397,6 +397,7 @@ fn test_array_of_functions() {
             type_id: TypeId::NUMBER,
             optional: false,
             rest: false,
+            arity_only_optional: false,
         }],
         this_type: None,
         return_type: TypeId::STRING,

@@ -126,6 +126,7 @@ pub(crate) fn js_class_method_callable_type(db: &dyn TypeDatabase) -> TypeId {
                 type_id: TypeId::ANY,
                 optional: false,
                 rest: true,
+                arity_only_optional: false,
             }],
             this_type: None,
             return_type: TypeId::ANY,

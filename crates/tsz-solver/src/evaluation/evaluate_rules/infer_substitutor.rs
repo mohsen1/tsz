@@ -438,10 +438,8 @@ impl<'a> InferSubstitutor<'a> {
                         changed = true;
                     }
                     new_params.push(ParamInfo {
-                        name: param.name,
                         type_id: param_type,
-                        optional: param.optional,
-                        rest: param.rest,
+                        ..*param
                     });
                 }
                 let return_type = self.substitute(shape.return_type);
@@ -484,10 +482,8 @@ impl<'a> InferSubstitutor<'a> {
                                 changed = true;
                             }
                             new_params.push(ParamInfo {
-                                name: param.name,
                                 type_id: param_type,
-                                optional: param.optional,
-                                rest: param.rest,
+                                ..*param
                             });
                         }
                         let return_type = self.substitute(sig.return_type);
@@ -523,10 +519,8 @@ impl<'a> InferSubstitutor<'a> {
                                 changed = true;
                             }
                             new_params.push(ParamInfo {
-                                name: param.name,
                                 type_id: param_type,
-                                optional: param.optional,
-                                rest: param.rest,
+                                ..*param
                             });
                         }
                         let return_type = self.substitute(sig.return_type);

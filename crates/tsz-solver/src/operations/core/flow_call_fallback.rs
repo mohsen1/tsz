@@ -197,6 +197,7 @@ mod tests {
                 type_id: parameter_type,
                 optional: false,
                 rest: false,
+                arity_only_optional: false,
             }],
             this_type: None,
             return_type: parameter_type,

@@ -19,6 +19,7 @@ pub(crate) fn make_apparent_method_type(db: &dyn TypeDatabase, return_type: Type
         type_id: rest_array,
         optional: false,
         rest: true,
+        arity_only_optional: false,
     };
     db.function(FunctionShape {
         params: vec![rest_param],

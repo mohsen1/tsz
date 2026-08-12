@@ -190,10 +190,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         let params = params
             .iter()
             .map(|param| ParamInfo {
-                name: param.name,
                 type_id: instantiate_type(self.interner(), param.type_id, &subst),
-                optional: param.optional,
-                rest: param.rest,
+                ..*param
             })
             .collect();
         let return_type = instantiate_type(self.interner(), return_type, &subst);
@@ -547,6 +545,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         type_id: TypeId::ANY,
                         optional: false,
                         rest: true,
+                        arity_only_optional: false,
                     }];
                     match_params_and_return(source, &function_params, TypeId::ANY, bindings)
                 }
@@ -649,6 +648,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         type_id: TypeId::ANY,
                         optional: false,
                         rest: true,
+                        arity_only_optional: false,
                     }];
                     match_params_and_return(source, &function_params, TypeId::ANY, bindings)
                 }
@@ -724,6 +724,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                             type_id: TypeId::ANY,
                             optional: false,
                             rest: true,
+                            arity_only_optional: false,
                         }];
                         match_params_tuple(&function_params, &[], bindings)
                     }
@@ -794,6 +795,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                             type_id: TypeId::ANY,
                             optional: false,
                             rest: true,
+                            arity_only_optional: false,
                         }];
                         match_params_tuple(&function_params, &[], bindings)
                     }

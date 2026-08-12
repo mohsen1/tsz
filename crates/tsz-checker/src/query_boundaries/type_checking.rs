@@ -91,6 +91,7 @@ pub(crate) const fn param_info(
         type_id,
         optional,
         rest,
+        arity_only_optional: false,
     }
 }
 

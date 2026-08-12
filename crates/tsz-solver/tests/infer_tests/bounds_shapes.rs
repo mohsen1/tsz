@@ -115,12 +115,14 @@ fn test_resolve_bounds_function_subtype() {
         type_id: interner.union(vec![TypeId::STRING, TypeId::NUMBER]),
         optional: false,
         rest: false,
+        arity_only_optional: false,
     };
     let target_param = ParamInfo {
         name: Some(interner.intern_string("y")),
         type_id: TypeId::STRING,
         optional: false,
         rest: false,
+        arity_only_optional: false,
     };
 
     let lower = interner.function(FunctionShape {
@@ -420,12 +422,14 @@ fn test_resolve_bounds_callable_subtype() {
         type_id: interner.union(vec![TypeId::STRING, TypeId::NUMBER]),
         optional: false,
         rest: false,
+        arity_only_optional: false,
     };
     let target_param = ParamInfo {
         name: Some(interner.intern_string("y")),
         type_id: TypeId::STRING,
         optional: false,
         rest: false,
+        arity_only_optional: false,
     };
 
     let lower = interner.callable(CallableShape {
@@ -478,12 +482,14 @@ fn test_resolve_bounds_function_to_callable() {
         type_id: interner.union(vec![TypeId::STRING, TypeId::NUMBER]),
         optional: false,
         rest: false,
+        arity_only_optional: false,
     };
     let target_param = ParamInfo {
         name: Some(interner.intern_string("y")),
         type_id: TypeId::STRING,
         optional: false,
         rest: false,
+        arity_only_optional: false,
     };
 
     let lower = interner.function(FunctionShape {
@@ -530,12 +536,14 @@ fn test_resolve_bounds_callable_to_function() {
         type_id: interner.union(vec![TypeId::STRING, TypeId::NUMBER]),
         optional: false,
         rest: false,
+        arity_only_optional: false,
     };
     let target_param = ParamInfo {
         name: Some(interner.intern_string("y")),
         type_id: TypeId::STRING,
         optional: false,
         rest: false,
+        arity_only_optional: false,
     };
 
     let lower = interner.callable(CallableShape {
@@ -664,6 +672,7 @@ fn test_infer_union_target_with_placeholder_member() {
             type_id: param_type,
             optional: false,
             rest: false,
+            arity_only_optional: false,
         }],
         this_type: None,
         return_type: t_type,
@@ -704,6 +713,7 @@ fn test_infer_union_target_with_placeholder_and_never_member() {
             type_id: param_type,
             optional: false,
             rest: false,
+            arity_only_optional: false,
         }],
         this_type: None,
         return_type: t_type,

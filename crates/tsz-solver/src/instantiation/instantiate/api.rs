@@ -1708,10 +1708,8 @@ pub fn instantiate_function_with_type_args(
             let new_ty =
                 instantiate_type_with_depth_status(interner, p.type_id, &subst).into_type_id();
             ParamInfo {
-                name: p.name,
                 type_id: new_ty,
-                optional: p.optional,
-                rest: p.rest,
+                ..*p
             }
         })
         .collect();

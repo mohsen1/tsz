@@ -452,10 +452,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     );
                 }
                 ParamInfo {
-                    name: p.name,
                     type_id: instantiated,
-                    optional: p.optional,
-                    rest: p.rest,
+                    ..*p
                 }
             })
             .collect();
@@ -942,6 +940,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     ),
                     optional: p.optional,
                     rest: p.rest,
+                    arity_only_optional: false,
                 })
                 .collect();
         }
@@ -1687,10 +1686,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     instantiated_params
                         .iter()
                         .map(|param| ParamInfo {
-                            name: param.name,
                             type_id: instantiate_type(self.interner, param.type_id, &fixed_subst),
-                            optional: param.optional,
-                            rest: param.rest,
+                            ..*param
                         })
                         .collect::<Vec<_>>(),
                 )

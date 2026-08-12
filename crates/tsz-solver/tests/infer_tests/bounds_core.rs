@@ -843,12 +843,14 @@ fn test_resolve_bounds_method_property_bivariant_params() {
         type_id: TypeId::STRING,
         optional: false,
         rest: false,
+        arity_only_optional: false,
     };
     let wide_param = ParamInfo {
         name: Some(interner.intern_string("x")),
         type_id: interner.union(vec![TypeId::STRING, TypeId::NUMBER]),
         optional: false,
         rest: false,
+        arity_only_optional: false,
     };
 
     let lower_fn = interner.function(FunctionShape {
@@ -893,12 +895,14 @@ fn test_resolve_bounds_function_property_contravariant_params() {
         type_id: TypeId::STRING,
         optional: false,
         rest: false,
+        arity_only_optional: false,
     };
     let wide_param = ParamInfo {
         name: Some(interner.intern_string("x")),
         type_id: interner.union(vec![TypeId::STRING, TypeId::NUMBER]),
         optional: false,
         rest: false,
+        arity_only_optional: false,
     };
 
     let lower_fn = interner.function(FunctionShape {
@@ -951,12 +955,14 @@ fn test_resolve_bounds_with_assignability_bivariant_function_property() {
         type_id: TypeId::STRING,
         optional: false,
         rest: false,
+        arity_only_optional: false,
     };
     let wide_param = ParamInfo {
         name: Some(interner.intern_string("x")),
         type_id: interner.union(vec![TypeId::STRING, TypeId::NUMBER]),
         optional: false,
         rest: false,
+        arity_only_optional: false,
     };
 
     let lower_fn = interner.function(FunctionShape {
@@ -1004,12 +1010,14 @@ fn test_resolve_bounds_function_param_contravariance_extends() {
         type_id: TypeId::STRING,
         optional: false,
         rest: false,
+        arity_only_optional: false,
     };
     let wide_param = ParamInfo {
         name: Some(interner.intern_string("x")),
         type_id: interner.union(vec![TypeId::STRING, TypeId::NUMBER]),
         optional: false,
         rest: false,
+        arity_only_optional: false,
     };
 
     let lower_fn = interner.function(FunctionShape {
@@ -1051,6 +1059,7 @@ fn test_resolve_bounds_function_return_covariance_extends() {
         type_id: TypeId::STRING,
         optional: false,
         rest: false,
+        arity_only_optional: false,
     };
 
     let lower_fn = interner.function(FunctionShape {

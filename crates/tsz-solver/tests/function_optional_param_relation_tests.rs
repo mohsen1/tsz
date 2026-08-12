@@ -17,6 +17,7 @@ fn function_with_param(
             type_id,
             optional,
             rest: false,
+            arity_only_optional: false,
         }],
         this_type: None,
         return_type: TypeId::VOID,

@@ -202,10 +202,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             .params
             .iter()
             .map(|param| ParamInfo {
-                name: param.name,
                 type_id: instantiate_type(self.interner, param.type_id, &rename),
-                optional: param.optional,
-                rest: param.rest,
+                ..*param
             })
             .collect();
         shape.return_type = instantiate_type(self.interner, shape.return_type, &rename);

@@ -182,6 +182,7 @@ fn build_infer_fixture(interner: &TypeInterner) -> (FunctionShape, [TypeId; 1]) 
             type_id: array_t,
             optional: false,
             rest: false,
+            arity_only_optional: false,
         }],
         this_type: None,
         return_type: u_type,

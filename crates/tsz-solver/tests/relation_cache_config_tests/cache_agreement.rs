@@ -1010,6 +1010,7 @@ fn assignability_cache_allow_bivariant_rest_matches_uncached_policy() {
             type_id: rest_any,
             optional: false,
             rest: true,
+            arity_only_optional: false,
         }],
         TypeId::VOID,
     ));
@@ -1096,6 +1097,7 @@ fn assignability_cache_top_rest_any_rejects_never_source_param() {
             type_id: rest_any,
             optional: false,
             rest: true,
+            arity_only_optional: false,
         }],
         TypeId::VOID,
     ));

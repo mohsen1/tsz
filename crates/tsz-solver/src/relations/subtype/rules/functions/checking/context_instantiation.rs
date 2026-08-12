@@ -334,6 +334,7 @@ mod tests {
             type_id: pack,
             optional: false,
             rest: true,
+            arity_only_optional: false,
         }];
         let fixed_params = vec![ParamInfo::unnamed(pack)];
         let callback = |params| {

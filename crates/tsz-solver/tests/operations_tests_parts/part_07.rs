@@ -36,6 +36,7 @@ fn test_call_generic_intersection_param_inference() {
             type_id: intersection_param,
             optional: false,
             rest: false,
+arity_only_optional: false,
         }],
         this_type: None,
         return_type: TypeId::VOID,
@@ -52,6 +53,7 @@ fn test_call_generic_intersection_param_inference() {
             type_id: inner_fn_type,
             optional: false,
             rest: false,
+arity_only_optional: false,
         }],
         this_type: None,
         return_type: own_props_type,
@@ -72,6 +74,7 @@ fn test_call_generic_intersection_param_inference() {
             type_id: store_obj,
             optional: false,
             rest: false,
+arity_only_optional: false,
         }],
         this_type: None,
         return_type: TypeId::VOID,
@@ -127,6 +130,7 @@ fn test_trivial_identity_preserves_literal_with_contextual_type() {
             type_id: t_type,
             optional: false,
             rest: false,
+arity_only_optional: false,
         }],
         this_type: None,
         return_type: t_type,
@@ -453,12 +457,14 @@ fn test_union_new_different_param_types_rejects_any_arg() {
         type_id: TypeId::NUMBER,
         optional: false,
         rest: false,
+arity_only_optional: false,
     };
     let str_param = ParamInfo {
         name: None,
         type_id: TypeId::STRING,
         optional: false,
         rest: false,
+arity_only_optional: false,
     };
     let m1 = make_construct_callable(&interner, vec![num_param], TypeId::NUMBER);
     let m2 = make_construct_callable(&interner, vec![str_param], TypeId::STRING);
@@ -506,12 +512,14 @@ fn test_union_new_different_param_counts_requires_max_args() {
         type_id: TypeId::STRING,
         optional: false,
         rest: false,
+arity_only_optional: false,
     };
     let num_param = ParamInfo {
         name: None,
         type_id: TypeId::NUMBER,
         optional: false,
         rest: false,
+arity_only_optional: false,
     };
     let m1 = make_construct_callable(&interner, vec![str_param()], TypeId::STRING);
     let m2 = make_construct_callable(&interner, vec![str_param(), num_param], TypeId::NUMBER);
@@ -565,6 +573,7 @@ fn test_union_new_same_return_types_correct_union() {
         type_id: TypeId::NUMBER,
         optional: false,
         rest: false,
+arity_only_optional: false,
     };
     let m1 = make_construct_callable(&interner, vec![num_param()], TypeId::STRING);
     let m2 = make_construct_callable(&interner, vec![num_param()], TypeId::NUMBER);
@@ -598,12 +607,14 @@ fn test_union_new_all_fail_requires_all_member_success() {
         type_id: TypeId::NUMBER,
         optional: false,
         rest: false,
+arity_only_optional: false,
     };
     let str_param = ParamInfo {
         name: None,
         type_id: TypeId::STRING,
         optional: false,
         rest: false,
+arity_only_optional: false,
     };
 
     let m1 = make_construct_callable(&interner, vec![num_param()], TypeId::NUMBER);
@@ -690,6 +701,7 @@ fn higher_order_generic_pipe_regeneralizes_through_shared_middle_placeholder() {
             type_id: a_type,
             optional: false,
             rest: false,
+arity_only_optional: false,
         }],
         this_type: None,
         return_type: b_type,
@@ -704,6 +716,7 @@ fn higher_order_generic_pipe_regeneralizes_through_shared_middle_placeholder() {
             type_id: b_type,
             optional: false,
             rest: false,
+arity_only_optional: false,
         }],
         this_type: None,
         return_type: c_type,
@@ -718,6 +731,7 @@ fn higher_order_generic_pipe_regeneralizes_through_shared_middle_placeholder() {
             type_id: a_type,
             optional: false,
             rest: false,
+arity_only_optional: false,
         }],
         this_type: None,
         return_type: c_type,
@@ -733,12 +747,14 @@ fn higher_order_generic_pipe_regeneralizes_through_shared_middle_placeholder() {
                 type_id: first_step,
                 optional: false,
                 rest: false,
+arity_only_optional: false,
             },
             ParamInfo {
                 name: Some(interner.intern_string("right")),
                 type_id: second_step,
                 optional: false,
                 rest: false,
+arity_only_optional: false,
             },
         ],
         this_type: None,
@@ -771,6 +787,7 @@ fn higher_order_generic_pipe_regeneralizes_through_shared_middle_placeholder() {
             type_id: x_type,
             optional: false,
             rest: false,
+arity_only_optional: false,
         }],
         this_type: None,
         return_type: interner.array(x_type),
@@ -785,6 +802,7 @@ fn higher_order_generic_pipe_regeneralizes_through_shared_middle_placeholder() {
             type_id: y_type,
             optional: false,
             rest: false,
+arity_only_optional: false,
         }],
         this_type: None,
         return_type: interner.array(y_type),

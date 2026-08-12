@@ -320,6 +320,7 @@ fn provisional_rest_union_policy_partitions_query_cache_in_both_orders() {
                 type_id: rest_type,
                 optional: false,
                 rest: true,
+                arity_only_optional: false,
             }],
             this_type: None,
             return_type: TypeId::VOID,

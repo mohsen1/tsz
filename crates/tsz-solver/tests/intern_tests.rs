@@ -450,12 +450,10 @@ fn test_interner_intersection_callable_vs_object_disjoint_property() {
     let callable = interner.callable(CallableShape {
         call_signatures: vec![CallSignature {
             type_params: vec![],
-            params: vec![ParamInfo {
-                name: Some(interner.intern_string("x")),
-                type_id: TypeId::STRING,
-                optional: false,
-                rest: false,
-            }],
+            params: vec![ParamInfo::required(
+                interner.intern_string("x"),
+                TypeId::STRING,
+            )],
             this_type: None,
             return_type: TypeId::NUMBER,
             type_predicate: None,
@@ -486,12 +484,10 @@ fn test_interner_intersection_callable_vs_object_compatible_property() {
     let callable = interner.callable(CallableShape {
         call_signatures: vec![CallSignature {
             type_params: vec![],
-            params: vec![ParamInfo {
-                name: Some(interner.intern_string("x")),
-                type_id: TypeId::STRING,
-                optional: false,
-                rest: false,
-            }],
+            params: vec![ParamInfo::required(
+                interner.intern_string("x"),
+                TypeId::STRING,
+            )],
             this_type: None,
             return_type: TypeId::NUMBER,
             type_predicate: None,
@@ -1907,12 +1903,10 @@ fn test_estimated_size_bytes_grows_with_functions() {
     for i in 0..20 {
         interner.function(FunctionShape {
             type_params: vec![],
-            params: vec![ParamInfo {
-                name: Some(interner.string_interner.intern(&format!("p_{i}"))),
-                type_id: TypeId::STRING,
-                optional: false,
-                rest: false,
-            }],
+            params: vec![ParamInfo::required(
+                interner.string_interner.intern(&format!("p_{i}")),
+                TypeId::STRING,
+            )],
             this_type: None,
             return_type: TypeId::VOID,
             type_predicate: None,

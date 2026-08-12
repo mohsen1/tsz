@@ -964,6 +964,7 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
                 type_id: self.canonicalize(p.type_id),
                 optional: p.optional,
                 rest: p.rest,
+                arity_only_optional: false,
             })
             .collect()
     }

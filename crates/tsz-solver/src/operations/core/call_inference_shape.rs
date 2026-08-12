@@ -75,10 +75,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 .params
                 .iter()
                 .map(|param| ParamInfo {
-                    name: param.name,
                     type_id: instantiate_type(self.interner, param.type_id, &substitution),
-                    optional: param.optional,
-                    rest: param.rest,
+                    ..*param
                 })
                 .collect(),
             return_type: instantiate_type(self.interner, func.return_type, &substitution),

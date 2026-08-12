@@ -398,6 +398,7 @@ impl<'a> CheckerState<'a> {
                                     },
                                     optional: p.optional,
                                     rest: p.rest,
+                                    arity_only_optional: false,
                                 }
                             })
                             .collect();

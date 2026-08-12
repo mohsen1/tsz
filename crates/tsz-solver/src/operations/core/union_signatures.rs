@@ -341,6 +341,7 @@ impl<C: AssignabilityChecker> CallEvaluator<'_, C> {
                 },
                 optional: is_optional && !is_rest_param,
                 rest: is_rest_param,
+                arity_only_optional: false,
             });
         }
         if needs_extra_rest {
@@ -351,6 +352,7 @@ impl<C: AssignabilityChecker> CallEvaluator<'_, C> {
                 type_id: self.interner.array(rest_element),
                 optional: false,
                 rest: true,
+                arity_only_optional: false,
             });
         }
 

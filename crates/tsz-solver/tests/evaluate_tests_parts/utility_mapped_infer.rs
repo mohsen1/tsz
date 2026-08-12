@@ -944,12 +944,14 @@ fn test_noinfer_multiple_type_params() {
                 type_id: t_param,
                 optional: false,
                 rest: false,
+arity_only_optional: false,
             },
             ParamInfo {
                 name: Some(interner.intern_string("b")),
                 type_id: u_param, // NoInfer<U>
                 optional: false,
                 rest: false,
+arity_only_optional: false,
             },
         ],
         this_type: None,
@@ -1009,6 +1011,7 @@ fn test_noinfer_in_return_position() {
             type_id: t_param,
             optional: false,
             rest: false,
+arity_only_optional: false,
         }],
         this_type: None,
         return_type: t_param, // NoInfer<T> = T

@@ -180,6 +180,7 @@ fn test_method_parameter_type_inference() {
             type_id: t_type,
             optional: false,
             rest: false,
+            arity_only_optional: false,
         }],
         this_type: None,
         return_type: TypeId::VOID,
@@ -272,6 +273,7 @@ fn test_method_generic_parameter_inference() {
             type_id: t_type,
             optional: false,
             rest: false,
+            arity_only_optional: false,
         }],
         this_type: None,
         return_type: return_array,
@@ -676,12 +678,14 @@ fn test_mutual_recursion_function_params() {
         type_id: TypeId::STRING,
         optional: false,
         rest: false,
+        arity_only_optional: false,
     };
     let param_g = ParamInfo {
         name: Some(interner.intern_string("f")),
         type_id: TypeId::NUMBER,
         optional: false,
         rest: false,
+        arity_only_optional: false,
     };
 
     // Concrete function lower bounds

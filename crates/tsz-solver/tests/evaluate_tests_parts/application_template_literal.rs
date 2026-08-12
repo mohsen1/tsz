@@ -30,7 +30,8 @@ fn test_application_ref_expansion_with_rest_param() {
             name: Some(args_name),
             type_id: t_array,
             optional: false,
-            rest: true, // rest parameter
+            rest: true, // rest parameter,
+arity_only_optional: false
         }],
         this_type: None,
         return_type: TypeId::VOID,
@@ -634,6 +635,7 @@ fn test_application_ref_expansion_with_optional_param() {
             type_id: t_type,
             optional: true, // optional parameter
             rest: false,
+arity_only_optional: false,
         }],
         this_type: None,
         return_type: t_type,

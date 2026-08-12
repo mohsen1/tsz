@@ -1508,6 +1508,7 @@ impl<'a> RestParameterExtractor<'a> {
                             type_id: self.db.union_literal_reduce(types),
                             optional,
                             rest: false,
+                            arity_only_optional: false,
                         }
                     })
                     .collect();

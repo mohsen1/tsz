@@ -525,6 +525,8 @@ mod js_expando_order_sensitivity_tests;
 mod js_file_function_parameters_as_optional_tests;
 #[path = "tests/js_open_object_property_access_tests.rs"]
 mod js_open_object_property_access_tests;
+#[path = "tests/js_parameter_display_optionality_tests.rs"]
+mod js_parameter_display_optionality_tests;
 #[path = "tests/jsdoc_bare_import_type_tests.rs"]
 mod jsdoc_bare_import_type_tests;
 #[path = "tests/jsdoc_bare_type_tag_non_prototype_expando_tests.rs"]

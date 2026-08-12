@@ -133,7 +133,14 @@ impl<'a> TypeFormatter<'a> {
             let name = p
                 .name
                 .map_or_else(|| "_".to_string(), |atom| self.atom(atom).to_string());
-            rendered.push(self.render_param_display(&name, p.optional, p.rest, p.type_id));
+            // An untyped-JS parameter is optional only for call arity; `tsc`
+            // renders it as required (`x: any`, not `x?: any`).
+            rendered.push(self.render_param_display(
+                &name,
+                p.is_display_optional(),
+                p.rest,
+                p.type_id,
+            ));
         }
 
         rendered

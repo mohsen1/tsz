@@ -1135,6 +1135,7 @@ fn strip_shape(
             type_id: body,
             optional: false,
             rest: false,
+            arity_only_optional: false,
         }],
         TypeId::NUMBER,
     )

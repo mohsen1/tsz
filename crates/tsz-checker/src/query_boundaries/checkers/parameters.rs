@@ -124,6 +124,7 @@ pub(crate) fn merge_callable_contextual_types(
             type_id: union_type(db, param_types),
             optional: shapes.iter().all(|s| s.params[i].optional),
             rest: shapes[0].params[i].rest,
+            arity_only_optional: false,
         });
     }
 

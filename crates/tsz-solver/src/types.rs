@@ -1335,6 +1335,9 @@ pub struct ParamInfo {
     pub type_id: TypeId,
     pub optional: bool,
     pub rest: bool,
+    /// Optional *only* for JS call-arity leniency; renders/emits as required
+    /// (see `is_display_optional`) to match `tsc`. Never set for genuine `?`.
+    pub arity_only_optional: bool,
 }
 
 impl ParamInfo {
@@ -1350,6 +1353,7 @@ impl ParamInfo {
             type_id,
             optional: false,
             rest: false,
+            arity_only_optional: false,
         }
     }
 
@@ -1376,6 +1380,7 @@ impl ParamInfo {
             type_id,
             optional: false,
             rest: false,
+            arity_only_optional: false,
         }
     }
 }

@@ -170,6 +170,7 @@ mod tests {
                 type_id: TypeId::NUMBER,
                 optional: false,
                 rest: false,
+                arity_only_optional: false,
             }],
             TypeId::BOOLEAN,
         ));
@@ -211,6 +212,7 @@ mod tests {
                 type_id: TypeId::NUMBER,
                 optional: false,
                 rest: false,
+                arity_only_optional: false,
             }],
             TypeId::BOOLEAN,
         ));

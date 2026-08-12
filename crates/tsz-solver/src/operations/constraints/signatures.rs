@@ -568,10 +568,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 .params
                 .iter()
                 .map(|p| ParamInfo {
-                    name: p.name,
                     type_id: instantiate_type(self.interner, p.type_id, &sub),
-                    optional: p.optional,
-                    rest: p.rest,
+                    ..*p
                 })
                 .collect(),
             this_type: sig

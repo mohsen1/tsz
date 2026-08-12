@@ -378,6 +378,7 @@ impl<'a> CheckerState<'a> {
                 type_id,
                 optional: param.question_token || param.initializer != NodeIndex::NONE,
                 rest: param.dot_dot_dot_token,
+                arity_only_optional: false,
             });
         }
         Some(params)

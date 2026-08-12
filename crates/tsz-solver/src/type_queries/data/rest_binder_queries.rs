@@ -1155,6 +1155,7 @@ mod tests {
                 type_id: binder,
                 optional: false,
                 rest: true,
+                arity_only_optional: false,
             }],
             this_type: None,
             return_type: TypeId::VOID,

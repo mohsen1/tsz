@@ -119,6 +119,7 @@ fn shared_cache_preserves_alpha_equivalence_across_probes() {
                 type_id: pref,
                 optional: false,
                 rest: false,
+                arity_only_optional: false,
             }],
             this_type: None,
             return_type: pref,

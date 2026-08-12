@@ -329,12 +329,10 @@ fn canonicalize_function_type() {
     use crate::types::{FunctionShape, ParamInfo};
     let func = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
-            name: Some(interner.intern_string("x")),
-            type_id: TypeId::STRING,
-            optional: false,
-            rest: false,
-        }],
+        params: vec![ParamInfo::required(
+            interner.intern_string("x"),
+            TypeId::STRING,
+        )],
         this_type: None,
         return_type: TypeId::NUMBER,
         type_predicate: None,
@@ -378,12 +376,7 @@ fn canonicalize_function_with_type_params_uses_bound_parameter() {
             is_const: false,
             origin: crate::types::TypeParamOrigin::User,
         }],
-        params: vec![ParamInfo {
-            name: Some(interner.intern_string("x")),
-            type_id: t_param,
-            optional: false,
-            rest: false,
-        }],
+        params: vec![ParamInfo::required(interner.intern_string("x"), t_param)],
         this_type: None,
         return_type: t_param,
         type_predicate: None,
@@ -443,12 +436,7 @@ fn canonicalize_function_type_params_alpha_equivalent_across_names() {
         let pref = interner.type_param(info);
         interner.function(FunctionShape {
             type_params: vec![info],
-            params: vec![ParamInfo {
-                name: Some(interner.intern_string("x")),
-                type_id: pref,
-                optional: false,
-                rest: false,
-            }],
+            params: vec![ParamInfo::required(interner.intern_string("x"), pref)],
             this_type: None,
             return_type: pref,
             type_predicate: None,
@@ -493,12 +481,7 @@ fn canonicalize_function_distinct_constraints_stay_distinct() {
         let pref = interner.type_param(info);
         interner.function(FunctionShape {
             type_params: vec![info],
-            params: vec![ParamInfo {
-                name: Some(interner.intern_string("x")),
-                type_id: pref,
-                optional: false,
-                rest: false,
-            }],
+            params: vec![ParamInfo::required(interner.intern_string("x"), pref)],
             this_type: None,
             return_type: pref,
             type_predicate: None,
@@ -544,12 +527,7 @@ fn canonicalize_function_multi_param_positional_identity() {
         let p1 = interner.type_param(mk(a1));
         interner.function(FunctionShape {
             type_params: vec![mk(a0), mk(a1)],
-            params: vec![ParamInfo {
-                name: Some(interner.intern_string("a")),
-                type_id: p0,
-                optional: false,
-                rest: false,
-            }],
+            params: vec![ParamInfo::required(interner.intern_string("a"), p0)],
             this_type: None,
             return_type: if return_second { p1 } else { p0 },
             type_predicate: None,
@@ -598,12 +576,7 @@ fn canonicalize_call_signature_alpha_equivalent_across_names() {
         let pref = interner.type_param(info);
         let sig = CallSignature {
             type_params: vec![info],
-            params: vec![ParamInfo {
-                name: Some(interner.intern_string("x")),
-                type_id: pref,
-                optional: false,
-                rest: false,
-            }],
+            params: vec![ParamInfo::required(interner.intern_string("x"), pref)],
             this_type: None,
             return_type: pref,
             type_predicate: None,
@@ -773,12 +746,7 @@ fn canonicalize_string_intrinsic_in_function_uses_bound_parameter() {
             is_const: false,
             origin: crate::types::TypeParamOrigin::User,
         }],
-        params: vec![ParamInfo {
-            name: Some(interner.intern_string("x")),
-            type_id: upper_t,
-            optional: false,
-            rest: false,
-        }],
+        params: vec![ParamInfo::required(interner.intern_string("x"), upper_t)],
         this_type: None,
         return_type: TypeId::VOID,
         type_predicate: None,
@@ -1200,12 +1168,7 @@ fn make_generic_identity_fn(interner: &TypeInterner, name: &str) -> TypeId {
     let pref = interner.type_param(info);
     interner.function(FunctionShape {
         type_params: vec![info],
-        params: vec![ParamInfo {
-            name: Some(interner.intern_string("x")),
-            type_id: pref,
-            optional: false,
-            rest: false,
-        }],
+        params: vec![ParamInfo::required(interner.intern_string("x"), pref)],
         this_type: None,
         return_type: pref,
         type_predicate: None,
@@ -1494,12 +1457,7 @@ fn canonicalize_function_type_param_list_ignores_default() {
                 is_const: false,
                 origin: crate::types::TypeParamOrigin::User,
             }],
-            params: vec![ParamInfo {
-                name: Some(interner.intern_string("x")),
-                type_id: body,
-                optional: false,
-                rest: false,
-            }],
+            params: vec![ParamInfo::required(interner.intern_string("x"), body)],
             this_type: None,
             return_type: body,
             type_predicate: None,
@@ -1893,12 +1851,7 @@ fn canonicalize_function_type_param_list_ignores_const_modifier() {
                 is_const,
                 origin: crate::types::TypeParamOrigin::User,
             }],
-            params: vec![ParamInfo {
-                name: Some(interner.intern_string("x")),
-                type_id: body,
-                optional: false,
-                rest: false,
-            }],
+            params: vec![ParamInfo::required(interner.intern_string("x"), body)],
             this_type: None,
             return_type: body,
             type_predicate: None,
@@ -1993,12 +1946,10 @@ fn canonicalize_function_value_param_names_alpha_equivalent() {
     let make = |name: &str| {
         interner.function(FunctionShape {
             type_params: vec![],
-            params: vec![ParamInfo {
-                name: Some(interner.intern_string(name)),
-                type_id: TypeId::STRING,
-                optional: false,
-                rest: false,
-            }],
+            params: vec![ParamInfo::required(
+                interner.intern_string(name),
+                TypeId::STRING,
+            )],
             this_type: None,
             return_type: TypeId::NUMBER,
             type_predicate: None,
@@ -2033,6 +1984,7 @@ fn canonicalize_function_param_type_and_arity_stay_distinct() {
                 type_id: ty,
                 optional,
                 rest,
+                arity_only_optional: false,
             }],
             this_type: None,
             return_type: TypeId::NUMBER,
@@ -2208,12 +2160,10 @@ fn canonicalize_predicate_identifier_target_alpha_equivalent() {
     let make = |name: &str| {
         interner.function(FunctionShape {
             type_params: vec![],
-            params: vec![ParamInfo {
-                name: Some(interner.intern_string(name)),
-                type_id: TypeId::UNKNOWN,
-                optional: false,
-                rest: false,
-            }],
+            params: vec![ParamInfo::required(
+                interner.intern_string(name),
+                TypeId::UNKNOWN,
+            )],
             this_type: None,
             return_type: TypeId::BOOLEAN,
             type_predicate: Some(TypePredicate {
@@ -2248,12 +2198,10 @@ fn canonicalize_predicate_asserts_and_narrowed_type_stay_distinct() {
     let make = |asserts: bool, narrowed: TypeId, target: TypePredicateTarget| {
         interner.function(FunctionShape {
             type_params: vec![],
-            params: vec![ParamInfo {
-                name: Some(interner.intern_string("x")),
-                type_id: TypeId::UNKNOWN,
-                optional: false,
-                rest: false,
-            }],
+            params: vec![ParamInfo::required(
+                interner.intern_string("x"),
+                TypeId::UNKNOWN,
+            )],
             this_type: None,
             return_type: TypeId::BOOLEAN,
             type_predicate: Some(TypePredicate {

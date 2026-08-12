@@ -327,18 +327,8 @@ fn test_optional_parameter_assignability_allows_extra_optional() {
 
     let source = interner.function(FunctionShape {
         params: vec![
-            ParamInfo {
-                name: Some(interner.intern_string("x")),
-                type_id: TypeId::STRING,
-                optional: false,
-                rest: false,
-            },
-            ParamInfo {
-                name: Some(interner.intern_string("y")),
-                type_id: TypeId::NUMBER,
-                optional: true,
-                rest: false,
-            },
+            ParamInfo::required(interner.intern_string("x"), TypeId::STRING),
+            ParamInfo::optional(interner.intern_string("y"), TypeId::NUMBER),
         ],
         this_type: None,
         return_type: TypeId::VOID,
@@ -349,12 +339,7 @@ fn test_optional_parameter_assignability_allows_extra_optional() {
     });
 
     let target = interner.function(FunctionShape {
-        params: vec![ParamInfo {
-            name: Some(interner.intern_string("x")),
-            type_id: TypeId::STRING,
-            optional: false,
-            rest: false,
-        }],
+        params: vec![ParamInfo::required(interner.intern_string("x"), TypeId::STRING)],
         this_type: None,
         return_type: TypeId::VOID,
         type_params: Vec::new(),
@@ -373,18 +358,8 @@ fn test_optional_parameter_assignability_rejects_required_extra() {
 
     let source = interner.function(FunctionShape {
         params: vec![
-            ParamInfo {
-                name: Some(interner.intern_string("x")),
-                type_id: TypeId::STRING,
-                optional: false,
-                rest: false,
-            },
-            ParamInfo {
-                name: Some(interner.intern_string("y")),
-                type_id: TypeId::NUMBER,
-                optional: false,
-                rest: false,
-            },
+            ParamInfo::required(interner.intern_string("x"), TypeId::STRING),
+            ParamInfo::required(interner.intern_string("y"), TypeId::NUMBER),
         ],
         this_type: None,
         return_type: TypeId::VOID,
@@ -396,18 +371,8 @@ fn test_optional_parameter_assignability_rejects_required_extra() {
 
     let target = interner.function(FunctionShape {
         params: vec![
-            ParamInfo {
-                name: Some(interner.intern_string("x")),
-                type_id: TypeId::STRING,
-                optional: false,
-                rest: false,
-            },
-            ParamInfo {
-                name: Some(interner.intern_string("y")),
-                type_id: TypeId::NUMBER,
-                optional: true,
-                rest: false,
-            },
+            ParamInfo::required(interner.intern_string("x"), TypeId::STRING),
+            ParamInfo::optional(interner.intern_string("y"), TypeId::NUMBER),
         ],
         this_type: None,
         return_type: TypeId::VOID,
@@ -460,12 +425,7 @@ fn test_rest_parameter_assignability_rejects_incompatible_fixed() {
     let mut checker = CompatChecker::new(&interner);
 
     let source = interner.function(FunctionShape {
-        params: vec![ParamInfo {
-            name: Some(interner.intern_string("args")),
-            type_id: interner.array(TypeId::STRING),
-            optional: false,
-            rest: true,
-        }],
+        params: vec![ParamInfo::rest(interner.intern_string("args"), interner.array(TypeId::STRING))],
         this_type: None,
         return_type: TypeId::VOID,
         type_params: Vec::new(),
@@ -475,12 +435,7 @@ fn test_rest_parameter_assignability_rejects_incompatible_fixed() {
     });
 
     let target = interner.function(FunctionShape {
-        params: vec![ParamInfo {
-            name: Some(interner.intern_string("x")),
-            type_id: TypeId::NUMBER,
-            optional: false,
-            rest: false,
-        }],
+        params: vec![ParamInfo::required(interner.intern_string("x"), TypeId::NUMBER)],
         this_type: None,
         return_type: TypeId::VOID,
         type_params: Vec::new(),
@@ -1375,6 +1330,7 @@ fn test_rest_any_bivariant_even_strict() {
             type_id: rest_any,
             optional: false,
             rest: true,
+arity_only_optional: false,
         }],
         this_type: None,
         return_type: TypeId::VOID,
@@ -1410,6 +1366,7 @@ fn test_rest_unknown_bivariant_even_strict() {
             type_id: rest_unknown,
             optional: false,
             rest: true,
+arity_only_optional: false,
         }],
         this_type: None,
         return_type: TypeId::VOID,
@@ -1445,6 +1402,7 @@ fn test_rest_unknown_bivariant_strict_assignable() {
             type_id: rest_unknown,
             optional: false,
             rest: true,
+arity_only_optional: false,
         }],
         this_type: None,
         return_type: TypeId::VOID,
@@ -1483,6 +1441,7 @@ fn test_rest_number_not_bivariant_even_strict() {
             type_id: rest_number,
             optional: false,
             rest: true,
+arity_only_optional: false,
         }],
         this_type: None,
         return_type: TypeId::VOID,
@@ -1518,6 +1477,7 @@ fn test_rest_unknown_vs_number_assignability_strict() {
             type_id: rest_unknown,
             optional: false,
             rest: true,
+arity_only_optional: false,
         }],
         this_type: None,
         return_type: TypeId::VOID,
@@ -1534,6 +1494,7 @@ fn test_rest_unknown_vs_number_assignability_strict() {
             type_id: rest_number,
             optional: false,
             rest: true,
+arity_only_optional: false,
         }],
         this_type: None,
         return_type: TypeId::VOID,
@@ -1569,6 +1530,7 @@ fn test_rest_any_still_checks_return_type() {
             type_id: rest_any,
             optional: false,
             rest: true,
+arity_only_optional: false,
         }],
         this_type: None,
         return_type: TypeId::NUMBER,
@@ -1604,6 +1566,7 @@ fn test_explain_failure_skips_rest_unknown() {
             type_id: rest_unknown,
             optional: false,
             rest: true,
+arity_only_optional: false,
         }],
         this_type: None,
         return_type: TypeId::VOID,
@@ -1641,6 +1604,7 @@ fn test_explain_failure_reports_rest_mismatch() {
             type_id: rest_number,
             optional: false,
             rest: true,
+arity_only_optional: false,
         }],
         this_type: None,
         return_type: TypeId::VOID,
@@ -1692,6 +1656,7 @@ fn test_explain_failure_reports_rest_mismatch_source_rest() {
             type_id: interner.array(TypeId::STRING),
             optional: false,
             rest: true,
+arity_only_optional: false,
         }],
         this_type: None,
         return_type: TypeId::VOID,

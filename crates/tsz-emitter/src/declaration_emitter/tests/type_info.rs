@@ -926,12 +926,7 @@ fn test_abstract_constructor_with_static_members_parenthesizes_in_intersection()
     let constructor_type = interner.callable(CallableShape {
         call_signatures: Vec::new(),
         construct_signatures: vec![CallSignature::new(
-            vec![ParamInfo {
-                name: Some(args),
-                type_id: interner.array(TypeId::ANY),
-                optional: false,
-                rest: true,
-            }],
+            vec![ParamInfo::rest(args, interner.array(TypeId::ANY))],
             instance_type,
         )],
         properties: vec![PropertyInfo::method(static_mixin_method, void_method)],

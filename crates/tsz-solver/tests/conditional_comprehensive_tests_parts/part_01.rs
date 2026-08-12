@@ -1564,6 +1564,7 @@ fn function_intrinsic_extends_callable_in_conditional_types() {
             type_id: TypeId::ANY,
             optional: false,
             rest: true,
+arity_only_optional: false,
         }],
         this_type: None,
         return_type: TypeId::ANY,

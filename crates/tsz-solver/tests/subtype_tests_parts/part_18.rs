@@ -45,6 +45,7 @@ fn rest_function_full(
             type_id: rest_type,
             optional: false,
             rest: true,
+arity_only_optional: false,
         }],
         this_type: None,
         return_type,
@@ -188,6 +189,7 @@ fn alpha_equivalent_local_generic_rests_accept_renamed_binders() {
                 type_id: rest_type,
                 optional: false,
                 rest: true,
+arity_only_optional: false,
             }],
             this_type: None,
             return_type: TypeId::VOID,
@@ -595,6 +597,7 @@ fn bare_rest_visibility_query_covers_fixed_slots_and_union_rests() {
         type_id: source_t,
         optional: false,
         rest: true,
+arity_only_optional: false,
     }];
     let target_params = vec![ParamInfo::unnamed(source_t)];
     let source_callable =
@@ -641,6 +644,7 @@ fn bare_rest_visibility_query_covers_fixed_slots_and_union_rests() {
         type_id: union_rest,
         optional: false,
         rest: true,
+arity_only_optional: false,
     }];
     let union_target_callable =
         callable_with_signatures(&interner, vec![call_signature(union_params.clone())]);
@@ -706,6 +710,7 @@ fn nested_overloaded_callable_tries_matching_source_after_rigid_rest_failure() {
         type_id: pack,
         optional: false,
         rest: true,
+arity_only_optional: false,
     }];
     let fixed_params = vec![ParamInfo::unnamed(pack)];
     let single_target =

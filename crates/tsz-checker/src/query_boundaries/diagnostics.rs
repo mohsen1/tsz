@@ -378,6 +378,7 @@ pub(crate) const fn display_param_with_type(param: &ParamInfo, type_id: TypeId) 
         type_id,
         optional: param.optional,
         rest: param.rest,
+        arity_only_optional: false,
     }
 }
 

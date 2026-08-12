@@ -714,6 +714,7 @@ impl<'a> NarrowingContext<'a> {
             type_id: rest_array,
             optional: false,
             rest: true,
+            arity_only_optional: false,
         };
         self.db.function(FunctionShape {
             params: vec![rest_param],

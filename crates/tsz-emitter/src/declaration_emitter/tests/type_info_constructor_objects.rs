@@ -309,6 +309,7 @@ fn build_abstract_constructor_with_index_sig(
                 type_id: interner.array(TypeId::ANY),
                 optional: false,
                 rest: true,
+                arity_only_optional: false,
             }],
             instance_shape,
         )],

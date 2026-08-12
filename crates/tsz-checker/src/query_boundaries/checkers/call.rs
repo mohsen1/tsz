@@ -74,6 +74,7 @@ pub(crate) fn sensitive_argument_placeholder_type(db: &dyn TypeDatabase) -> Type
             type_id: TypeId::ANY,
             optional: true,
             rest: false,
+            arity_only_optional: false,
         }],
         return_type: TypeId::ANY,
         this_type: None,

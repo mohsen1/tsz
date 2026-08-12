@@ -20,6 +20,7 @@ fn create_function_type(
             type_id,
             rest: false,
             optional: false,
+            arity_only_optional: false,
         })
         .collect();
 
@@ -568,6 +569,7 @@ fn test_methods_always_bivariant() {
             type_id: TypeId::STRING,
             rest: false,
             optional: false,
+            arity_only_optional: false,
         }],
         return_type: TypeId::VOID,
         this_type: None,
@@ -583,6 +585,7 @@ fn test_methods_always_bivariant() {
             type_id: TypeId::ANY,
             rest: false,
             optional: false,
+            arity_only_optional: false,
         }],
         return_type: TypeId::VOID,
         this_type: None,

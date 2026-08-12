@@ -548,6 +548,7 @@ pub(crate) const fn class_construct_param(
         type_id,
         optional,
         rest,
+        arity_only_optional: false,
     }
 }
 

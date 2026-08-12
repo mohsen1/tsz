@@ -175,6 +175,7 @@ pub(crate) const fn jsdoc_param_info(
         type_id,
         optional,
         rest,
+        arity_only_optional: false,
     }
 }
 

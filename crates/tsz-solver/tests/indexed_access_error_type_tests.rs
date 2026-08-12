@@ -62,6 +62,7 @@ fn infer_generic_index_access_param_from_index_access_arg_resolves_to_error_type
             type_id: index_access_param,
             optional: false,
             rest: false,
+            arity_only_optional: false,
         }],
         this_type: None,
         return_type: index_access_param,

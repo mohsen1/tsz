@@ -15,6 +15,7 @@ fn rewrite_function_error_slots_to_any_rewrites_error_param_and_return() {
             type_id: TypeId::ERROR,
             optional: false,
             rest: false,
+            arity_only_optional: false,
         }],
         this_type: None,
         return_type: TypeId::ERROR,
@@ -69,6 +70,7 @@ fn replace_function_return_type_updates_return_without_touching_params() {
             type_id: TypeId::STRING,
             optional: false,
             rest: false,
+            arity_only_optional: false,
         }],
         this_type: None,
         return_type: TypeId::NUMBER,
@@ -118,6 +120,7 @@ fn unpack_tuple_rest_parameter_flattens_nested_tuple_rest_elements() {
         ]),
         optional: false,
         rest: true,
+        arity_only_optional: false,
     };
 
     let unpacked = unpack_tuple_rest_parameter(&db, &source_rest);
@@ -151,6 +154,7 @@ fn unpack_tuple_rest_parameter_handles_empty_or_single_tuple_union() {
         type_id: union_ty,
         optional: false,
         rest: true,
+        arity_only_optional: false,
     };
 
     let unpacked = unpack_tuple_rest_parameter(&db, &rest_param);
@@ -199,6 +203,7 @@ fn unpack_tuple_rest_parameter_handles_prefix_aligned_two_member_union() {
         type_id: union_ty,
         optional: false,
         rest: true,
+        arity_only_optional: false,
     };
 
     let unpacked = unpack_tuple_rest_parameter(&db, &rest_param);
@@ -234,6 +239,7 @@ fn unpack_tuple_rest_parameter_keeps_disagreeing_union_as_rest() {
         type_id: union_ty,
         optional: false,
         rest: true,
+        arity_only_optional: false,
     };
 
     let unpacked = unpack_tuple_rest_parameter(&db, &rest_param);

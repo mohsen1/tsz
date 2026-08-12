@@ -1093,27 +1093,21 @@ impl<'a> CheckerState<'a> {
                         );
                     }
                 }
-                // In JS files, params without type annotations are implicitly optional
-                // unless a JSDoc @param tag or @type function annotation exists.
-                let js_implicit_optional = self.is_js_file()
-                    && !has_jsdoc_type_function
-                    && param.type_annotation.is_none()
-                    && !{
-                        let jsdoc_for_opt = func_jsdoc
-                            .as_ref()
-                            .cloned()
-                            .or_else(|| self.find_jsdoc_for_function(idx));
-                        jsdoc_for_opt.is_some_and(|jsdoc| {
-                            let pname = self.effective_jsdoc_param_name(
-                                param.name,
-                                &jsdoc_param_names,
-                                contextual_index,
-                            );
-                            Self::jsdoc_has_required_param_tag(&jsdoc, &pname)
-                        })
-                    };
-                let optional =
-                    param.question_token || param.initializer.is_some() || js_implicit_optional;
+                // In JS files, a param without a type annotation is implicitly
+                // optional for call arity unless a JSDoc `@param`/`@type`
+                // annotation pins it. `optional` carries that arity signal (so
+                // `is_required`/subtyping are unchanged); `arity_only_optional`
+                // marks the arity-only case so the printer and `.d.ts` emitter
+                // render the parameter as required, matching `tsc`.
+                let (optional, arity_only_optional) = self.js_param_optionality(
+                    idx,
+                    param.name,
+                    param.type_annotation.is_some() || has_jsdoc_type_function,
+                    param.question_token || param.initializer.is_some(),
+                    &jsdoc_param_names,
+                    contextual_index,
+                    func_jsdoc.as_deref(),
+                );
                 let rest = param.dot_dot_dot_token
                     || (self.is_js_file()
                         && func_jsdoc.as_ref().is_some_and(|jsdoc| {
@@ -1165,9 +1159,10 @@ impl<'a> CheckerState<'a> {
                         self.ctx.types,
                         type_id,
                     );
-                params.push(signature_building_boundary::param_info(
-                    name, type_id, optional, rest,
-                ));
+                let mut built_param =
+                    signature_building_boundary::param_info(name, type_id, optional, rest);
+                built_param.arity_only_optional = arity_only_optional;
+                params.push(built_param);
                 let cached_type = if needs_undefined && self.ctx.strict_null_checks() {
                     signature_building_boundary::optional_param_type_with_undefined(
                         self.ctx.types,
