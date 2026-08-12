@@ -2909,3 +2909,7 @@ path = "tests/abstract_method_overload_ts2391_suppression_tests.rs"
 [[test]]
 name = "ts_import_type_namespace_meaning_gate_tests"
 path = "tests/ts_import_type_namespace_meaning_gate_tests.rs"
+
+[[test]]
+name = "ts2694_jsdoc_import_export_equals_display_tests"
+path = "tests/ts2694_jsdoc_import_export_equals_display_tests.rs"

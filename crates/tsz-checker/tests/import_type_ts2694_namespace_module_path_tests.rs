@@ -205,13 +205,11 @@ fn jsdoc_index_resolution_import_type_renders_resolved_path() {
 /// apply the same resolved-path rule as the `@type`/`@typedef` and TS-syntax
 /// paths above.
 ///
-/// This site unconditionally appends a `.export=` qualifier regardless of
-/// whether the target module actually has an `export =`/`module.exports =`
-/// — oracle-verified (`typescript@7.0.2`) still wrong for a plain
-/// named-export CommonJS module like this fixture (`tsc` omits `.export=`
-/// there). That is a separate, pre-existing emission bug this test does not
-/// fix; it pins today's `.export=`-suffixed text so the resolved-path half
-/// (`"sub/index"`, not `"sub"`) has a regression guard.
+/// This site now appends the `.export=` qualifier only when the target module
+/// actually has an `export =`/`module.exports =` (#17208 JSDoc follow-up). This
+/// fixture is a plain named-export CommonJS module (`exports.FOO`, no export
+/// assignment), so `tsc` (`typescript@7.0.2`) names it by the resolved path
+/// with no suffix.
 #[test]
 fn jsdoc_typeof_import_walk_param_tag_renders_resolved_path() {
     let msgs = ts2694_messages_js(
@@ -226,7 +224,7 @@ fn jsdoc_typeof_import_walk_param_tag_renders_resolved_path() {
     );
     assert_eq!(
         msgs,
-        vec!["Namespace '\"sub/index\".export=' has no exported member 'Missing'.".to_string()],
+        vec!["Namespace '\"sub/index\"' has no exported member 'Missing'.".to_string()],
     );
 }
 
