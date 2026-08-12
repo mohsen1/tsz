@@ -16,20 +16,30 @@ impl<'a> CheckerState<'a> {
     /// member is visible to later reads with no `TS2339`), but contributes no
     /// concrete type. When every same-file assignment to the member has one
     /// of these implicit-any shapes, `tsc` reports `TS7008` once, at the
-    /// first such assignment — unconditionally in checked JS, independent of
-    /// `noImplicitAny`. A CommonJS export member
-    /// (`module.exports.x`/`exports.x`) is excluded: that family already has
-    /// its own dedicated implicit-any diagnostic
+    /// first such assignment — but only when BOTH `noImplicitAny` and
+    /// `strictNullChecks` are on. With `strictNullChecks` off, `void
+    /// 0`/`undefined`/`null` are not distinct types that collapse the member
+    /// to implicit `any`, so there is nothing for `TS7008` to report (a
+    /// tsconfig probe holding `strict: false` and flipping one flag at a
+    /// time is required here: `--noImplicitAny` alone on the CLI leaves
+    /// `strictNullChecks` on via the TS7 `strict` default, which is why an
+    /// initial CLI-only probe read as flag-independent). A CommonJS export
+    /// member (`module.exports.x`/`exports.x`) is excluded: that family
+    /// already has its own dedicated implicit-any diagnostic
     /// (`maybe_report_commonjs_export_implicit_any_assignment`, `TS7005`,
-    /// gated on `noImplicitAny`), and reporting here too would duplicate it
-    /// under a different code.
+    /// gated on `noImplicitAny` alone), and reporting here too would
+    /// duplicate it under a different code.
     pub(crate) fn maybe_report_js_expando_implicit_any_assignment(
         &mut self,
         target_idx: NodeIndex,
         right_idx: NodeIndex,
         expr_idx: NodeIndex,
     ) {
-        if !self.is_js_file() || !self.ctx.compiler_options.check_js {
+        if !self.is_js_file()
+            || !self.ctx.compiler_options.check_js
+            || !self.ctx.no_implicit_any()
+            || !self.ctx.strict_null_checks()
+        {
             return;
         }
 

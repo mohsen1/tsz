@@ -1453,40 +1453,55 @@ c.p + c.q;
 
 #[test]
 fn test_js_void_zero_expando_reports_named_receiver_type() {
-    let diagnostics = compile_and_get_diagnostics_named(
-        "a.js",
-        r#"
+    // TypeScript 7.0.2 (pinned oracle, verified via tsconfig with `strict:
+    // false` and one flag flipped at a time — `--noImplicitAny` alone on the
+    // CLI leaves `strictNullChecks` on via the `strict` default, which makes
+    // a CLI-only probe look flag-independent when it is not): `o.y = void 0`
+    // DECLARES the expando member, so no TS2339 fires in ANY of these four
+    // configurations. The member's implicit `any` is reported as TS7008 once
+    // at the write ONLY when both `noImplicitAny` and `strictNullChecks` are
+    // on — with `strictNullChecks` off, `void 0` is not a distinct type that
+    // collapses the member to implicit `any`, so there is nothing for TS7008
+    // to report. The old expectation (2x TS2339 on 'typeof o') encoded
+    // pre-TS7 behavior that rejected the write outright.
+    for (no_implicit_any, strict_null_checks, expect_ts7008) in [
+        (false, false, false),
+        (false, true, false),
+        (true, false, false),
+        (true, true, true),
+    ] {
+        let diagnostics = compile_and_get_diagnostics_named(
+            "a.js",
+            r#"
 var o = {};
 o.y = void 0;
 o.y;
 "#,
-        CheckerOptions {
-            allow_js: true,
-            check_js: true,
-            target: ScriptTarget::ES2015,
-            no_implicit_any: true,
-            ..CheckerOptions::default()
-        },
-    );
+            CheckerOptions {
+                allow_js: true,
+                check_js: true,
+                target: ScriptTarget::ES2015,
+                strict: false,
+                no_implicit_any,
+                strict_null_checks,
+                ..CheckerOptions::default()
+            },
+        );
 
-    // TypeScript 7.0.2 (pinned oracle): `o.y = void 0` DECLARES the expando
-    // member, so no TS2339 fires anywhere; under noImplicitAny the member's
-    // implicit `any` is reported once as TS7008 at the write (also fires
-    // without `noImplicitAny` — oracle-verified separately). The old
-    // expectation (2x TS2339 on 'typeof o') encoded pre-TS7 behavior that
-    // rejected the write outright.
-    let ts7008: Vec<_> = diagnostics
-        .iter()
-        .filter(|(code, _)| *code == 7008)
-        .collect();
-    let ts2339: Vec<_> = diagnostics
-        .iter()
-        .filter(|(code, _)| *code == 2339)
-        .collect();
-    assert!(
-        ts7008.len() == 1 && ts2339.is_empty(),
-        "Expected exactly one TS7008 (implicit-any expando member) and no TS2339 per tsc 7.0.2. Actual: {diagnostics:#?}"
-    );
+        let ts7008: Vec<_> = diagnostics
+            .iter()
+            .filter(|(code, _)| *code == 7008)
+            .collect();
+        let ts2339: Vec<_> = diagnostics
+            .iter()
+            .filter(|(code, _)| *code == 2339)
+            .collect();
+        let ts7008_count = if expect_ts7008 { 1 } else { 0 };
+        assert!(
+            ts7008.len() == ts7008_count && ts2339.is_empty(),
+            "noImplicitAny={no_implicit_any} strictNullChecks={strict_null_checks}: expected {ts7008_count} TS7008 and no TS2339 per tsc 7.0.2. Actual: {diagnostics:#?}"
+        );
+    }
 }
 
 #[test]
