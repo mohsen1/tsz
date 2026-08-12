@@ -422,6 +422,7 @@ pub(super) fn apply_cli_overrides_with_config_options(
     }
     if args.preserve_const_enums {
         options.printer.preserve_const_enums = true;
+        options.checker.preserve_const_enums = true;
     }
     // `isolatedModules`/`verbatimModuleSyntax -> preserveConstEnums` (and
     // `verbatimModuleSyntax -> isolatedModules`) are owned by the shared
@@ -1612,6 +1613,33 @@ mod tests {
         assert!(options.checker.strict_null_checks);
         assert!(options.checker.no_implicit_any);
         assert!(options.checker.strict_function_types);
+    }
+
+    #[test]
+    fn apply_cli_overrides_preserve_const_enums_sets_checker_and_printer() {
+        // `--preserveConstEnums` must reach the checker's copy of the option,
+        // not just the printer's: the checker consults it to decide whether an
+        // unreachable `const enum` still "affects control flow" for TS7027
+        // (an erased const enum does not; a preserved one does), matching
+        // tsc's `preserveConstEnums`-gated `ModuleInstanceState` check. Only
+        // wiring `options.printer.preserve_const_enums` left the checker
+        // permanently reading the default `false`, silently erasing this
+        // reachability distinction for any CLI invocation (the tsconfig.json
+        // path already set both fields via `resolved_options.rs`).
+        let mut options = ResolvedCompilerOptions::default();
+        let args = CliArgs::try_parse_from(["tsz", "--preserveConstEnums"]).unwrap();
+        apply_cli_overrides(&mut options, &args).unwrap();
+        assert!(options.checker.preserve_const_enums);
+        assert!(options.printer.preserve_const_enums);
+    }
+
+    #[test]
+    fn apply_cli_overrides_no_preserve_const_enums_leaves_checker_default() {
+        let mut options = ResolvedCompilerOptions::default();
+        let args = CliArgs::try_parse_from(["tsz"]).unwrap();
+        apply_cli_overrides(&mut options, &args).unwrap();
+        assert!(!options.checker.preserve_const_enums);
+        assert!(!options.printer.preserve_const_enums);
     }
 
     #[test]
