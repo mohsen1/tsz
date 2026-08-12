@@ -737,16 +737,21 @@ fn cjs_type_only_import_with_attributes_reports_ts2856_not_ts2857() {
 /// Broad parity matrix for import-attribute grammar diagnostics.
 ///
 /// Each row was verified against `tsc` 6.0.2 (`--strict --module <m>
-/// --moduleResolution nodenext`). The expectation is the exact set of
-/// import-attribute grammar codes `tsc` emits for that combination of module
-/// option, attribute keyword (`with`/`assert`), type-only-ness and emit kind
-/// (`.mts` = ESM, `.cts` = CommonJS).
+/// --moduleResolution nodenext`); the `node16`/`node18` `assert` rows were
+/// re-verified against the repo's currently pinned `typescript@7.0.2` for
+/// #17203 and updated where the two versions disagree (7.0 hardened `assert`
+/// into an unconditional, fully-suppressing TS2880 at every module kind —
+/// 6.0.2's node18 carve-out no longer holds). The expectation is the exact
+/// set of import-attribute grammar codes `tsc` emits for that combination of
+/// module option, attribute keyword (`with`/`assert`), type-only-ness and
+/// emit kind (`.mts` = ESM, `.cts` = CommonJS).
 ///
 /// The ordering that this exercises (and that a prior implementation got
 /// wrong): module-support (TS2823/TS2821) → assert deprecation (TS2880) →
 /// CommonJS-incompatibility (TS2856/TS2836) → type-only (TS2857/TS2822), with
-/// each step suppressing later ones except the non-fatal `assert` warning under
-/// `node18`.
+/// each step suppressing later ones. `assert` is a hard, fully-suppressing
+/// error (TS2880 alone) at every module kind under 7.0.2 — there is no
+/// longer a "non-fatal `assert` warning under `node18`" carve-out.
 #[test]
 fn import_attribute_grammar_matrix_matches_tsc() {
     // Import-attribute grammar codes we assert on; all other diagnostics
@@ -759,17 +764,31 @@ fn import_attribute_grammar_matrix_matches_tsc() {
         // node16: module does not support import attributes at all.
         (ModuleKind::Node16, "with", false, true, &[2823]),
         (ModuleKind::Node16, "with", true, false, &[2823]),
-        (ModuleKind::Node16, "assert", false, true, &[2821]),
-        (ModuleKind::Node16, "assert", true, false, &[2821]),
-        // node18: supported; `assert` is only a (non-fatal) deprecation warning.
+        // Oracle-confirmed (typescript@7.0.2, re-verified for #17203): the
+        // removed `assert` keyword (TS2880) takes precedence over the
+        // module-support gate here too, exactly as it does for `node18`/
+        // `node20`/`nodenext` below — Node16 does not carve out an exception.
+        // This previously pinned [2821], which tsc never emits for `assert`
+        // regardless of module kind; that was a stale expectation, not a
+        // regression.
+        (ModuleKind::Node16, "assert", false, true, &[2880]),
+        (ModuleKind::Node16, "assert", true, false, &[2880]),
+        // node18: supported for `with`. Oracle-confirmed (typescript@7.0.2,
+        // re-verified for #17203): `assert` is TS2880 ALONE at every
+        // type-only/esm combination here too — it is a hard error, not a
+        // non-fatal warning, and it suppresses the CommonJS (TS2836) and
+        // type-only (TS2822) checks below just like it does for node20/
+        // nodenext. The three rows below previously paired TS2880 with a
+        // second code that tsc never emits alongside it; those were stale
+        // expectations, not regressions.
         (ModuleKind::Node18, "with", false, true, &[]),
         (ModuleKind::Node18, "with", false, false, &[2856]),
         (ModuleKind::Node18, "with", true, true, &[2857]),
         (ModuleKind::Node18, "with", true, false, &[2856]),
         (ModuleKind::Node18, "assert", false, true, &[2880]),
-        (ModuleKind::Node18, "assert", false, false, &[2836, 2880]),
-        (ModuleKind::Node18, "assert", true, true, &[2822, 2880]),
-        (ModuleKind::Node18, "assert", true, false, &[2836, 2880]),
+        (ModuleKind::Node18, "assert", false, false, &[2880]),
+        (ModuleKind::Node18, "assert", true, true, &[2880]),
+        (ModuleKind::Node18, "assert", true, false, &[2880]),
         // node20 / nodenext: `assert` is a hard error (TS2880) that suppresses
         // the CommonJS and type-only checks.
         (ModuleKind::Node20, "with", false, true, &[]),

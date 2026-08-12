@@ -828,9 +828,14 @@ const obj = {
 
 // === Computed property (element access) tests ===
 
-/// this[symbolKey] = value in JS class constructor → no false TS2322
+/// this[symbolKey] = value in a JS class constructor still reports TS7053:
+/// a computed key (even a `const`-bound literal) never declares a property
+/// on the class the way a plain `this.foo = ...` assignment does. Oracle-
+/// confirmed (typescript@7.0.2, re-verified for #17203): tsc reports TS7053
+/// at all three access sites. This test previously pinned zero diagnostics,
+/// which was a stale expectation, not a regression.
 #[test]
-fn test_js_constructor_element_access_symbol_key_no_false_error() {
+fn test_js_constructor_element_access_symbol_key_reports_ts7053() {
     let source = r#"
 const _sym = Symbol("_sym");
 class MyClass {
@@ -850,14 +855,22 @@ class MyClass {
         .collect();
     assert_eq!(
         errors.len(),
-        0,
-        "Expected no TS2322/TS7053 for Symbol-keyed constructor property, got: {errors:?}"
+        3,
+        "Expected TS7053 at all three Symbol-keyed access sites, got: {errors:?}"
+    );
+    assert!(
+        errors.iter().all(|(code, _)| *code == 7053),
+        "expected only TS7053, got: {errors:?}"
     );
 }
 
-/// this[stringKey] = value in JS class constructor → no false TS7053
+/// this[stringKey] = value in a JS class constructor still reports TS7053,
+/// for the same reason as the Symbol-keyed case above. Oracle-confirmed
+/// (typescript@7.0.2, re-verified for #17203): tsc reports TS7053 at all
+/// three access sites. This test previously pinned zero diagnostics, which
+/// was a stale expectation, not a regression.
 #[test]
-fn test_js_constructor_element_access_string_key_no_false_error() {
+fn test_js_constructor_element_access_string_key_reports_ts7053() {
     let source = r#"
 const _key = "my-key";
 class MyClass {
@@ -877,8 +890,12 @@ class MyClass {
         .collect();
     assert_eq!(
         errors.len(),
-        0,
-        "Expected no TS7053/TS2322 for string-keyed constructor property, got: {errors:?}"
+        3,
+        "Expected TS7053 at all three string-keyed access sites, got: {errors:?}"
+    );
+    assert!(
+        errors.iter().all(|(code, _)| *code == 7053),
+        "expected only TS7053, got: {errors:?}"
     );
 }
 
@@ -1125,9 +1142,13 @@ this["a" + "b"] = 0;
     );
 }
 
-/// self[symbolKey] = value (this alias) in JS class constructor → no false error
+/// self[symbolKey] = value (this alias) in a JS class constructor still
+/// reports TS7053, same reason and same oracle-confirmed correction as the
+/// direct `this[...]` cases above (#17203): a computed key never declares a
+/// property, alias or not. This test previously pinned zero diagnostics,
+/// which was a stale expectation, not a regression.
 #[test]
-fn test_js_constructor_element_access_self_alias_no_false_error() {
+fn test_js_constructor_element_access_self_alias_reports_ts7053() {
     let source = r#"
 const _sym = Symbol("_sym");
 class MyClass {
@@ -1149,8 +1170,12 @@ class MyClass {
         .collect();
     assert_eq!(
         errors.len(),
-        0,
-        "Expected no TS2322/TS7053 for self-alias element access, got: {errors:?}"
+        3,
+        "Expected TS7053 at all three self-alias access sites, got: {errors:?}"
+    );
+    assert!(
+        errors.iter().all(|(code, _)| *code == 7053),
+        "expected only TS7053, got: {errors:?}"
     );
 }
 

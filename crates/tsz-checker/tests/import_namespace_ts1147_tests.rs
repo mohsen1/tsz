@@ -167,20 +167,23 @@ fn import_inside_ambient_module_still_reports_ts2307() {
 
 #[test]
 fn import_nested_in_block_within_namespace_reports_ts1232_not_ts1147() {
-    // Oracle-confirmed: further nested in a block inside the namespace, tsc
-    // reports TS1232 alone — the namespace-specific TS1147 gate correctly
-    // defers to it via `!in_wrong_context` (no TS1147 below). The residual
-    // TS2307 is a distinct, pre-existing gap (tsz does not yet short-circuit
-    // module resolution after a TS1232 placement error — that suppression is
-    // #16409's territory, out of scope here) and is pinned rather than hidden.
+    // Oracle-confirmed (typescript@7.0.2, re-verified for #17203): further
+    // nested in a block inside the namespace, tsc reports TS1232 ALONE — the
+    // namespace-specific TS1147 gate correctly defers to it via
+    // `!in_wrong_context` (no TS1147 below), and module resolution is also
+    // suppressed after the TS1232 placement error, so no TS2307 either. The
+    // residual-TS2307 gap this test used to pin has since been closed
+    // elsewhere (`position_invalid_import_resolves_specifier` in
+    // `declaration_check_body.rs`); this was a stale expectation, not a
+    // regression — tsz now matches tsc exactly.
     assert_codes(
         r#"namespace N {
   if (true) {
     import { a } from "nonexistent-module";
   }
 }"#,
-        &[1232, 2307],
-        "a block nested inside the namespace is not a direct module-element context; TS1147 must not also fire",
+        &[1232],
+        "a block nested inside the namespace is not a direct module-element context; TS1147 must not also fire, and TS2307 must not fire either once TS1232 has already flagged the placement",
     );
 }
 

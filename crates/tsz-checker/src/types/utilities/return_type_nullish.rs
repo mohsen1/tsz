@@ -139,4 +139,160 @@ impl CheckerState<'_> {
             expr_idx,
         )
     }
+
+    /// Whether every value-returning path in `body_idx` is a bare `null`
+    /// keyword, the global `undefined` identifier, or an empty `return;`
+    /// (implicit `undefined`) — the same widening-source leaves
+    /// [`Self::return_contribution_nullish_leaves_are_widening`] recognizes,
+    /// checked syntactically instead of through `node_types` so this is safe
+    /// to call from the pre-body-check return-type-inference seam (#17203).
+    ///
+    /// Distinguishes tsc's noImplicitAny return-type check: a body whose
+    /// inferred return type widens to `any` purely because every return is a
+    /// bare nullish contribution under non-strict null checks (`function f()
+    /// { return null; }`) still reports TS7010 — unlike a body that already
+    /// returns an `any`-typed operand (`return x` where `x: any`), which
+    /// tsc leaves silent because no widening occurred.
+    pub(crate) fn all_value_returns_are_nullish_widening_sources(
+        &mut self,
+        body_idx: NodeIndex,
+    ) -> bool {
+        if body_idx.is_none() {
+            return false;
+        }
+        let mut saw_return = false;
+        let mut all_nullish = true;
+        self.collect_nullish_only_returns(body_idx, &mut saw_return, &mut all_nullish);
+        saw_return && all_nullish
+    }
+
+    fn collect_nullish_only_returns(
+        &mut self,
+        stmt_idx: NodeIndex,
+        saw_return: &mut bool,
+        all_nullish: &mut bool,
+    ) {
+        let Some(node) = self.ctx.arena.get(stmt_idx) else {
+            return;
+        };
+
+        match node.kind {
+            syntax_kind_ext::RETURN_STATEMENT => {
+                if let Some(return_data) = self.ctx.arena.get_return_statement(node) {
+                    *saw_return = true;
+                    if return_data.expression.is_some()
+                        && !self.is_bare_nullish_return_expression(return_data.expression)
+                    {
+                        *all_nullish = false;
+                    }
+                }
+            }
+            syntax_kind_ext::BLOCK => {
+                if let Some(block) = self.ctx.arena.get_block(node) {
+                    for &stmt in &block.statements.nodes {
+                        self.collect_nullish_only_returns(stmt, saw_return, all_nullish);
+                    }
+                }
+            }
+            syntax_kind_ext::IF_STATEMENT => {
+                if let Some(if_data) = self.ctx.arena.get_if_statement(node) {
+                    self.collect_nullish_only_returns(
+                        if_data.then_statement,
+                        saw_return,
+                        all_nullish,
+                    );
+                    if if_data.else_statement.is_some() {
+                        self.collect_nullish_only_returns(
+                            if_data.else_statement,
+                            saw_return,
+                            all_nullish,
+                        );
+                    }
+                }
+            }
+            syntax_kind_ext::SWITCH_STATEMENT => {
+                if let Some(switch_data) = self.ctx.arena.get_switch(node)
+                    && let Some(case_block_node) = self.ctx.arena.get(switch_data.case_block)
+                    && let Some(case_block) = self.ctx.arena.get_block(case_block_node)
+                {
+                    for &clause_idx in &case_block.statements.nodes {
+                        if let Some(clause_node) = self.ctx.arena.get(clause_idx)
+                            && let Some(clause) = self.ctx.arena.get_case_clause(clause_node)
+                        {
+                            for &stmt in &clause.statements.nodes {
+                                self.collect_nullish_only_returns(stmt, saw_return, all_nullish);
+                            }
+                        }
+                    }
+                }
+            }
+            syntax_kind_ext::TRY_STATEMENT => {
+                if let Some(try_data) = self.ctx.arena.get_try(node) {
+                    self.collect_nullish_only_returns(try_data.try_block, saw_return, all_nullish);
+                    if try_data.catch_clause.is_some() {
+                        self.collect_nullish_only_returns(
+                            try_data.catch_clause,
+                            saw_return,
+                            all_nullish,
+                        );
+                    }
+                    if try_data.finally_block.is_some() {
+                        self.collect_nullish_only_returns(
+                            try_data.finally_block,
+                            saw_return,
+                            all_nullish,
+                        );
+                    }
+                }
+            }
+            syntax_kind_ext::CATCH_CLAUSE => {
+                if let Some(catch_data) = self.ctx.arena.get_catch_clause(node) {
+                    self.collect_nullish_only_returns(catch_data.block, saw_return, all_nullish);
+                }
+            }
+            syntax_kind_ext::WHILE_STATEMENT
+            | syntax_kind_ext::DO_STATEMENT
+            | syntax_kind_ext::FOR_STATEMENT => {
+                if let Some(loop_data) = self.ctx.arena.get_loop(node) {
+                    self.collect_nullish_only_returns(loop_data.statement, saw_return, all_nullish);
+                }
+            }
+            syntax_kind_ext::FOR_IN_STATEMENT | syntax_kind_ext::FOR_OF_STATEMENT => {
+                if let Some(for_in_of_data) = self.ctx.arena.get_for_in_of(node) {
+                    self.collect_nullish_only_returns(
+                        for_in_of_data.statement,
+                        saw_return,
+                        all_nullish,
+                    );
+                }
+            }
+            syntax_kind_ext::LABELED_STATEMENT => {
+                if let Some(labeled_data) = self.ctx.arena.get_labeled_statement(node) {
+                    self.collect_nullish_only_returns(
+                        labeled_data.statement,
+                        saw_return,
+                        all_nullish,
+                    );
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn is_bare_nullish_return_expression(&mut self, expr_idx: NodeIndex) -> bool {
+        let expr_idx = self.unwrap_parenthesized_expression(expr_idx);
+        let Some(node) = self.ctx.arena.get(expr_idx) else {
+            return false;
+        };
+        if node.kind == SyntaxKind::NullKeyword as u16
+            || node.kind == SyntaxKind::UndefinedKeyword as u16
+        {
+            return true;
+        }
+        crate::flow_domain::control_flow::narrowing_helpers::is_global_undefined_identifier(
+            self.ctx.arena,
+            self.ctx.binder,
+            expr_idx,
+        )
+    }
 }

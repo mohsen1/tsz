@@ -371,9 +371,16 @@ impl<'a> CheckerState<'a> {
                 }
                 // When the function has a body, the return type was inferred from it.
                 // An inferred `any` (e.g., `return x` where `x: any`) is a valid inference
-                // result, not "implicit any". TSC only emits TS7010 for bodyless
-                // declarations (interfaces, abstract methods) where `any` is the default.
-                if return_type == TypeId::ANY {
+                // result, not "implicit any" — UNLESS every return path is a bare
+                // `null`/`undefined` contribution that only became `any` because
+                // `strictNullChecks` is off widened it. tsc's noImplicitAny check DOES
+                // flag that widening (`function f() { return null; }` under
+                // `strictNullChecks: false` reports TS7010, oracle-verified against
+                // typescript@7.0.2); it stays silent only when the `any` already existed
+                // before inference, as with an explicit `any`-typed operand (#17203).
+                if return_type == TypeId::ANY
+                    && !self.all_value_returns_are_nullish_widening_sources(body_idx)
+                {
                     return;
                 }
             }
