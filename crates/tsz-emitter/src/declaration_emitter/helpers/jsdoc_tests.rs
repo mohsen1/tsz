@@ -690,3 +690,17 @@ fn type_tag_is_transparent_to_property_list() {
         "type Wide = {\n    a: string;\n    b: string;\n};\n"
     );
 }
+
+#[test]
+fn inline_object_typedef_annotation_wins_over_property_tags() {
+    // An inline `@typedef {{...}} M` annotation wins outright: `@property`
+    // tags are ignored rather than merged, and the alias must not be
+    // dropped just because the property path declines the non-Object base.
+    let decl = DeclarationEmitter::parse_jsdoc_type_alias_decl(
+        "@typedef {{a: number}} Mix\n@property {string} b",
+    )
+    .expect("expected inline typedef alias");
+    let rendered = DeclarationEmitter::render_jsdoc_type_alias_decl(&decl, false)
+        .expect("expected rendered type alias");
+    assert_eq!(rendered, "type Mix = {\n    a: number;\n};\n");
+}
