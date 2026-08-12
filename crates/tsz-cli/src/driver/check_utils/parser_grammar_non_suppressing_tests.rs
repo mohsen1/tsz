@@ -91,6 +91,54 @@ fn every_parser_grammar_code_is_non_suppressing() {
     );
 }
 
+/// The disjointness invariant: no `is_parser_grammar_code` member may also be
+/// an `is_real_syntax_error` or `is_structural_parse_error`, checked over the
+/// whole `u32` range rather than a hand-kept list.
+///
+/// A parser grammar code fires on a *well-formed* AST (tsc's checker-side
+/// `grammarErrorOnNode`), so it must not drive `has_real_syntax_errors` or the
+/// structural-cascade heuristic — doing so both self-suppresses the code (it
+/// becomes its own `filtered_parse_diagnostics` trigger) and deletes its file's
+/// semantic siblings. This exact overlap has bitten twice by omission: TS1313
+/// (`#16279` round 10) and TS1155 (`#17253`), each speculatively listed as a
+/// structural/real parse error and only caught after it started deleting
+/// TS2588/TS7005/TS1054 in the field. Round 10 and `#17253` each removed the
+/// offending code and added per-code `!is_real_syntax_error`/
+/// `!is_structural_parse_error` assertions; this whole-range guard generalizes
+/// those so a code added to `is_parser_grammar_code` in a future audit cannot
+/// reopen the class by omission, mirroring
+/// [`every_parser_grammar_code_is_non_suppressing`] one function up.
+#[test]
+fn no_parser_grammar_code_is_a_real_or_structural_parse_error() {
+    let mut real_offenders = Vec::new();
+    let mut structural_offenders = Vec::new();
+    for code in 0..20_000_u32 {
+        if is_parser_grammar_code(code) {
+            if is_real_syntax_error(code) {
+                real_offenders.push(code);
+            }
+            if is_structural_parse_error(code) {
+                structural_offenders.push(code);
+            }
+        }
+    }
+    assert!(
+        real_offenders.is_empty(),
+        "these codes are checker-side grammar checks (is_parser_grammar_code) yet \
+         also classified as real syntax errors: {real_offenders:?}. That makes each \
+         its own filtered_parse_diagnostics trigger (self-suppression) and sets \
+         has_real_syntax_errors, deleting the file's semantic siblings — the TS1313 \
+         (#16279 round 10) / TS1155 (#17253) regression shape."
+    );
+    assert!(
+        structural_offenders.is_empty(),
+        "these codes are checker-side grammar checks (is_parser_grammar_code) yet \
+         also classified as structural parse errors: {structural_offenders:?}. A \
+         grammar check runs on a well-formed AST and must not drive the \
+         cascading-suppression heuristic (#17253)."
+    );
+}
+
 /// The oracle-pinned witnesses, asserted individually so a failure names the
 /// code and the source that produced it rather than only a set difference.
 #[test]
