@@ -42,7 +42,11 @@ fn diagnostics_for_js_with_no_implicit_any(
 /// exists.
 #[test]
 fn checked_js_constructor_variable_prototype_methods_share_complete_this_shape() {
-    let diags = diagnostics_for_js(
+    // The `addon` assertion below needs noImplicitAny on: a non-empty
+    // prototype literal closes the prototype (and reports TS2339 for an
+    // undeclared later write) only under noImplicitAny, regardless of
+    // `isJSConstructor` evidence (oracle-verified, #17226 gap 2).
+    let diags = diagnostics_for_js_with_no_implicit_any(
         r#"
 /** @constructor */
 var Multimap = function() {
@@ -81,6 +85,7 @@ mm.set
 mm.get
 mm.addon
 "#,
+        true,
     );
     let instance_member_ts2339: Vec<_> = diags
         .iter()
@@ -157,7 +162,9 @@ a.first = 10
 
 #[test]
 fn checked_js_constructor_variable_prototype_methods_work_in_local_scope() {
-    let diags = diagnostics_for_js(
+    // See the top-level variant's comment: the `addon` assertion needs
+    // noImplicitAny on (#17226 gap 2).
+    let diags = diagnostics_for_js_with_no_implicit_any(
         r#"
 (function container() {
     /** @constructor */
@@ -198,6 +205,7 @@ fn checked_js_constructor_variable_prototype_methods_work_in_local_scope() {
     mm.addon
 });
 "#,
+        true,
     );
     let instance_member_ts2339: Vec<_> = diags
         .iter()
