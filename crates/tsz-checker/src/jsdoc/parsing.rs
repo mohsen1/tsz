@@ -1810,6 +1810,28 @@ mod parse_jsdoc_import_tag_alias_tests {
     }
 
     #[test]
+    fn import_type_member_keeps_full_qualified_path() {
+        assert_eq!(
+            CheckerState::parse_jsdoc_import_type(r#"import("./dep").A.B.C"#),
+            Some(("./dep".to_string(), Some("A.B.C".to_string())))
+        );
+    }
+
+    #[test]
+    fn import_type_member_stops_at_non_member_syntax() {
+        // Generic arguments and array suffixes end the qualified path
+        // without failing the parse.
+        assert_eq!(
+            CheckerState::parse_jsdoc_import_type(r#"import("./dep").Foo<string>"#),
+            Some(("./dep".to_string(), Some("Foo".to_string())))
+        );
+        assert_eq!(
+            CheckerState::parse_jsdoc_import_type(r#"import("./dep").A.B[]"#),
+            Some(("./dep".to_string(), Some("A.B".to_string())))
+        );
+    }
+
+    #[test]
     fn namespace_alias_with_space() {
         let got = parse(r#"* as ns from "./dep""#);
         assert_eq!(

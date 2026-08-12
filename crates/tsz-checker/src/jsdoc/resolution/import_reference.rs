@@ -20,7 +20,7 @@ impl<'a> CheckerState<'a> {
         if let Some(result) = self.resolve_jsdoc_import_type_member_result(type_expr) {
             return match result {
                 Ok(ty) => Some(ty),
-                Err((namespace_name, member_name)) => {
+                Err((namespace_display, member_name)) => {
                     // Neither a type-eligible export nor a JSDoc `@typedef`
                     // named `member_name` exists on the module: tsc reports
                     // TS2694 ("Namespace has no exported member") the same
@@ -39,7 +39,7 @@ impl<'a> CheckerState<'a> {
                     // and anchor at the member-name token themselves (#17176).
                     let message = crate::diagnostics::format_message(
                         crate::diagnostics::diagnostic_messages::NAMESPACE_HAS_NO_EXPORTED_MEMBER,
-                        &[&format!("\"{namespace_name}\""), &member_name],
+                        &[&namespace_display, &member_name],
                     );
                     let anchor = self.ctx.jsdoc_typedef_anchor_pos.get();
                     self.ctx.error(
@@ -72,6 +72,11 @@ impl<'a> CheckerState<'a> {
     /// resulting TS2694, since the source span of `type_expr` is not visible
     /// from here (different JSDoc tags carry the type expression at
     /// different offsets from their comment).
+    ///
+    /// `namespace_display` is the fully formatted namespace for the message —
+    /// the quoted module name (`"m"`), qualified with any declared
+    /// dotted-typedef prefix (`"m".Dotted`) — and `member` is the first
+    /// segment that failed under it; callers substitute both verbatim.
     pub(crate) fn resolve_jsdoc_import_type_member_result(
         &mut self,
         type_expr: &str,
@@ -94,12 +99,15 @@ impl<'a> CheckerState<'a> {
         {
             return Some(Ok(typedef_type));
         }
-        // The head segment drives export/class resolution and the TS2694
-        // "no exported member" message — tsc reports the first unresolved
-        // segment, not the whole qualified path.
-        let member_name: &str = member_name
+        // The head segment drives export/class resolution — tsc resolves a
+        // qualified path progressively, so a non-typedef qualified path
+        // falls back to its head segment for the lookups below. The full
+        // path is kept for the TS2694 report, which qualifies its namespace
+        // display with any declared dotted-typedef prefix.
+        let full_member_path = member_name;
+        let member_name: &str = full_member_path
             .split_once('.')
-            .map_or(member_name.as_str(), |(head, _tail)| head);
+            .map_or(full_member_path.as_str(), |(head, _tail)| head);
         if let Some(sym_id) = self.resolve_jsdoc_import_member_with_mode(
             &module_specifier,
             member_name,
@@ -159,7 +167,32 @@ impl<'a> CheckerState<'a> {
             .then(|| self.resolved_import_type_module_path(&module_specifier, None))
             .flatten()
             .unwrap_or_else(|| self.imported_namespace_display_module_name(&module_specifier));
-        Some(Err((namespace_name, member_name.to_string())))
+        // When a leading portion of a dotted reference names a namespace
+        // synthesized by dotted `@typedef`/`@callback` declarations
+        // (`Dotted.Missing` with a declared `Dotted.Name`), tsc reports the
+        // first segment missing *under* that namespace and qualifies the
+        // namespace display accordingly (oracle-verified:
+        // `Namespace '"m".Dotted' has no exported member 'Missing'`). When no
+        // declared name starts with the reference's head segment, the display
+        // stays unqualified and names the root segment. (#17162)
+        let segments: Vec<&str> = full_member_path.split('.').collect();
+        let mut prefix_len = 0usize;
+        for candidate_len in (1..segments.len()).rev() {
+            if self.import_type_jsdoc_typedef_namespace_prefix_exists(
+                &module_specifier,
+                &segments[..candidate_len].join("."),
+                None,
+            ) {
+                prefix_len = candidate_len;
+                break;
+            }
+        }
+        let namespace_display = if prefix_len == 0 {
+            format!("\"{namespace_name}\"")
+        } else {
+            format!("\"{namespace_name}\".{}", segments[..prefix_len].join("."))
+        };
+        Some(Err((namespace_display, segments[prefix_len].to_string())))
     }
 
     pub(crate) fn resolve_jsdoc_typeof_import_reference_parts(

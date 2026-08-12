@@ -202,6 +202,46 @@ impl<'a> CheckerState<'a> {
         })
     }
 
+    /// Whether the file declares a JSDoc `@typedef`/`@callback` whose dotted
+    /// qualified name starts with `prefix` plus a `.` — i.e. whether `prefix`
+    /// names a namespace synthesized by dotted JSDoc declarations
+    /// (`@typedef {number} Dotted.Name` makes `Dotted` such a namespace).
+    pub(crate) fn source_file_has_jsdoc_typedef_name_prefixed(
+        source_file: &SourceFileData,
+        prefix: &str,
+    ) -> bool {
+        use tsz_common::comments::{get_jsdoc_content, is_jsdoc_comment};
+
+        if prefix.is_empty() || source_file.comments.is_empty() {
+            return false;
+        }
+
+        let text = &source_file.text;
+        if !text.contains("@typedef") && !text.contains("@callback") && !text.contains("@import") {
+            return false;
+        }
+        if !text.contains(prefix) {
+            return false;
+        }
+
+        source_file.comments.iter().any(|comment| {
+            if !is_jsdoc_comment(comment, text) {
+                return false;
+            }
+            let content = get_jsdoc_content(comment, text);
+            if !content.contains(prefix) {
+                return false;
+            }
+            Self::parse_jsdoc_typedefs(&content)
+                .iter()
+                .any(|(typedef_name, _)| {
+                    typedef_name
+                        .strip_prefix(prefix)
+                        .is_some_and(|rest| rest.starts_with('.'))
+                })
+        })
+    }
+
     fn source_file_has_jsdoc_typedef_named_cached(
         &self,
         file_idx: usize,
@@ -830,10 +870,10 @@ impl<'a> CheckerState<'a> {
         if let Some(result) = self.resolve_jsdoc_import_type_member_result(type_expr) {
             let outcome = match result {
                 Ok(ty) => Some(ty),
-                Err((namespace_name, member_name)) => {
+                Err((namespace_display, member_name)) => {
                     let message = crate::diagnostics::format_message(
                         crate::diagnostics::diagnostic_messages::NAMESPACE_HAS_NO_EXPORTED_MEMBER,
-                        &[&format!("\"{namespace_name}\""), &member_name],
+                        &[&namespace_display, &member_name],
                     );
                     let member_offset = type_expr
                         .find(&format!(".{member_name}"))

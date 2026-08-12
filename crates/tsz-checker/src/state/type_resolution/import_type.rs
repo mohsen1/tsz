@@ -350,6 +350,28 @@ impl<'a> CheckerState<'a> {
                         type_id
                     }
                     None => {
+                        // A leading portion of a dotted chain may name a
+                        // namespace synthesized by dotted JSDoc
+                        // `@typedef`/`@callback` declarations; tsc then
+                        // reports the first segment missing *under* that
+                        // namespace (`Namespace '"m".Dotted' has no exported
+                        // member 'Missing'`), not the root segment.
+                        for candidate_len in (1..segments.len()).rev() {
+                            if self.import_type_jsdoc_typedef_namespace_prefix_exists(
+                                module_specifier,
+                                &segments[..candidate_len].join("."),
+                                resolution_mode_override,
+                            ) {
+                                return Some((
+                                    self.import_type_namespace_name_with_segments(
+                                        module_specifier,
+                                        &segments[..candidate_len],
+                                        resolution_mode_override,
+                                    ),
+                                    segments[candidate_len].clone(),
+                                ));
+                            }
+                        }
                         return Some((
                             self.import_type_namespace_name(
                                 module_specifier,
@@ -466,13 +488,15 @@ impl<'a> CheckerState<'a> {
         if segments.is_empty() {
             return None;
         }
-        if segments.len() == 1
-            && let Some(jsdoc_typedef_type) = self.resolve_import_type_jsdoc_typedef(
-                module_name,
-                &segments[0],
-                resolution_mode_override,
-            )
-        {
+        // A dotted JSDoc `@typedef`/`@callback` declares a *qualified* name
+        // (`@typedef {number} Dotted.Name` declares `Dotted.Name`, not a
+        // member `Dotted`), so the typedef lookup uses the whole segment
+        // chain joined back into that qualified name.
+        if let Some(jsdoc_typedef_type) = self.resolve_import_type_jsdoc_typedef(
+            module_name,
+            &segments.join("."),
+            resolution_mode_override,
+        ) {
             return Some(jsdoc_typedef_type);
         }
 
@@ -578,6 +602,36 @@ impl<'a> CheckerState<'a> {
         }
 
         typedef_exists_with_broken_body.then_some(TypeId::ANY)
+    }
+
+    /// Whether `prefix` names a namespace synthesized by dotted JSDoc
+    /// `@typedef`/`@callback` declarations in the target module (any declared
+    /// qualified name starts with `prefix` plus a `.`). Used to qualify the
+    /// TS2694 missing-member diagnostic the way tsc does: for
+    /// `import("./m").Dotted.Missing` with a declared `Dotted.Name`, the
+    /// missing member is `Missing` under namespace `"m".Dotted`, not `Dotted`
+    /// under `"m"`.
+    pub(crate) fn import_type_jsdoc_typedef_namespace_prefix_exists(
+        &mut self,
+        module_name: &str,
+        prefix: &str,
+        resolution_mode_override: Option<crate::context::ResolutionModeOverride>,
+    ) -> bool {
+        let Some(target_file_idx) = self
+            .ctx
+            .resolve_import_target_from_file_with_mode(
+                self.ctx.current_file_idx,
+                module_name,
+                resolution_mode_override,
+            )
+            .or_else(|| self.ctx.resolve_import_target(module_name))
+        else {
+            return false;
+        };
+        let target_arena = self.ctx.get_arena_for_file(target_file_idx as u32).clone();
+        target_arena.source_files.iter().any(|source_file| {
+            Self::source_file_has_jsdoc_typedef_name_prefixed(source_file, prefix)
+        })
     }
 
     /// Resolve the type parameters (with constraints) of a JSDoc typedef in another file.
