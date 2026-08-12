@@ -42,8 +42,17 @@ threads-required = "num-test-threads"
 # DOM lib-heritage publication witnesses intentionally build enough files to
 # exercise the fresh per-file checker pool. Run them alone with the longer
 # timeout used by other heavy checker regression tests.
+#
+# forced_parallel_dom_heritage_matches_sequential_witness (#13862) and
+# forced_parallel_webworker_global_augmentation_matches_sequential_witness
+# (#13245) are the same class of witness (40 generated files, a sequential
+# baseline plus 8 forced-parallel attempts = 9 full-project checks each) added
+# later without joining this override; under the unmodified 60s default
+# signoff timeout they measured 175.72s and 164.11s respectively solo on an
+# idle 4-core box (issue #17203 — the nightly unit lane's lone
+# `parallel_sequential_agreement_tests` timeout, not a compiler hang).
 [[profile.default.overrides]]
-filter = 'test(dom_element_heritage_clean_sequential) | test(forced_parallel_lib_iterator_heritage_matches_sequential)'
+filter = 'test(dom_element_heritage_clean_sequential) | test(forced_parallel_lib_iterator_heritage_matches_sequential) | test(forced_parallel_dom_heritage_matches_sequential_witness) | test(forced_parallel_webworker_global_augmentation_matches_sequential_witness)'
 slow-timeout = { period = "120s", terminate-after = 2 }
 threads-required = "num-test-threads"
 
