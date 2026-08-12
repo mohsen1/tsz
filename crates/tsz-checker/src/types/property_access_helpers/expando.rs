@@ -484,10 +484,19 @@ impl<'a> CheckerState<'a> {
                         read_pos,
                     )
                     .is_some_and(|declares| !declares)
-                // Mirrors the TS2339 site: only a JS constructor's prototype is
-                // closed by its object literal. On a plain function the write
-                // stays an expando declaration.
-                && self.js_prototype_owner_is_js_constructor(prototype_root_expr)
+                // Mirrors the TS2339 site: a JS constructor's prototype is
+                // always closed by its object literal. A plain function's
+                // prototype is also closed once the literal is non-empty, but
+                // only under `noImplicitAny` (oracle-verified: silent
+                // otherwise, unlike the constructor case).
+                && (self.js_prototype_owner_is_js_constructor(prototype_root_expr)
+                    || (self.ctx.no_implicit_any()
+                        && self
+                            .prior_js_prototype_object_literal_is_non_empty(
+                                prototype_root_expr,
+                                read_pos,
+                            )
+                            .unwrap_or(false)))
             {
                 return false;
             }

@@ -430,17 +430,33 @@ impl<'a> CheckerState<'a> {
         }))
     }
 
+    /// Whether the most recent `X.prototype = {…}` assignment prior to
+    /// `read_pos` used a non-empty object literal. Mirrors tsc's
+    /// `getExpandoInitializer` emptiness rule (`NodeArena::is_empty_object_literal`)
+    /// for the prototype-assignment case: an empty literal (`X.prototype = {}`)
+    /// keeps `X.prototype` an open expando host, so a later undeclared member
+    /// merges silently. A non-empty literal (`X.prototype = { m: 1 }`) is a
+    /// closed shape — oracle-verified (`typescript@7.0.2`, tsconfig-sentinel
+    /// method) against a *plain* function owner: a later `X.prototype.n = …`
+    /// for an undeclared `n` is `TS2339` under `noImplicitAny`, silent
+    /// otherwise. Combined with [`Self::js_prototype_owner_is_js_constructor`]
+    /// by the caller — a JS constructor's prototype stays closed unconditionally
+    /// (unchanged, pre-existing behavior); this only widens the closed set to
+    /// plain-function owners under `noImplicitAny`.
+    pub(in crate::types_domain) fn prior_js_prototype_object_literal_is_non_empty(
+        &self,
+        prototype_root_expr: NodeIndex,
+        read_pos: u32,
+    ) -> Option<bool> {
+        let rhs_idx =
+            self.prior_js_prototype_object_literal_assignment_node(prototype_root_expr, read_pos)?;
+        Some(!self.ctx.arena.is_empty_object_literal(rhs_idx))
+    }
+
     /// Whether the owner of a `X.prototype` expression is a JS *constructor*,
     /// in tsc's `isJSConstructor` sense: the function carries a `@constructor`
     /// (`@class`) JSDoc tag, or its symbol has members — which for a JS
     /// function means the body performs `this.x = ...` assignments.
-    ///
-    /// This is what separates a closed prototype from an open one. For a JS
-    /// constructor, `X.prototype = { ... }` establishes the complete prototype
-    /// and a later `X.prototype.y = ...` writing an undeclared property is
-    /// TS2339. For a plain function it is an ordinary prototype-property
-    /// declaration that merges with the literal, and reporting it is a false
-    /// positive.
     pub(in crate::types_domain) fn js_prototype_owner_is_js_constructor(
         &mut self,
         prototype_root_expr: NodeIndex,

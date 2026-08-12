@@ -223,3 +223,64 @@ fn ts2339_prototype_write_is_not_reported_when_the_literal_declares_it() {
         );
     }
 }
+
+// =========================================================================
+// A plain function's prototype closes too, but only under `noImplicitAny`
+// =========================================================================
+//
+// Oracle-verified (`typescript@7.0.2`, tsconfig-sentinel method — see #17226's
+// own scope-correction: bare CLI-arg invocation without a tsconfig behaves
+// like `noImplicitAny` is always on and cannot distinguish these cases).
+// Unlike a JS *constructor* (closed unconditionally, see
+// `ts2339_js_constructor_prototype_write_is_still_reported` above), a plain
+// function's non-empty `X.prototype = {...}` literal only closes the shape
+// when `noImplicitAny` is on; under noImplicitAny false the write stays a
+// silent, ordinary prototype-property declaration (matching
+// `ts2339_plain_function_prototype_write_is_not_reported` above, which pins
+// the noImplicitAny-false side of this same matrix).
+
+fn ts2339_names_no_implicit_any(source: &str) -> Vec<String> {
+    tsz_checker::test_utils::check_source(
+        source,
+        "test.js",
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            no_implicit_any: true,
+            ..CheckerOptions::default()
+        },
+    )
+    .into_iter()
+    .filter(|d| d.code == 2339)
+    .map(|d| d.message_text)
+    .collect()
+}
+
+#[test]
+fn ts2339_plain_function_prototype_write_is_reported_under_no_implicit_any() {
+    for (owner_name, owner_decl, prop) in [
+        ("I", "function I() {}", "j"),
+        ("Widget", "var Widget = function() {};", "extra"),
+    ] {
+        let source = format!(
+            "{owner_decl}\n{owner_name}.prototype = {{ m() {{}} }};\n{owner_name}.prototype.{prop} = 2;\n"
+        );
+        let messages = ts2339_names_no_implicit_any(&source);
+        assert!(
+            messages.iter().any(|m| m.contains(&format!("'{prop}'"))),
+            "owner={owner_name} must report TS2339 for `{prop}` under noImplicitAny; got {messages:?}"
+        );
+    }
+}
+
+#[test]
+fn ts2339_plain_function_prototype_write_stays_silent_with_empty_literal_under_no_implicit_any() {
+    // The emptiness rule, not noImplicitAny alone, gates closing: an empty
+    // `X.prototype = {}` keeps the prototype open even under noImplicitAny.
+    let source = "function I() {}\nI.prototype = {};\nI.prototype.j = 2;\nI.prototype.j;\n";
+    assert!(
+        ts2339_names_no_implicit_any(source).is_empty(),
+        "empty-literal prototype must stay open under noImplicitAny; got {:?}",
+        ts2339_names_no_implicit_any(source)
+    );
+}

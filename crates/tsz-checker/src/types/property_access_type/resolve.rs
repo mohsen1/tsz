@@ -739,11 +739,19 @@ impl<'a> CheckerState<'a> {
                         read_pos,
                     )
                     .is_some_and(|declares| !declares)
-                // Only a JS *constructor*'s prototype is closed by its object
-                // literal. On a plain function, `X.prototype.y = ...` is an
-                // ordinary prototype-property declaration that merges with the
-                // literal, and reporting it is a false positive.
-                && self.js_prototype_owner_is_js_constructor(prototype_access.expression)
+                // A JS constructor's prototype is always closed by its object
+                // literal. A plain function's prototype is also closed once
+                // the literal is non-empty, but only under `noImplicitAny`
+                // (oracle-verified: silent otherwise, unlike the constructor
+                // case).
+                && (self.js_prototype_owner_is_js_constructor(prototype_access.expression)
+                    || (self.ctx.no_implicit_any()
+                        && self
+                            .prior_js_prototype_object_literal_is_non_empty(
+                                prototype_access.expression,
+                                read_pos,
+                            )
+                            .unwrap_or(false)))
             {
                 let type_display = self
                     .prior_js_prototype_object_literal_assignment_display(
