@@ -9,6 +9,7 @@ import {
   REQUIRED_PROJECT_ROWS,
 } from "../../../../scripts/bench/project-rows.mjs";
 import { selectLatestBenchmarkArtifact } from "../../../../scripts/bench/benchmark-artifact-selection.mjs";
+import { didNotFinish } from "../../../../scripts/bench/row-utils.mjs";
 import { subsystemForCode } from "../../../../scripts/ci/diagnostic-subsystems.mjs";
 import { fmt } from "./loc.js";
 import { generatedBenchmarkSource } from "./benchmark_generated_sources.js";
@@ -229,8 +230,11 @@ function compareByTszSpeedup(a, b) {
 }
 
 function hasSuccessfulTimingPair(row) {
+  // `didNotFinish` (which subsumes `winner === "error"`) keeps a killed/errored
+  // row's ceiling/error timing out of any speed ratio — see it for the #16196
+  // rationale and why the exclusion must be structural, not incidental.
   return !row?.status
-    && row?.winner !== "error"
+    && !didNotFinish(row)
     && hasTiming(row?.tsz_ms)
     && hasTiming(row?.tsgo_ms);
 }
@@ -245,7 +249,11 @@ const CHART_MAX_TSZ_TO_TSGO_RATIO = 1.5;
 function isChartEligible(row) {
   const tsz = Number(row?.tsz_ms);
   const tsgo = Number(row?.tsgo_ms);
-  if (!(tsz > 0) || !(tsgo > 0) || row?.winner === "error") return false;
+  if (!(tsz > 0) || !(tsgo > 0)) return false;
+  // A short-ceiling timeout can land under 1.5x tsgo with finite timings and
+  // would otherwise leak a `ceiling / tsgo_time` win into the chart (#16196);
+  // `didNotFinish` (which subsumes `winner === "error"`) drops it structurally.
+  if (didNotFinish(row)) return false;
   return tsz < tsgo * CHART_MAX_TSZ_TO_TSGO_RATIO;
 }
 
@@ -265,6 +273,9 @@ function isFailedBenchmark(row) {
 
 function statusLabel(row) {
   if (row?.status) return String(row.status);
+  // Say "did not finish" rather than deriving a slower/faster label from a
+  // killed/errored row's sentinel timing (#16196).
+  if (didNotFinish(row)) return "did not finish";
   const tsz = Number(row?.tsz_ms);
   const tsgo = Number(row?.tsgo_ms);
   if (tsz > 0 && tsgo > 0 && tsz >= tsgo * CHART_MAX_TSZ_TO_TSGO_RATIO) {
@@ -1471,6 +1482,9 @@ function comparison(row) {
 
 function decorateRow(row, category, options = {}) {
   const maxMs = Math.max(Number(row.tsz_ms) || 0, Number(row.tsgo_ms) || 0);
+  // A killed/errored row never carries a speed ratio (#16196); compute the flag
+  // once and gate the labels themselves, so no downstream view reads a win off it.
+  const rowDidNotFinish = didNotFinish(row);
   const sourceFiles = sourceFilesForBenchmark(row, category);
   const focus = benchmarkFocus(row, category);
   const readme = readProjectReadme(row, category);
@@ -1494,13 +1508,15 @@ function decorateRow(row, category, options = {}) {
     tsgo_time: row.tsgo_ms ? formatDurationMs(row.tsgo_ms, 2) : "",
     tsz_width: maxMs > 0 && row.tsz_ms ? Math.max(1, (row.tsz_ms / maxMs) * 100).toFixed(2) : "1.00",
     tsgo_width: maxMs > 0 && row.tsgo_ms ? Math.max(1, (row.tsgo_ms / maxMs) * 100).toFixed(2) : "1.00",
-    status_label: row.status ? statusLabel(row) : "",
+    status_label: (row.status || rowDidNotFinish) ? statusLabel(row) : "",
     failed: isFailedBenchmark(row),
     is_aggregate: Boolean(options.isAggregate),
   };
   decorated.source_files_json = escapeAttributeJson(decorated.source_files);
   decorated.comparison = comparison(decorated);
-  decorated.speedup_label = formatSpeedupLabel(decorated.tsz_ms, decorated.tsgo_ms);
+  decorated.speedup_label = rowDidNotFinish
+    ? ""
+    : formatSpeedupLabel(decorated.tsz_ms, decorated.tsgo_ms);
   return decorated;
 }
 

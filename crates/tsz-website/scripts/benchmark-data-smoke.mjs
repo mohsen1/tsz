@@ -93,6 +93,52 @@ await fs.writeFile(artifact, `${JSON.stringify({
       },
     },
     {
+      // Regression for #16196: a row killed at a SHORT timeout ceiling whose
+      // ceiling wall time lands under 1.5x tsgo. It deliberately carries a
+      // non-error `winner` and finite timings (the merge step's incidental
+      // `winner: "error"`/null-timing stamp is absent here), so the ONLY thing
+      // that can exclude it is the structural `didNotFinish` guard keyed on
+      // `exit_class: "timeout"`. Without that guard it charts as a fabricated
+      // "tsz 125.0x faster" win for a compiler run that never finished.
+      // `ofetch-project` is a real perf-timed corpus row, so it exercises the
+      // project chart path where #16196's `large-ts-repo` timeout actually lives.
+      name: "ofetch-project",
+      lines: 500,
+      kb: 20,
+      tsz_ms: 40,
+      tsgo_ms: 5000,
+      winner: "tsz",
+      compatibility: {
+        generated_at: "2026-05-16T00:00:00.000Z",
+        source_commit: "local",
+        workflow_name: "Bench",
+        workflow_run_id: "1001",
+        workflow_run_url: "https://github.com/tsz-org/tsz/actions/runs/1001",
+        workflow_run_attempt: "1",
+        run_status: "completed",
+        state: "red",
+        exit_class: "timeout",
+        first_failure_class: "timeout",
+        owner_track: null,
+        phase: "check",
+        last_successful_phase: null,
+        diagnostic_status: "compiler timed out",
+        diagnostic_deltas: [],
+        diagnostic_subsystems: [],
+        known_blockers: [],
+        reduced_repro_path: null,
+        repro: {},
+        exit_codes: { tsc: [0], tsz: [124], tsgo: [0] },
+        files_reached: 5,
+        files_reached_reason: null,
+        peak_memory_bytes: null,
+        peak_memory_bytes_reason: null,
+        fixture_sources: [],
+        emit_status: "not in scope (noEmit project check)",
+        dts_status: "not in scope (noEmit project check)",
+      },
+    },
+    {
       name: "rxjs-project",
       lines: 12000,
       kb: 900,
@@ -508,6 +554,13 @@ try {
   assert.doesNotMatch(charts, /tsgo 3\.0x faster/);
   assert.match(charts, /Not charted: canaries, incomplete, or tsz slower than tsgo/);
   assert.match(charts, /type-challenges solutions project/);
+  // #16196: the ofetch timeout row carries finite timings and a non-error
+  // winner, so only the structural `didNotFinish` guard keeps its ceiling/tsgo
+  // ratio out of the chart. Its fabricated "125.0x faster" must never render...
+  assert.doesNotMatch(charts, /125\.0x faster/);
+  // ...and the row must still be surfaced (as DNF), not silently vanish.
+  assert.match(charts, /Ofetch project/);
+  assert.match(charts, /did not finish/);
 
   const compatibilityDashboard = getProjectCompatibilityDashboard();
   assert.match(compatibilityDashboard, /class="compat-table"/);
