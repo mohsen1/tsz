@@ -141,8 +141,9 @@ impl TypeInterner {
     }
 
     /// Intern a union type, normalizing and deduplicating members.
-    /// This performs full normalization including subtype reduction
-    /// (matching tsc's `UnionReduction.Subtype` behavior).
+    /// Full normalization including construction-time subtype reduction (tsc's
+    /// `UnionReduction.Subtype`); literal-mode under the default-OFF
+    /// `TSZ_UNION_LITERAL_DEFAULT` flag (#15809, see `intern::union_mode`).
     pub fn union(&self, members: Vec<TypeId>) -> TypeId {
         self.union_from_iter(members)
     }
@@ -829,19 +830,25 @@ impl TypeInterner {
         if let Some(collapsed) = self.reduce_and_collapse_nonstrict(&mut flat) {
             return collapsed;
         }
+        // Union construction-mode campaign (#15809): under `TSZ_UNION_LITERAL_DEFAULT`
+        // the constructor is literal-mode and skips its construction-time pairwise
+        // subtype sweep (rationale in `intern::union_mode`). Read once here — the flag
+        // is a process-global constant, so the member-keyed `union_normalize_cache`
+        // never mixes modes; default-OFF keeps the historical reduction byte-identical.
+        let literal_only = crate::intern::union_literal_default_enabled();
         if flat.len() > Self::UNION_NORMALIZE_CACHE_MAX_LEN {
-            return self.normalize_union_uncached(flat);
+            return self.normalize_union_uncached(flat, literal_only);
         }
         if let Some(hit) = self.union_normalize_cache.get(flat.as_slice()) {
             return *hit;
         }
         let key: Box<[TypeId]> = flat.as_slice().into();
-        let result = self.normalize_union_uncached(flat);
+        let result = self.normalize_union_uncached(flat, literal_only);
         self.insert_union_normalize_cache(key, result);
         result
     }
 
-    fn normalize_union_uncached(&self, mut flat: TypeListBuffer) -> TypeId {
+    fn normalize_union_uncached(&self, mut flat: TypeListBuffer, literal_only: bool) -> TypeId {
         // Callable unions feed signature-combining diagnostics, where tsc preserves
         // the declaration/indexed-access order for intersected parameter display.
         // The normal semantic union sort can invert class-backed function members
@@ -911,7 +918,8 @@ impl TypeInterner {
                 Some(TypeData::TypeParameter(_) | TypeData::Lazy(_))
             )
         });
-        if !has_complex && !preserve_callable_order {
+        // `literal_only` (#15809, tsc `UnionReduction.Literal`) skips the pairwise sweep.
+        if !has_complex && !preserve_callable_order && !literal_only {
             self.reduce_union_subtypes(&mut flat);
         }
 
@@ -1102,6 +1110,22 @@ impl TypeInterner {
         }
         let list_id = self.intern_type_list_from_slice(&flat);
         self.intern(TypeData::Union(list_id))
+    }
+
+    /// Test hook: normalize a union with an explicit reduction mode, bypassing the
+    /// process-global `TSZ_UNION_LITERAL_DEFAULT` `OnceLock` so both the historical
+    /// (`literal_only = false`) and campaign (`true`) #15809 paths run deterministically.
+    #[cfg(test)]
+    pub(crate) fn normalize_union_for_test(
+        &self,
+        members: Vec<TypeId>,
+        literal_only: bool,
+    ) -> TypeId {
+        let mut flat: TypeListBuffer = members.into_iter().collect();
+        if let Some(collapsed) = self.reduce_and_collapse_nonstrict(&mut flat) {
+            return collapsed;
+        }
+        self.normalize_union_uncached(flat, literal_only)
     }
 
     /// Intern an intersection type, normalizing and deduplicating members
