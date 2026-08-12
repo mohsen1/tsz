@@ -1766,47 +1766,60 @@ impl<'a> CheckerState<'a> {
                         current = self.resolve_type_query_type(type_id);
                         continue;
                     }
-                    let namespace_name = self
+                    let is_module_namespace =
+                        self.ctx.namespace_module_names.contains_key(&current)
+                            || self.is_namespace_value_type(current);
+                    if !is_module_namespace {
+                        self.error_property_not_exist_at(&segment, current, segment_idx);
+                        return Some(TypeId::ERROR);
+                    }
+                    // A module without an export assignment follows the same
+                    // TS2694 naming rule as the type-position
+                    // `import(...).Member` path: resolved module path,
+                    // traversed segments appended, no `.export=`, blaming the
+                    // segment that failed to resolve (tsc reports the first
+                    // failing segment, never a later one).
+                    if !self.target_module_has_export_equals(&module_name) {
+                        let namespace_name = self.import_type_namespace_name_with_segments(
+                            &module_name,
+                            &resolved_segments,
+                            resolution_mode_override,
+                        );
+                        self.error_namespace_no_export(&namespace_name, &segment, segment_idx);
+                        return Some(TypeId::ERROR);
+                    }
+                    // export=/`module.exports =` modules keep the pre-existing
+                    // `.export=` display scheme (tsc names the export= target
+                    // symbol instead — a separate, tracked divergence).
+                    let mut namespace_name = self
                         .ctx
                         .namespace_module_names
                         .get(&current)
                         .map(|name| {
                             format!("\"{}\".export=", name.strip_prefix("./").unwrap_or(name))
                         })
-                        .or_else(|| {
-                            self.is_namespace_value_type(current).then(|| {
-                                format!(
-                                    "\"{}\".export=",
-                                    self.imported_namespace_display_module_name(&module_name)
-                                )
-                            })
+                        .unwrap_or_else(|| {
+                            format!(
+                                "\"{}\".export=",
+                                self.imported_namespace_display_module_name(&module_name)
+                            )
                         });
-                    if let Some(mut namespace_name) = namespace_name {
-                        // For `typeof import("./m").bar.missing` on export= modules,
-                        // preserve the nested qualifier path when the first segment
-                        // comes from the export= target surface.
-                        if resolved_segments.is_empty()
-                            && namespace_name.ends_with(".export=")
-                            && let Some((next_idx, next_segment)) = segments_iter.next()
-                        {
-                            let base = namespace_name.trim_end_matches(".export=");
-                            namespace_name = format!("{base}.{segment}.export=");
-                            self.error_namespace_no_export(
-                                &namespace_name,
-                                &next_segment,
-                                next_idx,
-                            );
-                            return Some(TypeId::ERROR);
-                        }
-                        if namespace_name.ends_with(".export=") && !resolved_segments.is_empty() {
-                            let base = namespace_name.trim_end_matches(".export=");
-                            namespace_name =
-                                format!("{base}.{}.export=", resolved_segments.join("."));
-                        }
-                        self.error_namespace_no_export(&namespace_name, &segment, segment_idx);
-                    } else {
-                        self.error_property_not_exist_at(&segment, current, segment_idx);
+                    // For `typeof import("./m").bar.missing` on export= modules,
+                    // preserve the nested qualifier path when the first segment
+                    // comes from the export= target surface.
+                    if resolved_segments.is_empty()
+                        && let Some((next_idx, next_segment)) = segments_iter.next()
+                    {
+                        let base = namespace_name.trim_end_matches(".export=");
+                        namespace_name = format!("{base}.{segment}.export=");
+                        self.error_namespace_no_export(&namespace_name, &next_segment, next_idx);
+                        return Some(TypeId::ERROR);
                     }
+                    if !resolved_segments.is_empty() {
+                        let base = namespace_name.trim_end_matches(".export=");
+                        namespace_name = format!("{base}.{}.export=", resolved_segments.join("."));
+                    }
+                    self.error_namespace_no_export(&namespace_name, &segment, segment_idx);
                     return Some(TypeId::ERROR);
                 }
                 _ => return Some(TypeId::ERROR),
