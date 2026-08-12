@@ -679,6 +679,7 @@ impl<'a> TypePrinter<'a> {
         params: &[tsz_solver::types::ParamInfo],
         type_predicate: Option<&tsz_solver::types::TypePredicate>,
         return_type: TypeId,
+        this_type: Option<TypeId>,
     ) -> String {
         let mut result = String::new();
         result.push_str(printed_name);
@@ -699,6 +700,11 @@ impl<'a> TypePrinter<'a> {
 
         result.push('(');
         let mut first = true;
+        if let Some(this_type) = this_type {
+            result.push_str("this: ");
+            result.push_str(&scoped.print_type(this_type));
+            first = false;
+        }
         for param in params {
             if !first {
                 result.push_str(", ");
@@ -1600,6 +1606,7 @@ mod tests {
             &[tsz_solver::ParamInfo::optional(separator, ty)],
             None,
             TypeId::STRING,
+            None,
         );
         assert_eq!(printed, "join(separator?: string): string");
     }
@@ -1623,6 +1630,7 @@ mod tests {
             &[tsz_solver::ParamInfo::optional(compare_fn, ty)],
             None,
             TypeId::VOID,
+            None,
         );
         assert_eq!(
             printed,
@@ -1643,6 +1651,7 @@ mod tests {
             &[tsz_solver::ParamInfo::optional(value, ty)],
             None,
             TypeId::VOID,
+            None,
         );
         assert_eq!(printed, "set(value?: string | undefined): void");
     }
@@ -1668,6 +1677,7 @@ mod tests {
             &[tsz_solver::ParamInfo::optional(value, ty)],
             None,
             TypeId::VOID,
+            None,
         );
         assert_eq!(printed, "set<T>(value?: T): void");
     }
@@ -1693,11 +1703,28 @@ mod tests {
             &[tsz_solver::ParamInfo::optional(this_arg, ty)],
             None,
             TypeId::VOID,
+            None,
         );
         assert_eq!(
             printed,
             "flatMap<This = undefined>(thisArg?: This | undefined): void"
         );
+    }
+
+    #[test]
+    fn method_signature_prints_explicit_this_parameter() {
+        let interner = TypeInterner::new();
+        let a = interner.intern_string("a");
+        let printed = TypePrinter::new(&interner).print_method_signature(
+            "get",
+            false,
+            &[],
+            &[tsz_solver::ParamInfo::required(a, TypeId::NUMBER)],
+            None,
+            TypeId::NUMBER,
+            Some(TypeId::STRING),
+        );
+        assert_eq!(printed, "get(this: string, a: number): number");
     }
 
     #[test]
