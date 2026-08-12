@@ -234,10 +234,16 @@ impl<'a> DeclarationEmitter<'a> {
         })
     }
 
+    /// One physical JSDoc line can carry several tags (`@overload @param
+    /// {number} x`), so each normalized line is split into per-tag segments
+    /// before the overload-block scan indexes into it.
     fn normalized_jsdoc_lines(jsdoc: &str) -> Vec<String> {
         jsdoc
             .lines()
-            .map(|line| line.trim_start_matches('*').trim().to_string())
+            .flat_map(|raw_line| {
+                Self::split_jsdoc_tag_segments(raw_line.trim_start_matches('*').trim())
+            })
+            .map(str::to_string)
             .collect()
     }
 

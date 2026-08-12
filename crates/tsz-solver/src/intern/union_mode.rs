@@ -12,9 +12,13 @@
 //!
 //! The flag is **default-OFF and byte-parity when OFF** (campaign-flag-ledger
 //! convention): with it unset the pipeline reduces exactly as historical
-//! `main`. When ON it drops the evaluate-layer blanket reduction (Stage 2) and
-//! routes the evaluate-reachable `.Subtype` construction sites through the
-//! derived `subtype_reduced` query instead.
+//! `main`. When ON it (a) drops the evaluate-layer blanket reduction (Stage 2),
+//! (b) makes the interner constructor (`normalize_union`) literal-mode by
+//! skipping its unconditional construction-time pairwise subtype sweep — the
+//! structural root #15809 names, and the discipline the Stage 2 gate already
+//! assumes when it re-interns evaluated unions without its own reduce — and
+//! (c) routes the evaluate-reachable `.Subtype` construction sites through the
+//! derived `subtype_reduced` query to recover pairwise removal where tsc does.
 
 use std::sync::OnceLock;
 

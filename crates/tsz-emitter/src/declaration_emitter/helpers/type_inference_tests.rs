@@ -1593,6 +1593,104 @@ export const publicValue = make()
     );
 }
 
+// A bare identifier that widens to a function/class/enum/namespace symbol can be
+// spelled `typeof Name` in a `.d.ts` only when that name is visible at the emit
+// position. `symbol_declaration_reachable_from_module_scope` is the scope half
+// of that visibility question: a declaration nested inside a function/block body
+// is a local whose name is not emitted, so `typeof` must not be used and the
+// structural shape is expanded instead. These asserts pin the predicate directly
+// so the `declFileTypeofFunction` / mixin-local-class family cannot silently
+// re-widen to `typeof <local>`.
+fn symbol_reachable_from_module_scope(source: &str, escaped_name: &str, flag: u32) -> bool {
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    let interner = TypeInterner::new();
+    let type_cache = crate::type_cache_view::TypeCacheView::default();
+    let emitter = DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+
+    let symbol = binder
+        .symbols
+        .iter()
+        .find(|sym| sym.escaped_name == escaped_name && (sym.flags & flag) != 0)
+        .unwrap_or_else(|| panic!("no `{escaped_name}` symbol with the requested flag"));
+    emitter.symbol_declaration_reachable_from_module_scope(symbol)
+}
+
+#[test]
+fn module_level_function_and_class_are_reachable_from_module_scope() {
+    let source = r#"
+function topFn() { return topFn; }
+class TopClass {}
+enum TopEnum { A }
+"#;
+    assert!(symbol_reachable_from_module_scope(
+        source,
+        "topFn",
+        tsz_binder::symbol_flags::FUNCTION,
+    ));
+    assert!(symbol_reachable_from_module_scope(
+        source,
+        "TopClass",
+        tsz_binder::symbol_flags::CLASS,
+    ));
+    assert!(symbol_reachable_from_module_scope(
+        source,
+        "TopEnum",
+        tsz_binder::symbol_flags::ENUM,
+    ));
+}
+
+#[test]
+fn namespace_member_function_is_reachable_from_module_scope() {
+    // A `MODULE_BLOCK` is not a value-scope boundary, so namespace members stay
+    // reachable — `typeof N.f` remains spellable.
+    let source = r#"
+namespace N {
+    export function nested() { return nested; }
+}
+"#;
+    assert!(symbol_reachable_from_module_scope(
+        source,
+        "nested",
+        tsz_binder::symbol_flags::FUNCTION,
+    ));
+}
+
+#[test]
+fn function_local_declarations_are_not_reachable_from_module_scope() {
+    // `bar` (block body), `LocalClass` (block body), and `ArrowLocal` (expression
+    // body) are all trapped below module scope; none may print as `typeof`.
+    let source = r#"
+function foo5(x: number) {
+    function bar(y: number) { return y; }
+    return bar;
+}
+function mk() {
+    class LocalClass {}
+    return LocalClass;
+}
+const arrow = () => class ArrowLocal {};
+"#;
+    assert!(!symbol_reachable_from_module_scope(
+        source,
+        "bar",
+        tsz_binder::symbol_flags::FUNCTION,
+    ));
+    assert!(!symbol_reachable_from_module_scope(
+        source,
+        "LocalClass",
+        tsz_binder::symbol_flags::CLASS,
+    ));
+    assert!(!symbol_reachable_from_module_scope(
+        source,
+        "ArrowLocal",
+        tsz_binder::symbol_flags::CLASS,
+    ));
+}
+
 // #17262: `typeof <name>` in a `.d.ts` is emittable only when `<name>`'s
 // declaration is reachable at the emit position — module, namespace, or global
 // scope. A function/block-local `function`/`class` has no declaration in the
