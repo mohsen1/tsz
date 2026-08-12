@@ -435,9 +435,10 @@ impl<'a> DeclarationEmitter<'a> {
                 prop_decl.type_text.clone()
             };
             member.push_str(&type_text);
-            if prop_decl.optional_type_marker
-                && !Self::type_text_has_undefined_branch(&prop_decl.type_text)
-            {
+            // Pinned-corpus parity (jsDeclarationsOptionalTypeLiteralProps1/2):
+            // a bracket-optional member of a synthesized JSDoc object type
+            // literal keeps `| undefined`, unlike plain parameter positions.
+            if prop_decl.optional && !Self::type_text_has_undefined_branch(&prop_decl.type_text) {
                 member.push_str(" | undefined");
             }
             member.push(';');
@@ -480,9 +481,10 @@ impl<'a> DeclarationEmitter<'a> {
                 prop_decl.type_text.clone()
             };
             member.push_str(&type_text);
-            if prop_decl.optional_type_marker
-                && !Self::type_text_has_undefined_branch(&prop_decl.type_text)
-            {
+            // Pinned-corpus parity (jsDeclarationsOptionalTypeLiteralProps1/2):
+            // a bracket-optional member of a synthesized JSDoc object type
+            // literal keeps `| undefined`, unlike plain parameter positions.
+            if prop_decl.optional && !Self::type_text_has_undefined_branch(&prop_decl.type_text) {
                 member.push_str(" | undefined");
             }
             member.push(';');

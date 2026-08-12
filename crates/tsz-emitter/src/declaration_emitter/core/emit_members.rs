@@ -1812,15 +1812,10 @@ impl<'a> DeclarationEmitter<'a> {
                 self.write("...");
             }
             self.emit_node(param.name);
-            // tsc marks a JS setter parameter optional from its JSDoc
-            // (`[name]` or `{T=}`) even though TS1051 rejects the result.
-            if param.question_token
-                || (self.source_is_js_file
-                    && param.type_annotation.is_none()
-                    && self
-                        .jsdoc_param_decl_for_parameter(param_idx, 0)
-                        .is_some_and(|decl| decl.optional && !decl.rest))
-            {
+            // Pinned-corpus parity (jsDeclarationsReusesExistingTypeAnnotations):
+            // a JSDoc-optional JS setter parameter emits without `?`; only a
+            // written `?` in the source produces one.
+            if param.question_token {
                 self.write("?");
             }
             self.write(": ");

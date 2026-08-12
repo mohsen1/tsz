@@ -142,7 +142,10 @@ module.exports = build;
 }
 
 #[test]
-fn jsdoc_nested_object_param_bracket_optional_member_has_no_undefined() {
+fn jsdoc_nested_object_literal_member_keeps_undefined_for_corpus_parity() {
+    // Pinned-corpus parity (jsDeclarationsOptionalTypeLiteralProps1/2): a
+    // bracket-optional member of a synthesized JSDoc object type literal
+    // keeps `| undefined`, unlike plain parameter positions.
     let output = emit_js_dts_with_usage_analysis(
         r#"
 /**
@@ -156,17 +159,16 @@ module.exports = nest;
     );
 
     assert!(
-        output.contains("gap?: number;"),
-        "Nested bracket-optional object member prints `gap?: number;`: {output}"
-    );
-    assert!(
-        !output.contains("gap?: number | undefined"),
-        "Nested bracket-optional member must not add `| undefined` in parameter position: {output}"
+        output.contains("gap?: number | undefined;"),
+        "Nested bracket-optional object-literal member keeps `| undefined` per the pinned corpus: {output}"
     );
 }
 
 #[test]
 fn jsdoc_setter_param_optionality_forms() {
+    // Pinned-corpus parity (jsDeclarationsReusesExistingTypeAnnotations):
+    // JSDoc-optional setter params emit without `?`; the `{T=}` marker still
+    // owns the `| undefined` branch, and bracket optionality adds nothing.
     let output = emit_js_dts(
         r#"
 class Widget {
@@ -179,11 +181,11 @@ class Widget {
     );
 
     assert!(
-        output.contains("set size(v?: number);"),
-        "Bracket-optional setter param prints `v?: number` (tsc keeps the `?` despite TS1051): {output}"
+        output.contains("set size(v: number);"),
+        "Bracket-optional setter param prints `v: number` with no `?` and no undefined: {output}"
     );
     assert!(
-        output.contains("set title(t?: string | undefined);"),
-        "`{{T=}}` setter param prints `t?: string | undefined`: {output}"
+        output.contains("set title(t: string | undefined);"),
+        "`{{T=}}` setter param prints `t: string | undefined`: {output}"
     );
 }
