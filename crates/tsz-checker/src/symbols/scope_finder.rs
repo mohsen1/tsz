@@ -23,6 +23,18 @@ impl<'a> CheckerState<'a> {
     /// Decorators execute in the surrounding scope, not inside the class/member they
     /// decorate, so bare identifier lookup from this region must not see class members.
     pub(crate) fn is_in_decorator_expression(&self, idx: NodeIndex) -> bool {
+        self.nearest_decorator_ancestor(idx).is_some()
+    }
+
+    /// Return the nearest enclosing `DECORATOR` node for `idx`, if any.
+    ///
+    /// Used to scope the decorator-owner exclusion in
+    /// [`CheckerState::resolve_identifier_symbol_inner`](crate::symbols::symbol_resolver)
+    /// to declarations outside the decorator itself: a `var`/parameter declared
+    /// *inside* the decorator expression's own body must stay resolvable from
+    /// later references in that same body, even though it is structurally
+    /// nested inside the owning declaration the filter otherwise hides.
+    pub(crate) fn nearest_decorator_ancestor(&self, idx: NodeIndex) -> Option<NodeIndex> {
         use tsz_parser::parser::syntax_kind_ext::DECORATOR;
 
         let mut current = idx;
@@ -30,23 +42,19 @@ impl<'a> CheckerState<'a> {
         while current.is_some() {
             iterations += 1;
             if iterations > MAX_TREE_WALK_ITERATIONS {
-                return false;
+                return None;
             }
-            let Some(ext) = self.ctx.arena.get_extended(current) else {
-                return false;
-            };
+            let ext = self.ctx.arena.get_extended(current)?;
             if ext.parent.is_none() {
-                return false;
+                return None;
             }
             current = ext.parent;
-            let Some(node) = self.ctx.arena.get(current) else {
-                return false;
-            };
+            let node = self.ctx.arena.get(current)?;
             if node.kind == DECORATOR {
-                return true;
+                return Some(current);
             }
         }
-        false
+        None
     }
 
     /// Return the declaration or class/member node that owns the nearest enclosing decorator.

@@ -603,6 +603,9 @@ path = "tests/parameter_initializer_identifier_context_tests.rs"
 name = "decorator_method_tdz_tests"
 path = "tests/decorator_method_tdz_tests.rs"
 [[test]]
+name = "decorator_expression_local_scoping_tests"
+path = "tests/decorator_expression_local_scoping_tests.rs"
+[[test]]
 name = "ts1238_class_decorator_signature_tests"
 path = "tests/ts1238_class_decorator_signature_tests.rs"
 [[test]]

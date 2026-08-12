@@ -454,6 +454,9 @@ impl<'a> CheckerState<'a> {
         let decorator_owner = in_decorator_expr
             .then(|| self.decorator_owner_declaration(idx))
             .flatten();
+        let enclosing_decorator = in_decorator_expr
+            .then(|| self.nearest_decorator_ancestor(idx))
+            .flatten();
         let is_from_lib = |sym_id: SymbolId| self.ctx.symbol_is_from_lib(sym_id);
         let should_skip_lib_symbol = |sym_id: SymbolId| ignore_libs && is_from_lib(sym_id);
 
@@ -486,12 +489,12 @@ impl<'a> CheckerState<'a> {
                 if let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders) {
                     if let Some(owner_idx) = decorator_owner
                         && symbol.declarations.iter().any(|&decl_idx| {
-                            // Allow the decorator owner itself — only filter out
-                            // declarations strictly inside it (e.g., class members).
-                            // The class name should be resolvable from its own
-                            // decorator; TDZ checks handle validity.
+                            // Filter decls nested in the owner, except the owner itself and `enclosing_decorator`.
                             decl_idx != owner_idx
                                 && self.node_is_within_decorator_owner(decl_idx, owner_idx)
+                                && !enclosing_decorator.is_some_and(|dec_idx| {
+                                    self.node_is_within_decorator_owner(decl_idx, dec_idx)
+                                })
                         })
                     {
                         return false;
