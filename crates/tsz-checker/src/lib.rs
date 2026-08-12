@@ -669,6 +669,9 @@ mod symbol_index_signature_tests;
 #[path = "../tests/jsdoc_dotted_typedef_import_type_tests.rs"]
 mod jsdoc_dotted_typedef_import_type_tests;
 #[cfg(test)]
+#[path = "../tests/jsdoc_qualified_chain_namespace_meaning_tests.rs"]
+mod jsdoc_qualified_chain_namespace_meaning_tests;
+#[cfg(test)]
 #[path = "../tests/ts18048_unary_arithmetic_nullish_tests.rs"]
 mod ts18048_unary_arithmetic_nullish_tests;
 #[cfg(test)]
