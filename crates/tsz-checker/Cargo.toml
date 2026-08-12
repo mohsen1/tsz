@@ -2925,3 +2925,7 @@ path = "tests/ts_import_type_namespace_meaning_gate_tests.rs"
 [[test]]
 name = "ts2694_jsdoc_import_export_equals_display_tests"
 path = "tests/ts2694_jsdoc_import_export_equals_display_tests.rs"
+
+[[test]]
+name = "js_object_literal_expando_emptiness_tests"
+path = "tests/js_object_literal_expando_emptiness_tests.rs"

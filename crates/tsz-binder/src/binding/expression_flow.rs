@@ -892,11 +892,17 @@ impl BinderState {
             let is_function_like = init_node.is_function_expression_or_arrow();
             let is_property_access_lhs =
                 lhs_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION;
+            // Only an EMPTY object literal (`var X = {}`) hosts expando members,
+            // mirroring tsc's `getExpandoInitializer` (`properties.length === 0`)
+            // and the checker's read/write predicates. A non-empty literal
+            // (`var X = { a: 1 }`) is a closed shape, so `X.b = …` is a real
+            // property write, not an expando declaration. Class/function
+            // expression initializers stay hosts regardless.
             let is_expando_init = is_function_like
                 || (is_property_access_lhs
                     && !has_type_annotation
                     && (init_node.kind == syntax_kind_ext::CLASS_EXPRESSION
-                        || init_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION));
+                        || arena.is_empty_object_literal(var_decl.initializer)));
             if is_expando_init {
                 // Mirror the function-root branch: in a JS file a nested chain
                 // declares its member only when the immediate base link is an
