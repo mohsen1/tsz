@@ -191,62 +191,13 @@ impl<'a> CheckerState<'a> {
 
         self.check_await_expression(decl_idx);
 
-        // TS1155: Check if const declarations must be initialized
-        // Skip check for ambient declarations (e.g., declare const x;)
-        // Skip when file has real syntax errors — the parse error is sufficient.
-        if !self.is_ambient_declaration(decl_idx) && !self.ctx.has_real_syntax_errors {
-            // Get the parent node (VARIABLE_DECLARATION_LIST) to check flags
-            if let Some(ext) = self.ctx.arena.get_extended(decl_idx)
-                && let Some(parent_node) = self.ctx.arena.get(ext.parent)
-            {
-                use tsz_parser::parser::node_flags;
-                // TS1155's message parameter follows the declaration kind:
-                // `await using` (Const|Using), `using`, or `const`.
-                let kind_flags = u32::from(parent_node.flags);
-                let ts1155_kind = if kind_flags & node_flags::AWAIT_USING == node_flags::AWAIT_USING
-                {
-                    Some("await using")
-                } else if kind_flags & node_flags::USING != 0 {
-                    Some("using")
-                } else if kind_flags & node_flags::CONST != 0 {
-                    Some("const")
-                } else {
-                    None
-                };
-                if let Some(kind_name) = ts1155_kind
-                    && var_decl.initializer.is_none()
-                {
-                    // Skip for destructuring patterns - they get TS1182 from the parser
-                    let is_binding_pattern =
-                        if let Some(name_node) = self.ctx.arena.get(var_decl.name) {
-                            name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
-                                || name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
-                        } else {
-                            false
-                        };
-                    // Check if this is in a for-in or for-of loop (allowed)
-                    let is_in_for_loop =
-                        if let Some(parent_ext) = self.ctx.arena.get_extended(ext.parent) {
-                            if let Some(gp_node) = self.ctx.arena.get(parent_ext.parent) {
-                                gp_node.kind == syntax_kind_ext::FOR_IN_STATEMENT
-                                    || gp_node.kind == syntax_kind_ext::FOR_OF_STATEMENT
-                            } else {
-                                false
-                            }
-                        } else {
-                            false
-                        };
-                    if !is_in_for_loop && !is_binding_pattern {
-                        self.ctx.error(
-                            node.pos,
-                            node.end - node.pos,
-                            format!("'{kind_name}' declarations must be initialized."),
-                            1155,
-                        );
-                    }
-                }
-            }
-        }
+        // TS1155 ('{0}' declarations must be initialized) is owned by the parser
+        // (`report_const_or_using_uninitialized`, #17251) and classified as a
+        // parser grammar code (#17253). The checker previously re-emitted it here,
+        // anchored at the whole declaration rather than tsc's name-only span, and
+        // was kept silent in production only by the `is_real_syntax_error`
+        // misclassification #17253 removed — a latent double-emitter. Removed so
+        // the parser is the sole owner.
 
         // TS1255/TS1263/TS1264: Definite assignment assertion checks on variables
         if var_decl.exclamation_token {

@@ -17,6 +17,12 @@
 //! Oracle-verified against `tsc` (`--strict`): `using x;` reports TS1155 +
 //! TS7005; `let x;` / `var x;` report neither; `using x: number;` reports only
 //! TS1155 (the annotation supplies the type).
+//!
+//! These tests assert the checker-owned TS7005 half. TS1155 ("must be
+//! initialized") is parser-owned since #17251 and lives outside
+//! `checker.ctx.diagnostics` (the checker-only harness here), so it is covered
+//! exhaustively in the parser's `const_using_uninitialized_grammar_tests.rs`
+//! rather than re-asserted through this harness (#17253).
 
 use crate::test_utils::check_source_strict_codes;
 
@@ -25,10 +31,6 @@ use crate::test_utils::check_source_strict_codes;
 #[test]
 fn uninitialized_using_reports_ts7005_implicit_any() {
     let codes = check_source_strict_codes("using x;\n");
-    assert!(
-        codes.contains(&1155),
-        "an uninitialized `using` still needs TS1155 (must be initialized); got {codes:?}"
-    );
     assert!(
         codes.contains(&7005),
         "a `using` binding is const-like, so its uninitialized implicit-any is \
@@ -67,26 +69,26 @@ fn uninitialized_let_and_var_do_not_report_ts7005() {
     }
 }
 
-/// An annotated `using` supplies its own type, so only TS1155 fires — the
-/// implicit-any gate is correctly skipped when a type annotation is present.
+/// An annotated `using` supplies its own type, so the implicit-any gate is
+/// correctly skipped — no TS7005 — when a type annotation is present. (The
+/// parser still reports the must-initialize TS1155; that half is covered in
+/// the parser's grammar tests.)
 #[test]
-fn annotated_uninitialized_using_reports_only_ts1155_not_ts7005() {
+fn annotated_uninitialized_using_reports_no_ts7005() {
     let codes = check_source_strict_codes("using x: number;\n");
-    assert!(codes.contains(&1155), "got {codes:?}");
     assert!(
         !codes.contains(&7005),
         "the `: number` annotation supplies the type, so no implicit-any; got {codes:?}"
     );
 }
 
-/// An initialized `using` has a real type from its initializer — neither
-/// TS1155 nor TS7005 applies. Guards against the gate over-firing on the common
-/// valid form.
+/// An initialized `using` has a real type from its initializer — no TS7005.
+/// Guards against the gate over-firing on the common valid form.
 #[test]
-fn initialized_using_reports_neither_ts1155_nor_ts7005() {
+fn initialized_using_reports_no_ts7005() {
     let codes = check_source_strict_codes("using x = null as any;\n");
     assert!(
-        !codes.contains(&1155) && !codes.contains(&7005),
+        !codes.contains(&7005),
         "an initialized `using` is well-formed; got {codes:?}"
     );
 }
@@ -131,15 +133,12 @@ fn uninitialized_using_reports_ts7005_in_every_container() {
 }
 
 /// Non-strict / `noImplicitAny: false` control: TS7005 is a `noImplicitAny`
-/// diagnostic, so it must not fire when the flag is off — the must-initialize
-/// TS1155 still does (it is a grammar rule, not an implicit-any one).
+/// diagnostic, so it must not fire when the flag is off. (The must-initialize
+/// TS1155 is a grammar rule unaffected by `noImplicitAny`, but it is
+/// parser-owned and covered in the parser's grammar tests.)
 #[test]
-fn uninitialized_using_without_no_implicit_any_reports_only_ts1155() {
+fn uninitialized_using_without_no_implicit_any_reports_no_ts7005() {
     let codes = crate::test_utils::check_source_non_strict_codes("using x;\n");
-    assert!(
-        codes.contains(&1155),
-        "TS1155 is a grammar rule, unaffected by noImplicitAny; got {codes:?}"
-    );
     assert!(
         !codes.contains(&7005),
         "TS7005 is gated on noImplicitAny, which is off here; got {codes:?}"

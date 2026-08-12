@@ -1290,7 +1290,15 @@ pub(super) const fn is_real_syntax_error(code: u32) -> bool {
         | 1138 // Parameter declaration expected
         | 1141 // Type parameter declaration expected
         | 1146 // Declaration expected
-        | 1155 // 'const' declarations must be initialized
+        // Note: TS1155 ('{0}' declarations must be initialized) is intentionally
+        // excluded (#17253). tsc reports it from `checkGrammarVariableDeclaration`
+        // (a check-time grammar error) on a well-formed `const a;` — the AST parses
+        // cleanly, and tsc still emits the declarator's TS2588/TS7005 siblings, so
+        // it must not suppress cascading semantic diagnostics. Its speculative
+        // listing here (dormant until #17251 made the parser emit the code) turned
+        // every uninitialized const into a "real parse error" that deleted those
+        // siblings. It now lives in `is_parser_grammar_code` instead — same
+        // correction round 10 applied to TS1313.
         | 1160 // Unterminated template literal
         | 1161 // Unterminated regular expression literal
         | 1180 // Property destructuring pattern expected
@@ -1399,7 +1407,11 @@ pub(super) const fn is_structural_parse_error(code: u32) -> bool {
         | 1144 // '{' or ';' expected
         | 1145 // '{' or JSX element expected
         | 1146 // Declaration expected
-        | 1155 // 'const' declarations must be initialized
+        // TS1155 is intentionally excluded — see the matching note in
+        // `is_real_syntax_error` above. `const a;` parses to a well-formed AST;
+        // it is a grammar check, not a structural parse failure, so it must not
+        // drive the cascading-suppression heuristic. It moved to
+        // `is_parser_grammar_code` (#17253).
         | 1160 // Unterminated template literal
         | 1161 // Unterminated regular expression literal
         | 1180 // Property destructuring pattern expected
@@ -1649,6 +1661,10 @@ mod jsx_comma_operator_grammar_tests;
 #[cfg(test)]
 #[path = "check_utils/jsdoc_star_type_grammar_tests.rs"]
 mod jsdoc_star_type_grammar_tests;
+
+#[cfg(test)]
+#[path = "check_utils/const_using_uninitialized_grammar_tests.rs"]
+mod const_using_uninitialized_grammar_tests;
 
 #[cfg(test)]
 #[path = "check_utils/private_identifier_parse_error_suppression_tests.rs"]

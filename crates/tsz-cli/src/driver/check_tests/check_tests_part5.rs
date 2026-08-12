@@ -539,3 +539,47 @@ interface LibBase {
              got TS1054 at {ts1054} and TS2378 at {ts2378}: {diagnostics:?}"
         );
     }
+
+    /// #17253 regression: end-to-end parity through the real CLI pipeline for
+    /// the TS1155 grammar-code reclassification.
+    ///
+    /// `#17251` moved the "'{0}' declarations must be initialized." check into
+    /// the parser but left TS1155 out of `is_parser_grammar_code` and, worse,
+    /// listed in `is_real_syntax_error`/`is_structural_parse_error`. So an
+    /// uninitialized const counted as a suppressing "real parse error" and
+    /// deleted every co-occurring sibling (`constDeclarations-errors` lost its
+    /// TS2588). tsc reports BOTH: `const a; a = 1;` is a must-initialize TS1155
+    /// AND an assign-to-constant TS2588. The sibling must survive.
+    #[test]
+    fn ts1155_does_not_delete_the_assign_to_const_sibling() {
+        let diagnostics = collect_test_diagnostics(&[("/a.ts", "const a;\na = 1;\n")]);
+        let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
+        assert!(
+            codes.contains(&1155),
+            "the uninitialized const must still report TS1155, got: {codes:?}"
+        );
+        assert!(
+            codes.contains(&2588),
+            "the co-occurring TS2588 (cannot assign to a constant) must survive \
+             alongside TS1155, not be deleted by it, got: {codes:?}"
+        );
+    }
+
+    /// The other half of #17253: TS1155 is a grammar check on a well-formed
+    /// AST, so a genuine unrelated parse error in the same file must suppress
+    /// it (tsc's Direction B). `let b: = 1;` is a real syntax error (TS1110,
+    /// "Type expected"); tsc drops the file's TS1155 next to it. Before the fix
+    /// tsz kept TS1155 because it was absent from `is_parser_grammar_code`.
+    #[test]
+    fn ts1155_is_suppressed_by_an_unrelated_real_parse_error() {
+        let diagnostics = collect_test_diagnostics(&[("/a.ts", "const a;\nlet b: = 1;\n")]);
+        let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
+        assert!(
+            codes.contains(&1110),
+            "the real parse error TS1110 (type expected) must be reported, got: {codes:?}"
+        );
+        assert!(
+            !codes.contains(&1155),
+            "TS1155 must be suppressed alongside a real parse error (Direction B), got: {codes:?}"
+        );
+    }
