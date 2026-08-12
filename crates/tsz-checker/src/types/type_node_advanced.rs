@@ -16,7 +16,9 @@ use super::type_node_helpers::{
     get_string_literal_from_type_index, is_type_query_in_non_flow_sensitive_signature_parameter,
     is_typeof_global_this_type_node,
 };
-use super::unique_symbol_construction::unique_symbol_type_for_operator;
+use super::unique_symbol_construction::{
+    readonly_operator_result, unique_symbol_type_for_operator,
+};
 use crate::query_boundaries::type_query_construction;
 use tsz_parser::parser::node::Node;
 use tsz_parser::parser::syntax_kind_ext;
@@ -48,28 +50,28 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
 
             // Handle readonly operator
             if operator == SyntaxKind::ReadonlyKeyword as u16 {
+                let operand_kind = self.ctx.arena.get(type_op.type_node).map(|n| n.kind);
                 // TS1354: 'readonly' type modifier is only permitted on array and tuple literal types.
                 // A missing operand (`readonly ;`) already produced TS1110 `Type expected`
                 // in the parser; tsc does not also report the array/tuple grammar error.
-                if let Some(operand_node) = self.ctx.arena.get(type_op.type_node) {
-                    let operand_kind = operand_node.kind;
-                    if operand_kind != syntax_kind_ext::ARRAY_TYPE
-                        && operand_kind != syntax_kind_ext::TUPLE_TYPE
-                        && !self
-                            .ctx
-                            .arena
-                            .is_missing_recovery_identifier(type_op.type_node)
-                    {
-                        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-                        self.ctx.error(
-                            node.pos,
-                            node.end.saturating_sub(node.pos),
-                            diagnostic_messages::READONLY_TYPE_MODIFIER_IS_ONLY_PERMITTED_ON_ARRAY_AND_TUPLE_LITERAL_TYPES.to_string(),
-                            diagnostic_codes::READONLY_TYPE_MODIFIER_IS_ONLY_PERMITTED_ON_ARRAY_AND_TUPLE_LITERAL_TYPES,
-                        );
-                    }
+                if operand_kind.is_some()
+                    && !operand_kind.is_some_and(syntax_kind_ext::is_array_or_tuple_type)
+                    && !self
+                        .ctx
+                        .arena
+                        .is_missing_recovery_identifier(type_op.type_node)
+                {
+                    use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+                    self.ctx.error(
+                        node.pos,
+                        node.end.saturating_sub(node.pos),
+                        diagnostic_messages::READONLY_TYPE_MODIFIER_IS_ONLY_PERMITTED_ON_ARRAY_AND_TUPLE_LITERAL_TYPES.to_string(),
+                        diagnostic_codes::READONLY_TYPE_MODIFIER_IS_ONLY_PERMITTED_ON_ARRAY_AND_TUPLE_LITERAL_TYPES,
+                    );
                 }
-                return factory.readonly_type(inner_type);
+                // Readonly is transparent unless the operand is a syntactic
+                // array/tuple literal type; see `readonly_operator_result`.
+                return readonly_operator_result(self.ctx, operand_kind, inner_type);
             }
 
             // Handle keyof operator
