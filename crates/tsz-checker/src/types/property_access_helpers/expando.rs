@@ -230,7 +230,24 @@ impl<'a> CheckerState<'a> {
             || arena.is_empty_object_literal(var_decl.initializer)
     }
 
+    /// tsc 7.0.2 binds an assignment-declared expando member only when the
+    /// write appears in the host's OWN declaring file (oracle-pinned for
+    /// function, class, and `var X = {}` hosts, TS and JS script files alike;
+    /// see `js_cross_file_expando_declaration_tests`). A foreign-file write is
+    /// an ordinary property assignment against the host's declared shape:
+    /// `TS2339` under `noImplicitAny`, with the open-container leniency still
+    /// silencing `{}`-typed receivers when it is off.
+    pub(crate) fn expando_write_host_is_foreign_file(&self, sym_id: SymbolId) -> bool {
+        self.ctx
+            .resolve_symbol_file_index(sym_id)
+            .is_some_and(|file_idx| file_idx != self.ctx.current_file_idx)
+    }
+
     fn root_symbol_supports_js_direct_expando_write(&self, sym_id: SymbolId) -> bool {
+        if self.expando_write_host_is_foreign_file(sym_id) {
+            return false;
+        }
+
         let Some(symbol) = self
             .get_cross_file_symbol(sym_id)
             .or_else(|| self.ctx.binder.get_symbol(sym_id))
@@ -307,7 +324,7 @@ impl<'a> CheckerState<'a> {
             .is_some()
     }
 
-    fn expando_root_js_file_idx(&self, object_expr_idx: NodeIndex) -> Option<usize> {
+    pub(super) fn expando_root_js_file_idx(&self, object_expr_idx: NodeIndex) -> Option<usize> {
         let sym_id = self.root_symbol_for_expando_read(object_expr_idx)?;
         let file_idx = self
             .ctx
@@ -390,6 +407,12 @@ impl<'a> CheckerState<'a> {
         // the inferred `const f = () => {}` still does.
         if let Some(sym_id) = sym_id
             && self.expando_root_symbol_has_type_annotation(sym_id)
+        {
+            return false;
+        }
+
+        if let Some(sym_id) = sym_id
+            && self.expando_write_host_is_foreign_file(sym_id)
         {
             return false;
         }
@@ -1149,7 +1172,14 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
+        // Being a declared member is necessary but not sufficient: the base
+        // link must itself be an expando HOST — its declaring write's RHS an
+        // empty literal, function, or class expression. `a.b = { k: 1 }`
+        // declares `b` as a closed shape, so a nested `a.b.c` member is
+        // TS2339 under `noImplicitAny`, mirroring tsc's
+        // `getExpandoInitializer` emptiness rule (#17226 gap 1).
         self.is_expando_property_read(base_expr, &member_name)
+            && self.nested_expando_base_link_rhs_is_host(base_expr, &member_name)
     }
 
     pub(in crate::types_domain) fn expando_property_read_type(
@@ -1807,11 +1837,17 @@ impl<'a> CheckerState<'a> {
     /// `Event.prototype.removeChildren = ...` and `new C().q` keep reporting
     /// TS2339. Arrays and primitives have no object shape at all and are
     /// excluded before the `symbol` test is reached.
+    ///
+    /// A receiver produced by an object spread (`{ ...base }`) is excluded even
+    /// though it is anonymous and symbol-less: `tsc`'s `getSpreadType` never
+    /// marks its result `ObjectFlags.JSLiteral` the way a hand-written object
+    /// literal is marked, so a spread-derived container stays a strict TS2339
+    /// target rather than joining the open-container leniency.
     pub(crate) fn js_open_object_receiver_under_implicit_any(&self, type_id: TypeId) -> bool {
         self.is_js_file()
             && self.ctx.compiler_options.check_js
             && !self.ctx.no_implicit_any()
             && crate::query_boundaries::common::object_shape_for_type(self.ctx.types, type_id)
-                .is_some_and(|shape| shape.symbol.is_none())
+                .is_some_and(|shape| shape.symbol.is_none() && !shape.is_spread_literal())
     }
 }
