@@ -214,7 +214,7 @@ function mix(x, y) { return x; }
 // of scope from a prototype method's `@param {T} t`, reports plain TS2304 at
 // every site — no suggestion, despite the file also declaring `const t`). ---
 
-fn find_diag<'a>(diags: &'a [crate::diagnostics::Diagnostic], code: u32) -> Option<&'a str> {
+fn find_diag(diags: &[crate::diagnostics::Diagnostic], code: u32) -> Option<&str> {
     diags
         .iter()
         .find(|d| d.code == code)
