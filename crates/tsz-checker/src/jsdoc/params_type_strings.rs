@@ -185,17 +185,31 @@ impl<'a> CheckerState<'a> {
                 Ok(resolved) => resolved,
                 Err((member_offset, member_name)) => {
                     if let Some(comment_start) = jsdoc_comment_start {
-                        // NOTE (#17177 follow-up): for a *relative* specifier this
-                        // still renders the un-resolved stem, unlike the TS-syntax
-                        // `import(...).Member` and JSDoc `@type`/`@typedef` paths,
-                        // which now name the module by its resolved file path via
-                        // `resolved_import_type_module_path`. Routing this
-                        // `typeof import(...).member` export= site through that
-                        // helper is deferred: its `.export=` namespace naming has a
-                        // separate, unverified `tsc` divergence, so a display change
-                        // here needs its own oracle check before it can land.
-                        let display_name =
-                            self.imported_namespace_display_module_name(&module_specifier);
+                        // `resolved_import_type_module_path`, not
+                        // `imported_namespace_display_module_name`: tsc's
+                        // TS2694 text names the resolved file path (extension
+                        // stripped) for a real module even under a relative
+                        // specifier — the same rule the TS-syntax
+                        // `import(...).Member` and JSDoc `@type`/`@typedef`
+                        // paths already apply (see the sibling comments in
+                        // `import_type.rs` and `jsdoc/resolution/import_reference.rs`).
+                        // An ambient/unresolved specifier has no backing file,
+                        // so it falls back to the literal-specifier display,
+                        // matching how `tsc` names an ambient module symbol.
+                        //
+                        // This does NOT touch the `.export=` suffix below,
+                        // which this site appends unconditionally regardless
+                        // of whether the target module actually has an
+                        // `export =`/`module.exports =` — oracle-verified
+                        // still wrong for a plain named-export CommonJS
+                        // module (`tsc` omits `.export=` there). That is a
+                        // separate emission bug, not a display-path bug; left
+                        // for a follow-up.
+                        let display_name = self
+                            .resolved_import_type_module_path(&module_specifier, None)
+                            .unwrap_or_else(|| {
+                                self.imported_namespace_display_module_name(&module_specifier)
+                            });
                         let resolved_qualifier = segments
                             .iter()
                             .filter_map(|(offset, segment)| {
@@ -242,6 +256,69 @@ impl<'a> CheckerState<'a> {
                         });
                         if !already_reported {
                             self.error_at_position(start, length, &message, 2694);
+                        }
+                    }
+                    tsz_solver::TypeId::ANY
+                }
+            }
+        } else if let Some(result) =
+            self.resolve_jsdoc_import_type_member_result(&effective_type_expr)
+        {
+            // A bare (non-`typeof`) `import("./mod").Member` reference,
+            // resolved directly through the pure resolver so the resulting
+            // TS2694 anchors at the member-name token inside the comment —
+            // matching tsc and mirroring `jsdoc_type_annotation_for_node`'s
+            // `@type` handling (#17176). Falling through to
+            // `resolve_jsdoc_type_str` below would still resolve the same
+            // shape, but through `resolve_jsdoc_import_type_reference`'s
+            // coarse `jsdoc_typedef_anchor_pos` fallback instead.
+            match result {
+                Ok(resolved) => resolved,
+                Err((namespace_display, member_name)) => {
+                    if let Some(comment_start) = jsdoc_comment_start {
+                        use crate::diagnostics::{
+                            diagnostic_codes, diagnostic_messages, format_message,
+                        };
+                        let message = format_message(
+                            diagnostic_messages::NAMESPACE_HAS_NO_EXPORTED_MEMBER,
+                            &[&namespace_display, &member_name],
+                        );
+                        let member_offset = effective_type_expr
+                            .find(&format!(".{member_name}"))
+                            .map_or(0, |offset| offset + 1);
+                        let source_start = self
+                            .ctx
+                            .arena
+                            .source_files
+                            .first()
+                            .and_then(|source_file| {
+                                let source_text = source_file.text.as_ref();
+                                let exact =
+                                    format!("@param {{{effective_type_expr}}} {param_name}");
+                                let optional =
+                                    format!("@param {{{effective_type_expr}}} [{param_name}]");
+                                source_text
+                                    .find(&exact)
+                                    .or_else(|| source_text.find(&optional))
+                            })
+                            .map(|offset| offset + "@param {".len() + member_offset);
+                        let start = source_start.map(|offset| offset as u32).unwrap_or(
+                            comment_start + type_expr_offset as u32 + member_offset as u32,
+                        );
+                        let length = member_name.len() as u32;
+                        let already_reported = self.ctx.diagnostics.iter().any(|diagnostic| {
+                            diagnostic.code == diagnostic_codes::NAMESPACE_HAS_NO_EXPORTED_MEMBER
+                                && diagnostic.start == start
+                                && diagnostic.length == length
+                                && diagnostic.message_text == message
+                        });
+                        if !already_reported {
+                            self.error_at_position(
+                                start,
+                                length,
+                                &message,
+                                diagnostic_codes::NAMESPACE_HAS_NO_EXPORTED_MEMBER,
+                            );
                         }
                     }
                     tsz_solver::TypeId::ANY

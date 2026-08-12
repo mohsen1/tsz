@@ -199,3 +199,33 @@ fn jsdoc_index_resolution_import_type_renders_resolved_path() {
         vec!["Namespace '\"pkg/index\"' has no exported member 'Missing'.".to_string()],
     );
 }
+
+/// The remaining site this family missed: JSDoc `@param {typeof
+/// import(...).member}` (`params_type_strings.rs`'s value-position walk) must
+/// apply the same resolved-path rule as the `@type`/`@typedef` and TS-syntax
+/// paths above.
+///
+/// This site unconditionally appends a `.export=` qualifier regardless of
+/// whether the target module actually has an `export =`/`module.exports =`
+/// — oracle-verified (`typescript@7.0.2`) still wrong for a plain
+/// named-export CommonJS module like this fixture (`tsc` omits `.export=`
+/// there). That is a separate, pre-existing emission bug this test does not
+/// fix; it pins today's `.export=`-suffixed text so the resolved-path half
+/// (`"sub/index"`, not `"sub"`) has a regression guard.
+#[test]
+fn jsdoc_typeof_import_walk_param_tag_renders_resolved_path() {
+    let msgs = ts2694_messages_js(
+        &[
+            ("sub/index.js", "exports.FOO = \"foo\";\n"),
+            (
+                "a.js",
+                "/** @param {typeof import('./sub').Missing} p */\nfunction f(p) {}\n",
+            ),
+        ],
+        "a.js",
+    );
+    assert_eq!(
+        msgs,
+        vec!["Namespace '\"sub/index\".export=' has no exported member 'Missing'.".to_string()],
+    );
+}
