@@ -509,6 +509,11 @@ impl<'a> DeclarationEmitter<'a> {
 
         let mut properties = Vec::new();
         let mut current_property: Option<(String, bool, String, Vec<String>)> = None;
+        // tsc scopes a typedef's property list to the tag run following the
+        // `@typedef` tag: property tags before it are ignored, and the first
+        // tag other than `@property`/`@prop`/`@template`/`@type` terminates
+        // the list (the typedef then falls back to its braced annotation).
+        let mut seen_typedef = false;
 
         for line in jsdoc
             .lines()
@@ -516,6 +521,11 @@ impl<'a> DeclarationEmitter<'a> {
             .flat_map(Self::split_jsdoc_tag_segments)
         {
             if line.is_empty() {
+                continue;
+            }
+
+            if !seen_typedef {
+                seen_typedef = Self::jsdoc_tag_rest(line, "typedef").is_some();
                 continue;
             }
 
@@ -594,6 +604,14 @@ impl<'a> DeclarationEmitter<'a> {
             if line.starts_with('@') {
                 if let Some(property) = current_property.take() {
                     properties.push(property);
+                }
+                // `@template` and `@type` are recognized typedef companions
+                // and stay transparent to the property list; any other tag
+                // terminates it, discarding later properties.
+                if Self::jsdoc_tag_rest(line, "template").is_none()
+                    && Self::jsdoc_tag_rest(line, "type").is_none()
+                {
+                    break;
                 }
                 continue;
             }
@@ -795,11 +813,14 @@ impl<'a> DeclarationEmitter<'a> {
         let mut description_lines = Self::jsdoc_description_lines(jsdoc);
         description_lines.extend(Self::jsdoc_typedef_trailing_description_lines(jsdoc));
 
-        if Self::jsdoc_has_property_tags(jsdoc) {
+        // A failed property parse (e.g. the list was terminated before any
+        // property tag) falls through to the plain `@typedef` annotation.
+        if Self::jsdoc_has_property_tags(jsdoc)
+            && let Some((name, type_text)) = Self::parse_jsdoc_property_type_alias(jsdoc)
+        {
             let type_params = Self::parse_jsdoc_template_params_before_tag(jsdoc, "typedef");
             let invalid_type_param_names =
                 Self::jsdoc_template_param_names_after_tag(jsdoc, "typedef");
-            let (name, type_text) = Self::parse_jsdoc_property_type_alias(jsdoc)?;
             if name == "default" {
                 return None;
             }
@@ -877,10 +898,17 @@ impl<'a> DeclarationEmitter<'a> {
     ) -> Option<JsdocTypeAliasDecl> {
         let type_params = Self::parse_jsdoc_template_params_before_tag(jsdoc, "typedef");
         let invalid_type_param_names = Self::jsdoc_template_param_names_after_tag(jsdoc, "typedef");
-        let (name, type_text) = if Self::jsdoc_has_property_tags(jsdoc) {
-            Self::parse_jsdoc_property_type_alias(jsdoc)?
+        let property_alias = if Self::jsdoc_has_property_tags(jsdoc) {
+            Self::parse_jsdoc_property_type_alias(jsdoc)
         } else {
-            Self::parse_jsdoc_typedef_alias(jsdoc)?
+            None
+        };
+        let from_properties = property_alias.is_some();
+        let (name, type_text) = match property_alias {
+            Some(parsed) => parsed,
+            // A terminated (or absent) property list falls back to the plain
+            // `@typedef` annotation.
+            None => Self::parse_jsdoc_typedef_alias(jsdoc)?,
         };
         if name != "default" {
             return None;
@@ -899,7 +927,7 @@ impl<'a> DeclarationEmitter<'a> {
                 type_text
             },
             description_lines: Vec::new(),
-            render_verbatim: Self::jsdoc_has_property_tags(jsdoc) && !uses_invalid_template_param,
+            render_verbatim: from_properties && !uses_invalid_template_param,
         })
     }
 
