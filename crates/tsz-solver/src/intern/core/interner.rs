@@ -12,10 +12,9 @@
 use crate::def::DefId;
 use crate::types::{
     CallableShape, CallableShapeId, ConditionalType, ConditionalTypeId, FunctionShape,
-    FunctionShapeId, IntrinsicKind, LiteralValue, MappedType, MappedTypeId, ObjectFlags,
-    ObjectShape, ObjectShapeId, PropertyInfo, PropertyLookup, TemplateLiteralId, TemplateSpan,
-    TupleElement, TupleListId, TypeApplication, TypeApplicationId, TypeData, TypeId, TypeListId,
-    TypeParamInfo,
+    IntrinsicKind, LiteralValue, MappedType, MappedTypeId, ObjectFlags, ObjectShape, ObjectShapeId,
+    PropertyInfo, PropertyLookup, TemplateLiteralId, TemplateSpan, TupleElement, TupleListId,
+    TypeApplication, TypeApplicationId, TypeData, TypeId, TypeListId, TypeParamInfo,
 };
 use crate::utils::RwLockExt;
 use crate::visitor::is_identity_comparable_type;
@@ -52,6 +51,7 @@ struct UnionComplexityThreadState {
 
 mod cache;
 mod display;
+mod function_shapes;
 mod storage;
 mod union_complexity;
 mod variance_cache;
@@ -292,6 +292,8 @@ pub struct TypeInterner {
     /// Object property maps: lazily initialized `DashMap`
     pub(super) object_property_maps: ObjectPropertyMap,
     pub(super) function_shapes: ConcurrentValueInterner<FunctionShape>,
+    /// JS untyped-signature display masks (#17227); see `function_shapes`.
+    pub(super) js_display_masks: function_shapes::JsDisplayMasks,
     pub(super) callable_shapes: ConcurrentValueInterner<CallableShape>,
     pub(super) conditional_types: ConcurrentValueInterner<ConditionalType>,
     pub(super) mapped_types: ConcurrentValueInterner<MappedType>,
@@ -842,6 +844,7 @@ impl TypeInterner {
             object_shapes: ConcurrentValueInterner::new(),
             object_property_maps: OnceLock::new(),
             function_shapes: ConcurrentValueInterner::new(),
+            js_display_masks: function_shapes::JsDisplayMasks::default(),
             callable_shapes: ConcurrentValueInterner::new(),
             conditional_types: ConcurrentValueInterner::new(),
             mapped_types: ConcurrentValueInterner::new(),
@@ -1305,21 +1308,6 @@ impl TypeInterner {
     }
 
     #[inline]
-    pub fn function_shape(&self, id: FunctionShapeId) -> Arc<FunctionShape> {
-        self.function_shapes.get(id.0).unwrap_or_else(|| {
-            Arc::new(FunctionShape {
-                type_params: Vec::new(),
-                params: Vec::new(),
-                this_type: None,
-                return_type: TypeId::ERROR,
-                type_predicate: None,
-                is_constructor: false,
-                is_method: false,
-            })
-        })
-    }
-
-    #[inline]
     pub fn callable_shape(&self, id: CallableShapeId) -> Arc<CallableShape> {
         self.callable_shapes.get(id.0).unwrap_or_else(|| {
             Arc::new(CallableShape {
@@ -1759,11 +1747,6 @@ impl TypeInterner {
             shape.string_index = Some(sym);
         }
         ObjectShapeId(self.object_shapes.intern(shape))
-    }
-
-    pub(super) fn intern_function_shape(&self, shape: FunctionShape) -> FunctionShapeId {
-        tsz_common::perf_counters::record_interner_function_shape_intern_call();
-        FunctionShapeId(self.function_shapes.intern(shape))
     }
 
     pub(in crate::intern) fn intern_callable_shape(&self, shape: CallableShape) -> CallableShapeId {

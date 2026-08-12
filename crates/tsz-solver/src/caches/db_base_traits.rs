@@ -303,3 +303,32 @@ pub trait TypeCompilerOptions {
         true
     }
 }
+
+/// Storage capability for the per-parameter "arity-only optional" display
+/// masks of JS untyped signatures (#17227).
+///
+/// A bare, unannotated parameter in a JS file is `optional` in its
+/// `FunctionShape` only so call-arity checking stays lenient; `tsc` never
+/// displays it with `?`. The mask records which parameters owe `optional` to
+/// that rule so the printer renders them as required, while arity and
+/// subtyping keep reading `optional` unchanged. Kept out of
+/// [`crate::caches::db::TypeDatabase`]'s own method list as a narrower
+/// facet, following the other capability supertraits.
+pub trait JsSignatureDisplaySource {
+    /// Intern a function type carrying an arity-only-optional display mask
+    /// (`mask[i]` flags `shape.params[i]`). Implementations without mask
+    /// storage fall back to the plain function intern (today's display).
+    fn function_with_arity_optional_mask(
+        &self,
+        shape: crate::types::FunctionShape,
+        mask: &[bool],
+    ) -> TypeId;
+
+    /// The mask recorded for `id`, or `None` for shapes interned without
+    /// one. `Some(mask)[i] == true` means `params[i]`'s `optional` bit
+    /// exists only for JS call-arity leniency and displays as required.
+    fn function_shape_arity_optional_mask(
+        &self,
+        id: crate::types::FunctionShapeId,
+    ) -> Option<std::sync::Arc<[bool]>>;
+}

@@ -46,6 +46,7 @@ use std::sync::Arc;
 use tsz_binder::SymbolId;
 use tsz_common::interner::Atom;
 
+mod js_signature_display;
 mod predicate_cache;
 mod resolver;
 
