@@ -274,6 +274,27 @@ impl NodeArenaInner {
         }
     }
 
+    /// Whether `index` is an object-literal expression with no member elements
+    /// (`{}`).
+    ///
+    /// Mirrors tsc's `getExpandoInitializer` emptiness test: only an empty
+    /// object literal is a valid expando host, because its shape is open and a
+    /// later `x.p = …` write declares a new member. A non-empty literal
+    /// (`{ a: 1 }`) has a closed shape, so the same write is an ordinary
+    /// property assignment (`TS2339` under `noImplicitAny`). A prototype
+    /// assignment (`X.prototype = {…}`) relaxes the rule and is gated
+    /// separately by its caller.
+    #[inline]
+    #[must_use]
+    pub fn is_empty_object_literal(&self, index: NodeIndex) -> bool {
+        self.get(index).is_some_and(|node| {
+            node.kind == super::syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                && self
+                    .get_literal_expr(node)
+                    .is_some_and(|lit| lit.elements.nodes.is_empty())
+        })
+    }
+
     /// Check if a function-like node is immediately invoked (IIFE pattern).
     ///
     /// Detects patterns like `(function() {})()`, `(() => expr)()`,

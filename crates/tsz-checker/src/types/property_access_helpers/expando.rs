@@ -221,9 +221,13 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
+        // Only an EMPTY object literal (`var X = {}`) is an expando host: tsc's
+        // `getExpandoInitializer` treats a non-empty literal (`var X = { a: 1 }`)
+        // as a closed shape, so a later `X.b` read is `TS2339`, not an expando
+        // member. Function/class expression initializers stay hosts regardless.
         init_node.is_function_expression_or_arrow()
             || init_node.kind == syntax_kind_ext::CLASS_EXPRESSION
-            || init_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+            || arena.is_empty_object_literal(var_decl.initializer)
     }
 
     fn root_symbol_supports_js_direct_expando_write(&self, sym_id: SymbolId) -> bool {
@@ -277,9 +281,14 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
+        // Emptiness gate, mirroring the read side and tsc's
+        // `getExpandoInitializer`: a `var X = {}` empty literal hosts expando
+        // writes, but `var X = { a: 1 }` is a closed shape whose later `X.b = …`
+        // write is an ordinary property assignment (`TS2339` under
+        // `noImplicitAny`; silenced under the open-container leniency otherwise).
         init_node.is_function_expression_or_arrow()
             || init_node.kind == syntax_kind_ext::CLASS_EXPRESSION
-            || init_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+            || arena.is_empty_object_literal(var_decl.initializer)
     }
 
     fn variable_declaration_has_jsdoc_type_annotation(&self, decl_idx: NodeIndex) -> bool {
