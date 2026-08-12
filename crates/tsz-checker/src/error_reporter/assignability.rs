@@ -1205,6 +1205,7 @@ impl<'a> CheckerState<'a> {
         {
             return name;
         }
+        let target = self.ctx.types.intersection_reduced_for_display(target);
         let mut formatter = self
             .ctx
             .create_diagnostic_type_formatter()

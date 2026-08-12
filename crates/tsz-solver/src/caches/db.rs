@@ -73,8 +73,8 @@ impl<T: TypeDatabase + ?Sized> TypeStore for T {
 }
 
 pub use super::db_base_traits::{
-    JsSignatureDisplaySource, TypeCompilerOptions, TypePredicateCache,
-    TypeRawIntersectionConstruction, TypeTupleLimitSignal,
+    IntersectionDisplayReduction, JsSignatureDisplaySource, TypeCompilerOptions,
+    TypePredicateCache, TypeRawIntersectionConstruction, TypeTupleLimitSignal,
 };
 
 /// Per-file cache hooks for evaluated generic applications.
@@ -1327,7 +1327,11 @@ impl TypeRawIntersectionConstruction for TypeInterner {
 /// This is the incremental boundary where caching and (future) salsa hooks live.
 /// Inherits from `TypeResolver` to enable Lazy/Ref type resolution through `evaluate_type()`.
 pub trait QueryDatabase:
-    TypeDatabase + TypeResolver + CollectPropertiesResultCache + TypeRawIntersectionConstruction
+    TypeDatabase
+    + TypeResolver
+    + CollectPropertiesResultCache
+    + TypeRawIntersectionConstruction
+    + IntersectionDisplayReduction
 {
     /// Expose the underlying `TypeDatabase` view for legacy entry points.
     fn as_type_database(&self) -> &dyn TypeDatabase;

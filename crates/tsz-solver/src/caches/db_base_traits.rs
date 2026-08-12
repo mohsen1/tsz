@@ -1,4 +1,52 @@
-use crate::types::TypeId;
+use super::db::TypeDatabase;
+use crate::types::{TypeData, TypeId};
+
+/// Redundant-supertype reduction of an intersection type, for diagnostic
+/// DISPLAY only. It does not change any interned identity — in particular it
+/// must not feed back into `try_merge_objects_in_intersection`'s raw,
+/// non-distributing property-type merge, which existing intersection-origin
+/// tracking (`get_merged_intersection_origin`) depends on staying raw.
+///
+/// `A & B` collapses to `A` when `B` is a union that literally contains `A`
+/// as a member. That is exactly the shape an `exactOptionalPropertyTypes`
+/// property-write/read merge can leave unreduced (`boolean & (boolean |
+/// undefined)` instead of tsc's plain `boolean`): one member's write type is
+/// always literally a member of the other member's own union, so a
+/// `TypeId`-membership check is enough here — no general subtyping needed.
+/// The default body is expressed purely in terms of existing `TypeDatabase`
+/// queries, so every implementor gets it for free via the blanket impl below.
+pub trait IntersectionDisplayReduction: TypeDatabase {
+    fn intersection_reduced_for_display(&self, id: TypeId) -> TypeId {
+        let Some(TypeData::Intersection(list_id)) = self.lookup(id) else {
+            return id;
+        };
+        let members = self.type_list(list_id);
+        let is_redundant_supertype = |member: TypeId| match self.lookup(member) {
+            Some(TypeData::Union(union_list)) => {
+                let union_members = self.type_list(union_list);
+                members
+                    .iter()
+                    .any(|&other| other != member && union_members.contains(&other))
+            }
+            _ => false,
+        };
+        let kept: Vec<TypeId> = members
+            .iter()
+            .copied()
+            .filter(|&m| !is_redundant_supertype(m))
+            .collect();
+        match kept.len() {
+            1 => kept[0],
+            n if n == members.len() => id,
+            _ => kept
+                .into_iter()
+                .reduce(|acc, m| self.intersect_types_raw2(acc, m))
+                .unwrap_or(id),
+        }
+    }
+}
+
+impl<T: TypeDatabase + ?Sized> IntersectionDisplayReduction for T {}
 
 /// Construction capability for replaying an unsimplified intersection member
 /// list without producing a new diagnostic signal.
