@@ -310,6 +310,7 @@ mod generics_and_ambient;
 mod infer_paren_and_union_intersection;
 mod js_define_property;
 mod js_expando_features;
+mod jsdoc_multi_tag_lines;
 mod jsdoc_optionality_undefined;
 mod jsdoc_template_defaults;
 mod local_alias_elision;
