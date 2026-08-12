@@ -1782,27 +1782,4 @@ impl<'a> CheckerState<'a> {
             || ((self.is_js_file() && self.ctx.compiler_options.check_js)
                 && self.is_js_prototype_read_root(object_expr_idx, property_name))
     }
-
-    /// Whether an unknown property on `type_id` is an implicit `any` rather than
-    /// a `TS2339`, because the receiver is an *open* JS object container.
-    ///
-    /// In a JS file a value whose type is an anonymous object shape is open: JS
-    /// code routinely builds such containers up by property assignment, often
-    /// across files (`var N = {}` in one file, `N.commands.a = 1` in another), so
-    /// `tsc` types the access as an implicit `any` and reports it only under
-    /// `noImplicitAny`.
-    ///
-    /// The shape's nominal `symbol` separates an open container from a declared
-    /// shape: class instance types carry it so distinct classes do not intern
-    /// structurally, and interfaces carry their declaration's symbol. So
-    /// `Event.prototype.removeChildren = ...` and `new C().q` keep reporting
-    /// TS2339. Arrays and primitives have no object shape at all and are
-    /// excluded before the `symbol` test is reached.
-    pub(crate) fn js_open_object_receiver_under_implicit_any(&self, type_id: TypeId) -> bool {
-        self.is_js_file()
-            && self.ctx.compiler_options.check_js
-            && !self.ctx.no_implicit_any()
-            && crate::query_boundaries::common::object_shape_for_type(self.ctx.types, type_id)
-                .is_some_and(|shape| shape.symbol.is_none())
-    }
 }

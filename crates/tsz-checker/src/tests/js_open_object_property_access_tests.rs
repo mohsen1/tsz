@@ -1,22 +1,24 @@
-//! Unknown property access on an anonymous object shape in a JS file.
+//! Unknown property access on anonymous object shapes in a JS file.
 //!
-//! In a JS file `tsc` treats a value whose type is an *anonymous* object shape
-//! as open — JS code routinely builds such containers up by property assignment,
-//! often across files — so an unknown property access is an implicit `any` and
-//! is reported only under `noImplicitAny`. Verified against the pinned tsc
-//! 7.0.2:
+//! `tsc` 7.0.2 has no `noImplicitAny`-gated leniency here: an access that
+//! misses on the receiver's type reports `TS2339` regardless of
+//! `noImplicitAny`. The cases that stay silent are the ones the *expando
+//! declaration machinery* owns — a write that itself declares the member on an
+//! expando-capable container (a `var` initialized with an empty object
+//! literal, or `exports.x` in a CommonJS module without an export-assignment
+//! mix). A read of a member no write declared is `TS2339` even on those
+//! containers. Verified against the pinned tsc 7.0.2 (`--allowJs --checkJs`,
+//! each case run with and without `--noImplicitAny`):
 //!
 //! ```text
-//! // a.js, --allowJs --checkJs
-//! var o = {}; o.nope        // noImplicitAny off: silent | on: TS2339
-//! var s = "x"; s.nope       // TS2339 either way ('string')
-//! class K {}; new K().nope  // TS2339 either way ('K')
-//! var a = [1]; a.nope       // TS2339 either way ('number[]')
+//! var o = {}; o.nope            // TS2339 either way (read never declared)
+//! var o = {}; o.nope = 1        // silent either way (write declares it)
+//! var o = { a: 1 }; o.nope      // TS2339 either way
+//! var o = { a: 1 }; o.nope = 1  // TS2339 either way (non-empty init: not expando)
+//! var N = {}; N.c = {}; N.c.a = 1; N.c.b  // only `N.c.b` is TS2339
+//! function f() {}; f.nope       // TS2339 either way
+//! module.exports = { z: 1 }; exports.zag = 2  // TS2309 + TS2339 either way
 //! ```
-//!
-//! The discriminator is the shape's nominal `symbol`: class instances and
-//! interfaces carry one, anonymous literals do not. Arrays and primitives have
-//! no object shape at all.
 
 use crate::context::CheckerOptions;
 use crate::test_utils::check_source;
@@ -41,70 +43,132 @@ fn ts_codes(source: &str) -> Vec<u32> {
         .collect()
 }
 
-fn js_reports_2339(source: &str) -> bool {
-    js_codes_with(source, false).contains(&2339)
+/// TS2339 must fire with `noImplicitAny` both off and on.
+fn js_reports_2339_both_configs(source: &str) -> bool {
+    js_codes_with(source, false).contains(&2339) && js_codes_with(source, true).contains(&2339)
 }
 
-// --- Open anonymous containers: silent when noImplicitAny is off. ---
+/// No TS2339 with `noImplicitAny` either off or on.
+fn js_silent_2339_both_configs(source: &str) -> bool {
+    !js_codes_with(source, false).contains(&2339) && !js_codes_with(source, true).contains(&2339)
+}
+
+// --- Reads of a member no write declared: TS2339 regardless of noImplicitAny. ---
 
 #[test]
-fn empty_object_literal_receiver_is_open() {
-    assert!(!js_reports_2339("var o = {}\no.nope\n"));
+fn read_on_empty_literal_container_reports_both_configs() {
+    assert!(js_reports_2339_both_configs("var o = {}\no.nope\n"));
 }
 
 #[test]
-fn non_empty_object_literal_receiver_is_open() {
-    assert!(!js_reports_2339("var o = { a: 1 }\no.nope\n"));
+fn read_on_non_empty_literal_reports_both_configs() {
+    assert!(js_reports_2339_both_configs("var o = { a: 1 }\no.nope\n"));
 }
 
 /// A renamed binder and a different property, so the rule is structural rather
 /// than tied to any particular spelling.
 #[test]
-fn open_container_rule_is_not_name_specific() {
-    assert!(!js_reports_2339(
+fn read_rule_is_not_name_specific() {
+    assert!(js_reports_2339_both_configs(
         "var registry = { first: 1 }\nregistry.second\n"
     ));
 }
 
-/// The container shape JS code actually builds: a nested object extended by
-/// property assignment, as in the `typeFromPropertyAssignment` corpus tests.
+/// Nested container built by property assignment: the writes are expando
+/// declarations and stay silent, but the read of a member no write declared
+/// still reports.
 #[test]
-fn nested_assigned_container_is_open() {
+fn undeclared_read_on_nested_assigned_container_reports() {
     let source = "var N = {}\nN.commands = {}\nN.commands.a = 1\nN.commands.b\n";
-    assert!(!js_reports_2339(source));
+    assert!(js_reports_2339_both_configs(source));
 }
 
 #[test]
-fn writes_to_an_open_container_are_also_silent() {
-    assert!(!js_reports_2339("var o = {}\no.nope = 1\n"));
+fn function_receiver_undeclared_read_reports_both_configs() {
+    assert!(js_reports_2339_both_configs("function f() {}\nf.nope\n"));
 }
 
-// --- noImplicitAny restores the diagnostic. ---
+// --- Writes that are expando declarations: silent regardless of noImplicitAny. ---
 
 #[test]
-fn no_implicit_any_reports_on_open_container() {
-    assert!(js_codes_with("var o = {}\no.nope\n", true).contains(&2339));
+fn write_to_empty_literal_container_is_a_declaration() {
+    assert!(js_silent_2339_both_configs("var o = {}\no.nope = 1\n"));
+}
+
+#[test]
+fn nested_expando_writes_are_declarations() {
+    assert!(js_silent_2339_both_configs(
+        "var N = {}\nN.commands = {}\nN.commands.a = 1\n"
+    ));
+}
+
+#[test]
+fn expando_declared_member_read_is_clean() {
+    assert!(js_silent_2339_both_configs(
+        "var o = {}\no.zag = 2\nvar u = o.zag\n"
+    ));
+}
+
+#[test]
+fn exports_expando_write_without_export_assignment_is_clean() {
+    assert!(js_silent_2339_both_configs("exports.zag = 2\n"));
+}
+
+// --- Non-expando writes: TS2339 regardless of noImplicitAny. ---
+
+// KNOWN GAP (not pinned here): `var o = { zig: 1 }; o.zag = 2` should be
+// TS2339 both configs — tsc's expando rule (`getExpandoInitializer`) accepts
+// an object-literal initializer only when it is EMPTY, while tsz's expando
+// machinery (binder `expression_flow.rs` registration and the checker's
+// `root_symbol_supports_js_expando_*` predicates) accepts any object literal
+// and classifies the write as a declaration. Pre-existing false negative,
+// independent of the removed suppression gate; tracked in its own issue.
+
+/// The export-assignment mix (TS2309 surface): `exports`/`module.exports` are
+/// typed as the export= target, so a sibling write to an undeclared member
+/// reports against that target's type.
+#[test]
+fn export_assignment_mix_exports_write_reports_both_configs() {
+    let source = "module.exports = { zig: 1 }\nexports.zag = 2\n";
+    assert!(js_reports_2339_both_configs(source));
+}
+
+#[test]
+fn export_assignment_mix_module_exports_write_reports_both_configs() {
+    let source = "module.exports = { zig: 1 }\nmodule.exports.zag = 2\n";
+    assert!(js_reports_2339_both_configs(source));
+}
+
+#[test]
+fn export_assignment_mix_via_variable_target_reports_both_configs() {
+    let source = "var o = { zig: 1 }\nmodule.exports = o\nexports.zag = 2\n";
+    assert!(js_reports_2339_both_configs(source));
+}
+
+#[test]
+fn export_assignment_mix_undeclared_read_reports_both_configs() {
+    let source = "module.exports = { zig: 1 }\nvar v = exports.zag\n";
+    assert!(js_reports_2339_both_configs(source));
 }
 
 // --- Declared shapes keep reporting, with or without noImplicitAny. ---
 
 /// Witness `typeFromPropertyAssignment28`: a class instance carries a nominal
-/// symbol, so it is not an open container.
+/// symbol, so unknown members report.
 #[test]
 fn class_instance_receiver_still_reports() {
     let source = "class C { constructor() { this.p = 1 } }\nvar c = new C()\nc.nope\n";
-    assert!(js_reports_2339(source));
-    assert!(js_codes_with(source, true).contains(&2339));
+    assert!(js_reports_2339_both_configs(source));
 }
 
 #[test]
 fn string_receiver_still_reports() {
-    assert!(js_reports_2339("var s = \"x\"\ns.nope\n"));
+    assert!(js_reports_2339_both_configs("var s = \"x\"\ns.nope\n"));
 }
 
 #[test]
 fn array_receiver_still_reports() {
-    assert!(js_reports_2339("var a = [1, 2]\na.nope\n"));
+    assert!(js_reports_2339_both_configs("var a = [1, 2]\na.nope\n"));
 }
 
 // --- TypeScript files are unaffected. ---

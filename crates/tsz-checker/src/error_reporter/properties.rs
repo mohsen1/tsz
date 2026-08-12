@@ -1182,10 +1182,6 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        if self.js_open_object_receiver_under_implicit_any(type_id) {
-            return;
-        }
-
         // Suppress error if type is ERROR/ANY or an Error type wrapper.
         // This prevents cascading errors when accessing properties on error types.
         // NOTE: We do NOT suppress for UNKNOWN — accessing properties on unknown should error (TS2339).
