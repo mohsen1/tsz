@@ -81,7 +81,7 @@ impl<'a> CheckerState<'a> {
     /// Accumulate a host verdict over the declaring assignments of one
     /// expando member key: `found` flips when any `<expected_key> = rhs`
     /// assignment (non-void-zero RHS) exists in this subtree, and `all_host`
-    /// is ANDed with each such RHS being an expando-host shape — an empty
+    /// is AND-accumulated with each such RHS being an expando-host shape — an empty
     /// object literal, a function/arrow expression, or a class expression
     /// (tsc's `getExpandoInitializer` shapes). A single closed-shape write
     /// closes the member in either order (oracle-verified), so the verdict
