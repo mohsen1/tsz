@@ -368,6 +368,23 @@ pub struct BinderState {
     /// go through `Arc::make_mut` (free when refcount=1, the case during a
     /// single file's bind); read-only post-bind.
     pub expando_properties: Arc<FxHashMap<String, FxHashSet<String>>>,
+    /// Bind-time-only companion to `expando_properties`: for each recorded
+    /// member, whether EVERY declaring assignment RHS seen so far qualifies
+    /// as an expando host (empty object literal, function/arrow expression,
+    /// or class expression — tsc's `getExpandoInitializer` shapes),
+    /// accumulated with `&=` across repeated writes (a single closed-shape
+    /// write closes the member for good, in either order — oracle-verified).
+    ///
+    /// `detect_expando_assignment` consults it to gate NESTED chain
+    /// recording: `a.b.c = e` declares `c` only when `b`'s declaring RHS was
+    /// host-shaped (`a.b = {}`), not merely when `b` is a recorded member
+    /// (`a.b = { k: 1 }` is a closed shape whose later `a.b.c = e` write is
+    /// TS2339 under `noImplicitAny`). The gated result is fully captured in
+    /// `expando_properties`, so this map is neither serialized nor
+    /// reconstructed from `BinderInputs`; post-bind consumers must not read
+    /// it.
+    #[serde(skip)]
+    pub expando_host_members: FxHashMap<String, FxHashMap<String, bool>>,
     /// Ambient module declarations by specifier (e.g. "pkg", "./types").
     ///
     /// `Arc`-wrapped so per-file binders constructed by the CLI driver
