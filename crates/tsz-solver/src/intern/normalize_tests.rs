@@ -865,3 +865,137 @@ fn redundant_array_intersection_survives_interning() {
     );
     assert_ne!(intersection, narrow);
 }
+
+// `union2` is a fast path for `union`; the two constructors must mint the
+// identical interned `TypeId` for the same member set. Regression tests for the
+// content-canonical-identity bug (#14344) where `union2`'s hand-rolled insertion
+// ordered by allocation order and skipped reduction, diverging from `union`.
+
+#[test]
+fn union2_matches_union_for_string_literal_insertion() {
+    let interner = TypeInterner::new();
+    // Intern "b" and "c" first, then "a", so "a" has the highest allocation
+    // order. Content-canonical ordering is by string value ("a" < "b" < "c"),
+    // which is independent of that allocation order.
+    let b = interner.literal_string("b");
+    let c = interner.literal_string("c");
+    let a = interner.literal_string("a");
+
+    let existing = interner.union(vec![b, c]);
+    assert_eq!(
+        interner.union2(a, existing),
+        interner.union(vec![a, b, c]),
+        "union2 must place the new literal at its content-canonical position, not by alloc order"
+    );
+}
+
+#[test]
+fn union2_absorbs_literals_into_primitive_like_union() {
+    let interner = TypeInterner::new();
+    let a = interner.literal_string("a");
+    let b = interner.literal_string("b");
+    let lits = interner.union(vec![a, b]);
+    // `string | "a" | "b"` collapses to `string` in both constructors.
+    assert_eq!(interner.union2(TypeId::STRING, lits), TypeId::STRING);
+    assert_eq!(
+        interner.union2(TypeId::STRING, lits),
+        interner.union(vec![TypeId::STRING, a, b])
+    );
+}
+
+#[test]
+fn union2_reduces_object_subtypes_like_union() {
+    let interner = TypeInterner::new();
+    let obj_narrow = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        interner.literal_number(1.0),
+    )]);
+    let obj_wide = interner.object(vec![
+        PropertyInfo::new(interner.intern_string("a"), interner.literal_number(1.0)),
+        PropertyInfo::new(interner.intern_string("b"), interner.literal_number(2.0)),
+    ]);
+    // `{ a: 1; b: 2 } <: { a: 1 }` (width subtyping): the wide object is absorbed.
+    // The `number` member keeps this off the all-literals-and-objects early-return
+    // gate so the pairwise object reduction actually runs.
+    let existing = interner.union(vec![obj_narrow, TypeId::NUMBER]);
+    assert_eq!(
+        interner.union2(obj_wide, existing),
+        interner.union(vec![obj_narrow, obj_wide, TypeId::NUMBER]),
+        "union2 must apply the same structural subtype reduction as union"
+    );
+}
+
+#[test]
+fn union2_result_is_invariant_under_interning_order() {
+    // The interned union `TypeId` must be a pure function of the member set, not
+    // of the order the members were interned in (allocation order). Build the
+    // same `"x" | "y" | "z"` union in two interners with opposite interning
+    // order, via both constructors, and assert one identity and one rendered
+    // order across the board.
+    let render = |i: &TypeInterner, u: TypeId| -> Vec<String> {
+        match i.lookup(u) {
+            Some(TypeData::Union(l)) => i
+                .type_list(l)
+                .iter()
+                .map(|&m| match i.lookup(m) {
+                    Some(TypeData::Literal(LiteralValue::String(atom))) => {
+                        i.string_interner.resolve(atom).to_string()
+                    }
+                    other => format!("{other:?}"),
+                })
+                .collect(),
+            _ => vec![],
+        }
+    };
+
+    // Forward interning order: x, y, z.
+    let fi = TypeInterner::new();
+    let fx = fi.literal_string("x");
+    let fy = fi.literal_string("y");
+    let fz = fi.literal_string("z");
+    let f_union = fi.union2(fz, fi.union(vec![fx, fy]));
+    assert_eq!(
+        f_union,
+        fi.union(vec![fx, fy, fz]),
+        "union2 == union (forward)"
+    );
+
+    // Reverse interning order: z, y, x.
+    let ri = TypeInterner::new();
+    let rz = ri.literal_string("z");
+    let ry = ri.literal_string("y");
+    let rx = ri.literal_string("x");
+    let r_union = ri.union2(rx, ri.union(vec![ry, rz]));
+    assert_eq!(
+        r_union,
+        ri.union(vec![rx, ry, rz]),
+        "union2 == union (reverse)"
+    );
+
+    // Rendered member order is content-canonical regardless of interning order.
+    assert_eq!(
+        render(&fi, f_union),
+        render(&ri, r_union),
+        "union member order must be content-canonical, independent of interning order"
+    );
+    assert_eq!(render(&fi, f_union), vec!["x", "y", "z"]);
+}
+
+#[test]
+fn union2_dedup_and_literal_absorption_fast_paths_stay_canonical() {
+    let interner = TypeInterner::new();
+    let a = interner.literal_string("a");
+    let b = interner.literal_string("b");
+    let u = interner.union(vec![a, b]);
+    // Re-adding an existing member returns the same union identity.
+    assert_eq!(interner.union2(a, u), u);
+    // Number-literal insertion is ordered by numeric value, not alloc order.
+    let two = interner.literal_number(2.0);
+    let three = interner.literal_number(3.0);
+    let one = interner.literal_number(1.0);
+    let nums = interner.union(vec![two, three]);
+    assert_eq!(
+        interner.union2(one, nums),
+        interner.union(vec![one, two, three])
+    );
+}
