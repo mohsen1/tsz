@@ -227,6 +227,10 @@ mod rest_element_not_last_grammar_tests;
 mod const_using_uninitialized_grammar_tests;
 
 #[cfg(test)]
+#[path = "../../tests/declare_duplicate_modifier_grammar_tests.rs"]
+mod declare_duplicate_modifier_grammar_tests;
+
+#[cfg(test)]
 #[path = "../../tests/spelling_integration_tests.rs"]
 mod spelling_integration_tests;
 

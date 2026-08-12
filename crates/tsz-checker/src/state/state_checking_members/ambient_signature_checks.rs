@@ -336,7 +336,13 @@ impl<'a> CheckerState<'a> {
                                 .is_some_and(|n| n.kind == syntax_kind_ext::DECORATOR)
                         })
                     });
-                if !has_es_decorator_on_declare {
+                // A duplicate `declare` fires TS1030 in the parser; tsc's
+                // `checkGrammarModifiers` `return`s there and never runs
+                // `checkGrammarProperty`, so the ambient-initializer check below
+                // is suppressed for such a member (matches tsc's single grammar
+                // diagnostic on `declare declare x = 1`).
+                let has_duplicate_declare = self.has_duplicate_declare_modifier(&prop.modifiers);
+                if !has_es_decorator_on_declare && !has_duplicate_declare {
                     // A `readonly` class property (incl. `static readonly`) behaves
                     // like a `const` in an ambient context: a string/numeric/negated-
                     // numeric literal initializer is accepted (it is preserved), while

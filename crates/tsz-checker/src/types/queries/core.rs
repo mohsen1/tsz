@@ -199,6 +199,35 @@ impl<'a> CheckerState<'a> {
             .has_modifier(modifiers, SyntaxKind::DeclareKeyword)
     }
 
+    /// `true` when the modifier list carries two or more `declare` keywords.
+    /// The parser reports the duplicate as TS1030 and — mirroring tsc's
+    /// `checkGrammarModifiers`, which `return`s at the first grammar error —
+    /// the downstream property grammar checks (e.g. TS1039, initializers not
+    /// allowed in ambient contexts) are suppressed for such a member.
+    pub(crate) fn has_duplicate_declare_modifier(
+        &self,
+        modifiers: &Option<tsz_parser::parser::NodeList>,
+    ) -> bool {
+        let Some(mods) = modifiers else {
+            return false;
+        };
+        let mut seen = false;
+        for &mod_idx in &mods.nodes {
+            if self
+                .ctx
+                .arena
+                .get(mod_idx)
+                .is_some_and(|node| node.kind == SyntaxKind::DeclareKeyword as u16)
+            {
+                if seen {
+                    return true;
+                }
+                seen = true;
+            }
+        }
+        false
+    }
+
     /// Find the `declare` modifier `NodeIndex` in a modifier list, if present.
     /// Used to point error messages at the specific modifier.
     pub(crate) fn get_declare_modifier(
