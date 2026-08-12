@@ -1,0 +1,141 @@
+{
+  "_note": "Per-writer fidelity ratchet for #16311. anyTokens/declareModules must not grow past these values; lower them by replacing `any` stub members with real types, then re-pin with `node scripts/bench/project-fixture-stub-fidelity.mjs --update-baseline`.",
+  "totals": {
+    "declareModules": 104,
+    "anyTokens": 1974,
+    "exports": 679,
+    "writers": 26
+  },
+  "writers": {
+    "tsz_write_kysely_globals": {
+      "declareModules": 0,
+      "anyTokens": 0,
+      "exports": 0
+    },
+    "tsz_write_tiny_invariant_config": {
+      "declareModules": 0,
+      "anyTokens": 1,
+      "exports": 0
+    },
+    "tsz_write_tanstack_query_config": {
+      "declareModules": 0,
+      "anyTokens": 1,
+      "exports": 0
+    },
+    "tsz_write_immer_config": {
+      "declareModules": 0,
+      "anyTokens": 1,
+      "exports": 0
+    },
+    "tsz_write_arktype_config": {
+      "declareModules": 0,
+      "anyTokens": 1,
+      "exports": 0
+    },
+    "tsz_write_class_transformer_config": {
+      "declareModules": 0,
+      "anyTokens": 13,
+      "exports": 0
+    },
+    "tsz_write_xstate_config": {
+      "declareModules": 1,
+      "anyTokens": 7,
+      "exports": 3
+    },
+    "tsz_write_mobx_config": {
+      "declareModules": 0,
+      "anyTokens": 11,
+      "exports": 0
+    },
+    "tsz_write_nextjs_bench_globals": {
+      "declareModules": 2,
+      "anyTokens": 5,
+      "exports": 2
+    },
+    "tsz_write_nextjs_external_module": {
+      "declareModules": 0,
+      "anyTokens": 1,
+      "exports": 1
+    },
+    "tsz_write_type_challenges_solutions_config": {
+      "declareModules": 0,
+      "anyTokens": 0,
+      "exports": 0
+    },
+    "tsz_write_drizzle_orm_external_stubs": {
+      "declareModules": 44,
+      "anyTokens": 1014,
+      "exports": 344
+    },
+    "tsz_write_ts_rest_external_stubs": {
+      "declareModules": 2,
+      "anyTokens": 61,
+      "exports": 9
+    },
+    "tsz_write_trpc_external_stubs": {
+      "declareModules": 0,
+      "anyTokens": 6,
+      "exports": 0
+    },
+    "tsz_write_effect_external_stubs": {
+      "declareModules": 2,
+      "anyTokens": 20,
+      "exports": 37
+    },
+    "tsz_write_zustand_external_stubs": {
+      "declareModules": 4,
+      "anyTokens": 22,
+      "exports": 4
+    },
+    "tsz_write_jotai_external_stubs": {
+      "declareModules": 3,
+      "anyTokens": 60,
+      "exports": 20
+    },
+    "tsz_write_type_graphql_external_stubs": {
+      "declareModules": 12,
+      "anyTokens": 160,
+      "exports": 87
+    },
+    "tsz_write_ofetch_external_stubs": {
+      "declareModules": 2,
+      "anyTokens": 5,
+      "exports": 2
+    },
+    "tsz_write_io_ts_external_stubs": {
+      "declareModules": 0,
+      "anyTokens": 1,
+      "exports": 1
+    },
+    "tsz_write_superjson_canary_stubs": {
+      "declareModules": 1,
+      "anyTokens": 8,
+      "exports": 3
+    },
+    "tsz_write_ts_extras_canary_stubs": {
+      "declareModules": 1,
+      "anyTokens": 92,
+      "exports": 27
+    },
+    "tsz_write_valtio_canary_stubs": {
+      "declareModules": 3,
+      "anyTokens": 66,
+      "exports": 19
+    },
+    "tsz_write_msw_canary_stubs": {
+      "declareModules": 19,
+      "anyTokens": 321,
+      "exports": 86
+    },
+    "tsz_write_tanstack_router_canary_stubs": {
+      "declareModules": 6,
+      "anyTokens": 79,
+      "exports": 27
+    },
+    "tsz_write_ts_morph_canary_stubs": {
+      "declareModules": 2,
+      "anyTokens": 18,
+      "exports": 7
+    }
+  }
+}

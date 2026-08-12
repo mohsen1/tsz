@@ -346,6 +346,7 @@ run_lint() {
   scripts/check-crate-root-files.sh || return $?
   node scripts/bench/test-project-rows.mjs || return $?
   node scripts/bench/test-project-fixture-deprecations.mjs || return $?
+  node scripts/bench/test-project-fixture-stub-fidelity.mjs || return $?
   node scripts/bench/project-row-summary.mjs || return $?
   node scripts/bench/test-project-row-summary.mjs || return $?
   node scripts/bench/test-project-file-stats.mjs || return $?
