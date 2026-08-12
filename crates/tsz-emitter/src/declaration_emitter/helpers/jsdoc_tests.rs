@@ -345,6 +345,176 @@ fn tag_segments_protect_braced_groups_backticks_and_glued_at() {
 }
 
 #[test]
+fn overload_signatures_parse_every_tag_on_one_line() {
+    // Both the tag sharing the `@overload` line and a mid-block multi-tag
+    // line must contribute; tsc parses one signature per `@overload` with
+    // params (x: number, y: string) => string and (x: string) => number.
+    let jsdoc = "\
+@overload
+@param {number} x @param {string} y
+@returns {string}
+@overload @param {string} x @returns {number}
+";
+
+    let signatures = DeclarationEmitter::parse_jsdoc_overload_signatures(jsdoc);
+    assert_eq!(signatures.len(), 2);
+
+    let first: Vec<(&str, &str)> = signatures[0]
+        .params
+        .iter()
+        .map(|p| (p.name.as_str(), p.type_text.as_str()))
+        .collect();
+    assert_eq!(first, vec![("x", "number"), ("y", "string")]);
+    assert_eq!(signatures[0].return_type, "string");
+
+    let second: Vec<(&str, &str)> = signatures[1]
+        .params
+        .iter()
+        .map(|p| (p.name.as_str(), p.type_text.as_str()))
+        .collect();
+    assert_eq!(second, vec![("x", "string")]);
+    assert_eq!(signatures[1].return_type, "number");
+}
+
+#[test]
+fn overload_signatures_keep_braced_tag_text_in_one_segment() {
+    // An `@`-tag inside a braced group is comment text, not a boundary:
+    // the bogus `@param` inside `{@link ...}` must not become a parameter.
+    let jsdoc = "\
+@overload
+@param {number} x - see {@link other @param {bogus} nope}
+@returns {string}
+";
+
+    let signatures = DeclarationEmitter::parse_jsdoc_overload_signatures(jsdoc);
+    assert_eq!(signatures.len(), 1);
+    let params: Vec<(&str, &str)> = signatures[0]
+        .params
+        .iter()
+        .map(|p| (p.name.as_str(), p.type_text.as_str()))
+        .collect();
+    assert_eq!(params, vec![("x", "number")]);
+    assert_eq!(signatures[0].return_type, "string");
+}
+
+#[test]
+fn property_alias_parses_every_tag_on_one_line() {
+    // The whole typedef fits on one physical line; both properties parse and
+    // the bracketed name stays `?`-optional without an `| undefined` branch.
+    let jsdoc = "@typedef {Object} Pair @property {number} first @property {string} [second]";
+
+    let decl = DeclarationEmitter::parse_jsdoc_type_alias_decl(jsdoc)
+        .expect("expected JSDoc property alias");
+    assert_eq!(decl.name, "Pair");
+
+    let rendered = DeclarationEmitter::render_jsdoc_type_alias_decl(&decl, false)
+        .expect("expected rendered type alias");
+    assert_eq!(
+        rendered,
+        "type Pair = {\n    first: number;\n    second?: string;\n};\n"
+    );
+}
+
+#[test]
+fn property_alias_same_line_tags_nest_dotted_paths_and_prop_alias() {
+    let jsdoc = "\
+@typedef Nested
+@property {Object} outer @prop {number} outer.value @property {string} outer.label
+";
+
+    let decl = DeclarationEmitter::parse_jsdoc_type_alias_decl(jsdoc)
+        .expect("expected JSDoc property alias");
+    assert_eq!(decl.name, "Nested");
+
+    let rendered = DeclarationEmitter::render_jsdoc_type_alias_decl(&decl, false)
+        .expect("expected rendered type alias");
+    assert_eq!(
+        rendered,
+        "type Nested = {\n    outer: {\n        value: number;\n        label: string;\n    };\n};\n"
+    );
+}
+
+#[test]
+fn property_alias_braced_tag_text_stays_description() {
+    // `@property` inside a `{@link ...}` group is protected text: only the
+    // real property parses, and the link stays in its description.
+    let jsdoc = "\
+@typedef {Object} Doc
+@property {number} a see {@link B @property {string} fake}
+";
+
+    let decl = DeclarationEmitter::parse_jsdoc_type_alias_decl(jsdoc)
+        .expect("expected JSDoc property alias");
+    assert_eq!(decl.name, "Doc");
+
+    let rendered = DeclarationEmitter::render_jsdoc_type_alias_decl(&decl, false)
+        .expect("expected rendered type alias");
+    assert_eq!(
+        rendered,
+        "type Doc = {\n    /**\n     * see {@link B @property {string} fake}\n     */\n    a: number;\n};\n"
+    );
+}
+
+#[test]
+fn property_alias_typeless_property_gets_any() {
+    // tsc gives a type-less `@property p` the `any` type instead of
+    // dropping the alias, in the same-line and mixed shapes alike.
+    let decl = DeclarationEmitter::parse_jsdoc_type_alias_decl("@typedef {Object} T1 @property p")
+        .expect("expected JSDoc property alias");
+    assert_eq!(decl.name, "T1");
+    let rendered = DeclarationEmitter::render_jsdoc_type_alias_decl(&decl, false)
+        .expect("expected rendered type alias");
+    assert_eq!(rendered, "type T1 = {\n    p: any;\n};\n");
+
+    let decl = DeclarationEmitter::parse_jsdoc_type_alias_decl(
+        "@typedef {Object} T3\n@property {number} a @property p",
+    )
+    .expect("expected JSDoc property alias");
+    let rendered = DeclarationEmitter::render_jsdoc_type_alias_decl(&decl, false)
+        .expect("expected rendered type alias");
+    assert_eq!(rendered, "type T3 = {\n    a: number;\n    p: any;\n};\n");
+}
+
+#[test]
+fn property_alias_postfix_type_form_parses() {
+    // tsc's `@property name {type}` postfix form, with the `=` marker
+    // carrying both `?` and the `| undefined` branch (oracle: postfix1.js).
+    let decl = DeclarationEmitter::parse_jsdoc_type_alias_decl(
+        "@typedef {Object} P\n@property anotherX {string}\n@property anotherY {string=}",
+    )
+    .expect("expected JSDoc property alias");
+    assert_eq!(decl.name, "P");
+    let rendered = DeclarationEmitter::render_jsdoc_type_alias_decl(&decl, false)
+        .expect("expected rendered type alias");
+    assert_eq!(
+        rendered,
+        "type P = {\n    anotherX: string;\n    anotherY?: string | undefined;\n};\n"
+    );
+}
+
+#[test]
+fn property_tag_detection_requires_real_tag_boundary() {
+    // `@propertyx` / `@properties` are different tags, not property tags.
+    assert!(!DeclarationEmitter::jsdoc_has_property_tags(
+        "@typedef {Object} T\n@propertyx {number} y"
+    ));
+    assert!(!DeclarationEmitter::jsdoc_has_property_tags(
+        "@typedef {Object} T\n@properties {number} y"
+    ));
+}
+
+#[test]
+fn has_property_tags_sees_same_line_and_respects_braced_groups() {
+    assert!(DeclarationEmitter::jsdoc_has_property_tags(
+        "@typedef {Object} T @property {number} a"
+    ));
+    // Braced `{@link ... @property ...}` text is not a property tag.
+    assert!(!DeclarationEmitter::jsdoc_has_property_tags(
+        "@typedef {Object} T see {@link B @property {string} fake}"
+    ));
+}
+
+#[test]
 fn param_decls_parse_every_tag_on_one_line() {
     let decls =
         DeclarationEmitter::parse_jsdoc_param_decls("@param {number=} lo @param {string} [hi]");

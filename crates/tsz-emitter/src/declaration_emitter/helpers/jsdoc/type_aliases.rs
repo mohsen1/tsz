@@ -474,11 +474,28 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
+    /// The rest of a `@property`/`@prop` tag segment, or `None` when the
+    /// segment is a different tag (`@propertyx`, `@properties`, ...).
+    fn jsdoc_property_tag_rest(segment: &str) -> Option<&str> {
+        let rest = segment
+            .strip_prefix("@property")
+            .or_else(|| segment.strip_prefix("@prop"))?;
+        if rest
+            .chars()
+            .next()
+            .is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '$')
+        {
+            return None;
+        }
+        Some(rest.trim())
+    }
+
     pub(in crate::declaration_emitter) fn jsdoc_has_property_tags(jsdoc: &str) -> bool {
-        jsdoc.lines().any(|raw_line| {
-            let line = raw_line.trim_start_matches('*').trim();
-            line.starts_with("@property") || line.starts_with("@prop")
-        })
+        jsdoc
+            .lines()
+            .map(|raw_line| raw_line.trim_start_matches('*').trim())
+            .flat_map(Self::split_jsdoc_tag_segments)
+            .any(|segment| Self::jsdoc_property_tag_rest(segment).is_some())
     }
 
     pub(in crate::declaration_emitter) fn parse_jsdoc_property_type_alias(
@@ -493,32 +510,51 @@ impl<'a> DeclarationEmitter<'a> {
         let mut properties = Vec::new();
         let mut current_property: Option<(String, bool, String, Vec<String>)> = None;
 
-        for raw_line in jsdoc.lines() {
-            let line = raw_line.trim_start_matches('*').trim();
+        for line in jsdoc
+            .lines()
+            .map(|raw_line| raw_line.trim_start_matches('*').trim())
+            .flat_map(Self::split_jsdoc_tag_segments)
+        {
             if line.is_empty() {
                 continue;
             }
 
-            if let Some(rest) = line
-                .strip_prefix("@property")
-                .or_else(|| line.strip_prefix("@prop"))
-            {
+            if let Some(rest) = Self::jsdoc_property_tag_rest(line) {
                 if let Some(property) = current_property.take() {
                     properties.push(property);
                 }
 
-                let rest = rest.trim();
-                let (type_expr, name_rest) = Self::parse_jsdoc_braced_type_and_name(rest)?;
+                let (type_expr, name_rest) = match Self::parse_jsdoc_braced_type_and_name(rest) {
+                    Some(parsed) => parsed,
+                    // A type-less `@property p` is `p: any` in tsc, not a
+                    // reason to drop the whole alias.
+                    None if !rest.starts_with('{') => ("", rest),
+                    None => return None,
+                };
                 let mut parts = name_rest.split_whitespace();
                 let property_name = parts.next()?.trim();
                 if property_name.is_empty() {
                     return None;
                 }
 
+                let trailing = parts.collect::<Vec<_>>().join(" ");
+                // tsc also accepts the postfix form `@property name {type}`.
+                let (raw_type, inline_description) =
+                    if type_expr.is_empty() && trailing.starts_with('{') {
+                        match Self::parse_jsdoc_braced_type_and_name(&trailing) {
+                            Some((postfix_type, description)) => {
+                                (postfix_type.to_string(), description.to_string())
+                            }
+                            None => (String::new(), trailing),
+                        }
+                    } else {
+                        (type_expr.to_string(), trailing)
+                    };
+
                 // The `{T=}` optional-type marker is part of the type: it
                 // serializes as `T | undefined` and makes the member optional,
                 // matching tsc. The bracketed `[name]` form only adds `?`.
-                let type_expr = type_expr.trim();
+                let type_expr = raw_type.trim();
                 let (type_expr, optional_type_marker) = match type_expr.strip_suffix('=') {
                     Some(stripped) => (stripped.trim_end(), true),
                     None => (type_expr, false),
@@ -536,13 +572,16 @@ impl<'a> DeclarationEmitter<'a> {
                         (property_name.to_string(), optional_type_marker)
                     };
 
-                let inline_description = parts.collect::<Vec<_>>().join(" ");
                 let mut description_lines = Vec::new();
                 if !inline_description.is_empty() {
                     description_lines.push(inline_description);
                 }
 
-                let mut property_type = Self::normalize_jsdoc_primitive_type_name(type_expr);
+                let mut property_type = if type_expr.is_empty() {
+                    "any".to_string()
+                } else {
+                    Self::normalize_jsdoc_primitive_type_name(type_expr)
+                };
                 if optional_type_marker && !Self::type_text_has_undefined_branch(&property_type) {
                     property_type.push_str(" | undefined");
                 }
