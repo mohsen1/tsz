@@ -51,9 +51,7 @@ impl<'a> CheckerState<'a> {
         // symbol (no NAMESPACE_MODULE flag) whose own exports/members are
         // empty. Follow `import_module` to check the target module's
         // top-level exports for any runtime value before short-circuiting.
-        let is_namespace_style_alias = sym.has_any_flags(symbol_flags::ALIAS)
-            && sym.import_module().is_some()
-            && sym.import_name() == Some("*");
+        let is_namespace_style_alias = sym.is_namespace_style_alias();
         if !sym.has_any_flags(symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE)
             && !is_namespace_style_alias
         {
