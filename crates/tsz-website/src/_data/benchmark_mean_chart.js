@@ -5,7 +5,7 @@ import {
   PERF_TIMED_PROJECT_ROWS,
   REQUIRED_PROJECT_ROWS,
 } from "../../../../scripts/bench/project-rows.mjs";
-import { didNotFinish } from "../../../../scripts/bench/row-utils.mjs";
+import { isSpeedRatioEligible } from "../../../../scripts/bench/row-utils.mjs";
 import { fmt } from "./loc.js";
 
 const ROOT = path.resolve(import.meta.dirname, "..", "..", "..", "..");
@@ -15,19 +15,6 @@ function sanitizeLegacyBenchmarkResults(data) {
     return data.results || [];
   }
   return (data?.results || []).filter((row) => row.name !== "large-ts-repo");
-}
-
-function hasSuccessfulTiming(row) {
-  // `didNotFinish` (which subsumes `winner === "error"`) keeps a killed/errored
-  // row's ceiling/error timing out of the aggregate mean (#16196).
-  return (
-    !row?.status &&
-    !didNotFinish(row) &&
-    Number.isFinite(row?.tsz_ms) &&
-    row.tsz_ms > 0 &&
-    Number.isFinite(row?.tsgo_ms) &&
-    row.tsgo_ms > 0
-  );
 }
 
 const PROJECT_BENCHMARK_NAMES = new Set([
@@ -117,7 +104,9 @@ function renderMeanChart(results) {
     return "";
   }
 
-  const valid = results.filter((r) => isMicroBenchmark(r) && hasSuccessfulTiming(r));
+  // `isSpeedRatioEligible` (row-utils.mjs) keeps a killed/errored row's
+  // ceiling/error sentinel out of the aggregate mean structurally (#16196).
+  const valid = results.filter((r) => isMicroBenchmark(r) && isSpeedRatioEligible(r));
   if (!valid.length) {
     return "";
   }

@@ -9,7 +9,13 @@ import {
   REQUIRED_PROJECT_ROWS,
 } from "../../../../scripts/bench/project-rows.mjs";
 import { selectLatestBenchmarkArtifact } from "../../../../scripts/bench/benchmark-artifact-selection.mjs";
-import { didNotFinish } from "../../../../scripts/bench/row-utils.mjs";
+import {
+  didNotFinish,
+  isPositiveFiniteTiming,
+  isSpeedChartEligible,
+  isSpeedRatioEligible,
+  SLOWDOWN_FAILURE_FACTOR,
+} from "../../../../scripts/bench/row-utils.mjs";
 import { subsystemForCode } from "../../../../scripts/ci/diagnostic-subsystems.mjs";
 import { fmt } from "./loc.js";
 import { generatedBenchmarkSource } from "./benchmark_generated_sources.js";
@@ -169,7 +175,7 @@ function renderBenchmarkBar(kind, widthPx, label) {
 function formatSpeedupLabel(tszMs, tsgoMs) {
   const tsz = Number(tszMs);
   const tsgo = Number(tsgoMs);
-  if (!Number.isFinite(tsz) || !Number.isFinite(tsgo) || tsz <= 0 || tsgo <= 0) return "";
+  if (!isPositiveFiniteTiming(tsz) || !isPositiveFiniteTiming(tsgo)) return "";
 
   const factor = Math.max(tsz, tsgo) / Math.min(tsz, tsgo);
   if (factor < 1.05) return "equal";
@@ -177,11 +183,6 @@ function formatSpeedupLabel(tszMs, tsgoMs) {
   return tsz < tsgo
     ? `tsz ${factor.toFixed(1)}x faster`
     : `tsgo ${factor.toFixed(1)}x faster`;
-}
-
-function hasTiming(value) {
-  const time = Number(value);
-  return Number.isFinite(time) && time > 0;
 }
 
 function isProjectBenchmark(row) {
@@ -204,14 +205,14 @@ function hasGreenProjectCompatibility(row) {
 }
 
 function fastestTiming(row) {
-  const timings = [row?.tsz_ms, row?.tsgo_ms].map(Number).filter((time) => Number.isFinite(time) && time > 0);
+  const timings = [row?.tsz_ms, row?.tsgo_ms].map(Number).filter(isPositiveFiniteTiming);
   return timings.length ? Math.min(...timings) : Infinity;
 }
 
 function tszSpeedupScore(row) {
   const tsz = Number(row?.tsz_ms);
   const tsgo = Number(row?.tsgo_ms);
-  if (!Number.isFinite(tsz) || !Number.isFinite(tsgo) || tsz <= 0 || tsgo <= 0) {
+  if (!isPositiveFiniteTiming(tsz) || !isPositiveFiniteTiming(tsgo)) {
     return -Infinity;
   }
   return tsgo / tsz;
@@ -229,32 +230,18 @@ function compareByTszSpeedup(a, b) {
   return String(a?.name || "").localeCompare(String(b?.name || ""));
 }
 
+// Local name for the shared bench/website gate (`row-utils.mjs`); see the
+// canonical predicate there for the #16196/#17302 rationale.
 function hasSuccessfulTimingPair(row) {
-  // `didNotFinish` (which subsumes `winner === "error"`) keeps a killed/errored
-  // row's ceiling/error timing out of any speed ratio — see it for the #16196
-  // rationale and why the exclusion must be structural, not incidental.
-  return !row?.status
-    && !didNotFinish(row)
-    && hasTiming(row?.tsz_ms)
-    && hasTiming(row?.tsgo_ms);
+  return isSpeedRatioEligible(row);
 }
 
-// We run every benchmark and let individual ones fail; the chart renders only
-// the ones that "succeeded", where success means SPEED, not tsc-compatibility:
-// both compilers produced a timing AND tsgo is not >= 1.5x faster than tsz.
-// A row that keeps up with tsgo renders even if it diverges from tsc (yellow);
-// a row where tsz is >= 1.5x slower, errored, or timed out simply does not
-// render — it never blocks the rest of the chart.
-const CHART_MAX_TSZ_TO_TSGO_RATIO = 1.5;
+// The chart renders only rows that "succeeded" at SPEED (not tsc-compatibility):
+// a measured timing pair whose tsz is under the slowdown-failure threshold of
+// tsgo. A row that keeps up with tsgo renders even if it diverges from tsc
+// (yellow); a row that is >= threshold slower, errored, or timed out does not.
 function isChartEligible(row) {
-  const tsz = Number(row?.tsz_ms);
-  const tsgo = Number(row?.tsgo_ms);
-  if (!(tsz > 0) || !(tsgo > 0)) return false;
-  // A short-ceiling timeout can land under 1.5x tsgo with finite timings and
-  // would otherwise leak a `ceiling / tsgo_time` win into the chart (#16196);
-  // `didNotFinish` (which subsumes `winner === "error"`) drops it structurally.
-  if (didNotFinish(row)) return false;
-  return tsz < tsgo * CHART_MAX_TSZ_TO_TSGO_RATIO;
+  return isSpeedChartEligible(row);
 }
 
 // A row that produced a real timing pair but is too slow to chart (tsgo is
@@ -268,7 +255,7 @@ function isExcludedSlowTimedRow(row) {
 
 function isFailedBenchmark(row) {
   if (!row || hasSuccessfulTimingPair(row)) return false;
-  return Boolean(row.status) || row.winner === "error" || hasTiming(row.tsz_ms) || hasTiming(row.tsgo_ms);
+  return Boolean(row.status) || row.winner === "error" || isPositiveFiniteTiming(row.tsz_ms) || isPositiveFiniteTiming(row.tsgo_ms);
 }
 
 function statusLabel(row) {
@@ -278,7 +265,7 @@ function statusLabel(row) {
   if (didNotFinish(row)) return "did not finish";
   const tsz = Number(row?.tsz_ms);
   const tsgo = Number(row?.tsgo_ms);
-  if (tsz > 0 && tsgo > 0 && tsz >= tsgo * CHART_MAX_TSZ_TO_TSGO_RATIO) {
+  if (tsz > 0 && tsgo > 0 && tsz >= tsgo * SLOWDOWN_FAILURE_FACTOR) {
     return `tsz ${(tsz / tsgo).toFixed(1)}x slower than tsgo`;
   }
   return "timing unavailable";
@@ -1460,7 +1447,7 @@ function truncateReadme(text) {
 function comparison(row) {
   const tsz = Number(row.tsz_ms);
   const tsgo = Number(row.tsgo_ms);
-  if (!Number.isFinite(tsz) || !Number.isFinite(tsgo) || tsz <= 0 || tsgo <= 0) {
+  if (!isPositiveFiniteTiming(tsz) || !isPositiveFiniteTiming(tsgo)) {
     return {
       available: false,
       winner: row.status ? "unavailable" : "unknown",
