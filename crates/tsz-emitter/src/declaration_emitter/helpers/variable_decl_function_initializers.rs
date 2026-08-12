@@ -362,6 +362,13 @@ impl<'a> DeclarationEmitter<'a> {
         func: &tsz_parser::parser::node::FunctionData,
         identifier_idx: NodeIndex,
     ) -> Option<String> {
+        // Same object-rest exclusion as `function_body_declared_return_identifier_type_text`:
+        // a returned `...rest` binding is typed as the object rest, not the parameter
+        // annotation, so decline the source-reuse shortcuts here (the function-expression
+        // initializer path at the caller falls through to the solver-resolved return type).
+        if self.identifier_is_object_rest_binding(identifier_idx) {
+            return None;
+        }
         self.function_parameter_type_text(func, identifier_idx)
             .or_else(|| {
                 if let Some(type_text) =
@@ -392,6 +399,14 @@ impl<'a> DeclarationEmitter<'a> {
             return None;
         }
         let returned_identifier = self.function_body_unique_return_identifier(func.body)?;
+        // An object-rest binding (`function f({ a, ...rest }: P) { return rest; }`) is
+        // typed as the object rest, not the parameter annotation `P`. The source-reuse
+        // shortcuts below would copy `P` and emit the full object, shadowing the
+        // solver-refined return type `refine_object_rest_return_type_from_identifier`
+        // already produces, so decline them here and let that refinement be printed.
+        if self.identifier_is_object_rest_binding(returned_identifier) {
+            return None;
+        }
         let type_text = self
             .function_parameter_type_text(func, returned_identifier)
             .or_else(|| self.returned_function_initializer_type_text(func, returned_identifier))
