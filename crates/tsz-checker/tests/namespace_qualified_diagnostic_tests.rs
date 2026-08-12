@@ -602,15 +602,13 @@ const eq = node?.kind === k;
 }
 
 /// Regression test for issue #5433:
-/// `import("./mod").Bar.Q` (nested segment, export= module) must produce
-/// `Namespace '"mod".Bar' has no exported member 'Q'.`
-/// NOT `Namespace '"mod".export=.Bar' has no exported member 'Q'.`
-///
-/// The `.export=` synthetic qualifier is correct at the top level (no
-/// segments: `import("./mod").Q`), but must be omitted when segments
-/// already traverse into the export= namespace.
+/// `import("./mod").Bar.Q` (nested segment, NAMED export= target) roots the
+/// traversed path at the target's own symbol name (#17208):
+/// `Namespace 'ns.Bar' has no exported member 'Q'.` — no module path, no
+/// `.export=` qualifier. tsc names the `export = ns` target symbol `ns`, then
+/// appends the traversed `Bar` segment.
 #[test]
-fn ts2694_import_type_nested_segment_omits_export_equals_in_namespace_display() {
+fn ts2694_import_type_nested_segment_named_target_roots_at_target_symbol() {
     let mod_source = r#"
 declare namespace ns {
     namespace Bar {
@@ -640,20 +638,19 @@ export = ns;
     );
     let msg = &ts2694[0].1;
     assert!(
-        msg.contains("Namespace '\"mod\".Bar'"),
-        "TS2694 namespace should be '\"mod\".Bar', got: {msg:?}"
+        msg.contains("Namespace 'ns.Bar'"),
+        "TS2694 namespace should be 'ns.Bar', got: {msg:?}"
     );
     assert!(
         !msg.contains(".export="),
-        "TS2694 namespace must not contain '.export=' for nested segment access, got: {msg:?}"
+        "TS2694 namespace must not contain '.export=' for a named export= target, got: {msg:?}"
     );
 }
 
-/// Counterpart: `import("./mod").Q` (no segments, export= module) must
-/// still include `.export=` in the namespace display — that is the
-/// existing tsc behaviour for a top-level missing member.
+/// Counterpart: `import("./mod").Q` (no segments) on a NAMED export= target
+/// renders the target symbol name `ns` — no module path, no `.export=` (#17208).
 #[test]
-fn ts2694_import_type_top_level_missing_keeps_export_equals_in_namespace_display() {
+fn ts2694_import_type_top_level_missing_named_target_renders_target_symbol() {
     let mod_source = r#"
 declare namespace ns {
     function method(): void;
@@ -681,7 +678,11 @@ export = ns;
     );
     let msg = &ts2694[0].1;
     assert!(
-        msg.contains("\"mod\".export="),
-        "TS2694 namespace for top-level missing member must include '.export=', got: {msg:?}"
+        msg.contains("Namespace 'ns'"),
+        "TS2694 namespace for a named export= target must be 'ns', got: {msg:?}"
+    );
+    assert!(
+        !msg.contains(".export="),
+        "TS2694 namespace must not contain '.export=' for a named export= target, got: {msg:?}"
     );
 }

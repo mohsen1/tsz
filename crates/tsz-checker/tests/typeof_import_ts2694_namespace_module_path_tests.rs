@@ -183,13 +183,11 @@ fn typeof_present_member_resolves_without_ts2694() {
     assert_eq!(msgs, Vec::<String>::new());
 }
 
-/// Negative boundary: an export-assignment module keeps the pre-existing
-/// `.export=` display scheme untouched — specifier stem and suffix exactly as
-/// before this fix. `tsc` names the export= *target symbol* there (`shape`),
-/// a separately-tracked divergence this fix must not half-migrate: only
-/// modules without an export assignment take the resolved-path rule.
+/// Named `export = <target>` (#17208): `tsc` names the export= *target
+/// symbol* — no module path, no `.export=` suffix. A `const` target renders
+/// its own name. This is the divergence #17202 deliberately left tracked.
 #[test]
-fn typeof_export_equals_module_keeps_preexisting_display_scheme() {
+fn typeof_export_equals_named_const_renders_target_symbol_name() {
     let msgs = ts2694_messages_cjs(
         &[
             (
@@ -205,7 +203,93 @@ fn typeof_export_equals_module_keeps_preexisting_display_scheme() {
     );
     assert_eq!(
         msgs,
-        vec!["Namespace '\"cepkg\".export=' has no exported member 'edge2'.".to_string()],
+        vec!["Namespace 'shape' has no exported member 'edge2'.".to_string()],
+    );
+}
+
+/// Named namespace target — same rule, renamed binder (`geo`, not `shape`).
+#[test]
+fn typeof_export_equals_named_namespace_renders_target_symbol_name() {
+    let msgs = ts2694_messages_cjs(
+        &[
+            (
+                "geopkg/index.ts",
+                "namespace geo { export interface Point { x: number } }\nexport = geo;\n",
+            ),
+            (
+                "main.ts",
+                "type M = typeof import('./geopkg').Absent;\ndeclare const m: M;\n",
+            ),
+        ],
+        "main.ts",
+    );
+    assert_eq!(
+        msgs,
+        vec!["Namespace 'geo' has no exported member 'Absent'.".to_string()],
+    );
+}
+
+/// Named class target.
+#[test]
+fn typeof_export_equals_named_class_renders_target_symbol_name() {
+    let msgs = ts2694_messages_cjs(
+        &[
+            (
+                "wpkg/index.ts",
+                "class Widget { w = 1 }\nexport = Widget;\n",
+            ),
+            (
+                "main.ts",
+                "type M = typeof import('./wpkg').Absent;\ndeclare const m: M;\n",
+            ),
+        ],
+        "main.ts",
+    );
+    assert_eq!(
+        msgs,
+        vec!["Namespace 'Widget' has no exported member 'Absent'.".to_string()],
+    );
+}
+
+/// Named function target.
+#[test]
+fn typeof_export_equals_named_function_renders_target_symbol_name() {
+    let msgs = ts2694_messages_cjs(
+        &[
+            (
+                "mpkg/index.ts",
+                "function make() { return 1 }\nexport = make;\n",
+            ),
+            (
+                "main.ts",
+                "type M = typeof import('./mpkg').Absent;\ndeclare const m: M;\n",
+            ),
+        ],
+        "main.ts",
+    );
+    assert_eq!(
+        msgs,
+        vec!["Namespace 'make' has no exported member 'Absent'.".to_string()],
+    );
+}
+
+/// Anonymous target control (`module.exports = { ... }`): tsc keeps the
+/// synthesized `"mod".export=` member — this shape must NOT change.
+#[test]
+fn typeof_module_exports_anonymous_object_keeps_export_eq_scheme() {
+    let msgs = ts2694_messages_cjs(
+        &[
+            ("anon.js", "module.exports = { edge: 1 };\n"),
+            (
+                "main.ts",
+                "type M = typeof import('./anon').edge2;\ndeclare const m: M;\n",
+            ),
+        ],
+        "main.ts",
+    );
+    assert_eq!(
+        msgs,
+        vec!["Namespace '\"anon\".export=' has no exported member 'edge2'.".to_string()],
     );
 }
 

@@ -10,11 +10,9 @@
 //! `ts1339_bare_typeof_import_no_value_tests.rs`).
 //!
 //! Oracle-verified against pinned `typescript@7.0.2` for diagnostic CODE and
-//! member name; the namespace-name text tsz renders in the message
-//! (`"m".export=`) already diverges from tsc's (`N`) on the pre-existing
-//! sibling path this PR does not touch (see
-//! `export_equals_namespace_value_member_missing_sibling_reports_ts2694`) —
-//! a separate, out-of-scope display quirk, not part of this fix.
+//! member name. The namespace-name text now also matches tsc: a named
+//! `export = N` target renders the target symbol `N` (not `"m".export=`),
+//! fixed in #17208.
 //!
 //! Sibling of #17076/TS1339 — same underlying question ("does this
 //! import-type reference name a value?") asked at the qualified position
@@ -68,16 +66,9 @@ fn export_equals_namespace_interface_member_reports_ts2694() {
     );
     assert_eq!(codes(&diags), vec![TS2694], "{diags:?}");
     let (_, message) = diags.iter().find(|(code, _)| *code == TS2694).unwrap();
-    // tsc's message names the namespace `N`; tsz renders the export=-target
-    // qualifier as `"m".export=` here even for this pre-existing sibling path
-    // (see `export_equals_namespace_value_member_missing_sibling_reports_ts2694`
-    // below, untouched by this PR) — a separate, already-diverging display
-    // quirk in the namespace-name formatting, not a TS2694 emission bug. Only
-    // the emission (code + member name) is this PR's concern.
-    assert_eq!(
-        message,
-        "Namespace '\"m\".export=' has no exported member 'Q'."
-    );
+    // Named `export = N` target: tsc names the target symbol `N`, not
+    // `"m".export=` (#17208).
+    assert_eq!(message, "Namespace 'N' has no exported member 'Q'.");
 }
 
 /// Same value-less shape via a type alias member instead of an interface.
@@ -95,10 +86,7 @@ fn export_equals_namespace_type_alias_member_reports_ts2694() {
     );
     assert_eq!(codes(&diags), vec![TS2694], "{diags:?}");
     let (_, message) = diags.iter().find(|(code, _)| *code == TS2694).unwrap();
-    assert_eq!(
-        message,
-        "Namespace '\"m\".export=' has no exported member 'Q'."
-    );
+    assert_eq!(message, "Namespace 'N' has no exported member 'Q'.");
 }
 
 /// Negative control that keeps the fix honest: a genuinely missing member on
@@ -120,10 +108,7 @@ fn export_equals_namespace_missing_member_reports_ts2694() {
     );
     assert_eq!(codes(&diags), vec![TS2694], "{diags:?}");
     let (_, message) = diags.iter().find(|(code, _)| *code == TS2694).unwrap();
-    assert_eq!(
-        message,
-        "Namespace '\"m\".export=' has no exported member 'Nope'."
-    );
+    assert_eq!(message, "Namespace 'N' has no exported member 'Nope'.");
 }
 
 /// Negative control: a value member (`const v`) on the same shape of
@@ -162,10 +147,7 @@ fn export_equals_namespace_value_member_missing_sibling_reports_ts2694() {
     );
     assert_eq!(codes(&diags), vec![TS2694], "{diags:?}");
     let (_, message) = diags.iter().find(|(code, _)| *code == TS2694).unwrap();
-    assert_eq!(
-        message,
-        "Namespace '\"m\".export=' has no exported member 'Nope'."
-    );
+    assert_eq!(message, "Namespace 'N' has no exported member 'Nope'.");
 }
 
 /// Negative control: a plain module (no `export =` at all) reports TS2694 for
@@ -214,10 +196,7 @@ fn nested_namespace_missing_member_reports_ts2694() {
     );
     assert_eq!(codes(&diags), vec![TS2694], "{diags:?}");
     let (_, message) = diags.iter().find(|(code, _)| *code == TS2694).unwrap();
-    assert_eq!(
-        message,
-        "Namespace '\"m\".M.export=' has no exported member 'Nope'."
-    );
+    assert_eq!(message, "Namespace 'N.M' has no exported member 'Nope'.");
 }
 
 /// The discriminator: drop `typeof` and the identical `Q` reference is a

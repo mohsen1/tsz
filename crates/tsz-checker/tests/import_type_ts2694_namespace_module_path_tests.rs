@@ -229,3 +229,93 @@ fn jsdoc_typeof_import_walk_param_tag_renders_resolved_path() {
         vec!["Namespace '\"sub/index\".export=' has no exported member 'Missing'.".to_string()],
     );
 }
+
+// ---------------------------------------------------------------------------
+// #17208: a bare `import("./mod").Member` on an `export = <target>` module.
+// A NAMED target renders its own symbol name (no module path, no `.export=`);
+// an ANONYMOUS target (`module.exports = { ... }`) keeps `"mod".export=`.
+// ---------------------------------------------------------------------------
+
+fn ts2694_messages_cjs(files: &[(&str, &str)], entry: &str) -> Vec<String> {
+    check_multi_file(
+        files,
+        entry,
+        CheckerOptions {
+            module: tsz_common::common::ModuleKind::CommonJS,
+            ..CheckerOptions::default()
+        },
+    )
+    .into_iter()
+    .filter(|d| d.code == 2694)
+    .map(|d| d.message_text)
+    .collect()
+}
+
+#[test]
+fn import_type_export_equals_named_namespace_renders_target_symbol_name() {
+    let msgs = ts2694_messages_cjs(
+        &[
+            (
+                "geopkg/index.ts",
+                "namespace geo { export interface Point { x: number } }\nexport = geo;\n",
+            ),
+            ("main.ts", "type M = import('./geopkg').Absent;\n"),
+        ],
+        "main.ts",
+    );
+    assert_eq!(
+        msgs,
+        vec!["Namespace 'geo' has no exported member 'Absent'.".to_string()],
+    );
+}
+
+#[test]
+fn import_type_export_equals_named_class_renders_target_symbol_name() {
+    let msgs = ts2694_messages_cjs(
+        &[
+            (
+                "wpkg/index.ts",
+                "class Widget { w = 1 }\nexport = Widget;\n",
+            ),
+            ("main.ts", "type M = import('./wpkg').Absent;\n"),
+        ],
+        "main.ts",
+    );
+    assert_eq!(
+        msgs,
+        vec!["Namespace 'Widget' has no exported member 'Absent'.".to_string()],
+    );
+}
+
+/// Aliased target: `const t = ...; export = t` renders the alias name `t`,
+/// not the underlying object type — matching tsc.
+#[test]
+fn import_type_export_equals_aliased_const_renders_alias_name() {
+    let msgs = ts2694_messages_cjs(
+        &[
+            ("tpkg/index.ts", "const t = { edge: 1 };\nexport = t;\n"),
+            ("main.ts", "type M = import('./tpkg').Absent;\n"),
+        ],
+        "main.ts",
+    );
+    assert_eq!(
+        msgs,
+        vec!["Namespace 't' has no exported member 'Absent'.".to_string()],
+    );
+}
+
+/// Anonymous target control: `module.exports = { ... }` keeps `"mod".export=`.
+#[test]
+fn import_type_module_exports_anonymous_object_keeps_export_eq_scheme() {
+    let msgs = ts2694_messages_cjs(
+        &[
+            ("anon.js", "module.exports = { edge: 1 };\n"),
+            ("main.ts", "type M = import('./anon').Absent;\n"),
+        ],
+        "main.ts",
+    );
+    assert_eq!(
+        msgs,
+        vec!["Namespace '\"anon\".export=' has no exported member 'Absent'.".to_string()],
+    );
+}
