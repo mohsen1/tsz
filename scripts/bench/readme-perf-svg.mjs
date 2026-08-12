@@ -7,7 +7,7 @@ import process from "node:process";
 import { pathToFileURL } from "node:url";
 import zlib from "node:zlib";
 import { PROJECT_ROWS_BY_NAME } from "./project-rows.mjs";
-import { didNotFinish } from "./row-utils.mjs";
+import { isSpeedChartEligible } from "./row-utils.mjs";
 
 const SVG_WIDTH = 760;
 const SVG_HEIGHT = 128;
@@ -239,34 +239,13 @@ function finiteNumber(value) {
   return Number.isFinite(number) ? number : null;
 }
 
-// Mirror the bench harness's slowdown-failure policy (default 1.5x; see
-// scripts/bench/project-fixtures.sh tsz_project_slowdown_failure_factor): a row
-// where tsz is >=1.5x slower than tsgo is a failure and must not count toward the
-// README headline chart, matching the website chart which drops these rows.
-const SLOWDOWN_FAILURE_FACTOR = 1.5;
-
-function hasSuccessfulTimingPair(row) {
-  return !row?.status
-    && row?.winner !== "error"
-    // A killed/errored row's timing is a ceiling/error sentinel, so its ratio is
-    // fabricated (#16196). Exclude it structurally rather than relying on the
-    // ceiling incidentally exceeding the slowdown-failure threshold below — a
-    // short-ceiling timeout can land under 1.5x tsgo and would otherwise leak a
-    // `ceiling / tsgo_time` datapoint into the headline chart and aggregate.
-    && !didNotFinish(row)
-    && finiteNumber(row?.tsz_ms) > 0
-    && finiteNumber(row?.tsgo_ms) > 0;
-}
-
-// A row counts toward the README headline only if it has a valid timing pair AND
-// tsz is within the slowdown-failure threshold of tsgo (i.e. not a >=1.5x-slower
-// failure). Matches the site chart and the perf gate so the three never diverge.
+// A row counts toward the README headline only if it is chart-eligible: a
+// measured timing pair (not did-not-finish) with tsz under the slowdown-failure
+// threshold of tsgo. `isSpeedChartEligible` (row-utils.mjs) is the shared gate,
+// so the README headline, the site chart, and the perf gate never diverge
+// (#16196, #17302).
 function countsTowardReadmeChart(row) {
-  if (!hasSuccessfulTimingPair(row)) return false;
-  const tszMs = finiteNumber(row?.tsz_ms);
-  const tsgoMs = finiteNumber(row?.tsgo_ms);
-  if (tszMs === null || tsgoMs === null || tsgoMs <= 0) return false;
-  return tszMs < SLOWDOWN_FAILURE_FACTOR * tsgoMs;
+  return isSpeedChartEligible(row);
 }
 
 function isProjectBenchmark(row) {

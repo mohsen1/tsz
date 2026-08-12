@@ -40,6 +40,7 @@ import { BENCH_RUNNER_EXCLUDED_ROWS } from "./project-row-summary.mjs";
 import {
   hasCompletePhaseMetadata,
   isGreen,
+  isSpeedRatioEligible,
   missingDeclaredRows,
 } from "./row-utils.mjs";
 import { measurementProfileStatus } from "./measurement-profile.mjs";
@@ -227,15 +228,12 @@ function applicationCompatibilityState(row, duplicate = false) {
 
 const STATE_ICON = { green: "✅", yellow: "⚠️", red: "❌", gray: "⬜", missing: "🚫" };
 
+// Shared bench gate (`row-utils.mjs`). This readiness check previously omitted
+// the did-not-finish guard, so a row killed at the ceiling with a finite
+// sentinel timing could count here while the website/README dropped it — the
+// exact drift #17302 fixes. `isSpeedRatioEligible` adds that guard (#16196).
 function hasSuccessfulTimingPair(row) {
-  return (
-    Number.isFinite(Number(row?.tsz_ms)) &&
-    Number(row.tsz_ms) > 0 &&
-    Number.isFinite(Number(row?.tsgo_ms)) &&
-    Number(row.tsgo_ms) > 0 &&
-    row?.winner !== "error" &&
-    !row?.status
-  );
+  return isSpeedRatioEligible(row);
 }
 
 function hasGreenCompatibilityEvidence(row) {
