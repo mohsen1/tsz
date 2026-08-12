@@ -455,6 +455,18 @@ pub mod syntax_kind_ext {
     pub const TYPE_LITERAL: u16 = 188;
     pub const ARRAY_TYPE: u16 = 189;
     pub const TUPLE_TYPE: u16 = 190;
+
+    /// True when `kind` is a syntactic array (`T[]`) or tuple (`[T, U]`) type
+    /// node. The `readonly` type operator is meaningful only on these operands;
+    /// on any other operand tsc reports TS1354 and resolves the operator to the
+    /// operand type unchanged (`getTypeFromTypeOperatorNode` is transparent for
+    /// `readonly`), so callers must not wrap it in a `ReadonlyType` marker.
+    /// Shared by every site that resolves a `readonly` operator (the checker's
+    /// two `get_type_from_type_operator` entry points and the lowering path) so
+    /// the transparency rule and the TS1354 grammar check stay in lockstep.
+    pub const fn is_array_or_tuple_type(kind: u16) -> bool {
+        kind == ARRAY_TYPE || kind == TUPLE_TYPE
+    }
     pub const OPTIONAL_TYPE: u16 = 191;
     pub const REST_TYPE: u16 = 192;
     pub const UNION_TYPE: u16 = 193;

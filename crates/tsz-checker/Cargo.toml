@@ -870,6 +870,9 @@ path = "tests/type_parameter_source_constraint_chain_tests.rs"
 name = "readonly_tuple_to_array_constraint_tests"
 path = "tests/readonly_tuple_to_array_constraint_tests.rs"
 [[test]]
+name = "readonly_type_operator_non_array_tests"
+path = "tests/readonly_type_operator_non_array_tests.rs"
+[[test]]
 name = "module_augmentation_declaration_identity_tests"
 path = "tests/module_augmentation_declaration_identity_tests.rs"
 [[test]]

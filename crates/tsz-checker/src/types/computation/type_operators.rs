@@ -1,7 +1,9 @@
 //! Union, intersection, type operator, and keyof type computation.
 //! Also includes class-type helpers for brand property resolution.
 
-use super::super::unique_symbol_construction::unique_symbol_type_for_operator;
+use super::super::unique_symbol_construction::{
+    readonly_operator_result, unique_symbol_type_for_operator,
+};
 use crate::query_boundaries::type_computation::complex as query;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
@@ -148,7 +150,6 @@ impl<'a> CheckerState<'a> {
     /// - `readonly T[]` - Creates `ReadonlyType` wrapper
     /// - `unique symbol` - Special marker for unique symbols
     pub(crate) fn get_type_from_type_operator(&mut self, idx: NodeIndex) -> TypeId {
-        let factory = self.ctx.types.factory();
         use tsz_scanner::SyntaxKind;
 
         let Some(node) = self.ctx.arena.get(idx) else {
@@ -159,10 +160,12 @@ impl<'a> CheckerState<'a> {
             let operator = type_op.operator;
             let inner_type = self.get_type_from_type_node(type_op.type_node);
 
-            // Handle readonly operator
+            // Handle readonly operator. Readonly is transparent unless the
+            // operand is a syntactic array/tuple literal type; see
+            // `readonly_operator_result`.
             if operator == SyntaxKind::ReadonlyKeyword as u16 {
-                // Wrap the inner type in ReadonlyType
-                return factory.readonly_type(inner_type);
+                let operand_kind = self.ctx.arena.get(type_op.type_node).map(|n| n.kind);
+                return readonly_operator_result(&self.ctx, operand_kind, inner_type);
             }
 
             // Handle keyof operator

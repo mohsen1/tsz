@@ -934,8 +934,26 @@ impl TypeLowering<'_> {
                 }
                 _ => self.interner.keyof(inner_type),
             },
-            // ReadonlyKeyword = 148
-            148 => self.interner.readonly_type(inner_type),
+            // ReadonlyKeyword = 148. tsc's `getTypeFromTypeOperatorNode` is
+            // transparent for `readonly`: it wraps a `ReadonlyType` marker only
+            // when the operand is a syntactic array/tuple literal type, and
+            // resolves to the operand type unchanged otherwise (a separate
+            // grammar check reports TS1354). Mirrors the checker's
+            // `readonly_operator_result` so the lowering path does not
+            // reintroduce a spurious `ReadonlyType(<non-array>)` — e.g. a
+            // `readonly number` reached through a generic argument, conditional
+            // branch, mapped value, or type-parameter default.
+            148 => {
+                let operand_is_array_or_tuple = self
+                    .arena
+                    .get(data.type_node)
+                    .is_some_and(|n| syntax_kind_ext::is_array_or_tuple_type(n.kind));
+                if operand_is_array_or_tuple {
+                    self.interner.readonly_type(inner_type)
+                } else {
+                    inner_type
+                }
+            }
             // UniqueKeyword = 158 - unique symbol
             158 => {
                 // A `unique symbol`'s identity must be globally unique per
