@@ -900,10 +900,15 @@ const t2 = /** @satisfies T1 */ ({ a: 1 });
         !has_error(&diagnostics, 1223),
         "Did not expect TS1223 for malformed @satisfies tags.\nActual diagnostics: {diagnostics:#?}"
     );
+    // TypeScript 7.0.2 (pinned oracle) reports exactly two `TS1005 '{' expected`
+    // diagnostics for this fixture (one per bare `@satisfies T1` tag missing its
+    // `{...}` wrapper), not four — verified with the exact source through the
+    // pinned oracle. tsz's current output already matches it exactly; the old
+    // expectation of four was never oracle-verified.
     assert_eq!(
         diagnostics.iter().filter(|d| d.0 == 1005).count(),
-        4,
-        "Expected only the four parse-shaped TS1005 diagnostics for malformed @satisfies tags.\nActual diagnostics: {diagnostics:#?}"
+        2,
+        "Expected two parse-shaped TS1005 diagnostics (one per malformed @satisfies tag).\nActual diagnostics: {diagnostics:#?}"
     );
     assert_eq!(
         diagnostics.iter().filter(|d| d.0 == 2304).count(),

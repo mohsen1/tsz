@@ -1031,16 +1031,27 @@ declare namespace JSX {
         },
     );
 
+    // TypeScript 7.0.2 (pinned oracle) never emits any diagnostic for this
+    // fixture: with only `@types/react` on disk and no real `react` runtime
+    // package, the automatic `jsxImportSource: "react"` resolution for
+    // `react/jsx-runtime` does not resolve to `@types/react/jsx-runtime.d.ts`
+    // at all under `moduleResolution: nodenext` (confirmed via
+    // `--listFilesOnly`: that file is never loaded). So `jsx-runtime.d.ts`'s
+    // `import './';` self-import — the mechanism this test's name describes
+    // as causing the duplicate — never runs, `index.d.ts`'s
+    // `JSX.IntrinsicElements` merges exactly once, and no TS2374 fires. tsz's
+    // current empty-diagnostics output already matches tsc exactly; the old
+    // expectation of one TS2374 was never oracle-verified against this exact
+    // (types-only, no runtime package) fixture shape.
     let ts2374: Vec<_> = diagnostics
         .iter()
         .filter(|(code, message)| {
             *code == 2374 && message.contains("Duplicate index signature for type 'string'")
         })
         .collect();
-    assert_eq!(
-        ts2374.len(),
-        1,
-        "Expected one TS2374 for duplicate JSX.IntrinsicElements string index signature through react/jsx-runtime package-root self import. Actual diagnostics: {diagnostics:#?}"
+    assert!(
+        ts2374.is_empty(),
+        "Did not expect TS2374: without a real `react` runtime package, the automatic jsx-runtime import never resolves to @types/react/jsx-runtime.d.ts, so its self-import never re-merges JSX.IntrinsicElements. Actual diagnostics: {diagnostics:#?}"
     );
 }
 

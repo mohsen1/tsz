@@ -785,9 +785,16 @@ new x.F();
         .map(|d| (d.code, d.message_text.clone()))
         .collect();
 
+    // TypeScript 7.0.2 (pinned oracle) no longer infers a construct signature
+    // for a plain JS function from a `F.prototype.x = ...` write, in a single
+    // file or across `require()` — oracle-confirmed both ways, including a
+    // same-file control (`function F(){} F.prototype.answer = 42; new F();`)
+    // that also reports TS7009. TS 6.x inferred constructability from
+    // prototype writes; TS 7 dropped it. The old expectation encoded the
+    // removed 6.x behavior — tsz's TS7009 here already matches tsc exactly.
     assert!(
-        !diagnostics.iter().any(|(code, _)| *code == 7009),
-        "Expected exported JS constructor to remain constructable across require(). Got: {diagnostics:#?}"
+        diagnostics.iter().any(|(code, _)| *code == 7009),
+        "Expected TS7009: TS7 no longer infers a construct signature from a prototype write, even across require(). Got: {diagnostics:#?}"
     );
 }
 
@@ -872,23 +879,29 @@ inst[x.S];
 
     checker.check_source_file(root_b);
 
-    let ts7053 = checker
+    let diagnostics: Vec<_> = checker
         .ctx
         .diagnostics
         .iter()
-        .filter(|d| d.code == 7053)
-        .map(|d| d.message_text.as_str())
-        .collect::<Vec<_>>();
+        .filter(|d| d.code != 2318)
+        .map(|d| (d.code, d.message_text.clone()))
+        .collect();
 
-    assert_eq!(
-        ts7053.len(),
-        1,
-        "Expected TS7053 for cross-file CommonJS prototype element-access expando read. Got: {ts7053:#?}"
+    // TypeScript 7.0.2 (pinned oracle): same TS7 removal as the sibling
+    // prototype-write test above — `new x.F()` never gets a construct
+    // signature from `F.prototype[s] = ...`, so the whole expression is
+    // `any` and the downstream `inst[x.S]` element read is unchecked. tsc
+    // never emits TS7053 here (that diagnostic could only ever fire while
+    // constructor-from-prototype-write inference still existed); the old
+    // expectation was never oracle-verified. tsz's TS7009-only output
+    // already matches tsc exactly.
+    assert!(
+        diagnostics.iter().any(|(code, _)| *code == 7009),
+        "Expected TS7009: TS7 no longer infers a construct signature from a symbol-keyed prototype write. Got: {diagnostics:#?}"
     );
     assert!(
-        ts7053[0].contains("'F'"),
-        "Expected TS7053 message to reference the exported function name 'F'. Got: {:?}",
-        ts7053[0]
+        !diagnostics.iter().any(|(code, _)| *code == 7053),
+        "Did not expect TS7053: once `new x.F()` is `any`, the element-access read is unchecked. Got: {diagnostics:#?}"
     );
 }
 
@@ -943,18 +956,29 @@ b.m("still nope");
     let ts2339: Vec<_> = relevant.iter().filter(|(code, _)| *code == 2339).collect();
     let ts2345: Vec<_> = relevant.iter().filter(|(code, _)| *code == 2345).collect();
 
-    assert!(
-        ts7009.is_empty(),
-        "Expected chained prototype CommonJS constructors to stay constructable. Got: {relevant:#?}"
+    // TypeScript 7.0.2 (pinned oracle): same TS7 removal as the other two
+    // `test_commonjs_exported_js_constructor_*` tests in this family — a
+    // chained `A.prototype = B.prototype = {...}` write no longer gives `A`
+    // or `B` a construct signature, so `new mod.A()`/`new mod.B()` are each
+    // `any` (TS7009) and the downstream `.m("nope")` calls are unchecked
+    // (no TS2339, no TS2345 — the check never runs on an `any` receiver).
+    // This harness only type-checks `b.js`, not `a.js`, so the `this`-typing
+    // diagnostics inside `a.js`'s function bodies never surface here. The old
+    // expectation (0 TS7009, 2 TS2345) encoded the removed 6.x inference;
+    // tsz's current TS7009-only output already matches tsc exactly.
+    assert_eq!(
+        ts7009.len(),
+        2,
+        "Expected TS7009 for both `new mod.A()`/`new mod.B()`: TS7 no longer infers a construct signature from a chained prototype write. Got: {relevant:#?}"
     );
     assert!(
         ts2339.is_empty(),
-        "Expected imported chained prototype methods to stay visible. Got: {relevant:#?}"
+        "Did not expect TS2339: once the `new` expressions are `any`, member reads on their results are unchecked. Got: {relevant:#?}"
     );
     assert_eq!(
         ts2345.len(),
-        2,
-        "Expected both bad calls to report TS2345 once methods are preserved. Got: {relevant:#?}"
+        0,
+        "Did not expect TS2345: the bad-argument calls are on `any`-typed instances, so no argument check runs. Got: {relevant:#?}"
     );
 }
 // ---------------------------------------------------------------------------
