@@ -162,6 +162,12 @@ impl<'a> DeclarationEmitter<'a> {
                     self.get_node_type(node_id)
                         .map(|type_id| self.print_type_id(type_id))
                 }),
+            k if k == SyntaxKind::Identifier as u16 => {
+                self.preferred_expression_type_text(node_id).or_else(|| {
+                    self.get_node_type(node_id)
+                        .map(|type_id| self.print_type_id(type_id))
+                })
+            }
             _ => self
                 .get_node_type(node_id)
                 .map(|type_id| self.print_type_id(type_id)),
