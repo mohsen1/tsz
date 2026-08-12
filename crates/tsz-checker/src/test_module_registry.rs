@@ -161,6 +161,8 @@ mod class_implements_index_relation_routing_arch_tests;
 mod class_implements_jsdoc_heritage_relation_routing_arch_tests;
 #[path = "tests/class_implements_whole_type_relation_routing_arch_tests.rs"]
 mod class_implements_whole_type_relation_routing_arch_tests;
+#[path = "tests/class_index_signature_modifier_grammar_tests.rs"]
+mod class_index_signature_modifier_grammar_tests;
 #[path = "tests/class_member_circular_return_tests.rs"]
 mod class_member_circular_return_tests;
 #[path = "tests/class_member_modifier_grammar_first_error_wins_tests.rs"]

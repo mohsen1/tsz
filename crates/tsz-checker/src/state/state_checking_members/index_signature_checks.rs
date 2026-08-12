@@ -1709,4 +1709,72 @@ impl<'a> CheckerState<'a> {
                     && !self.is_identifier_reference_to_global_symbol(access.expression)
             })
     }
+
+    /// TS1071 for modifiers on a **class** index signature.
+    ///
+    /// tsc's `checkGrammarModifiers` accepts only `readonly` (and `static`, on a
+    /// class index signature) here; any other modifier is rejected with a single
+    /// `TS1071: '{0}' modifier cannot appear on an index signature.`, anchored at
+    /// and naming the FIRST offending modifier in the run, after which the walk
+    /// returns. So `declare`, `abstract`, `async`, `override`, `accessor`, the
+    /// `in`/`out` variance markers, `const`, `export`, `default` and the
+    /// accessibility modifiers are all covered by one rule, and a run like
+    /// `public static [k]` reports once rather than once per modifier.
+    ///
+    /// `static`/`readonly` ordering and duplicate diagnostics (TS1029/TS1030/
+    /// TS1434) are owned by the parser and other grammar walks and must not be
+    /// shadowed here, so those two kinds are skipped rather than reported.
+    pub(crate) fn check_index_signature_member_modifiers(&mut self, node_idx: NodeIndex) {
+        use crate::diagnostics::diagnostic_codes;
+
+        let Some(node) = self.ctx.arena.get(node_idx) else {
+            return;
+        };
+        let Some(index_sig) = self.ctx.arena.get_index_signature(node) else {
+            return;
+        };
+        let Some(ref mods) = index_sig.modifiers else {
+            return;
+        };
+        for &mod_idx in &mods.nodes {
+            let Some(mod_node) = self.ctx.arena.get(mod_idx) else {
+                continue;
+            };
+            if let Some(name) = Self::index_signature_illegal_modifier_name(mod_node.kind) {
+                self.error_at_node_msg(
+                    mod_idx,
+                    diagnostic_codes::MODIFIER_CANNOT_APPEAR_ON_AN_INDEX_SIGNATURE,
+                    &[name],
+                );
+                // tsc returns on the first grammar error in the run.
+                break;
+            }
+        }
+    }
+
+    /// The keyword text for a modifier that `tsc` rejects on a class index
+    /// signature (TS1071), or `None` for a modifier it accepts there
+    /// (`readonly`, and `static` for a class member) or a non-modifier entry
+    /// (a decorator, which tsc skips). The two accepted kinds return `None` so
+    /// their own ordering/duplicate grammar diagnostics stay owned by the parser
+    /// and are not shadowed by this walk.
+    const fn index_signature_illegal_modifier_name(kind: u16) -> Option<&'static str> {
+        use tsz_scanner::SyntaxKind;
+        match kind {
+            k if k == SyntaxKind::PublicKeyword as u16 => Some("public"),
+            k if k == SyntaxKind::PrivateKeyword as u16 => Some("private"),
+            k if k == SyntaxKind::ProtectedKeyword as u16 => Some("protected"),
+            k if k == SyntaxKind::DeclareKeyword as u16 => Some("declare"),
+            k if k == SyntaxKind::AbstractKeyword as u16 => Some("abstract"),
+            k if k == SyntaxKind::AsyncKeyword as u16 => Some("async"),
+            k if k == SyntaxKind::OverrideKeyword as u16 => Some("override"),
+            k if k == SyntaxKind::AccessorKeyword as u16 => Some("accessor"),
+            k if k == SyntaxKind::ExportKeyword as u16 => Some("export"),
+            k if k == SyntaxKind::DefaultKeyword as u16 => Some("default"),
+            k if k == SyntaxKind::ConstKeyword as u16 => Some("const"),
+            k if k == SyntaxKind::InKeyword as u16 => Some("in"),
+            k if k == SyntaxKind::OutKeyword as u16 => Some("out"),
+            _ => None,
+        }
+    }
 }
