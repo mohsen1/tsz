@@ -1471,12 +1471,10 @@ o.y;
 
     // TypeScript 7.0.2 (pinned oracle): `o.y = void 0` DECLARES the expando
     // member, so no TS2339 fires anywhere; under noImplicitAny the member's
-    // implicit `any` is reported once as TS7008 at the write. The old
+    // implicit `any` is reported once as TS7008 at the write (also fires
+    // without `noImplicitAny` — oracle-verified separately). The old
     // expectation (2x TS2339 on 'typeof o') encoded pre-TS7 behavior that
-    // rejected the write outright. tsz currently still reports one residual
-    // TS2339 and lacks the TS7008 emission — the remaining gap is tracked in
-    // the salsa campaign (missing-TS7008 sub-family) and this test is
-    // baselined until it lands.
+    // rejected the write outright.
     let ts7008: Vec<_> = diagnostics
         .iter()
         .filter(|(code, _)| *code == 7008)

@@ -8,6 +8,7 @@
 mod access_semantics;
 mod expando;
 mod expando_commonjs_exports;
+mod expando_implicit_any;
 mod expando_prototype_writes;
 mod iterator_methods;
 

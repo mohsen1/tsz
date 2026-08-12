@@ -651,6 +651,7 @@ impl<'a> CheckerState<'a> {
         }
 
         self.maybe_report_commonjs_export_implicit_any_assignment(left_idx, right_idx);
+        self.maybe_report_js_expando_implicit_any_assignment(left_idx, right_idx, expr_idx);
 
         if is_function_assignment {
             // TS2629/TS2628/TS2630 are terminal for simple assignment targets in tsc.

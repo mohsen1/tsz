@@ -517,39 +517,16 @@ impl BinderState {
                     .is_some_and(|ident| ident.escaped_text == "Symbol")
         }
 
-        fn is_undefined_like_rhs(arena: &NodeArena, idx: NodeIndex) -> bool {
-            let Some(node) = arena.get(idx) else {
-                return false;
-            };
-
-            if node.kind == SyntaxKind::Identifier as u16 {
-                return arena
-                    .get_identifier(node)
-                    .is_some_and(|ident| ident.escaped_text == "undefined");
-            }
-
-            if node.kind != syntax_kind_ext::VOID_EXPRESSION
-                && node.kind != syntax_kind_ext::PREFIX_UNARY_EXPRESSION
-            {
-                return false;
-            }
-
-            let Some(unary) = arena.get_unary_expr(node) else {
-                return false;
-            };
-            if unary.operator != SyntaxKind::VoidKeyword as u16 {
-                return false;
-            }
-            let Some(expr) = arena.get(unary.operand) else {
-                return false;
-            };
-            matches!(expr.kind, k if k == SyntaxKind::NumericLiteral as u16)
-                && arena.get_literal(expr).is_some_and(|lit| lit.text == "0")
-        }
-
-        if is_undefined_like_rhs(arena, rhs) {
-            return;
-        }
+        // `x.y = void 0` / `x.y = undefined` still DECLARES the expando member
+        // in tsc 7.0.2 (verified against the pinned oracle): the member is
+        // visible to later reads (no TS2339), and only its inferred *type*
+        // collapses to implicit `any` (TS7008 at the write, handled by the
+        // checker's `collect_expando_property_assignment_type`, which already
+        // excludes a void-zero/undefined RHS from contributing a concrete
+        // type). An earlier version of this function bailed out of recording
+        // the member entirely for such a RHS, encoding an assumption that tsc
+        // rejects the member outright; it does not, so the member must still
+        // be recorded here.
 
         fn property_access_chain(arena: &NodeArena, idx: NodeIndex) -> Option<String> {
             if let Some(text) = arena.identifier_text_owned(idx) {
