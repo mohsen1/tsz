@@ -1924,6 +1924,14 @@ impl ParserState {
     /// Flags: bits 0-2 used for LET/CONST/USING, bit 3 for catch-clause binding (suppresses TS1182)
     pub(crate) fn parse_variable_declaration_with_flags(&mut self, flags: u16) -> NodeIndex {
         let start_pos = self.token_pos();
+        // Snapshot the diagnostic count so the TS1155 "must be initialized" grammar
+        // check can tell a genuinely uninitialized `const` (`const a;`) from a
+        // declarator whose initializer was lost to error recovery
+        // (`const a: C[#bad] = 3;`, where the malformed type detaches `= 3`). tsc
+        // runs TS1155 over a well-formed AST where recovery still attaches the
+        // initializer, so it never fires on those; suppressing when this declarator
+        // itself produced parse errors keeps parity without re-plumbing recovery.
+        let diag_len_before = self.parse_diagnostics.len();
         self.parse_variable_declaration_with_flags_pre_checks(flags);
 
         // Clear any stale template-literal-property recovery signal so that it
@@ -1943,7 +1951,14 @@ impl ParserState {
             NodeIndex::NONE
         };
         let initializer = self.parse_variable_declaration_initializer();
-        self.parse_variable_declaration_after_parse_checks(flags, start_pos, name, initializer);
+        let declarator_clean = self.parse_diagnostics.len() == diag_len_before;
+        self.parse_variable_declaration_after_parse_checks(
+            flags,
+            start_pos,
+            name,
+            initializer,
+            declarator_clean,
+        );
 
         let end_pos =
             self.parse_variable_declaration_end_pos(start_pos, type_annotation, name, initializer);

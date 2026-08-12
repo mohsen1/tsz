@@ -1045,6 +1045,18 @@ impl ParserState {
         if self.is_token(SyntaxKind::OfKeyword) {
             return self.parse_for_of_statement_rest(start_pos, initializer, await_modifier);
         }
+        // TS1155: a well-formed C-style `for` header (`for (const x; ; )`) is not
+        // a `for...in` / `for...of` head, so tsc's `checkGrammarVariableDeclaration`
+        // exemption no longer applies — each `const` / `using` / `await using`
+        // declarator without an initializer reports "'{0}' declarations must be
+        // initialized." Gated on the mandatory `;` that terminates the init clause:
+        // a malformed header such as `for (const a)` (a `)` where the `;` belongs)
+        // is a recovery case tsc reinterprets rather than a real C-style for, and
+        // emits no TS1155 there. The `in` / `of` branches above have already
+        // returned, so a genuine iterable head never reaches this point.
+        if self.is_token(SyntaxKind::SemicolonToken) {
+            self.report_for_header_const_using_uninitialized(initializer);
+        }
         // Regular for statement: for (init; cond; incr)
         // When the initializer is a variable declaration list and the next token
         // is `)` instead of `;`, tsc's `parseDelimitedList(VariableDeclarations)`

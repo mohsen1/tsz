@@ -265,7 +265,9 @@ impl ParserState {
         start_pos: u32,
         name: NodeIndex,
         initializer: NodeIndex,
+        declarator_clean: bool,
     ) {
+        use crate::parser::node_flags;
         use tsz_common::diagnostics::diagnostic_codes;
 
         // TS1182: A destructuring declaration must have an initializer
@@ -331,11 +333,131 @@ impl ParserState {
                 diagnostic_codes::A_DESTRUCTURING_DECLARATION_MUST_HAVE_AN_INITIALIZER,
             );
         }
+        // TS1155: a `const` / `using` / `await using` declaration must have an
+        // initializer. tsc's `checkGrammarVariableDeclaration` reports this on the
+        // binding name when `isVarConstLike(node)` holds and the declarator has no
+        // initializer, in the same `else if` arm that follows the TS1182
+        // destructuring check — so the two are mutually exclusive (a binding
+        // pattern reports TS1182 and returns; an identifier falls through to
+        // TS1155). Suppressed in ambient contexts (`declare const x;` and every
+        // top-level `.d.ts` declaration are legally uninitialized) and for
+        // catch-clause bindings, matching the TS1182 gate above. The `for...in` /
+        // `for...of` head is exempt in tsc; those declarators are parsed by a
+        // separate path (`parse_for_variable_declaration_entry`) that never reaches
+        // this function, so no gate is needed here.
+        // A well-formed uninitialized declarator ends at a list boundary: a comma
+        // (another declarator follows) or a point where a semicolon can be
+        // inserted (`;`, `}`, EOF, or a preceding line break via ASI). Any other
+        // token means the declaration-list loop is about to enter missing-comma
+        // recovery (`const x: "".typeof(...)` reparses the tail as a second
+        // declarator), and tsc emits no TS1155 on a declarator caught up in that
+        // recovery. This mirrors the loop's own `parse_optional(Comma)` /
+        // `can_parse_semicolon` continuation test.
+        let at_declarator_boundary =
+            self.is_token(SyntaxKind::CommaToken) || self.can_parse_semicolon();
+        if declarator_clean
+            && at_declarator_boundary
+            && !is_catch_clause
+            && !stray_same_line_definite_assignment
+            && !self.in_ambient_declaration()
+        {
+            let has_const = (flags & self.u16_from_node_flags(node_flags::CONST)) != 0;
+            let has_using = (flags & self.u16_from_node_flags(node_flags::USING)) != 0;
+            self.report_const_or_using_uninitialized(has_const, has_using, name, initializer);
+        }
         if name == NodeIndex::NONE {
             self.parse_error_at_current_token(
                 "Identifier expected.",
                 diagnostic_codes::IDENTIFIER_EXPECTED,
             );
+        }
+    }
+
+    /// TS1155: `'{0}' declarations must be initialized.` — a single declarator
+    /// whose declaration list is `const`, `using`, or `await using` (tsc's
+    /// `isVarConstLike`) and which has no initializer. `let` / `var` are exempt.
+    /// Destructuring names are skipped here (they report TS1182 / TS1492 instead),
+    /// so an identifier is the only shape that reaches the diagnostic. The
+    /// squiggle is anchored at the binding name — tsc spans only the name node,
+    /// not a trailing type annotation (`const y: number;` underlines `y`). The
+    /// keyword substituted into `{0}` is reconstructed from the declaration-list
+    /// flags: `await using` sets both the `Const` and `Using` bits, `using` only
+    /// the `Using` bit, `const` only the `Const` bit.
+    ///
+    /// Shared by the plain-statement path (`parse_variable_declaration_after_parse_checks`)
+    /// and the C-style `for` header (`parse_for_statement`), mirroring tsc's single
+    /// `checkGrammarVariableDeclaration` owner.
+    pub(crate) fn report_const_or_using_uninitialized(
+        &mut self,
+        has_const: bool,
+        has_using: bool,
+        name: NodeIndex,
+        initializer: NodeIndex,
+    ) {
+        use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
+
+        if initializer.is_some() || (!has_const && !has_using) {
+            return;
+        }
+        let Some(name_node) = self.arena.get(name) else {
+            return;
+        };
+        // A destructuring name reports TS1182; a `using` binding pattern reports
+        // TS1492. tsc returns before the `isVarConstLike` arm in both cases, so
+        // TS1155 fires for identifier names only.
+        if name_node.is_binding_pattern() {
+            return;
+        }
+        let keyword = match (has_using, has_const) {
+            (true, true) => "await using",
+            (true, false) => "using",
+            _ => "const",
+        };
+        let message = diagnostic_messages::DECLARATIONS_MUST_BE_INITIALIZED.replace("{0}", keyword);
+        self.parse_error_at(
+            name_node.pos,
+            name_node.end - name_node.pos,
+            &message,
+            diagnostic_codes::DECLARATIONS_MUST_BE_INITIALIZED,
+        );
+    }
+
+    /// TS1155 for a C-style `for` header: walk the declaration list and report
+    /// each `const` / `using` / `await using` declarator that lacks an
+    /// initializer. The list node carries the `Const` / `Using` bits (`await
+    /// using` sets both); per declarator the shared
+    /// `report_const_or_using_uninitialized` owner applies the identifier-only,
+    /// name-anchored rule, so the message and span match the plain-statement path
+    /// exactly. The caller (`parse_for_statement`) only invokes this once the
+    /// terminating `;` is present, keeping `for...in` / `for...of` heads and
+    /// malformed `for (const a)` recovery exempt.
+    pub(crate) fn report_for_header_const_using_uninitialized(&mut self, initializer: NodeIndex) {
+        use crate::parser::node_flags;
+
+        let Some(list_node) = self.arena.get(initializer) else {
+            return;
+        };
+        let has_const = list_node.has_any_node_flags(node_flags::CONST);
+        let has_using = list_node.has_any_node_flags(node_flags::USING);
+        if !has_const && !has_using {
+            return;
+        }
+        let Some(declarations) = self
+            .arena
+            .get_variable_at(initializer)
+            .map(|var| var.declarations.nodes.clone())
+        else {
+            return;
+        };
+        for decl in declarations {
+            let Some((name, decl_initializer)) = self
+                .arena
+                .get_variable_declaration_at(decl)
+                .map(|d| (d.name, d.initializer))
+            else {
+                continue;
+            };
+            self.report_const_or_using_uninitialized(has_const, has_using, name, decl_initializer);
         }
     }
 
