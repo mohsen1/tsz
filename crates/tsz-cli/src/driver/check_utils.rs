@@ -1290,7 +1290,18 @@ pub(super) const fn is_real_syntax_error(code: u32) -> bool {
         | 1138 // Parameter declaration expected
         | 1141 // Type parameter declaration expected
         | 1146 // Declaration expected
-        | 1155 // 'const' declarations must be initialized
+        // Note: TS1155 ('{0}' declarations must be initialized) is intentionally
+        // excluded (#17253). Same stale-mislabel shape as TS1313 above: tsc's
+        // checkGrammarVariableDeclaration reports it from the checker, so it is
+        // never in sourceFile.parseDiagnostics and never triggers
+        // hasParseDiagnostics() — `const x; y +` on real tsc reports TS1155
+        // alongside the real TS1109, and `const x; x = 1;`-shaped fixtures keep
+        // TS1155 alongside TS2588/TS7005. Listing it here made it its own
+        // "real" syntax error, which (a) wrongly suppressed unrelated semantic
+        // diagnostics program-wide whenever TS1155 fired, and (b) once TS1155
+        // also joined `is_parser_grammar_code`, made it self-suppress every
+        // time — the code was simultaneously the trigger and the target. It
+        // now lives only in `is_parser_grammar_code`.
         | 1160 // Unterminated template literal
         | 1161 // Unterminated regular expression literal
         | 1180 // Property destructuring pattern expected
@@ -1399,7 +1410,8 @@ pub(super) const fn is_structural_parse_error(code: u32) -> bool {
         | 1144 // '{' or ';' expected
         | 1145 // '{' or JSX element expected
         | 1146 // Declaration expected
-        | 1155 // 'const' declarations must be initialized
+        // TS1155 is intentionally excluded — see the matching note in
+        // `is_real_syntax_error` above. It moved to `is_parser_grammar_code`.
         | 1160 // Unterminated template literal
         | 1161 // Unterminated regular expression literal
         | 1180 // Property destructuring pattern expected
@@ -1617,6 +1629,10 @@ mod audit_round_9_grammar_tests;
 #[cfg(test)]
 #[path = "check_utils/parser_grammar_non_suppressing_tests.rs"]
 mod parser_grammar_non_suppressing_tests;
+
+#[cfg(test)]
+#[path = "check_utils/const_declaration_must_be_initialized_grammar_tests.rs"]
+mod const_declaration_must_be_initialized_grammar_tests;
 
 #[cfg(test)]
 #[path = "check_utils/for_in_using_declaration_grammar_tests.rs"]

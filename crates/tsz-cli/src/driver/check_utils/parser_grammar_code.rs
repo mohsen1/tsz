@@ -322,6 +322,19 @@ pub(super) const fn is_parser_grammar_code(code: u32) -> bool {
         | 1495 // '{0}' modifier cannot appear on an 'await using' declaration
         | 1275 // 'accessor' modifier can only appear on a property declaration
         | 1276 // An 'accessor' property cannot be declared optional
+        | 1155 // '{0}' declarations must be initialized. tsc's
+                // checkGrammarVariableDeclaration reports this from the
+                // checker for an uninitialized `const` binding; tsz emits it
+                // from the parser (state_variable_declarations.rs). #17251
+                // wired it into the parser without adding it here, which both
+                // let it survive alongside a real syntax error in the same
+                // file (tsc drops it — visible on
+                // `decoratorOnUsing`/`commonMissingSemicolons`) and, being
+                // unlisted, made it count as a "real" parse error that
+                // suppresses unrelated CHECKER diagnostics elsewhere in the
+                // same file the way a genuine structural syntax error does —
+                // `constDeclarations-errors`/`for-of2`/`downlevelLetConst2`
+                // each lost their co-occurring TS2588/TS7005 this way. #17253.
         | 1156 // '{0}' declarations can only be declared inside a block
         | 1313 // The body of an 'if' statement cannot be the empty statement
         | 1358 // Tagged template expressions are not permitted in an optional chain

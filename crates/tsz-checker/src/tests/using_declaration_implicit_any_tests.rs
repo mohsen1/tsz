@@ -18,13 +18,20 @@
 //! TS7005; `let x;` / `var x;` report neither; `using x: number;` reports only
 //! TS1155 (the annotation supplies the type).
 
-use crate::test_utils::check_source_strict_codes;
+use crate::test_utils::{
+    check_source_codes_with_parse_health, check_source_codes_with_parse_health_and_options,
+    check_source_strict_codes, non_strict_checker_options,
+};
 
 /// The core regression: a bare uninitialized `using` reports the implicit-any
 /// at its declaration site, not just the must-initialize TS1155.
+///
+/// TS1155 is a parser-emitted diagnostic (`report_const_or_using_uninitialized`,
+/// #17251/#17253), so this needs the combined parser+checker harness — a
+/// checker-only harness like `check_source_strict_codes` cannot see it.
 #[test]
 fn uninitialized_using_reports_ts7005_implicit_any() {
-    let codes = check_source_strict_codes("using x;\n");
+    let codes = check_source_codes_with_parse_health("using x;\n");
     assert!(
         codes.contains(&1155),
         "an uninitialized `using` still needs TS1155 (must be initialized); got {codes:?}"
@@ -71,7 +78,7 @@ fn uninitialized_let_and_var_do_not_report_ts7005() {
 /// implicit-any gate is correctly skipped when a type annotation is present.
 #[test]
 fn annotated_uninitialized_using_reports_only_ts1155_not_ts7005() {
-    let codes = check_source_strict_codes("using x: number;\n");
+    let codes = check_source_codes_with_parse_health("using x: number;\n");
     assert!(codes.contains(&1155), "got {codes:?}");
     assert!(
         !codes.contains(&7005),
@@ -135,7 +142,10 @@ fn uninitialized_using_reports_ts7005_in_every_container() {
 /// TS1155 still does (it is a grammar rule, not an implicit-any one).
 #[test]
 fn uninitialized_using_without_no_implicit_any_reports_only_ts1155() {
-    let codes = crate::test_utils::check_source_non_strict_codes("using x;\n");
+    let codes = check_source_codes_with_parse_health_and_options(
+        "using x;\n",
+        non_strict_checker_options(),
+    );
     assert!(
         codes.contains(&1155),
         "TS1155 is a grammar rule, unaffected by noImplicitAny; got {codes:?}"

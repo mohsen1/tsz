@@ -539,3 +539,88 @@ interface LibBase {
              got TS1054 at {ts1054} and TS2378 at {ts2378}: {diagnostics:?}"
         );
     }
+
+/// #17253: TS1155 ('{0}' declarations must be initialized.) was wired into
+/// the parser by #17251 without joining `is_parser_grammar_code`, and was
+/// separately misclassified as a "real"/"structural" syntax error — both
+/// gaps together (a) suppressed unrelated checker diagnostics program-wide
+/// whenever TS1155 fired, (b) made TS1155 self-suppress once it also joined
+/// `is_parser_grammar_code`, and (c) left a redundant checker-side TS1155
+/// emitter (`CheckerState::check_variable_declaration_with_request`) firing
+/// alongside the parser, double-reporting every witness. Fixed by (1) adding
+/// 1155 to `is_parser_grammar_code`, (2) removing it from
+/// `is_real_syntax_error`/`is_structural_parse_error`, and (3) deleting the
+/// checker-side emitter so the parser is the sole owner.
+mod ts1155_declarations_must_be_initialized_tests {
+    use super::*;
+
+    #[test]
+    fn uninitialized_const_alone_reports_ts1155_exactly_once() {
+        let diagnostics = collect_test_diagnostics(&[("a.ts", "const x;\n")]);
+        let hits: Vec<_> = diagnostics.iter().filter(|d| d.code == 1155).collect();
+        assert_eq!(
+            hits.len(),
+            1,
+            "TS1155 must fire exactly once (not double-emitted by parser + checker), got: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn uninitialized_const_does_not_suppress_unrelated_diagnostics_in_the_same_file() {
+        // Before the fix, TS1155 was misclassified as a "real" syntax error,
+        // so `program_has_real_syntax_errors` suppressed the unrelated TS2322
+        // on the next line entirely (code < 2000 gate in
+        // `keep_checker_diagnostic_when_program_has_real_syntax_errors`).
+        let diagnostics = collect_test_diagnostics(&[(
+            "a.ts",
+            "const x;\nlet y: number = \"str\";\n",
+        )]);
+        let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
+        assert!(
+            codes.contains(&1155),
+            "TS1155 must still fire for the uninitialized const, got: {diagnostics:?}"
+        );
+        assert!(
+            codes.contains(&2322),
+            "TS2322 on the unrelated line must not be suppressed by TS1155, got: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn uninitialized_const_is_suppressed_alongside_a_real_syntax_error() {
+        // Direction B (oracle-confirmed against typescript@7.0.2 on #17253):
+        // a genuine structural syntax error elsewhere in the file drops
+        // TS1155, matching tsc's `hasParseDiagnostics`-gated
+        // `checkGrammarVariableDeclaration`.
+        let diagnostics = collect_test_diagnostics(&[("a.ts", "const x;\ny +\n")]);
+        let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
+        assert!(
+            !codes.contains(&1155),
+            "TS1155 must be suppressed alongside a real syntax error, got: {diagnostics:?}"
+        );
+        assert!(
+            codes.contains(&1109),
+            "the real syntax error (TS1109) must survive, got: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn using_declaration_uninitialized_reports_ts1155_exactly_once() {
+        let diagnostics = collect_es2015_default_lib_diagnostics("using u;\n");
+        let hits: Vec<_> = diagnostics.iter().filter(|d| d.code == 1155).collect();
+        assert_eq!(
+            hits.len(),
+            1,
+            "TS1155 for 'using' must fire exactly once, got: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn ambient_uninitialized_const_reports_no_ts1155() {
+        let diagnostics = collect_test_diagnostics(&[("a.d.ts", "declare const x: number;\n")]);
+        assert!(
+            !diagnostics.iter().any(|d| d.code == 1155),
+            "an ambient declaration is legally uninitialized, got: {diagnostics:?}"
+        );
+    }
+}
