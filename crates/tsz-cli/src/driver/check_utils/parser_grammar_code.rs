@@ -37,6 +37,32 @@
 /// function but are checker-emitted in tsz (`parameter_checker.rs`), so they
 /// never reach this filter either.
 ///
+/// #17253 regression round: TS1155 (`'{0}' declarations must be initialized.`)
+/// joined this family when #17251 moved tsc's `checkGrammarVariableDeclaration`
+/// initializer check into the parser (`state_variable_declarations.rs`'s
+/// `report_const_or_using_uninitialized`, plus the C-style `for`-header walk).
+/// It is the exact shape #16279 audits repeatedly hit and the doc above warns
+/// about: a well-formed `const a;` parses to a valid AST, so tsc emits TS1155
+/// as a check-time `grammarErrorOnNode` that a real parse error suppresses and
+/// that coexists with the declarator's other diagnostics. Because the new
+/// parser-emitted copy was omitted here, it BOTH survived when a real parse
+/// error should have dropped it (`decoratorOnUsing`: tsz kept TS1155 alongside
+/// the recovery's TS1134) AND, counted as a suppressing "real parse error",
+/// deleted every co-occurring sibling — `constDeclarations-errors` lost its
+/// TS2588, `for-of2` its TS2588 and TS7005, `downlevelLetConst2` its TS7005 —
+/// regressing 11 conformance rows at `0d1c93cd42`. TS1155 was simultaneously
+/// mislisted in `is_real_syntax_error` and `is_structural_parse_error`
+/// (`check_utils.rs`) — a speculative classification that only became live once
+/// the parser started emitting the code — which is what actually drove the
+/// sibling deletion (`has_real_syntax_errors` / the structural-cascade
+/// heuristic). The fix is the same shape as round 10's TS1313: removed from
+/// both structural lists, added here. The redundant checker-side copies
+/// (`variable_checking/core.rs`, `declarations/declarations.rs`, which anchored
+/// the squiggle at the whole declaration rather than tsc's name-only span and
+/// were only kept silent in production by the very `is_real_syntax_error`
+/// misclassification being removed) were deleted so the parser is the sole
+/// owner — no double-emission, the trap that blocks TS2499/TS18016.
+///
 /// #16279 audit round: 11 more parser-emitted codes confirmed
 /// checker-suppressible against a real `typescript@7.0.2` oracle (a genuine
 /// unrelated syntax error in the same file drops each of these, matching the
@@ -322,6 +348,17 @@ pub(super) const fn is_parser_grammar_code(code: u32) -> bool {
         | 1495 // '{0}' modifier cannot appear on an 'await using' declaration
         | 1275 // 'accessor' modifier can only appear on a property declaration
         | 1276 // An 'accessor' property cannot be declared optional
+        | 1155 // '{0}' declarations must be initialized. Parser-emitted since
+                // #17251 (`report_const_or_using_uninitialized`); tsc reports it
+                // from `checkGrammarVariableDeclaration` (a check-time
+                // `grammarErrorOnNode`) on a well-formed `const`/`using`/`await
+                // using` declarator that lacks an initializer, so a real parse
+                // error suppresses it and it coexists with the declarator's
+                // TS2588/TS7005 siblings. Sole owner after #17253 removed the
+                // redundant checker copies; also removed from
+                // `is_real_syntax_error`/`is_structural_parse_error`, where its
+                // speculative pre-#17251 listing turned every uninitialized
+                // const into a sibling-deleting "real parse error" (#17253).
         | 1156 // '{0}' declarations can only be declared inside a block
         | 1313 // The body of an 'if' statement cannot be the empty statement
         | 1358 // Tagged template expressions are not permitted in an optional chain

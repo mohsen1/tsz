@@ -8,7 +8,7 @@ use crate::diagnostics::format_message;
 use crate::types_domain::utilities::enum_eval::{
     IsolatedEnumInitializerKind, classify_isolated_enum_initializer, is_numeric_constant_enum_expr,
 };
-use tsz_parser::parser::{NodeIndex, node_flags, syntax_kind_ext};
+use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 
 /// Declaration type checker that operates on the shared context.
@@ -103,69 +103,10 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
             return;
         };
 
-        // TS1155: Check if const declarations must be initialized
-        // Get the parent node (VARIABLE_DECLARATION_LIST) via extended info
-        let Some(ext) = self.ctx.arena.get_extended(decl_idx) else {
-            return;
-        };
-        let parent_idx = ext.parent;
-
-        let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
-            return;
-        };
-
-        // TS1155's message parameter follows the declaration kind:
-        // `await using` (Const|Using), `using`, or `const`.
-        let kind_flags = u32::from(parent_node.flags);
-        let ts1155_kind = if kind_flags & node_flags::AWAIT_USING == node_flags::AWAIT_USING {
-            Some("await using")
-        } else if kind_flags & node_flags::USING != 0 {
-            Some("using")
-        } else if kind_flags & node_flags::CONST != 0 {
-            Some("const")
-        } else {
-            None
-        };
-
-        // TS1155: '<kind>' declarations must be initialized
-        // Skip when file has real syntax errors — the parse error is sufficient.
-        if let Some(kind_name) = ts1155_kind
-            && decl_data.initializer.is_none()
-            && !self.ctx.has_real_syntax_errors
-        {
-            // Skip for destructuring patterns - they get TS1182 from the parser
-            if let Some(name_node) = self.ctx.arena.get(decl_data.name) {
-                if name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
-                    || name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
-                {
-                    // TS1182 is emitted by parser for destructuring without initializer
-                    // Don't also emit TS1155
-                } else {
-                    // Check if this is in a for-in or for-of loop (allowed)
-                    if let Some(parent_ext) = self.ctx.arena.get_extended(parent_idx)
-                        && let Some(gp_node) = self.ctx.arena.get(parent_ext.parent)
-                        && (gp_node.kind == syntax_kind_ext::FOR_IN_STATEMENT
-                            || gp_node.kind == syntax_kind_ext::FOR_OF_STATEMENT)
-                    {
-                        // const in for-in/for-of is allowed without initializer
-                        return;
-                    }
-
-                    // Check if this is an ambient declaration (allowed)
-                    let is_ambient = self.is_ambient_declaration(decl_idx);
-                    if is_ambient {
-                        return;
-                    }
-
-                    self.ctx.error(
-                        decl_node.pos,
-                        decl_node.end - decl_node.pos,
-                        format!("'{kind_name}' declarations must be initialized."),
-                        1155,
-                    );
-                }
-            }
-        }
+        // TS1155 ('{0}' declarations must be initialized) is owned by the parser
+        // (`report_const_or_using_uninitialized`, #17251) and classified as a
+        // parser grammar code (#17253); the checker no longer re-emits it. See
+        // the matching note in `variable_checking/core.rs`.
 
         // Variable declaration checking is handled by CheckerState for now
         // Will be migrated incrementally
