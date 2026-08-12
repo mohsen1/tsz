@@ -139,6 +139,11 @@ pub(crate) struct JsdocParamDecl {
     pub(crate) name: String,
     pub(crate) type_text: String,
     pub(crate) optional: bool,
+    /// True only for the JSDoc optional-type marker form (`{T=}`), which tsc
+    /// serializes as `T | undefined` on declaration surfaces. The bracketed
+    /// name form (`[name]`) sets `optional` alone and never adds `undefined`
+    /// to the printed type.
+    pub(crate) optional_type_marker: bool,
     pub(crate) rest: bool,
 }
 

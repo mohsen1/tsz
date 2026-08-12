@@ -840,6 +840,9 @@ function foo({ a, b }) {
 "#,
     );
 
+    // Pinned-corpus parity (jsDeclarationsOptionalTypeLiteralProps1/2): a
+    // bracket-optional member of a synthesized JSDoc object type literal
+    // keeps `| undefined`, unlike plain parameter positions.
     assert!(
         output.contains(
             "declare function foo({ a, b }: {\n    a: number;\n    b?: number | undefined;\n}): number;"

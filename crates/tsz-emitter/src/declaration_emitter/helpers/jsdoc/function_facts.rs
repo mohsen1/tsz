@@ -229,6 +229,7 @@ impl<'a> DeclarationEmitter<'a> {
             name,
             type_text: "any".to_string(),
             optional,
+            optional_type_marker: false,
             rest: false,
         })
     }
@@ -434,6 +435,9 @@ impl<'a> DeclarationEmitter<'a> {
                 prop_decl.type_text.clone()
             };
             member.push_str(&type_text);
+            // Pinned-corpus parity (jsDeclarationsOptionalTypeLiteralProps1/2):
+            // a bracket-optional member of a synthesized JSDoc object type
+            // literal keeps `| undefined`, unlike plain parameter positions.
             if prop_decl.optional && !Self::type_text_has_undefined_branch(&prop_decl.type_text) {
                 member.push_str(" | undefined");
             }
@@ -477,6 +481,9 @@ impl<'a> DeclarationEmitter<'a> {
                 prop_decl.type_text.clone()
             };
             member.push_str(&type_text);
+            // Pinned-corpus parity (jsDeclarationsOptionalTypeLiteralProps1/2):
+            // a bracket-optional member of a synthesized JSDoc object type
+            // literal keeps `| undefined`, unlike plain parameter positions.
             if prop_decl.optional && !Self::type_text_has_undefined_branch(&prop_decl.type_text) {
                 member.push_str(" | undefined");
             }
@@ -548,6 +555,7 @@ impl<'a> DeclarationEmitter<'a> {
         adapted.rest = false;
         if decl.rest {
             adapted.optional = false;
+            adapted.optional_type_marker = false;
             if let Some(element_type) = adapted.type_text.strip_suffix("[]") {
                 adapted.type_text = element_type.trim().to_string();
             }
@@ -683,6 +691,7 @@ impl<'a> DeclarationEmitter<'a> {
             name,
             type_text: Self::normalize_jsdoc_type_text(type_expr, rest_param),
             optional,
+            optional_type_marker: false,
             rest: rest_param,
         })
     }

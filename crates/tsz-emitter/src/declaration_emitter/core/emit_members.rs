@@ -1812,6 +1812,9 @@ impl<'a> DeclarationEmitter<'a> {
                 self.write("...");
             }
             self.emit_node(param.name);
+            // Pinned-corpus parity (jsDeclarationsReusesExistingTypeAnnotations):
+            // a JSDoc-optional JS setter parameter emits without `?`; only a
+            // written `?` in the source produces one.
             if param.question_token {
                 self.write("?");
             }
@@ -1831,7 +1834,7 @@ impl<'a> DeclarationEmitter<'a> {
         let param_idx = *params.nodes.first()?;
         let decl = self.jsdoc_param_decl_for_parameter(param_idx, 0)?;
         let mut type_text = decl.type_text;
-        if decl.optional && !Self::type_text_has_undefined_branch(&type_text) {
+        if decl.optional_type_marker && !Self::type_text_has_undefined_branch(&type_text) {
             type_text.push_str(" | undefined");
         }
         Some(type_text)
