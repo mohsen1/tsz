@@ -41,6 +41,9 @@ path = "tests/interface_simultaneous_extend_suppresses_incorrectly_extends_tests
 name = "evolving_array_assignment_contextual_inference_tests"
 path = "tests/evolving_array_assignment_contextual_inference_tests.rs"
 [[test]]
+name = "arithmetic_nullish_operand_non_strict_tests"
+path = "tests/arithmetic_nullish_operand_non_strict_tests.rs"
+[[test]]
 name = "enum_member_binding_widening_tests"
 path = "tests/enum_member_binding_widening_tests.rs"
 [[test]]
