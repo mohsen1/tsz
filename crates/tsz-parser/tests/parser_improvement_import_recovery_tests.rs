@@ -12,23 +12,21 @@ fn test_typeof_import_with_member_access() {
 export const foo: typeof import("./a").A.foo;
 "#;
     let (parser, _root) = parse_source(source);
+    let codes: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();
 
     // Should not emit TS1005 for member access after import()
-    let ts1005_count = parser
-        .get_diagnostics()
-        .iter()
-        .filter(|d| d.code == 1005)
-        .count();
-    assert_eq!(
-        ts1005_count, 0,
-        "Expected no TS1005 errors for typeof import with member access, got {ts1005_count}",
+    assert!(
+        !codes.contains(&1005),
+        "Expected no TS1005 errors for typeof import with member access, got {codes:?}",
     );
 
-    // Should have no errors at all
-    assert!(
-        parser.get_diagnostics().is_empty(),
-        "Expected no parser errors for typeof import with member access, got {:?}",
-        parser.get_diagnostics()
+    // The typeof-import type parses cleanly; the declaration is a `const` with no
+    // initializer, so the one expected diagnostic is TS1155 ("'const' declarations
+    // must be initialized.") — matching tsc for `export const foo: T;`.
+    assert_eq!(
+        codes,
+        vec![1155],
+        "Expected only the uninitialized-const TS1155, got {codes:?}",
     );
 }
 
@@ -39,12 +37,14 @@ fn test_typeof_import_with_nested_member_access() {
 export const foo: typeof import("./module").A.B.C;
 "#;
     let (parser, _root) = parse_source(source);
+    let codes: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();
 
-    // Should not emit any errors for nested member access after import()
-    assert!(
-        parser.get_diagnostics().is_empty(),
-        "Expected no parser errors for typeof import with nested member access, got {:?}",
-        parser.get_diagnostics()
+    // The nested member-access type parses cleanly; the only expected diagnostic
+    // is the uninitialized-`const` TS1155 (the declaration has no initializer).
+    assert_eq!(
+        codes,
+        vec![1155],
+        "Expected only the uninitialized-const TS1155 for nested member access, got {codes:?}",
     );
 }
 
@@ -55,12 +55,14 @@ fn test_typeof_import_without_member_access() {
 export const foo: typeof import("./module");
 "#;
     let (parser, _root) = parse_source(source);
+    let codes: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();
 
-    // Should not emit any errors
-    assert!(
-        parser.get_diagnostics().is_empty(),
-        "Expected no parser errors for typeof import without member access, got {:?}",
-        parser.get_diagnostics()
+    // The bare `typeof import(...)` type parses cleanly; the only expected
+    // diagnostic is the uninitialized-`const` TS1155.
+    assert_eq!(
+        codes,
+        vec![1155],
+        "Expected only the uninitialized-const TS1155, got {codes:?}",
     );
 }
 
