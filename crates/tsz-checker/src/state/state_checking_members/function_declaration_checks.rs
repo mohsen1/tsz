@@ -340,9 +340,9 @@ impl<'a> CheckerState<'a> {
                 })
                 .or_else(|| {
                     // Second try: @returns/@return tag (e.g., @returns {T})
+                    let comment_pos = self.get_jsdoc_comment_pos_for_function(func_idx);
                     func_decl_jsdoc.as_ref().and_then(|jsdoc| {
-                        Self::jsdoc_returns_type_expression(jsdoc)
-                            .and_then(|expr| self.resolve_jsdoc_reference(&expr))
+                        self.resolve_jsdoc_return_type_with_pos(jsdoc, comment_pos)
                     })
                 })
         } else {

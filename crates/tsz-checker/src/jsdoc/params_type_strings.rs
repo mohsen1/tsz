@@ -380,6 +380,90 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Resolve a JSDoc `@returns`/`@return` tag's type expression.
+    ///
+    /// A bare (non-`typeof`) `import("./mod").Member` reference is resolved
+    /// directly through `resolve_jsdoc_import_type_member_result` so a
+    /// failing TS2694 anchors at the member-name token inside the comment,
+    /// mirroring `resolve_jsdoc_param_type_with_pos`'s `@param` handling and
+    /// `jsdoc_type_annotation_for_node`'s `@type` handling (#17176/#17193).
+    /// Every other shape falls through to the generic string resolver
+    /// unchanged.
+    pub(crate) fn resolve_jsdoc_return_type_with_pos(
+        &mut self,
+        jsdoc: &str,
+        jsdoc_comment_start: Option<u32>,
+    ) -> Option<tsz_solver::TypeId> {
+        let type_expr = Self::jsdoc_returns_type_expression(jsdoc)?;
+        let effective_type_expr = type_expr.trim();
+        let Some(result) = self.resolve_jsdoc_import_type_member_result(effective_type_expr) else {
+            return self.resolve_jsdoc_type_str(effective_type_expr);
+        };
+        Some(match result {
+            Ok(resolved) => resolved,
+            Err((namespace_display, member_name)) => {
+                if let Some(comment_start) = jsdoc_comment_start {
+                    use crate::diagnostics::{
+                        diagnostic_codes, diagnostic_messages, format_message,
+                    };
+                    let message = format_message(
+                        diagnostic_messages::NAMESPACE_HAS_NO_EXPORTED_MEMBER,
+                        &[&namespace_display, &member_name],
+                    );
+                    let member_offset = effective_type_expr
+                        .find(&format!(".{member_name}"))
+                        .map_or(0, |offset| offset + 1);
+                    // Search the raw source for the tag's own literal text
+                    // (`@returns {expr}` or `@return {expr}`) rather than
+                    // tracking a byte offset through the stripped/joined
+                    // `jsdoc` string — the same strategy
+                    // `resolve_jsdoc_param_type_with_pos` uses, and the only
+                    // way to land on *this* tag's token when a sibling tag
+                    // in the same comment (e.g. `@param`) shares the exact
+                    // same unresolvable type expression.
+                    let source_start = self
+                        .ctx
+                        .arena
+                        .source_files
+                        .first()
+                        .and_then(|source_file| {
+                            let source_text = source_file.text.as_ref();
+                            let returns_exact = format!("@returns {{{effective_type_expr}}}");
+                            let return_exact = format!("@return {{{effective_type_expr}}}");
+                            source_text
+                                .find(&returns_exact)
+                                .map(|offset| offset + "@returns {".len())
+                                .or_else(|| {
+                                    source_text
+                                        .find(&return_exact)
+                                        .map(|offset| offset + "@return {".len())
+                                })
+                        })
+                        .map(|offset| offset + member_offset);
+                    let start = source_start
+                        .map(|offset| offset as u32)
+                        .unwrap_or(comment_start);
+                    let length = member_name.len() as u32;
+                    let already_reported = self.ctx.diagnostics.iter().any(|diagnostic| {
+                        diagnostic.code == diagnostic_codes::NAMESPACE_HAS_NO_EXPORTED_MEMBER
+                            && diagnostic.start == start
+                            && diagnostic.length == length
+                            && diagnostic.message_text == message
+                    });
+                    if !already_reported {
+                        self.error_at_position(
+                            start,
+                            length,
+                            &message,
+                            diagnostic_codes::NAMESPACE_HAS_NO_EXPORTED_MEMBER,
+                        );
+                    }
+                }
+                tsz_solver::TypeId::ANY
+            }
+        })
+    }
+
     /// Check if a JSDoc `@param` tag has a rest type prefix (`{...Type}`).
     pub(crate) fn jsdoc_param_is_rest(jsdoc: &str, param_name: &str) -> bool {
         Self::extract_jsdoc_param_type_expr_with_span(jsdoc, param_name)

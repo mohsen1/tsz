@@ -291,3 +291,116 @@ export var y = 1
          prefix, got: {diagnostics:?}"
     );
 }
+
+#[test]
+fn jsdoc_multitag_comment_reports_ts2694_at_each_tags_own_member_token() {
+    // #17193 residual 1: a multi-tag comment where `@param` and `@returns`
+    // reference the *same* unresolvable member. tsc reports one TS2694 per
+    // tag, each at that tag's own member token; the coarse fallback anchor
+    // (`jsdoc_typedef_anchor_pos`, unset for the return-context resolution
+    // path) previously landed one of the two at a garbage `u32::MAX`
+    // position instead of the `@returns` tag's own token.
+    let consumer_source = r#"
+/** @param {import("./types.js").Missing} p
+ * @returns {import("./types.js").Missing}
+ */
+function h(p) { return p; }
+"#;
+    let diagnostics = check_consumer_with_module_source(
+        "types.js",
+        "\nexport var dummy = 1\n",
+        "consumer.js",
+        consumer_source,
+    );
+    let ts2694 = diagnostics_with_code(&diagnostics, 2694);
+    assert_eq!(
+        ts2694.len(),
+        2,
+        "Expected one TS2694 per tag (@param and @returns both reference the \
+         same unresolvable member), got: {diagnostics:?}"
+    );
+    let param_needle = "@param {import(\"./types.js\").";
+    let returns_needle = "@returns {import(\"./types.js\").";
+    let param_pos = (consumer_source.find(param_needle).unwrap() + param_needle.len()) as u32;
+    let returns_pos = (consumer_source.find(returns_needle).unwrap() + returns_needle.len()) as u32;
+    let starts: Vec<u32> = ts2694.iter().map(|d| d.start).collect();
+    assert!(
+        starts.contains(&param_pos),
+        "Expected a TS2694 anchored at @param's member token ({param_pos}), \
+         got starts: {starts:?}"
+    );
+    assert!(
+        starts.contains(&returns_pos),
+        "Expected a TS2694 anchored at @returns's member token \
+         ({returns_pos}), got starts: {starts:?}"
+    );
+}
+
+#[test]
+fn jsdoc_typedef_import_type_member_reports_ts2694_at_member_token() {
+    // #17193 residual 2: `@typedef {import(...).Missing} T` anchored TS2694
+    // at the comment start (`comment.pos`) instead of the member token —
+    // `@type`/`@param`/`@returns` were corrected by #17176/#17184/this PR,
+    // but the `@typedef` base-type path still went through the coarse
+    // `jsdoc_typedef_anchor_pos` fallback. Also guards against the
+    // knock-on defect: when the import fails, the typedef must still
+    // register as `any` so other references to `T` in the file don't
+    // cascade into a spurious "Cannot find name 'T'".
+    let consumer_source = r#"
+/** @typedef {import("./types.js").Missing} T */
+/** @type {T} */
+let b;
+"#;
+    let diagnostics = check_consumer_with_module_source(
+        "types.js",
+        "\nexport var dummy = 1\n",
+        "consumer.js",
+        consumer_source,
+    );
+    let ts2694 = diagnostics_with_code(&diagnostics, 2694);
+    assert_eq!(
+        ts2694.len(),
+        1,
+        "Expected exactly one TS2694 for the typedef's unresolvable import \
+         member, got: {diagnostics:?}"
+    );
+    let needle = "@typedef {import(\"./types.js\").";
+    let expected_pos = (consumer_source.find(needle).unwrap() + needle.len()) as u32;
+    assert_eq!(
+        ts2694[0].start, expected_pos,
+        "Expected TS2694 anchored at the member token, not the comment \
+         start, got: {:?}",
+        ts2694[0]
+    );
+    assert!(
+        diagnostics_with_code(&diagnostics, 2304).is_empty(),
+        "The typedef must still register as `any` on import failure so `T` \
+         resolves for the later `@type` reference instead of cascading into \
+         'Cannot find name', got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn jsdoc_typedef_import_type_member_resolves_cleanly_when_present() {
+    // Positive control for the same path: a resolvable `@typedef`
+    // `import(...).Member` base must emit no TS2694, and every later
+    // reference to `T` (which now shares the precise-anchor resolver) must
+    // still resolve.
+    let diagnostics = check_consumer_with_module_source(
+        "types.js",
+        "\nexport class Present {}\n",
+        "consumer.js",
+        r#"
+/** @typedef {import("./types.js").Present} T */
+/** @type {T} */
+let b;
+/** @type {T} */
+let c;
+"#,
+    );
+    assert!(
+        diagnostics.is_empty(),
+        "Expected no diagnostics for a resolvable @typedef import member, \
+         got: {diagnostics:?}"
+    );
+}

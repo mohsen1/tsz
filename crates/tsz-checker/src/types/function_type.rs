@@ -308,10 +308,10 @@ impl<'a> CheckerState<'a> {
         // Push enclosing class's @template T (pop via jsdoc_type_param_updates).
         jsdoc_type_param_updates
             .extend(self.push_enclosing_jsdoc_class_template_types_with_flag(idx));
-        let jsdoc_return_context = func_jsdoc
-            .as_ref()
-            .and_then(|j| Self::jsdoc_returns_type_expression(j))
-            .and_then(|expr| self.resolve_jsdoc_reference(&expr));
+        let jsdoc_return_context = func_jsdoc.as_ref().and_then(|j| {
+            let comment_pos = self.get_jsdoc_comment_pos_for_function(idx);
+            self.resolve_jsdoc_return_type_with_pos(j, comment_pos)
+        });
 
         // TypeScript 7 dropped JS constructor-function inference: a plain function
         // (even with a `@constructor`/`@class` JSDoc tag or `this.x =` assignments)

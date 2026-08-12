@@ -1606,7 +1606,7 @@ impl<'a> CheckerState<'a> {
         let result = if let Some(cb) = info.callback {
             self.type_from_jsdoc_callback(cb)
         } else {
-            self.type_from_jsdoc_object_typedef(info)
+            self.type_from_jsdoc_object_typedef(info, comment_pos)
         };
 
         for (name, previous) in scope_updates.into_iter().rev() {
@@ -1635,6 +1635,84 @@ impl<'a> CheckerState<'a> {
             return None;
         }
         Some((result.unwrap_or(TypeId::ANY), type_param_infos))
+    }
+
+    /// Resolve a JSDoc `@typedef {Type} Name` tag's base-type expression.
+    ///
+    /// A bare (non-`typeof`) `import("./mod").Member` reference is resolved
+    /// directly through `resolve_jsdoc_import_type_member_result` so a
+    /// failing TS2694 anchors at the member-name token inside the comment,
+    /// mirroring `resolve_jsdoc_param_type_with_pos`'s `@param` handling and
+    /// `jsdoc_type_annotation_for_node`'s `@type` handling (#17176/#17193).
+    /// The generic string resolver's own failure path only has `comment_pos`
+    /// (the `@typedef` tag's own comment start) to anchor with. Every other
+    /// shape falls through to the generic string resolver unchanged.
+    ///
+    /// On failure this returns `Some(TypeId::ANY)` rather than `None` so the
+    /// caller (`resolve_jsdoc_typedef_info`) still registers the typedef
+    /// name — leaving it unregistered cascades into a spurious "Cannot find
+    /// name" on every other reference to `Name` in the file.
+    fn resolve_jsdoc_typedef_base_type_str(
+        &mut self,
+        expr: &str,
+        comment_pos: u32,
+    ) -> Option<TypeId> {
+        let Some(result) = self.resolve_jsdoc_import_type_member_result(expr) else {
+            return self.resolve_jsdoc_type_str(expr);
+        };
+        Some(match result {
+            Ok(resolved) => resolved,
+            Err((namespace_display, member_name)) => {
+                use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+                let message = format_message(
+                    diagnostic_messages::NAMESPACE_HAS_NO_EXPORTED_MEMBER,
+                    &[&namespace_display, &member_name],
+                );
+                let member_offset = expr
+                    .find(&format!(".{member_name}"))
+                    .map_or(0, |offset| offset + 1);
+                // Search the raw source for this tag's own literal text
+                // (`@typedef {expr}`), the closest occurrence to
+                // `comment_pos`, rather than tracking a byte offset through
+                // the parsed `JsdocTypedefInfo` (which carries no span) —
+                // the same strategy `resolve_jsdoc_param_type_with_pos` uses.
+                // Closest-to-`comment_pos` disambiguates two `@typedef`
+                // tags in the file sharing an identical unresolvable body.
+                let needle = format!("@typedef {{{expr}}}");
+                let source_start = self
+                    .ctx
+                    .arena
+                    .source_files
+                    .first()
+                    .and_then(|source_file| {
+                        let source_text = source_file.text.as_ref();
+                        source_text
+                            .match_indices(&needle)
+                            .min_by_key(|(offset, _)| (*offset as i64 - comment_pos as i64).abs())
+                            .map(|(offset, _)| offset + "@typedef {".len())
+                    })
+                    .map(|offset| offset + member_offset);
+                let start = source_start
+                    .map(|offset| offset as u32)
+                    .unwrap_or(comment_pos);
+                let length = member_name.len() as u32;
+                let already_reported = self.ctx.diagnostics.iter().any(|diagnostic| {
+                    diagnostic.code == diagnostic_codes::NAMESPACE_HAS_NO_EXPORTED_MEMBER
+                        && diagnostic.start == start
+                        && diagnostic.length == length
+                        && diagnostic.message_text == message
+                });
+                if !already_reported {
+                    self.error_at_position(
+                        start,
+                        length,
+                        &message,
+                        diagnostic_codes::NAMESPACE_HAS_NO_EXPORTED_MEMBER,
+                    );
+                }
+                TypeId::ANY
+            }
+        })
     }
 
     fn type_from_jsdoc_callback(&mut self, cb: JsdocCallbackInfo) -> Option<TypeId> {
@@ -1764,11 +1842,15 @@ impl<'a> CheckerState<'a> {
         ))
     }
 
-    fn type_from_jsdoc_object_typedef(&mut self, info: JsdocTypedefInfo) -> Option<TypeId> {
+    fn type_from_jsdoc_object_typedef(
+        &mut self,
+        info: JsdocTypedefInfo,
+        comment_pos: u32,
+    ) -> Option<TypeId> {
         let base_type = if let Some(base_type_expr) = &info.base_type {
             let expr = base_type_expr.trim();
             if expr != "Object" && expr != "object" {
-                return self.resolve_jsdoc_type_str(expr);
+                return self.resolve_jsdoc_typedef_base_type_str(expr, comment_pos);
             }
             None
         } else {
