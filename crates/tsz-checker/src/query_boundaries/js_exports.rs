@@ -1095,8 +1095,18 @@ impl<'a> CheckerState<'a> {
 
         // Guard against self-recursive synthesis. This can happen when typing
         // `module.exports` asks for the current file's export surface while the
-        // same surface is still being derived from `Object.defineProperty(...)`
-        // calls in that file.
+        // same surface is still being derived — e.g. a named export's RHS
+        // function body (`module.exports.f = function () { module.exports(); }`)
+        // reads `module.exports` while its own type is still being inferred as
+        // part of the named-export scan below. `direct_export_type` is
+        // computed first and does not depend on that scan, so
+        // `compute_js_export_surface` publishes a partial surface exposing
+        // just it into this same cache as soon as it is known (overwritten
+        // with the complete surface once the scan finishes) — a re-entrant
+        // call hits the cache check above and answers with the real
+        // direct-export type instead of a fully empty surface, which
+        // `to_type_id` would otherwise turn into a namespace type with no
+        // call signatures.
         if !self
             .ctx
             .js_export_surface_resolution_set
@@ -1303,6 +1313,23 @@ impl<'a> CheckerState<'a> {
                 self.widen_type_for_display(rhs_type)
             })
             .filter(|&rhs_type| rhs_type != TypeId::UNDEFINED);
+
+        // Publish the direct-export half of the surface before the
+        // named-export scan below, which can recurse back into this same
+        // file's `module.exports` (see `resolve_js_export_surface`'s cache
+        // check) while a named export's own RHS is still being inferred. The
+        // final `js_export_surface_cache` insert in `resolve_js_export_surface`
+        // overwrites this partial entry once the full surface is known.
+        if let Some(direct_export_type) = surface.direct_export_type {
+            self.ctx.js_export_surface_cache.insert(
+                target_file_idx,
+                JsExportSurface {
+                    direct_export_type: Some(direct_export_type),
+                    has_commonjs_exports: true,
+                    ..JsExportSurface::empty()
+                },
+            );
+        }
 
         // Record whether the bare `module.exports = X` reads from `exports`/
         // `module.exports` itself (e.g. `module.exports = exports.default`).

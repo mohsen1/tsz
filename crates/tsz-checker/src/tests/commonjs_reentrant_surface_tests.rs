@@ -91,3 +91,60 @@ fn object_literal_whole_module_export_keeps_its_members() {
     let source = "module.exports = { a: 1 };\nmodule.exports.a;\n";
     assert_eq!(missing_property_count(source), 0);
 }
+
+// --- A named export's RHS reading `module.exports` re-enters the window. ---
+//
+// `module.exports.f = function () { ...; module.exports(...); }` needs the
+// checker to type `f`'s body — including any read of `module.exports` inside
+// it — while `direct_export_type` is already known but the named-export scan
+// that would discover `f` itself is still in progress. Before this fix, the
+// re-entrant call answered with a fully empty surface, so `module.exports`
+// inside the body resolved to an empty `typeof import("mod")` namespace with
+// no call signatures — a spurious TS2349 "not callable" on a receiver whose
+// direct export type is a plain callable function (verified against the
+// pinned tsc 7.0.2, which reports nothing here).
+
+const NOT_CALLABLE: u32 = 2349;
+
+/// The exact `moduleExportAssignment2` shape: `npm(tree)` calls through the
+/// local alias (unaffected), `module.exports(tree)` calls through the
+/// re-entrant read (the bug).
+#[test]
+fn nested_call_of_module_exports_resolves_direct_export_type() {
+    let source = concat!(
+        "var npm = module.exports = function (tree) {\n",
+        "}\n",
+        "module.exports.asReadInstalled = function (tree) {\n",
+        "    npm(tree)\n",
+        "    module.exports(tree)\n",
+        "}\n",
+    );
+    assert!(!js_codes(source).contains(&NOT_CALLABLE));
+}
+
+/// Renamed export and receiver-call site: the rule is structural, not keyed
+/// on `asReadInstalled`/`npm`.
+#[test]
+fn nested_call_of_module_exports_resolves_direct_export_type_renamed() {
+    let source = concat!(
+        "module.exports = function (widget) {\n",
+        "}\n",
+        "module.exports.registerHandler = function (widget) {\n",
+        "    module.exports(widget)\n",
+        "}\n",
+    );
+    assert!(!js_codes(source).contains(&NOT_CALLABLE));
+}
+
+/// An arrow-function RHS also re-enters and must resolve the same way.
+#[test]
+fn nested_call_of_module_exports_in_arrow_rhs_resolves_direct_export_type() {
+    let source = concat!(
+        "module.exports = function (widget) {\n",
+        "}\n",
+        "module.exports.registerHandler = (widget) => {\n",
+        "    module.exports(widget)\n",
+        "};\n",
+    );
+    assert!(!js_codes(source).contains(&NOT_CALLABLE));
+}
