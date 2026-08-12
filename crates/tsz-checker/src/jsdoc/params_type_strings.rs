@@ -261,6 +261,69 @@ impl<'a> CheckerState<'a> {
                     tsz_solver::TypeId::ANY
                 }
             }
+        } else if let Some(result) =
+            self.resolve_jsdoc_import_type_member_result(&effective_type_expr)
+        {
+            // A bare (non-`typeof`) `import("./mod").Member` reference,
+            // resolved directly through the pure resolver so the resulting
+            // TS2694 anchors at the member-name token inside the comment —
+            // matching tsc and mirroring `jsdoc_type_annotation_for_node`'s
+            // `@type` handling (#17176). Falling through to
+            // `resolve_jsdoc_type_str` below would still resolve the same
+            // shape, but through `resolve_jsdoc_import_type_reference`'s
+            // coarse `jsdoc_typedef_anchor_pos` fallback instead.
+            match result {
+                Ok(resolved) => resolved,
+                Err((namespace_display, member_name)) => {
+                    if let Some(comment_start) = jsdoc_comment_start {
+                        use crate::diagnostics::{
+                            diagnostic_codes, diagnostic_messages, format_message,
+                        };
+                        let message = format_message(
+                            diagnostic_messages::NAMESPACE_HAS_NO_EXPORTED_MEMBER,
+                            &[&namespace_display, &member_name],
+                        );
+                        let member_offset = effective_type_expr
+                            .find(&format!(".{member_name}"))
+                            .map_or(0, |offset| offset + 1);
+                        let source_start = self
+                            .ctx
+                            .arena
+                            .source_files
+                            .first()
+                            .and_then(|source_file| {
+                                let source_text = source_file.text.as_ref();
+                                let exact =
+                                    format!("@param {{{effective_type_expr}}} {param_name}");
+                                let optional =
+                                    format!("@param {{{effective_type_expr}}} [{param_name}]");
+                                source_text
+                                    .find(&exact)
+                                    .or_else(|| source_text.find(&optional))
+                            })
+                            .map(|offset| offset + "@param {".len() + member_offset);
+                        let start = source_start.map(|offset| offset as u32).unwrap_or(
+                            comment_start + type_expr_offset as u32 + member_offset as u32,
+                        );
+                        let length = member_name.len() as u32;
+                        let already_reported = self.ctx.diagnostics.iter().any(|diagnostic| {
+                            diagnostic.code == diagnostic_codes::NAMESPACE_HAS_NO_EXPORTED_MEMBER
+                                && diagnostic.start == start
+                                && diagnostic.length == length
+                                && diagnostic.message_text == message
+                        });
+                        if !already_reported {
+                            self.error_at_position(
+                                start,
+                                length,
+                                &message,
+                                diagnostic_codes::NAMESPACE_HAS_NO_EXPORTED_MEMBER,
+                            );
+                        }
+                    }
+                    tsz_solver::TypeId::ANY
+                }
+            }
         } else {
             if let Some(comment_start) = jsdoc_comment_start {
                 // Keep JSDoc @param generic-instantiation diagnostics anchored to the
