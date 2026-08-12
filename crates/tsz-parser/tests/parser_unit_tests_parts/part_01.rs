@@ -385,7 +385,14 @@ fn class_empty_extends_list_still_reports_ts1097() {
 }
 
 #[test]
-fn interface_extends_array_literal_reports_interface_heritage_error() {
+fn interface_extends_array_literal_recovers_without_parser_heritage_error() {
+    // TS2499 ("an interface can only extend an identifier/qualified-name") is
+    // owned solely by the checker's generic heritage walk (`heritage.rs`),
+    // which rejects every non-identifier/qualified-name heritage node. The
+    // parser used to also report it for the `(`/`[` shape, producing a
+    // parser+checker double-report; it now just parses the operand for
+    // recovery and leaves the diagnostic to the checker (#16279). Assert the
+    // parser no longer emits the interface-heritage code here.
     let (parser, _root) = parse_source("interface I extends [] {}");
     let codes: Vec<u32> = parser
         .get_diagnostics()
@@ -393,10 +400,10 @@ fn interface_extends_array_literal_reports_interface_heritage_error() {
         .map(|diag| diag.code)
         .collect();
     assert!(
-        codes.contains(
+        !codes.contains(
             &diagnostic_codes::AN_INTERFACE_CAN_ONLY_EXTEND_AN_IDENTIFIER_QUALIFIED_NAME_WITH_OPTIONAL_TYPE_ARG
         ),
-        "expected the interface-specific heritage diagnostic, got {:?}",
+        "parser must not emit the interface-heritage diagnostic; the checker owns it, got {:?}",
         parser.get_diagnostics()
     );
 }

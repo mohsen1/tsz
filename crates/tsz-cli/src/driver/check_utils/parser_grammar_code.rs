@@ -61,7 +61,9 @@
 /// the squiggle at the whole declaration rather than tsc's name-only span and
 /// were only kept silent in production by the very `is_real_syntax_error`
 /// misclassification being removed) were deleted so the parser is the sole
-/// owner — no double-emission, the trap that blocks TS2499/TS18016.
+/// owner — no double-emission, the trap that blocks TS18016. (TS2499's own
+/// double-emission was later resolved the same way — see the TS2499 bullet in
+/// the audit-round-4 doc section below.)
 ///
 /// #16279 audit round: 11 more parser-emitted codes confirmed
 /// checker-suppressible against a real `typescript@7.0.2` oracle (a genuine
@@ -119,14 +121,16 @@
 /// worth reading before extending this list, since neither failure mode is
 /// obvious from a synthetic-diagnostic unit test alone:
 /// - **TS2499** (`an interface can only extend an identifier/qualified-name
-///   with optional type arguments`) is Direction-B-confirmed suppressible,
-///   but has a pre-existing, unrelated double-emission bug: both the parser
+///   with optional type arguments`) was originally left out here because it
+///   had a double-emission bug: both the parser
 ///   (`state_statements_class_declarations.rs`) and the checker
 ///   (`state/state_checking/heritage.rs`, its own independent TS2499 walk)
-///   report it for the same node, so `interface I extends (1 + 2) {}`
-///   reports TS2499 twice today regardless of this list. Adding it here
-///   would fold a real emission-site bug into this suppression-only audit;
-///   left for its own fix.
+///   reported it for the same node, so `interface I extends (1 + 2) {}`
+///   reported TS2499 twice. That "left for its own fix" was later done by
+///   making the checker the single owner (the parser stopped emitting
+///   TS2499), which is why it is not in this list: it is no longer
+///   parser-emitted, so it needs no parser-grammar entry, and its
+///   Direction-B suppression rides the checker keep-gate instead.
 /// - **TS2427/TS2457** (interface/type-alias reserved names) are resolved by
 ///   emission site rather than by this list (#16279): the parser owns the
 ///   hard-keyword `void`/`null` (and numeric) interface-name TS2427, the checker
@@ -395,7 +399,8 @@ pub(super) const fn is_parser_grammar_code(code: u32) -> bool {
         // error" — delete the listed one. The checker's own meta-property
         // access path (`property_access_type/helpers.rs`) deliberately does NOT
         // emit either ("A separate grammar check is expected to emit TS17012"),
-        // so there is no double-emission — the trap that blocked TS2499/TS18016.
+        // so there is no double-emission — the trap that blocked TS18016 (and,
+        // until it was given a single owner, TS2499).
         // #16279 meta-property round: oracle-confirmed against `typescript@7.0.2`
         // — Direction A, `const y = import.foo;` reports TS17012 and
         // `import.foo();` reports TS18061; Direction B, either construct plus an
@@ -435,23 +440,10 @@ pub(super) const fn is_parser_grammar_code(code: u32) -> bool {
                // ordinary type position; tsz's parser emits it directly
                // (`state_types.rs`, `state_types_jsx.rs`), sole emission
                // site, no checker-side counterpart. #16279 audit round 11.
-        | 2499 // An interface can only extend an identifier/qualified-name
-               // with optional type arguments. tsc's checker rejects a
-               // parenthesized or bracketed `extends` operand
-               // (`interface I extends (1 + 2) {}`); tsz's parser
-               // (`parse_interface_heritage_type_reference`,
-               // `state_statements_class_declarations.rs`) already
-               // special-cases that shape and reports TS2499 itself, at the
-               // same position the checker's independent generic heritage
-               // walk (`heritage.rs`) also reports it — a genuine
-               // double-emission this list alone cannot fix (see
-               // `post_process_checker_diagnostics`'s TS2499 position-match
-               // filter for that half). Oracle-confirmed
-               // (`typescript@7.0.2`) — Direction A, `interface I extends
-               // (1 + 2) {}` alone reports TS2499 exactly once; Direction B,
-               // the same line plus an unrelated real syntax error
-               // (`let x: = 1;`) elsewhere in the file drops TS2499
-               // entirely on the real compiler, which tsz's parser-emitted
-               // copy did not (round 7 of the #16279 audit).
+               //
+               // TS2499 is intentionally absent — it is no longer
+               // parser-emitted (the checker's heritage walk is its single
+               // owner; see the TS2499 bullet in the audit-round-4 doc
+               // section above for the full rationale).
     )
 }

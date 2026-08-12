@@ -1064,13 +1064,15 @@ interface Node {
     }
 
     // TS2499 ("An interface can only extend an identifier/qualified-name with
-    // optional type arguments") for a parenthesized/bracketed heritage
-    // expression is reported by both the parser
-    // (`parse_interface_heritage_type_reference`) and the checker's
-    // independent generic heritage walk (`heritage.rs`) for the same node.
-    // tsc emits it exactly once (oracle: `typescript@7.0.2`); these pin the
-    // dedup in `post_process_checker_diagnostics` and the Direction-B
-    // suppression via `is_parser_grammar_code`.
+    // optional type arguments") is owned solely by the checker's generic
+    // heritage walk (`heritage.rs`), which rejects every non-identifier/
+    // qualified-name heritage node. The parser used to also report it for the
+    // parenthesized/bracketed shape, producing a parser+checker double-report
+    // that a position-keyed dedup in `post_process_checker_diagnostics` then
+    // had to strip; the parser no longer emits it, so the checker is the
+    // single owner. tsc emits it exactly once (oracle: `typescript@7.0.2`);
+    // these pin the single emission (Direction A) and the checker keep-gate's
+    // Direction-B suppression under a real syntax error.
 
     fn ts2499_count(diagnostics: &[Diagnostic], file: &str) -> usize {
         diagnostics
@@ -1103,10 +1105,9 @@ interface Node {
 
     #[test]
     fn interface_extends_class_expression_reports_ts2499_once() {
-        // Checker-only shape: the parenthesized operand is a class
-        // expression rather than a binary/array literal, but the parser's
-        // open-paren grammar check still fires alongside the checker's
-        // generic heritage walk, so this exercises the same dedup.
+        // The parenthesized operand is a class expression rather than a
+        // binary/array literal; the checker's generic heritage walk owns the
+        // single TS2499 for every parenthesized shape.
         let diagnostics =
             collect_test_diagnostics(&[("/a.ts", "interface I extends (class {}) {}\n")]);
         assert_eq!(
@@ -1115,6 +1116,30 @@ interface Node {
             "expected exactly one TS2499: {diagnostics:?}"
         );
     }
+
+    #[test]
+    fn interface_extends_call_expression_reports_ts2499_once() {
+        // A call-expression heritage operand (`foo()`) is a shape the parser's
+        // old open-paren/bracket special-case never covered — only the
+        // checker's generic heritage walk rejects it. With the checker as the
+        // single owner this must still report exactly one TS2499, proving the
+        // fix does not depend on the removed parser special-case.
+        let diagnostics = collect_test_diagnostics(&[(
+            "/a.ts",
+            "declare function foo(): number;\ninterface I extends foo() {}\n",
+        )]);
+        assert_eq!(
+            ts2499_count(&diagnostics, "/a.ts"),
+            1,
+            "expected exactly one TS2499 for a call-expression heritage operand: {diagnostics:?}"
+        );
+    }
+
+    // Direction-B suppression is shape-agnostic — the checker keep-gate
+    // (`keep_checker_diagnostic_when_program_has_real_syntax_errors`) keys on
+    // `code >= 2000`, not the heritage node shape — so
+    // `real_syntax_error_suppresses_parenthesized_interface_heritage_ts2499`
+    // below already covers the call-expression shape's Direction B too.
 
     #[test]
     fn interface_extends_renamed_binder_reports_ts2499_once() {
@@ -1178,9 +1203,9 @@ interface Node {
     #[test]
     fn class_implements_parenthesized_expression_still_reports_ts2500_once() {
         // Negative control for the fix's blast radius: TS2500 (class
-        // `implements`) has no parser-side emission site for this shape, so
-        // it must be unaffected by the new TS2499-specific dedup and
-        // grammar-list entry.
+        // `implements`) is checker-owned like TS2499, and was never part of
+        // the parser special-case, so making the checker the single owner of
+        // TS2499 must leave TS2500 reporting exactly once.
         let diagnostics =
             collect_test_diagnostics(&[("/a.ts", "class C implements (1 as any) {}\n")]);
         assert_eq!(
