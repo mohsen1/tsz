@@ -1435,7 +1435,7 @@ impl<'a> TypePrinter<'a> {
 mod tests {
     use tsz_solver::DefId;
     use tsz_solver::construction::TypeInterner;
-    use tsz_solver::types::{IntrinsicKind, TupleElement, TypeId, TypeParamInfo};
+    use tsz_solver::types::{IntrinsicKind, ParamInfo, TupleElement, TypeId, TypeParamInfo};
 
     use super::TypePrinter;
 
@@ -1719,7 +1719,7 @@ mod tests {
             "get",
             false,
             &[],
-            &[tsz_solver::ParamInfo::required(a, TypeId::NUMBER)],
+            &[ParamInfo::required(a, TypeId::NUMBER)],
             None,
             TypeId::NUMBER,
             Some(TypeId::STRING),
