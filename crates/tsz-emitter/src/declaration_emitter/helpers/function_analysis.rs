@@ -1237,6 +1237,32 @@ impl<'a> DeclarationEmitter<'a> {
         Some(self.value_reference_symbol_can_use_typeof(expr_idx, sym_id, resolved_sym_id, symbol))
     }
 
+    /// Whether a symbol's declaration is reachable by name from the emitted
+    /// `.d.ts`.
+    ///
+    /// `typeof <name>` is only printable when `<name>` has a declaration in the
+    /// output. A declaration nested inside a function body has none — the body
+    /// is erased — so `tsc` expands the structural shape there instead. See
+    /// `declFileTypeofFunction`, where `foo5` returns a function-local `bar`
+    /// and the oracle prints `(x: number) => number`, not `typeof bar`.
+    fn typeof_reference_declaration_is_emit_visible(&self, decl_idx: NodeIndex) -> bool {
+        let mut current = decl_idx;
+        while let Some(parent_idx) = self.arena.parent_of(current) {
+            let Some(node) = self.arena.get(parent_idx) else {
+                return true;
+            };
+            if node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+                || node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+                || node.kind == syntax_kind_ext::ARROW_FUNCTION
+                || node.kind == syntax_kind_ext::METHOD_DECLARATION
+            {
+                return false;
+            }
+            current = parent_idx;
+        }
+        true
+    }
+
     pub(in crate::declaration_emitter) fn value_reference_symbol_can_use_typeof(
         &self,
         _expr_idx: NodeIndex,
@@ -1245,6 +1271,12 @@ impl<'a> DeclarationEmitter<'a> {
         resolved_symbol: &tsz_binder::Symbol,
     ) -> bool {
         if resolved_symbol.has_any_flags(symbol_flags::ENUM_MEMBER) {
+            return false;
+        }
+
+        if resolved_symbol.value_declaration.is_some()
+            && !self.typeof_reference_declaration_is_emit_visible(resolved_symbol.value_declaration)
+        {
             return false;
         }
 
