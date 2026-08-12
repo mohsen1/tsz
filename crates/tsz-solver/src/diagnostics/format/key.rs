@@ -171,14 +171,26 @@ impl<'a> TypeFormatter<'a> {
                     if self.symbol_renders_as_typeof_name(sym_id) {
                         return format!("typeof {name}").into();
                     }
-                    // A function symbol whose callable carries appended value
-                    // properties (expando assignments) renders structurally in
-                    // tsc (`{ (): void; declared: number; }`), never as the
-                    // bare name; `prototype` is not an appended property.
+                    // A function-valued symbol whose callable carries appended
+                    // value properties (expando assignments) renders
+                    // structurally in tsc (`{ (): void; declared: number; }`),
+                    // never as the bare name; `prototype` is not an appended
+                    // property. This applies equally to a `function` declaration
+                    // and a `const`/`let`/`var` binding initialized with a
+                    // function/arrow expression — both bind the callable's
+                    // `shape.symbol` to the declaring symbol, and tsc does not
+                    // distinguish them for this display rule (only a genuinely
+                    // *named* type, e.g. the `ObjectConstructor` interface, keeps
+                    // the bare-name short-circuit below).
                     let expando_augmented_function = self
                         .symbol_arena
                         .and_then(|arena| arena.get(sym_id))
-                        .is_some_and(|sym| sym.has_flags(tsz_binder::symbol_flags::FUNCTION))
+                        .is_some_and(|sym| {
+                            sym.has_any_flags(
+                                tsz_binder::symbol_flags::FUNCTION
+                                    | tsz_binder::symbol_flags::VARIABLE,
+                            )
+                        })
                         && shape
                             .properties
                             .iter()
