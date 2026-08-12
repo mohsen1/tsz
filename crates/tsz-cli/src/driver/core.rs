@@ -1604,6 +1604,9 @@ mod cross_file_merged_value_self_typealias_typeof_tests;
 #[path = "cross_file_typeof_class_constructor_tests.rs"]
 mod cross_file_typeof_class_constructor_tests;
 #[cfg(test)]
+#[path = "declaration_qualified_typeof_reference_tests.rs"]
+mod declaration_qualified_typeof_reference_tests;
+#[cfg(test)]
 #[path = "explain_files_reason_tests.rs"]
 mod explain_files_reason_tests;
 #[cfg(test)]
