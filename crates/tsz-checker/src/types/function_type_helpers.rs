@@ -1280,6 +1280,10 @@ impl<'a> CheckerState<'a> {
             if Self::jsdoc_returns_type_predicate_from_type_expr(type_expr).is_some() {
                 return None;
             }
+            // Computing the function's return type is a lazy computation, not
+            // the validation scan, so the kernel resolves silently — the
+            // import-type member TS2694 is emitted once, at the member token, by
+            // the comment-scan pass (issue #17176).
             return self.resolve_jsdoc_reference(type_expr);
         }
         None

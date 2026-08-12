@@ -315,18 +315,11 @@ impl<'a> CheckerState<'a> {
             // TS-syntax `import(...).Member` resolver does. This mirrors
             // that resolver's `report_missing_import_type_member`, which the
             // string-based JSDoc parse path cannot reach directly.
-            let namespace_name = self.imported_namespace_display_module_name(&module_specifier);
-            let message = crate::diagnostics::format_message(
-                crate::diagnostics::diagnostic_messages::NAMESPACE_HAS_NO_EXPORTED_MEMBER,
-                &[&format!("\"{namespace_name}\""), &member_name],
-            );
-            let anchor = self.ctx.jsdoc_typedef_anchor_pos.get();
-            self.ctx.error(
-                anchor,
-                type_expr.len() as u32,
-                message,
-                crate::diagnostics::diagnostic_codes::NAMESPACE_HAS_NO_EXPORTED_MEMBER,
-            );
+            //
+            // Reported once, at the member token, only by the comment-scan
+            // validation pass; the lazy type computations that also resolve this
+            // string are gated to a no-op here (issue #17176).
+            self.emit_jsdoc_import_type_member_missing(&module_specifier, &member_name, type_expr);
             return None;
         }
 

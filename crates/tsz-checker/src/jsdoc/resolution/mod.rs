@@ -15,5 +15,6 @@
 //! - Import type resolution (`resolve_jsdoc_import_type_reference`)
 
 mod generic_typedef;
+pub(in crate::jsdoc) mod import_type_member_diag;
 mod name_resolution;
 mod type_construction;

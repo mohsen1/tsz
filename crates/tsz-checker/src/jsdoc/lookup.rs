@@ -838,6 +838,9 @@ impl<'a> CheckerState<'a> {
         }
         self.ctx.jsdoc_typedef_anchor_pos.set(node.pos);
         // Use the authoritative resolution kernel — no fallback chain needed.
+        // This is a *lazy* type computation, not the validation scan, so the
+        // kernel resolves silently (the import-type member TS2694 is emitted
+        // once, at the member token, by the comment-scan pass — issue #17176).
         let result = self.resolve_jsdoc_reference(type_expr);
         self.ctx.jsdoc_typedef_anchor_pos.set(prev_anchor);
         self.ctx.file_name = prev_file_name;

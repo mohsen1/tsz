@@ -250,6 +250,10 @@ impl<'a> CheckerState<'a> {
                     return Some(tsz_solver::TypeId::ERROR);
                 }
             }
+            // Resolving the parameter's own type is a lazy computation, not the
+            // validation scan, so the kernel resolves silently — the import-type
+            // member TS2694 is emitted once, at the member token, by the
+            // comment-scan pass (issue #17176).
             self.resolve_jsdoc_type_str(&effective_type_expr)?
         };
 

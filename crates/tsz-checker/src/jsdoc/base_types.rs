@@ -110,10 +110,21 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
                 let prev_anchor = self.ctx.jsdoc_typedef_anchor_pos.get();
-                self.ctx.jsdoc_typedef_anchor_pos.set(comment.pos);
-                let unresolved_type = self
-                    .resolve_jsdoc_type_str(simple_expr)
-                    .is_none_or(|ty| self.jsdoc_resolved_type_is_unresolved(simple_expr, ty));
+                // Anchor at this tag's own type-expression start (not the shared
+                // comment start) so an `import(...).Member` TS2694 lands on the
+                // member token of *this* tag, even when another tag in the same
+                // comment carries the identical type expression (issue #17176).
+                self.ctx
+                    .jsdoc_typedef_anchor_pos
+                    .set(comment.pos + offset_in_comment as u32);
+                // The comment-scan validation pass owns the single import-type
+                // member TS2694 (anchored above at this tag's member token); the
+                // lazy type computations resolve the same string silently.
+                let unresolved_type = {
+                    let _diag = crate::jsdoc::resolution::import_type_member_diag::ImportTypeMemberDiagGuard::active();
+                    self.resolve_jsdoc_type_str(simple_expr)
+                        .is_none_or(|ty| self.jsdoc_resolved_type_is_unresolved(simple_expr, ty))
+                };
                 self.ctx.jsdoc_typedef_anchor_pos.set(prev_anchor);
                 if Self::is_simple_type_name(simple_expr) && unresolved_type {
                     if let Some(angle_idx) = Self::find_top_level_char(simple_expr, '<')
@@ -638,8 +649,17 @@ impl<'a> CheckerState<'a> {
                 self.report_jsdoc_param_generic_instantiation_errors(expr, type_expr_start);
 
                 let prev_anchor = self.ctx.jsdoc_typedef_anchor_pos.get();
-                self.ctx.jsdoc_typedef_anchor_pos.set(comment.pos);
-                let resolved = self.resolve_jsdoc_type_str(expr);
+                // Anchor at the `@type` expression start so an
+                // `import(...).Member` TS2694 lands on the member token
+                // (issue #17176), not at the `/**` comment start.
+                self.ctx.jsdoc_typedef_anchor_pos.set(type_expr_start);
+                // The comment-scan validation pass owns the single import-type
+                // member TS2694 (anchored above at the member token); the lazy
+                // declaration-type computation resolves the same string silently.
+                let resolved = {
+                    let _diag = crate::jsdoc::resolution::import_type_member_diag::ImportTypeMemberDiagGuard::active();
+                    self.resolve_jsdoc_type_str(expr)
+                };
                 self.ctx.jsdoc_typedef_anchor_pos.set(prev_anchor);
                 let unresolved = resolved.is_none()
                     || resolved.is_some_and(|ty| self.jsdoc_resolved_type_is_unresolved(expr, ty));
