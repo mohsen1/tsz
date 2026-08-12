@@ -430,6 +430,8 @@ pub use base::{NodeIndex, NodeList, TextRange};
 // Legacy fat AST has been removed; NodeArena is the only AST representation.
 pub use node::NodeArena;
 
+pub use node_access::ModuleInstanceState;
+
 // Parser implementation (NodeArena-based).
 pub use state::{ParseDiagnostic, ParserState};
 
