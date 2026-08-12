@@ -50,17 +50,20 @@ fn emit_declaration(source: &str) -> String {
     fs::read_to_string(dir.path().join("dist/decl.d.ts")).expect("emitted decl.d.ts")
 }
 
+/// Compile `source` and assert the emitted `.d.ts` contains `needle`.
+fn assert_emits_contains(source: &str, needle: &str) {
+    let dts = emit_declaration(source);
+    assert!(dts.contains(needle), "expected `{needle}`, got:\n{dts}");
+}
+
 /// A static method referenced through its class name emits `typeof M.sm`, not
 /// the expanded call signature.
 #[test]
 fn static_method_qualified_reference_emits_typeof() {
-    let dts = emit_declaration(
+    assert_emits_contains(
         "export class M { static sm(x: number) { return x; } }\n\
          export function h2() { return M.sm; }\n",
-    );
-    assert!(
-        dts.contains("function h2(): typeof M.sm;"),
-        "static method should be spelled `typeof M.sm`, got:\n{dts}"
+        "function h2(): typeof M.sm;",
     );
 }
 
@@ -68,43 +71,34 @@ fn static_method_qualified_reference_emits_typeof() {
 /// overload set structurally).
 #[test]
 fn namespace_function_qualified_reference_emits_typeof() {
-    let dts = emit_declaration(
+    assert_emits_contains(
         "export namespace P {\n\
          export function pf(x: number): number;\n\
          export function pf(x: string): string;\n\
          export function pf(x: any): any { return x; }\n\
          }\n\
          export function h() { return P.pf; }\n",
-    );
-    assert!(
-        dts.contains("function h(): typeof P.pf;"),
-        "namespace function should be spelled `typeof P.pf`, got:\n{dts}"
+        "function h(): typeof P.pf;",
     );
 }
 
 /// A function nested two namespaces deep still resolves to a dotted `typeof`.
 #[test]
 fn nested_namespace_function_qualified_reference_emits_typeof() {
-    let dts = emit_declaration(
+    assert_emits_contains(
         "export namespace R { export namespace T { export function tf(x: number) { return x; } } }\n\
          export function h3() { return R.T.tf; }\n",
-    );
-    assert!(
-        dts.contains("function h3(): typeof R.T.tf;"),
-        "nested-namespace function should be spelled `typeof R.T.tf`, got:\n{dts}"
+        "function h3(): typeof R.T.tf;",
     );
 }
 
 /// The pre-existing namespace-class case is unchanged.
 #[test]
 fn namespace_class_qualified_reference_still_emits_typeof() {
-    let dts = emit_declaration(
+    assert_emits_contains(
         "export namespace Q { export class QC {} }\n\
          export function h4() { return Q.QC; }\n",
-    );
-    assert!(
-        dts.contains("function h4(): typeof Q.QC;"),
-        "namespace class should stay `typeof Q.QC`, got:\n{dts}"
+        "function h4(): typeof Q.QC;",
     );
 }
 
@@ -112,13 +106,10 @@ fn namespace_class_qualified_reference_still_emits_typeof() {
 /// names — renaming every identifier keeps the dotted `typeof`.
 #[test]
 fn qualified_typeof_is_binder_name_independent() {
-    let dts = emit_declaration(
+    assert_emits_contains(
         "export class Widget { static build(n: number) { return n; } }\n\
          export function makeBuilder() { return Widget.build; }\n",
-    );
-    assert!(
-        dts.contains("function makeBuilder(): typeof Widget.build;"),
-        "renamed static method should be spelled `typeof Widget.build`, got:\n{dts}"
+        "function makeBuilder(): typeof Widget.build;",
     );
 }
 
@@ -147,13 +138,10 @@ fn value_scope_local_static_method_expands_structurally() {
 /// value-space reference to the method symbol, so it expands (matching tsc).
 #[test]
 fn instance_value_method_access_expands_structurally() {
-    let dts = emit_declaration(
+    assert_emits_contains(
         "class C { m(x: number) { return x; } }\n\
          declare const c: C;\n\
          export function g1() { return c.m; }\n",
-    );
-    assert!(
-        dts.contains("function g1(): (x: number) => number;"),
-        "instance-value method access must expand structurally, got:\n{dts}"
+        "function g1(): (x: number) => number;",
     );
 }

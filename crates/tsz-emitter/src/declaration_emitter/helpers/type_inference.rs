@@ -919,24 +919,12 @@ impl<'a> DeclarationEmitter<'a> {
 
         // A reference to a function/class/enum/namespace symbol widens to that
         // symbol's own type; tsc's declaration emitter prefers `typeof Name`
-        // over expanding the structural shape. This holds for both a bare
-        // identifier (`bf` -> `typeof bf`) and a qualified name (`M.sm` /
-        // `P.pf` / `R.T.tf` -> `typeof M.sm` ...): the discriminator is the
-        // resolved symbol's kind and its reachability from module scope
-        // (`value_reference_symbol_can_use_typeof`), not whether the reference
-        // is dotted, so a static method or namespace function is spelled with
-        // `typeof` exactly as a namespace class already is.
-        if matches!(
-            self.arena.get(expr_idx).map(|node| node.kind),
-            Some(k) if k == SyntaxKind::Identifier as u16
-                || k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-        ) && self.value_reference_symbol_can_use_typeof(sym_id, resolved_sym_id, symbol)
-            && let Some(reference_text) = self.nameable_constructor_expression_text(expr_idx)
-        {
-            return Some(format!(
-                "typeof {}",
-                self.relative_value_reference_text(&reference_text)
-            ));
+        // over expanding the structural shape, for both bare (`bf`) and
+        // qualified (`M.sm`) references. Delegate to the shared gateway (the
+        // variable-initializer path routes through it too) rather than
+        // re-derive its resolve -> predicate -> name -> relativize sequence.
+        if let Some(typeof_text) = self.direct_value_reference_typeof_text(expr_idx) {
+            return Some(typeof_text);
         }
 
         for decl_idx in symbol.declarations.iter().copied() {
