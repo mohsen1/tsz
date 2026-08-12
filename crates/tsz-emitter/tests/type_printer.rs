@@ -103,6 +103,70 @@ fn readonly_spread_tuple_prints_spread_syntax() {
     assert_eq!(printer.print_type(readonly_spread), "readonly [...T]");
 }
 
+/// A bare, unannotated JS parameter is `optional` in its `FunctionShape` only so
+/// call-arity stays lenient (#17227). `tsc` never renders it with `?`. The
+/// arity-only-optional mask recorded by
+/// `TypeInterner::function_with_arity_optional_mask` must reach the `.d.ts`
+/// printer so the parameter prints required (`tree: any`), matching the
+/// diagnostic surface fixed in #17233. Regression test for #17238.
+#[test]
+fn arity_optional_mask_prints_bare_js_param_as_required() {
+    use tsz_solver::types::{FunctionShape, ParamInfo};
+
+    let interner = tsz_solver::construction::TypeInterner::new();
+    let tree = interner.intern_string("tree");
+
+    // `optional: true` mirrors how the JS untyped-param signal is stored.
+    let shape = FunctionShape::new(
+        vec![ParamInfo {
+            name: Some(tree),
+            type_id: TypeId::ANY,
+            optional: true,
+            rest: false,
+        }],
+        TypeId::VOID,
+    );
+    let masked = interner.function_with_arity_optional_mask(shape, &[true]);
+
+    let printer = TypePrinter::new(&interner);
+    assert_eq!(
+        printer.print_type(masked),
+        "(tree: any) => void",
+        "arity-only-optional mask must render the bare JS param as required"
+    );
+}
+
+/// The mask suppresses `?` ONLY for masked positions. A structurally identical
+/// shape interned WITHOUT the mask (a genuine written `?`, an initializer, or a
+/// JSDoc `[a]` optional marker) keeps its `?`. Guards against the fix widening
+/// into every `any`-typed optional parameter. Companion to #17238.
+#[test]
+fn unmasked_optional_param_keeps_question_mark() {
+    use tsz_solver::types::{FunctionShape, ParamInfo};
+
+    let interner = tsz_solver::construction::TypeInterner::new();
+    let a = interner.intern_string("a");
+
+    let shape = FunctionShape::new(
+        vec![ParamInfo {
+            name: Some(a),
+            type_id: TypeId::NUMBER,
+            optional: true,
+            rest: false,
+        }],
+        TypeId::VOID,
+    );
+    // No mask: a genuinely optional parameter.
+    let plain = interner.function(shape);
+
+    let printer = TypePrinter::new(&interner);
+    assert_eq!(
+        printer.print_type(plain),
+        "(a?: number) => void",
+        "a genuinely optional parameter must keep its `?`"
+    );
+}
+
 #[test]
 fn object_type_nested_multiline() {
     let interner = tsz_solver::construction::TypeInterner::new();

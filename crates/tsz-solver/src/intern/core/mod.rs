@@ -13,5 +13,6 @@ mod interner;
 pub(crate) use interner::PROPERTY_MAP_THRESHOLD;
 pub use interner::SharedDefVariance;
 pub use interner::TypeInterner;
+pub(crate) use interner::apply_arity_optional_display_mask;
 pub use interner::clear_thread_local_cache;
 pub(crate) use interner::{PredicateCacheKind, TEMPLATE_LITERAL_EXPANSION_LIMIT, TypeListBuffer};

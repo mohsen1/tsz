@@ -647,11 +647,14 @@ impl<'a> TypePrinter<'a> {
         };
 
         // Parameters
+        let display_params = self
+            .interner
+            .display_params_for_function_shape(func_id, &func_shape.params);
         let mut params = Vec::new();
         if let Some(this_type) = func_shape.this_type {
             params.push(format!("this: {}", scoped.print_type(this_type)));
         }
-        for param in &func_shape.params {
+        for param in display_params.iter() {
             let mut param_str = String::new();
 
             // Rest parameter

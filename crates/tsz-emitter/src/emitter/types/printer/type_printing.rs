@@ -921,7 +921,10 @@ impl<'a> TypePrinter<'a> {
     fn print_parameters_utility_tuple(&self, arg: TypeId) -> Option<String> {
         if let Some(func_id) = visitor::function_shape_id(self.interner, arg) {
             let func = self.interner.function_shape(func_id);
-            return Some(self.print_parameters_tuple_elements(&func.params));
+            let display_params = self
+                .interner
+                .display_params_for_function_shape(func_id, &func.params);
+            return Some(self.print_parameters_tuple_elements(&display_params));
         }
 
         if let Some(callable_id) = visitor::callable_shape_id(self.interner, arg) {

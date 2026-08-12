@@ -56,6 +56,7 @@ mod storage;
 mod union_complexity;
 mod variance_cache;
 
+pub(crate) use function_shapes::apply_arity_optional_display_mask;
 pub use variance_cache::SharedDefVariance;
 
 pub(super) use storage::{AppComponentKey, CachedUnionMember, TypeShard};
