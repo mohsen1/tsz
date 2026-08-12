@@ -8,6 +8,7 @@ use tsz_scanner::{SyntaxKind, is_ecmascript_identifier_part};
 use tsz_solver::computation::{
     TypeSubstitution, free_type_params_named, instantiate_type_cached, substitute_exact_types,
 };
+pub(crate) use tsz_solver::construction::JsSignatureDisplaySource;
 pub(crate) use tsz_solver::type_queries::ts7_sort_order;
 pub(crate) use tsz_solver::types::LiteralValue as SolverLiteralValue;
 use tsz_solver::types::TypeId;
@@ -249,7 +250,14 @@ impl<'a> TypePrinter<'a> {
             let mut shape = (*self.interner.function_shape(func_id)).clone();
             shape.return_type =
                 self.widen_synthesized_method_return_type_depth(shape.return_type, depth + 1);
-            return self.interner.function(shape);
+            // Re-interning must not drop an arity-only-optional display mask,
+            // or the widened shape would regain a spurious `?` (#17238).
+            return match self.interner.function_shape_arity_optional_mask(func_id) {
+                Some(mask) => self
+                    .interner
+                    .function_with_arity_optional_mask(shape, &mask),
+                None => self.interner.function(shape),
+            };
         }
 
         if let Some(shape_id) = visitor::object_shape_id(self.interner, type_id)
@@ -921,7 +929,11 @@ impl<'a> TypePrinter<'a> {
     fn print_parameters_utility_tuple(&self, arg: TypeId) -> Option<String> {
         if let Some(func_id) = visitor::function_shape_id(self.interner, arg) {
             let func = self.interner.function_shape(func_id);
-            return Some(self.print_parameters_tuple_elements(&func.params));
+            // Arity-only-optional JS parameters print as required (#17238).
+            let display_params = self
+                .interner
+                .display_params_for_function_shape(func_id, &func.params);
+            return Some(self.print_parameters_tuple_elements(&display_params));
         }
 
         if let Some(callable_id) = visitor::callable_shape_id(self.interner, arg) {

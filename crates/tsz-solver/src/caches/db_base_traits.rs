@@ -331,4 +331,37 @@ pub trait JsSignatureDisplaySource {
         &self,
         id: crate::types::FunctionShapeId,
     ) -> Option<std::sync::Arc<[bool]>>;
+
+    /// Parameters as they should DISPLAY for the shape interned as `id`: a
+    /// parameter whose `optional` bit exists only for JS call-arity leniency
+    /// renders as required (`tree: any`), matching tsc, which reserves `?`
+    /// for a written `?`, an initializer, or a JSDoc optional marker. Shapes
+    /// without a recorded mask borrow their params untouched. Both the
+    /// diagnostics formatter and the declaration-emit printers consult this
+    /// provided method, so the two display surfaces cannot drift (#17238).
+    fn display_params_for_function_shape<'p>(
+        &self,
+        id: crate::types::FunctionShapeId,
+        params: &'p [crate::types::ParamInfo],
+    ) -> std::borrow::Cow<'p, [crate::types::ParamInfo]> {
+        match self.function_shape_arity_optional_mask(id) {
+            Some(mask) if mask.len() == params.len() => std::borrow::Cow::Owned(
+                params
+                    .iter()
+                    .zip(mask.iter())
+                    .map(|(p, &arity_only)| {
+                        if arity_only {
+                            crate::types::ParamInfo {
+                                optional: false,
+                                ..*p
+                            }
+                        } else {
+                            *p
+                        }
+                    })
+                    .collect(),
+            ),
+            _ => std::borrow::Cow::Borrowed(params),
+        }
+    }
 }

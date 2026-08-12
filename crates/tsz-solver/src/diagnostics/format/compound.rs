@@ -110,33 +110,16 @@ impl<'a> TypeFormatter<'a> {
     /// whose `optional` bit exists only for JS call-arity leniency (a bare,
     /// unannotated parameter in a JS file — see
     /// `function_shape_arity_optional_mask`) renders as required
-    /// (`tree: any`), matching tsc, which reserves `?` for a written `?`, an
-    /// initializer, or a JSDoc optional marker. Shapes without a recorded
-    /// mask borrow their params untouched.
+    /// (`tree: any`), matching tsc. Delegates to the interner's
+    /// `display_params_for_function_shape`, the single owner of the mask
+    /// semantics shared with declaration-emit printing.
     pub(super) fn display_params_for_function_shape<'p>(
         &self,
         shape_id: crate::types::FunctionShapeId,
         params: &'p [ParamInfo],
     ) -> Cow<'p, [ParamInfo]> {
-        match self.interner.function_shape_arity_optional_mask(shape_id) {
-            Some(mask) if mask.len() == params.len() => Cow::Owned(
-                params
-                    .iter()
-                    .zip(mask.iter())
-                    .map(|(p, &arity_only)| {
-                        if arity_only {
-                            ParamInfo {
-                                optional: false,
-                                ..*p
-                            }
-                        } else {
-                            *p
-                        }
-                    })
-                    .collect(),
-            ),
-            _ => Cow::Borrowed(params),
-        }
+        self.interner
+            .display_params_for_function_shape(shape_id, params)
     }
 
     pub(super) fn format_params(

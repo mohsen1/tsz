@@ -367,3 +367,144 @@ fn mapped_type_multiline_format_with_indent() {
         "Mapped type with indent should be multi-line"
     );
 }
+
+/// Build a `(tree: any) => void`-shaped `FunctionShape` whose single
+/// parameter carries the JS arity-leniency `optional` bit.
+#[cfg(test)]
+fn js_arity_optional_shape(
+    interner: &tsz_solver::construction::TypeInterner,
+    param_name: &str,
+) -> tsz_solver::types::FunctionShape {
+    let name = interner.intern_string(param_name);
+    tsz_solver::types::FunctionShape {
+        type_params: Vec::new(),
+        params: vec![tsz_solver::ParamInfo {
+            name: Some(name),
+            type_id: TypeId::ANY,
+            optional: true,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    }
+}
+
+#[test]
+fn masked_js_arity_optional_param_prints_required() {
+    let interner = tsz_solver::construction::TypeInterner::new();
+    let shape = js_arity_optional_shape(&interner, "tree");
+    let masked = interner.function_with_arity_optional_mask(shape, &[true]);
+
+    let printer = TypePrinter::new(&interner);
+    assert_eq!(printer.print_type(masked), "(tree: any) => void");
+}
+
+#[test]
+fn unmasked_genuine_optional_param_keeps_question_mark() {
+    let interner = tsz_solver::construction::TypeInterner::new();
+    let shape = js_arity_optional_shape(&interner, "tree");
+    let plain = interner.function(shape);
+
+    let printer = TypePrinter::new(&interner);
+    assert_eq!(printer.print_type(plain), "(tree?: any) => void");
+}
+
+#[test]
+fn masked_param_prints_required_beside_genuine_optional() {
+    let interner = tsz_solver::construction::TypeInterner::new();
+    let name_a = interner.intern_string("a");
+    let name_b = interner.intern_string("b");
+    let shape = tsz_solver::types::FunctionShape {
+        type_params: Vec::new(),
+        params: vec![
+            tsz_solver::ParamInfo {
+                name: Some(name_a),
+                type_id: TypeId::ANY,
+                optional: true,
+                rest: false,
+            },
+            tsz_solver::ParamInfo {
+                name: Some(name_b),
+                type_id: TypeId::NUMBER,
+                optional: true,
+                rest: false,
+            },
+        ],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    };
+    let masked = interner.function_with_arity_optional_mask(shape, &[true, false]);
+
+    let printer = TypePrinter::new(&interner);
+    assert_eq!(printer.print_type(masked), "(a: any, b?: number) => void");
+}
+
+#[test]
+fn masked_function_in_union_prints_required() {
+    let interner = tsz_solver::construction::TypeInterner::new();
+    let shape = js_arity_optional_shape(&interner, "tree");
+    let masked = interner.function_with_arity_optional_mask(shape, &[true]);
+    let union = interner.union(vec![masked, TypeId::NULL]);
+
+    let printer = TypePrinter::new(&interner);
+    assert_eq!(printer.print_type(union), "((tree: any) => void) | null");
+}
+
+#[test]
+fn masked_function_in_array_prints_required() {
+    let interner = tsz_solver::construction::TypeInterner::new();
+    let shape = js_arity_optional_shape(&interner, "tree");
+    let masked = interner.function_with_arity_optional_mask(shape, &[true]);
+    let array = interner.array(masked);
+
+    let printer = TypePrinter::new(&interner);
+    assert_eq!(printer.print_type(array), "((tree: any) => void)[]");
+}
+
+#[test]
+fn masked_method_property_prints_required() {
+    let interner = tsz_solver::construction::TypeInterner::new();
+    let shape = js_arity_optional_shape(&interner, "tree");
+    let masked = interner.function_with_arity_optional_mask(shape, &[true]);
+    let name_m = interner.intern_string("m");
+    let mut property = tsz_solver::types::PropertyInfo::new(name_m, masked);
+    property.is_method = true;
+
+    let printer = TypePrinter::new(&interner);
+    assert_eq!(
+        printer.print_property_as_method(&property, None).as_deref(),
+        Some("m(tree: any): void")
+    );
+}
+
+#[test]
+fn synthesized_return_widening_preserves_arity_optional_mask() {
+    let interner = tsz_solver::construction::TypeInterner::new();
+    let name = interner.intern_string("tree");
+    let literal_one = interner.literal_number(1.0);
+    let shape = tsz_solver::types::FunctionShape {
+        type_params: Vec::new(),
+        params: vec![tsz_solver::ParamInfo {
+            name: Some(name),
+            type_id: TypeId::ANY,
+            optional: true,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: literal_one,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    };
+    let masked = interner.function_with_arity_optional_mask(shape, &[true]);
+
+    let printer = TypePrinter::new(&interner);
+    let widened = printer.widen_synthesized_method_return_type(masked);
+    assert_eq!(printer.print_type(widened), "(tree: any) => number");
+}

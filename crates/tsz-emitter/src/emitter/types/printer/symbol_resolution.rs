@@ -6,6 +6,7 @@ use tsz_common::source_map::escape_js_string;
 use tsz_parser::parser::node::{NodeAccess, NodeArena};
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::computation::{TypeSubstitution, instantiate_type_cached};
+use tsz_solver::construction::JsSignatureDisplaySource;
 use tsz_solver::types::TypeId;
 use tsz_solver::visitor;
 
@@ -1355,11 +1356,15 @@ impl<'a> TypePrinter<'a> {
 
         if let Some(func_id) = visitor::function_shape_id(self.interner, property.type_id) {
             let func_shape = self.interner.function_shape(func_id);
+            // Arity-only-optional JS parameters print as required (#17238).
+            let display_params = self
+                .interner
+                .display_params_for_function_shape(func_id, &func_shape.params);
             return Some(self.print_method_signature(
                 &printed_name,
                 property.optional,
                 &func_shape.type_params,
-                &func_shape.params,
+                &display_params,
                 func_shape.type_predicate.as_ref(),
                 func_shape.return_type,
             ));

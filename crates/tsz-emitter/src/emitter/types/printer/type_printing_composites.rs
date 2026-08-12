@@ -2,7 +2,10 @@ use super::SolverLiteralValue as LiteralValue;
 use super::ts7_sort_order::{
     Ts7SortNameSource, ts7_sort_literal, ts7_sort_name_source, ts7_union_sort_rank,
 };
-use super::{TypeId, TypePrinter, free_type_params_named, substitute_exact_types, visitor};
+use super::{
+    JsSignatureDisplaySource, TypeId, TypePrinter, free_type_params_named, substitute_exact_types,
+    visitor,
+};
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_common::interner::Atom;
 
@@ -634,6 +637,11 @@ impl<'a> TypePrinter<'a> {
         func_id: tsz_solver::types::FunctionShapeId,
     ) -> String {
         let func_shape = self.interner.function_shape(func_id);
+        // A parameter whose `optional` bit exists only for JS call-arity
+        // leniency prints as required (`tree: any`), matching tsc (#17238).
+        let display_params = self
+            .interner
+            .display_params_for_function_shape(func_id, &func_shape.params);
         let scoped = self.with_type_param_scope(&func_shape.type_params);
         let type_params_str = if !func_shape.type_params.is_empty() {
             let params: Vec<String> = func_shape
@@ -651,7 +659,7 @@ impl<'a> TypePrinter<'a> {
         if let Some(this_type) = func_shape.this_type {
             params.push(format!("this: {}", scoped.print_type(this_type)));
         }
-        for param in &func_shape.params {
+        for param in display_params.iter() {
             let mut param_str = String::new();
 
             // Rest parameter
