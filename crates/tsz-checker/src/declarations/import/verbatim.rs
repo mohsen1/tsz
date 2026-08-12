@@ -623,7 +623,17 @@ impl<'a> CheckerState<'a> {
             let target_has_value = sym
                 .import_module()
                 .map(|module_spec| {
-                    let import_name = sym.import_name().unwrap_or(name.as_str());
+                    // A whole-module `import X = require("mod")` (no named
+                    // member) targets the module's `export =` assignment, not a
+                    // member named `X`; its `import_name()` is `None`. Resolving
+                    // the local alias name only found the target when it
+                    // coincidentally matched the target's own name, so a
+                    // renamed alias (`import type J = require("./c")` for an
+                    // `export =`-of-`I` module) missed the value and mis-picked
+                    // TS1282 over TS1283. The `export=` key resolves the real
+                    // target; for a module with no `export =` it resolves
+                    // nothing, exactly as the old local-name miss did.
+                    let import_name = sym.import_name().unwrap_or("export=");
                     self.lookup_imported_target_flags(module_spec, import_name)
                         .1
                 })
