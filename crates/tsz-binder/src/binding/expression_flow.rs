@@ -674,6 +674,19 @@ impl BinderState {
             }
         }
 
+        // The RHS shapes that make the ASSIGNED MEMBER itself a further
+        // expando host, mirroring tsc's `getExpandoInitializer`: an empty
+        // object literal, a function/arrow expression, or a class
+        // expression. `a.b = { k: 1 }` still declares `b`, but `b` is a
+        // closed shape — a later `a.b.c = e` is a real property write
+        // (TS2339 under `noImplicitAny`), not a nested expando declaration.
+        fn rhs_is_expando_host_shape(arena: &NodeArena, rhs: NodeIndex) -> bool {
+            arena.get(rhs).is_some_and(|node| {
+                node.is_function_expression_or_arrow()
+                    || node.kind == syntax_kind_ext::CLASS_EXPRESSION
+            }) || arena.is_empty_object_literal(rhs)
+        }
+
         let Some(lhs_node) = arena.get(lhs) else {
             return;
         };
@@ -809,19 +822,23 @@ impl BinderState {
             }
             // In JS files, a nested object chain (`a.b.…x.p = e`, `obj_key` has a
             // dot) declares an expando member only when the immediate base link
-            // (`a.b.…x`) is itself an assignment-declared expando.
-            // `Object.defineProperty(root, 'seg', …)` never records into
-            // `expando_properties`, so a defineProperty-only base does not
-            // qualify — tsc types it as `{}` and reports TS2339 on the nested
-            // write. `prototype` chains are exempt: `prototype` is a built-in
-            // member handled by the dedicated prototype-expando paths.
+            // (`a.b.…x`) is itself an assignment-declared expando HOST — its own
+            // declaring RHS was an empty literal, function, or class expression
+            // (`expando_host_members`). A merely-declared member with a closed
+            // RHS (`a.b = { k: 1 }`) does not qualify, and neither does an
+            // `Object.defineProperty(root, 'seg', …)` base, which never records
+            // at all — tsc types both as their literal shape and reports TS2339
+            // on the nested write. `prototype` chains are exempt: `prototype` is
+            // a built-in member handled by the dedicated prototype-expando paths.
             if is_js_like_source
                 && !obj_key.split('.').any(|segment| segment == "prototype")
                 && let Some((parent_key, member_name)) = obj_key.rsplit_once('.')
                 && !self
-                    .expando_properties
+                    .expando_host_members
                     .get(parent_key)
-                    .is_some_and(|members| members.contains(member_name))
+                    .and_then(|members| members.get(member_name))
+                    .copied()
+                    .unwrap_or(false)
             {
                 return;
             }
@@ -861,6 +878,13 @@ impl BinderState {
             {
                 return;
             }
+            let rhs_is_host = rhs_is_expando_host_shape(arena, rhs);
+            self.expando_host_members
+                .entry(obj_key.clone())
+                .or_default()
+                .entry(prop_name.clone())
+                .and_modify(|host| *host &= rhs_is_host)
+                .or_insert(rhs_is_host);
             Arc::make_mut(&mut self.expando_properties)
                 .entry(obj_key.clone())
                 .or_default()
@@ -906,20 +930,33 @@ impl BinderState {
             if is_expando_init {
                 // Mirror the function-root branch: in a JS file a nested chain
                 // declares its member only when the immediate base link is an
-                // assignment-declared expando. This blocks
-                // `Object.defineProperty(root, 'seg', …)` bases, which tsc types
-                // as `{}` and rejects the nested write with TS2339. `prototype`
-                // chains are exempt (dedicated prototype-expando handling).
+                // assignment-declared expando HOST (`expando_host_members` —
+                // its own declaring RHS was an empty literal, function, or
+                // class expression). This blocks closed-shape bases
+                // (`M.sub = { a: 1 }` followed by `M.sub.b = e`) and
+                // `Object.defineProperty(root, 'seg', …)` bases, which tsc
+                // types as their literal shape and rejects the nested write
+                // with TS2339 under `noImplicitAny`. `prototype` chains are
+                // exempt (dedicated prototype-expando handling).
                 if is_js_like_source
                     && !obj_key.split('.').any(|segment| segment == "prototype")
                     && let Some((parent_key, member_name)) = obj_key.rsplit_once('.')
                     && !self
-                        .expando_properties
+                        .expando_host_members
                         .get(parent_key)
-                        .is_some_and(|members| members.contains(member_name))
+                        .and_then(|members| members.get(member_name))
+                        .copied()
+                        .unwrap_or(false)
                 {
                     return;
                 }
+                let rhs_is_host = rhs_is_expando_host_shape(arena, rhs);
+                self.expando_host_members
+                    .entry(obj_key.clone())
+                    .or_default()
+                    .entry(prop_name.clone())
+                    .and_modify(|host| *host &= rhs_is_host)
+                    .or_insert(rhs_is_host);
                 Arc::make_mut(&mut self.expando_properties)
                     .entry(obj_key)
                     .or_default()

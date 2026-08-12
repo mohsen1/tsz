@@ -307,7 +307,7 @@ impl<'a> CheckerState<'a> {
             .is_some()
     }
 
-    fn expando_root_js_file_idx(&self, object_expr_idx: NodeIndex) -> Option<usize> {
+    pub(super) fn expando_root_js_file_idx(&self, object_expr_idx: NodeIndex) -> Option<usize> {
         let sym_id = self.root_symbol_for_expando_read(object_expr_idx)?;
         let file_idx = self
             .ctx
@@ -1149,7 +1149,14 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
+        // Being a declared member is necessary but not sufficient: the base
+        // link must itself be an expando HOST — its declaring write's RHS an
+        // empty literal, function, or class expression. `a.b = { k: 1 }`
+        // declares `b` as a closed shape, so a nested `a.b.c` member is
+        // TS2339 under `noImplicitAny`, mirroring tsc's
+        // `getExpandoInitializer` emptiness rule (#17226 gap 1).
         self.is_expando_property_read(base_expr, &member_name)
+            && self.nested_expando_base_link_rhs_is_host(base_expr, &member_name)
     }
 
     pub(in crate::types_domain) fn expando_property_read_type(

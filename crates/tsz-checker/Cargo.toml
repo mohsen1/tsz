@@ -2929,3 +2929,7 @@ path = "tests/ts2694_jsdoc_import_export_equals_display_tests.rs"
 [[test]]
 name = "js_object_literal_expando_emptiness_tests"
 path = "tests/js_object_literal_expando_emptiness_tests.rs"
+
+[[test]]
+name = "js_nested_expando_member_host_tests"
+path = "tests/js_nested_expando_member_host_tests.rs"
