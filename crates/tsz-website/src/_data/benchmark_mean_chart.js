@@ -5,6 +5,7 @@ import {
   PERF_TIMED_PROJECT_ROWS,
   REQUIRED_PROJECT_ROWS,
 } from "../../../../scripts/bench/project-rows.mjs";
+import { didNotFinish } from "../../../../scripts/bench/row-utils.mjs";
 import { fmt } from "./loc.js";
 
 const ROOT = path.resolve(import.meta.dirname, "..", "..", "..", "..");
@@ -17,9 +18,11 @@ function sanitizeLegacyBenchmarkResults(data) {
 }
 
 function hasSuccessfulTiming(row) {
+  // `didNotFinish` (which subsumes `winner === "error"`) keeps a killed/errored
+  // row's ceiling/error timing out of the aggregate mean (#16196).
   return (
     !row?.status &&
-    row?.winner !== "error" &&
+    !didNotFinish(row) &&
     Number.isFinite(row?.tsz_ms) &&
     row.tsz_ms > 0 &&
     Number.isFinite(row?.tsgo_ms) &&
