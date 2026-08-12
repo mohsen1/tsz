@@ -1726,4 +1726,29 @@ impl<'a> CheckerState<'a> {
             crate::query_boundaries::assignability::RelationRequest::return_stmt(source, target);
         self.execute_relation_request(&request)
     }
+
+    /// Execute the `using`/`await using` disposable-resource relation for raw
+    /// checker types: the freshness-widened initializer type against the
+    /// resolved `Disposable`/`AsyncDisposable` interface shape (`tsc`'s
+    /// `checkTypeAssignableTo`). Decision-only: the sole caller reads
+    /// `outcome.related` to decide between accepting the resource and the
+    /// TS2850/TS2851 family, so no failure analysis is produced. Deliberately
+    /// wraps the public assignability entry point rather than a
+    /// `RelationRequest` so the variance and application fast paths that
+    /// entry applies stay byte-identical for this relation.
+    pub(crate) fn disposable_resource_relation_outcome(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> crate::query_boundaries::assignability::RelationOutcome {
+        let related = self.is_assignable_to(source, target);
+        crate::query_boundaries::assignability::RelationOutcome {
+            related,
+            depth_exceeded: false,
+            iteration_exceeded: false,
+            failure: None,
+            weak_union_violation: false,
+            property_classification: None,
+        }
+    }
 }

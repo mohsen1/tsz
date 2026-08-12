@@ -643,6 +643,16 @@ pub(crate) fn is_unresolved_for_display(db: &dyn TypeDatabase, ty: TypeId) -> bo
     tsz_solver::type_queries::is_deferred_lazy_or_indexed_access(db, ty)
 }
 
+/// True when a type is an index-access key shape tsc reduces eagerly during
+/// type construction: a literal, a union, a unique symbol, a `typeof` query,
+/// or the bare `string`/`number` primitive (the array/tuple element idiom,
+/// `Arr[number]`). Does not by itself guarantee the key is free of type
+/// parameters — a union member can still carry one; pair with
+/// [`contains_free_type_parameters`].
+pub(crate) fn is_display_reducible_index_key(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::type_queries::extended::is_display_reducible_index_key(db, type_id)
+}
+
 pub(crate) fn type_may_display_iterator_protocol(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::type_queries::type_may_display_iterator_protocol(db, type_id)
 }

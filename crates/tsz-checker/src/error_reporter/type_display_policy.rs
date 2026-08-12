@@ -121,7 +121,11 @@ impl<'a> CheckerState<'a> {
         // the residual policy #16461 / #16469 already established for the deferred
         // rows — rather than risk repainting it with an unrelated name.
         let index_is_keyof = common::is_keyof_type(db, indexed.index_type);
-        if !common::is_display_reducible_index_key(db, indexed.index_type) && !index_is_keyof {
+        if !crate::query_boundaries::diagnostics::is_display_reducible_index_key(
+            db,
+            indexed.index_type,
+        ) && !index_is_keyof
+        {
             return ty;
         }
         // A free type parameter anywhere in the object or index means the
