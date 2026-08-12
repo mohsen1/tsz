@@ -678,6 +678,9 @@ path = "tests/ts1119_object_literal_property_accessor_tests.rs"
 name = "ts1038_ambient_declare_modifier_tests"
 path = "tests/ts1038_ambient_declare_modifier_tests.rs"
 [[test]]
+name = "class_index_signature_modifier_grammar_tests"
+path = "tests/class_index_signature_modifier_grammar_tests.rs"
+[[test]]
 name = "es_member_decorator_arity_tests"
 path = "tests/es_member_decorator_arity_tests.rs"
 [[test]]
