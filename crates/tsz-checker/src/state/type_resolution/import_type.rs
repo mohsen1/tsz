@@ -408,7 +408,8 @@ impl<'a> CheckerState<'a> {
             }
         };
 
-        let mut resolved_segments = vec![first_segment];
+        let mut resolved_segments = Vec::new();
+        let mut pending_segment = first_segment;
         for segment in segments.iter().skip(1) {
             let Some(symbol) = self
                 .get_cross_file_symbol(current_sym)
@@ -416,6 +417,25 @@ impl<'a> CheckerState<'a> {
             else {
                 break;
             };
+
+            // Every segment but the last must resolve in namespace meaning
+            // (module/namespace/enum) to be a valid qualifier for the next
+            // segment — tsc rejects a class/interface/type-alias head here
+            // rather than walking into its instance member table. The
+            // rejected segment is blamed unqualified (or qualified only by
+            // the segments already validated before it), never against a
+            // namespace name that includes itself.
+            if symbol.flags & symbol_flags::NAMESPACE == 0 {
+                return Some((
+                    self.import_type_namespace_name_with_segments(
+                        module_specifier,
+                        &resolved_segments,
+                        resolution_mode_override,
+                    ),
+                    pending_segment,
+                ));
+            }
+            resolved_segments.push(pending_segment);
 
             if let Some(next_sym) = symbol
                 .exports
@@ -429,7 +449,7 @@ impl<'a> CheckerState<'a> {
                 })
             {
                 current_sym = next_sym;
-                resolved_segments.push(segment.clone());
+                pending_segment = segment.clone();
             } else {
                 return Some((
                     self.import_type_namespace_name_with_segments(
@@ -509,6 +529,16 @@ impl<'a> CheckerState<'a> {
             let symbol = self
                 .get_cross_file_symbol(current_sym)
                 .or_else(|| self.ctx.binder.get_symbol(current_sym))?;
+            // Every segment but the last must resolve in namespace meaning
+            // (module/namespace/enum) to be a valid qualifier — a class,
+            // interface, or type-alias head is not a legal way station, even
+            // when its own member table happens to contain a name matching
+            // the next segment (tsc never walks into a class's instance
+            // members here; it fails at the class segment itself, see
+            // `import_type_missing_member_context`).
+            if symbol.flags & symbol_flags::NAMESPACE == 0 {
+                return None;
+            }
             current_sym = symbol
                 .exports
                 .as_ref()
@@ -1208,6 +1238,11 @@ impl<'a> CheckerState<'a> {
             let symbol = self
                 .get_cross_file_symbol(current_sym)
                 .or_else(|| self.ctx.binder.get_symbol(current_sym))?;
+            // Same qualifier-meaning gate as `resolve_import_type_reference`:
+            // every segment but the last must be a module/namespace/enum.
+            if symbol.flags & symbol_flags::NAMESPACE == 0 {
+                return None;
+            }
             current_sym = symbol
                 .exports
                 .as_ref()
