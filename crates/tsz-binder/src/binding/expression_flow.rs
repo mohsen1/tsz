@@ -240,7 +240,7 @@ impl BinderState {
                     }
                     // Detect expando property assignments (X.prop = value)
                     if bin.operator_token == SyntaxKind::EqualsToken as u16 {
-                        self.detect_expando_assignment(arena, bin.left);
+                        self.detect_expando_assignment(arena, bin.left, bin.right);
                     }
                     return;
                 }
@@ -497,7 +497,10 @@ impl BinderState {
     /// Detect expando property assignments of the form `X.prop = value`.
     /// Tracks both simple identifiers (`X.prop`) and dotted receiver chains
     /// (`A.B.prop`) so function members on namespaces can collect expandos.
-    fn detect_expando_assignment(&mut self, arena: &NodeArena, lhs: NodeIndex) {
+    /// The assignment's `rhs` feeds the member-level host verdict
+    /// (`expando_host_members`): only an empty-literal/function/class RHS
+    /// lets the declared member carry further nested expando members.
+    fn detect_expando_assignment(&mut self, arena: &NodeArena, lhs: NodeIndex, rhs: NodeIndex) {
         fn symbol_call(arena: &NodeArena, idx: NodeIndex) -> bool {
             let Some(node) = arena.get(idx) else {
                 return false;

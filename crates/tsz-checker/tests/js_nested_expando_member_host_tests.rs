@@ -216,6 +216,25 @@ fn function_root_empty_member_rhs_hosts_nested_writes() {
     );
 }
 
+/// A NON-OBJECT member RHS (`o.sub = 42`) reports in BOTH configs
+/// (oracle-verified): the receiver type is `number`, so there is no
+/// open-container leniency to apply — unlike the non-empty-literal case,
+/// which is gated on `noImplicitAny`. Write and read each report.
+#[test]
+fn scalar_member_rhs_nested_access_reports_ts2339_both_configs() {
+    let src = "var o = {};\no.sub = 42;\no.sub.b = 2;\nvar r = o.sub.b;\n";
+    assert_eq!(
+        codes_no_implicit_any_on(src),
+        vec![2339, 2339],
+        "nested access through a number-typed member must be TS2339 at the write and the read"
+    );
+    assert_eq!(
+        codes_no_implicit_any_off(src),
+        vec![2339, 2339],
+        "a number receiver has no open-container leniency, must still report without noImplicitAny"
+    );
+}
+
 // ===========================================================================
 // Mixed declaring writes: one closed-shape write closes the member for good,
 // in either order (oracle-verified against typescript@7.0.2).
