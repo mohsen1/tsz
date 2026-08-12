@@ -1140,7 +1140,21 @@ impl BinderState {
             (ident.atom != tsz_common::interner::AstAtom::NONE)
                 .then_some((arena.atom_owner_key(), ident.atom))
         });
-        if let Some(existing_id) = self.current_scope().get(name) {
+        // A top-level local type shares a declaration space with the enclosing
+        // function's type parameters (see `function_type_parameter_collision`);
+        // value declarations legally shadow a same-named type parameter instead.
+        let type_param_collision_candidate = (flags
+            & (symbol_flags::INTERFACE
+                | symbol_flags::TYPE_ALIAS
+                | symbol_flags::CLASS
+                | symbol_flags::ENUM))
+            != 0;
+        let existing_in_scope = self.current_scope().get(name).or_else(|| {
+            type_param_collision_candidate
+                .then(|| self.function_type_parameter_collision(arena, name))
+                .flatten()
+        });
+        if let Some(existing_id) = existing_in_scope {
             // Cross-function synthetic-`arguments` isolation. `declare_arguments_symbol`
             // keys its synthetic binding on the shared `NodeIndex::NONE` sentinel, so a
             // later function's synthetic `arguments` reuses the prior function's symbol
