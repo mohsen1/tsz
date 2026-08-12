@@ -1166,7 +1166,7 @@ impl<'a> DeclarationEmitter<'a> {
             .unwrap_or_else(|| self.resolve_portability_symbol(sym_id, binder));
         let symbol = binder.symbols.get(resolved_sym_id)?;
         let needs_typeof =
-            self.value_reference_symbol_can_use_typeof(expr_idx, sym_id, resolved_sym_id, symbol);
+            self.value_reference_symbol_can_use_typeof(sym_id, resolved_sym_id, symbol);
         if !needs_typeof {
             return None;
         }
@@ -1234,38 +1234,11 @@ impl<'a> DeclarationEmitter<'a> {
             .resolve_portability_import_alias(sym_id, binder)
             .unwrap_or_else(|| self.resolve_portability_symbol(sym_id, binder));
         let symbol = binder.symbols.get(resolved_sym_id)?;
-        Some(self.value_reference_symbol_can_use_typeof(expr_idx, sym_id, resolved_sym_id, symbol))
-    }
-
-    /// Whether a symbol's declaration is reachable by name from the emitted
-    /// `.d.ts`.
-    ///
-    /// `typeof <name>` is only printable when `<name>` has a declaration in the
-    /// output. A declaration nested inside a function body has none — the body
-    /// is erased — so `tsc` expands the structural shape there instead. See
-    /// `declFileTypeofFunction`, where `foo5` returns a function-local `bar`
-    /// and the oracle prints `(x: number) => number`, not `typeof bar`.
-    fn typeof_reference_declaration_is_emit_visible(&self, decl_idx: NodeIndex) -> bool {
-        let mut current = decl_idx;
-        while let Some(parent_idx) = self.arena.parent_of(current) {
-            let Some(node) = self.arena.get(parent_idx) else {
-                return true;
-            };
-            if node.kind == syntax_kind_ext::FUNCTION_DECLARATION
-                || node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-                || node.kind == syntax_kind_ext::ARROW_FUNCTION
-                || node.kind == syntax_kind_ext::METHOD_DECLARATION
-            {
-                return false;
-            }
-            current = parent_idx;
-        }
-        true
+        Some(self.value_reference_symbol_can_use_typeof(sym_id, resolved_sym_id, symbol))
     }
 
     pub(in crate::declaration_emitter) fn value_reference_symbol_can_use_typeof(
         &self,
-        _expr_idx: NodeIndex,
         sym_id: SymbolId,
         resolved_sym_id: SymbolId,
         resolved_symbol: &tsz_binder::Symbol,
@@ -1274,10 +1247,13 @@ impl<'a> DeclarationEmitter<'a> {
             return false;
         }
 
-        if resolved_symbol.value_declaration.is_some()
-            && !self.typeof_reference_declaration_is_emit_visible(resolved_symbol.value_declaration)
+        // A namespace-import alias resolves through the module system and is
+        // always addressable at the emit position regardless of where the
+        // target lives, so it can always be spelled with `typeof`.
+        if self.is_namespace_import_alias_symbol(sym_id)
+            || self.is_namespace_import_alias_symbol(resolved_sym_id)
         {
-            return false;
+            return true;
         }
 
         if resolved_symbol.has_any_flags(
@@ -1286,12 +1262,83 @@ impl<'a> DeclarationEmitter<'a> {
                 | symbol_flags::ENUM
                 | symbol_flags::VALUE_MODULE
                 | symbol_flags::METHOD,
-        ) || self.is_namespace_import_alias_symbol(sym_id)
-            || self.is_namespace_import_alias_symbol(resolved_sym_id)
-        {
-            return true;
+        ) {
+            // `typeof Name` is only spellable when `Name` is visible at the
+            // `.d.ts` emit position. A function/class/enum/namespace declared at
+            // module or namespace scope is visible; one nested inside a
+            // function/method/accessor/block body is a local whose name is not
+            // emitted, so its structural shape must be expanded instead
+            // (`function foo5() { function bar() {} return bar }` emits
+            // `(x: number) => number`, not `typeof bar`; a mixin's local
+            // `class MixinClass` / `class C3` likewise expands to its anonymous
+            // constructor shape). This mirrors tsc's `isEntityNameVisible`
+            // gate on the emitted reference.
+            return self.symbol_declaration_reachable_from_module_scope(resolved_symbol);
         }
 
+        false
+    }
+
+    /// Returns `true` when at least one declaration of `symbol` is reachable
+    /// from module or namespace scope — i.e. no function-like or block body
+    /// lies on the path from the declaration up to its containing source file.
+    ///
+    /// This is the scope half of tsc's entity-name visibility question: a name
+    /// trapped in a value scope (a function/method/accessor/constructor body,
+    /// or a block local to one) has no declaration in the emitted `.d.ts`, so
+    /// the declaration emitter cannot spell it as `typeof Name`. A class body is
+    /// deliberately *not* a boundary: a `METHOD` of a module-level class is
+    /// still addressed relative to that class, and only becomes unreachable
+    /// when the class itself sits behind a value-scope boundary.
+    pub(in crate::declaration_emitter) fn symbol_declaration_reachable_from_module_scope(
+        &self,
+        symbol: &tsz_binder::Symbol,
+    ) -> bool {
+        symbol
+            .declarations
+            .iter()
+            .copied()
+            .any(|decl_idx| !self.node_is_inside_value_scope(decl_idx, true))
+    }
+
+    /// Walks the parent chain of `node_idx` toward its containing source file
+    /// and reports whether a value-scope boundary is crossed first.
+    ///
+    /// A function/arrow node (`get_function`) is always a boundary; a lexical
+    /// `BLOCK` — the body of a function/method/accessor/constructor or a nested
+    /// block statement — is a boundary only when `block_is_boundary`. A
+    /// `MODULE_BLOCK` is a distinct kind and is never a boundary, so namespace
+    /// members stay at module/namespace scope. Returns `false` once the source
+    /// file is reached without crossing a boundary (the declaration is at
+    /// module/namespace scope).
+    ///
+    /// Shared by the `typeof`-visibility gate (which counts a `BLOCK` as a
+    /// boundary) and the function-local type-alias check (which does not).
+    pub(in crate::declaration_emitter) fn node_is_inside_value_scope(
+        &self,
+        node_idx: NodeIndex,
+        block_is_boundary: bool,
+    ) -> bool {
+        let mut current = node_idx;
+        // Bounded walk: real declaration nesting is shallow, and the cap guards
+        // against a malformed parent cycle.
+        for _ in 0..128 {
+            let Some(parent_idx) = self.arena.parent_of(current) else {
+                return false;
+            };
+            let Some(parent_node) = self.arena.get(parent_idx) else {
+                return false;
+            };
+            if self.arena.get_source_file(parent_node).is_some() {
+                return false;
+            }
+            if self.arena.get_function(parent_node).is_some()
+                || (block_is_boundary && parent_node.kind == syntax_kind_ext::BLOCK)
+            {
+                return true;
+            }
+            current = parent_idx;
+        }
         false
     }
 
