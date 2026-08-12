@@ -917,6 +917,22 @@ impl<'a> DeclarationEmitter<'a> {
             .unwrap_or_else(|| self.resolve_portability_symbol(sym_id, binder));
         let symbol = binder.symbols.get(resolved_sym_id)?;
 
+        // A bare identifier referencing a function/class/enum/namespace symbol
+        // widens to that symbol's own type; tsc's declaration emitter prefers
+        // `typeof Name` over expanding the structural shape (`typeof_prefix_for_value_entity`
+        // applies the identical rule for variable initializers). Without this,
+        // a return position or other non-variable expression context loses the
+        // symbol reference and expands the callable structurally instead.
+        if self
+            .arena
+            .get(expr_idx)
+            .is_some_and(|node| node.kind == SyntaxKind::Identifier as u16)
+            && self.value_reference_symbol_can_use_typeof(expr_idx, sym_id, resolved_sym_id, symbol)
+            && let Some(name) = self.get_identifier_text(expr_idx)
+        {
+            return Some(format!("typeof {name}"));
+        }
+
         for decl_idx in symbol.declarations.iter().copied() {
             let Some(decl_node) = self.arena.get(decl_idx) else {
                 continue;
