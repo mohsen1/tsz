@@ -191,6 +191,9 @@ pub(crate) enum RelationKind {
     Satisfies,
     /// Bivariant callback assignment where function parameter types are checked bivariantly.
     BivariantCallbacks,
+    /// `using`/`await using` initializer compatibility against the global
+    /// `Disposable`/`AsyncDisposable` interface for TS2850 diagnostics.
+    Disposable,
 }
 
 /// How excess properties (properties in source not in target) are handled.
@@ -664,6 +667,10 @@ impl RelationRequest {
 
     pub(crate) const fn bivariant_callbacks(source: TypeId, target: TypeId) -> Self {
         Self::new(source, target, RelationKind::BivariantCallbacks)
+    }
+
+    pub(crate) const fn disposable(source: TypeId, target: TypeId) -> Self {
+        Self::new(source, target, RelationKind::Disposable)
     }
 
     /// Mark the source as a fresh object literal, enabling EPC.
