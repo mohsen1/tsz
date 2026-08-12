@@ -666,6 +666,12 @@ foo.bar = function () {
 
 #[test]
 fn js_expando_property_assignment_this_member_present_no_error() {
+    // A NON-EMPTY object-literal initializer is not an expando host (tsc's
+    // `getExpandoInitializer` requires an empty literal), so the `o.m` write
+    // itself reports TS2339 under `noImplicitAny` (oracle: typescript@7.0.2).
+    // The point of this test is unchanged: `this` inside the assigned function
+    // resolves to the receiver, whose declared `q` member keeps `this.q` clean
+    // and TS2683 must not fire.
     let src = r#"
 const o = { q: 0 };
 o.m = function () {
@@ -673,9 +679,14 @@ o.m = function () {
 };
 "#;
     let diags = get_js_diagnostics(src);
+    assert_eq!(
+        diags.iter().filter(|d| d.0 == 2339).count(),
+        1,
+        "Expected exactly the TS2339 on the non-expando-host `o.m` write, got: {diags:?}"
+    );
     assert!(
-        diags.is_empty(),
-        "Expected a clean check when the base type already declares the accessed member, got: {diags:?}"
+        !diags.iter().any(|d| d.0 == 2683),
+        "This is a resolved contextual `this`, not implicit `any` — TS2683 must not fire, got: {diags:?}"
     );
 }
 
