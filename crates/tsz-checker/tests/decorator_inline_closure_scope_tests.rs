@@ -187,6 +187,47 @@ class A {
 }
 
 #[test]
+fn method_decorator_var_used_inside_nested_arrow_resolves() {
+    // A reference to the decorator's own local from an arrow function
+    // NESTED WITHIN the decorator's own closure — one function-boundary
+    // deeper than the direct-body cases above. This is the shape that would
+    // catch a fix that stops the exclusion filter at exactly one function
+    // boundary instead of every function boundary between the reference and
+    // the nearest DECORATOR ancestor.
+    let codes = check_source_codes_experimental_decorators(
+        r#"
+function consume(s: string): void {}
+class Widget {
+    @((target, key, descriptor) => {
+        var value = 9;
+        const wrap = () => consume(value);
+        wrap();
+        return descriptor;
+    })
+    render() {}
+}
+"#,
+    );
+    assert_resolves_to_real_mismatch(&codes);
+}
+
+#[test]
+fn parameter_decorator_inline_arrow_resolves_local_var() {
+    let codes = check_source_codes_experimental_decorators(
+        r#"
+function consume(s: string): void {}
+class Widget {
+    render(@((target, key, index) => {
+        var flag = 1;
+        consume(flag);
+    })() p: any) {}
+}
+"#,
+    );
+    assert_resolves_to_real_mismatch(&codes);
+}
+
+#[test]
 fn bare_decorator_argument_still_excludes_sibling_member() {
     // Positive control for the original exclusion this code exists for:
     // a bare identifier that is DIRECTLY the decorator's own argument (not
