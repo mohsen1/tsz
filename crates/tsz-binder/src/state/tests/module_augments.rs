@@ -639,7 +639,12 @@ foo.baz = 'hello';
 }
 
 #[test]
-fn void_zero_expando_assignments_are_skipped() {
+fn void_zero_expando_assignments_are_tracked() {
+    // Per #17229: tsc 7.0.2 still declares a member whose only assignment is
+    // `void 0`/`undefined`/`null` (inferred type collapses to implicit `any`,
+    // reported once as TS7008 at check time), it does not leave the member
+    // undeclared. The binder must record these writes as expando properties
+    // so later reads don't wrongly report TS2339.
     let source = r#"
 exports.k = void 0;
 var o = {};
@@ -652,19 +657,19 @@ o.y = void 0;
     binder.bind_source_file(parser.get_arena(), root);
 
     assert!(
-        !binder
+        binder
             .expando_properties
             .get("exports")
             .is_some_and(|props| props.contains("k")),
-        "unexpected exports expando tracking: {:?}",
+        "expected exports expando tracking: {:?}",
         binder.expando_properties
     );
     assert!(
-        !binder
+        binder
             .expando_properties
             .get("o")
             .is_some_and(|props| props.contains("y")),
-        "unexpected object expando tracking: {:?}",
+        "expected object expando tracking: {:?}",
         binder.expando_properties
     );
 }
