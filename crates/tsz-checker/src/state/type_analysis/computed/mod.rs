@@ -696,6 +696,24 @@ impl<'a> CheckerState<'a> {
             let mut prop_type =
                 self.namespace_import_export_property_type(module_name, export_sym_id, name);
             prop_type = self.apply_module_augmentations(module_name, name, prop_type);
+            // This member's own declaring module is `nested_module_specifier`
+            // (the `export =` target's `typeof import(...)` annotation), not
+            // `module_name` (the file doing the re-export). When the member
+            // is itself a namespace, register that owning module the same
+            // way the top-level `typeof import(module_name)` namespace type
+            // is registered below in `core_type_query.rs`'s
+            // `build_typeof_import_namespace_type` — so a TS2694 miss walked
+            // *through* this member (`typeof import(module_name).bar.missing`)
+            // names the diagnostic by `bar`'s own module (`tsc`'s rule), not
+            // by `module_name`'s export= target.
+            if export_is_namespace_module
+                && let Some(nested_specifier) = nested_module_specifier.as_deref()
+            {
+                self.ctx.namespace_module_names.insert(
+                    prop_type,
+                    self.imported_namespace_display_module_name(nested_specifier),
+                );
+            }
             let declaration_order = if name == "default" {
                 1
             } else {
