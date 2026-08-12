@@ -1162,3 +1162,176 @@ def scan_allowlist_ratchet_coverage(
     allowlisted = line_limit_allowlisted_files(src_allowlists, tests_allowlists)
     ratcheted = file_line_limit_ratcheted_paths(file_line_checks)
     return sorted(f for f in allowlisted if f not in ratcheted)
+
+
+# #17295: `.claude/CLAUDE.md` states a hard 2000-physical-line contract limit
+# ("No hand-authored source, test, script, or generated-code shard may exceed
+# 2000 physical lines. Split instead of adding local allowlists or ceilings.").
+# `FILE_LINE_LIMIT_CHECKS` enforces per-file *ceilings* instead, and most of
+# them sit above 2000 — the guard was a ratchet against further growth, not
+# an enforcement of the contract limit, and `arch-size` stayed green on files
+# already past it.
+#
+# Freeze-and-drain (option 2 of #17295): every ceiling above 2000 that existed
+# at the time this gate landed is recorded below at its then-current value.
+# `scan_ceiling_contract_violations` then enforces two rules:
+#   1. A ceiling at or under the contract limit is always fine.
+#   2. A ceiling above the contract limit is fine ONLY if the file is in this
+#      frozen ledger AND the live ceiling does not exceed the frozen value —
+#      i.e. an already-over-limit file may have its ceiling lowered (as
+#      submodules are split out) but never raised, and no *new* ceiling may
+#      be registered above the contract limit at all.
+# Paying a legacy entry down to <= 2000 needs no ledger edit — rule 1 already
+# covers it once the ceiling itself drops. Raising a legacy ceiling, or adding
+# a fresh one above 2000, requires visibly editing this ledger in the same
+# diff, which is the enforcement the issue asked for: the guard now says which
+# option was picked instead of silently accepting either.
+FILE_LINE_CONTRACT_LIMIT = 2000
+
+LEGACY_CEILING_DEBT = {
+    "crates/conformance/src/runner.rs": 2485,
+    "crates/tsz-binder/src/binding/declaration.rs": 3038,
+    "crates/tsz-binder/src/state/core.rs": 2006,
+    "crates/tsz-checker/src/assignability/assignability_diagnostics.rs": 2539,
+    "crates/tsz-checker/src/state/state_checking_members/interface_checks.rs": 2250,
+    "crates/tsz-checker/tests/symbol_index_signature_tests.rs": 2158,
+    "crates/tsz-checker/tests/ts2353_tests.rs": 2113,
+    "crates/tsz-cli/src/bin/tsz.rs": 3566,
+    "crates/tsz-cli/src/bin/tsz_server/handlers_completions.rs": 3577,
+    "crates/tsz-cli/src/bin/tsz_server/handlers_editing.rs": 2332,
+    "crates/tsz-cli/src/bin/tsz_server/handlers_info.rs": 2881,
+    "crates/tsz-cli/src/bin/tsz_server/handlers_structure.rs": 3075,
+    "crates/tsz-cli/src/bin/tsz_server/main.rs": 2038,
+    "crates/tsz-cli/src/bin/tsz_server/tests_navigation.rs": 2044,
+    "crates/tsz-cli/src/driver/check.rs": 2131,
+    "crates/tsz-cli/src/driver/check_tests/check_tests_part1.rs": 2158,
+    "crates/tsz-cli/src/driver/check_utils.rs": 2466,
+    "crates/tsz-cli/src/driver/check_utils/tests.rs": 2258,
+    "crates/tsz-cli/src/driver/core.rs": 3193,
+    "crates/tsz-cli/src/driver/tests.rs": 2896,
+    "crates/tsz-cli/tests/driver_tests_parts/part_12.rs": 2078,
+    "crates/tsz-cli/tests/tsc_compat_tests_parts/part_00.rs": 2069,
+    "crates/tsz-common/src/perf_counters/runtime.rs": 2114,
+    "crates/tsz-common/src/perf_counters/tests.rs": 2066,
+    "crates/tsz-core/src/config/mod.rs": 4281,
+    "crates/tsz-core/src/config/tests/module_resolution.rs": 2016,
+    "crates/tsz-core/tests/parser_state_tests_parts/part_00.rs": 2045,
+    "crates/tsz-emitter/src/declaration_emitter/helpers/portability_resolve.rs": 3178,
+    "crates/tsz-emitter/src/declaration_emitter/helpers/type_inference.rs": 2846,
+    "crates/tsz-emitter/src/declaration_emitter/helpers/type_inference_return_normalization.rs": 2006,
+    "crates/tsz-emitter/src/declaration_emitter/tests/type_info.rs": 2153,
+    "crates/tsz-emitter/src/declaration_emitter/usage_analyzer.rs": 2154,
+    "crates/tsz-emitter/src/emitter/declarations/class/emit_es6.rs": 4139,
+    "crates/tsz-emitter/src/emitter/es5/helpers_async.rs": 2261,
+    "crates/tsz-emitter/src/emitter/expressions/call.rs": 2080,
+    "crates/tsz-emitter/src/emitter/expressions/core/private_fields.rs": 2006,
+    "crates/tsz-emitter/src/emitter/functions.rs": 2121,
+    "crates/tsz-emitter/src/emitter/helpers.rs": 2222,
+    "crates/tsz-emitter/src/emitter/module_emission/core/mod.rs": 2484,
+    "crates/tsz-emitter/src/emitter/source_file/emit.rs": 2426,
+    "crates/tsz-emitter/src/emitter/source_file/es5_emit_tests.rs": 2048,
+    "crates/tsz-emitter/src/emitter/source_file/top_level_using.rs": 2608,
+    "crates/tsz-emitter/src/emitter/statements/control_flow.rs": 2014,
+    "crates/tsz-emitter/src/emitter/statements/core.rs": 2029,
+    "crates/tsz-emitter/src/emitter/transform_dispatch.rs": 2119,
+    "crates/tsz-emitter/src/transforms/async_es5_ir.rs": 4924,
+    "crates/tsz-emitter/src/transforms/class_es5_ast_to_ir_expressions.rs": 2223,
+    "crates/tsz-emitter/src/transforms/class_es5_ir.rs": 2101,
+    "crates/tsz-emitter/src/transforms/class_es5_ir_members.rs": 2037,
+    "crates/tsz-emitter/src/transforms/helpers.rs": 2099,
+    "crates/tsz-emitter/src/transforms/ir_printer.rs": 2003,
+    "crates/tsz-emitter/src/transforms/module_commonjs.rs": 2016,
+    "crates/tsz-lowering/src/lower/core.rs": 2032,
+    "crates/tsz-lsp/src/fourslash.rs": 2268,
+    "crates/tsz-lsp/src/hierarchy/call_hierarchy.rs": 2091,
+    "crates/tsz-lsp/src/hover/core.rs": 2029,
+    "crates/tsz-lsp/src/navigation/definition.rs": 2121,
+    "crates/tsz-lsp/src/project/core.rs": 2916,
+    "crates/tsz-lsp/src/project/module_specifiers.rs": 3669,
+    "crates/tsz-lsp/tests/hover_tests.rs": 2151,
+    "crates/tsz-parser/src/parser/state_expressions_literals.rs": 3011,
+    "crates/tsz-parser/src/parser/state_expressions_literals_regex.rs": 2191,
+    "crates/tsz-parser/src/parser/state_statements_class_members.rs": 2587,
+    "crates/tsz-solver/src/caches/db.rs": 2334,
+    "crates/tsz-solver/src/caches/query_cache.rs": 2022,
+    "crates/tsz-solver/src/contextual/extractors.rs": 2004,
+    "crates/tsz-solver/src/def/core.rs": 2298,
+    "crates/tsz-solver/src/def/resolver.rs": 2541,
+    "crates/tsz-solver/src/diagnostics/format/mod.rs": 2012,
+    "crates/tsz-solver/src/evaluation/evaluate.rs": 2065,
+    "crates/tsz-solver/src/evaluation/evaluate/support.rs": 2008,
+    "crates/tsz-solver/src/evaluation/evaluate_rules/conditional.rs": 2083,
+    "crates/tsz-solver/src/evaluation/evaluate_rules/infer_pattern.rs": 2343,
+    "crates/tsz-solver/src/inference/infer_matching.rs": 2002,
+    "crates/tsz-solver/src/instantiation/instantiate.rs": 2098,
+    "crates/tsz-solver/src/intern/core/constructors.rs": 2026,
+    "crates/tsz-solver/src/intern/core/interner.rs": 2105,
+    "crates/tsz-solver/src/intern/normalize.rs": 2010,
+    "crates/tsz-solver/src/narrowing/core.rs": 2655,
+    "crates/tsz-solver/src/operations/call_args.rs": 2097,
+    "crates/tsz-solver/src/operations/constraints/walker.rs": 2230,
+    "crates/tsz-solver/src/operations/generic_call/inference_helpers.rs": 2065,
+    "crates/tsz-solver/src/operations/generic_call/resolve.rs": 3413,
+    "crates/tsz-solver/src/operations/widening.rs": 2042,
+    "crates/tsz-solver/src/relations/subtype/explain.rs": 2026,
+    "crates/tsz-solver/src/relations/subtype/rules/functions/checking.rs": 2198,
+    "crates/tsz-solver/src/relations/subtype/rules/generics.rs": 2017,
+    "crates/tsz-solver/src/relations/subtype/rules/objects.rs": 2075,
+    "crates/tsz-solver/src/type_queries/core.rs": 2174,
+    "crates/tsz-solver/src/type_queries/data/content_predicates.rs": 2043,
+    "crates/tsz-solver/src/type_queries/data/signatures_and_advanced.rs": 2191,
+    "crates/tsz-solver/src/type_queries/data/tests.rs": 2035,
+    "crates/tsz-solver/src/type_queries/flow.rs": 2755,
+    "crates/tsz-solver/src/visitors/visitor_predicates.rs": 2120,
+    "crates/tsz-solver/tests/canonicalize_tests.rs": 2287,
+    "crates/tsz-solver/tests/intern_tests.rs": 2045,
+}
+
+
+CEILING_CONTRACT_VIOLATION_NAME = (
+    "Architecture boundary: a FILE_LINE_LIMIT_CHECKS ceiling above the "
+    f"{FILE_LINE_CONTRACT_LIMIT}-line CLAUDE.md contract limit must be a "
+    "frozen LEGACY_CEILING_DEBT entry it does not exceed — new ceilings above "
+    "the limit are forbidden and existing ones may only be lowered, never "
+    "raised (#17295)"
+)
+
+
+def scan_ceiling_contract_violations(checks=None, legacy_debt=None) -> list:
+    """Report `FILE_LINE_LIMIT_CHECKS` ceilings that cross the contract limit.
+
+    `.claude/CLAUDE.md` caps hand-authored files at
+    `FILE_LINE_CONTRACT_LIMIT` physical lines; `FILE_LINE_LIMIT_CHECKS` caps
+    them per-file instead, and a ceiling above the contract limit legalizes
+    exactly the growth the contract forbids. A ceiling is a violation unless
+    it is at or under the contract limit, or it is a `LEGACY_CEILING_DEBT`
+    entry and does not exceed the frozen value recorded there — so debt can
+    only shrink and no new above-limit ceiling can be added silently.
+    """
+    checks = checks if checks is not None else FILE_LINE_LIMIT_CHECKS
+    legacy_debt = legacy_debt if legacy_debt is not None else LEGACY_CEILING_DEBT
+    violations = []
+    for _name, path, limit in checks:
+        if limit <= FILE_LINE_CONTRACT_LIMIT:
+            continue
+        path = Path(path)
+        try:
+            rel = path.resolve().relative_to(ROOT).as_posix()
+        except ValueError:
+            rel = path.as_posix()
+        frozen = legacy_debt.get(rel)
+        if frozen is not None and limit <= frozen:
+            continue
+        if frozen is None:
+            violations.append(
+                f"{rel}: new ceiling {limit} exceeds the "
+                f"{FILE_LINE_CONTRACT_LIMIT}-line contract limit with no "
+                "LEGACY_CEILING_DEBT entry"
+            )
+        else:
+            violations.append(
+                f"{rel}: ceiling {limit} exceeds its frozen "
+                f"LEGACY_CEILING_DEBT ceiling {frozen} — an over-limit "
+                "ceiling may only be lowered, never raised"
+            )
+    return sorted(violations)

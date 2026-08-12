@@ -203,6 +203,13 @@ def main() -> int:
         if allowlist_gap:
             size_failures.append((ALLOWLIST_RATCHET_COVERAGE_NAME, allowlist_gap))
 
+        ceiling_violations = scan_ceiling_contract_violations()
+        size_total += len(ceiling_violations)
+        if ceiling_violations:
+            size_failures.append(
+                (CEILING_CONTRACT_VIOLATION_NAME, ceiling_violations)
+            )
+
         payload = build_json_payload(size_failures, size_total)
         if args.json_report:
             write_json_report(Path(args.json_report), payload)
@@ -289,6 +296,11 @@ def main() -> int:
     total_hits += len(allowlist_gap)
     if allowlist_gap:
         failures.append((ALLOWLIST_RATCHET_COVERAGE_NAME, allowlist_gap))
+
+    ceiling_violations = scan_ceiling_contract_violations()
+    total_hits += len(ceiling_violations)
+    if ceiling_violations:
+        failures.append((CEILING_CONTRACT_VIOLATION_NAME, ceiling_violations))
 
     for name, path, struct_name, max_fields in STRUCT_FIELD_COUNT_CHECKS:
         hits = scan_struct_field_count(path, struct_name, max_fields)
