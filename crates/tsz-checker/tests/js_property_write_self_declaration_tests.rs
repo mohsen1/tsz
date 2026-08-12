@@ -109,6 +109,7 @@ fn cross_file_ts2339_count(host_source: &str) -> usize {
         "writer.js",
         CheckerOptions {
             check_js: true,
+            no_implicit_any: true,
             ..CheckerOptions::default()
         },
     )
@@ -119,23 +120,28 @@ fn cross_file_ts2339_count(host_source: &str) -> usize {
 
 #[test]
 fn checked_js_cross_file_nonempty_object_literal_write_reports_ts2339() {
-    // The cross-file suppression runs through the checker's
-    // `root_symbol_supports_js_direct_expando_write` / `..._read` predicates
-    // (the writing file's binder cannot resolve the root), so the emptiness
-    // rule must hold there too: a non-empty-literal host in another file is a
-    // closed shape and both the write and the read report TS2339.
+    // tsc 7.0.2 binds an expando member only when the write appears in the
+    // host's own declaring file, so a foreign-file write onto ANY object-var
+    // host reports TS2339 at the write and the read under `noImplicitAny`
+    // (oracle-pinned; under `noImplicitAny`-off both cells go silent through
+    // the open-container leniency, verified via the production driver — this
+    // harness never fires that gate).
     assert_eq!(
         cross_file_ts2339_count("var shared = { seeded: 1 };\n"),
         2,
-        "a cross-file root declared with a non-empty object literal is not an expando host"
+        "a foreign-file write onto a non-empty-literal host declares nothing"
     );
 }
 
 #[test]
-fn checked_js_cross_file_empty_object_literal_write_still_allowed() {
+fn checked_js_cross_file_empty_object_literal_write_reports_ts2339() {
+    // The emptiness rule is a SAME-file distinction: cross-file, an empty
+    // `var shared = {}` host behaves exactly like the non-empty one above —
+    // the foreign write declares nothing (tsc 7.0.2, oracle-pinned; an
+    // earlier version of this test pinned the strada-era cross-file merge).
     assert_eq!(
         cross_file_ts2339_count("var shared = {};\n"),
-        0,
-        "a cross-file root declared with an empty object literal stays an expando host"
+        2,
+        "a foreign-file write onto an empty-literal host declares nothing"
     );
 }

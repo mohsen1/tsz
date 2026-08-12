@@ -1346,10 +1346,9 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // Checked-JS function declarations support expando writes like
-        // `fn.extra = value` without TS2339. Suppress the diagnostic when the
-        // property name belongs to a direct write target rooted at a function
-        // symbol, even if an intermediate query transiently observed the RHS type.
+        // Checked-JS function declarations support SAME-FILE expando writes
+        // (`fn.extra = value`) without TS2339. tsc 7.0.2 binds the member only
+        // in the host's declaring file, so a foreign-file write keeps erroring.
         if self.is_js_file()
             && self.ctx.compiler_options.check_js
             && let Some(parent) = self.ctx.arena.get_extended(idx)
@@ -1396,6 +1395,7 @@ impl<'a> CheckerState<'a> {
                 .or_else(|| self.ctx.binder.get_symbol(obj_sym))
             && symbol.has_any_flags(tsz_binder::symbol_flags::FUNCTION)
             && !symbol.has_any_flags(tsz_binder::symbol_flags::CLASS)
+            && !self.expando_write_host_is_foreign_file(obj_sym)
         {
             return;
         }
