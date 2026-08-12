@@ -611,7 +611,19 @@ impl<'a> CheckerState<'a> {
                 };
                 let then_falls = self.statement_falls_through(if_data.then_statement);
                 if if_data.else_statement.is_none() {
-                    return true;
+                    // A missing else branch normally means execution can skip
+                    // the `then` branch entirely, so the statement as a whole
+                    // falls through regardless of `then_falls`. But when the
+                    // condition is a compile-time-true constant there is no
+                    // implicit else path — the `then` branch always runs, so
+                    // completion follows it exactly (mirrors
+                    // `loop_falls_through`'s `is_true_condition` handling for
+                    // `while (true)` with no reachable `break`).
+                    return if self.is_true_condition(if_data.expression) {
+                        then_falls
+                    } else {
+                        true
+                    };
                 }
                 let else_falls = self.statement_falls_through(if_data.else_statement);
                 then_falls || else_falls
