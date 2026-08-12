@@ -557,14 +557,7 @@ impl<'a> CheckerState<'a> {
                     // ALIAS), so `sym`'s own flags can't answer this — the
                     // resolved import target's flags can, mirroring the
                     // lookup TS1292 already does further down.
-                    let target_has_value = sym
-                        .import_module()
-                        .map(|module_spec| {
-                            let import_name = sym.import_name().unwrap_or(name.as_str());
-                            self.lookup_imported_target_flags(module_spec, import_name)
-                                .1
-                        })
-                        .unwrap_or(true);
+                    let target_has_value = self.type_only_import_alias_target_has_value(sym, &name);
                     let (message_key, diag_code) = if target_has_value {
                         (
                             diagnostic_messages::AN_EXPORT_DEFAULT_MUST_REFERENCE_A_REAL_VALUE_WHEN_VERBATIMMODULESYNTAX_IS_ENABL,
