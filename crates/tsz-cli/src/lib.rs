@@ -35,6 +35,9 @@ mod build_tests;
 #[path = "../tests/config_tests.rs"]
 mod config_tests;
 #[cfg(test)]
+#[path = "../tests/const_using_uninitialized_ts1155_diagnostic_family_cli_tests.rs"]
+mod const_using_uninitialized_ts1155_diagnostic_family_cli_tests;
+#[cfg(test)]
 #[path = "../tests/cross_file_imported_const_computed_key_identity_tests.rs"]
 mod cross_file_imported_const_computed_key_identity_tests;
 #[cfg(test)]

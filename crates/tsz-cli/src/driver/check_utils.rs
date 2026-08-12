@@ -1290,7 +1290,6 @@ pub(super) const fn is_real_syntax_error(code: u32) -> bool {
         | 1138 // Parameter declaration expected
         | 1141 // Type parameter declaration expected
         | 1146 // Declaration expected
-        | 1155 // 'const' declarations must be initialized
         | 1160 // Unterminated template literal
         | 1161 // Unterminated regular expression literal
         | 1180 // Property destructuring pattern expected
@@ -1399,11 +1398,19 @@ pub(super) const fn is_structural_parse_error(code: u32) -> bool {
         | 1144 // '{' or ';' expected
         | 1145 // '{' or JSX element expected
         | 1146 // Declaration expected
-        | 1155 // 'const' declarations must be initialized
         | 1160 // Unterminated template literal
         | 1161 // Unterminated regular expression literal
         | 1180 // Property destructuring pattern expected
         | 1185 // Merge conflict marker encountered
+        // TS1155 is intentionally excluded (#17253 follow-up to #17251). tsc's
+        // `checkGrammarVariableDeclaration` reports it from the checker over a
+        // well-formed AST — a `const`/`using`/`await using` declarator without
+        // an initializer parses cleanly, it just fails this grammar rule — so
+        // it never suppresses cascading checker diagnostics the way a genuine
+        // structural parse failure does. Oracle-confirmed: `const x; y();`
+        // reports TS1155 *and* TS2304 together. It moved to
+        // `is_parser_grammar_code`, mirroring TS1313's identical fix below.
+        //
         // TS1313 is intentionally excluded — see the matching note in
         // `is_real_syntax_error` above. It moved to `is_parser_grammar_code`.
         | 1351 // An identifier or keyword cannot immediately follow a numeric literal

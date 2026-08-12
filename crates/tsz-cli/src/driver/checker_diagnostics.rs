@@ -226,6 +226,28 @@ pub(super) fn post_process_checker_diagnostics(
             .retain(|diag| diag.code != 2499 || !parser_ts2499_positions.contains(&diag.start));
     }
 
+    // TS1155 ("'{0}' declarations must be initialized.") has the identical
+    // double-emission shape as TS2499 above (#17253 follow-up to #17251): the
+    // parser's `report_const_or_using_uninitialized` reports it at tsc's own
+    // position (the declarator name) for the plain-statement and C-style
+    // `for`-header cases, and the checker's own independent
+    // `check_variable_declaration_with_request` walk (which pre-dates #17251
+    // and exists so the checker-only unit-test harness can exercise the rule
+    // in isolation, `using_declaration_implicit_any_tests.rs`) reports it
+    // again for the same declarator whenever `has_real_syntax_errors` is
+    // false. tsc emits this diagnostic exactly once; drop the checker's copy
+    // wherever a parser TS1155 already covers the same position.
+    let parser_ts1155_positions: std::collections::HashSet<u32> = file
+        .parse_diagnostics
+        .iter()
+        .filter(|d| d.code == 1155)
+        .map(|d| d.start)
+        .collect();
+    if !parser_ts1155_positions.is_empty() {
+        checker_diagnostics
+            .retain(|diag| diag.code != 1155 || !parser_ts1155_positions.contains(&diag.start));
+    }
+
     // When TS5107/TS5101 deprecation diagnostics are present, suppress the most
     // common type relationship errors that tsc would not emit. Parser errors
     // (<2000) are handled separately and not affected by this filter.

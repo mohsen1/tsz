@@ -170,6 +170,26 @@
 /// unlike a genuine structural failure). Fix removed 1313 from the two
 /// structural-error lists and added it here instead.
 ///
+/// #17253: TS1155 (`'{0}' declarations must be initialized.`,
+/// `state_variable_declarations.rs`/`state_statements.rs` via the shared
+/// `report_const_or_using_uninitialized`/`report_for_header_const_using_uninitialized`
+/// owners) was wired by #17251 as a parser diagnostic but landed in
+/// `is_real_syntax_error`/`is_structural_parse_error` instead of here — the
+/// same self-suppression trap TS1313 hit at round 10. tsc's
+/// `checkGrammarVariableDeclaration` reports TS1155 from the checker over a
+/// syntactically valid AST (a `const`/`using`/`await using` declarator with no
+/// initializer parses cleanly), so it never suppresses a file's other checker
+/// diagnostics. Being misclassified as a structural/real syntax error instead
+/// set `has_real_syntax_errors` for the whole file, which broadly suppresses
+/// checker diagnostics — dropping TS2588/TS7005 companions the real compiler
+/// keeps (`constDeclarations-errors.ts`, `for-of2.ts`,
+/// `downlevelLetConst2.ts`; oracle-confirmed against `typescript@7.0.2`,
+/// `const x; y();` reports both TS1155 and TS2304). It also went unsuppressed
+/// itself alongside an unrelated real syntax error in the same file
+/// (`decoratorOnUsing.ts`, `commonMissingSemicolons.ts`), the mirror-image
+/// half of the same membership gap. Fix: removed from the two structural-error
+/// lists in `check_utils.rs`, added here instead — the TS1313 fix, replayed.
+///
 /// #16279 audit round 11: re-derived the grep-and-diff recipe (every
 /// `diagnostic_codes::*` name emitted from `crates/tsz-parser/src`, resolved
 /// to numeric codes, diffed against this list AND
@@ -322,6 +342,7 @@ pub(super) const fn is_parser_grammar_code(code: u32) -> bool {
         | 1495 // '{0}' modifier cannot appear on an 'await using' declaration
         | 1275 // 'accessor' modifier can only appear on a property declaration
         | 1276 // An 'accessor' property cannot be declared optional
+        | 1155 // '{0}' declarations must be initialized
         | 1156 // '{0}' declarations can only be declared inside a block
         | 1313 // The body of an 'if' statement cannot be the empty statement
         | 1358 // Tagged template expressions are not permitted in an optional chain
