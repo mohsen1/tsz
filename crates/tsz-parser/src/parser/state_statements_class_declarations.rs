@@ -1101,16 +1101,16 @@ impl ParserState {
 
         if self.is_token(SyntaxKind::OpenParenToken) || self.is_token(SyntaxKind::OpenBracketToken)
         {
-            let start_pos = self.token_pos();
-            let invalid_ref = self.parse_heritage_type_reference();
-            let end_pos = self.token_end();
-            self.parse_error_at(
-                start_pos,
-                end_pos - start_pos,
-                "An interface can only extend an identifier/qualified-name with optional type arguments.",
-                diagnostic_codes::AN_INTERFACE_CAN_ONLY_EXTEND_AN_IDENTIFIER_QUALIFIED_NAME_WITH_OPTIONAL_TYPE_ARG,
-            );
-            return invalid_ref;
+            // A parenthesized or bracketed heritage expression is not a valid
+            // interface base. Parse it as a heritage expression for recovery
+            // and let the checker's generic heritage walk (`heritage.rs`) own
+            // the TS2499 grammar diagnostic. The checker already rejects every
+            // non-identifier/qualified-name heritage node, so having the parser
+            // report it here too produced a parser+checker double-report that a
+            // position-keyed dedup then had to strip. tsc emits TS2499 exactly
+            // once, from its checker-side grammar check; make the checker the
+            // single owner rather than coordinating two emission sites (#16279).
+            return self.parse_heritage_type_reference();
         }
 
         if matches!(

@@ -202,29 +202,15 @@ pub(super) fn post_process_checker_diagnostics(
     // above — exactly tsc's `hasParseDiagnostics` short-circuit, with no
     // message-text matching (#16279).
 
-    // TS2499 ("An interface can only extend an identifier/qualified-name
-    // with optional type arguments") is grammar-decidable at parse time for
-    // a parenthesized or bracketed heritage expression
-    // (`interface I extends (1 + 2) {}`), and the parser
-    // (`parse_interface_heritage_type_reference`) already reports it there
-    // at tsc's own position. The checker's independent, more general
-    // heritage walk (`heritage.rs`) does not know the parser already
-    // flagged that exact node — it structurally rejects anything that is
-    // not an identifier/qualified-name chain — so it reports TS2499 again
-    // for the same span. tsc emits this diagnostic exactly once; drop the
-    // checker's copy wherever a parser TS2499 already covers the same
-    // position, keeping any TS2499 the checker alone finds (e.g. non-paren
-    // heritage shapes the parser's grammar check does not special-case).
-    let parser_ts2499_positions: std::collections::HashSet<u32> = file
-        .parse_diagnostics
-        .iter()
-        .filter(|d| d.code == 2499)
-        .map(|d| d.start)
-        .collect();
-    if !parser_ts2499_positions.is_empty() {
-        checker_diagnostics
-            .retain(|diag| diag.code != 2499 || !parser_ts2499_positions.contains(&diag.start));
-    }
+    // TS2499 ("An interface can only extend an identifier/qualified-name with
+    // optional type arguments") is owned solely by the checker's generic
+    // heritage walk (`heritage.rs`), which rejects every non-identifier/
+    // qualified-name heritage node — a superset of the parenthesized/bracketed
+    // shape the parser used to special-case. The parser no longer reports it,
+    // so there is no parser+checker double-report to dedup here; the single
+    // checker copy is suppressed under a real syntax error by the
+    // `program_has_real_syntax_errors` keep-gate above, matching tsc's
+    // `hasParseDiagnostics` short-circuit (#16279).
 
     // When TS5107/TS5101 deprecation diagnostics are present, suppress the most
     // common type relationship errors that tsc would not emit. Parser errors
