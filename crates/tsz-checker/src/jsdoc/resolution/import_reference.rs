@@ -29,6 +29,12 @@ impl<'a> CheckerState<'a> {
                     // `report_missing_import_type_member`, which the
                     // string-based JSDoc parse path cannot reach directly.
                     //
+                    // `namespace_display` is already fully quoted-and-dotted
+                    // (`"mod"` or `"mod".NS`) by the producer below — a
+                    // qualified-chain failure needs the dotted-namespace-prefix
+                    // segments to appear *outside* the quotes, which a blanket
+                    // wrap here cannot express.
+                    //
                     // This coarse anchor (caller-supplied, typically the
                     // enclosing comment or declaration start) and full-length
                     // span are a fallback for callers that have not adopted
@@ -75,8 +81,9 @@ impl<'a> CheckerState<'a> {
     ///
     /// `namespace_display` is the fully formatted namespace for the message —
     /// the quoted module name (`"m"`), qualified with any declared
-    /// dotted-typedef prefix (`"m".Dotted`) — and `member` is the first
-    /// segment that failed under it; callers substitute both verbatim.
+    /// dotted-typedef prefix (`"m".Dotted`) or resolved namespace-symbol
+    /// prefix (`"m".NS`) — and `member` is the first segment that failed
+    /// under it; callers substitute both verbatim.
     pub(crate) fn resolve_jsdoc_import_type_member_result(
         &mut self,
         type_expr: &str,
@@ -99,15 +106,25 @@ impl<'a> CheckerState<'a> {
         {
             return Some(Ok(typedef_type));
         }
-        // The head segment drives export/class resolution — tsc resolves a
-        // qualified path progressively, so a non-typedef qualified path
-        // falls back to its head segment for the lookups below. The full
-        // path is kept for the TS2694 report, which qualifies its namespace
-        // display with any declared dotted-typedef prefix.
         let full_member_path = member_name;
-        let member_name: &str = full_member_path
-            .split_once('.')
-            .map_or(full_member_path.as_str(), |(head, _tail)| head);
+        // A qualified reference (`A.B[.C…]`) that isn't a declared dotted
+        // `@typedef` needs *namespace*-meaning resolution for every segment
+        // but the last: tsc only walks past a qualifier when it names a
+        // real namespace/module symbol, not any type-eligible export. A
+        // class/interface/type-alias head is not eligible as a further
+        // qualifier and fails immediately, blaming the head segment —
+        // oracle-verified (typescript@7.0.2) against the single-segment
+        // failure shape, not a `Head.Tail`-qualified one. Delegated to a
+        // dedicated resolver so the (already correct, more common)
+        // single-segment path below is untouched. (#17181)
+        if full_member_path.contains('.') {
+            return Some(self.resolve_jsdoc_import_type_qualified_chain(
+                &module_specifier,
+                &full_member_path,
+                resolution_mode,
+            ));
+        }
+        let member_name: &str = full_member_path.as_str();
         if let Some(sym_id) = self.resolve_jsdoc_import_member_with_mode(
             &module_specifier,
             member_name,
@@ -155,31 +172,39 @@ impl<'a> CheckerState<'a> {
                 return Some(Ok(resolved));
             }
         }
-        // tsc names the module by its resolved file path (the module symbol's
-        // name), so a relative import whose resolved path differs from the
-        // written specifier — index resolution (`./pkg` -> `pkg/index`), parent
-        // traversal — must render the resolved path, matching the TS-syntax
-        // `import(...).Member` path. Non-relative and unresolved specifiers keep
-        // the existing display (which owns the careful `node_modules`/ambient
-        // forms). (#17177)
+        Some(Err(self.jsdoc_import_type_missing_member_display(
+            &module_specifier,
+            full_member_path.as_str(),
+        )))
+    }
+
+    /// Build the `(namespace_display, missing_member)` pair for a JSDoc
+    /// import-type reference whose (single-segment) member failed to
+    /// resolve as any type-eligible export, CommonJS expando, or `@typedef`.
+    ///
+    /// tsc names the module by its resolved file path, not the written
+    /// specifier (#17177), and when a leading portion of `full_member_path`
+    /// names a namespace synthesized by dotted `@typedef`/`@callback`
+    /// declarations, qualifies the namespace display with that declared
+    /// prefix (#17162): `Dotted.Missing` with a declared `Dotted.Name`
+    /// reports `Namespace '"m".Dotted' has no exported member 'Missing'`,
+    /// not the unqualified root. When no declared name starts with the
+    /// reference's head segment, the display stays unqualified.
+    fn jsdoc_import_type_missing_member_display(
+        &mut self,
+        module_specifier: &str,
+        full_member_path: &str,
+    ) -> (String, String) {
         let is_relative = module_specifier.starts_with("./") || module_specifier.starts_with("../");
         let namespace_name = is_relative
-            .then(|| self.resolved_import_type_module_path(&module_specifier, None))
+            .then(|| self.resolved_import_type_module_path(module_specifier, None))
             .flatten()
-            .unwrap_or_else(|| self.imported_namespace_display_module_name(&module_specifier));
-        // When a leading portion of a dotted reference names a namespace
-        // synthesized by dotted `@typedef`/`@callback` declarations
-        // (`Dotted.Missing` with a declared `Dotted.Name`), tsc reports the
-        // first segment missing *under* that namespace and qualifies the
-        // namespace display accordingly (oracle-verified:
-        // `Namespace '"m".Dotted' has no exported member 'Missing'`). When no
-        // declared name starts with the reference's head segment, the display
-        // stays unqualified and names the root segment. (#17162)
+            .unwrap_or_else(|| self.imported_namespace_display_module_name(module_specifier));
         let segments: Vec<&str> = full_member_path.split('.').collect();
         let mut prefix_len = 0usize;
         for candidate_len in (1..segments.len()).rev() {
             if self.import_type_jsdoc_typedef_namespace_prefix_exists(
-                &module_specifier,
+                module_specifier,
                 &segments[..candidate_len].join("."),
                 None,
             ) {
@@ -192,7 +217,110 @@ impl<'a> CheckerState<'a> {
         } else {
             format!("\"{namespace_name}\".{}", segments[..prefix_len].join("."))
         };
-        Some(Err((namespace_display, segments[prefix_len].to_string())))
+        (namespace_display, segments[prefix_len].to_string())
+    }
+
+    /// Resolve a qualified (multi-segment, non-typedef) JSDoc
+    /// `import("./mod").A.B[.C…]` member reference once the whole-chain
+    /// `@typedef` lookup has already missed.
+    ///
+    /// tsc requires every segment but the last to resolve in *namespace*
+    /// meaning: the head (and each intermediate segment) must be a real
+    /// namespace/module symbol whose own export table supplies the next
+    /// segment. A class/interface/type-alias/enum head has no such meaning,
+    /// so the reference fails at the head — falling through to the same
+    /// resolved-path/declared-prefix-qualified display every other missing
+    /// member uses, exactly like a single-segment miss (oracle:
+    /// typescript@7.0.2, `import("./mod").SomeClass.Member` reports
+    /// `Namespace '"mod"' has no exported member 'SomeClass'`, never a
+    /// `'SomeClass.Member'`-qualified failure on `Member`). When the head
+    /// genuinely is a namespace, tsc keeps walking and, on a failure deeper
+    /// in the chain, qualifies the namespace display with the segments that
+    /// did resolve (`Namespace '"mod".NS' has no exported member
+    /// 'Missing'`).
+    fn resolve_jsdoc_import_type_qualified_chain(
+        &mut self,
+        module_specifier: &str,
+        qualified_member_name: &str,
+        resolution_mode: Option<crate::context::ResolutionModeOverride>,
+    ) -> Result<TypeId, (String, String)> {
+        let segments: Vec<&str> = qualified_member_name.split('.').collect();
+        let head = segments[0];
+
+        let Some(mut current_sym) =
+            self.resolve_jsdoc_import_member_with_mode(module_specifier, head, resolution_mode)
+        else {
+            return Err(self.jsdoc_import_type_missing_member_display(
+                module_specifier,
+                qualified_member_name,
+            ));
+        };
+        let is_namespace_like = |checker: &Self, sym| {
+            checker
+                .get_cross_file_symbol(sym)
+                .or_else(|| checker.ctx.binder.get_symbol(sym))
+                .is_some_and(|symbol| {
+                    symbol.flags
+                        & (tsz_binder::symbol_flags::NAMESPACE_MODULE
+                            | tsz_binder::symbol_flags::VALUE_MODULE)
+                        != 0
+                })
+        };
+        if !is_namespace_like(&*self, current_sym) {
+            return Err(self.jsdoc_import_type_missing_member_display(
+                module_specifier,
+                qualified_member_name,
+            ));
+        }
+
+        let is_relative = module_specifier.starts_with("./") || module_specifier.starts_with("../");
+        let namespace_name = is_relative
+            .then(|| self.resolved_import_type_module_path(module_specifier, None))
+            .flatten()
+            .unwrap_or_else(|| self.imported_namespace_display_module_name(module_specifier));
+
+        let mut resolved_segments = vec![head];
+        for segment in &segments[1..] {
+            let Some(symbol) = self
+                .get_cross_file_symbol(current_sym)
+                .or_else(|| self.ctx.binder.get_symbol(current_sym))
+            else {
+                return Err((
+                    format!("\"{namespace_name}\".{}", resolved_segments.join(".")),
+                    (*segment).to_string(),
+                ));
+            };
+            let Some(next_sym) = symbol
+                .exports
+                .as_ref()
+                .and_then(|exports| exports.get(segment))
+                .or_else(|| {
+                    symbol
+                        .members
+                        .as_ref()
+                        .and_then(|members| members.get(segment))
+                })
+            else {
+                return Err((
+                    format!("\"{namespace_name}\".{}", resolved_segments.join(".")),
+                    (*segment).to_string(),
+                ));
+            };
+            current_sym = next_sym;
+            resolved_segments.push(segment);
+        }
+
+        let resolved =
+            self.resolve_jsdoc_symbol_type_with_mode(current_sym, JsdocNameMode::BareTypeReference);
+        if resolved != TypeId::ERROR && resolved != TypeId::UNKNOWN {
+            Ok(resolved)
+        } else {
+            let last = resolved_segments.pop().unwrap_or(head);
+            Err((
+                format!("\"{namespace_name}\".{}", resolved_segments.join(".")),
+                last.to_string(),
+            ))
+        }
     }
 
     pub(crate) fn resolve_jsdoc_typeof_import_reference_parts(
