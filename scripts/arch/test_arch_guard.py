@@ -1530,5 +1530,87 @@ class ArchGuardAllowlistRatchetCoverageTests(unittest.TestCase):
         self.assertEqual(gap, [rel])
 
 
+class ArchGuardCeilingContractLimitTests(unittest.TestCase):
+    """Cover the "no ceiling may legalize crossing 2000 lines" invariant (#17295).
+
+    `.claude/CLAUDE.md` caps hand-authored files at 2000 physical lines, but
+    `FILE_LINE_LIMIT_CHECKS` enforces per-file ceilings instead, and most sit
+    above 2000 — a local ceiling legalizing exactly the growth the contract
+    forbids. `scan_ceiling_contract_violations` freezes every over-limit
+    ceiling at its recorded `LEGACY_CEILING_DEBT` value: a new ceiling above
+    2000 is always a violation, and an existing one may only be lowered.
+    """
+
+    def setUp(self):
+        self.arch_guard = load_arch_guard_module()
+
+    def test_main_has_no_ceiling_contract_violations(self):
+        """Every live FILE_LINE_LIMIT_CHECKS ceiling is <=2000 or frozen debt."""
+        violations = self.arch_guard.scan_ceiling_contract_violations()
+        self.assertEqual(
+            violations,
+            [],
+            "FILE_LINE_LIMIT_CHECKS ceilings that cross the 2000-line "
+            "contract limit without a matching frozen LEGACY_CEILING_DEBT "
+            "entry: " + ", ".join(violations),
+        )
+
+    def test_ceiling_at_or_under_limit_is_never_flagged(self):
+        """A ceiling <=2000 needs no legacy-debt entry at all."""
+        violations = self.arch_guard.scan_ceiling_contract_violations(
+            checks=[("Demo ratchet", ROOT / "crates/tsz-demo/src/lib.rs", 2000)],
+            legacy_debt={},
+        )
+        self.assertEqual(violations, [])
+
+    def test_new_ceiling_above_limit_with_no_debt_entry_is_flagged(self):
+        """A fresh ceiling above 2000 is rejected outright."""
+        violations = self.arch_guard.scan_ceiling_contract_violations(
+            checks=[("Demo ratchet", ROOT / "crates/tsz-demo/src/lib.rs", 2001)],
+            legacy_debt={},
+        )
+        self.assertEqual(len(violations), 1)
+        self.assertIn("crates/tsz-demo/src/lib.rs", violations[0])
+        self.assertIn("no LEGACY_CEILING_DEBT entry", violations[0])
+
+    def test_legacy_ceiling_at_frozen_value_passes(self):
+        """A legacy over-limit ceiling matching its frozen value is fine."""
+        rel = "crates/tsz-demo/src/lib.rs"
+        violations = self.arch_guard.scan_ceiling_contract_violations(
+            checks=[("Demo ratchet", ROOT / rel, 2500)],
+            legacy_debt={rel: 2500},
+        )
+        self.assertEqual(violations, [])
+
+    def test_legacy_ceiling_lowered_below_frozen_value_passes(self):
+        """Paying down a legacy ceiling (still above 2000) stays clean."""
+        rel = "crates/tsz-demo/src/lib.rs"
+        violations = self.arch_guard.scan_ceiling_contract_violations(
+            checks=[("Demo ratchet", ROOT / rel, 2400)],
+            legacy_debt={rel: 2500},
+        )
+        self.assertEqual(violations, [])
+
+    def test_legacy_ceiling_raised_above_frozen_value_is_flagged(self):
+        """Raising an existing over-limit ceiling is the exact regression #17295 reports."""
+        rel = "crates/tsz-demo/src/lib.rs"
+        violations = self.arch_guard.scan_ceiling_contract_violations(
+            checks=[("Demo ratchet", ROOT / rel, 2600)],
+            legacy_debt={rel: 2500},
+        )
+        self.assertEqual(len(violations), 1)
+        self.assertIn(rel, violations[0])
+        self.assertIn("may only be lowered, never raised", violations[0])
+
+    def test_legacy_ceiling_paid_down_to_or_under_limit_needs_no_ledger_edit(self):
+        """Once a legacy ceiling drops to <=2000 the stale debt entry is inert."""
+        rel = "crates/tsz-demo/src/lib.rs"
+        violations = self.arch_guard.scan_ceiling_contract_violations(
+            checks=[("Demo ratchet", ROOT / rel, 2000)],
+            legacy_debt={rel: 2500},
+        )
+        self.assertEqual(violations, [])
+
+
 if __name__ == "__main__":
     unittest.main()
