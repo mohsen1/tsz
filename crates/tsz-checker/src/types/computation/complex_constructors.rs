@@ -178,7 +178,8 @@ impl<'a> CheckerState<'a> {
         let return_type = if return_type_node.is_some() {
             self.get_type_from_type_node(return_type_node)
         } else if let Some(jsdoc) = func_jsdoc.as_ref() {
-            self.resolve_jsdoc_return_type(jsdoc).unwrap_or(TypeId::ANY)
+            self.resolve_jsdoc_return_type(jsdoc, comment_start)
+                .unwrap_or(TypeId::ANY)
         } else {
             TypeId::ANY
         };
