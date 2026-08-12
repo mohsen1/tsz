@@ -372,6 +372,9 @@ impl<'a> CheckerContext<'a> {
             .type_arg_constraint_relation_successes
             .clear();
         self.type_reference_validation_caches
+            .explicit_alias_constraint_relation_successes
+            .clear();
+        self.type_reference_validation_caches
             .ref_type_params
             .clear();
         self.type_reference_validation_caches

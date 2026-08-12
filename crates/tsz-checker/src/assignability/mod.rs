@@ -13,6 +13,7 @@ mod assignability_relation;
 mod assignability_type_param_helpers;
 pub mod assignment_checker;
 mod awaited_variance_normalization;
+mod cached_constraint_relation_helpers;
 mod callable_union_relation;
 pub(crate) mod compound_assignment;
 mod conditional_infer_alias_helpers;

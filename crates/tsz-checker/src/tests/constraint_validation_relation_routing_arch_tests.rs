@@ -57,9 +57,10 @@ fn generic_constraint_validation_regular_checks_use_relation_outcome_boundary() 
 #[test]
 fn successful_type_arg_constraint_relations_are_file_local_cached() {
     let relation_source = fs::read_to_string(
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("src/assignability/relation_outcome_helpers.rs"),
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("src/assignability/cached_constraint_relation_helpers.rs"),
     )
-    .expect("failed to read relation_outcome_helpers.rs");
+    .expect("failed to read cached_constraint_relation_helpers.rs");
     let caches_source =
         fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("src/context/caches.rs"))
             .expect("failed to read caches.rs");
@@ -78,6 +79,36 @@ fn successful_type_arg_constraint_relations_are_file_local_cached() {
             && reset_source.contains(".clear()"),
         "successful type-argument constraint relation probes should be cached by \
          prepared source/target plus relation mode, while failures keep the real \
+         diagnostic relation path"
+    );
+}
+
+#[test]
+fn successful_explicit_alias_constraint_relations_are_file_local_cached() {
+    let relation_source = fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("src/assignability/cached_constraint_relation_helpers.rs"),
+    )
+    .expect("failed to read cached_constraint_relation_helpers.rs");
+    let caches_source =
+        fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("src/context/caches.rs"))
+            .expect("failed to read caches.rs");
+    let reset_source = fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("src/context/file_session_reset.rs"),
+    )
+    .expect("failed to read file_session_reset.rs");
+
+    assert!(
+        caches_source.contains("explicit_alias_constraint_relation_successes")
+            && relation_source.contains("explicit_alias_constraint_relation_successes")
+            && relation_source.contains("pack_relation_flags")
+            && relation_source.contains("sound_mode")
+            && relation_source.contains("outcome.related")
+            && reset_source.contains("explicit_alias_constraint_relation_successes")
+            && reset_source.contains(".clear()"),
+        "successful explicit-alias constraint relation probes should be cached by \
+         prepared source/target plus relation mode (#15729), mirroring \
+         type_arg_constraint_relation_successes, while failures keep the real \
          diagnostic relation path"
     );
 }
