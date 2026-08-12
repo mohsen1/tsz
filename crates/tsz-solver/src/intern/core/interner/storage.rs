@@ -337,6 +337,21 @@ where
         }
     }
 
+    /// Insert a value under a fresh id WITHOUT registering it in the dedup
+    /// map. Used for entries whose identity carries out-of-band data (e.g. a
+    /// display mask stored beside the arena): a structurally equal value
+    /// interned through `intern` must never resolve to this id, and vice
+    /// versa. Callers own dedup among unique-inserted entries.
+    pub(in crate::intern::core) fn insert_unique(&self, value_arc: Arc<T>) -> u32 {
+        let inner = self.get_inner();
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        let mut vec = tsz_common::perf_counters::time_shard_write(0, || {
+            inner.items.write_unpoisoned("interner.items")
+        });
+        write_id_slot(&mut vec, id as usize, Arc::clone(&value_arc), || value_arc);
+        id
+    }
+
     #[inline]
     pub(in crate::intern::core) fn get(&self, id: u32) -> Option<Arc<T>> {
         let vec = self.inner.get()?.items.read().ok()?;

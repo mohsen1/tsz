@@ -73,7 +73,8 @@ impl<T: TypeDatabase + ?Sized> TypeStore for T {
 }
 
 pub use super::db_base_traits::{
-    TypeCompilerOptions, TypePredicateCache, TypeRawIntersectionConstruction, TypeTupleLimitSignal,
+    JsSignatureDisplaySource, TypeCompilerOptions, TypePredicateCache,
+    TypeRawIntersectionConstruction, TypeTupleLimitSignal,
 };
 
 /// Per-file cache hooks for evaluated generic applications.
@@ -431,7 +432,8 @@ pub trait TypeBuiltinAccess {
 /// This keeps solver components generic and prevents them from reaching
 /// into concrete storage structures directly.
 pub trait TypeDatabase:
-    TypeBuiltinAccess
+    JsSignatureDisplaySource
+    + TypeBuiltinAccess
     + TypePredicateCache
     + TypeTupleLimitSignal
     + TypeDisplayProvenance
@@ -847,6 +849,16 @@ impl TypeTupleLimitSignal for TypeInterner {
 
     fn is_poisoned(&self) -> bool {
         Self::is_poisoned(self)
+    }
+}
+
+impl JsSignatureDisplaySource for TypeInterner {
+    fn function_with_arity_optional_mask(&self, shape: FunctionShape, mask: &[bool]) -> TypeId {
+        Self::function_with_arity_optional_mask(self, shape, mask)
+    }
+
+    fn function_shape_arity_optional_mask(&self, id: FunctionShapeId) -> Option<Arc<[bool]>> {
+        Self::function_shape_arity_optional_mask(self, id)
     }
 }
 

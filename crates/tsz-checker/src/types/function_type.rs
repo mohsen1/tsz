@@ -2,6 +2,7 @@
 mod contextual_arity;
 mod function_name_diagnostics;
 mod generator_declaration_yield;
+mod js_param_display;
 mod js_prototype;
 mod jsx_body_context;
 mod literal_context;
@@ -153,6 +154,10 @@ impl<'a> CheckerState<'a> {
         }
 
         let mut params = Vec::new();
+        // Parallel to `params`: true where the parameter's `optional` bit
+        // exists only for JS call-arity leniency (bare, unannotated JS
+        // parameter). Such parameters DISPLAY as required, matching tsc.
+        let mut arity_only_optional_params: Vec<bool> = Vec::new();
         let mut param_types: Vec<Option<TypeId>> = Vec::new();
         let mut destructuring_context_param_types: Vec<Option<TypeId>> = Vec::new();
         let mut this_type = None;
@@ -1093,25 +1098,18 @@ impl<'a> CheckerState<'a> {
                         );
                     }
                 }
-                // In JS files, params without type annotations are implicitly optional
-                // unless a JSDoc @param tag or @type function annotation exists.
-                let js_implicit_optional = self.is_js_file()
-                    && !has_jsdoc_type_function
-                    && param.type_annotation.is_none()
-                    && !{
-                        let jsdoc_for_opt = func_jsdoc
-                            .as_ref()
-                            .cloned()
-                            .or_else(|| self.find_jsdoc_for_function(idx));
-                        jsdoc_for_opt.is_some_and(|jsdoc| {
-                            let pname = self.effective_jsdoc_param_name(
-                                param.name,
-                                &jsdoc_param_names,
-                                contextual_index,
-                            );
-                            Self::jsdoc_has_required_param_tag(&jsdoc, &pname)
-                        })
-                    };
+                // In JS files, params without type annotations are implicitly
+                // optional for call arity, but only genuine optional markers
+                // display `?` (see `js_param_display`).
+                let param_optionality = self.js_param_optionality(
+                    idx,
+                    param,
+                    has_jsdoc_type_function,
+                    func_jsdoc.as_deref(),
+                    &jsdoc_param_names,
+                    contextual_index,
+                );
+                let js_implicit_optional = param_optionality.implicit_optional;
                 let optional =
                     param.question_token || param.initializer.is_some() || js_implicit_optional;
                 let rest = param.dot_dot_dot_token
@@ -1168,6 +1166,7 @@ impl<'a> CheckerState<'a> {
                 params.push(signature_building_boundary::param_info(
                     name, type_id, optional, rest,
                 ));
+                arity_only_optional_params.push(param_optionality.arity_only_optional);
                 let cached_type = if needs_undefined && self.ctx.strict_null_checks() {
                     signature_building_boundary::optional_param_type_with_undefined(
                         self.ctx.types,
@@ -1187,10 +1186,9 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // JS files: if the function has no AST parameters but its body references
-        // `arguments`, synthesize a call signature from JSDoc `@param` tags so that
-        // calls are checked against the declared JSDoc parameter types.
-        // Mirrors tsc's `getSignatureFromDeclaration` JSDoc fallback.
+        // JS files: a function with no AST parameters whose body references
+        // `arguments` synthesizes a signature from JSDoc `@param` tags (see
+        // `js_param_display`), mirroring tsc's JSDoc fallback.
         if parameters.nodes.is_empty()
             && params.is_empty()
             && self.is_js_file()
@@ -1198,38 +1196,7 @@ impl<'a> CheckerState<'a> {
             && !Self::jsdoc_contains_tag(jsdoc, "callback")
             && self.body_has_arguments_reference(body)
         {
-            let function_has_name = self.function_has_effective_name(idx);
-            let comment_pos = self.get_jsdoc_comment_pos_for_function(idx);
-            for (pname, _) in Self::extract_jsdoc_param_names(jsdoc) {
-                if pname == "this" {
-                    continue;
-                }
-                let is_rest = Self::jsdoc_param_is_rest(jsdoc, &pname);
-                // tsc only promotes {...T} → T[] when the function has an
-                // effective name; anonymous expressions leave the type as T
-                // and TS8029 is emitted by check_jsdoc_param_tag_names.
-                if is_rest && !function_has_name {
-                    continue;
-                }
-                let is_optional = Self::is_jsdoc_param_optional_by_brackets(jsdoc, &pname)
-                    || Self::extract_jsdoc_param_type_string(jsdoc, &pname)
-                        .is_some_and(|t| t.trim().ends_with('='));
-                let Some(type_id) =
-                    self.resolve_jsdoc_param_type_with_pos(jsdoc, &pname, comment_pos)
-                else {
-                    continue;
-                };
-                // `resolve_jsdoc_param_type_with_pos` already strips the `...` prefix
-                // and returns the element type. For rest params we store the element
-                // type and set `rest: true`, matching the AST-param JSDoc path.
-                let name = self.ctx.types.intern_string(&pname);
-                params.push(signature_building_boundary::param_info(
-                    Some(name),
-                    type_id,
-                    is_optional,
-                    is_rest,
-                ));
-            }
+            self.jsdoc_arguments_fallback_params(idx, jsdoc, &mut params);
         }
 
         // Record that we've checked this closure for implicit-any diagnostics so
@@ -1961,6 +1928,14 @@ impl<'a> CheckerState<'a> {
         } else {
             params
         };
+        // Appended synthetic params (JSDoc `arguments` fallback, synthesized
+        // rest) are not arity-only optional; contextually inherited params
+        // replace the list wholesale (misaligned mask -> plain intern).
+        if inherited_contextual_generics {
+            arity_only_optional_params.clear();
+        } else {
+            arity_only_optional_params.resize(params.len(), false);
+        }
         let signature = signature_building_boundary::call_signature(
             type_params,
             params,
@@ -1969,11 +1944,13 @@ impl<'a> CheckerState<'a> {
             type_predicate,
             false,
         );
-        let mut function_type = signature_construction::function_type_from_call_signature(
-            self.ctx.types,
-            &signature,
-            js_constructor_instance_type.is_some(),
-        );
+        let mut function_type =
+            signature_construction::function_type_from_call_signature_with_arity_optional_mask(
+                self.ctx.types,
+                &signature,
+                js_constructor_instance_type.is_some(),
+                &arity_only_optional_params,
+            );
         if self.is_js_file()
             && is_function_declaration
             && let (Some(name), Some(sym_id)) = (

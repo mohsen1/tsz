@@ -140,7 +140,7 @@ impl<'a> TypeFormatter<'a> {
             }
             TypeData::Function(shape_id) => {
                 let shape = self.interner.function_shape(*shape_id);
-                self.format_function(shape.as_ref()).into()
+                self.format_function(*shape_id, shape.as_ref()).into()
             }
             TypeData::Callable(shape_id) => {
                 let shape = self.interner.callable_shape(*shape_id);
