@@ -1002,6 +1002,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             .params
             .iter()
             .map(|p| ParamInfo {
+                suppress_display_optional: false,
                 name: p.name,
                 type_id: instantiate_type(self.interner, p.type_id, substitution),
                 optional: p.optional,
@@ -1392,6 +1393,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 .params
                 .iter()
                 .map(|p| ParamInfo {
+                    suppress_display_optional: false,
                     name: p.name,
                     type_id: instantiate_type(self.interner, p.type_id, &rename_substitution),
                     optional: p.optional,

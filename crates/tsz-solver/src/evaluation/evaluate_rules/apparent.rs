@@ -15,6 +15,7 @@ use super::super::evaluate::TypeEvaluator;
 pub(crate) fn make_apparent_method_type(db: &dyn TypeDatabase, return_type: TypeId) -> TypeId {
     let rest_array = db.array(TypeId::ANY);
     let rest_param = ParamInfo {
+        suppress_display_optional: false,
         name: None,
         type_id: rest_array,
         optional: false,

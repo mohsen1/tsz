@@ -40,7 +40,7 @@ fn rest_function_full(
 ) -> TypeId {
     interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("values")),
             type_id: rest_type,
             optional: false,
@@ -183,7 +183,7 @@ fn alpha_equivalent_local_generic_rests_accept_renamed_binders() {
     let generic_rest = |info, rest_type| {
         interner.function(FunctionShape {
             type_params: vec![info],
-            params: vec![ParamInfo {
+            params: vec![ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("values")),
                 type_id: rest_type,
                 optional: false,
@@ -590,7 +590,7 @@ fn bare_rest_visibility_query_covers_fixed_slots_and_union_rests() {
     let interner = TypeInterner::new();
     let unknown_array = interner.array(TypeId::UNKNOWN);
     let source_t = scoped_rest_param(&interner, "Pack", 30, unknown_array);
-    let source_params = vec![ParamInfo {
+    let source_params = vec![ParamInfo { suppress_display_optional: false,
         name: None,
         type_id: source_t,
         optional: false,
@@ -636,7 +636,7 @@ fn bare_rest_visibility_query_covers_fixed_slots_and_union_rests() {
         rest: true,
     }]);
     let union_rest = interner.union_preserve_members(vec![fixed, spread]);
-    let union_params = vec![ParamInfo {
+    let union_params = vec![ParamInfo { suppress_display_optional: false,
         name: None,
         type_id: union_rest,
         optional: false,
@@ -701,7 +701,7 @@ fn nested_overloaded_callable_tries_matching_source_after_rigid_rest_failure() {
     let interner = TypeInterner::new();
     let unknown_array = interner.array(TypeId::UNKNOWN);
     let pack = scoped_rest_param(&interner, "Pack", 40, unknown_array);
-    let rest_params = vec![ParamInfo {
+    let rest_params = vec![ParamInfo { suppress_display_optional: false,
         name: None,
         type_id: pack,
         optional: false,

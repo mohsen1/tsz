@@ -305,6 +305,7 @@ fn build_abstract_constructor_with_index_sig(
         call_signatures: Vec::new(),
         construct_signatures: vec![CallSignature::new(
             vec![ParamInfo {
+                suppress_display_optional: false,
                 name: Some(args),
                 type_id: interner.array(TypeId::ANY),
                 optional: false,

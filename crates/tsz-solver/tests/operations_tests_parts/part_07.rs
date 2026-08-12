@@ -31,7 +31,7 @@ fn test_call_generic_intersection_param_inference() {
     // (p: {dispatch: number} & OwnProps) => void
     let inner_fn_type = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("p")),
             type_id: intersection_param,
             optional: false,
@@ -47,7 +47,7 @@ fn test_call_generic_intersection_param_inference() {
     // Generic function: <OwnProps>(f: inner_fn_type) => OwnProps
     let generic_func = interner.function(FunctionShape {
         type_params: vec![own_props_param],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("f")),
             type_id: inner_fn_type,
             optional: false,
@@ -67,7 +67,7 @@ fn test_call_generic_intersection_param_inference() {
     )]);
     let arg_fn = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("props")),
             type_id: store_obj,
             optional: false,
@@ -122,7 +122,7 @@ fn test_trivial_identity_preserves_literal_with_contextual_type() {
     let t_type = interner.type_param(t_param);
     let identity = interner.function(FunctionShape {
         type_params: vec![t_param],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: t_type,
             optional: false,
@@ -448,13 +448,13 @@ fn test_union_new_different_param_types_rejects_any_arg() {
     // { new(a: number): number } | { new(a: string): Date }
     // Combined param type = number & string = never → every arg fails.
     let interner = TypeInterner::new();
-    let num_param = ParamInfo {
+    let num_param = ParamInfo { suppress_display_optional: false,
         name: None,
         type_id: TypeId::NUMBER,
         optional: false,
         rest: false,
     };
-    let str_param = ParamInfo {
+    let str_param = ParamInfo { suppress_display_optional: false,
         name: None,
         type_id: TypeId::STRING,
         optional: false,
@@ -501,13 +501,13 @@ fn test_union_new_different_param_counts_requires_max_args() {
     // { new(a: string): string } | { new(a: string, b: number): number }
     // Combined min_required = 2 (max of 1 and 2).
     let interner = TypeInterner::new();
-    let str_param = || ParamInfo {
+    let str_param = || ParamInfo { suppress_display_optional: false,
         name: None,
         type_id: TypeId::STRING,
         optional: false,
         rest: false,
     };
-    let num_param = ParamInfo {
+    let num_param = ParamInfo { suppress_display_optional: false,
         name: None,
         type_id: TypeId::NUMBER,
         optional: false,
@@ -560,7 +560,7 @@ fn test_union_new_same_return_types_correct_union() {
     // { new(a: number): string } | { new(a: number): number }
     // Combined: param = number, return = string | number.
     let interner = TypeInterner::new();
-    let num_param = || ParamInfo {
+    let num_param = || ParamInfo { suppress_display_optional: false,
         name: None,
         type_id: TypeId::NUMBER,
         optional: false,
@@ -593,13 +593,13 @@ fn test_union_new_all_fail_requires_all_member_success() {
     // Member 2 has multiple construct sigs → combined = None → strict per-member.
     // If member 1 fails (string arg), whole union fails.
     let interner = TypeInterner::new();
-    let num_param = || ParamInfo {
+    let num_param = || ParamInfo { suppress_display_optional: false,
         name: None,
         type_id: TypeId::NUMBER,
         optional: false,
         rest: false,
     };
-    let str_param = ParamInfo {
+    let str_param = ParamInfo { suppress_display_optional: false,
         name: None,
         type_id: TypeId::STRING,
         optional: false,
@@ -685,7 +685,7 @@ fn higher_order_generic_pipe_regeneralizes_through_shared_middle_placeholder() {
 
     let first_step = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("input")),
             type_id: a_type,
             optional: false,
@@ -699,7 +699,7 @@ fn higher_order_generic_pipe_regeneralizes_through_shared_middle_placeholder() {
     });
     let second_step = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("middle")),
             type_id: b_type,
             optional: false,
@@ -713,7 +713,7 @@ fn higher_order_generic_pipe_regeneralizes_through_shared_middle_placeholder() {
     });
     let piped_return = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("value")),
             type_id: a_type,
             optional: false,
@@ -728,13 +728,13 @@ fn higher_order_generic_pipe_regeneralizes_through_shared_middle_placeholder() {
     let pipe = interner.function(FunctionShape {
         type_params: vec![a_param, b_param, c_param],
         params: vec![
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("left")),
                 type_id: first_step,
                 optional: false,
                 rest: false,
             },
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("right")),
                 type_id: second_step,
                 optional: false,
@@ -766,7 +766,7 @@ fn higher_order_generic_pipe_regeneralizes_through_shared_middle_placeholder() {
     let y_type = interner.type_param(y_param);
     let list = interner.function(FunctionShape {
         type_params: vec![x_param],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("item")),
             type_id: x_type,
             optional: false,
@@ -780,7 +780,7 @@ fn higher_order_generic_pipe_regeneralizes_through_shared_middle_placeholder() {
     });
     let wrap = interner.function(FunctionShape {
         type_params: vec![y_param],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("entry")),
             type_id: y_type,
             optional: false,

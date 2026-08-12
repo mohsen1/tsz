@@ -32,19 +32,19 @@ fn make_array_test_env(
     let u_type = interner.intern(TypeData::TypeParameter(u_param));
     let map_callback = interner.function(FunctionShape {
         params: vec![
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("value")),
                 type_id: t_type,
                 optional: false,
                 rest: false,
             },
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("index")),
                 type_id: TypeId::NUMBER,
                 optional: false,
                 rest: false,
             },
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("array")),
                 type_id: interner.array(t_type),
                 optional: false,
@@ -60,13 +60,13 @@ fn make_array_test_env(
     });
     let map_func = interner.function(FunctionShape {
         params: vec![
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("callbackfn")),
                 type_id: map_callback,
                 optional: false,
                 rest: false,
             },
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("thisArg")),
                 type_id: TypeId::ANY,
                 optional: true,
@@ -83,7 +83,7 @@ fn make_array_test_env(
 
     // at(index: number): T | undefined
     let at_func = interner.function(FunctionShape {
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("index")),
             type_id: TypeId::NUMBER,
             optional: false,
@@ -126,25 +126,25 @@ fn make_array_test_env(
     use crate::types::CallSignature;
     let reduce_cb_1 = interner.function(FunctionShape {
         params: vec![
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("previousValue")),
                 type_id: t_type,
                 optional: false,
                 rest: false,
             },
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("currentValue")),
                 type_id: t_type,
                 optional: false,
                 rest: false,
             },
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("currentIndex")),
                 type_id: TypeId::NUMBER,
                 optional: false,
                 rest: false,
             },
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("array")),
                 type_id: interner.array(t_type),
                 optional: false,
@@ -159,7 +159,7 @@ fn make_array_test_env(
         is_method: false,
     });
     let reduce_sig_1 = CallSignature {
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("callbackfn")),
             type_id: reduce_cb_1,
             optional: false,
@@ -174,25 +174,25 @@ fn make_array_test_env(
     // reduce<U>(callbackfn: (prev: U, curr: T, idx: number, arr: T[]) => U, initialValue: U): U
     let reduce_cb_2 = interner.function(FunctionShape {
         params: vec![
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("previousValue")),
                 type_id: u_type,
                 optional: false,
                 rest: false,
             },
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("currentValue")),
                 type_id: t_type,
                 optional: false,
                 rest: false,
             },
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("currentIndex")),
                 type_id: TypeId::NUMBER,
                 optional: false,
                 rest: false,
             },
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("array")),
                 type_id: interner.array(t_type),
                 optional: false,
@@ -208,13 +208,13 @@ fn make_array_test_env(
     });
     let reduce_sig_2 = CallSignature {
         params: vec![
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("callbackfn")),
                 type_id: reduce_cb_2,
                 optional: false,
                 rest: false,
             },
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("initialValue")),
                 type_id: u_type,
                 optional: false,
@@ -482,13 +482,13 @@ fn test_property_access_array_indexof_preserves_nullable_element_type() {
 
     let index_of = interner.function(FunctionShape {
         params: vec![
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("searchElement")),
                 type_id: t_type,
                 optional: false,
                 rest: false,
             },
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("fromIndex")),
                 type_id: TypeId::NUMBER,
                 optional: true,
@@ -543,13 +543,13 @@ fn test_property_access_callable_array_indexof_preserves_nullable_element_type()
 
     let index_of = interner.function(FunctionShape {
         params: vec![
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("searchElement")),
                 type_id: t_type,
                 optional: false,
                 rest: false,
             },
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("fromIndex")),
                 type_id: TypeId::NUMBER,
                 optional: true,
@@ -999,7 +999,7 @@ fn test_call_generic_function_identity() {
     // function identity<T>(x: T): T
     let func = interner.function(FunctionShape {
         type_params: vec![t_param],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: t_type,
             optional: false,
@@ -1039,7 +1039,7 @@ fn test_call_generic_function_with_string() {
     // function identity<T>(x: T): T
     let func = interner.function(FunctionShape {
         type_params: vec![t_param],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: t_type,
             optional: false,
@@ -1078,7 +1078,7 @@ fn test_call_generic_argument_type_mismatch_with_default() {
 
     let func = interner.function(FunctionShape {
         type_params: vec![t_param],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: param_type,
             optional: false,
@@ -1122,13 +1122,13 @@ fn test_call_generic_direct_param_candidate_keeps_first_for_conflicting_literals
     let func = interner.function(FunctionShape {
         type_params: vec![t_param],
         params: vec![
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("x")),
                 type_id: t_type,
                 optional: false,
                 rest: false,
             },
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("y")),
                 type_id: t_type,
                 optional: false,
@@ -1172,7 +1172,7 @@ fn test_call_generic_argument_count_mismatch() {
 
     let func = interner.function(FunctionShape {
         type_params: vec![t_param],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: t_type,
             optional: false,
@@ -1230,7 +1230,7 @@ fn test_call_generic_rest_tuple_constraint_count_mismatch() {
 
     let func = interner.function(FunctionShape {
         type_params: vec![t_param],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("args")),
             type_id: t_type,
             optional: false,
@@ -1289,7 +1289,7 @@ fn test_call_generic_default_rest_tuple_count_mismatch() {
 
     let func = interner.function(FunctionShape {
         type_params: vec![t_param],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("args")),
             type_id: t_type,
             optional: false,
@@ -1342,7 +1342,7 @@ fn test_call_generic_rest_excess_args_detected_when_shared_type_param() {
 
     // handler: (...args: TS) => void
     let handler_fn = interner.function(FunctionShape {
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("args")),
             type_id: ts_type,
             optional: false,
@@ -1360,13 +1360,13 @@ fn test_call_generic_rest_excess_args_detected_when_shared_type_param() {
     let call_fn = interner.function(FunctionShape {
         type_params: vec![ts_param],
         params: vec![
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("handler")),
                 type_id: handler_fn,
                 optional: false,
                 rest: false,
             },
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("args")),
                 type_id: ts_type,
                 optional: false,
@@ -1383,13 +1383,13 @@ fn test_call_generic_rest_excess_args_detected_when_shared_type_param() {
     // The handler callback: (x: number, y: number) => number
     let handler_arg = interner.function(FunctionShape {
         params: vec![
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("x")),
                 type_id: TypeId::NUMBER,
                 optional: false,
                 rest: false,
             },
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("y")),
                 type_id: TypeId::NUMBER,
                 optional: false,
@@ -1454,7 +1454,7 @@ fn test_call_generic_default_rest_tuple_optional_allows_empty() {
 
     let func = interner.function(FunctionShape {
         type_params: vec![t_param],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("args")),
             type_id: t_type,
             optional: false,
@@ -1493,13 +1493,13 @@ fn test_call_generic_argument_type_mismatch_non_generic_param() {
     let func = interner.function(FunctionShape {
         type_params: vec![t_param],
         params: vec![
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("x")),
                 type_id: TypeId::NUMBER,
                 optional: false,
                 rest: false,
             },
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("y")),
                 type_id: t_type,
                 optional: false,
@@ -1549,7 +1549,7 @@ fn test_call_generic_callable_signature() {
         is_abstract: false,
         call_signatures: vec![CallSignature {
             type_params: vec![t_param],
-            params: vec![ParamInfo {
+            params: vec![ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("x")),
                 type_id: t_type,
                 optional: false,
@@ -1592,7 +1592,7 @@ fn test_call_generic_array_function() {
     // function first<T>(arr: T[]): T
     let func = interner.function(FunctionShape {
         type_params: vec![t_param],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("arr")),
             type_id: array_t,
             optional: false,
@@ -1630,7 +1630,7 @@ fn test_infer_call_signature_identity() {
 
     let sig = CallSignature {
         type_params: vec![t_param],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: t_type,
             optional: false,
@@ -1662,7 +1662,7 @@ fn test_infer_generic_function_identity() {
 
     let func = FunctionShape {
         type_params: vec![t_param],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: t_type,
             optional: false,

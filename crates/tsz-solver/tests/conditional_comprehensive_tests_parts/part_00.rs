@@ -912,7 +912,7 @@ fn test_conditional_infer_with_constrained_type_param_index_access() {
     // extends_type = (...args: any) => infer R
     let extends_fn = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("args")),
             type_id: TypeId::ANY,
             optional: false,
@@ -973,7 +973,7 @@ fn test_conditional_infer_with_type_param_check_type_stays_deferred() {
 
     let extends_fn = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("args")),
             type_id: TypeId::ANY,
             optional: false,
@@ -1024,7 +1024,7 @@ fn test_conditional_infer_concrete_check_type_takes_true_branch() {
 
     let extends_fn = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("args")),
             type_id: TypeId::ANY,
             optional: false,
@@ -1072,7 +1072,7 @@ fn test_conditional_infer_non_matching_concrete_takes_false_branch() {
 
     let extends_fn = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("args")),
             type_id: TypeId::ANY,
             optional: false,

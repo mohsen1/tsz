@@ -125,6 +125,7 @@ pub(crate) fn constructor_shape_with_mapped_parameter_types(
         .params
         .iter()
         .map(|param| ParamInfo {
+            suppress_display_optional: false,
             type_id: map_type(param.type_id),
             ..*param
         })

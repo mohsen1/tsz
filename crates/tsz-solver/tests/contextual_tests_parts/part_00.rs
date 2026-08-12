@@ -28,13 +28,13 @@ fn test_contextual_function_parameter() {
     let handler = interner.function(FunctionShape {
         type_params: vec![],
         params: vec![
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("e")),
                 type_id: TypeId::STRING,
                 optional: false,
                 rest: false,
             },
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("i")),
                 type_id: TypeId::NUMBER,
                 optional: false,
@@ -65,7 +65,7 @@ fn test_contextual_function_this_parameter() {
     // type Handler = (this: string, x: number) => void
     let handler = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::NUMBER,
             optional: false,
@@ -109,7 +109,7 @@ fn test_contextual_callable_signature() {
 
     let call_sig = CallSignature {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::STRING,
             optional: false,
@@ -143,7 +143,7 @@ fn test_contextual_callable_overload_union() {
 
     let call_sig_a = CallSignature {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::STRING,
             optional: false,
@@ -158,13 +158,13 @@ fn test_contextual_callable_overload_union() {
     let call_sig_b = CallSignature {
         type_params: vec![],
         params: vec![
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("x")),
                 type_id: TypeId::NUMBER,
                 optional: false,
                 rest: false,
             },
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("y")),
                 type_id: TypeId::BOOLEAN,
                 optional: false,
@@ -209,7 +209,7 @@ fn test_contextual_callable_overload_by_arity() {
 
     let call_sig_a = CallSignature {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::STRING,
             optional: false,
@@ -224,13 +224,13 @@ fn test_contextual_callable_overload_by_arity() {
     let call_sig_b = CallSignature {
         type_params: vec![],
         params: vec![
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("x")),
                 type_id: TypeId::NUMBER,
                 optional: false,
                 rest: false,
             },
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("y")),
                 type_id: TypeId::BOOLEAN,
                 optional: false,
@@ -268,7 +268,7 @@ fn test_contextual_function_rest_parameter() {
     let number_array = interner.array(TypeId::NUMBER);
     let fn_type = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("args")),
             type_id: number_array,
             optional: false,
@@ -438,7 +438,7 @@ fn test_contextual_for_parameter() {
     // (x: string) => void
     let fn_type = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::STRING,
             optional: false,
@@ -526,7 +526,7 @@ fn test_contextual_generic_call_union_preserves_literal() {
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
     let func = FunctionShape {
         type_params: vec![t_param],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: t_type,
             optional: false,
@@ -675,7 +675,7 @@ fn test_contextual_union_function_different_params_unions_types() {
     // ((x: string) => void) | ((x: number) => void) — different param types
     let fn1 = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::STRING,
             optional: false,
@@ -689,7 +689,7 @@ fn test_contextual_union_function_different_params_unions_types() {
     });
     let fn2 = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::NUMBER,
             optional: false,
@@ -728,7 +728,7 @@ fn test_conditional_function_branch_contextual_parameter_type() {
 
     let fn_true_branch = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::NUMBER,
             optional: false,
@@ -767,7 +767,7 @@ fn test_conditional_function_branch_contextual_type_for_call_argument() {
 
     let callback = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("n")),
             type_id: TypeId::NUMBER,
             optional: false,
@@ -782,7 +782,7 @@ fn test_conditional_function_branch_contextual_type_for_call_argument() {
 
     let true_branch = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("cb")),
             type_id: callback,
             optional: false,
@@ -807,7 +807,7 @@ fn test_conditional_function_branch_contextual_type_for_call_argument() {
     let callback_param = interner.intersection(vec![TypeId::NUMBER, t_param]);
     let expected_callback = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("n")),
             type_id: callback_param,
             optional: false,
@@ -835,7 +835,7 @@ fn test_contextual_union_function_same_params_different_returns() {
     // ((x: number) => string) | ((x: number) => number) — same param, different returns
     let fn1 = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::NUMBER,
             optional: false,
@@ -849,7 +849,7 @@ fn test_contextual_union_function_same_params_different_returns() {
     });
     let fn2 = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::NUMBER,
             optional: false,
@@ -878,7 +878,7 @@ fn test_contextual_union_non_callable_member_ignored() {
     // string | ((x: number) => void) — string has no call signatures
     let fn1 = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::NUMBER,
             optional: false,
@@ -905,7 +905,7 @@ fn test_contextual_union_arity_param_preserves_literal() {
     // ((x: string) => string) | ((x: string, y: number) => string)
     let fn_one = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::STRING,
             optional: false,
@@ -920,13 +920,13 @@ fn test_contextual_union_arity_param_preserves_literal() {
     let fn_two = interner.function(FunctionShape {
         type_params: vec![],
         params: vec![
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("x")),
                 type_id: TypeId::STRING,
                 optional: false,
                 rest: false,
             },
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("y")),
                 type_id: TypeId::NUMBER,
                 optional: false,
@@ -961,7 +961,7 @@ fn test_contextual_union_rest_param_preserves_literal() {
     // ((x: string) => string) | ((...args: string[]) => string)
     let fn_one = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::STRING,
             optional: false,
@@ -976,7 +976,7 @@ fn test_contextual_union_rest_param_preserves_literal() {
     let rest_array = interner.array(TypeId::STRING);
     let fn_rest = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("args")),
             type_id: rest_array,
             optional: false,
@@ -1016,7 +1016,7 @@ fn test_contextual_union_empty_param_preserves_literal() {
     });
     let fn_one = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::STRING,
             optional: false,
@@ -1047,7 +1047,7 @@ fn test_contextual_union_optional_param_preserves_literal() {
     // ((x?: string) => string) | ((x: string) => string)
     let fn_optional = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::STRING,
             optional: true,
@@ -1061,7 +1061,7 @@ fn test_contextual_union_optional_param_preserves_literal() {
     });
     let fn_required = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::STRING,
             optional: false,
@@ -1092,7 +1092,7 @@ fn test_contextual_union_function_param_return_preserves_literal() {
     // ((x: string) => string) | ((x: number) => number)
     let fn_string = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::STRING,
             optional: false,
@@ -1106,7 +1106,7 @@ fn test_contextual_union_function_param_return_preserves_literal() {
     });
     let fn_number = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::NUMBER,
             optional: false,
@@ -1139,7 +1139,7 @@ fn test_contextual_union_param_preserves_literal() {
     let union_param = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
     let fn_type = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: union_param,
             optional: false,
@@ -1179,7 +1179,7 @@ fn test_contextual_generic_function_parameter() {
     // <T>(x: T) => void
     let generic_fn = interner.function(FunctionShape {
         type_params: vec![t_param],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: t_type,
             optional: false,
@@ -1230,7 +1230,7 @@ fn test_contextual_callable_overload_no_implicit_any_false() {
 
     let call_sig_a = CallSignature {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::STRING,
             optional: false,
@@ -1244,7 +1244,7 @@ fn test_contextual_callable_overload_no_implicit_any_false() {
 
     let call_sig_b = CallSignature {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::NUMBER,
             optional: false,
@@ -1294,7 +1294,7 @@ fn test_contextual_property_union_with_undefined() {
     // { fn: (x: number) => void } | undefined
     let fn_type = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::NUMBER,
             optional: false,
@@ -1379,7 +1379,7 @@ fn test_variadic_tuple_call_single_arg_gets_tail_type() {
     // Build: (arg: number) => void
     let fn_number = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("arg")),
             type_id: TypeId::NUMBER,
             optional: false,
@@ -1395,7 +1395,7 @@ fn test_variadic_tuple_call_single_arg_gets_tail_type() {
     // Build: (arg: string) => void
     let fn_string = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("arg")),
             type_id: TypeId::STRING,
             optional: false,
@@ -1428,7 +1428,7 @@ fn test_variadic_tuple_call_single_arg_gets_tail_type() {
     // Build function: f(...args: Funcs)
     let f = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("args")),
             type_id: variadic_tuple,
             optional: false,
@@ -1455,7 +1455,7 @@ fn test_variadic_tuple_call_multiple_args_prefix_and_tail() {
 
     let fn_number = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("arg")),
             type_id: TypeId::NUMBER,
             optional: false,
@@ -1470,7 +1470,7 @@ fn test_variadic_tuple_call_multiple_args_prefix_and_tail() {
 
     let fn_string = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("arg")),
             type_id: TypeId::STRING,
             optional: false,
@@ -1501,7 +1501,7 @@ fn test_variadic_tuple_call_multiple_args_prefix_and_tail() {
 
     let f = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("args")),
             type_id: variadic_tuple,
             optional: false,
@@ -1624,7 +1624,7 @@ fn test_contextual_rest_param_from_tuple_rest() {
 
     let fn_type = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("values")),
             type_id: tuple_type,
             optional: false,
@@ -1656,19 +1656,19 @@ fn test_contextual_rest_param_from_individual_params() {
     let fn_type = interner.function(FunctionShape {
         type_params: vec![],
         params: vec![
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("a")),
                 type_id: TypeId::STRING,
                 optional: false,
                 rest: false,
             },
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("b")),
                 type_id: TypeId::NUMBER,
                 optional: false,
                 rest: false,
             },
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("c")),
                 type_id: TypeId::BOOLEAN,
                 optional: false,
@@ -1719,13 +1719,13 @@ fn test_contextual_rest_param_from_mixed_params() {
     let fn_type = interner.function(FunctionShape {
         type_params: vec![],
         params: vec![
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("a")),
                 type_id: TypeId::STRING,
                 optional: false,
                 rest: false,
             },
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("rest")),
                 type_id: number_array,
                 optional: false,

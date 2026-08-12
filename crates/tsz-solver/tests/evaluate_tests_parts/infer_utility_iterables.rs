@@ -9,7 +9,7 @@ fn test_infer_contravariant_callback_param() {
     // Inner callback pattern: (x: infer T) => void
     let callback_pattern = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: infer_t,
             optional: false,
@@ -25,7 +25,7 @@ fn test_infer_contravariant_callback_param() {
     // Outer pattern: (callback: CallbackPattern) => any
     let outer_pattern = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("callback")),
             type_id: callback_pattern,
             optional: false,
@@ -41,7 +41,7 @@ fn test_infer_contravariant_callback_param() {
     // Input callback: (x: number) => void
     let input_callback = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::NUMBER,
             optional: false,
@@ -57,7 +57,7 @@ fn test_infer_contravariant_callback_param() {
     // Input: (callback: InputCallback) => void
     let input_fn = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("callback")),
             type_id: input_callback,
             optional: false,
@@ -1101,7 +1101,7 @@ fn test_infer_with_extends_constraint() {
     // Pattern: (x: infer U extends string) => any
     let pattern_fn = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: infer_u,
             optional: false,
@@ -1118,7 +1118,7 @@ fn test_infer_with_extends_constraint() {
     let lit_hello = interner.literal_string("hello");
     let input_fn = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: lit_hello,
             optional: false,
@@ -1161,7 +1161,7 @@ fn test_infer_with_constraint_violation() {
     // Pattern: (x: infer U extends string) => any
     let pattern_fn = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: infer_u,
             optional: false,
@@ -1177,7 +1177,7 @@ fn test_infer_with_constraint_violation() {
     // Input: (x: number) => void - number does NOT satisfy string constraint
     let input_fn = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::NUMBER,
             optional: false,

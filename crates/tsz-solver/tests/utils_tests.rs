@@ -238,16 +238,19 @@ fn required_param_count_filters_optional_and_rest() {
     use tsz_common::interner::Atom;
 
     let required = ParamInfo {
+        suppress_display_optional: false,
         name: Some(Atom::NONE),
         type_id: TypeId::NUMBER,
         optional: false,
         rest: false,
     };
     let optional = ParamInfo {
+        suppress_display_optional: false,
         optional: true,
         ..required
     };
     let rest = ParamInfo {
+        suppress_display_optional: false,
         rest: true,
         optional: false,
         ..required

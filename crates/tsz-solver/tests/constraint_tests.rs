@@ -219,6 +219,7 @@ fn test_constraint_function_extends() {
     let (mut ctx, var_t) = ctx_with_t_var(&interner);
 
     let param = ParamInfo {
+        suppress_display_optional: false,
         name: Some(interner.intern_string("x")),
         type_id: TypeId::NUMBER,
         optional: false,
@@ -262,6 +263,7 @@ fn test_constraint_function_extends_with_compat_checker() {
     let upper = interner.function(FunctionShape {
         type_params: Vec::new(),
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::ANY,
             optional: false,
@@ -278,6 +280,7 @@ fn test_constraint_function_extends_with_compat_checker() {
     let lower = interner.function(FunctionShape {
         type_params: Vec::new(),
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::NUMBER,
             optional: false,
@@ -532,6 +535,7 @@ fn test_constraint_infer_from_function() {
     let target = interner.function(FunctionShape {
         type_params: Vec::new(),
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: t_type,
             optional: false,
@@ -548,6 +552,7 @@ fn test_constraint_infer_from_function() {
     let source = interner.function(FunctionShape {
         type_params: Vec::new(),
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::NUMBER,
             optional: false,
@@ -596,6 +601,7 @@ fn test_constraint_recursive_self_referential() {
     let compare_fn = interner.function(FunctionShape {
         type_params: Vec::new(),
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("other")),
             type_id: t_type,
             optional: false,
@@ -700,6 +706,7 @@ fn test_constraint_call_generic_identity() {
             origin: crate::types::TypeParamOrigin::User,
         }],
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: t_type,
             optional: false,
@@ -750,6 +757,7 @@ fn test_constraint_call_generic_with_constraint() {
             origin: crate::types::TypeParamOrigin::User,
         }],
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: t_type,
             optional: false,
@@ -831,12 +839,14 @@ fn test_constraint_call_generic_two_params() {
         ],
         params: vec![
             ParamInfo {
+                suppress_display_optional: false,
                 name: Some(interner.intern_string("a")),
                 type_id: t_type,
                 optional: false,
                 rest: false,
             },
             ParamInfo {
+                suppress_display_optional: false,
                 name: Some(interner.intern_string("b")),
                 type_id: u_type,
                 optional: false,
@@ -888,6 +898,7 @@ fn test_constraint_call_generic_array_element() {
             origin: crate::types::TypeParamOrigin::User,
         }],
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("arr")),
             type_id: interner.array(t_type),
             optional: false,
@@ -1193,6 +1204,7 @@ fn test_eopt_preserves_explicit_undefined_in_index_signature_inference() {
             origin: crate::types::TypeParamOrigin::User,
         }],
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: param_obj,
             optional: false,
@@ -1272,6 +1284,7 @@ fn test_no_eopt_preserves_explicit_undefined_in_index_signature_inference() {
             origin: crate::types::TypeParamOrigin::User,
         }],
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: param_obj,
             optional: false,
@@ -1349,6 +1362,7 @@ fn test_any_arg_naked_t_infers_any() {
             origin: crate::types::TypeParamOrigin::User,
         }],
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: t_type,
             optional: false,
@@ -1401,6 +1415,7 @@ fn test_any_arg_union_member_t_infers_any() {
             origin: crate::types::TypeParamOrigin::User,
         }],
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: t_or_string,
             optional: false,
@@ -1432,6 +1447,7 @@ fn test_any_arg_union_member_t_infers_any() {
             origin: crate::types::TypeParamOrigin::User,
         }],
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: k_or_string,
             optional: false,
@@ -1486,6 +1502,7 @@ fn test_any_arg_array_elem_t_infers_unknown() {
             origin: crate::types::TypeParamOrigin::User,
         }],
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: t_array,
             optional: false,
@@ -1604,6 +1621,7 @@ fn test_object_entries_like_callable_any_arg_uses_first_overload() {
     let sig2 = CallSignature {
         type_params: vec![],
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(o_name),
             type_id: empty_obj,
             optional: false,
@@ -1625,6 +1643,7 @@ fn test_object_entries_like_callable_any_arg_uses_first_overload() {
             origin: crate::types::TypeParamOrigin::User,
         }],
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(o_name),
             type_id: index_sig_obj,
             optional: false,
@@ -1700,6 +1719,7 @@ fn test_any_arg_object_prop_t_infers_unknown() {
             origin: crate::types::TypeParamOrigin::User,
         }],
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: param_obj,
             optional: false,
@@ -1764,6 +1784,7 @@ fn test_any_arg_index_sig_t_infers_unknown() {
             origin: crate::types::TypeParamOrigin::User,
         }],
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: param_obj,
             optional: false,
@@ -1824,6 +1845,7 @@ fn test_any_arg_conditional_true_branch_t_infers_any() {
             origin: crate::types::TypeParamOrigin::User,
         }],
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: cond_type,
             optional: false,
@@ -1884,6 +1906,7 @@ fn test_any_arg_conditional_false_branch_t_infers_any() {
             origin: crate::types::TypeParamOrigin::User,
         }],
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: cond_type,
             optional: false,
@@ -1944,6 +1967,7 @@ fn test_any_arg_conditional_check_only_t_infers_unknown() {
             origin: crate::types::TypeParamOrigin::User,
         }],
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: cond_type,
             optional: false,

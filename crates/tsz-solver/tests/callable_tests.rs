@@ -14,6 +14,7 @@ fn test_callable_same_signature() {
     let sig = CallSignature {
         type_params: vec![],
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::STRING,
             optional: false,
@@ -54,6 +55,7 @@ fn test_callable_more_overloads() {
     let sig1 = CallSignature {
         type_params: vec![],
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::STRING,
             optional: false,
@@ -68,6 +70,7 @@ fn test_callable_more_overloads() {
     let sig2 = CallSignature {
         type_params: vec![],
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::NUMBER,
             optional: false,
@@ -108,6 +111,7 @@ fn test_callable_missing_overload() {
     let sig1 = CallSignature {
         type_params: vec![],
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::STRING,
             optional: false,
@@ -122,6 +126,7 @@ fn test_callable_missing_overload() {
     let sig2 = CallSignature {
         type_params: vec![],
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::NUMBER,
             optional: false,
@@ -213,6 +218,7 @@ fn test_construct_sig_literal_params_are_contravariant_not_bivariant() {
         construct_signatures: vec![CallSignature {
             type_params: vec![],
             params: vec![ParamInfo {
+                suppress_display_optional: false,
                 name: Some(interner.intern_string("x")),
                 type_id: one,
                 optional: false,
@@ -235,6 +241,7 @@ fn test_construct_sig_literal_params_are_contravariant_not_bivariant() {
         construct_signatures: vec![CallSignature {
             type_params: vec![],
             params: vec![ParamInfo {
+                suppress_display_optional: false,
                 name: Some(interner.intern_string("x")),
                 type_id: TypeId::NUMBER,
                 optional: false,
@@ -311,6 +318,7 @@ fn test_function_to_callable() {
     let fn_type = interner.function(FunctionShape {
         type_params: vec![],
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::STRING,
             optional: false,
@@ -329,6 +337,7 @@ fn test_function_to_callable() {
         call_signatures: vec![CallSignature {
             type_params: vec![],
             params: vec![ParamInfo {
+                suppress_display_optional: false,
                 name: Some(interner.intern_string("x")),
                 type_id: TypeId::STRING,
                 optional: false,
@@ -359,6 +368,7 @@ fn test_callable_to_function() {
         call_signatures: vec![CallSignature {
             type_params: vec![],
             params: vec![ParamInfo {
+                suppress_display_optional: false,
                 name: Some(interner.intern_string("x")),
                 type_id: TypeId::STRING,
                 optional: false,
@@ -377,6 +387,7 @@ fn test_callable_to_function() {
     let fn_type = interner.function(FunctionShape {
         type_params: vec![],
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::STRING,
             optional: false,
@@ -493,6 +504,7 @@ fn test_overload_signature_exact_match() {
     let sig_string_to_number = CallSignature {
         type_params: vec![],
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::STRING,
             optional: false,
@@ -507,6 +519,7 @@ fn test_overload_signature_exact_match() {
     let sig_number_to_string = CallSignature {
         type_params: vec![],
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::NUMBER,
             optional: false,
@@ -549,6 +562,7 @@ fn test_overload_signature_order_priority() {
     let sig_special = CallSignature {
         type_params: vec![],
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: special_lit,
             optional: false,
@@ -564,6 +578,7 @@ fn test_overload_signature_order_priority() {
     let sig_general = CallSignature {
         type_params: vec![],
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::STRING,
             optional: false,
@@ -613,6 +628,7 @@ fn test_overload_multiple_arities() {
     let sig_1 = CallSignature {
         type_params: vec![],
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::STRING,
             optional: false,
@@ -628,12 +644,14 @@ fn test_overload_multiple_arities() {
         type_params: vec![],
         params: vec![
             ParamInfo {
+                suppress_display_optional: false,
                 name: Some(interner.intern_string("x")),
                 type_id: TypeId::STRING,
                 optional: false,
                 rest: false,
             },
             ParamInfo {
+                suppress_display_optional: false,
                 name: Some(interner.intern_string("y")),
                 type_id: TypeId::NUMBER,
                 optional: false,
@@ -713,6 +731,7 @@ fn test_generic_overload_simple() {
             origin: crate::types::TypeParamOrigin::User,
         }],
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: t_param,
             optional: false,
@@ -773,6 +792,7 @@ fn test_generic_overload_with_constraint() {
             origin: crate::types::TypeParamOrigin::User,
         }],
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: t_param,
             optional: false,
@@ -861,12 +881,14 @@ fn test_generic_overload_multiple_type_params() {
         ],
         params: vec![
             ParamInfo {
+                suppress_display_optional: false,
                 name: Some(interner.intern_string("x")),
                 type_id: t_param,
                 optional: false,
                 rest: false,
             },
             ParamInfo {
+                suppress_display_optional: false,
                 name: Some(interner.intern_string("y")),
                 type_id: u_param,
                 optional: false,
@@ -911,6 +933,7 @@ fn test_optional_param_overload_matching() {
     let sig_required = CallSignature {
         type_params: vec![],
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::STRING,
             optional: false,
@@ -926,12 +949,14 @@ fn test_optional_param_overload_matching() {
         type_params: vec![],
         params: vec![
             ParamInfo {
+                suppress_display_optional: false,
                 name: Some(interner.intern_string("x")),
                 type_id: TypeId::STRING,
                 optional: false,
                 rest: false,
             },
             ParamInfo {
+                suppress_display_optional: false,
                 name: Some(interner.intern_string("y")),
                 type_id: TypeId::NUMBER,
                 optional: true,
@@ -983,12 +1008,14 @@ fn test_all_optional_params_overload() {
         type_params: vec![],
         params: vec![
             ParamInfo {
+                suppress_display_optional: false,
                 name: Some(interner.intern_string("x")),
                 type_id: TypeId::STRING,
                 optional: true,
                 rest: false,
             },
             ParamInfo {
+                suppress_display_optional: false,
                 name: Some(interner.intern_string("y")),
                 type_id: TypeId::NUMBER,
                 optional: true,
@@ -1043,12 +1070,14 @@ fn test_optional_and_rest_param_overload() {
         type_params: vec![],
         params: vec![
             ParamInfo {
+                suppress_display_optional: false,
                 name: Some(interner.intern_string("x")),
                 type_id: TypeId::STRING,
                 optional: false,
                 rest: false,
             },
             ParamInfo {
+                suppress_display_optional: false,
                 name: Some(interner.intern_string("rest")),
                 type_id: number_array,
                 optional: false,
@@ -1073,6 +1102,7 @@ fn test_optional_and_rest_param_overload() {
     let single_param_sig = CallSignature {
         type_params: vec![],
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::STRING,
             optional: false,
@@ -1130,12 +1160,14 @@ fn test_contextual_instantiation_generic_call_signature_with_rest_target() {
             type_params: vec![a_param, b_param],
             params: vec![
                 ParamInfo {
+                    suppress_display_optional: false,
                     name: Some(interner.intern_string("a")),
                     type_id: a_type,
                     optional: true,
                     rest: false,
                 },
                 ParamInfo {
+                    suppress_display_optional: false,
                     name: Some(interner.intern_string("b")),
                     type_id: b_type,
                     optional: true,
@@ -1158,6 +1190,7 @@ fn test_contextual_instantiation_generic_call_signature_with_rest_target() {
         call_signatures: vec![CallSignature {
             type_params: vec![],
             params: vec![ParamInfo {
+                suppress_display_optional: false,
                 name: Some(interner.intern_string("s")),
                 type_id: interner.array(TypeId::STRING),
                 optional: false,
@@ -1197,6 +1230,7 @@ fn test_contextual_instantiation_generic_source_ignores_unknown_param_signal() {
     let source = interner.function(FunctionShape {
         type_params: vec![t_param],
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: t_type,
             optional: false,
@@ -1219,6 +1253,7 @@ fn test_contextual_instantiation_generic_source_ignores_unknown_param_signal() {
     let target = interner.function(FunctionShape {
         type_params: vec![],
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("_")),
             type_id: TypeId::UNKNOWN,
             optional: false,
@@ -1254,12 +1289,14 @@ fn test_contextual_instantiation_generic_source_rejects_incomparable_param_candi
         type_params: vec![t_param],
         params: vec![
             ParamInfo {
+                suppress_display_optional: false,
                 name: Some(interner.intern_string("x")),
                 type_id: t_type,
                 optional: false,
                 rest: false,
             },
             ParamInfo {
+                suppress_display_optional: false,
                 name: Some(interner.intern_string("y")),
                 type_id: t_type,
                 optional: false,
@@ -1277,12 +1314,14 @@ fn test_contextual_instantiation_generic_source_rejects_incomparable_param_candi
         type_params: vec![],
         params: vec![
             ParamInfo {
+                suppress_display_optional: false,
                 name: Some(interner.intern_string("x")),
                 type_id: TypeId::NUMBER,
                 optional: false,
                 rest: false,
             },
             ParamInfo {
+                suppress_display_optional: false,
                 name: Some(interner.intern_string("y")),
                 type_id: TypeId::STRING,
                 optional: false,
@@ -1319,6 +1358,7 @@ fn test_contextual_instantiation_generic_target_from_source_type_param() {
     let source = interner.function(FunctionShape {
         type_params: vec![],
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("t")),
             type_id: contextual_t,
             optional: false,
@@ -1343,6 +1383,7 @@ fn test_contextual_instantiation_generic_target_from_source_type_param() {
     let target = interner.function(FunctionShape {
         type_params: vec![t_param],
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: t_type,
             optional: false,
@@ -1378,6 +1419,7 @@ fn test_contextual_instantiation_callable_to_generic_function_target() {
         call_signatures: vec![CallSignature {
             type_params: vec![],
             params: vec![ParamInfo {
+                suppress_display_optional: false,
                 name: Some(interner.intern_string("t")),
                 type_id: contextual_t,
                 optional: false,
@@ -1405,6 +1447,7 @@ fn test_contextual_instantiation_callable_to_generic_function_target() {
     let target = interner.function(FunctionShape {
         type_params: vec![t_param],
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: t_type,
             optional: false,
@@ -1439,6 +1482,7 @@ fn test_contextual_instantiation_generic_function_to_callable_target() {
     let source = interner.function(FunctionShape {
         type_params: vec![t_param],
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: t_type,
             optional: false,
@@ -1464,6 +1508,7 @@ fn test_contextual_instantiation_generic_function_to_callable_target() {
         call_signatures: vec![CallSignature {
             type_params: vec![],
             params: vec![ParamInfo {
+                suppress_display_optional: false,
                 name: Some(interner.intern_string("_")),
                 type_id: TypeId::UNKNOWN,
                 optional: false,
@@ -1573,6 +1618,7 @@ fn test_nongeneric_construct_sig_nested_callback_not_assignable_to_generic_targe
     let source_param = interner.function(FunctionShape {
         type_params: vec![],
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("arg")),
             type_id: base,
             optional: false,
@@ -1587,6 +1633,7 @@ fn test_nongeneric_construct_sig_nested_callback_not_assignable_to_generic_targe
     let source_return = interner.function(FunctionShape {
         type_params: vec![],
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("r")),
             type_id: base,
             optional: false,
@@ -1605,6 +1652,7 @@ fn test_nongeneric_construct_sig_nested_callback_not_assignable_to_generic_targe
         construct_signatures: vec![CallSignature {
             type_params: vec![],
             params: vec![ParamInfo {
+                suppress_display_optional: false,
                 name: Some(interner.intern_string("x")),
                 type_id: source_param,
                 optional: false,
@@ -1646,6 +1694,7 @@ fn test_nongeneric_construct_sig_nested_callback_not_assignable_to_generic_targe
     let target_param = interner.function(FunctionShape {
         type_params: vec![],
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("arg")),
             type_id: t_type,
             optional: false,
@@ -1660,6 +1709,7 @@ fn test_nongeneric_construct_sig_nested_callback_not_assignable_to_generic_targe
     let target_return = interner.function(FunctionShape {
         type_params: vec![],
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("r")),
             type_id: t_type,
             optional: false,
@@ -1678,6 +1728,7 @@ fn test_nongeneric_construct_sig_nested_callback_not_assignable_to_generic_targe
         construct_signatures: vec![CallSignature {
             type_params: vec![t_param, u_param, v_param],
             params: vec![ParamInfo {
+                suppress_display_optional: false,
                 name: Some(interner.intern_string("x")),
                 type_id: target_param,
                 optional: false,
@@ -1743,6 +1794,7 @@ fn test_generic_callable_return_type_mismatch_not_assignable() {
         call_signatures: vec![CallSignature {
             type_params: vec![t_param],
             params: vec![ParamInfo {
+                suppress_display_optional: false,
                 name: Some(interner.intern_string("x")),
                 type_id: t_type,
                 optional: false,

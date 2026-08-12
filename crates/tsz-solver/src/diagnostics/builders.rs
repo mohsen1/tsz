@@ -148,6 +148,7 @@ impl<'a> DiagnosticBuilder<'a> {
                     .params
                     .iter()
                     .map(|param| crate::ParamInfo {
+                        suppress_display_optional: false,
                         type_id: self.normalize_excess_display_type(param.type_id),
                         ..*param
                     })

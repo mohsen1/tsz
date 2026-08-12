@@ -178,6 +178,7 @@ fn build_infer_fixture(interner: &TypeInterner) -> (FunctionShape, [TypeId; 1]) 
     let func = FunctionShape {
         type_params: vec![t_param, u_param],
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("items")),
             type_id: array_t,
             optional: false,

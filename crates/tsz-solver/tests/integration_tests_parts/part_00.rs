@@ -108,7 +108,7 @@ mod generic_strictness_tests {
         // Function type: (obj: T) => number
         let func_type = interner.function(FunctionShape {
             type_params: vec![],
-            params: vec![ParamInfo {
+            params: vec![ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("obj")),
                 type_id: t_param,
                 optional: false,
@@ -124,7 +124,7 @@ mod generic_strictness_tests {
         // Implementation: (obj: { id: number }) => number
         let impl_type = interner.function(FunctionShape {
             type_params: vec![],
-            params: vec![ParamInfo {
+            params: vec![ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("obj")),
                 type_id: obj_param,
                 optional: false,
@@ -488,7 +488,7 @@ mod function_variance_tests {
         // (x: number) => void
         let func_number = interner.function(FunctionShape {
             type_params: vec![],
-            params: vec![ParamInfo {
+            params: vec![ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("x")),
                 type_id: TypeId::NUMBER,
                 optional: false,
@@ -504,7 +504,7 @@ mod function_variance_tests {
         // (x: string | number) => void
         let func_union = interner.function(FunctionShape {
             type_params: vec![],
-            params: vec![ParamInfo {
+            params: vec![ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("x")),
                 type_id: interner.union(vec![TypeId::STRING, TypeId::NUMBER]),
                 optional: false,
@@ -572,7 +572,7 @@ mod function_variance_tests {
         // (x: number) => void
         let func_number = interner.function(FunctionShape {
             type_params: vec![],
-            params: vec![ParamInfo {
+            params: vec![ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("x")),
                 type_id: TypeId::NUMBER,
                 optional: false,
@@ -588,7 +588,7 @@ mod function_variance_tests {
         // (x: string | number) => void
         let func_union = interner.function(FunctionShape {
             type_params: vec![],
-            params: vec![ParamInfo {
+            params: vec![ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("x")),
                 type_id: interner.union(vec![TypeId::STRING, TypeId::NUMBER]),
                 optional: false,
@@ -618,13 +618,13 @@ mod function_variance_tests {
         let func1 = interner.function(FunctionShape {
             type_params: vec![],
             params: vec![
-                ParamInfo {
+                ParamInfo { suppress_display_optional: false,
                     name: Some(interner.intern_string("x")),
                     type_id: TypeId::NUMBER,
                     optional: false,
                     rest: false,
                 },
-                ParamInfo {
+                ParamInfo { suppress_display_optional: false,
                     name: Some(interner.intern_string("y")),
                     type_id: TypeId::STRING,
                     optional: false,
@@ -642,13 +642,13 @@ mod function_variance_tests {
         let func2 = interner.function(FunctionShape {
             type_params: vec![],
             params: vec![
-                ParamInfo {
+                ParamInfo { suppress_display_optional: false,
                     name: Some(interner.intern_string("x")),
                     type_id: interner.union(vec![TypeId::STRING, TypeId::NUMBER]),
                     optional: false,
                     rest: false,
                 },
-                ParamInfo {
+                ParamInfo { suppress_display_optional: false,
                     name: Some(interner.intern_string("y")),
                     type_id: interner.union(vec![TypeId::STRING, TypeId::NUMBER]),
                     optional: false,
@@ -678,13 +678,13 @@ mod function_variance_tests {
         let func_with_optional = interner.function(FunctionShape {
             type_params: vec![],
             params: vec![
-                ParamInfo {
+                ParamInfo { suppress_display_optional: false,
                     name: Some(interner.intern_string("x")),
                     type_id: TypeId::NUMBER,
                     optional: false,
                     rest: false,
                 },
-                ParamInfo {
+                ParamInfo { suppress_display_optional: false,
                     name: Some(interner.intern_string("y")),
                     type_id: TypeId::STRING,
                     optional: true,
@@ -701,7 +701,7 @@ mod function_variance_tests {
         // (x: number) => void
         let func_without_optional = interner.function(FunctionShape {
             type_params: vec![],
-            params: vec![ParamInfo {
+            params: vec![ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("x")),
                 type_id: TypeId::NUMBER,
                 optional: false,
@@ -728,7 +728,7 @@ mod function_variance_tests {
         // (...args: number[]) => void
         let func_with_rest = interner.function(FunctionShape {
             type_params: vec![],
-            params: vec![ParamInfo {
+            params: vec![ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("args")),
                 type_id: TypeId::NUMBER,
                 optional: false,
@@ -745,13 +745,13 @@ mod function_variance_tests {
         let func_with_params = interner.function(FunctionShape {
             type_params: vec![],
             params: vec![
-                ParamInfo {
+                ParamInfo { suppress_display_optional: false,
                     name: Some(interner.intern_string("x")),
                     type_id: TypeId::NUMBER,
                     optional: false,
                     rest: false,
                 },
-                ParamInfo {
+                ParamInfo { suppress_display_optional: false,
                     name: Some(interner.intern_string("y")),
                     type_id: TypeId::NUMBER,
                     optional: false,
@@ -825,7 +825,7 @@ mod function_variance_tests {
 
         let generic_func = interner.function(FunctionShape {
             type_params: vec![],
-            params: vec![ParamInfo {
+            params: vec![ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("x")),
                 type_id: t_param,
                 optional: false,
@@ -850,7 +850,7 @@ mod function_variance_tests {
 
         let constrained_func = interner.function(FunctionShape {
             type_params: vec![],
-            params: vec![ParamInfo {
+            params: vec![ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("x")),
                 type_id: t_constrained,
                 optional: false,
@@ -1391,13 +1391,13 @@ mod error_detection_tests {
         let func_two_params = interner.function(FunctionShape {
             type_params: vec![],
             params: vec![
-                ParamInfo {
+                ParamInfo { suppress_display_optional: false,
                     name: Some(interner.intern_string("x")),
                     type_id: TypeId::NUMBER,
                     optional: false,
                     rest: false,
                 },
-                ParamInfo {
+                ParamInfo { suppress_display_optional: false,
                     name: Some(interner.intern_string("y")),
                     type_id: TypeId::STRING,
                     optional: false,
@@ -1414,7 +1414,7 @@ mod error_detection_tests {
         // (x: number) => void
         let func_one_param = interner.function(FunctionShape {
             type_params: vec![],
-            params: vec![ParamInfo {
+            params: vec![ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("x")),
                 type_id: TypeId::NUMBER,
                 optional: false,
@@ -1539,7 +1539,7 @@ mod unknown_fallback_tests {
         // Function with this parameter (explicit type)
         let func_with_this = interner.function(FunctionShape {
             type_params: vec![],
-            params: vec![ParamInfo {
+            params: vec![ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("x")),
                 type_id: TypeId::NUMBER,
                 optional: false,
@@ -1555,7 +1555,7 @@ mod unknown_fallback_tests {
         // Function without this parameter
         let func_without_this = interner.function(FunctionShape {
             type_params: vec![],
-            params: vec![ParamInfo {
+            params: vec![ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("x")),
                 type_id: TypeId::NUMBER,
                 optional: false,

@@ -15,7 +15,7 @@ fn test_array_push_uses_symbol_params_when_array_base_params_missing() {
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
     let push_func = interner.function(FunctionShape {
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("items")),
             type_id: interner.array(t_type),
             optional: false,
@@ -767,7 +767,7 @@ fn test_infer_application_to_mapped_type_direct_arg_unification() {
     let wrapped_t = interner.application(wrapped_base, vec![t_type]);
     let func = FunctionShape {
         type_params: vec![t_param],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("obj")),
             type_id: wrapped_t,
             optional: false,
@@ -1688,7 +1688,7 @@ fn test_call_optional_param_accepts_union_with_undefined() {
 
     // function(message?: string): never
     let func = interner.function(FunctionShape {
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("message")),
             type_id: TypeId::STRING,
             optional: true,
@@ -1723,7 +1723,7 @@ fn test_call_optional_param_rejects_wrong_type_with_undefined() {
     let mut evaluator = CallEvaluator::new(&interner, &mut subtype);
 
     let func = interner.function(FunctionShape {
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::STRING,
             optional: true,

@@ -340,7 +340,7 @@ fn test_never_is_bottom_type_for_function_types() {
 
     let fn_type = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::STRING,
             optional: false,
@@ -464,7 +464,7 @@ fn test_unknown_is_top_type_for_function_types() {
 
     let fn_type = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::NUMBER,
             optional: false,
@@ -644,7 +644,7 @@ fn test_intersection_unknown_with_function_simplifies() {
 
     let fn_type = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::STRING,
             optional: false,
@@ -1152,7 +1152,7 @@ fn test_enum_member_as_function_param() {
 
     let fn_active_param = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("status")),
             type_id: active,
             optional: false,
@@ -1167,7 +1167,7 @@ fn test_enum_member_as_function_param() {
 
     let fn_inactive_param = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("status")),
             type_id: inactive,
             optional: false,

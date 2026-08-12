@@ -166,6 +166,7 @@ mod tests {
         let method = db.function(FunctionShape::new(vec![], TypeId::STRING));
         let includes = db.function(FunctionShape::new(
             vec![ParamInfo {
+                suppress_display_optional: false,
                 name: Some(db.intern_string("searchElement")),
                 type_id: TypeId::NUMBER,
                 optional: false,
@@ -207,6 +208,7 @@ mod tests {
         let method = db.function(FunctionShape::new(vec![], TypeId::STRING));
         let includes = db.function(FunctionShape::new(
             vec![ParamInfo {
+                suppress_display_optional: false,
                 name: Some(db.intern_string("searchElement")),
                 type_id: TypeId::NUMBER,
                 optional: false,

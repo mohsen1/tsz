@@ -122,6 +122,7 @@ pub(crate) fn js_class_method_callable_type(db: &dyn TypeDatabase) -> TypeId {
         call_signatures: vec![CallSignature {
             type_params: Vec::new(),
             params: vec![ParamInfo {
+                suppress_display_optional: false,
                 name: None,
                 type_id: TypeId::ANY,
                 optional: false,

@@ -15,6 +15,7 @@ fn make_callable_with_construct_sig(
         construct_signatures: vec![CallSignature {
             type_params,
             params: vec![ParamInfo {
+                suppress_display_optional: false,
                 name: None,
                 type_id: TypeId::STRING,
                 optional: false,
@@ -39,6 +40,7 @@ fn make_callable_with_call_sig(interner: &TypeInterner, return_type: TypeId) -> 
         call_signatures: vec![CallSignature {
             type_params: vec![],
             params: vec![ParamInfo {
+                suppress_display_optional: false,
                 name: None,
                 type_id: TypeId::NUMBER,
                 optional: false,
@@ -1737,6 +1739,7 @@ fn content_walk_agreement_corpus(interner: &TypeInterner) -> Vec<TypeId> {
         }));
         corpus.push(interner.function(crate::types::FunctionShape::new(
             vec![ParamInfo {
+                suppress_display_optional: false,
                 name: None,
                 type_id: leaf,
                 optional: false,

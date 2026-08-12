@@ -114,6 +114,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 .params
                 .iter()
                 .map(|param| ParamInfo {
+                    suppress_display_optional: false,
                     name: param.name,
                     type_id: self.replace_type_exact(param.type_id, from, to),
                     optional: param.optional,

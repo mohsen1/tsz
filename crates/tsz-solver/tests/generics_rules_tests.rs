@@ -1914,6 +1914,7 @@ fn test_evaluated_callable_assignable_to_all_any_application_via_display_alias()
     let sig = CallSignature {
         type_params: vec![],
         params: vec![crate::ParamInfo {
+            suppress_display_optional: false,
             name: Some(param_atom),
             type_id: TypeId::UNKNOWN,
             optional: false,

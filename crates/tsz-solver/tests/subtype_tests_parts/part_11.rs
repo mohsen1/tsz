@@ -1292,13 +1292,13 @@ fn test_constructor_with_parameters() {
     let constructor = interner.function(FunctionShape {
         type_params: vec![],
         params: vec![
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("x")),
                 type_id: TypeId::STRING,
                 optional: false,
                 rest: false,
             },
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("y")),
                 type_id: TypeId::NUMBER,
                 optional: false,
@@ -1476,7 +1476,7 @@ fn test_constructor_contravariant_parameters() {
 
     let ctor_wide_param = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: string_or_number,
             optional: false,
@@ -1491,7 +1491,7 @@ fn test_constructor_contravariant_parameters() {
 
     let ctor_narrow_param = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::STRING,
             optional: false,
@@ -1518,7 +1518,7 @@ fn test_constructor_optional_parameter() {
 
     let ctor_optional = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::STRING,
             optional: true,
@@ -1533,7 +1533,7 @@ fn test_constructor_optional_parameter() {
 
     let ctor_required = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::STRING,
             optional: false,
@@ -1560,7 +1560,7 @@ fn test_constructor_rest_parameter() {
 
     let ctor_rest = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("args")),
             type_id: string_array,
             optional: false,
@@ -1606,7 +1606,7 @@ fn test_constructor_overload_signatures() {
             },
             CallSignature {
                 type_params: vec![],
-                params: vec![ParamInfo {
+                params: vec![ParamInfo { suppress_display_optional: false,
                     name: Some(interner.intern_string("x")),
                     type_id: TypeId::STRING,
                     optional: false,

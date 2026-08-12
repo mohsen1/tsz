@@ -42,6 +42,7 @@ fn bound_type_param_origin_is_alpha_equivalent_function() {
         interner.function(FunctionShape {
             type_params: vec![info],
             params: vec![ParamInfo {
+                suppress_display_optional: false,
                 name: Some(interner.intern_string("x")),
                 type_id: pref,
                 optional: false,
@@ -103,6 +104,7 @@ fn bound_type_param_distinct_placeholder_ids_collapse() {
         interner.function(FunctionShape {
             type_params: vec![info],
             params: vec![ParamInfo {
+                suppress_display_optional: false,
                 name: Some(interner.intern_string("a")),
                 type_id: pref,
                 optional: false,
@@ -150,6 +152,7 @@ fn bound_type_param_origin_drop_preserves_constraint_distinction() {
         interner.function(FunctionShape {
             type_params: vec![info],
             params: vec![ParamInfo {
+                suppress_display_optional: false,
                 name: Some(interner.intern_string("x")),
                 type_id: pref,
                 optional: false,
@@ -192,6 +195,7 @@ fn bound_type_param_origin_alpha_equivalent_call_signature() {
         let sig = CallSignature {
             type_params: vec![info],
             params: vec![ParamInfo {
+                suppress_display_optional: false,
                 name: Some(interner.intern_string("x")),
                 type_id: pref,
                 optional: false,

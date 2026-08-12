@@ -374,6 +374,7 @@ impl<'a> CheckerState<'a> {
                 return None;
             }
             params.push(ParamInfo {
+                suppress_display_optional: false,
                 name,
                 type_id,
                 optional: param.question_token || param.initializer != NodeIndex::NONE,

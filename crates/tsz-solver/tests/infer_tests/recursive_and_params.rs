@@ -200,6 +200,7 @@ fn test_mutual_dependency_input_output() {
     let input_fn = interner.function(FunctionShape {
         type_params: Vec::new(),
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::STRING,
             optional: false,
@@ -975,6 +976,7 @@ fn test_f_bounded_comparable() {
     let compare_to_fn = interner.function(FunctionShape {
         type_params: Vec::new(),
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("other")),
             type_id: TypeId::OBJECT,
             optional: false,
@@ -1022,6 +1024,7 @@ fn test_f_bounded_builder_pattern() {
     let set_fn = interner.function(FunctionShape {
         type_params: Vec::new(),
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("key")),
             type_id: TypeId::STRING,
             optional: false,
@@ -1116,6 +1119,7 @@ fn test_f_bounded_with_additional_constraint() {
     let compare_fn = interner.function(FunctionShape {
         type_params: Vec::new(),
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("other")),
             type_id: TypeId::OBJECT,
             optional: false,

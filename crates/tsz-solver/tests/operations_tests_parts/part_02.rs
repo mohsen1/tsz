@@ -123,7 +123,7 @@ fn test_infer_generic_function_identity_preserves_const_type_param() {
 
     let func = FunctionShape {
         type_params: vec![t_param],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: t_type,
             optional: false,
@@ -167,7 +167,7 @@ fn test_infer_generic_function_this_type_param() {
 
     let func = FunctionShape {
         type_params: vec![t_param],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("cb")),
             type_id: param_func,
             optional: false,
@@ -213,7 +213,7 @@ fn test_infer_generic_callable_param_from_function() {
         is_abstract: false,
         call_signatures: vec![CallSignature {
             type_params: Vec::new(),
-            params: vec![ParamInfo {
+            params: vec![ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("x")),
                 type_id: TypeId::NUMBER,
                 optional: false,
@@ -231,7 +231,7 @@ fn test_infer_generic_callable_param_from_function() {
 
     let func = FunctionShape {
         type_params: vec![t_param],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("cb")),
             type_id: callable_param,
             optional: false,
@@ -246,7 +246,7 @@ fn test_infer_generic_callable_param_from_function() {
 
     let arg_func = interner.function(FunctionShape {
         type_params: Vec::new(),
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("value")),
             type_id: TypeId::NUMBER,
             optional: false,
@@ -279,7 +279,7 @@ fn test_infer_generic_function_param_from_callable() {
 
     let function_param = interner.function(FunctionShape {
         type_params: Vec::new(),
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("value")),
             type_id: TypeId::NUMBER,
             optional: false,
@@ -294,7 +294,7 @@ fn test_infer_generic_function_param_from_callable() {
 
     let func = FunctionShape {
         type_params: vec![t_param],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("cb")),
             type_id: function_param,
             optional: false,
@@ -312,7 +312,7 @@ fn test_infer_generic_function_param_from_callable() {
         is_abstract: false,
         call_signatures: vec![CallSignature {
             type_params: Vec::new(),
-            params: vec![ParamInfo {
+            params: vec![ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("arg")),
                 type_id: TypeId::NUMBER,
                 optional: false,
@@ -348,7 +348,7 @@ fn test_infer_generic_function_param_from_overloaded_callable() {
 
     let function_param = interner.function(FunctionShape {
         type_params: Vec::new(),
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("value")),
             type_id: t_type,
             optional: false,
@@ -363,7 +363,7 @@ fn test_infer_generic_function_param_from_overloaded_callable() {
 
     let func = FunctionShape {
         type_params: vec![t_param],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("cb")),
             type_id: function_param,
             optional: false,
@@ -382,7 +382,7 @@ fn test_infer_generic_function_param_from_overloaded_callable() {
         call_signatures: vec![
             CallSignature {
                 type_params: Vec::new(),
-                params: vec![ParamInfo {
+                params: vec![ParamInfo { suppress_display_optional: false,
                     name: Some(interner.intern_string("value")),
                     type_id: TypeId::STRING,
                     optional: false,
@@ -396,13 +396,13 @@ fn test_infer_generic_function_param_from_overloaded_callable() {
             CallSignature {
                 type_params: Vec::new(),
                 params: vec![
-                    ParamInfo {
+                    ParamInfo { suppress_display_optional: false,
                         name: Some(interner.intern_string("x")),
                         type_id: TypeId::NUMBER,
                         optional: false,
                         rest: false,
                     },
-                    ParamInfo {
+                    ParamInfo { suppress_display_optional: false,
                         name: Some(interner.intern_string("y")),
                         type_id: TypeId::NUMBER,
                         optional: false,
@@ -469,13 +469,13 @@ fn test_infer_generic_function_from_union_call_or_construct_argument() {
     let func = FunctionShape {
         type_params: vec![t_param],
         params: vec![
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("type")),
                 type_id: interner.union(vec![target_call, target_construct, TypeId::STRING]),
                 optional: false,
                 rest: false,
             },
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("props")),
                 type_id: t_type,
                 optional: false,
@@ -534,7 +534,7 @@ fn test_infer_generic_final_argument_check_uses_non_strict_assignability() {
 
     let callback_param_type = interner.function(FunctionShape {
         type_params: Vec::new(),
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("value")),
             type_id: t_type,
             optional: false,
@@ -559,13 +559,13 @@ fn test_infer_generic_final_argument_check_uses_non_strict_assignability() {
     let func = FunctionShape {
         type_params: vec![t_param],
         params: vec![
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("cb")),
                 type_id: callback_param_type,
                 optional: false,
                 rest: false,
             },
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("value")),
                 type_id: t_type,
                 optional: false,
@@ -581,7 +581,7 @@ fn test_infer_generic_final_argument_check_uses_non_strict_assignability() {
 
     let callback_arg = interner.function(FunctionShape {
         type_params: Vec::new(),
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("value")),
             type_id: animal,
             optional: false,
@@ -631,7 +631,7 @@ fn test_infer_generic_object_with_contextual_callbacks_prefers_schema_property_t
 
     let pre_target = interner.function(FunctionShape {
         type_params: Vec::new(),
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(pre_arg),
             type_id: t_type,
             optional: false,
@@ -646,7 +646,7 @@ fn test_infer_generic_object_with_contextual_callbacks_prefers_schema_property_t
 
     let pre_source = interner.function(FunctionShape {
         type_params: Vec::new(),
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(pre_arg),
             type_id: schema_constraint,
             optional: false,
@@ -662,7 +662,7 @@ fn test_infer_generic_object_with_contextual_callbacks_prefers_schema_property_t
     let request_query = interner.index_access(t_type, interner.literal_string("query"));
     let handle_target = interner.function(FunctionShape {
         type_params: Vec::new(),
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(req_arg),
             type_id: request_query,
             optional: false,
@@ -677,7 +677,7 @@ fn test_infer_generic_object_with_contextual_callbacks_prefers_schema_property_t
 
     let handle_source = interner.function(FunctionShape {
         type_params: Vec::new(),
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(req_arg),
             type_id: TypeId::ANY,
             optional: false,
@@ -698,7 +698,7 @@ fn test_infer_generic_object_with_contextual_callbacks_prefers_schema_property_t
 
     let func = FunctionShape {
         type_params: vec![t_param],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("options")),
             type_id: shape_param,
             optional: false,
@@ -748,7 +748,7 @@ fn test_infer_generic_mixed_object_argument_infers_from_non_contextual_property(
 
     let pre_target = interner.function(FunctionShape {
         type_params: Vec::new(),
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("value")),
             type_id: t_type,
             optional: false,
@@ -763,7 +763,7 @@ fn test_infer_generic_mixed_object_argument_infers_from_non_contextual_property(
 
     let pre_source = interner.function(FunctionShape {
         type_params: Vec::new(),
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("value")),
             type_id: schema_constraint,
             optional: false,
@@ -778,7 +778,7 @@ fn test_infer_generic_mixed_object_argument_infers_from_non_contextual_property(
 
     let handle_target = interner.function(FunctionShape {
         type_params: Vec::new(),
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("value")),
             type_id: interner.index_access(t_type, interner.literal_string("query")),
             optional: false,
@@ -793,7 +793,7 @@ fn test_infer_generic_mixed_object_argument_infers_from_non_contextual_property(
 
     let handle_source = interner.function(FunctionShape {
         type_params: Vec::new(),
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("value")),
             type_id: TypeId::ANY,
             optional: false,
@@ -814,7 +814,7 @@ fn test_infer_generic_mixed_object_argument_infers_from_non_contextual_property(
 
     let func = FunctionShape {
         type_params: vec![t_param],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("route_args")),
             type_id: shape_param,
             optional: false,
@@ -870,7 +870,7 @@ fn test_infer_generic_callable_param_from_callable() {
         is_abstract: false,
         call_signatures: vec![CallSignature {
             type_params: Vec::new(),
-            params: vec![ParamInfo {
+            params: vec![ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("x")),
                 type_id: TypeId::NUMBER,
                 optional: false,
@@ -888,7 +888,7 @@ fn test_infer_generic_callable_param_from_callable() {
 
     let func = FunctionShape {
         type_params: vec![t_param],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("cb")),
             type_id: callable_param,
             optional: false,
@@ -906,7 +906,7 @@ fn test_infer_generic_callable_param_from_callable() {
         is_abstract: false,
         call_signatures: vec![CallSignature {
             type_params: Vec::new(),
-            params: vec![ParamInfo {
+            params: vec![ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("value")),
                 type_id: TypeId::NUMBER,
                 optional: false,
@@ -946,7 +946,7 @@ fn test_infer_generic_construct_signature_param() {
         call_signatures: Vec::new(),
         construct_signatures: vec![CallSignature {
             type_params: Vec::new(),
-            params: vec![ParamInfo {
+            params: vec![ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("value")),
                 type_id: t_type,
                 optional: false,
@@ -963,7 +963,7 @@ fn test_infer_generic_construct_signature_param() {
 
     let func = FunctionShape {
         type_params: vec![t_param],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("ctor")),
             type_id: ctor_param,
             optional: false,
@@ -982,7 +982,7 @@ fn test_infer_generic_construct_signature_param() {
         call_signatures: Vec::new(),
         construct_signatures: vec![CallSignature {
             type_params: Vec::new(),
-            params: vec![ParamInfo {
+            params: vec![ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("value")),
                 type_id: TypeId::NUMBER,
                 optional: false,
@@ -1018,7 +1018,7 @@ fn test_infer_generic_keyof_param_from_keyof_arg() {
 
     let func = FunctionShape {
         type_params: vec![t_param],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("key")),
             type_id: keyof_param,
             optional: false,
@@ -1061,7 +1061,7 @@ fn test_infer_generic_index_access_param_from_object_property_arg() {
 
     let func = FunctionShape {
         type_params: vec![t_param],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("value")),
             type_id: index_access_param,
             optional: false,
@@ -1100,7 +1100,7 @@ fn test_infer_generic_template_literal_param() {
 
     let func = FunctionShape {
         type_params: vec![t_param],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("value")),
             type_id: template_param,
             optional: false,
@@ -1148,7 +1148,7 @@ fn test_infer_generic_conditional_param_from_arg() {
 
     let func = FunctionShape {
         type_params: vec![t_param],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("value")),
             type_id: conditional_type,
             optional: false,
@@ -1189,7 +1189,7 @@ fn test_infer_generic_conditional_param_with_check_placeholder_from_branch() {
 
     let func = FunctionShape {
         type_params: vec![t_param],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("value")),
             type_id: conditional,
             optional: false,
@@ -1243,7 +1243,7 @@ fn test_infer_generic_mapped_param_from_object_arg() {
 
     let func = FunctionShape {
         type_params: vec![t_param],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("values")),
             type_id: mapped_type,
             optional: false,
@@ -1291,7 +1291,7 @@ fn test_infer_generic_array_map() {
 
     let callback_param = interner.function(FunctionShape {
         type_params: Vec::new(),
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("value")),
             type_id: t_type,
             optional: false,
@@ -1307,13 +1307,13 @@ fn test_infer_generic_array_map() {
     let map_func = FunctionShape {
         type_params: vec![t_param, u_param],
         params: vec![
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("arr")),
                 type_id: array_t,
                 optional: false,
                 rest: false,
             },
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("callback")),
                 type_id: callback_param,
                 optional: false,
@@ -1330,7 +1330,7 @@ fn test_infer_generic_array_map() {
     let number_array = interner.array(TypeId::NUMBER);
     let callback_arg = interner.function(FunctionShape {
         type_params: Vec::new(),
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::NUMBER,
             optional: false,
@@ -1370,7 +1370,7 @@ fn test_infer_generic_array_param_from_tuple_arg() {
 
     let func = FunctionShape {
         type_params: vec![t_param],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("values")),
             type_id: array_t,
             optional: false,
@@ -1419,7 +1419,7 @@ fn test_infer_generic_readonly_array_param() {
 
     let func = FunctionShape {
         type_params: vec![t_param],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("items")),
             type_id: readonly_array_t,
             optional: false,
@@ -1461,7 +1461,7 @@ fn test_infer_generic_readonly_tuple_param() {
 
     let func = FunctionShape {
         type_params: vec![t_param],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("pair")),
             type_id: readonly_tuple_t,
             optional: false,
@@ -1504,7 +1504,7 @@ fn test_infer_generic_constructor_instantiation() {
 
     let ctor = FunctionShape {
         type_params: vec![t_param],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("value")),
             type_id: t_type,
             optional: false,
@@ -1541,7 +1541,7 @@ fn test_infer_generic_application_param() {
 
     let func = FunctionShape {
         type_params: vec![t_param],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("value")),
             type_id: promise_t,
             optional: false,
@@ -1594,7 +1594,7 @@ fn test_generic_call_uses_contextual_return_inference_for_application() {
 
     let func = interner.function(FunctionShape {
         type_params: vec![t_param],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("value")),
             type_id: t_type,
             optional: false,
@@ -1662,13 +1662,13 @@ fn test_generic_callback_instantiation_preserves_parameter_conflicts() {
     let generic_callback = interner.function(FunctionShape {
         type_params: vec![callback_t_param],
         params: vec![
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("x")),
                 type_id: callback_t_type,
                 optional: false,
                 rest: false,
             },
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("y")),
                 type_id: callback_t_type,
                 optional: false,
@@ -1693,13 +1693,13 @@ fn test_generic_callback_instantiation_preserves_parameter_conflicts() {
     let expected_callback = interner.function(FunctionShape {
         type_params: vec![],
         params: vec![
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("x")),
                 type_id: TypeId::NUMBER,
                 optional: false,
                 rest: false,
             },
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("y")),
                 type_id: TypeId::STRING,
                 optional: false,
@@ -1714,7 +1714,7 @@ fn test_generic_callback_instantiation_preserves_parameter_conflicts() {
     });
     let higher_order = interner.function(FunctionShape {
         type_params: vec![outer_t_param],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("cb")),
             type_id: expected_callback,
             optional: false,

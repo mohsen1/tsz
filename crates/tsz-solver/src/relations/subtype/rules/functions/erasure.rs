@@ -126,6 +126,7 @@ pub(super) fn erase_call_sig_to_any(
         .params
         .iter()
         .map(|p| ParamInfo {
+            suppress_display_optional: false,
             name: p.name,
             type_id: instantiate_type(interner, p.type_id, &sub),
             optional: p.optional,
@@ -164,6 +165,7 @@ pub(super) fn erase_fn_shape_to_any(
         .params
         .iter()
         .map(|p| ParamInfo {
+            suppress_display_optional: false,
             name: p.name,
             type_id: instantiate_type(interner, p.type_id, &sub),
             optional: p.optional,

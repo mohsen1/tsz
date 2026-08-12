@@ -150,6 +150,7 @@ fn test_variance_contravariant_function_parameter() {
 
     let func = interner.function(FunctionShape {
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: t_param,
             optional: false,
@@ -188,6 +189,7 @@ fn test_variance_contravariant_callback_parameter() {
 
     let callback = interner.function(FunctionShape {
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: t_param,
             optional: false,
@@ -203,6 +205,7 @@ fn test_variance_contravariant_callback_parameter() {
 
     let outer = interner.function(FunctionShape {
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("cb")),
             type_id: callback,
             optional: false,
@@ -295,6 +298,7 @@ fn test_variance_invariant_both_positions() {
 
     let setter = interner.function(FunctionShape {
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: t_param,
             optional: false,
@@ -389,6 +393,7 @@ fn test_variance_method_parameters_contravariant() {
 
     let method = interner.function(FunctionShape {
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: t_param,
             optional: false,
@@ -448,6 +453,7 @@ fn test_variance_method_with_callback_param_is_covariant() {
     // Inner callback: (x: T) => void
     let callback = interner.function(FunctionShape {
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: t_param,
             optional: false,
@@ -464,6 +470,7 @@ fn test_variance_method_with_callback_param_is_covariant() {
     // Outer method: then(cb: (x: T) => void): void
     let method = interner.function(FunctionShape {
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("cb")),
             type_id: callback,
             optional: false,
@@ -500,6 +507,7 @@ fn test_variance_indexed_access_skips_method_param_bivariance_hack() {
 
     let method = interner.function(FunctionShape {
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("event")),
             type_id: t_param,
             optional: false,
@@ -536,6 +544,7 @@ fn test_variance_indexed_access_skips_callable_method_signature_param() {
         call_signatures: vec![CallSignature {
             type_params: Vec::new(),
             params: vec![ParamInfo {
+                suppress_display_optional: false,
                 name: Some(interner.intern_string("event")),
                 type_id: t_param,
                 optional: false,
@@ -674,6 +683,7 @@ fn test_variance_function_returning_function() {
 
     let inner = interner.function(FunctionShape {
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: t_param,
             optional: false,
@@ -715,6 +725,7 @@ fn test_variance_param_of_param() {
 
     let inner = interner.function(FunctionShape {
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: t_param,
             optional: false,
@@ -730,6 +741,7 @@ fn test_variance_param_of_param() {
 
     let outer = interner.function(FunctionShape {
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("f")),
             type_id: inner,
             optional: false,
@@ -1063,6 +1075,7 @@ fn test_variance_callable_call_signatures() {
         call_signatures: vec![CallSignature {
             type_params: Vec::new(),
             params: vec![ParamInfo {
+                suppress_display_optional: false,
                 name: Some(interner.intern_string("x")),
                 type_id: t_param,
                 optional: false,
@@ -1216,6 +1229,7 @@ fn test_variance_param_and_return() {
 
     let func = interner.function(FunctionShape {
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: t_param,
             optional: false,
@@ -1248,6 +1262,7 @@ fn test_variance_union_of_co_and_contra() {
 
     let consumer = interner.function(FunctionShape {
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: t_param,
             optional: false,
@@ -1479,6 +1494,7 @@ fn test_variance_method_param_alone_is_rejection_unreliable() {
 
     let method = interner.function(FunctionShape {
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: t_param,
             optional: false,
@@ -1518,6 +1534,7 @@ fn test_variance_method_callback_param_is_reliable_covariant() {
 
     let callback = interner.function(FunctionShape {
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: t_param,
             optional: false,
@@ -1532,6 +1549,7 @@ fn test_variance_method_callback_param_is_reliable_covariant() {
     });
     let method = interner.function(FunctionShape {
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("cb")),
             type_id: callback,
             optional: false,
@@ -1575,6 +1593,7 @@ fn test_variance_mixed_direct_and_callback_method_param_is_reliable() {
 
     let callback = interner.function(FunctionShape {
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: t_param,
             optional: false,
@@ -1590,12 +1609,14 @@ fn test_variance_mixed_direct_and_callback_method_param_is_reliable() {
     let method = interner.function(FunctionShape {
         params: vec![
             ParamInfo {
+                suppress_display_optional: false,
                 name: Some(interner.intern_string("x")),
                 type_id: t_param,
                 optional: false,
                 rest: false,
             },
             ParamInfo {
+                suppress_display_optional: false,
                 name: Some(interner.intern_string("cb")),
                 type_id: callback,
                 optional: false,
@@ -1649,6 +1670,7 @@ fn test_variance_merged_promise_like_overloads_is_covariant() {
     let make_callback_with_t = |param_name: &str| {
         interner.function(FunctionShape {
             params: vec![ParamInfo {
+                suppress_display_optional: false,
                 name: Some(interner.intern_string(param_name)),
                 type_id: t_param,
                 optional: false,
@@ -1666,6 +1688,7 @@ fn test_variance_merged_promise_like_overloads_is_covariant() {
     let lib_then_sig = CallSignature {
         type_params: Vec::new(),
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("onfulfilled")),
             type_id: make_callback_with_t("value"),
             optional: false,
@@ -1679,6 +1702,7 @@ fn test_variance_merged_promise_like_overloads_is_covariant() {
     let user_then_sig = CallSignature {
         type_params: Vec::new(),
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("cb")),
             type_id: make_callback_with_t("x"),
             optional: false,

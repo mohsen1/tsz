@@ -1481,10 +1481,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 .params
                 .iter()
                 .map(|param| ParamInfo {
-                    name: param.name,
                     type_id: instantiate_type(self.interner, param.type_id, &substitution),
-                    optional: param.optional,
-                    rest: param.rest,
+                    ..*param
                 })
                 .collect(),
             return_type: instantiate_type(self.interner, func.return_type, &substitution),
@@ -1711,10 +1709,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     .params
                     .iter()
                     .map(|param| ParamInfo {
-                        name: param.name,
                         type_id: instantiate_type(self.interner, param.type_id, &substitution),
-                        optional: param.optional,
-                        rest: param.rest,
+                        ..*param
                     })
                     .collect(),
                 return_type: instantiate_type(self.interner, source_fn.return_type, &substitution),
@@ -1821,10 +1817,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     .params
                     .iter()
                     .map(|p| ParamInfo {
-                        name: p.name,
                         type_id: instantiate_type(self.interner, p.type_id, &erasure_sub),
-                        optional: p.optional,
-                        rest: p.rest,
+                        ..*p
                     })
                     .collect(),
                 return_type: instantiate_type(self.interner, source_fn.return_type, &erasure_sub),
@@ -1968,10 +1962,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     .params
                     .iter()
                     .map(|p| ParamInfo {
-                        name: p.name,
                         type_id: instantiate_type(self.interner, p.type_id, &erasure_sub),
-                        optional: p.optional,
-                        rest: p.rest,
+                        ..*p
                     })
                     .collect(),
                 return_type: instantiate_type(self.interner, source_fn.return_type, &erasure_sub),

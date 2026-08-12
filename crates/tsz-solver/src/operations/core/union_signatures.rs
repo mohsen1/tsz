@@ -333,6 +333,7 @@ impl<C: AssignabilityChecker> CallEvaluator<'_, C> {
             let is_optional = i >= left_min && i >= right_min;
             let name = combined_param_name(left, right, i);
             params.push(ParamInfo {
+                suppress_display_optional: false,
                 name,
                 type_id: if is_rest_param {
                     self.interner.array(union_param_type)
@@ -347,6 +348,7 @@ impl<C: AssignabilityChecker> CallEvaluator<'_, C> {
             // The shorter signature carries the rest tail; widen it to an array.
             let rest_element = sig_type_at(self.interner, shorter, longest_count);
             params.push(ParamInfo {
+                suppress_display_optional: false,
                 name: None,
                 type_id: self.interner.array(rest_element),
                 optional: false,

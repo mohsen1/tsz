@@ -1087,6 +1087,7 @@ pub fn unpack_tuple_rest_parameter(
         for elem in tuple_elements {
             if !elem.rest {
                 unpacked.push(crate::types::ParamInfo {
+                    suppress_display_optional: false,
                     name: elem.name,
                     type_id: elem.type_id,
                     optional: elem.optional,
@@ -1098,6 +1099,7 @@ pub fn unpack_tuple_rest_parameter(
             let expansion = crate::utils::expand_tuple_rest(db, elem.type_id);
             for fixed in expansion.fixed {
                 unpacked.push(crate::types::ParamInfo {
+                    suppress_display_optional: false,
                     name: fixed.name,
                     type_id: fixed.type_id,
                     optional: fixed.optional,
@@ -1106,6 +1108,7 @@ pub fn unpack_tuple_rest_parameter(
             }
             if let Some(variadic) = expansion.variadic {
                 unpacked.push(crate::types::ParamInfo {
+                    suppress_display_optional: false,
                     name: elem.name,
                     type_id: db.array(variadic),
                     optional: false,
@@ -1114,6 +1117,7 @@ pub fn unpack_tuple_rest_parameter(
             }
             for tail in expansion.tail {
                 unpacked.push(crate::types::ParamInfo {
+                    suppress_display_optional: false,
                     name: tail.name,
                     type_id: tail.type_id,
                     optional: tail.optional,
@@ -1202,6 +1206,7 @@ fn unpack_union_of_prefix_tuples(
         shape
             .into_iter()
             .map(|e| crate::types::ParamInfo {
+                suppress_display_optional: false,
                 name: e.name,
                 type_id: e.type_id,
                 optional: e.optional,

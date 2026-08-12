@@ -330,6 +330,7 @@ mod tests {
             },
         });
         let rest_params = vec![ParamInfo {
+            suppress_display_optional: false,
             name: None,
             type_id: pack,
             optional: false,

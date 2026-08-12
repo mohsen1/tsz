@@ -1200,6 +1200,7 @@ mod tests {
         let function = db.function(FunctionShape {
             type_params: vec![signature_param],
             params: vec![ParamInfo {
+                suppress_display_optional: false,
                 type_id: outer,
                 ..ParamInfo::default()
             }],
@@ -1212,6 +1213,7 @@ mod tests {
         let call_signature = CallSignature {
             type_params: vec![signature_param],
             params: vec![ParamInfo {
+                suppress_display_optional: false,
                 type_id: outer,
                 ..ParamInfo::default()
             }],
@@ -1392,6 +1394,7 @@ mod tests {
         let function = db.function(FunctionShape {
             type_params: Vec::new(),
             params: vec![ParamInfo {
+                suppress_display_optional: false,
                 type_id: first,
                 ..ParamInfo::default()
             }],
@@ -1405,6 +1408,7 @@ mod tests {
             call_signatures: vec![CallSignature {
                 type_params: Vec::new(),
                 params: vec![ParamInfo {
+                    suppress_display_optional: false,
                     type_id: second,
                     ..ParamInfo::default()
                 }],

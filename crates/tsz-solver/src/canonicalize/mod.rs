@@ -960,6 +960,7 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
         params
             .iter()
             .map(|p| ParamInfo {
+                suppress_display_optional: false,
                 name: None,
                 type_id: self.canonicalize(p.type_id),
                 optional: p.optional,

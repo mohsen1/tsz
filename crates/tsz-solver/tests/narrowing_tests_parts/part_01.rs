@@ -692,7 +692,7 @@ fn test_narrow_excluding_default_budget_handles_wide_intersection() {
 fn test_narrow_excluding_function_shares_the_budget() {
     let interner = TypeInterner::new();
     let func = interner.function(FunctionShape {
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::NUMBER,
             optional: false,

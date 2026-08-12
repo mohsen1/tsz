@@ -710,6 +710,7 @@ impl<'a> NarrowingContext<'a> {
     pub(crate) fn function_type(&self) -> TypeId {
         let rest_array = self.db.array(TypeId::ANY);
         let rest_param = ParamInfo {
+            suppress_display_optional: false,
             name: None,
             type_id: rest_array,
             optional: false,

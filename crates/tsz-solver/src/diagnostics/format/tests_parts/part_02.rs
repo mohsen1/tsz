@@ -7,7 +7,7 @@ fn format_callable_multiple_call_signatures() {
         call_signatures: vec![
             CallSignature {
                 type_params: vec![],
-                params: vec![ParamInfo {
+                params: vec![ParamInfo { suppress_display_optional: false,
                     name: Some(db.intern_string("x")),
                     type_id: TypeId::STRING,
                     optional: false,
@@ -20,7 +20,7 @@ fn format_callable_multiple_call_signatures() {
             },
             CallSignature {
                 type_params: vec![],
-                params: vec![ParamInfo {
+                params: vec![ParamInfo { suppress_display_optional: false,
                     name: Some(db.intern_string("x")),
                     type_id: TypeId::NUMBER,
                     optional: false,
@@ -56,7 +56,7 @@ fn format_callable_displays_zero_arg_overload_first() {
         call_signatures: vec![
             CallSignature {
                 type_params: vec![],
-                params: vec![ParamInfo {
+                params: vec![ParamInfo { suppress_display_optional: false,
                     name: Some(db.intern_string("locales")),
                     type_id: TypeId::STRING,
                     optional: true,
@@ -231,7 +231,7 @@ fn format_object_method_shorthand() {
 
     let method_type = db.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(db.intern_string("x")),
             type_id: TypeId::NUMBER,
             optional: false,
@@ -271,7 +271,7 @@ fn format_object_readonly_method_uses_property_form() {
 
     let method_type = db.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(db.intern_string("x")),
             type_id: TypeId::NUMBER,
             optional: false,
@@ -325,7 +325,7 @@ fn format_const_type_param() {
             is_const: true,
             origin: crate::types::TypeParamOrigin::User,
         }],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(db.intern_string("x")),
             type_id: t_param,
             optional: false,
@@ -570,7 +570,7 @@ fn optional_param_shows_undefined() {
 
     let func = db.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(db.intern_string("a")),
             type_id: TypeId::STRING,
             optional: true,
@@ -599,7 +599,7 @@ fn optional_param_with_union_undefined_keeps_it() {
     let str_or_undef = db.union_preserve_members(vec![TypeId::STRING, TypeId::UNDEFINED]);
     let func = db.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(db.intern_string("a")),
             type_id: str_or_undef,
             optional: true,
@@ -627,7 +627,7 @@ fn optional_param_shows_synthetic_undefined_when_surface_preservation_disabled()
 
     let func = db.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(db.intern_string("a")),
             type_id: TypeId::STRING,
             optional: true,
@@ -749,7 +749,7 @@ fn non_optional_param_keeps_undefined_in_union() {
     let str_or_undef = db.union_preserve_members(vec![TypeId::STRING, TypeId::UNDEFINED]);
     let func = db.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(db.intern_string("a")),
             type_id: str_or_undef,
             optional: false,

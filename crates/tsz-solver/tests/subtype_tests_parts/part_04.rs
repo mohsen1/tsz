@@ -315,7 +315,7 @@ fn test_generic_function_constraint_directionality() {
 
     let fn_t = interner.function(FunctionShape {
         type_params: vec![u],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: u_id,
             optional: false,
@@ -330,7 +330,7 @@ fn test_generic_function_constraint_directionality() {
 
     let fn_t1 = interner.function(FunctionShape {
         type_params: vec![v],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: v_id,
             optional: false,
@@ -601,7 +601,7 @@ fn test_generic_contravariant_param_position() {
 
     let accept_string = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::STRING,
             optional: false,
@@ -616,7 +616,7 @@ fn test_generic_contravariant_param_position() {
 
     let accept_union = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: interner.union(vec![TypeId::STRING, TypeId::NUMBER]),
             optional: false,
@@ -652,7 +652,7 @@ fn test_generic_mixed_variance_positions() {
     // process(input: string | number): string
     let process_wide_in_narrow_out = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("input")),
             type_id: wide_type,
             optional: false,
@@ -668,7 +668,7 @@ fn test_generic_mixed_variance_positions() {
     // process(input: string): string | number
     let process_narrow_in_wide_out = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("input")),
             type_id: TypeId::STRING,
             optional: false,
@@ -734,7 +734,7 @@ fn test_method_bivariant_wider_param() {
 
     let method_narrow = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("e")),
             type_id: TypeId::STRING,
             optional: false,
@@ -749,7 +749,7 @@ fn test_method_bivariant_wider_param() {
 
     let method_wide = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("e")),
             type_id: wide_param,
             optional: false,
@@ -781,7 +781,7 @@ fn test_method_bivariant_callback_param() {
 
     let callback_narrow = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("data")),
             type_id: TypeId::STRING,
             optional: false,
@@ -796,7 +796,7 @@ fn test_method_bivariant_callback_param() {
 
     let callback_wide = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("data")),
             type_id: interner.union(vec![TypeId::STRING, TypeId::NUMBER]),
             optional: false,
@@ -811,7 +811,7 @@ fn test_method_bivariant_callback_param() {
 
     let method_with_narrow_cb = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("cb")),
             type_id: callback_narrow,
             optional: false,
@@ -826,7 +826,7 @@ fn test_method_bivariant_callback_param() {
 
     let method_with_wide_cb = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("cb")),
             type_id: callback_wide,
             optional: false,
@@ -862,7 +862,7 @@ fn test_function_property_contravariant_not_bivariant() {
 
     let fn_narrow = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("e")),
             type_id: TypeId::STRING,
             optional: false,
@@ -877,7 +877,7 @@ fn test_function_property_contravariant_not_bivariant() {
 
     let fn_wide = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("e")),
             type_id: wide_param,
             optional: false,
@@ -1758,7 +1758,7 @@ fn test_contravariant_param_wider_is_subtype() {
 
     let fn_param_union = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: union,
             optional: false,
@@ -1773,7 +1773,7 @@ fn test_contravariant_param_wider_is_subtype() {
 
     let fn_param_string = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::STRING,
             optional: false,
@@ -1813,7 +1813,7 @@ fn test_contravariant_param_base_class() {
 
     let fn_param_base = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: base,
             optional: false,
@@ -1828,7 +1828,7 @@ fn test_contravariant_param_base_class() {
 
     let fn_param_derived = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: derived,
             optional: false,
@@ -1855,7 +1855,7 @@ fn test_contravariant_param_unknown() {
 
     let fn_param_unknown = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::UNKNOWN,
             optional: false,
@@ -1870,7 +1870,7 @@ fn test_contravariant_param_unknown() {
 
     let fn_param_string = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::STRING,
             optional: false,
@@ -1899,13 +1899,13 @@ fn test_contravariant_multiple_params() {
     let fn_wider = interner.function(FunctionShape {
         type_params: vec![],
         params: vec![
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("a")),
                 type_id: union,
                 optional: false,
                 rest: false,
             },
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("b")),
                 type_id: TypeId::UNKNOWN,
                 optional: false,
@@ -1923,13 +1923,13 @@ fn test_contravariant_multiple_params() {
     let fn_narrower = interner.function(FunctionShape {
         type_params: vec![],
         params: vec![
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("a")),
                 type_id: TypeId::STRING,
                 optional: false,
                 rest: false,
             },
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("b")),
                 type_id: TypeId::NUMBER,
                 optional: false,

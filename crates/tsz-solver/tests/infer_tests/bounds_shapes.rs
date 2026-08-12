@@ -111,12 +111,14 @@ fn test_resolve_bounds_function_subtype() {
     let var = ctx.fresh_type_param(interner.intern_string("T"), false);
 
     let source_param = ParamInfo {
+        suppress_display_optional: false,
         name: Some(interner.intern_string("x")),
         type_id: interner.union(vec![TypeId::STRING, TypeId::NUMBER]),
         optional: false,
         rest: false,
     };
     let target_param = ParamInfo {
+        suppress_display_optional: false,
         name: Some(interner.intern_string("y")),
         type_id: TypeId::STRING,
         optional: false,
@@ -416,12 +418,14 @@ fn test_resolve_bounds_callable_subtype() {
     let var = ctx.fresh_type_param(interner.intern_string("T"), false);
 
     let source_param = ParamInfo {
+        suppress_display_optional: false,
         name: Some(interner.intern_string("x")),
         type_id: interner.union(vec![TypeId::STRING, TypeId::NUMBER]),
         optional: false,
         rest: false,
     };
     let target_param = ParamInfo {
+        suppress_display_optional: false,
         name: Some(interner.intern_string("y")),
         type_id: TypeId::STRING,
         optional: false,
@@ -474,12 +478,14 @@ fn test_resolve_bounds_function_to_callable() {
     let var = ctx.fresh_type_param(interner.intern_string("T"), false);
 
     let source_param = ParamInfo {
+        suppress_display_optional: false,
         name: Some(interner.intern_string("x")),
         type_id: interner.union(vec![TypeId::STRING, TypeId::NUMBER]),
         optional: false,
         rest: false,
     };
     let target_param = ParamInfo {
+        suppress_display_optional: false,
         name: Some(interner.intern_string("y")),
         type_id: TypeId::STRING,
         optional: false,
@@ -526,12 +532,14 @@ fn test_resolve_bounds_callable_to_function() {
     let var = ctx.fresh_type_param(interner.intern_string("T"), false);
 
     let source_param = ParamInfo {
+        suppress_display_optional: false,
         name: Some(interner.intern_string("x")),
         type_id: interner.union(vec![TypeId::STRING, TypeId::NUMBER]),
         optional: false,
         rest: false,
     };
     let target_param = ParamInfo {
+        suppress_display_optional: false,
         name: Some(interner.intern_string("y")),
         type_id: TypeId::STRING,
         optional: false,
@@ -660,6 +668,7 @@ fn test_infer_union_target_with_placeholder_member() {
             origin: crate::types::TypeParamOrigin::User,
         }],
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: param_type,
             optional: false,
@@ -700,6 +709,7 @@ fn test_infer_union_target_with_placeholder_and_never_member() {
             origin: crate::types::TypeParamOrigin::User,
         }],
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: param_type,
             optional: false,

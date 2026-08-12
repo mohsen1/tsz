@@ -143,6 +143,7 @@ fn test_contextual_property_type_specializes_unique_symbol_mapped_keys() {
     let template = interner.function(FunctionShape {
         type_params: vec![],
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("p")),
             type_id: key_param,
             optional: false,
@@ -205,6 +206,7 @@ fn test_contextual_function_parameter_type() {
     let fn_type = interner.function(FunctionShape {
         type_params: vec![],
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::NUMBER,
             optional: false,
@@ -265,6 +267,7 @@ fn test_contextual_for_parameter_child_context() {
     let fn_type = interner.function(FunctionShape {
         type_params: vec![],
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::STRING,
             optional: false,

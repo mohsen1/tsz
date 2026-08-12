@@ -38,6 +38,7 @@ fn test_class_instance_with_method() {
 
     let method_type = interner.function(FunctionShape {
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::NUMBER,
             optional: false,
@@ -73,6 +74,7 @@ fn test_constructor_type() {
 
     let constructor_type = interner.function(FunctionShape {
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("name")),
             type_id: TypeId::STRING,
             optional: false,
@@ -405,6 +407,7 @@ fn test_class_with_setter() {
     // Setter is a method that takes a parameter
     let setter_type = interner.function(FunctionShape {
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("value")),
             type_id: TypeId::NUMBER,
             optional: false,
@@ -441,6 +444,7 @@ fn test_static_method_type() {
     // Static method doesn't have this_type
     let static_method = interner.function(FunctionShape {
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::NUMBER,
             optional: false,

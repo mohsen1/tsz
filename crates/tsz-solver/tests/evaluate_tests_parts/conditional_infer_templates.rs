@@ -105,7 +105,7 @@ fn test_conditional_infer_function_optional_param_distributive() {
     // T extends (arg?: infer R) => void ? R : never, with T = ((arg?: string) => void)
     // | ((arg?: number) => void).
     let extends_fn = interner.function(FunctionShape {
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: None,
             type_id: infer_r,
             optional: true,
@@ -129,7 +129,7 @@ fn test_conditional_infer_function_optional_param_distributive() {
     let cond_type = interner.conditional(cond);
     let mut subst = TypeSubstitution::new();
     let string_fn = interner.function(FunctionShape {
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: None,
             type_id: TypeId::STRING,
             optional: true,
@@ -143,7 +143,7 @@ fn test_conditional_infer_function_optional_param_distributive() {
         is_method: false,
     });
     let number_fn = interner.function(FunctionShape {
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: None,
             type_id: TypeId::NUMBER,
             optional: true,
@@ -176,7 +176,7 @@ fn test_conditional_infer_function_optional_param_non_distributive_union_input()
     // [T] extends [(arg?: infer R) => void] ? R : never, with T = ((arg?: string) => void)
     // | ((arg?: number) => void).
     let extends_fn = interner.function(FunctionShape {
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: None,
             type_id: infer_r,
             optional: true,
@@ -210,7 +210,7 @@ fn test_conditional_infer_function_optional_param_non_distributive_union_input()
     let cond_type = interner.conditional(cond);
     let mut subst = TypeSubstitution::new();
     let string_fn = interner.function(FunctionShape {
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: None,
             type_id: TypeId::STRING,
             optional: true,
@@ -224,7 +224,7 @@ fn test_conditional_infer_function_optional_param_non_distributive_union_input()
         is_method: false,
     });
     let number_fn = interner.function(FunctionShape {
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: None,
             type_id: TypeId::NUMBER,
             optional: true,
@@ -428,7 +428,7 @@ fn test_conditional_infer_function_rest_param_distributive() {
     // T extends (...args: infer R) => void ? R : never, with T = ((...args: string[]) => void)
     // | ((...args: number[]) => void).
     let extends_fn = interner.function(FunctionShape {
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: None,
             type_id: infer_r,
             optional: false,
@@ -452,7 +452,7 @@ fn test_conditional_infer_function_rest_param_distributive() {
     let cond_type = interner.conditional(cond);
     let mut subst = TypeSubstitution::new();
     let string_fn = interner.function(FunctionShape {
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: None,
             type_id: interner.array(TypeId::STRING),
             optional: false,
@@ -466,7 +466,7 @@ fn test_conditional_infer_function_rest_param_distributive() {
         is_method: false,
     });
     let number_fn = interner.function(FunctionShape {
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: None,
             type_id: interner.array(TypeId::NUMBER),
             optional: false,
@@ -502,7 +502,7 @@ fn test_conditional_infer_function_rest_param_non_distributive_union_input() {
     // [T] extends [(...args: infer R) => void] ? R : never, with T = ((...args: string[]) => void)
     // | ((...args: number[]) => void).
     let extends_fn = interner.function(FunctionShape {
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: None,
             type_id: infer_r,
             optional: false,
@@ -536,7 +536,7 @@ fn test_conditional_infer_function_rest_param_non_distributive_union_input() {
     let cond_type = interner.conditional(cond);
     let mut subst = TypeSubstitution::new();
     let string_fn = interner.function(FunctionShape {
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: None,
             type_id: interner.array(TypeId::STRING),
             optional: false,
@@ -550,7 +550,7 @@ fn test_conditional_infer_function_rest_param_non_distributive_union_input() {
         is_method: false,
     });
     let number_fn = interner.function(FunctionShape {
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: None,
             type_id: interner.array(TypeId::NUMBER),
             optional: false,
@@ -588,7 +588,7 @@ fn test_conditional_infer_function_rest_param_non_distributive_union_branch() {
     // [T] extends [(...args: infer R) => void] ? R : never, with T = ((...args: string[]) => void)
     // | number.
     let extends_fn = interner.function(FunctionShape {
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: None,
             type_id: infer_r,
             optional: false,
@@ -622,7 +622,7 @@ fn test_conditional_infer_function_rest_param_non_distributive_union_branch() {
     let cond_type = interner.conditional(cond);
     let mut subst = TypeSubstitution::new();
     let string_fn = interner.function(FunctionShape {
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: None,
             type_id: interner.array(TypeId::STRING),
             optional: false,

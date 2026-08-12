@@ -488,7 +488,9 @@ FILE_LINE_LIMIT_CHECKS = [
     (
         "Solver boundary: type_queries/data/tests.rs size ratchet",
         ROOT / "crates/tsz-solver/src/type_queries/data/tests.rs",
-        2035,
+        # +3: #17227 added the `ParamInfo::suppress_display_optional` field, so
+        # each `ParamInfo { .. }` test literal gains one line under rustfmt.
+        2038,
     ),
     (
         "Solver boundary: intern/core/constructors.rs size ratchet",
@@ -1007,7 +1009,8 @@ FILE_LINE_LIMIT_CHECKS = [
     (
         "Lowering boundary: lower/core.rs size ratchet",
         ROOT / "crates" / "tsz-lowering" / "src" / "lower" / "core.rs",
-        2032,
+        # +1: #17227 `ParamInfo::suppress_display_optional` field addition.
+        2033,
     ),
     (
         "Binder boundary: state/core.rs size ratchet",
@@ -1072,7 +1075,8 @@ FILE_LINE_LIMIT_CHECKS = [
         / "declaration_emitter"
         / "tests"
         / "type_info.rs",
-        2153,
+        # +1: #17227 `ParamInfo::suppress_display_optional` field addition.
+        2154,
     ),
     (
         "Emitter boundary: emitter/source_file/es5_emit_tests.rs size ratchet (#16488)",
@@ -1093,12 +1097,15 @@ FILE_LINE_LIMIT_CHECKS = [
     (
         "Solver tests boundary: canonicalize_tests.rs size ratchet (#16488)",
         ROOT / "crates" / "tsz-solver" / "tests" / "canonicalize_tests.rs",
-        2287,
+        # +14: #17227 `ParamInfo::suppress_display_optional` field addition, one
+        # line per `ParamInfo { .. }` test literal under rustfmt.
+        2301,
     ),
     (
         "Solver tests boundary: intern_tests.rs size ratchet (#16488)",
         ROOT / "crates" / "tsz-solver" / "tests" / "intern_tests.rs",
-        2045,
+        # +3: #17227 `ParamInfo::suppress_display_optional` field addition.
+        2048,
     ),
 ]
 

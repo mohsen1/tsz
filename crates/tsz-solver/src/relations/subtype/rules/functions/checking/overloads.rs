@@ -1014,6 +1014,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let prefix_params = &target_sig.params[..target_sig.params.len().saturating_sub(1)];
         union_members.iter().all(|member_type_id| {
             let member_param = ParamInfo {
+                suppress_display_optional: false,
                 type_id: *member_type_id,
                 rest: true,
                 ..*last_target_param

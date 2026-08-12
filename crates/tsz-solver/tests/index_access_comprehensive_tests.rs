@@ -1756,6 +1756,7 @@ fn test_index_access_length_on_concrete_conditional_tuple() {
     let check_fn = interner.function(FunctionShape {
         type_params: vec![],
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("args")),
             type_id: tuple_sn,
             optional: false,
@@ -1779,6 +1780,7 @@ fn test_index_access_length_on_concrete_conditional_tuple() {
     let extends_fn = interner.function(FunctionShape {
         type_params: vec![],
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("args")),
             type_id: infer_r,
             optional: false,

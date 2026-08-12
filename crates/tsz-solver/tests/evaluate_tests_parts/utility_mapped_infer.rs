@@ -939,13 +939,13 @@ fn test_noinfer_multiple_type_params() {
             },
         ],
         params: vec![
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("a")),
                 type_id: t_param,
                 optional: false,
                 rest: false,
             },
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("b")),
                 type_id: u_param, // NoInfer<U>
                 optional: false,
@@ -1004,7 +1004,7 @@ fn test_noinfer_in_return_position() {
             is_const: false,
             origin: crate::types::TypeParamOrigin::User,
         }],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: t_param,
             optional: false,

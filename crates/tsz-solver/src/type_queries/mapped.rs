@@ -575,6 +575,7 @@ fn specialize_mapped_property_value_type_for_key(
                 .params
                 .iter()
                 .map(|param| crate::ParamInfo {
+                    suppress_display_optional: false,
                     type_id: specialize_mapped_property_value_type_for_key(
                         db,
                         param.type_id,

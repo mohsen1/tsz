@@ -315,13 +315,13 @@ fn test_conditional_infer_extract_state_pattern() {
     let extends_fn = interner.function(FunctionShape {
         type_params: vec![],
         params: vec![
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("state")),
                 type_id: state_param,
                 optional: false,
                 rest: false,
             },
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("action")),
                 type_id: any_action,
                 optional: false,
@@ -341,13 +341,13 @@ fn test_conditional_infer_extract_state_pattern() {
     let concrete_reducer = interner.function(FunctionShape {
         type_params: vec![],
         params: vec![
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("state")),
                 type_id: concrete_state_param,
                 optional: false,
                 rest: false,
             },
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("action")),
                 type_id: any_action,
                 optional: false,
@@ -391,13 +391,13 @@ fn test_conditional_infer_extract_action_pattern() {
     let extends_fn = interner.function(FunctionShape {
         type_params: vec![],
         params: vec![
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("state")),
                 type_id: state_param,
                 optional: false,
                 rest: false,
             },
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("action")),
                 type_id: infer_a,
                 optional: false,
@@ -427,13 +427,13 @@ fn test_conditional_infer_extract_action_pattern() {
     let concrete_reducer = interner.function(FunctionShape {
         type_params: vec![],
         params: vec![
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("state")),
                 type_id: concrete_state_param,
                 optional: false,
                 rest: false,
             },
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("action")),
                 type_id: concrete_action,
                 optional: false,
@@ -483,13 +483,13 @@ fn test_conditional_infer_extract_state_non_matching() {
     let extends_fn = interner.function(FunctionShape {
         type_params: vec![],
         params: vec![
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("state")),
                 type_id: state_param,
                 optional: false,
                 rest: false,
             },
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("action")),
                 type_id: any_action,
                 optional: false,
@@ -535,7 +535,7 @@ fn test_conditional_infer_extract_state_union_distributive() {
     // Simple function pattern for testing: (x: infer S) => S
     let extends_fn = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: infer_s,
             optional: false,
@@ -551,7 +551,7 @@ fn test_conditional_infer_extract_state_union_distributive() {
     // Two reducer-like functions
     let reducer_number = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::NUMBER,
             optional: false,
@@ -565,7 +565,7 @@ fn test_conditional_infer_extract_state_union_distributive() {
     });
     let reducer_string = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::STRING,
             optional: false,

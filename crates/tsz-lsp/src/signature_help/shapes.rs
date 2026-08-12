@@ -155,6 +155,7 @@ impl<'a> SignatureHelpProvider<'a> {
                     base_ty
                 };
                 ParamInfo {
+                    suppress_display_optional: false,
                     name: Some(self.interner.intern_string(spec.name)),
                     type_id,
                     optional: spec.optional,

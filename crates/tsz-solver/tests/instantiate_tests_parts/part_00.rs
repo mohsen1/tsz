@@ -264,7 +264,7 @@ fn test_instantiate_function() {
     }));
     let func = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: type_param_t,
             optional: false,
@@ -285,7 +285,7 @@ fn test_instantiate_function() {
     // Result should be (x: string) => string
     let expected = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::STRING,
             optional: false,
@@ -353,7 +353,7 @@ fn test_instantiate_function_shadowed_type_params() {
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
     let func = interner.function(FunctionShape {
         type_params: vec![t_param],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: t_type,
             optional: false,
@@ -372,7 +372,7 @@ fn test_instantiate_function_shadowed_type_params() {
 
     let expected = interner.function(FunctionShape {
         type_params: vec![t_param],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: t_type,
             optional: false,
@@ -1837,13 +1837,13 @@ fn test_callable_shadowed_type_param_no_cache_leak() {
     let foo_sig = CallSignature {
         type_params: vec![],
         params: vec![
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("t")),
                 type_id: t_type,
                 optional: false,
                 rest: false,
             },
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("u")),
                 type_id: u_type,
                 optional: false,
@@ -1860,13 +1860,13 @@ fn test_callable_shadowed_type_param_no_cache_leak() {
     let bar_sig = CallSignature {
         type_params: vec![t_param],
         params: vec![
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("t")),
                 type_id: t_type,
                 optional: false,
                 rest: false,
             },
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("u")),
                 type_id: u_type,
                 optional: false,

@@ -374,6 +374,7 @@ pub(crate) fn call_signature_from_function_shape_for_display(
 
 pub(crate) const fn display_param_with_type(param: &ParamInfo, type_id: TypeId) -> ParamInfo {
     ParamInfo {
+        suppress_display_optional: false,
         name: param.name,
         type_id,
         optional: param.optional,

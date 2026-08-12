@@ -1504,6 +1504,7 @@ impl<'a> RestParameterExtractor<'a> {
                             sigs.iter().map(|sig| sig.params[i].type_id).collect();
                         let optional = sigs.iter().any(|sig| sig.params[i].optional);
                         ParamInfo {
+                            suppress_display_optional: false,
                             name: None,
                             type_id: self.db.union_literal_reduce(types),
                             optional,

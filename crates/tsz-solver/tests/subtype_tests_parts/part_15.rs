@@ -7,19 +7,19 @@ fn test_rest_param_flag_is_preserved() {
     let target = interner.function(FunctionShape {
         type_params: vec![],
         params: vec![
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("name")),
                 type_id: TypeId::STRING,
                 optional: false,
                 rest: false,
             },
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("mixed")),
                 type_id: TypeId::ANY,
                 optional: false,
                 rest: false,
             },
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("args")),
                 type_id: any_array,
                 optional: false,
@@ -71,7 +71,7 @@ fn test_rest_param_any_with_extra_fixed_params() {
         params: vec![
             ParamInfo::unnamed(TypeId::STRING),
             ParamInfo::unnamed(TypeId::ANY),
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: None,
                 type_id: rest_any,
                 optional: false,
@@ -425,13 +425,13 @@ fn test_callback_with_readonly_tuple_union_rest_param() {
     let source = interner.function(FunctionShape {
         type_params: vec![],
         params: vec![
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("a")),
                 type_id: num_union,
                 optional: false,
                 rest: false,
             },
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("b")),
                 type_id: str_union,
                 optional: false,
@@ -481,7 +481,7 @@ fn test_callback_with_readonly_tuple_union_rest_param() {
 
     let target = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("args")),
             type_id: union_of_tuples,
             optional: false,

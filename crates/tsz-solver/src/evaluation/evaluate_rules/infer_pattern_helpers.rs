@@ -190,6 +190,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         let params = params
             .iter()
             .map(|param| ParamInfo {
+                suppress_display_optional: false,
                 name: param.name,
                 type_id: instantiate_type(self.interner(), param.type_id, &subst),
                 optional: param.optional,
@@ -543,6 +544,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 Some(TypeData::Intrinsic(crate::types::IntrinsicKind::Function)) => {
                     // Function intrinsic is structurally (...args: any[]) => any
                     let function_params = vec![crate::types::ParamInfo {
+                        suppress_display_optional: false,
                         name: None,
                         type_id: TypeId::ANY,
                         optional: false,
@@ -645,6 +647,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     ) =>
                 {
                     let function_params = vec![crate::types::ParamInfo {
+                        suppress_display_optional: false,
                         name: None,
                         type_id: TypeId::ANY,
                         optional: false,
@@ -720,6 +723,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     Some(TypeData::Intrinsic(crate::types::IntrinsicKind::Function)) => {
                         // Function intrinsic is structurally (...args: any[]) => any
                         let function_params = vec![crate::types::ParamInfo {
+                            suppress_display_optional: false,
                             name: None,
                             type_id: TypeId::ANY,
                             optional: false,
@@ -790,6 +794,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         ) =>
                     {
                         let function_params = vec![crate::types::ParamInfo {
+                            suppress_display_optional: false,
                             name: None,
                             type_id: TypeId::ANY,
                             optional: false,

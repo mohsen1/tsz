@@ -345,6 +345,7 @@ fn test_intersection_function_overloads() {
     let func1 = interner.function(FunctionShape {
         type_params: vec![],
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::STRING,
             optional: false,
@@ -361,6 +362,7 @@ fn test_intersection_function_overloads() {
     let func2 = interner.function(FunctionShape {
         type_params: vec![],
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::NUMBER,
             optional: false,

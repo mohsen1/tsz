@@ -187,7 +187,7 @@ fn test_return_type_generic_function() {
 
     // Pattern: (...args: any[]) => infer R
     let extends_fn = interner.function(FunctionShape {
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: None,
             type_id: interner.array(TypeId::ANY),
             optional: false,
@@ -211,7 +211,7 @@ fn test_return_type_generic_function() {
             is_const: false,
             origin: crate::types::TypeParamOrigin::User,
         }],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: u_param,
             optional: false,
@@ -247,7 +247,7 @@ fn test_return_type_overloaded_function() {
 
     // Pattern: (...args: any[]) => infer R
     let extends_fn = interner.function(FunctionShape {
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: None,
             type_id: interner.array(TypeId::ANY),
             optional: false,
@@ -268,7 +268,7 @@ fn test_return_type_overloaded_function() {
         call_signatures: vec![
             CallSignature {
                 type_params: Vec::new(),
-                params: vec![ParamInfo {
+                params: vec![ParamInfo { suppress_display_optional: false,
                     name: Some(interner.intern_string("x")),
                     type_id: TypeId::STRING,
                     optional: false,
@@ -281,7 +281,7 @@ fn test_return_type_overloaded_function() {
             },
             CallSignature {
                 type_params: Vec::new(),
-                params: vec![ParamInfo {
+                params: vec![ParamInfo { suppress_display_optional: false,
                     name: Some(interner.intern_string("x")),
                     type_id: TypeId::NUMBER,
                     optional: false,
@@ -323,7 +323,7 @@ fn test_return_type_type_predicate_function() {
 
     // Pattern: (...args: any[]) => infer R
     let extends_fn = interner.function(FunctionShape {
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: None,
             type_id: interner.array(TypeId::ANY),
             optional: false,
@@ -378,7 +378,7 @@ fn test_parameters_rest_param_function() {
 
     // Pattern for Parameters: T extends (...args: infer P) => any ? P : never
     let extends_fn = interner.function(FunctionShape {
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("args")),
             type_id: infer_p,
             optional: false,
@@ -395,7 +395,7 @@ fn test_parameters_rest_param_function() {
     // Source: (...args: string[]) => void
     let source_fn = interner.function(FunctionShape {
         type_params: Vec::new(),
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("args")),
             type_id: interner.array(TypeId::STRING),
             optional: false,
@@ -433,7 +433,7 @@ fn test_parameters_optional_and_rest_combination() {
 
     // Pattern: (...args: infer P) => any
     let extends_fn = interner.function(FunctionShape {
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("args")),
             type_id: infer_p,
             optional: false,
@@ -451,19 +451,19 @@ fn test_parameters_optional_and_rest_combination() {
     let source_fn = interner.function(FunctionShape {
         type_params: Vec::new(),
         params: vec![
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("a")),
                 type_id: TypeId::STRING,
                 optional: false,
                 rest: false,
             },
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("b")),
                 type_id: TypeId::NUMBER,
                 optional: true,
                 rest: false,
             },
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("rest")),
                 type_id: interner.array(TypeId::BOOLEAN),
                 optional: false,
@@ -512,7 +512,7 @@ fn test_parameters_generic_function_extracts_parameter_tuple() {
     let (_infer_name, infer_p) = test_infer_param(&interner, "P");
 
     let extends_fn = interner.function(FunctionShape {
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("args")),
             type_id: infer_p,
             optional: false,
@@ -549,13 +549,13 @@ fn test_parameters_generic_function_extracts_parameter_tuple() {
             },
         ],
         params: vec![
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("a")),
                 type_id: t_param,
                 optional: false,
                 rest: false,
             },
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("b")),
                 type_id: u_param,
                 optional: false,
@@ -597,7 +597,7 @@ fn test_constructor_parameters_basic() {
 
     // Pattern for ConstructorParameters: T extends new (...args: infer P) => any ? P : never
     let extends_ctor = interner.function(FunctionShape {
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("args")),
             type_id: infer_p,
             optional: false,
@@ -615,13 +615,13 @@ fn test_constructor_parameters_basic() {
     let source_ctor = interner.function(FunctionShape {
         type_params: Vec::new(),
         params: vec![
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("name")),
                 type_id: TypeId::STRING,
                 optional: false,
                 rest: false,
             },
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("age")),
                 type_id: TypeId::NUMBER,
                 optional: false,
@@ -665,7 +665,7 @@ fn test_constructor_parameters_callable_construct_signature() {
 
     // Pattern: new (...args: infer P) => any
     let extends_ctor = interner.function(FunctionShape {
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("args")),
             type_id: infer_p,
             optional: false,
@@ -686,7 +686,7 @@ fn test_constructor_parameters_callable_construct_signature() {
         call_signatures: Vec::new(),
         construct_signatures: vec![CallSignature {
             type_params: Vec::new(),
-            params: vec![ParamInfo {
+            params: vec![ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("x")),
                 type_id: TypeId::STRING,
                 optional: false,
@@ -731,7 +731,7 @@ fn test_constructor_parameters_callable_construct_signature_with_properties() {
     let (_infer_name, infer_p) = test_infer_param(&interner, "P");
 
     let extends_ctor = interner.function(FunctionShape {
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("args")),
             type_id: infer_p,
             optional: false,
@@ -751,7 +751,7 @@ fn test_constructor_parameters_callable_construct_signature_with_properties() {
         call_signatures: Vec::new(),
         construct_signatures: vec![CallSignature {
             type_params: Vec::new(),
-            params: vec![ParamInfo {
+            params: vec![ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("options")),
                 type_id: TypeId::STRING,
                 optional: false,
@@ -802,7 +802,7 @@ fn test_return_type_union_distributive() {
 
     // Pattern: T extends (...args: any[]) => infer R ? R : never
     let extends_fn = interner.function(FunctionShape {
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: None,
             type_id: interner.array(TypeId::ANY),
             optional: false,
@@ -1166,7 +1166,7 @@ fn test_infer_function_signature_param_and_return() {
     // Pattern: (x: infer P) => infer R
     let pattern_fn = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: infer_p,
             optional: false,
@@ -1182,7 +1182,7 @@ fn test_infer_function_signature_param_and_return() {
     // Input: (x: string) => number
     let input_fn = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::STRING,
             optional: false,
@@ -1233,13 +1233,13 @@ fn test_infer_function_multiple_params() {
     let pattern_fn = interner.function(FunctionShape {
         type_params: vec![],
         params: vec![
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("a")),
                 type_id: infer_a,
                 optional: false,
                 rest: false,
             },
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("b")),
                 type_id: infer_b,
                 optional: false,
@@ -1257,13 +1257,13 @@ fn test_infer_function_multiple_params() {
     let input_fn = interner.function(FunctionShape {
         type_params: vec![],
         params: vec![
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("a")),
                 type_id: TypeId::BOOLEAN,
                 optional: false,
                 rest: false,
             },
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("b")),
                 type_id: TypeId::STRING,
                 optional: false,
@@ -1475,7 +1475,7 @@ fn test_infer_contravariant_single_param() {
     // Pattern: (x: infer P) => any
     let pattern_fn = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: infer_p,
             optional: false,
@@ -1492,7 +1492,7 @@ fn test_infer_contravariant_single_param() {
     let param_union = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
     let input_fn = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: param_union,
             optional: false,
@@ -1532,13 +1532,13 @@ fn test_infer_contravariant_intersection_from_multiple_candidates() {
     let pattern_fn = interner.function(FunctionShape {
         type_params: vec![],
         params: vec![
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("a")),
                 type_id: infer_t,
                 optional: false,
                 rest: false,
             },
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("b")),
                 type_id: infer_t,
                 optional: false,
@@ -1556,13 +1556,13 @@ fn test_infer_contravariant_intersection_from_multiple_candidates() {
     let input_fn = interner.function(FunctionShape {
         type_params: vec![],
         params: vec![
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("a")),
                 type_id: TypeId::STRING,
                 optional: false,
                 rest: false,
             },
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("b")),
                 type_id: TypeId::STRING,
                 optional: false,

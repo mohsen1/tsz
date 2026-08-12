@@ -198,7 +198,7 @@ fn test_rest_unknown_bivariant_conditional_evaluate_strict() {
 
     let rest_unknown = interner.array(TypeId::UNKNOWN);
     let target = interner.function(FunctionShape {
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: None,
             type_id: rest_unknown,
             optional: false,

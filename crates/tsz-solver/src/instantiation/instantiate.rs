@@ -630,6 +630,7 @@ impl<'a> TypeInstantiator<'a> {
             let type_id = self.instantiate(param.type_id);
             let original = *param;
             let param = ParamInfo {
+                suppress_display_optional: false,
                 type_id,
                 ..original
             };

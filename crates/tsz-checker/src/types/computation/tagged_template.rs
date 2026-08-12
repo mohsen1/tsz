@@ -335,6 +335,7 @@ impl<'a> CheckerState<'a> {
                         .params
                         .iter()
                         .map(|p| tsz_solver::ParamInfo {
+                            suppress_display_optional: false,
                             name: p.name,
                             type_id: self.evaluate_type_with_env(p.type_id),
                             optional: p.optional,

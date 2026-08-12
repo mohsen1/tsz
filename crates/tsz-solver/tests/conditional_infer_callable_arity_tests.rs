@@ -36,6 +36,7 @@ fn one_arg_infer_pattern(interner: &TypeInterner, name: &str) -> (TypeId, TypeId
     let pattern = interner.function(FunctionShape {
         type_params: vec![],
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("p")),
             type_id: infer_ty,
             optional: false,
@@ -116,12 +117,14 @@ fn infer_callable_two_missing_params_default_each_to_unknown() {
         type_params: vec![],
         params: vec![
             ParamInfo {
+                suppress_display_optional: false,
                 name: Some(interner.intern_string("a")),
                 type_id: infer_a,
                 optional: false,
                 rest: false,
             },
             ParamInfo {
+                suppress_display_optional: false,
                 name: Some(interner.intern_string("b")),
                 type_id: infer_b,
                 optional: false,
@@ -187,6 +190,7 @@ fn infer_callable_supplied_param_still_infers_concrete_type() {
     let source = interner.function(FunctionShape {
         type_params: vec![],
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::NUMBER,
             optional: false,
@@ -255,6 +259,7 @@ fn infer_callable_unmatched_param_defaults_nested_object_infer() {
     let pattern = interner.function(FunctionShape {
         type_params: vec![],
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: param_obj,
             optional: false,
@@ -307,6 +312,7 @@ fn infer_callable_unmatched_param_defaults_deferred_application_infer() {
     let pattern = interner.function(FunctionShape {
         type_params: vec![],
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: box_of_infer,
             optional: false,

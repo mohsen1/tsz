@@ -128,6 +128,7 @@ fn test_classify_callable_function() {
     let fn_type = interner.function(FunctionShape {
         type_params: vec![],
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: None,
             type_id: TypeId::NUMBER,
             optional: false,
@@ -728,6 +729,7 @@ fn test_function_subtype_params_contravariant() {
 
     let fn_string_param = interner.function(FunctionShape {
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: None,
             type_id: TypeId::STRING,
             optional: false,
@@ -743,6 +745,7 @@ fn test_function_subtype_params_contravariant() {
 
     let fn_literal_param = interner.function(FunctionShape {
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: None,
             type_id: hello,
             optional: false,
@@ -786,6 +789,7 @@ fn test_function_subtype_fewer_params_ok() {
 
     let fn_one_param = interner.function(FunctionShape {
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: None,
             type_id: TypeId::NUMBER,
             optional: false,
@@ -1376,6 +1380,7 @@ fn test_classify_callable_overloaded() {
             CallSignature {
                 type_params: Vec::new(),
                 params: vec![ParamInfo {
+                    suppress_display_optional: false,
                     name: None,
                     type_id: TypeId::NUMBER,
                     optional: false,
@@ -1389,6 +1394,7 @@ fn test_classify_callable_overloaded() {
             CallSignature {
                 type_params: Vec::new(),
                 params: vec![ParamInfo {
+                    suppress_display_optional: false,
                     name: None,
                     type_id: TypeId::STRING,
                     optional: false,
@@ -1715,6 +1721,7 @@ fn test_get_call_signatures_function() {
 
     let func = interner.function(FunctionShape {
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: None,
             type_id: TypeId::NUMBER,
             optional: false,
@@ -1808,6 +1815,7 @@ fn test_function_is_not_subtype_of_number_index_target() {
     let fn_type = interner.function(FunctionShape {
         type_params: vec![],
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: None,
             type_id: TypeId::STRING,
             optional: false,

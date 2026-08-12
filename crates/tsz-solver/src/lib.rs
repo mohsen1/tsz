@@ -51,6 +51,7 @@ mod sound_prototype;
 pub mod ts_type_flags;
 pub mod type_queries;
 // type_resolver moved into def/resolver.rs
+mod param_info_impl;
 pub mod types;
 pub mod unique_symbol_identity;
 pub mod unsoundness_audit;

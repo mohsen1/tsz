@@ -7,7 +7,7 @@ fn test_tuple_rest_element_extracts_array_element_type() {
     // [(x: number) => number, ...((x: string) => number)[]]
     let num_callback = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::NUMBER,
             optional: false,
@@ -21,7 +21,7 @@ fn test_tuple_rest_element_extracts_array_element_type() {
     });
     let str_callback = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::STRING,
             optional: false,
@@ -73,7 +73,7 @@ fn test_rest_param_tuple_extracts_element_type_for_call() {
 
     let num_callback = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::NUMBER,
             optional: false,
@@ -87,7 +87,7 @@ fn test_rest_param_tuple_extracts_element_type_for_call() {
     });
     let str_callback = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::STRING,
             optional: false,
@@ -119,7 +119,7 @@ fn test_rest_param_tuple_extracts_element_type_for_call() {
     // f2(...a: [(x: number) => number, ...((x: string) => number)[]]): void
     let f2 = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("a")),
             type_id: tuple_type,
             optional: false,
@@ -379,7 +379,7 @@ fn build_homomorphic_mapped(
 fn build_consumer_fn(interner: &TypeInterner, param_type: TypeId) -> TypeId {
     interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("v")),
             type_id: param_type,
             optional: false,

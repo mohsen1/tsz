@@ -1365,6 +1365,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 let instantiated =
                     instantiate_call_type(self.interner, p.type_id, &final_subst, actual_this_type);
                 ParamInfo {
+                    suppress_display_optional: false,
                     name: p.name,
                     type_id: instantiated,
                     optional: p.optional,
@@ -1522,6 +1523,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     &func.type_params,
                 );
                 finalized.push(ParamInfo {
+                    suppress_display_optional: false,
                     name: param.name,
                     type_id,
                     optional: param.optional,
@@ -1854,6 +1856,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 .params
                 .iter()
                 .map(|p| ParamInfo {
+                    suppress_display_optional: false,
                     name: p.name,
                     type_id: instantiate_call_type(
                         self.interner,

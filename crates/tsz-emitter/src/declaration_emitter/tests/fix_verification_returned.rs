@@ -318,6 +318,7 @@ fn fix_symbol_types_fallback_used_when_node_types_is_any() {
     let func_type = interner.function(FunctionShape {
         type_params: vec![],
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(x_atom),
             type_id: param_type,
             optional: false,
@@ -379,6 +380,7 @@ fn fix_predicate_pattern2_does_not_rewrite_unrelated_union_shapes() {
     let func_type = interner.function(FunctionShape {
         type_params: vec![TypeParamInfo::simple(t_atom)],
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(x_atom),
             type_id: TypeId::UNKNOWN,
             optional: false,
@@ -467,6 +469,7 @@ type Bar = Foo & {
     let func_type = interner.function(FunctionShape {
         type_params: Vec::new(),
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(x_atom),
             type_id: param_type,
             optional: false,
@@ -554,6 +557,7 @@ type Bar = {
     let func_type = interner.function(FunctionShape {
         type_params: Vec::new(),
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(x_atom),
             type_id: param_type,
             optional: false,

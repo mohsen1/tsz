@@ -291,6 +291,7 @@ fn test_type_parameter_in_function() {
 
     let func = interner.function(crate::types::FunctionShape {
         params: vec![crate::types::ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("value")),
             type_id: type_param,
             optional: false,
@@ -671,12 +672,14 @@ fn test_function_with_multiple_type_parameters() {
     let func = interner.function(crate::types::FunctionShape {
         params: vec![
             crate::types::ParamInfo {
+                suppress_display_optional: false,
                 name: Some(interner.intern_string("a")),
                 type_id: t_param,
                 optional: false,
                 rest: false,
             },
             crate::types::ParamInfo {
+                suppress_display_optional: false,
                 name: Some(interner.intern_string("b")),
                 type_id: u_param,
                 optional: false,

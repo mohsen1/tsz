@@ -683,12 +683,14 @@ fn test_canonicalization_functions() {
         type_params: vec![],
         params: vec![
             ParamInfo {
+                suppress_display_optional: false,
                 name: Some(interner.intern_string("x")),
                 type_id: TypeId::STRING,
                 optional: false,
                 rest: false,
             },
             ParamInfo {
+                suppress_display_optional: false,
                 name: Some(interner.intern_string("y")),
                 type_id: TypeId::NUMBER,
                 optional: false,

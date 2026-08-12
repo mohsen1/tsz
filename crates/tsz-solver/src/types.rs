@@ -1335,50 +1335,15 @@ pub struct ParamInfo {
     pub type_id: TypeId,
     pub optional: bool,
     pub rest: bool,
+    /// Display-only: suppress the `?` marker for a bare, unannotated JS
+    /// parameter (optional for weak call-arity, but `tsc` renders it required).
+    /// Never set for a real `?`, initializer, or JSDoc-optional param. Defaults
+    /// `false`, so identity (`Hash`/`Eq`) and arity/subtyping are unchanged.
+    pub suppress_display_optional: bool,
 }
 
-impl ParamInfo {
-    /// Returns `true` if this parameter is required (non-optional, non-rest).
-    pub const fn is_required(&self) -> bool {
-        !self.optional && !self.rest
-    }
-
-    /// Create a required parameter.
-    pub const fn required(name: Atom, type_id: TypeId) -> Self {
-        Self {
-            name: Some(name),
-            type_id,
-            optional: false,
-            rest: false,
-        }
-    }
-
-    /// Create an optional parameter.
-    pub const fn optional(name: Atom, type_id: TypeId) -> Self {
-        Self {
-            optional: true,
-            ..Self::required(name, type_id)
-        }
-    }
-
-    /// Create a rest parameter.
-    pub const fn rest(name: Atom, type_id: TypeId) -> Self {
-        Self {
-            rest: true,
-            ..Self::required(name, type_id)
-        }
-    }
-
-    /// Create an unnamed required parameter.
-    pub const fn unnamed(type_id: TypeId) -> Self {
-        Self {
-            name: None,
-            type_id,
-            optional: false,
-            rest: false,
-        }
-    }
-}
+// Inherent methods for `ParamInfo` live in `crate::param_info_impl` to keep
+// this module under the per-file size cap.
 
 /// Origin/kind discriminant for a [`TypeParamInfo`].
 ///

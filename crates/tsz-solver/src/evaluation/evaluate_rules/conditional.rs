@@ -1699,6 +1699,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 .params
                 .iter()
                 .map(|p| ParamInfo {
+                    suppress_display_optional: false,
                     type_id: instantiate_type(interner, p.type_id, &subst),
                     ..*p
                 })

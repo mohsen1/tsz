@@ -1093,25 +1093,19 @@ impl<'a> CheckerState<'a> {
                         );
                     }
                 }
-                // In JS files, params without type annotations are implicitly optional
-                // unless a JSDoc @param tag or @type function annotation exists.
-                let js_implicit_optional = self.is_js_file()
-                    && !has_jsdoc_type_function
-                    && param.type_annotation.is_none()
-                    && !{
-                        let jsdoc_for_opt = func_jsdoc
-                            .as_ref()
-                            .cloned()
-                            .or_else(|| self.find_jsdoc_for_function(idx));
-                        jsdoc_for_opt.is_some_and(|jsdoc| {
-                            let pname = self.effective_jsdoc_param_name(
-                                param.name,
-                                &jsdoc_param_names,
-                                contextual_index,
-                            );
-                            Self::jsdoc_has_required_param_tag(&jsdoc, &pname)
-                        })
-                    };
+                // In JS files, params without type annotations are implicitly
+                // optional for weak call-arity unless JSDoc marks them required;
+                // `suppress_display_optional` keeps such bare params *rendered*
+                // as required, matching tsc's independent display/arity split.
+                let (js_implicit_optional, suppress_display_optional) = self
+                    .js_param_optionality_signals(
+                        idx,
+                        param,
+                        has_jsdoc_type_function,
+                        func_jsdoc.as_deref(),
+                        &jsdoc_param_names,
+                        contextual_index,
+                    );
                 let optional =
                     param.question_token || param.initializer.is_some() || js_implicit_optional;
                 let rest = param.dot_dot_dot_token
@@ -1165,8 +1159,12 @@ impl<'a> CheckerState<'a> {
                         self.ctx.types,
                         type_id,
                     );
-                params.push(signature_building_boundary::param_info(
-                    name, type_id, optional, rest,
+                params.push(signature_building_boundary::param_info_with_display(
+                    name,
+                    type_id,
+                    optional,
+                    rest,
+                    suppress_display_optional,
                 ));
                 let cached_type = if needs_undefined && self.ctx.strict_null_checks() {
                     signature_building_boundary::optional_param_type_with_undefined(

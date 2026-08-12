@@ -580,6 +580,7 @@ fn erase_signature_for_assertion(
         .params
         .iter()
         .map(|param| ParamInfo {
+            suppress_display_optional: false,
             name: param.name,
             type_id: instantiate_type(db, param.type_id, &substitution),
             optional: param.optional,

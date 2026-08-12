@@ -446,7 +446,7 @@ fn test_apparent_number_member_subtyping() {
     let rest_any = interner.array(TypeId::ANY);
     let method = |return_type| {
         interner.function(FunctionShape {
-            params: vec![ParamInfo {
+            params: vec![ParamInfo { suppress_display_optional: false,
                 name: None,
                 type_id: rest_any,
                 optional: false,
@@ -539,7 +539,7 @@ fn test_generic_function_mapped_apparent_constraint_not_erased_by_alpha_rename()
         optional_modifier: None,
     });
     let foo = interner.function(FunctionShape {
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("target")),
             type_id: foo_param_type,
             optional: false,
@@ -578,7 +578,7 @@ fn test_generic_function_mapped_apparent_constraint_not_erased_by_alpha_rename()
         optional_modifier: None,
     });
     let bar = interner.function(FunctionShape {
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("source")),
             type_id: bar_param_type,
             optional: false,

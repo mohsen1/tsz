@@ -205,7 +205,7 @@ fn test_this_type_in_param_contravariant() {
 
     let narrow_fn = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("other")),
             type_id: this_type,
             optional: false,
@@ -220,7 +220,7 @@ fn test_this_type_in_param_contravariant() {
 
     let wide_fn = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("other")),
             type_id: this_or_number,
             optional: false,
@@ -258,7 +258,7 @@ fn test_class_like_subtyping_this_param_contravariant() {
 
     let base_compare = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("other")),
             type_id: this_or_number,
             optional: false,
@@ -273,7 +273,7 @@ fn test_class_like_subtyping_this_param_contravariant() {
 
     let derived_compare = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("other")),
             type_id: this_type,
             optional: false,
@@ -354,7 +354,7 @@ fn test_this_type_does_not_break_union_function_contravariance() {
     // (x: A | B) => void
     let fn_wide = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: a_or_b,
             optional: false,
@@ -370,7 +370,7 @@ fn test_this_type_does_not_break_union_function_contravariance() {
     // (x: B) => void
     let fn_narrow = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: b_type,
             optional: false,
@@ -408,19 +408,19 @@ fn test_function_fixed_to_rest_subtyping() {
     let source = interner.function(FunctionShape {
         type_params: vec![],
         params: vec![
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("name")),
                 type_id: TypeId::STRING,
                 optional: false,
                 rest: false,
             },
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("mixed")),
                 type_id: TypeId::ANY,
                 optional: false,
                 rest: false,
             },
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("arg")),
                 type_id: TypeId::ANY,
                 optional: false,
@@ -439,19 +439,19 @@ fn test_function_fixed_to_rest_subtyping() {
     let target = interner.function(FunctionShape {
         type_params: vec![],
         params: vec![
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("name")),
                 type_id: TypeId::STRING,
                 optional: false,
                 rest: false,
             },
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("mixed")),
                 type_id: TypeId::ANY,
                 optional: false,
                 rest: false,
             },
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("args")),
                 type_id: any_array,
                 optional: false,
@@ -483,13 +483,13 @@ fn test_function_fixed_to_rest_extra_param_accepts_undefined() {
     let source = interner.function(FunctionShape {
         type_params: vec![],
         params: vec![
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("name")),
                 type_id: TypeId::STRING,
                 optional: false,
                 rest: false,
             },
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("value")),
                 type_id: num_or_undef,
                 optional: false,
@@ -507,13 +507,13 @@ fn test_function_fixed_to_rest_extra_param_accepts_undefined() {
     let target = interner.function(FunctionShape {
         type_params: vec![],
         params: vec![
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("name")),
                 type_id: TypeId::STRING,
                 optional: false,
                 rest: false,
             },
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("args")),
                 type_id: number_array,
                 optional: false,
@@ -546,19 +546,19 @@ fn test_rest_any_three_fixed_to_two_fixed_plus_rest() {
     let source = interner.function(FunctionShape {
         type_params: vec![],
         params: vec![
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("name")),
                 type_id: TypeId::STRING,
                 optional: false,
                 rest: false,
             },
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("mixed")),
                 type_id: TypeId::ANY,
                 optional: false,
                 rest: false,
             },
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("args_0")),
                 type_id: TypeId::ANY,
                 optional: false,
@@ -576,19 +576,19 @@ fn test_rest_any_three_fixed_to_two_fixed_plus_rest() {
     let target = interner.function(FunctionShape {
         type_params: vec![],
         params: vec![
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("name")),
                 type_id: TypeId::STRING,
                 optional: false,
                 rest: false,
             },
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("mixed")),
                 type_id: TypeId::ANY,
                 optional: false,
                 rest: false,
             },
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("args")),
                 type_id: rest_any,
                 optional: false,
@@ -613,13 +613,13 @@ fn test_function_fixed_to_rest_extra_param_compatible() {
     let source = interner.function(FunctionShape {
         type_params: vec![],
         params: vec![
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("name")),
                 type_id: TypeId::STRING,
                 optional: false,
                 rest: false,
             },
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("value")),
                 type_id: TypeId::NUMBER,
                 optional: false,
@@ -637,13 +637,13 @@ fn test_function_fixed_to_rest_extra_param_compatible() {
     let target = interner.function(FunctionShape {
         type_params: vec![],
         params: vec![
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("name")),
                 type_id: TypeId::STRING,
                 optional: false,
                 rest: false,
             },
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("args")),
                 type_id: number_array,
                 optional: false,
@@ -677,19 +677,19 @@ fn test_function_rest_tuple_to_rest_array_subtyping() {
     let source = interner.function(FunctionShape {
         type_params: vec![],
         params: vec![
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("name")),
                 type_id: TypeId::STRING,
                 optional: false,
                 rest: false,
             },
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("mixed")),
                 type_id: TypeId::ANY,
                 optional: false,
                 rest: false,
             },
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("args")),
                 type_id: tuple_one_any,
                 optional: false,
@@ -708,19 +708,19 @@ fn test_function_rest_tuple_to_rest_array_subtyping() {
     let target = interner.function(FunctionShape {
         type_params: vec![],
         params: vec![
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("name")),
                 type_id: TypeId::STRING,
                 optional: false,
                 rest: false,
             },
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("mixed")),
                 type_id: TypeId::ANY,
                 optional: false,
                 rest: false,
             },
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("args")),
                 type_id: any_array,
                 optional: false,

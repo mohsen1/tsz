@@ -120,6 +120,7 @@ pub(crate) fn merge_callable_contextual_types(
     for i in 0..param_count {
         let param_types = shapes.iter().map(|s| s.params[i].type_id).collect();
         combined_params.push(ParamInfo {
+            suppress_display_optional: false,
             name: shapes[0].params[i].name,
             type_id: union_type(db, param_types),
             optional: shapes.iter().all(|s| s.params[i].optional),

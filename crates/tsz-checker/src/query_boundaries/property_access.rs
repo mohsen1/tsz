@@ -360,6 +360,7 @@ pub(crate) fn strict_bind_call_apply_this_arg_param(
     type_id: TypeId,
 ) -> ParamInfo {
     ParamInfo {
+        suppress_display_optional: false,
         name: Some(db.intern_string("thisArg")),
         type_id,
         optional: false,
@@ -372,6 +373,7 @@ pub(crate) fn strict_bind_call_apply_args_param(
     type_id: TypeId,
 ) -> ParamInfo {
     ParamInfo {
+        suppress_display_optional: false,
         name: Some(db.intern_string("args")),
         type_id,
         optional: true,
@@ -477,7 +479,7 @@ pub(crate) fn strict_bind_call_apply_generic_bind_receiver_type<R: TypeResolver>
             {
                 return *param;
             }
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 type_id: info
                     .constraint
                     .filter(|constraint| *constraint != TypeId::ERROR)

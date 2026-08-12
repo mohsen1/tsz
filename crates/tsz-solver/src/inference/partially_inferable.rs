@@ -40,6 +40,7 @@ impl<'a> InferenceContext<'a> {
                     .map(|p| {
                         if p.type_id == TypeId::ANY {
                             ParamInfo {
+                                suppress_display_optional: false,
                                 type_id: TypeId::UNKNOWN,
                                 ..*p
                             }
@@ -73,6 +74,7 @@ impl<'a> InferenceContext<'a> {
                             .map(|p| {
                                 if p.type_id == TypeId::ANY {
                                     ParamInfo {
+                                        suppress_display_optional: false,
                                         type_id: TypeId::UNKNOWN,
                                         ..*p
                                     }

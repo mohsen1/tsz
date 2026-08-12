@@ -248,6 +248,7 @@ impl<'a> CheckerState<'a> {
             .iter()
             .copied()
             .map(|arg_idx| ParamInfo {
+                suppress_display_optional: false,
                 name: None,
                 type_id: self.get_type_of_node_with_request(arg_idx, &TypingRequest::NONE),
                 optional: false,

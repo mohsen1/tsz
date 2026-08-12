@@ -942,6 +942,7 @@ fn test_finite_mapped_property_type_resolves_infer_conditional_keys() {
     let template = interner.function(FunctionShape {
         type_params: vec![],
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("_")),
             type_id: interner.conditional(ConditionalType {
                 check_type: values,
@@ -1027,6 +1028,7 @@ fn test_finite_mapped_property_type_specializes_unique_symbol_keys() {
     let template = interner.function(FunctionShape {
         type_params: vec![],
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("p")),
             type_id: key_param,
             optional: false,

@@ -1332,6 +1332,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         .params
                         .iter()
                         .map(|p| ParamInfo {
+                            suppress_display_optional: false,
                             name: p.name,
                             type_id: instantiate_type(self.interner, p.type_id, &source_subst),
                             optional: p.optional,

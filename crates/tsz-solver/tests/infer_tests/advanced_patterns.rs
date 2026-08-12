@@ -400,12 +400,14 @@ fn test_parameters_utility_inference() {
         type_params: vec![],
         params: vec![
             ParamInfo {
+                suppress_display_optional: false,
                 name: Some(interner.intern_string("a")),
                 type_id: TypeId::STRING,
                 optional: false,
                 rest: false,
             },
             ParamInfo {
+                suppress_display_optional: false,
                 name: Some(interner.intern_string("b")),
                 type_id: TypeId::NUMBER,
                 optional: false,
@@ -438,6 +440,7 @@ fn test_constructor_parameters_inference() {
     let ctor = interner.function(FunctionShape {
         type_params: vec![],
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("name")),
             type_id: TypeId::STRING,
             optional: false,
@@ -523,6 +526,7 @@ fn test_circular_constraint_recursive_promise() {
     let then_fn = interner.function(FunctionShape {
         type_params: Vec::new(),
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("callback")),
             type_id: TypeId::OBJECT,
             optional: false,
@@ -560,12 +564,14 @@ fn test_circular_constraint_event_emitter() {
         type_params: Vec::new(),
         params: vec![
             ParamInfo {
+                suppress_display_optional: false,
                 name: Some(interner.intern_string("event")),
                 type_id: TypeId::STRING,
                 optional: false,
                 rest: false,
             },
             ParamInfo {
+                suppress_display_optional: false,
                 name: Some(interner.intern_string("handler")),
                 type_id: TypeId::OBJECT,
                 optional: false,
@@ -582,6 +588,7 @@ fn test_circular_constraint_event_emitter() {
     let emit_fn = interner.function(FunctionShape {
         type_params: Vec::new(),
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("event")),
             type_id: TypeId::STRING,
             optional: false,
@@ -619,12 +626,14 @@ fn test_circular_constraint_fluent_interface() {
         type_params: Vec::new(),
         params: vec![
             ParamInfo {
+                suppress_display_optional: false,
                 name: Some(interner.intern_string("key")),
                 type_id: TypeId::STRING,
                 optional: false,
                 rest: false,
             },
             ParamInfo {
+                suppress_display_optional: false,
                 name: Some(interner.intern_string("value")),
                 type_id: TypeId::UNKNOWN,
                 optional: false,
@@ -743,6 +752,7 @@ fn test_circular_constraint_state_machine() {
     let transition_fn = interner.function(FunctionShape {
         type_params: Vec::new(),
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("event")),
             type_id: TypeId::OBJECT,
             optional: false,
@@ -786,6 +796,7 @@ fn test_circular_constraint_visitor_pattern() {
     let accept_fn = interner.function(FunctionShape {
         type_params: Vec::new(),
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("visitor")),
             type_id: TypeId::OBJECT,
             optional: false,
@@ -832,6 +843,7 @@ fn test_circular_constraint_expression_tree() {
     let combine_fn = interner.function(FunctionShape {
         type_params: Vec::new(),
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("other")),
             type_id: TypeId::OBJECT,
             optional: false,
@@ -870,6 +882,7 @@ fn test_circular_constraint_repository_pattern() {
     let find_fn = interner.function(FunctionShape {
         type_params: Vec::new(),
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("id")),
             type_id: TypeId::STRING,
             optional: false,
@@ -885,6 +898,7 @@ fn test_circular_constraint_repository_pattern() {
     let save_fn = interner.function(FunctionShape {
         type_params: Vec::new(),
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("entity")),
             type_id: TypeId::OBJECT,
             optional: false,

@@ -300,13 +300,13 @@ fn test_contextual_typing_for_function_parameters() {
     let func_shape = FunctionShape {
         type_params: vec![],
         params: vec![
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(types.intern_string("x")),
                 type_id: TypeId::STRING,
                 optional: false,
                 rest: false,
             },
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(types.intern_string("y")),
                 type_id: TypeId::NUMBER,
                 optional: false,

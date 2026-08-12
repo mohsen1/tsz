@@ -316,6 +316,7 @@ fn provisional_rest_union_policy_partitions_query_cache_in_both_orders() {
         interner.function(FunctionShape {
             type_params: vec![],
             params: vec![ParamInfo {
+                suppress_display_optional: false,
                 name: Some(interner.intern_string("values")),
                 type_id: rest_type,
                 optional: false,

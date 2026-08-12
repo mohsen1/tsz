@@ -385,6 +385,7 @@ mod tests {
     fn unary_signature(interner: &TypeInterner, ty: TypeId, is_method: bool) -> CallSignature {
         let mut signature = CallSignature::new(
             vec![ParamInfo {
+                suppress_display_optional: false,
                 name: Some(interner.intern_string("value")),
                 type_id: ty,
                 optional: false,

@@ -510,6 +510,7 @@ fn test_widen_function_returns_self_via_general_widen_type() {
     let func = interner.function(FunctionShape {
         type_params: Vec::new(),
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: lit,
             optional: false,
@@ -565,6 +566,7 @@ fn test_widen_type_for_display_does_not_recurse_into_function_params() {
     let func = interner.function(FunctionShape {
         type_params: Vec::new(),
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: lit,
             optional: false,
@@ -591,6 +593,7 @@ fn test_widen_type_deep_recurses_into_function_param_and_return() {
     let func = interner.function(FunctionShape {
         type_params: Vec::new(),
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: lit_string,
             optional: false,
@@ -652,6 +655,7 @@ fn test_widen_type_for_inference_does_not_recurse_into_function() {
     let func = interner.function(FunctionShape {
         type_params: Vec::new(),
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: lit_string,
             optional: false,

@@ -839,12 +839,14 @@ fn test_resolve_bounds_method_property_bivariant_params() {
     let name_m = interner.intern_string("m");
 
     let narrow_param = ParamInfo {
+        suppress_display_optional: false,
         name: Some(interner.intern_string("x")),
         type_id: TypeId::STRING,
         optional: false,
         rest: false,
     };
     let wide_param = ParamInfo {
+        suppress_display_optional: false,
         name: Some(interner.intern_string("x")),
         type_id: interner.union(vec![TypeId::STRING, TypeId::NUMBER]),
         optional: false,
@@ -889,12 +891,14 @@ fn test_resolve_bounds_function_property_contravariant_params() {
     let name_f = interner.intern_string("f");
 
     let narrow_param = ParamInfo {
+        suppress_display_optional: false,
         name: Some(interner.intern_string("x")),
         type_id: TypeId::STRING,
         optional: false,
         rest: false,
     };
     let wide_param = ParamInfo {
+        suppress_display_optional: false,
         name: Some(interner.intern_string("x")),
         type_id: interner.union(vec![TypeId::STRING, TypeId::NUMBER]),
         optional: false,
@@ -947,12 +951,14 @@ fn test_resolve_bounds_with_assignability_bivariant_function_property() {
     let name_f = interner.intern_string("f");
 
     let narrow_param = ParamInfo {
+        suppress_display_optional: false,
         name: Some(interner.intern_string("x")),
         type_id: TypeId::STRING,
         optional: false,
         rest: false,
     };
     let wide_param = ParamInfo {
+        suppress_display_optional: false,
         name: Some(interner.intern_string("x")),
         type_id: interner.union(vec![TypeId::STRING, TypeId::NUMBER]),
         optional: false,
@@ -1000,12 +1006,14 @@ fn test_resolve_bounds_function_param_contravariance_extends() {
     let var = ctx.fresh_type_param(interner.intern_string("T"), false);
 
     let narrow_param = ParamInfo {
+        suppress_display_optional: false,
         name: Some(interner.intern_string("x")),
         type_id: TypeId::STRING,
         optional: false,
         rest: false,
     };
     let wide_param = ParamInfo {
+        suppress_display_optional: false,
         name: Some(interner.intern_string("x")),
         type_id: interner.union(vec![TypeId::STRING, TypeId::NUMBER]),
         optional: false,
@@ -1047,6 +1055,7 @@ fn test_resolve_bounds_function_return_covariance_extends() {
     let var = ctx.fresh_type_param(interner.intern_string("T"), false);
 
     let param = ParamInfo {
+        suppress_display_optional: false,
         name: Some(interner.intern_string("x")),
         type_id: TypeId::STRING,
         optional: false,

@@ -1003,6 +1003,7 @@ pub fn rewrite_function_error_slots_to_any(db: &dyn TypeDatabase, type_id: TypeI
         .params
         .iter()
         .map(|p| crate::types::ParamInfo {
+            suppress_display_optional: false,
             type_id: rewrite_error_to_any_in_display_type(db, p.type_id, &mut rewritten_types),
             ..*p
         })
@@ -1100,6 +1101,7 @@ pub fn erase_function_type_params_to_any(db: &dyn TypeDatabase, type_id: TypeId)
         .params
         .iter()
         .map(|p| crate::types::ParamInfo {
+            suppress_display_optional: false,
             type_id: instantiate_type(db, p.type_id, &subst),
             ..*p
         })

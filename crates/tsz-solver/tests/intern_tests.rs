@@ -451,6 +451,7 @@ fn test_interner_intersection_callable_vs_object_disjoint_property() {
         call_signatures: vec![CallSignature {
             type_params: vec![],
             params: vec![ParamInfo {
+                suppress_display_optional: false,
                 name: Some(interner.intern_string("x")),
                 type_id: TypeId::STRING,
                 optional: false,
@@ -487,6 +488,7 @@ fn test_interner_intersection_callable_vs_object_compatible_property() {
         call_signatures: vec![CallSignature {
             type_params: vec![],
             params: vec![ParamInfo {
+                suppress_display_optional: false,
                 name: Some(interner.intern_string("x")),
                 type_id: TypeId::STRING,
                 optional: false,
@@ -1908,6 +1910,7 @@ fn test_estimated_size_bytes_grows_with_functions() {
         interner.function(FunctionShape {
             type_params: vec![],
             params: vec![ParamInfo {
+                suppress_display_optional: false,
                 name: Some(interner.string_interner.intern(&format!("p_{i}"))),
                 type_id: TypeId::STRING,
                 optional: false,

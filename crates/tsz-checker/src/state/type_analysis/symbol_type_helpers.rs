@@ -471,6 +471,7 @@ impl<'a> CheckerState<'a> {
             let param_name = self.parameter_name_for_error(param.name);
             let name = self.ctx.types.intern_string(&param_name);
             params.push(tsz_solver::ParamInfo {
+                suppress_display_optional: false,
                 name: Some(name),
                 type_id: TypeId::ANY,
                 optional: param.question_token || param.initializer.is_some(),

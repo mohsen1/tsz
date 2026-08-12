@@ -58,6 +58,7 @@ fn infer_generic_index_access_param_from_index_access_arg_resolves_to_error_type
     let func = FunctionShape {
         type_params: vec![t_param, k_param],
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("value")),
             type_id: index_access_param,
             optional: false,

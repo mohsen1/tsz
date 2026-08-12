@@ -327,13 +327,13 @@ fn test_optional_parameter_assignability_allows_extra_optional() {
 
     let source = interner.function(FunctionShape {
         params: vec![
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("x")),
                 type_id: TypeId::STRING,
                 optional: false,
                 rest: false,
             },
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("y")),
                 type_id: TypeId::NUMBER,
                 optional: true,
@@ -349,7 +349,7 @@ fn test_optional_parameter_assignability_allows_extra_optional() {
     });
 
     let target = interner.function(FunctionShape {
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::STRING,
             optional: false,
@@ -373,13 +373,13 @@ fn test_optional_parameter_assignability_rejects_required_extra() {
 
     let source = interner.function(FunctionShape {
         params: vec![
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("x")),
                 type_id: TypeId::STRING,
                 optional: false,
                 rest: false,
             },
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("y")),
                 type_id: TypeId::NUMBER,
                 optional: false,
@@ -396,13 +396,13 @@ fn test_optional_parameter_assignability_rejects_required_extra() {
 
     let target = interner.function(FunctionShape {
         params: vec![
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("x")),
                 type_id: TypeId::STRING,
                 optional: false,
                 rest: false,
             },
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("y")),
                 type_id: TypeId::NUMBER,
                 optional: true,
@@ -460,7 +460,7 @@ fn test_rest_parameter_assignability_rejects_incompatible_fixed() {
     let mut checker = CompatChecker::new(&interner);
 
     let source = interner.function(FunctionShape {
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("args")),
             type_id: interner.array(TypeId::STRING),
             optional: false,
@@ -475,7 +475,7 @@ fn test_rest_parameter_assignability_rejects_incompatible_fixed() {
     });
 
     let target = interner.function(FunctionShape {
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::NUMBER,
             optional: false,
@@ -1370,7 +1370,7 @@ fn test_rest_any_bivariant_even_strict() {
 
     let rest_any = interner.array(TypeId::ANY);
     let target = interner.function(FunctionShape {
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: None,
             type_id: rest_any,
             optional: false,
@@ -1405,7 +1405,7 @@ fn test_rest_unknown_bivariant_even_strict() {
 
     let rest_unknown = interner.array(TypeId::UNKNOWN);
     let target = interner.function(FunctionShape {
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: None,
             type_id: rest_unknown,
             optional: false,
@@ -1440,7 +1440,7 @@ fn test_rest_unknown_bivariant_strict_assignable() {
 
     let rest_unknown = interner.array(TypeId::UNKNOWN);
     let target = interner.function(FunctionShape {
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: None,
             type_id: rest_unknown,
             optional: false,
@@ -1478,7 +1478,7 @@ fn test_rest_number_not_bivariant_even_strict() {
 
     let rest_number = interner.array(TypeId::NUMBER);
     let target = interner.function(FunctionShape {
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: None,
             type_id: rest_number,
             optional: false,
@@ -1513,7 +1513,7 @@ fn test_rest_unknown_vs_number_assignability_strict() {
 
     let rest_unknown = interner.array(TypeId::UNKNOWN);
     let target_unknown = interner.function(FunctionShape {
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: None,
             type_id: rest_unknown,
             optional: false,
@@ -1529,7 +1529,7 @@ fn test_rest_unknown_vs_number_assignability_strict() {
 
     let rest_number = interner.array(TypeId::NUMBER);
     let target_number = interner.function(FunctionShape {
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: None,
             type_id: rest_number,
             optional: false,
@@ -1564,7 +1564,7 @@ fn test_rest_any_still_checks_return_type() {
 
     let rest_any = interner.array(TypeId::ANY);
     let target = interner.function(FunctionShape {
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: None,
             type_id: rest_any,
             optional: false,
@@ -1599,7 +1599,7 @@ fn test_explain_failure_skips_rest_unknown() {
 
     let rest_unknown = interner.array(TypeId::UNKNOWN);
     let target = interner.function(FunctionShape {
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: None,
             type_id: rest_unknown,
             optional: false,
@@ -1636,7 +1636,7 @@ fn test_explain_failure_reports_rest_mismatch() {
 
     let rest_number = interner.array(TypeId::NUMBER);
     let target = interner.function(FunctionShape {
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: None,
             type_id: rest_number,
             optional: false,
@@ -1687,7 +1687,7 @@ fn test_explain_failure_reports_rest_mismatch_source_rest() {
     let mut checker = CompatChecker::new(&interner);
 
     let source = interner.function(FunctionShape {
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: None,
             type_id: interner.array(TypeId::STRING),
             optional: false,

@@ -1151,6 +1151,7 @@ mod tests {
         let mut nested = interner.function(FunctionShape {
             type_params: vec![],
             params: vec![ParamInfo {
+                suppress_display_optional: false,
                 name: None,
                 type_id: binder,
                 optional: false,

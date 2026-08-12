@@ -970,6 +970,7 @@ impl<'a> FlowAnalyzer<'a> {
                 continue;
             }
             params.push(ParamInfo {
+                suppress_display_optional: false,
                 name: param_name.map(|name| self.interner.intern_string(name)),
                 type_id: param_type,
                 optional: param.question_token || param.initializer.is_some(),

@@ -231,6 +231,7 @@ impl Projector<'_> {
             let projected = self.project(param.type_id, polarity);
             if let Some(out) = &mut out {
                 out.push(ParamInfo {
+                    suppress_display_optional: false,
                     type_id: projected,
                     ..*param
                 });
@@ -238,6 +239,7 @@ impl Projector<'_> {
                 let mut changed = Vec::with_capacity(params.len());
                 changed.extend_from_slice(&params[..index]);
                 changed.push(ParamInfo {
+                    suppress_display_optional: false,
                     type_id: projected,
                     ..*param
                 });
@@ -437,6 +439,7 @@ mod tests {
 
     fn param(type_id: TypeId) -> ParamInfo {
         ParamInfo {
+            suppress_display_optional: false,
             name: None,
             type_id,
             optional: false,

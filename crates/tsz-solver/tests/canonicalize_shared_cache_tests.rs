@@ -115,6 +115,7 @@ fn shared_cache_preserves_alpha_equivalence_across_probes() {
         interner.function(FunctionShape {
             type_params: vec![info],
             params: vec![ParamInfo {
+                suppress_display_optional: false,
                 name: Some(interner.intern_string("x")),
                 type_id: pref,
                 optional: false,

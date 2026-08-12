@@ -11,7 +11,7 @@ fn make_identity_shape(interner: &TypeInterner, param_name: &str, arg_name: &str
     let t_type = interner.type_param(t_param);
     FunctionShape {
         type_params: vec![t_param],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string(arg_name)),
             type_id: t_type,
             optional: false,
@@ -33,7 +33,7 @@ fn test_call_simple_function() {
 
     // function(x: number): string
     let func = interner.function(FunctionShape {
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::NUMBER,
             optional: false,
@@ -67,7 +67,7 @@ fn call_evaluator_cache_statistics_account_for_contextual_sensitivity() {
     assert_eq!(empty.estimated_size_bytes(), 0);
 
     let func = interner.function(FunctionShape {
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::ANY,
             optional: false,
@@ -120,7 +120,7 @@ fn call_evaluator_memoizes_declared_bare_rest_classification() {
     let callback = |rest_type| {
         interner.function(FunctionShape {
             type_params: vec![],
-            params: vec![ParamInfo {
+            params: vec![ParamInfo { suppress_display_optional: false,
                 name: None,
                 type_id: rest_type,
                 optional: false,
@@ -174,7 +174,7 @@ fn test_call_argument_count_mismatch() {
 
     // function(x: number): string
     let func = interner.function(FunctionShape {
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::NUMBER,
             optional: false,
@@ -211,7 +211,7 @@ fn test_call_argument_type_mismatch() {
 
     // function(x: number): string
     let func = interner.function(FunctionShape {
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::NUMBER,
             optional: false,
@@ -303,7 +303,7 @@ fn test_call_assignability_respects_strict_function_types_toggle() {
     });
 
     let accepts_fn = interner.function(FunctionShape {
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("cb")),
             type_id: fn_animal,
             optional: false,
@@ -343,7 +343,7 @@ fn test_call_weak_type_with_compat_checker() {
         TypeId::NUMBER,
     )]);
     let func = interner.function(FunctionShape {
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("arg")),
             type_id: weak_target,
             optional: false,
@@ -967,7 +967,7 @@ fn test_call_rest_parameter_allows_zero_args() {
     // function(...args: number[]): string
     let rest_array = interner.array(TypeId::NUMBER);
     let func = interner.function(FunctionShape {
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("args")),
             type_id: rest_array,
             optional: false,
@@ -998,13 +998,13 @@ fn test_call_rest_parameter_min_args_with_required() {
     let rest_array = interner.array(TypeId::NUMBER);
     let func = interner.function(FunctionShape {
         params: vec![
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("x")),
                 type_id: TypeId::STRING,
                 optional: false,
                 rest: false,
             },
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("args")),
                 type_id: rest_array,
                 optional: false,
@@ -1345,7 +1345,7 @@ fn test_call_rest_parameter_type_match() {
     // function(...args: number[]): string
     let rest_array = interner.array(TypeId::NUMBER);
     let func = interner.function(FunctionShape {
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("args")),
             type_id: rest_array,
             optional: false,
@@ -1375,7 +1375,7 @@ fn test_call_rest_parameter_type_mismatch() {
     // function(...args: number[]): string
     let rest_array = interner.array(TypeId::NUMBER);
     let func = interner.function(FunctionShape {
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("args")),
             type_id: rest_array,
             optional: false,
@@ -1427,7 +1427,7 @@ fn test_call_tuple_rest_argument_count_mismatch() {
     ]);
 
     let func = interner.function(FunctionShape {
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("args")),
             type_id: tuple_rest,
             optional: false,
@@ -1477,7 +1477,7 @@ fn test_call_tuple_rest_argument_type_mismatch() {
     ]);
 
     let func = interner.function(FunctionShape {
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("args")),
             type_id: tuple_rest,
             optional: false,
@@ -1529,7 +1529,7 @@ fn test_call_tuple_rest_argument_success() {
     ]);
 
     let func = interner.function(FunctionShape {
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("args")),
             type_id: tuple_rest,
             optional: false,
@@ -1573,7 +1573,7 @@ fn test_call_tuple_rest_with_fixed_tail() {
     ]);
 
     let func = interner.function(FunctionShape {
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("args")),
             type_id: tuple_rest,
             optional: false,
@@ -1634,7 +1634,7 @@ fn test_call_variadic_tuple_rest_empty_args_produces_type_mismatch() {
 
     // Build tuple type: [...((arg: number) => void)[], (arg: string) => void]
     let num_fn = interner.function(FunctionShape {
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("arg")),
             type_id: TypeId::NUMBER,
             optional: false,
@@ -1648,7 +1648,7 @@ fn test_call_variadic_tuple_rest_empty_args_produces_type_mismatch() {
         is_method: false,
     });
     let str_fn = interner.function(FunctionShape {
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("arg")),
             type_id: TypeId::STRING,
             optional: false,
@@ -1679,7 +1679,7 @@ fn test_call_variadic_tuple_rest_empty_args_produces_type_mismatch() {
     ]);
 
     let func = interner.function(FunctionShape {
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("args")),
             type_id: tuple_type,
             optional: false,
@@ -1744,7 +1744,7 @@ fn test_call_variadic_tuple_rest_with_trailing_element_uses_aggregate_mismatch()
     ]);
 
     let func = interner.function(FunctionShape {
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("args")),
             type_id: tuple_type,
             optional: false,

@@ -12,7 +12,7 @@ fn test_overload_basic_two_signatures() {
         call_signatures: vec![
             CallSignature {
                 type_params: vec![],
-                params: vec![ParamInfo {
+                params: vec![ParamInfo { suppress_display_optional: false,
                     name: Some(interner.intern_string("x")),
                     type_id: TypeId::STRING,
                     optional: false,
@@ -25,7 +25,7 @@ fn test_overload_basic_two_signatures() {
             },
             CallSignature {
                 type_params: vec![],
-                params: vec![ParamInfo {
+                params: vec![ParamInfo { suppress_display_optional: false,
                     name: Some(interner.intern_string("x")),
                     type_id: TypeId::NUMBER,
                     optional: false,
@@ -69,7 +69,7 @@ fn test_overload_by_argument_count() {
             },
             CallSignature {
                 type_params: vec![],
-                params: vec![ParamInfo {
+                params: vec![ParamInfo { suppress_display_optional: false,
                     name: Some(interner.intern_string("x")),
                     type_id: TypeId::NUMBER,
                     optional: false,
@@ -83,13 +83,13 @@ fn test_overload_by_argument_count() {
             CallSignature {
                 type_params: vec![],
                 params: vec![
-                    ParamInfo {
+                    ParamInfo { suppress_display_optional: false,
                         name: Some(interner.intern_string("x")),
                         type_id: TypeId::NUMBER,
                         optional: false,
                         rest: false,
                     },
-                    ParamInfo {
+                    ParamInfo { suppress_display_optional: false,
                         name: Some(interner.intern_string("y")),
                         type_id: TypeId::NUMBER,
                         optional: false,
@@ -124,7 +124,7 @@ fn test_overload_subtype_more_signatures_to_fewer() {
         call_signatures: vec![
             CallSignature {
                 type_params: vec![],
-                params: vec![ParamInfo {
+                params: vec![ParamInfo { suppress_display_optional: false,
                     name: Some(interner.intern_string("x")),
                     type_id: TypeId::STRING,
                     optional: false,
@@ -137,7 +137,7 @@ fn test_overload_subtype_more_signatures_to_fewer() {
             },
             CallSignature {
                 type_params: vec![],
-                params: vec![ParamInfo {
+                params: vec![ParamInfo { suppress_display_optional: false,
                     name: Some(interner.intern_string("x")),
                     type_id: TypeId::NUMBER,
                     optional: false,
@@ -161,7 +161,7 @@ fn test_overload_subtype_more_signatures_to_fewer() {
         is_abstract: false,
         call_signatures: vec![CallSignature {
             type_params: vec![],
-            params: vec![ParamInfo {
+            params: vec![ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("x")),
                 type_id: TypeId::STRING,
                 optional: false,
@@ -195,7 +195,7 @@ fn test_overload_subtype_fewer_not_subtype_of_more() {
         call_signatures: vec![
             CallSignature {
                 type_params: vec![],
-                params: vec![ParamInfo {
+                params: vec![ParamInfo { suppress_display_optional: false,
                     name: Some(interner.intern_string("x")),
                     type_id: TypeId::STRING,
                     optional: false,
@@ -208,7 +208,7 @@ fn test_overload_subtype_fewer_not_subtype_of_more() {
             },
             CallSignature {
                 type_params: vec![],
-                params: vec![ParamInfo {
+                params: vec![ParamInfo { suppress_display_optional: false,
                     name: Some(interner.intern_string("x")),
                     type_id: TypeId::NUMBER,
                     optional: false,
@@ -232,7 +232,7 @@ fn test_overload_subtype_fewer_not_subtype_of_more() {
         is_abstract: false,
         call_signatures: vec![CallSignature {
             type_params: vec![],
-            params: vec![ParamInfo {
+            params: vec![ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("x")),
                 type_id: TypeId::STRING,
                 optional: false,
@@ -281,7 +281,7 @@ fn test_overload_generic_identity() {
                     is_const: false,
                     origin: crate::types::TypeParamOrigin::User,
                 }],
-                params: vec![ParamInfo {
+                params: vec![ParamInfo { suppress_display_optional: false,
                     name: Some(interner.intern_string("x")),
                     type_id: t_param,
                     optional: false,
@@ -294,7 +294,7 @@ fn test_overload_generic_identity() {
             },
             CallSignature {
                 type_params: vec![],
-                params: vec![ParamInfo {
+                params: vec![ParamInfo { suppress_display_optional: false,
                     name: Some(interner.intern_string("x")),
                     type_id: TypeId::STRING,
                     optional: false,
@@ -351,7 +351,7 @@ fn test_overload_generic_with_constraint() {
                     is_const: false,
                     origin: crate::types::TypeParamOrigin::User,
                 }],
-                params: vec![ParamInfo {
+                params: vec![ParamInfo { suppress_display_optional: false,
                     name: Some(interner.intern_string("x")),
                     type_id: t_string,
                     optional: false,
@@ -370,7 +370,7 @@ fn test_overload_generic_with_constraint() {
                     is_const: false,
                     origin: crate::types::TypeParamOrigin::User,
                 }],
-                params: vec![ParamInfo {
+                params: vec![ParamInfo { suppress_display_optional: false,
                     name: Some(interner.intern_string("x")),
                     type_id: t_number,
                     optional: false,
@@ -407,7 +407,7 @@ fn test_overload_with_rest_parameter() {
         call_signatures: vec![
             CallSignature {
                 type_params: vec![],
-                params: vec![ParamInfo {
+                params: vec![ParamInfo { suppress_display_optional: false,
                     name: Some(interner.intern_string("x")),
                     type_id: TypeId::NUMBER,
                     optional: false,
@@ -420,7 +420,7 @@ fn test_overload_with_rest_parameter() {
             },
             CallSignature {
                 type_params: vec![],
-                params: vec![ParamInfo {
+                params: vec![ParamInfo { suppress_display_optional: false,
                     name: Some(interner.intern_string("args")),
                     type_id: number_array,
                     optional: false,
@@ -455,7 +455,7 @@ fn test_overload_with_optional_parameters() {
         call_signatures: vec![
             CallSignature {
                 type_params: vec![],
-                params: vec![ParamInfo {
+                params: vec![ParamInfo { suppress_display_optional: false,
                     name: Some(interner.intern_string("x")),
                     type_id: TypeId::STRING,
                     optional: false,
@@ -469,13 +469,13 @@ fn test_overload_with_optional_parameters() {
             CallSignature {
                 type_params: vec![],
                 params: vec![
-                    ParamInfo {
+                    ParamInfo { suppress_display_optional: false,
                         name: Some(interner.intern_string("x")),
                         type_id: TypeId::STRING,
                         optional: false,
                         rest: false,
                     },
-                    ParamInfo {
+                    ParamInfo { suppress_display_optional: false,
                         name: Some(interner.intern_string("y")),
                         type_id: TypeId::NUMBER,
                         optional: true,
@@ -510,7 +510,7 @@ fn test_overload_mixed_call_and_construct() {
         is_abstract: false,
         call_signatures: vec![CallSignature {
             type_params: vec![],
-            params: vec![ParamInfo {
+            params: vec![ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("x")),
                 type_id: TypeId::STRING,
                 optional: false,
@@ -523,7 +523,7 @@ fn test_overload_mixed_call_and_construct() {
         }],
         construct_signatures: vec![CallSignature {
             type_params: vec![],
-            params: vec![ParamInfo {
+            params: vec![ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("x")),
                 type_id: TypeId::NUMBER,
                 optional: false,
@@ -561,7 +561,7 @@ fn test_overload_return_type_union() {
         call_signatures: vec![
             CallSignature {
                 type_params: vec![],
-                params: vec![ParamInfo {
+                params: vec![ParamInfo { suppress_display_optional: false,
                     name: Some(interner.intern_string("x")),
                     type_id: lit_a,
                     optional: false,
@@ -574,7 +574,7 @@ fn test_overload_return_type_union() {
             },
             CallSignature {
                 type_params: vec![],
-                params: vec![ParamInfo {
+                params: vec![ParamInfo { suppress_display_optional: false,
                     name: Some(interner.intern_string("x")),
                     type_id: lit_b,
                     optional: false,
@@ -587,7 +587,7 @@ fn test_overload_return_type_union() {
             },
             CallSignature {
                 type_params: vec![],
-                params: vec![ParamInfo {
+                params: vec![ParamInfo { suppress_display_optional: false,
                     name: Some(interner.intern_string("x")),
                     type_id: TypeId::STRING,
                     optional: false,
@@ -622,7 +622,7 @@ fn test_overload_subtype_signature_order_matters() {
         call_signatures: vec![
             CallSignature {
                 type_params: vec![],
-                params: vec![ParamInfo {
+                params: vec![ParamInfo { suppress_display_optional: false,
                     name: Some(interner.intern_string("x")),
                     type_id: lit_a,
                     optional: false,
@@ -635,7 +635,7 @@ fn test_overload_subtype_signature_order_matters() {
             },
             CallSignature {
                 type_params: vec![],
-                params: vec![ParamInfo {
+                params: vec![ParamInfo { suppress_display_optional: false,
                     name: Some(interner.intern_string("x")),
                     type_id: TypeId::STRING,
                     optional: false,
@@ -660,7 +660,7 @@ fn test_overload_subtype_signature_order_matters() {
         call_signatures: vec![
             CallSignature {
                 type_params: vec![],
-                params: vec![ParamInfo {
+                params: vec![ParamInfo { suppress_display_optional: false,
                     name: Some(interner.intern_string("x")),
                     type_id: TypeId::STRING,
                     optional: false,
@@ -673,7 +673,7 @@ fn test_overload_subtype_signature_order_matters() {
             },
             CallSignature {
                 type_params: vec![],
-                params: vec![ParamInfo {
+                params: vec![ParamInfo { suppress_display_optional: false,
                     name: Some(interner.intern_string("x")),
                     type_id: lit_a,
                     optional: false,
@@ -756,13 +756,13 @@ fn test_overload_generic_multiple_type_params() {
                     },
                 ],
                 params: vec![
-                    ParamInfo {
+                    ParamInfo { suppress_display_optional: false,
                         name: Some(interner.intern_string("x")),
                         type_id: t_param,
                         optional: false,
                         rest: false,
                     },
-                    ParamInfo {
+                    ParamInfo { suppress_display_optional: false,
                         name: Some(interner.intern_string("y")),
                         type_id: u_param,
                         optional: false,
@@ -782,7 +782,7 @@ fn test_overload_generic_multiple_type_params() {
                     is_const: false,
                     origin: crate::types::TypeParamOrigin::User,
                 }],
-                params: vec![ParamInfo {
+                params: vec![ParamInfo { suppress_display_optional: false,
                     name: Some(interner.intern_string("x")),
                     type_id: t_param,
                     optional: false,
@@ -815,7 +815,7 @@ fn test_overload_reflexivity() {
         call_signatures: vec![
             CallSignature {
                 type_params: vec![],
-                params: vec![ParamInfo {
+                params: vec![ParamInfo { suppress_display_optional: false,
                     name: Some(interner.intern_string("x")),
                     type_id: TypeId::STRING,
                     optional: false,
@@ -828,7 +828,7 @@ fn test_overload_reflexivity() {
             },
             CallSignature {
                 type_params: vec![],
-                params: vec![ParamInfo {
+                params: vec![ParamInfo { suppress_display_optional: false,
                     name: Some(interner.intern_string("x")),
                     type_id: TypeId::NUMBER,
                     optional: false,
@@ -863,7 +863,7 @@ fn test_overload_covariant_return_types() {
         is_abstract: false,
         call_signatures: vec![CallSignature {
             type_params: vec![],
-            params: vec![ParamInfo {
+            params: vec![ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("x")),
                 type_id: TypeId::NUMBER,
                 optional: false,
@@ -886,7 +886,7 @@ fn test_overload_covariant_return_types() {
         is_abstract: false,
         call_signatures: vec![CallSignature {
             type_params: vec![],
-            params: vec![ParamInfo {
+            params: vec![ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("x")),
                 type_id: TypeId::NUMBER,
                 optional: false,
@@ -922,7 +922,7 @@ fn test_overload_contravariant_parameters() {
         is_abstract: false,
         call_signatures: vec![CallSignature {
             type_params: vec![],
-            params: vec![ParamInfo {
+            params: vec![ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("x")),
                 type_id: TypeId::STRING,
                 optional: false,
@@ -945,7 +945,7 @@ fn test_overload_contravariant_parameters() {
         is_abstract: false,
         call_signatures: vec![CallSignature {
             type_params: vec![],
-            params: vec![ParamInfo {
+            params: vec![ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("x")),
                 type_id: lit_hello,
                 optional: false,
@@ -1047,7 +1047,7 @@ fn test_overload_with_this_type() {
         call_signatures: vec![
             CallSignature {
                 type_params: vec![],
-                params: vec![ParamInfo {
+                params: vec![ParamInfo { suppress_display_optional: false,
                     name: Some(interner.intern_string("x")),
                     type_id: TypeId::STRING,
                     optional: false,
@@ -1060,7 +1060,7 @@ fn test_overload_with_this_type() {
             },
             CallSignature {
                 type_params: vec![],
-                params: vec![ParamInfo {
+                params: vec![ParamInfo { suppress_display_optional: false,
                     name: Some(interner.intern_string("x")),
                     type_id: TypeId::NUMBER,
                     optional: false,
@@ -1112,7 +1112,7 @@ fn test_overload_with_properties() {
         is_abstract: false,
         call_signatures: vec![CallSignature {
             type_params: vec![],
-            params: vec![ParamInfo {
+            params: vec![ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("x")),
                 type_id: TypeId::STRING,
                 optional: false,
@@ -1161,7 +1161,7 @@ fn test_overload_generic_default_type() {
                 is_const: false,
                 origin: crate::types::TypeParamOrigin::User,
             }],
-            params: vec![ParamInfo {
+            params: vec![ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("x")),
                 type_id: t_param,
                 optional: false,
@@ -1210,7 +1210,7 @@ fn test_overload_array_methods_pattern() {
     // (x: T) => U
     let map_callback = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: t_param,
             optional: false,
@@ -1226,7 +1226,7 @@ fn test_overload_array_methods_pattern() {
     // (x: T) => boolean
     let filter_callback = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: t_param,
             optional: false,
@@ -1243,13 +1243,13 @@ fn test_overload_array_methods_pattern() {
     let reduce_callback = interner.function(FunctionShape {
         type_params: vec![],
         params: vec![
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("acc")),
                 type_id: u_param,
                 optional: false,
                 rest: false,
             },
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("x")),
                 type_id: t_param,
                 optional: false,
@@ -1275,7 +1275,7 @@ fn test_overload_array_methods_pattern() {
             is_const: false,
             origin: crate::types::TypeParamOrigin::User,
         }],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("fn")),
             type_id: map_callback,
             optional: false,
@@ -1291,7 +1291,7 @@ fn test_overload_array_methods_pattern() {
     // filter(fn: (x: T) => boolean): T[]
     let filter_method = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("fn")),
             type_id: filter_callback,
             optional: false,
@@ -1314,13 +1314,13 @@ fn test_overload_array_methods_pattern() {
             origin: crate::types::TypeParamOrigin::User,
         }],
         params: vec![
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("fn")),
                 type_id: reduce_callback,
                 optional: false,
                 rest: false,
             },
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("init")),
                 type_id: u_param,
                 optional: false,
@@ -1376,7 +1376,7 @@ fn test_overload_event_handler_pattern() {
     // (e: MouseEvent) => void
     let mouse_listener = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("e")),
             type_id: mouse_event,
             optional: false,
@@ -1392,7 +1392,7 @@ fn test_overload_event_handler_pattern() {
     // (e: KeyboardEvent) => void
     let keyboard_listener = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("e")),
             type_id: keyboard_event,
             optional: false,
@@ -1408,7 +1408,7 @@ fn test_overload_event_handler_pattern() {
     // (e: Event) => void
     let base_listener = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("e")),
             type_id: base_event,
             optional: false,
@@ -1428,13 +1428,13 @@ fn test_overload_event_handler_pattern() {
             CallSignature {
                 type_params: vec![],
                 params: vec![
-                    ParamInfo {
+                    ParamInfo { suppress_display_optional: false,
                         name: Some(interner.intern_string("type")),
                         type_id: lit_click,
                         optional: false,
                         rest: false,
                     },
-                    ParamInfo {
+                    ParamInfo { suppress_display_optional: false,
                         name: Some(interner.intern_string("listener")),
                         type_id: mouse_listener,
                         optional: false,
@@ -1449,13 +1449,13 @@ fn test_overload_event_handler_pattern() {
             CallSignature {
                 type_params: vec![],
                 params: vec![
-                    ParamInfo {
+                    ParamInfo { suppress_display_optional: false,
                         name: Some(interner.intern_string("type")),
                         type_id: lit_keydown,
                         optional: false,
                         rest: false,
                     },
-                    ParamInfo {
+                    ParamInfo { suppress_display_optional: false,
                         name: Some(interner.intern_string("listener")),
                         type_id: keyboard_listener,
                         optional: false,
@@ -1470,13 +1470,13 @@ fn test_overload_event_handler_pattern() {
             CallSignature {
                 type_params: vec![],
                 params: vec![
-                    ParamInfo {
+                    ParamInfo { suppress_display_optional: false,
                         name: Some(interner.intern_string("type")),
                         type_id: TypeId::STRING,
                         optional: false,
                         rest: false,
                     },
-                    ParamInfo {
+                    ParamInfo { suppress_display_optional: false,
                         name: Some(interner.intern_string("listener")),
                         type_id: base_listener,
                         optional: false,
@@ -1540,7 +1540,7 @@ fn test_overload_promise_then_pattern() {
     // (value: T) => U
     let on_fulfilled_sync = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("value")),
             type_id: t_param,
             optional: false,
@@ -1556,7 +1556,7 @@ fn test_overload_promise_then_pattern() {
     // (reason: any) => V
     let on_rejected = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("reason")),
             type_id: TypeId::ANY,
             optional: false,
@@ -1584,7 +1584,7 @@ fn test_overload_promise_then_pattern() {
                     is_const: false,
                     origin: crate::types::TypeParamOrigin::User,
                 }],
-                params: vec![ParamInfo {
+                params: vec![ParamInfo { suppress_display_optional: false,
                     name: Some(interner.intern_string("onFulfilled")),
                     type_id: on_fulfilled_sync,
                     optional: false,
@@ -1615,13 +1615,13 @@ fn test_overload_promise_then_pattern() {
                     },
                 ],
                 params: vec![
-                    ParamInfo {
+                    ParamInfo { suppress_display_optional: false,
                         name: Some(interner.intern_string("onFulfilled")),
                         type_id: on_fulfilled_sync,
                         optional: false,
                         rest: false,
                     },
-                    ParamInfo {
+                    ParamInfo { suppress_display_optional: false,
                         name: Some(interner.intern_string("onRejected")),
                         type_id: on_rejected,
                         optional: false,
@@ -1719,7 +1719,7 @@ fn test_overload_constructor_overloads() {
             // new (value: number): Date
             CallSignature {
                 type_params: vec![],
-                params: vec![ParamInfo {
+                params: vec![ParamInfo { suppress_display_optional: false,
                     name: Some(interner.intern_string("value")),
                     type_id: TypeId::NUMBER,
                     optional: false,
@@ -1733,7 +1733,7 @@ fn test_overload_constructor_overloads() {
             // new (value: string): Date
             CallSignature {
                 type_params: vec![],
-                params: vec![ParamInfo {
+                params: vec![ParamInfo { suppress_display_optional: false,
                     name: Some(interner.intern_string("value")),
                     type_id: TypeId::STRING,
                     optional: false,
@@ -1748,19 +1748,19 @@ fn test_overload_constructor_overloads() {
             CallSignature {
                 type_params: vec![],
                 params: vec![
-                    ParamInfo {
+                    ParamInfo { suppress_display_optional: false,
                         name: Some(interner.intern_string("year")),
                         type_id: TypeId::NUMBER,
                         optional: false,
                         rest: false,
                     },
-                    ParamInfo {
+                    ParamInfo { suppress_display_optional: false,
                         name: Some(interner.intern_string("month")),
                         type_id: TypeId::NUMBER,
                         optional: false,
                         rest: false,
                     },
-                    ParamInfo {
+                    ParamInfo { suppress_display_optional: false,
                         name: Some(interner.intern_string("date")),
                         type_id: TypeId::NUMBER,
                         optional: true,

@@ -11,6 +11,7 @@ fn rewrite_function_error_slots_to_any_rewrites_error_param_and_return() {
     let fn_ty = db.function(FunctionShape {
         type_params: Vec::new(),
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: None,
             type_id: TypeId::ERROR,
             optional: false,
@@ -65,6 +66,7 @@ fn replace_function_return_type_updates_return_without_touching_params() {
     let fn_ty = db.function(FunctionShape {
         type_params: Vec::new(),
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: None,
             type_id: TypeId::STRING,
             optional: false,
@@ -101,6 +103,7 @@ fn unpack_tuple_rest_parameter_flattens_nested_tuple_rest_elements() {
         },
     ]);
     let source_rest = ParamInfo {
+        suppress_display_optional: false,
         name: None,
         type_id: db.tuple(vec![
             TupleElement {
@@ -147,6 +150,7 @@ fn unpack_tuple_rest_parameter_handles_empty_or_single_tuple_union() {
     let union_ty = db.union(vec![empty_tuple, single_tuple]);
 
     let rest_param = ParamInfo {
+        suppress_display_optional: false,
         name: None,
         type_id: union_ty,
         optional: false,
@@ -195,6 +199,7 @@ fn unpack_tuple_rest_parameter_handles_prefix_aligned_two_member_union() {
     let union_ty = db.union(vec![one, two]);
 
     let rest_param = ParamInfo {
+        suppress_display_optional: false,
         name: None,
         type_id: union_ty,
         optional: false,
@@ -230,6 +235,7 @@ fn unpack_tuple_rest_parameter_keeps_disagreeing_union_as_rest() {
     let union_ty = db.union(vec![s_tuple, n_tuple]);
 
     let rest_param = ParamInfo {
+        suppress_display_optional: false,
         name: None,
         type_id: union_ty,
         optional: false,

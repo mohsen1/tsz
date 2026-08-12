@@ -33,13 +33,13 @@ fn test_object_property_does_not_contaminate_method_type_param() {
     let method_type = interner.function(FunctionShape {
         type_params: vec![t_param],
         params: vec![
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("t")),
                 type_id: t_type,
                 optional: false,
                 rest: false,
             },
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("u")),
                 type_id: u_type,
                 optional: false,

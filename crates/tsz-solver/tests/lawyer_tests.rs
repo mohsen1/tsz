@@ -16,6 +16,7 @@ fn create_function_type(
     let param_infos: Vec<ParamInfo> = params
         .into_iter()
         .map(|type_id| ParamInfo {
+            suppress_display_optional: false,
             name: None,
             type_id,
             rest: false,
@@ -564,6 +565,7 @@ fn test_methods_always_bivariant() {
     let method_string = FunctionShape {
         type_params: vec![],
         params: vec![crate::types::ParamInfo {
+            suppress_display_optional: false,
             name: None,
             type_id: TypeId::STRING,
             rest: false,
@@ -579,6 +581,7 @@ fn test_methods_always_bivariant() {
     let method_any = FunctionShape {
         type_params: vec![],
         params: vec![crate::types::ParamInfo {
+            suppress_display_optional: false,
             name: None,
             type_id: TypeId::ANY,
             rest: false,

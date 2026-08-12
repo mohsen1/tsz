@@ -21,7 +21,7 @@ fn format_overload_renamed_type_param_uses_display_name() {
     });
     let func = db.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(db.intern_string("x")),
             type_id: tp,
             optional: false,
@@ -63,7 +63,7 @@ fn format_function_with_type_params() {
             is_const: false,
             origin: crate::types::TypeParamOrigin::User,
         }],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(db.intern_string("x")),
             type_id: t_param,
             optional: false,
@@ -102,7 +102,7 @@ fn format_function_type_param_with_constraint() {
             is_const: false,
             origin: crate::types::TypeParamOrigin::User,
         }],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(db.intern_string("x")),
             type_id: t_param,
             optional: false,
@@ -143,7 +143,7 @@ fn format_function_type_param_with_structural_array_constraint_uses_shorthand() 
             is_const: false,
             origin: crate::types::TypeParamOrigin::User,
         }],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(db.intern_string("x")),
             type_id: t_param,
             optional: false,
@@ -187,7 +187,7 @@ fn format_function_type_param_with_non_primitive_array_constraint_uses_generic_f
             is_const: false,
             origin: crate::types::TypeParamOrigin::User,
         }],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(db.intern_string("x")),
             type_id: t_param,
             optional: false,
@@ -230,7 +230,7 @@ fn format_function_type_param_with_array_application_constraint_preserves_generi
             is_const: false,
             origin: crate::types::TypeParamOrigin::User,
         }],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(db.intern_string("x")),
             type_id: t_param,
             optional: false,
@@ -271,7 +271,7 @@ fn format_function_type_param_with_default() {
             is_const: false,
             origin: crate::types::TypeParamOrigin::User,
         }],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(db.intern_string("x")),
             type_id: t_param,
             optional: false,

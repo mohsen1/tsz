@@ -1155,6 +1155,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
                     // Try unpacking this union member as a tuple
                     let member_param = ParamInfo {
+                        suppress_display_optional: false,
                         type_id: *member_type_id,
                         rest: true,
                         ..*last_target_param
@@ -1670,6 +1671,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             .params
             .iter()
             .map(|p| crate::types::ParamInfo {
+                suppress_display_optional: false,
                 name: p.name,
                 type_id: instantiate_type(self.interner, p.type_id, &substitution),
                 optional: p.optional,

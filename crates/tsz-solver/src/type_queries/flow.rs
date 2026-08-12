@@ -1506,6 +1506,7 @@ mod tests {
         let fn_with_pred = interner.function(FunctionShape {
             type_params: vec![],
             params: vec![ParamInfo {
+                suppress_display_optional: false,
                 name: Some(interner.intern_string("x")),
                 type_id: TypeId::UNKNOWN,
                 optional: false,
@@ -1684,6 +1685,7 @@ mod tests {
         let has_instance_fn = db.function(FunctionShape {
             type_params: vec![],
             params: vec![ParamInfo {
+                suppress_display_optional: false,
                 name: Some(value_atom),
                 type_id: TypeId::UNKNOWN,
                 optional: false,
@@ -1805,6 +1807,7 @@ mod tests {
         let has_instance_fn = db.function(FunctionShape {
             type_params: vec![t_info],
             params: vec![ParamInfo {
+                suppress_display_optional: false,
                 name: Some(value_atom),
                 type_id: TypeId::UNKNOWN,
                 optional: false,
@@ -1881,6 +1884,7 @@ mod tests {
         let has_instance_fn = db.function(FunctionShape {
             type_params: vec![],
             params: vec![ParamInfo {
+                suppress_display_optional: false,
                 name: Some(value_atom),
                 type_id: TypeId::UNKNOWN,
                 optional: false,
@@ -1955,6 +1959,7 @@ mod tests {
             let fn_id = db.function(FunctionShape {
                 type_params: vec![],
                 params: vec![ParamInfo {
+                    suppress_display_optional: false,
                     name: Some(name_atom),
                     type_id: TypeId::UNKNOWN,
                     optional: false,
@@ -2021,6 +2026,7 @@ mod tests {
         let fn_id = db.function(FunctionShape {
             type_params: vec![],
             params: vec![ParamInfo {
+                suppress_display_optional: false,
                 name: Some(value_atom),
                 type_id: TypeId::UNKNOWN,
                 optional: false,

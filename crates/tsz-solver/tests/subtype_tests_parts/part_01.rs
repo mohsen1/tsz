@@ -70,19 +70,19 @@ fn test_function_rest_parameter_subtyping() {
     let fixed_params = FunctionShape {
         type_params: vec![],
         params: vec![
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("a")),
                 type_id: TypeId::STRING,
                 optional: false,
                 rest: false,
             },
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("b")),
                 type_id: TypeId::ANY,
                 optional: false,
                 rest: false,
             },
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("c")),
                 type_id: TypeId::ANY,
                 optional: false,
@@ -101,19 +101,19 @@ fn test_function_rest_parameter_subtyping() {
     let rest_params = FunctionShape {
         type_params: vec![],
         params: vec![
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("a")),
                 type_id: TypeId::STRING,
                 optional: false,
                 rest: false,
             },
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("b")),
                 type_id: TypeId::ANY,
                 optional: false,
                 rest: false,
             },
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("args")),
                 type_id: any_array,
                 optional: false,
@@ -145,7 +145,7 @@ fn test_rest_unknown_bivariant_subtyping_toggle() {
 
     let rest_unknown = interner.array(TypeId::UNKNOWN);
     let target = interner.function(FunctionShape {
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: None,
             type_id: rest_unknown,
             optional: false,
@@ -182,7 +182,7 @@ fn test_rest_any_bivariant_subtyping_toggle() {
 
     let rest_any = interner.array(TypeId::ANY);
     let target = interner.function(FunctionShape {
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: None,
             type_id: rest_any,
             optional: false,
@@ -221,7 +221,7 @@ fn test_never_param_is_not_subtype_of_any_rest_target() {
     checker.allow_bivariant_rest = true;
 
     let target = interner.function(FunctionShape {
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("args")),
             type_id: interner.array(TypeId::ANY),
             optional: false,
@@ -1330,7 +1330,7 @@ fn test_number_index_signature_method_property_is_strict() {
 
     let narrow_method = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: narrow_param,
             optional: false,
@@ -1345,7 +1345,7 @@ fn test_number_index_signature_method_property_is_strict() {
 
     let wide_fn = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: wide_param,
             optional: false,
@@ -1485,7 +1485,7 @@ fn test_string_index_signature_method_property_is_strict() {
 
     let narrow_method = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: narrow_param,
             optional: false,
@@ -1500,7 +1500,7 @@ fn test_string_index_signature_method_property_is_strict() {
 
     let wide_fn = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: wide_param,
             optional: false,

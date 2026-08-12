@@ -23,9 +23,11 @@ fn test_promise_of_string() {
     // For now we can represent this as an object with then method
     let then_method = interner.function(FunctionShape {
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("onfulfilled")),
             type_id: interner.function(FunctionShape {
                 params: vec![ParamInfo {
+                    suppress_display_optional: false,
                     name: Some(interner.intern_string("value")),
                     type_id: TypeId::STRING,
                     optional: false,
@@ -177,6 +179,7 @@ fn test_async_function_with_params() {
 
     let async_func = interner.function(FunctionShape {
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("url")),
             type_id: TypeId::STRING,
             optional: false,
@@ -210,6 +213,7 @@ fn test_async_arrow_function() {
 
     let async_arrow = interner.function(FunctionShape {
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::NUMBER,
             optional: false,
@@ -253,6 +257,7 @@ fn test_promise_then_chain() {
 
     let then_callback = interner.function(FunctionShape {
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("value")),
             type_id: TypeId::NUMBER,
             optional: false,
@@ -268,6 +273,7 @@ fn test_promise_then_chain() {
 
     let then_method = interner.function(FunctionShape {
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("onfulfilled")),
             type_id: then_callback,
             optional: false,
@@ -363,6 +369,7 @@ fn test_promise_resolve() {
     // Promise.resolve(value: T): Promise<T>
     let resolve_func = interner.function(FunctionShape {
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("value")),
             type_id: TypeId::STRING,
             optional: false,

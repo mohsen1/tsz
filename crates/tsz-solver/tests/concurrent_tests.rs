@@ -118,12 +118,14 @@ fn test_concurrent_function_creation() {
                 }],
                 params: vec![
                     ParamInfo {
+                        suppress_display_optional: false,
                         name: Some(interner.intern_string("x")),
                         type_id: TypeId::NUMBER,
                         optional: false,
                         rest: false,
                     },
                     ParamInfo {
+                        suppress_display_optional: false,
                         name: Some(interner.intern_string("y")),
                         type_id: TypeId::STRING,
                         optional: false,

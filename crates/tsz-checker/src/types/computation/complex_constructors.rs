@@ -157,6 +157,7 @@ impl<'a> CheckerState<'a> {
                     None
                 };
                 Some(ParamInfo {
+                    suppress_display_optional: false,
                     name: self
                         .ctx
                         .arena

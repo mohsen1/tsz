@@ -1377,7 +1377,7 @@ fn format_array_like_object_with_index_expands_to_locale_string_overload_display
     let mut fmt = TypeFormatter::new(&db);
     let method = db.function(FunctionShape::new(vec![], TypeId::STRING));
     let includes = db.function(FunctionShape::new(
-        vec![ParamInfo {
+        vec![ParamInfo { suppress_display_optional: false,
             name: Some(db.intern_string("searchElement")),
             type_id: TypeId::NUMBER,
             optional: false,
@@ -1422,7 +1422,7 @@ fn format_array_like_object_without_symbol_tail_preserves_array_display_shape() 
     let mut fmt = TypeFormatter::new(&db);
     let method = db.function(FunctionShape::new(vec![], TypeId::STRING));
     let includes = db.function(FunctionShape::new(
-        vec![ParamInfo {
+        vec![ParamInfo { suppress_display_optional: false,
             name: Some(db.intern_string("searchElement")),
             type_id: TypeId::NUMBER,
             optional: false,
@@ -1505,13 +1505,13 @@ fn format_function_two_params() {
     let func = db.function(FunctionShape {
         type_params: vec![],
         params: vec![
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(db.intern_string("a")),
                 type_id: TypeId::STRING,
                 optional: false,
                 rest: false,
             },
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(db.intern_string("b")),
                 type_id: TypeId::NUMBER,
                 optional: false,
@@ -1536,7 +1536,7 @@ fn format_function_rest_param() {
     let arr = db.array(TypeId::STRING);
     let func = db.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(db.intern_string("args")),
             type_id: arr,
             optional: false,
@@ -1566,7 +1566,7 @@ fn format_rest_tuple_fn(
     let tuple = db.tuple(elements);
     let func = db.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(db.intern_string(rest_name)),
             type_id: tuple,
             optional: false,
@@ -1715,7 +1715,7 @@ fn format_rest_array_param_not_expanded() {
     let arr = db.array(TypeId::STRING);
     let func = db.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(db.intern_string("args")),
             type_id: arr,
             optional: false,
@@ -1753,7 +1753,7 @@ fn format_rest_readonly_tuple_param_expands_dropping_modifier() {
     let readonly_tuple = db.readonly_type(tuple);
     let func = db.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(db.intern_string("rest")),
             type_id: readonly_tuple,
             optional: false,
@@ -1785,7 +1785,7 @@ fn format_rest_typed_with_store(
 ) -> String {
     let func = db.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(db.intern_string(rest_name)),
             type_id: rest_type_id,
             optional: false,

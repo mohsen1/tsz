@@ -642,7 +642,7 @@ fn test_distributive_function_types() {
         is_method: false,
     });
     let fn2 = interner.function(FunctionShape {
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::NUMBER,
             optional: false,

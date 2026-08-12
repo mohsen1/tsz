@@ -80,11 +80,27 @@ pub(crate) const fn param_info(
     optional: bool,
     rest: bool,
 ) -> ParamInfo {
+    param_info_with_display(name, type_id, optional, rest, false)
+}
+
+/// Like [`param_info`], but records whether the parameter's optional marker is
+/// display-suppressed. `suppress_display_optional` must be `true` only for a
+/// bare, unannotated JS parameter (optional for weak call-arity but rendered
+/// required by `tsc`); `false` for a real `?`, initializer, or JSDoc-optional
+/// parameter. Arity and subtyping are unaffected — they keep reading `optional`.
+pub(crate) const fn param_info_with_display(
+    name: Option<Atom>,
+    type_id: TypeId,
+    optional: bool,
+    rest: bool,
+    suppress_display_optional: bool,
+) -> ParamInfo {
     ParamInfo {
         name,
         type_id,
         optional,
         rest,
+        suppress_display_optional,
     }
 }
 
@@ -184,11 +200,12 @@ fn instantiate_params(
     params
         .iter()
         .map(|param| {
-            param_info(
+            param_info_with_display(
                 param.name,
                 instantiate_type(db, param.type_id, substitution),
                 param.optional,
                 param.rest,
+                param.suppress_display_optional,
             )
         })
         .collect()

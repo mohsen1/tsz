@@ -31,7 +31,7 @@ fn test_tuple_rest_captures_remaining() {
 
     let func = FunctionShape {
         type_params: vec![t_param],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("args")),
             type_id: tuple_param,
             optional: false,
@@ -109,7 +109,7 @@ fn test_tuple_rest_with_multiple_prefix() {
 
     let func = FunctionShape {
         type_params: vec![t_param],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("args")),
             type_id: tuple_param,
             optional: false,
@@ -185,7 +185,7 @@ fn test_tuple_rest_single_capture() {
 
     let func = FunctionShape {
         type_params: vec![t_param],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("args")),
             type_id: tuple_param,
             optional: false,
@@ -239,7 +239,7 @@ fn test_variadic_with_constraint() {
 
     let func = FunctionShape {
         type_params: vec![t_param],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("args")),
             type_id: array_t,
             optional: false,
@@ -325,7 +325,7 @@ fn test_variadic_zip_pattern() {
 
     let func = FunctionShape {
         type_params: vec![t_param, u_param],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("pairs")),
             type_id: array_pairs,
             optional: false,
@@ -406,7 +406,7 @@ fn test_variadic_empty_args_uses_constraint() {
 
     let func = FunctionShape {
         type_params: vec![t_param],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("args")),
             type_id: array_t,
             optional: false,
@@ -1575,7 +1575,7 @@ fn test_property_access_array_push_with_env_resolver() {
 
     // push(...items: T[]): number
     let push_func = interner.function(FunctionShape {
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("items")),
             type_id: interner.array(t_type),
             optional: false,
@@ -1647,7 +1647,7 @@ fn test_property_access_array_push_with_query_cache_resolver() {
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
     let push_func = interner.function(FunctionShape {
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("items")),
             type_id: interner.array(t_type),
             optional: false,
@@ -1702,7 +1702,7 @@ fn test_property_access_array_push_with_intersection_array_base() {
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
     let push_func = interner.function(FunctionShape {
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("items")),
             type_id: interner.array(t_type),
             optional: false,
@@ -1762,7 +1762,7 @@ fn test_array_push_instantiates_intersection_array_base_parameter() {
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
     let push_func = interner.function(FunctionShape {
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("items")),
             type_id: interner.array(t_type),
             optional: false,

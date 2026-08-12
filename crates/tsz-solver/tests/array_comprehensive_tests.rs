@@ -393,6 +393,7 @@ fn test_array_of_functions() {
 
     let func = interner.function(crate::types::FunctionShape {
         params: vec![crate::types::ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::NUMBER,
             optional: false,

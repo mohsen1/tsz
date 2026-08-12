@@ -390,6 +390,7 @@ impl<'a> CheckerState<'a> {
                                 });
 
                                 common::ParamInfo {
+                                    suppress_display_optional: false,
                                     name: p.name,
                                     type_id: if preserve_raw_application {
                                         p.type_id

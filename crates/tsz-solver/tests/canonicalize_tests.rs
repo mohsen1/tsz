@@ -330,6 +330,7 @@ fn canonicalize_function_type() {
     let func = interner.function(FunctionShape {
         type_params: vec![],
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::STRING,
             optional: false,
@@ -379,6 +380,7 @@ fn canonicalize_function_with_type_params_uses_bound_parameter() {
             origin: crate::types::TypeParamOrigin::User,
         }],
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: t_param,
             optional: false,
@@ -444,6 +446,7 @@ fn canonicalize_function_type_params_alpha_equivalent_across_names() {
         interner.function(FunctionShape {
             type_params: vec![info],
             params: vec![ParamInfo {
+                suppress_display_optional: false,
                 name: Some(interner.intern_string("x")),
                 type_id: pref,
                 optional: false,
@@ -494,6 +497,7 @@ fn canonicalize_function_distinct_constraints_stay_distinct() {
         interner.function(FunctionShape {
             type_params: vec![info],
             params: vec![ParamInfo {
+                suppress_display_optional: false,
                 name: Some(interner.intern_string("x")),
                 type_id: pref,
                 optional: false,
@@ -545,6 +549,7 @@ fn canonicalize_function_multi_param_positional_identity() {
         interner.function(FunctionShape {
             type_params: vec![mk(a0), mk(a1)],
             params: vec![ParamInfo {
+                suppress_display_optional: false,
                 name: Some(interner.intern_string("a")),
                 type_id: p0,
                 optional: false,
@@ -599,6 +604,7 @@ fn canonicalize_call_signature_alpha_equivalent_across_names() {
         let sig = CallSignature {
             type_params: vec![info],
             params: vec![ParamInfo {
+                suppress_display_optional: false,
                 name: Some(interner.intern_string("x")),
                 type_id: pref,
                 optional: false,
@@ -774,6 +780,7 @@ fn canonicalize_string_intrinsic_in_function_uses_bound_parameter() {
             origin: crate::types::TypeParamOrigin::User,
         }],
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: upper_t,
             optional: false,
@@ -1201,6 +1208,7 @@ fn make_generic_identity_fn(interner: &TypeInterner, name: &str) -> TypeId {
     interner.function(FunctionShape {
         type_params: vec![info],
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: pref,
             optional: false,
@@ -1495,6 +1503,7 @@ fn canonicalize_function_type_param_list_ignores_default() {
                 origin: crate::types::TypeParamOrigin::User,
             }],
             params: vec![ParamInfo {
+                suppress_display_optional: false,
                 name: Some(interner.intern_string("x")),
                 type_id: body,
                 optional: false,
@@ -1894,6 +1903,7 @@ fn canonicalize_function_type_param_list_ignores_const_modifier() {
                 origin: crate::types::TypeParamOrigin::User,
             }],
             params: vec![ParamInfo {
+                suppress_display_optional: false,
                 name: Some(interner.intern_string("x")),
                 type_id: body,
                 optional: false,
@@ -1994,6 +2004,7 @@ fn canonicalize_function_value_param_names_alpha_equivalent() {
         interner.function(FunctionShape {
             type_params: vec![],
             params: vec![ParamInfo {
+                suppress_display_optional: false,
                 name: Some(interner.intern_string(name)),
                 type_id: TypeId::STRING,
                 optional: false,
@@ -2029,6 +2040,7 @@ fn canonicalize_function_param_type_and_arity_stay_distinct() {
         interner.function(FunctionShape {
             type_params: vec![],
             params: vec![ParamInfo {
+                suppress_display_optional: false,
                 name: Some(interner.intern_string("p")),
                 type_id: ty,
                 optional,
@@ -2209,6 +2221,7 @@ fn canonicalize_predicate_identifier_target_alpha_equivalent() {
         interner.function(FunctionShape {
             type_params: vec![],
             params: vec![ParamInfo {
+                suppress_display_optional: false,
                 name: Some(interner.intern_string(name)),
                 type_id: TypeId::UNKNOWN,
                 optional: false,
@@ -2249,6 +2262,7 @@ fn canonicalize_predicate_asserts_and_narrowed_type_stay_distinct() {
         interner.function(FunctionShape {
             type_params: vec![],
             params: vec![ParamInfo {
+                suppress_display_optional: false,
                 name: Some(interner.intern_string("x")),
                 type_id: TypeId::UNKNOWN,
                 optional: false,

@@ -171,6 +171,7 @@ pub(crate) const fn jsdoc_param_info(
     rest: bool,
 ) -> ParamInfo {
     ParamInfo {
+        suppress_display_optional: false,
         name,
         type_id,
         optional,

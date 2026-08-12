@@ -1752,6 +1752,7 @@ mod tests {
                 origin: crate::TypeParamOrigin::User,
             }],
             params: vec![ParamInfo {
+                suppress_display_optional: false,
                 name: Some(Atom(20)),
                 type_id: TypeId(100), // ReadonlyArray<T> with T=TypeId(100)
                 optional: false,
@@ -1772,6 +1773,7 @@ mod tests {
                 origin: crate::TypeParamOrigin::User,
             }],
             params: vec![ParamInfo {
+                suppress_display_optional: false,
                 name: Some(Atom(20)),
                 type_id: TypeId(200), // ReadonlyArray<T> with different T=TypeId(200)
                 optional: false,
@@ -1808,6 +1810,7 @@ mod tests {
                 origin: crate::TypeParamOrigin::User,
             }],
             params: vec![ParamInfo {
+                suppress_display_optional: false,
                 name: Some(Atom(20)),
                 type_id: TypeId(100),
                 optional: false,
@@ -1828,6 +1831,7 @@ mod tests {
                 origin: crate::TypeParamOrigin::User,
             }],
             params: vec![ParamInfo {
+                suppress_display_optional: false,
                 name: Some(Atom(20)),
                 type_id: TypeId(200),
                 optional: false,
@@ -1854,6 +1858,7 @@ mod tests {
         let sig1 = CallSignature {
             type_params: vec![],
             params: vec![ParamInfo {
+                suppress_display_optional: false,
                 name: Some(Atom(20)),
                 type_id: TypeId(100),
                 optional: false,
@@ -1868,6 +1873,7 @@ mod tests {
         let sig2 = CallSignature {
             type_params: vec![],
             params: vec![ParamInfo {
+                suppress_display_optional: false,
                 name: Some(Atom(20)),
                 type_id: TypeId(200),
                 optional: false,

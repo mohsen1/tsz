@@ -456,6 +456,7 @@ fn test_custom_type_guard() {
     // This is represented by a function with type predicate
     let func = interner.function(crate::types::FunctionShape {
         params: vec![crate::types::ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::UNKNOWN,
             optional: false,
@@ -489,6 +490,7 @@ fn test_assertion_type_guard() {
     // function assertDefined(x: unknown): asserts x is defined
     let func = interner.function(crate::types::FunctionShape {
         params: vec![crate::types::ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::UNKNOWN,
             optional: false,

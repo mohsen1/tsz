@@ -862,7 +862,7 @@ fn test_generic_callable_return_type_mismatch_compat_layer() {
     let target = interner.callable(CallableShape {
         call_signatures: vec![CallSignature {
             type_params: vec![t_param],
-            params: vec![ParamInfo {
+            params: vec![ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("x")),
                 type_id: t_type,
                 optional: false,
@@ -900,13 +900,13 @@ fn test_callback_readonly_tuple_union_rest_not_assignable() {
     let source = interner.function(FunctionShape {
         type_params: vec![],
         params: vec![
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("a")),
                 type_id: num_union,
                 optional: false,
                 rest: false,
             },
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("b")),
                 type_id: str_union,
                 optional: false,
@@ -956,7 +956,7 @@ fn test_callback_readonly_tuple_union_rest_not_assignable() {
 
     let target = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("args")),
             type_id: union_of_tuples,
             optional: false,

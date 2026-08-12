@@ -26,7 +26,7 @@ fn test_application_ref_expansion_with_rest_param() {
 
     let varargs_body = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(args_name),
             type_id: t_array,
             optional: false,
@@ -629,7 +629,7 @@ fn test_application_ref_expansion_with_optional_param() {
     let x_name = interner.intern_string("x");
     let optional_fn_body = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(x_name),
             type_id: t_type,
             optional: true, // optional parameter

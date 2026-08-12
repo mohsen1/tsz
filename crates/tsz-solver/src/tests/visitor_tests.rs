@@ -332,6 +332,7 @@ fn test_collect_all_types_function() {
 
     let func = interner.function(FunctionShape {
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::NUMBER,
             optional: false,
@@ -1256,6 +1257,7 @@ fn test_is_type_parameter_at_top_level_inside_function() {
     // literal candidates inferred at this position.
     let fn_ty = interner.function(FunctionShape {
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: None,
             type_id: TypeId::NUMBER,
             optional: false,

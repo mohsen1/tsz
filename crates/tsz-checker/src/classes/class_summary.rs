@@ -86,6 +86,7 @@ mod exact_rebind_cache_tests {
             &db,
             Vec::new(),
             vec![ParamInfo {
+                suppress_display_optional: false,
                 type_id: nested,
                 ..ParamInfo::default()
             }],
@@ -179,6 +180,7 @@ mod exact_rebind_cache_tests {
                 &db,
                 Vec::new(),
                 vec![ParamInfo {
+                    suppress_display_optional: false,
                     type_id: nested,
                     ..ParamInfo::default()
                 }],

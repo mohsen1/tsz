@@ -40,6 +40,7 @@ fn unary_function(
     interner.function(FunctionShape {
         type_params: Vec::new(),
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("value")),
             type_id: parameter_type,
             optional: false,
@@ -61,6 +62,7 @@ fn unary_call_signature(
     CallSignature {
         type_params: Vec::new(),
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("entry")),
             type_id: parameter_type,
             optional: false,
@@ -403,6 +405,7 @@ fn test_match_function_param_and_return() {
     let source = interner.function(FunctionShape {
         type_params: Vec::new(),
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("n")),
             type_id: TypeId::NUMBER,
             optional: false,
@@ -418,6 +421,7 @@ fn test_match_function_param_and_return() {
     let target = interner.function(FunctionShape {
         type_params: Vec::new(),
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: t_type,
             optional: false,
@@ -462,12 +466,14 @@ fn test_match_function_multiple_params() {
         type_params: Vec::new(),
         params: vec![
             ParamInfo {
+                suppress_display_optional: false,
                 name: Some(interner.intern_string("a")),
                 type_id: TypeId::STRING,
                 optional: false,
                 rest: false,
             },
             ParamInfo {
+                suppress_display_optional: false,
                 name: Some(interner.intern_string("b")),
                 type_id: TypeId::NUMBER,
                 optional: false,
@@ -485,12 +491,14 @@ fn test_match_function_multiple_params() {
         type_params: Vec::new(),
         params: vec![
             ParamInfo {
+                suppress_display_optional: false,
                 name: Some(interner.intern_string("x")),
                 type_id: t_type,
                 optional: false,
                 rest: false,
             },
             ParamInfo {
+                suppress_display_optional: false,
                 name: Some(interner.intern_string("y")),
                 type_id: u_type,
                 optional: false,
@@ -847,6 +855,7 @@ fn test_match_contravariant_parameter() {
     let source = interner.function(FunctionShape {
         type_params: Vec::new(),
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::STRING,
             optional: false,
@@ -862,6 +871,7 @@ fn test_match_contravariant_parameter() {
     let target = interner.function(FunctionShape {
         type_params: Vec::new(),
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: t_type,
             optional: false,
@@ -1251,6 +1261,7 @@ fn test_match_number_against_function_no_panic() {
     let target = interner.function(FunctionShape {
         type_params: Vec::new(),
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: t_type,
             optional: false,
@@ -1693,6 +1704,7 @@ fn test_match_callable_signatures() {
         call_signatures: vec![CallSignature {
             type_params: Vec::new(),
             params: vec![ParamInfo {
+                suppress_display_optional: false,
                 name: Some(interner.intern_string("x")),
                 type_id: TypeId::NUMBER,
                 optional: false,
@@ -1714,6 +1726,7 @@ fn test_match_callable_signatures() {
         call_signatures: vec![CallSignature {
             type_params: Vec::new(),
             params: vec![ParamInfo {
+                suppress_display_optional: false,
                 name: Some(interner.intern_string("x")),
                 type_id: TypeId::NUMBER,
                 optional: false,

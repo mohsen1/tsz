@@ -35,13 +35,13 @@ fn test_constructor_parameters_extraction() {
     let ctor = interner.function(FunctionShape {
         type_params: vec![],
         params: vec![
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("name")),
                 type_id: TypeId::STRING,
                 optional: false,
                 rest: false,
             },
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("age")),
                 type_id: TypeId::NUMBER,
                 optional: false,
@@ -88,7 +88,7 @@ fn test_constructor_reflexive() {
 
     let ctor = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::STRING,
             optional: false,
@@ -200,7 +200,7 @@ fn test_constructor_multiple_construct_signatures_subtype() {
             },
             CallSignature {
                 type_params: vec![],
-                params: vec![ParamInfo {
+                params: vec![ParamInfo { suppress_display_optional: false,
                     name: Some(interner.intern_string("x")),
                     type_id: TypeId::STRING,
                     optional: false,
@@ -338,7 +338,7 @@ fn test_this_type_fluent_builder() {
 
     let set_name = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("name")),
             type_id: TypeId::STRING,
             optional: false,
@@ -353,7 +353,7 @@ fn test_this_type_fluent_builder() {
 
     let set_value = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("value")),
             type_id: TypeId::NUMBER,
             optional: false,
@@ -523,7 +523,7 @@ fn test_this_type_with_generic_method() {
             is_const: false,
             origin: crate::types::TypeParamOrigin::User,
         }],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("value")),
             type_id: t_ref,
             optional: false,
@@ -695,7 +695,7 @@ fn test_this_type_map_method() {
 
     let mapper_fn = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("value")),
             type_id: this_type,
             optional: false,
@@ -716,7 +716,7 @@ fn test_this_type_map_method() {
             is_const: false,
             origin: crate::types::TypeParamOrigin::User,
         }],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("fn")),
             type_id: mapper_fn,
             optional: false,
@@ -908,7 +908,7 @@ fn test_this_type_with_rest_params() {
     // Simplified: method with rest params returning this
     let rest_method = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("args")),
             type_id: interner.array(TypeId::ANY),
             optional: false,
@@ -945,7 +945,7 @@ fn test_this_type_with_method_overload() {
 
     let overload1 = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::STRING,
             optional: false,
@@ -960,7 +960,7 @@ fn test_this_type_with_method_overload() {
 
     let overload2 = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::NUMBER,
             optional: false,
@@ -991,13 +991,13 @@ fn test_this_type_event_emitter_pattern() {
     let on_method = interner.function(FunctionShape {
         type_params: vec![],
         params: vec![
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("event")),
                 type_id: TypeId::STRING,
                 optional: false,
                 rest: false,
             },
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("handler")),
                 type_id: TypeId::FUNCTION,
                 optional: false,
@@ -1014,13 +1014,13 @@ fn test_this_type_event_emitter_pattern() {
     let off_method = interner.function(FunctionShape {
         type_params: vec![],
         params: vec![
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("event")),
                 type_id: TypeId::STRING,
                 optional: false,
                 rest: false,
             },
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("handler")),
                 type_id: TypeId::FUNCTION,
                 optional: false,
@@ -1037,13 +1037,13 @@ fn test_this_type_event_emitter_pattern() {
     let emit_method = interner.function(FunctionShape {
         type_params: vec![],
         params: vec![
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("event")),
                 type_id: TypeId::STRING,
                 optional: false,
                 rest: false,
             },
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("args")),
                 type_id: interner.array(TypeId::ANY),
                 optional: false,
@@ -1081,7 +1081,7 @@ fn test_this_type_query_builder() {
 
     let where_method = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("condition")),
             type_id: TypeId::STRING,
             optional: false,
@@ -1096,7 +1096,7 @@ fn test_this_type_query_builder() {
 
     let order_by_method = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("field")),
             type_id: TypeId::STRING,
             optional: false,
@@ -1111,7 +1111,7 @@ fn test_this_type_query_builder() {
 
     let limit_method = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("n")),
             type_id: TypeId::NUMBER,
             optional: false,

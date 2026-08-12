@@ -544,6 +544,7 @@ pub(crate) const fn class_construct_param(
     rest: bool,
 ) -> ParamInfo {
     ParamInfo {
+        suppress_display_optional: false,
         name,
         type_id,
         optional,

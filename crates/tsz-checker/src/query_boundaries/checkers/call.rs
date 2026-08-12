@@ -70,6 +70,7 @@ pub(crate) fn sensitive_argument_placeholder_type(db: &dyn TypeDatabase) -> Type
     let placeholder_param_name = db.intern_string(SENSITIVE_ARGUMENT_PLACEHOLDER_NAME);
     db.function(FunctionShape {
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(placeholder_param_name),
             type_id: TypeId::ANY,
             optional: true,
@@ -757,6 +758,7 @@ pub(crate) fn call_result_spread_rest_tuple_display_target(
         return None;
     }
     *last_param = ParamInfo {
+        suppress_display_optional: false,
         type_id: spread_type,
         ..*last_param
     };

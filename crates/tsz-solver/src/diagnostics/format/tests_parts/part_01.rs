@@ -1733,7 +1733,7 @@ fn format_callable_single_call_signature() {
     let callable = db.callable(CallableShape {
         call_signatures: vec![CallSignature {
             type_params: vec![],
-            params: vec![ParamInfo {
+            params: vec![ParamInfo { suppress_display_optional: false,
                 name: Some(db.intern_string("x")),
                 type_id: TypeId::NUMBER,
                 optional: false,
@@ -1837,13 +1837,13 @@ fn format_callable_single_construct_signature() {
         construct_signatures: vec![CallSignature {
             type_params: vec![type_param],
             params: vec![
-                ParamInfo {
+                ParamInfo { suppress_display_optional: false,
                     name: Some(db.intern_string("x")),
                     type_id: t_type,
                     optional: false,
                     rest: false,
                 },
-                ParamInfo {
+                ParamInfo { suppress_display_optional: false,
                     name: Some(db.intern_string("y")),
                     type_id: t_type,
                     optional: false,

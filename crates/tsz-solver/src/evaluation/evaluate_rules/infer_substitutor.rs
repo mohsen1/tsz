@@ -438,6 +438,7 @@ impl<'a> InferSubstitutor<'a> {
                         changed = true;
                     }
                     new_params.push(ParamInfo {
+                        suppress_display_optional: false,
                         name: param.name,
                         type_id: param_type,
                         optional: param.optional,
@@ -484,6 +485,7 @@ impl<'a> InferSubstitutor<'a> {
                                 changed = true;
                             }
                             new_params.push(ParamInfo {
+                                suppress_display_optional: false,
                                 name: param.name,
                                 type_id: param_type,
                                 optional: param.optional,
@@ -523,6 +525,7 @@ impl<'a> InferSubstitutor<'a> {
                                 changed = true;
                             }
                             new_params.push(ParamInfo {
+                                suppress_display_optional: false,
                                 name: param.name,
                                 type_id: param_type,
                                 optional: param.optional,

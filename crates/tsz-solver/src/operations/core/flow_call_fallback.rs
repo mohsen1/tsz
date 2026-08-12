@@ -193,6 +193,7 @@ mod tests {
         db.function(FunctionShape {
             type_params: vec![parameter],
             params: vec![ParamInfo {
+                suppress_display_optional: false,
                 name: None,
                 type_id: parameter_type,
                 optional: false,

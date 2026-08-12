@@ -382,6 +382,7 @@ pub(crate) fn synthetic_single_param_function_shape(
     FunctionShape {
         type_params,
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(param_name),
             type_id: param_type,
             optional: false,

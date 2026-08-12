@@ -1006,6 +1006,7 @@ fn assignability_cache_allow_bivariant_rest_matches_uncached_policy() {
     let rest_any = interner.array(TypeId::ANY);
     let target = interner.function(FunctionShape::new(
         vec![ParamInfo {
+            suppress_display_optional: false,
             name: None,
             type_id: rest_any,
             optional: false,
@@ -1092,6 +1093,7 @@ fn assignability_cache_top_rest_any_rejects_never_source_param() {
     let rest_any = interner.array(TypeId::ANY);
     let target = interner.function(FunctionShape::new(
         vec![ParamInfo {
+            suppress_display_optional: false,
             name: None,
             type_id: rest_any,
             optional: false,

@@ -456,6 +456,7 @@ pub(crate) fn map_function_shape_types(
         let mapped = map_type(FunctionShapeTypeSlot::Param, param.type_id);
         if let Some(params) = &mut params {
             params.push(ParamInfo {
+                suppress_display_optional: false,
                 type_id: mapped,
                 ..*param
             });
@@ -463,6 +464,7 @@ pub(crate) fn map_function_shape_types(
             let mut changed_params = Vec::with_capacity(shape.params.len());
             changed_params.extend(shape.params[..index].iter().copied());
             changed_params.push(ParamInfo {
+                suppress_display_optional: false,
                 type_id: mapped,
                 ..*param
             });

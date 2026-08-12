@@ -565,7 +565,7 @@ fn test_omit_this_parameter_basic() {
     // Function with this parameter
     let fn_with_this = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::STRING,
             optional: false,
@@ -581,7 +581,7 @@ fn test_omit_this_parameter_basic() {
     // Function without this parameter (result of OmitThisParameter)
     let fn_without_this = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::STRING,
             optional: false,
@@ -621,7 +621,7 @@ fn test_omit_this_parameter_no_this() {
 
     let fn_no_this = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::STRING,
             optional: false,
@@ -670,7 +670,7 @@ fn test_omit_this_preserves_generics() {
                 origin: crate::types::TypeParamOrigin::User,
             },
         ],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: u_param,
             optional: false,
@@ -814,7 +814,7 @@ fn test_parameters_with_overloads() {
         call_signatures: vec![
             CallSignature {
                 type_params: vec![],
-                params: vec![ParamInfo {
+                params: vec![ParamInfo { suppress_display_optional: false,
                     name: Some(interner.intern_string("x")),
                     type_id: TypeId::STRING,
                     optional: false,
@@ -828,13 +828,13 @@ fn test_parameters_with_overloads() {
             CallSignature {
                 type_params: vec![],
                 params: vec![
-                    ParamInfo {
+                    ParamInfo { suppress_display_optional: false,
                         name: Some(interner.intern_string("x")),
                         type_id: TypeId::NUMBER,
                         optional: false,
                         rest: false,
                     },
-                    ParamInfo {
+                    ParamInfo { suppress_display_optional: false,
                         name: Some(interner.intern_string("y")),
                         type_id: TypeId::NUMBER,
                         optional: false,
@@ -873,7 +873,7 @@ fn test_constructor_parameters_simple() {
 
     let ctor = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("a")),
             type_id: TypeId::STRING,
             optional: false,
@@ -928,13 +928,13 @@ fn test_constructor_parameters_callable() {
         construct_signatures: vec![CallSignature {
             type_params: vec![],
             params: vec![
-                ParamInfo {
+                ParamInfo { suppress_display_optional: false,
                     name: Some(interner.intern_string("x")),
                     type_id: TypeId::NUMBER,
                     optional: false,
                     rest: false,
                 },
-                ParamInfo {
+                ParamInfo { suppress_display_optional: false,
                     name: Some(interner.intern_string("y")),
                     type_id: TypeId::STRING,
                     optional: false,
@@ -1048,7 +1048,7 @@ fn test_instance_type_with_generics() {
             is_const: false,
             origin: crate::types::TypeParamOrigin::User,
         }],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: t_param,
             optional: false,
@@ -1089,7 +1089,7 @@ fn test_this_parameter_type() {
 
     let fn_with_this = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::STRING,
             optional: false,
@@ -1154,7 +1154,7 @@ fn test_return_type_overloads() {
             },
             CallSignature {
                 type_params: vec![],
-                params: vec![ParamInfo {
+                params: vec![ParamInfo { suppress_display_optional: false,
                     name: Some(interner.intern_string("x")),
                     type_id: TypeId::NUMBER,
                     optional: false,

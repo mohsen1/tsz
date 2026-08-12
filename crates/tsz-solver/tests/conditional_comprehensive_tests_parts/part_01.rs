@@ -1559,7 +1559,7 @@ fn function_intrinsic_extends_callable_in_conditional_types() {
 
     let interner = TypeInterner::new();
     let callable_target = interner.function(FunctionShape {
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: None,
             type_id: TypeId::ANY,
             optional: false,

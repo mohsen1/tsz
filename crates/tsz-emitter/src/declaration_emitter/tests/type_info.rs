@@ -927,6 +927,7 @@ fn test_abstract_constructor_with_static_members_parenthesizes_in_intersection()
         call_signatures: Vec::new(),
         construct_signatures: vec![CallSignature::new(
             vec![ParamInfo {
+                suppress_display_optional: false,
                 name: Some(args),
                 type_id: interner.array(TypeId::ANY),
                 optional: false,

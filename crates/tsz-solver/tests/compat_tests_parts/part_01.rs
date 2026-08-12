@@ -413,7 +413,7 @@ fn test_apparent_string_members_include_substr_and_locale_compare() {
     let locale_compare = interner.intern_string("localeCompare");
     let substr = interner.intern_string("substr");
     let locale_compare_type = interner.function(FunctionShape {
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("that")),
             type_id: TypeId::ANY,
             optional: false,
@@ -428,13 +428,13 @@ fn test_apparent_string_members_include_substr_and_locale_compare() {
     });
     let substr_type = interner.function(FunctionShape {
         params: vec![
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("start")),
                 type_id: TypeId::ANY,
                 optional: false,
                 rest: false,
             },
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("length")),
                 type_id: TypeId::ANY,
                 optional: true,
@@ -525,7 +525,7 @@ fn test_apparent_string_members_exclude_at() {
 
     let at = interner.intern_string("at");
     let at_type = interner.function(FunctionShape {
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("index")),
             type_id: TypeId::NUMBER,
             optional: false,
@@ -595,7 +595,7 @@ fn test_apparent_number_member_rejects_mismatch() {
     let rest_any = interner.array(TypeId::ANY);
     let method = |return_type| {
         interner.function(FunctionShape {
-            params: vec![ParamInfo {
+            params: vec![ParamInfo { suppress_display_optional: false,
                 name: None,
                 type_id: rest_any,
                 optional: false,
@@ -1005,7 +1005,7 @@ fn test_rest_any_callable_target_from_function() {
         symbol: None,
         is_abstract: false,
         call_signatures: vec![CallSignature {
-            params: vec![ParamInfo {
+            params: vec![ParamInfo { suppress_display_optional: false,
                 name: None,
                 type_id: rest_any,
                 optional: false,
@@ -1046,7 +1046,7 @@ fn test_rest_unknown_callable_target_from_callable() {
         symbol: None,
         is_abstract: false,
         call_signatures: vec![CallSignature {
-            params: vec![ParamInfo {
+            params: vec![ParamInfo { suppress_display_optional: false,
                 name: None,
                 type_id: rest_unknown,
                 optional: false,

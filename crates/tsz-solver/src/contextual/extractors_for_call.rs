@@ -40,6 +40,7 @@ fn signature_params_mapped_to_canonical(
     sig.params
         .iter()
         .map(|p| ParamInfo {
+            suppress_display_optional: false,
             name: p.name,
             type_id: instantiate_type(db, p.type_id, &sub),
             optional: p.optional,

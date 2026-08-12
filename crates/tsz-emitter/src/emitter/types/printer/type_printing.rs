@@ -211,6 +211,7 @@ impl<'a> TypePrinter<'a> {
                     .unwrap_or(TypeId::ANY);
 
                 Some(tsz_solver::types::ParamInfo {
+                    suppress_display_optional: false,
                     name,
                     type_id,
                     optional: param.question_token,

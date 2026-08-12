@@ -176,6 +176,7 @@ fn test_method_parameter_type_inference() {
             origin: crate::types::TypeParamOrigin::User,
         }],
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: t_type,
             optional: false,
@@ -268,6 +269,7 @@ fn test_method_generic_parameter_inference() {
             origin: crate::types::TypeParamOrigin::User,
         }],
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: t_type,
             optional: false,
@@ -672,12 +674,14 @@ fn test_mutual_recursion_function_params() {
 
     // Create ParamInfo structs
     let param_f = ParamInfo {
+        suppress_display_optional: false,
         name: Some(interner.intern_string("a")),
         type_id: TypeId::STRING,
         optional: false,
         rest: false,
     };
     let param_g = ParamInfo {
+        suppress_display_optional: false,
         name: Some(interner.intern_string("f")),
         type_id: TypeId::NUMBER,
         optional: false,

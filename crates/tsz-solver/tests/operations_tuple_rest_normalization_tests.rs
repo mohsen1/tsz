@@ -35,6 +35,7 @@ fn infer_generic_tuple_rest_from_rest_argument_returns_array() {
     let func = FunctionShape {
         type_params: vec![t_param],
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("args")),
             type_id: tuple_t,
             optional: false,

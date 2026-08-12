@@ -45,6 +45,7 @@ pub(crate) mod diagnostics_return_type;
 pub(crate) mod diagnostics_templates;
 pub(crate) mod diagnostics_typedef_name;
 pub(crate) mod lookup;
+pub(crate) mod param_optionality;
 pub(crate) mod params;
 pub(crate) mod params_comment_retrieval;
 pub(crate) mod params_generic_instantiation;

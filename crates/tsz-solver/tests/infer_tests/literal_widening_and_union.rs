@@ -248,6 +248,7 @@ fn test_union_inference_prefers_structural_match_over_naked_type_param() {
             origin: crate::types::TypeParamOrigin::User,
         }],
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("value")),
             type_id: param_type,
             optional: false,
@@ -310,6 +311,7 @@ fn test_union_inference_naked_param_still_receives_unmatched_candidates() {
             origin: crate::types::TypeParamOrigin::User,
         }],
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: param_type,
             optional: false,
@@ -359,6 +361,7 @@ fn test_union_inference_multiple_unmatched_candidates() {
             origin: crate::types::TypeParamOrigin::User,
         }],
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: param_type,
             optional: false,
@@ -489,6 +492,7 @@ fn test_callback_plus_value_arg_does_not_leak_any_into_direct_param() {
     let callback_param_type = interner.function(FunctionShape {
         type_params: Vec::new(),
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(x_name),
             type_id: u_type,
             optional: false,
@@ -505,6 +509,7 @@ fn test_callback_plus_value_arg_does_not_leak_any_into_direct_param() {
     let callback_arg_type = interner.function(FunctionShape {
         type_params: Vec::new(),
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(x_name),
             type_id: TypeId::ANY,
             optional: false,
@@ -528,12 +533,14 @@ fn test_callback_plus_value_arg_does_not_leak_any_into_direct_param() {
         }],
         params: vec![
             ParamInfo {
+                suppress_display_optional: false,
                 name: Some(interner.intern_string("fn")),
                 type_id: callback_param_type,
                 optional: false,
                 rest: false,
             },
             ParamInfo {
+                suppress_display_optional: false,
                 name: Some(interner.intern_string("init")),
                 type_id: u_type,
                 optional: false,

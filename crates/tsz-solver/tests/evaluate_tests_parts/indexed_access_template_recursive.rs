@@ -243,7 +243,7 @@ fn test_distribution_with_function_types() {
     let any_array = interner.array(TypeId::ANY);
     let fn_pattern = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("args")),
             type_id: any_array,
             optional: false,
@@ -258,7 +258,7 @@ fn test_distribution_with_function_types() {
 
     let fn1 = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::STRING,
             optional: false,
@@ -273,7 +273,7 @@ fn test_distribution_with_function_types() {
 
     let fn2 = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("y")),
             type_id: TypeId::NUMBER,
             optional: false,

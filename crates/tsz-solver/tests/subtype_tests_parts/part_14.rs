@@ -1413,7 +1413,7 @@ fn test_this_type_in_method_parameter_covariant() {
     // Box.compare(other: this)
     let box_compare = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("other")),
             type_id: this_type,
             optional: false,
@@ -1553,7 +1553,7 @@ fn test_this_type_polymorphic_method_chain() {
 
     let set_name = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("name")),
             type_id: TypeId::STRING,
             optional: false,
@@ -1568,7 +1568,7 @@ fn test_this_type_polymorphic_method_chain() {
 
     let set_value = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("value")),
             type_id: TypeId::NUMBER,
             optional: false,
@@ -1628,11 +1628,11 @@ fn test_this_type_with_generics_in_class() {
     // filter method returning this (polymorphic return)
     let filter_method = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("predicate")),
             type_id: interner.function(FunctionShape {
                 type_params: vec![],
-                params: vec![ParamInfo {
+                params: vec![ParamInfo { suppress_display_optional: false,
                     name: Some(interner.intern_string("value")),
                     type_id: TypeId::UNKNOWN,
                     optional: false,

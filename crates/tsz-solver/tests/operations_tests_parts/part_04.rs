@@ -28,7 +28,7 @@ fn test_infer_generic_number_index_from_negative_infinity_property() {
 
     let func = FunctionShape {
         type_params: vec![t_param],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("bag")),
             type_id: indexed_t,
             optional: false,
@@ -93,7 +93,7 @@ fn test_infer_generic_index_signatures_from_mixed_properties() {
 
     let func = FunctionShape {
         type_params: vec![t_param, u_param],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("bag")),
             type_id: indexed_tu,
             optional: false,
@@ -186,7 +186,7 @@ fn test_infer_generic_index_signatures_from_optional_mixed_properties() {
 
     let func = FunctionShape {
         type_params: vec![t_param, u_param],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("bag")),
             type_id: indexed_tu,
             optional: false,
@@ -270,7 +270,7 @@ fn test_infer_generic_index_signatures_ignore_optional_noncanonical_numeric_prop
 
     let func = FunctionShape {
         type_params: vec![t_param, u_param],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("bag")),
             type_id: indexed_tu,
             optional: false,
@@ -335,7 +335,7 @@ fn test_infer_generic_union_source_rejects_heterogeneous_property_candidates() {
 
     let func = FunctionShape {
         type_params: vec![t_param],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("boxed")),
             type_id: boxed_t,
             optional: false,
@@ -381,7 +381,7 @@ fn test_infer_generic_union_target_with_placeholder_member() {
 
     let func = FunctionShape {
         type_params: vec![t_param],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("value")),
             type_id: union_target,
             optional: false,
@@ -415,7 +415,7 @@ fn test_infer_generic_union_target_with_placeholder_and_optional_member() {
 
     let func = FunctionShape {
         type_params: vec![t_param],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("value")),
             type_id: union_target,
             optional: false,
@@ -449,7 +449,7 @@ fn test_infer_generic_optional_union_target() {
     let optional_t = interner.union(vec![t_type, TypeId::UNDEFINED]);
     let func = FunctionShape {
         type_params: vec![t_param],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("value")),
             type_id: optional_t,
             optional: false,
@@ -483,7 +483,7 @@ fn test_infer_generic_optional_union_target_with_null() {
     let optional_t = interner.union(vec![t_type, TypeId::UNDEFINED, TypeId::NULL]);
     let func = FunctionShape {
         type_params: vec![t_param],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("value")),
             type_id: optional_t,
             optional: false,
@@ -517,7 +517,7 @@ fn test_infer_generic_rest_parameters_rejects_heterogeneous_candidates() {
 
     let func = FunctionShape {
         type_params: vec![t_param],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("items")),
             type_id: array_t,
             optional: false,
@@ -557,7 +557,7 @@ fn test_infer_generic_rest_tuple_type_param() {
 
     let func = FunctionShape {
         type_params: vec![t_param],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("args")),
             type_id: t_type,
             optional: false,
@@ -624,7 +624,7 @@ fn test_infer_generic_tuple_rest_type_param() {
 
     let func = FunctionShape {
         type_params: vec![t_param],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("args")),
             type_id: tuple_t,
             optional: false,
@@ -692,7 +692,7 @@ fn test_infer_generic_tuple_rest_in_tuple_param() {
 
     let func = FunctionShape {
         type_params: vec![t_param],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("args")),
             type_id: tuple_t,
             optional: false,
@@ -776,7 +776,7 @@ fn test_infer_generic_tuple_rest_in_tuple_param_from_rest_argument() {
 
     let func = FunctionShape {
         type_params: vec![t_param],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("args")),
             type_id: tuple_t,
             optional: false,
@@ -852,7 +852,7 @@ fn test_infer_generic_tuple_rest_in_tuple_param_from_rest_argument_with_fixed_ta
 
     let func = FunctionShape {
         type_params: vec![t_param],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("args")),
             type_id: tuple_t,
             optional: false,
@@ -936,7 +936,7 @@ fn test_infer_generic_tuple_rest_in_tuple_param_empty_tail() {
 
     let func = FunctionShape {
         type_params: vec![t_param],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("args")),
             type_id: tuple_t,
             optional: false,
@@ -983,7 +983,7 @@ fn test_infer_non_const_rest_tuple_widens_literal_elements() {
 
     let func = FunctionShape {
         type_params: vec![t_param],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("rest")),
             type_id: t_type,
             optional: false,
@@ -1045,7 +1045,7 @@ fn test_infer_non_const_rest_tuple_single_literal_widens() {
 
     let func = FunctionShape {
         type_params: vec![t_param],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("rest")),
             type_id: t_type,
             optional: false,
@@ -1092,7 +1092,7 @@ fn test_infer_const_rest_tuple_preserves_literal_elements() {
 
     let func = FunctionShape {
         type_params: vec![t_param],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("rest")),
             type_id: t_type,
             optional: false,
@@ -1154,7 +1154,7 @@ fn test_infer_non_const_rest_tuple_string_literals_widen() {
 
     let func = FunctionShape {
         type_params: vec![t_param],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("rest")),
             type_id: t_type,
             optional: false,
@@ -1212,13 +1212,13 @@ fn test_infer_non_const_rest_tuple_with_leading_fixed_param_widens() {
     let func = FunctionShape {
         type_params: vec![t_param],
         params: vec![
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("first")),
                 type_id: TypeId::STRING,
                 optional: false,
                 rest: false,
             },
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("rest")),
                 type_id: t_type,
                 optional: false,
@@ -1276,7 +1276,7 @@ fn test_infer_generic_default_type_param() {
 
     let func = FunctionShape {
         type_params: vec![t_param],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("value")),
             type_id: t_type,
             optional: true,
@@ -1318,7 +1318,7 @@ fn test_infer_generic_default_depends_on_prior_param() {
 
     let func = FunctionShape {
         type_params: vec![t_param, u_param],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("value")),
             type_id: t_type,
             optional: false,
@@ -1351,7 +1351,7 @@ fn test_infer_generic_constraint_fallback() {
 
     let func = FunctionShape {
         type_params: vec![t_param],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("value")),
             type_id: t_type,
             optional: true,
@@ -1384,7 +1384,7 @@ fn test_infer_generic_constraint_violation() {
 
     let func = FunctionShape {
         type_params: vec![t_param],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("value")),
             type_id: t_type,
             optional: false,
@@ -1428,13 +1428,13 @@ fn test_infer_generic_constraint_depends_on_prior_param() {
     let func = FunctionShape {
         type_params: vec![t_param, u_param],
         params: vec![
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("first")),
                 type_id: t_type,
                 optional: false,
                 rest: false,
             },
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("second")),
                 type_id: u_type,
                 optional: false,
@@ -1480,7 +1480,7 @@ fn test_rest_param_spreading_homogeneous_args() {
 
     let func = FunctionShape {
         type_params: vec![t_param],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("args")),
             type_id: array_t,
             optional: false,
@@ -1522,7 +1522,7 @@ fn test_rest_param_spreading_rejects_heterogeneous_args() {
 
     let func = FunctionShape {
         type_params: vec![t_param],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("args")),
             type_id: array_t,
             optional: false,
@@ -1564,7 +1564,7 @@ fn test_rest_param_nullable_prefix_reports_later_incompatible_argument() {
 
     let func = interner.function(FunctionShape {
         type_params: vec![t_param],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("args")),
             type_id: array_t,
             optional: false,
@@ -1631,7 +1631,7 @@ fn test_array_constructor_rest_mismatch_keeps_nullable_fallback_array() {
         construct_signatures: vec![
             CallSignature {
                 type_params: Vec::new(),
-                params: vec![ParamInfo {
+                params: vec![ParamInfo { suppress_display_optional: false,
                     name: Some(interner.intern_string("arrayLength")),
                     type_id: TypeId::NUMBER,
                     optional: true,
@@ -1644,7 +1644,7 @@ fn test_array_constructor_rest_mismatch_keeps_nullable_fallback_array() {
             },
             CallSignature {
                 type_params: vec![t_param],
-                params: vec![ParamInfo {
+                params: vec![ParamInfo { suppress_display_optional: false,
                     name: Some(interner.intern_string("arrayLength")),
                     type_id: TypeId::NUMBER,
                     optional: false,
@@ -1657,7 +1657,7 @@ fn test_array_constructor_rest_mismatch_keeps_nullable_fallback_array() {
             },
             CallSignature {
                 type_params: vec![t_param],
-                params: vec![ParamInfo {
+                params: vec![ParamInfo { suppress_display_optional: false,
                     name: Some(interner.intern_string("items")),
                     type_id: array_t,
                     optional: false,
@@ -1753,13 +1753,13 @@ fn test_rest_param_with_leading_fixed() {
     let func = FunctionShape {
         type_params: vec![t_param, u_param],
         params: vec![
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("first")),
                 type_id: t_type,
                 optional: false,
                 rest: false,
             },
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("rest")),
                 type_id: array_u,
                 optional: false,

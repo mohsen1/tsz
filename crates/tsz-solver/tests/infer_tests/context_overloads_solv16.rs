@@ -780,6 +780,7 @@ fn test_variance_computation_contravariant() {
     let func = interner.function(FunctionShape {
         type_params: Vec::new(),
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             type_id: t_type,
             name: Some(interner.intern_string("x")),
             optional: false,
@@ -829,6 +830,7 @@ fn test_variance_computation_invariant() {
     let set_func = interner.function(FunctionShape {
         type_params: Vec::new(),
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             type_id: t_type,
             name: Some(interner.intern_string("x")),
             optional: false,

@@ -662,7 +662,7 @@ fn test_narrow_by_typeof_negation_function() {
     let ctx = NarrowingContext::new(&interner);
 
     let func = interner.function(FunctionShape {
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::NUMBER,
             optional: false,
@@ -695,7 +695,7 @@ fn test_narrow_by_typeof_negation_function_branded_intersection() {
         interner.literal_string("Tagged"),
     )]);
     let func = interner.function(FunctionShape {
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::NUMBER,
             optional: false,
@@ -721,7 +721,7 @@ fn test_narrow_by_typeof_negation_function_type_param_with_union_constraint() {
     let ctx = NarrowingContext::new(&interner);
 
     let func = interner.function(FunctionShape {
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::NUMBER,
             optional: false,
@@ -756,7 +756,7 @@ fn test_narrow_by_typeof_negation_function_type_param_to_never() {
     let ctx = NarrowingContext::new(&interner);
 
     let func = interner.function(FunctionShape {
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::NUMBER,
             optional: false,
@@ -804,7 +804,7 @@ fn test_narrow_by_typeof_function_type_param_with_union_constraint() {
     let interner = TypeInterner::new();
 
     let func = interner.function(FunctionShape {
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::NUMBER,
             optional: false,
@@ -919,7 +919,7 @@ fn test_narrow_by_typeof_branded_function_intersection() {
         interner.literal_string("Tagged"),
     )]);
     let func = interner.function(FunctionShape {
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::NUMBER,
             optional: false,
@@ -948,7 +948,7 @@ fn test_narrow_by_typeof_object_excludes_branded_function_intersection() {
         interner.literal_string("Tagged"),
     )]);
     let func = interner.function(FunctionShape {
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::NUMBER,
             optional: false,
@@ -995,7 +995,7 @@ fn test_narrow_by_typeof_object_excludes_function() {
         TypeId::NUMBER,
     )]);
     let func = interner.function(FunctionShape {
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::NUMBER,
             optional: false,
@@ -1020,7 +1020,7 @@ fn test_narrow_by_typeof_function_includes_callable() {
 
     let sig = CallSignature {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::NUMBER,
             optional: false,

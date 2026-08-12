@@ -555,7 +555,7 @@ fn test_distributive_function_type_union() {
 
     let any_func = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("args")),
             type_id: interner.array(TypeId::ANY),
             optional: false,
@@ -797,7 +797,7 @@ fn test_infer_from_overloaded_callable() {
     // Pattern: (...args: any[]) => infer R
     let pattern = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("args")),
             type_id: interner.array(TypeId::ANY),
             optional: false,
@@ -817,7 +817,7 @@ fn test_infer_from_overloaded_callable() {
         call_signatures: vec![
             CallSignature {
                 type_params: vec![],
-                params: vec![ParamInfo {
+                params: vec![ParamInfo { suppress_display_optional: false,
                     name: Some(interner.intern_string("x")),
                     type_id: TypeId::STRING,
                     optional: false,
@@ -830,7 +830,7 @@ fn test_infer_from_overloaded_callable() {
             },
             CallSignature {
                 type_params: vec![],
-                params: vec![ParamInfo {
+                params: vec![ParamInfo { suppress_display_optional: false,
                     name: Some(interner.intern_string("x")),
                     type_id: TypeId::NUMBER,
                     optional: false,
@@ -1024,7 +1024,7 @@ fn test_infer_promise_like_unwrap() {
     // Pattern: { then: (onfulfilled: (value: infer T) => any) => any }
     let callback_param = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("value")),
             type_id: infer_t,
             optional: false,
@@ -1039,7 +1039,7 @@ fn test_infer_promise_like_unwrap() {
 
     let then_fn = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("onfulfilled")),
             type_id: callback_param,
             optional: false,
@@ -1060,7 +1060,7 @@ fn test_infer_promise_like_unwrap() {
     // Input: { then: (onfulfilled: (value: string) => any) => any }
     let input_callback = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("value")),
             type_id: TypeId::STRING,
             optional: false,
@@ -1075,7 +1075,7 @@ fn test_infer_promise_like_unwrap() {
 
     let input_then = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("onfulfilled")),
             type_id: input_callback,
             optional: false,

@@ -12,7 +12,7 @@ fn test_conditional_infer_object_call_signature_optional_param_distributive() {
         symbol: None,
         is_abstract: false,
         call_signatures: vec![CallSignature {
-            params: vec![ParamInfo {
+            params: vec![ParamInfo { suppress_display_optional: false,
                 name: None,
                 type_id: infer_r,
                 optional: true,
@@ -43,7 +43,7 @@ fn test_conditional_infer_object_call_signature_optional_param_distributive() {
         symbol: None,
         is_abstract: false,
         call_signatures: vec![CallSignature {
-            params: vec![ParamInfo {
+            params: vec![ParamInfo { suppress_display_optional: false,
                 name: None,
                 type_id: TypeId::STRING,
                 optional: true,
@@ -64,7 +64,7 @@ fn test_conditional_infer_object_call_signature_optional_param_distributive() {
         symbol: None,
         is_abstract: false,
         call_signatures: vec![CallSignature {
-            params: vec![ParamInfo {
+            params: vec![ParamInfo { suppress_display_optional: false,
                 name: None,
                 type_id: TypeId::NUMBER,
                 optional: true,
@@ -107,7 +107,7 @@ fn test_conditional_infer_object_call_signature_optional_param_non_distributive_
         symbol: None,
         is_abstract: false,
         call_signatures: vec![CallSignature {
-            params: vec![ParamInfo {
+            params: vec![ParamInfo { suppress_display_optional: false,
                 name: None,
                 type_id: infer_r,
                 optional: true,
@@ -148,7 +148,7 @@ fn test_conditional_infer_object_call_signature_optional_param_non_distributive_
         symbol: None,
         is_abstract: false,
         call_signatures: vec![CallSignature {
-            params: vec![ParamInfo {
+            params: vec![ParamInfo { suppress_display_optional: false,
                 name: None,
                 type_id: TypeId::STRING,
                 optional: true,
@@ -169,7 +169,7 @@ fn test_conditional_infer_object_call_signature_optional_param_non_distributive_
         symbol: None,
         is_abstract: false,
         call_signatures: vec![CallSignature {
-            params: vec![ParamInfo {
+            params: vec![ParamInfo { suppress_display_optional: false,
                 name: None,
                 type_id: TypeId::NUMBER,
                 optional: true,
@@ -213,7 +213,7 @@ fn test_conditional_infer_object_call_signature_rest_param_distributive() {
         symbol: None,
         is_abstract: false,
         call_signatures: vec![CallSignature {
-            params: vec![ParamInfo {
+            params: vec![ParamInfo { suppress_display_optional: false,
                 name: None,
                 type_id: infer_r,
                 optional: false,
@@ -244,7 +244,7 @@ fn test_conditional_infer_object_call_signature_rest_param_distributive() {
         symbol: None,
         is_abstract: false,
         call_signatures: vec![CallSignature {
-            params: vec![ParamInfo {
+            params: vec![ParamInfo { suppress_display_optional: false,
                 name: None,
                 type_id: interner.array(TypeId::STRING),
                 optional: false,
@@ -265,7 +265,7 @@ fn test_conditional_infer_object_call_signature_rest_param_distributive() {
         symbol: None,
         is_abstract: false,
         call_signatures: vec![CallSignature {
-            params: vec![ParamInfo {
+            params: vec![ParamInfo { suppress_display_optional: false,
                 name: None,
                 type_id: interner.array(TypeId::NUMBER),
                 optional: false,
@@ -311,7 +311,7 @@ fn test_conditional_infer_object_call_signature_rest_param_non_distributive_unio
         symbol: None,
         is_abstract: false,
         call_signatures: vec![CallSignature {
-            params: vec![ParamInfo {
+            params: vec![ParamInfo { suppress_display_optional: false,
                 name: None,
                 type_id: infer_r,
                 optional: false,
@@ -352,7 +352,7 @@ fn test_conditional_infer_object_call_signature_rest_param_non_distributive_unio
         symbol: None,
         is_abstract: false,
         call_signatures: vec![CallSignature {
-            params: vec![ParamInfo {
+            params: vec![ParamInfo { suppress_display_optional: false,
                 name: None,
                 type_id: interner.array(TypeId::STRING),
                 optional: false,
@@ -373,7 +373,7 @@ fn test_conditional_infer_object_call_signature_rest_param_non_distributive_unio
         symbol: None,
         is_abstract: false,
         call_signatures: vec![CallSignature {
-            params: vec![ParamInfo {
+            params: vec![ParamInfo { suppress_display_optional: false,
                 name: None,
                 type_id: interner.array(TypeId::NUMBER),
                 optional: false,
@@ -1638,7 +1638,7 @@ fn test_conditional_infer_rest_pattern_matches_higher_arity_source() {
     // Pattern: (...args: infer P) => any -> P
     let pattern = make_fn(
         &interner,
-        vec![ParamInfo {
+        vec![ParamInfo { suppress_display_optional: false,
             name: Some(args),
             type_id: infer_p,
             optional: false,
@@ -1679,7 +1679,7 @@ fn test_conditional_infer_fixed_arity_optional_trailing_param_matches() {
         &interner,
         vec![
             ParamInfo::required(a, TypeId::STRING),
-            ParamInfo {
+            ParamInfo { suppress_display_optional: false,
                 name: Some(b),
                 type_id: TypeId::NUMBER,
                 optional: true,

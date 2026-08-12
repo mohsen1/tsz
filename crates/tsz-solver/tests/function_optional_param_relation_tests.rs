@@ -13,6 +13,7 @@ fn function_with_param(
     interner.function(FunctionShape {
         type_params: vec![],
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string(name)),
             type_id,
             optional,

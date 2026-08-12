@@ -656,7 +656,7 @@ fn test_variance_nested_function_contravariance() {
     // Callback with narrow param
     let narrow_callback = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::STRING,
             optional: false,
@@ -673,7 +673,7 @@ fn test_variance_nested_function_contravariance() {
     let wide_param = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
     let wide_callback = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: wide_param,
             optional: false,
@@ -689,7 +689,7 @@ fn test_variance_nested_function_contravariance() {
     // HOF taking narrow callback
     let hof_narrow = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("f")),
             type_id: narrow_callback,
             optional: false,
@@ -705,7 +705,7 @@ fn test_variance_nested_function_contravariance() {
     // HOF taking wide callback
     let hof_wide = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("f")),
             type_id: wide_callback,
             optional: false,
@@ -758,7 +758,7 @@ fn test_variance_callback_return_type() {
     // HOF taking narrow-returning callback
     let hof_narrow_return = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("f")),
             type_id: narrow_returning,
             optional: false,
@@ -774,7 +774,7 @@ fn test_variance_callback_return_type() {
     // HOF taking wide-returning callback
     let hof_wide_return = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("f")),
             type_id: wide_returning,
             optional: false,
@@ -897,7 +897,7 @@ fn test_variance_function_returning_function() {
     // Inner function with narrow param
     let inner_narrow = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::STRING,
             optional: false,
@@ -913,7 +913,7 @@ fn test_variance_function_returning_function() {
     // Inner function with wide param
     let inner_wide = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: wide_param,
             optional: false,
@@ -964,7 +964,7 @@ fn test_variance_union_in_contravariant_position() {
 
     let fn_union_param = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: union_ab,
             optional: false,
@@ -979,7 +979,7 @@ fn test_variance_union_in_contravariant_position() {
 
     let fn_single_param = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::STRING,
             optional: false,
@@ -1073,7 +1073,7 @@ fn test_variance_method_bivariant_params() {
             name: interner.intern_string("handle"),
             type_id: interner.function(FunctionShape {
                 type_params: vec![],
-                params: vec![ParamInfo {
+                params: vec![ParamInfo { suppress_display_optional: false,
                     name: Some(interner.intern_string("x")),
                     type_id: TypeId::STRING,
                     optional: false,
@@ -1111,7 +1111,7 @@ fn test_variance_method_bivariant_params() {
             name: interner.intern_string("handle"),
             type_id: interner.function(FunctionShape {
                 type_params: vec![],
-                params: vec![ParamInfo {
+                params: vec![ParamInfo { suppress_display_optional: false,
                     name: Some(interner.intern_string("x")),
                     type_id: wide_type,
                     optional: false,
@@ -1157,7 +1157,7 @@ fn test_variance_function_property_contravariant() {
         name: interner.intern_string("handle"),
         type_id: interner.function(FunctionShape {
             type_params: vec![],
-            params: vec![ParamInfo {
+            params: vec![ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("x")),
                 type_id: TypeId::STRING,
                 optional: false,
@@ -1187,7 +1187,7 @@ fn test_variance_function_property_contravariant() {
         name: interner.intern_string("handle"),
         type_id: interner.function(FunctionShape {
             type_params: vec![],
-            params: vec![ParamInfo {
+            params: vec![ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("x")),
                 type_id: wide_type,
                 optional: false,
@@ -1227,11 +1227,11 @@ fn test_variance_promise_covariant() {
     // Simulate Promise<string> as { then: (cb: (value: string) => void) => void }
     let then_narrow = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("cb")),
             type_id: interner.function(FunctionShape {
                 type_params: vec![],
-                params: vec![ParamInfo {
+                params: vec![ParamInfo { suppress_display_optional: false,
                     name: Some(interner.intern_string("value")),
                     type_id: TypeId::STRING,
                     optional: false,
@@ -1255,11 +1255,11 @@ fn test_variance_promise_covariant() {
 
     let then_wide = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("cb")),
             type_id: interner.function(FunctionShape {
                 type_params: vec![],
-                params: vec![ParamInfo {
+                params: vec![ParamInfo { suppress_display_optional: false,
                     name: Some(interner.intern_string("value")),
                     type_id: wide_type,
                     optional: false,
@@ -1328,7 +1328,7 @@ fn test_recursive_promise_then_assignable_to_promise_like() {
 
     let onfulfilled_promise_like = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("value")),
             type_id: outer_t_ty,
             optional: false,
@@ -1346,7 +1346,7 @@ fn test_recursive_promise_then_assignable_to_promise_like() {
         is_abstract: false,
         call_signatures: vec![CallSignature {
             type_params: vec![inner_u],
-            params: vec![ParamInfo {
+            params: vec![ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("onfulfilled")),
                 type_id: interner.union(vec![onfulfilled_promise_like, TypeId::UNDEFINED]),
                 optional: true,
@@ -1365,7 +1365,7 @@ fn test_recursive_promise_then_assignable_to_promise_like() {
 
     let onfulfilled_promise = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("value")),
             type_id: outer_t_ty,
             optional: false,
@@ -1383,7 +1383,7 @@ fn test_recursive_promise_then_assignable_to_promise_like() {
         is_abstract: false,
         call_signatures: vec![CallSignature {
             type_params: vec![inner_u],
-            params: vec![ParamInfo {
+            params: vec![ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("onfulfilled")),
                 type_id: interner.union(vec![onfulfilled_promise, TypeId::UNDEFINED]),
                 optional: true,
@@ -1469,7 +1469,7 @@ fn test_recursive_promise_then_actual_lib_shape_assignable_to_promise_like() {
 
     let onfulfilled = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("value")),
             type_id: outer_t_ty,
             optional: false,
@@ -1484,7 +1484,7 @@ fn test_recursive_promise_then_actual_lib_shape_assignable_to_promise_like() {
 
     let onrejected = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("reason")),
             type_id: TypeId::ANY,
             optional: false,
@@ -1506,13 +1506,13 @@ fn test_recursive_promise_then_actual_lib_shape_assignable_to_promise_like() {
         call_signatures: vec![CallSignature {
             type_params: vec![result1, result2],
             params: vec![
-                ParamInfo {
+                ParamInfo { suppress_display_optional: false,
                     name: Some(interner.intern_string("onfulfilled")),
                     type_id: nullable_onfulfilled,
                     optional: true,
                     rest: false,
                 },
-                ParamInfo {
+                ParamInfo { suppress_display_optional: false,
                     name: Some(interner.intern_string("onrejected")),
                     type_id: nullable_onrejected,
                     optional: true,
@@ -1536,13 +1536,13 @@ fn test_recursive_promise_then_actual_lib_shape_assignable_to_promise_like() {
         call_signatures: vec![CallSignature {
             type_params: vec![result1, result2],
             params: vec![
-                ParamInfo {
+                ParamInfo { suppress_display_optional: false,
                     name: Some(interner.intern_string("onfulfilled")),
                     type_id: nullable_onfulfilled,
                     optional: true,
                     rest: false,
                 },
-                ParamInfo {
+                ParamInfo { suppress_display_optional: false,
                     name: Some(interner.intern_string("onrejected")),
                     type_id: nullable_onrejected,
                     optional: true,
@@ -1597,7 +1597,7 @@ fn test_variance_triple_nested_contravariance() {
     // Innermost: (x: T) => void
     let inner_narrow = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::STRING,
             optional: false,
@@ -1612,7 +1612,7 @@ fn test_variance_triple_nested_contravariance() {
 
     let inner_wide = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: wide_type,
             optional: false,
@@ -1628,7 +1628,7 @@ fn test_variance_triple_nested_contravariance() {
     // Middle: (g: innermost) => void
     let middle_narrow = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("g")),
             type_id: inner_narrow,
             optional: false,
@@ -1643,7 +1643,7 @@ fn test_variance_triple_nested_contravariance() {
 
     let middle_wide = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("g")),
             type_id: inner_wide,
             optional: false,
@@ -1659,7 +1659,7 @@ fn test_variance_triple_nested_contravariance() {
     // Outermost: (f: middle) => void
     let outer_narrow = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("f")),
             type_id: middle_narrow,
             optional: false,
@@ -1674,7 +1674,7 @@ fn test_variance_triple_nested_contravariance() {
 
     let outer_wide = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("f")),
             type_id: middle_wide,
             optional: false,
@@ -1717,7 +1717,7 @@ fn test_variance_construct_signature_literal_param_contravariant() {
         call_signatures: vec![],
         construct_signatures: vec![CallSignature {
             type_params: vec![],
-            params: vec![ParamInfo {
+            params: vec![ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("x")),
                 type_id: TypeId::STRING,
                 optional: false,
@@ -1739,7 +1739,7 @@ fn test_variance_construct_signature_literal_param_contravariant() {
         call_signatures: vec![],
         construct_signatures: vec![CallSignature {
             type_params: vec![],
-            params: vec![ParamInfo {
+            params: vec![ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("x")),
                 type_id: wide_type,
                 optional: false,
@@ -1774,7 +1774,7 @@ fn test_variance_rest_param_contravariant() {
 
     let fn_narrow_rest = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("args")),
             type_id: narrow_array,
             optional: false,
@@ -1789,7 +1789,7 @@ fn test_variance_rest_param_contravariant() {
 
     let fn_wide_rest = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("args")),
             type_id: wide_array,
             optional: false,

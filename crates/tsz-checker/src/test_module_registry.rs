@@ -521,6 +521,8 @@ mod iterable_next_relation_routing_arch_tests;
 mod iterator_override_widened_value_tests;
 #[path = "tests/js_expando_order_sensitivity_tests.rs"]
 mod js_expando_order_sensitivity_tests;
+#[path = "tests/js_file_function_parameter_display_tests.rs"]
+mod js_file_function_parameter_display_tests;
 #[path = "tests/js_file_function_parameters_as_optional_tests.rs"]
 mod js_file_function_parameters_as_optional_tests;
 #[path = "tests/js_open_object_property_access_tests.rs"]

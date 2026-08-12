@@ -1510,6 +1510,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     .params
                     .iter()
                     .map(|p| ParamInfo {
+                        suppress_display_optional: false,
                         name: p.name,
                         type_id: instantiate_type_cached(self.db, self.query_db, p.type_id, &subst),
                         optional: p.optional,

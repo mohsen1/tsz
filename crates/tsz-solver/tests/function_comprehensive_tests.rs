@@ -22,6 +22,7 @@ fn test_function_construction() {
 
     let func = interner.function(FunctionShape {
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::NUMBER,
             optional: false,
@@ -73,18 +74,21 @@ fn test_function_multiple_params() {
     let func = interner.function(FunctionShape {
         params: vec![
             ParamInfo {
+                suppress_display_optional: false,
                 name: Some(interner.intern_string("a")),
                 type_id: TypeId::STRING,
                 optional: false,
                 rest: false,
             },
             ParamInfo {
+                suppress_display_optional: false,
                 name: Some(interner.intern_string("b")),
                 type_id: TypeId::NUMBER,
                 optional: false,
                 rest: false,
             },
             ParamInfo {
+                suppress_display_optional: false,
                 name: Some(interner.intern_string("c")),
                 type_id: TypeId::BOOLEAN,
                 optional: false,
@@ -118,6 +122,7 @@ fn test_function_same_type_is_subtype() {
 
     let func = interner.function(FunctionShape {
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::NUMBER,
             optional: false,
@@ -148,6 +153,7 @@ fn test_function_return_type_covariance() {
 
     let string_return = interner.function(FunctionShape {
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::NUMBER,
             optional: false,
@@ -163,6 +169,7 @@ fn test_function_return_type_covariance() {
 
     let union_return = interner.function(FunctionShape {
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::NUMBER,
             optional: false,
@@ -193,6 +200,7 @@ fn test_function_param_type_contravariance() {
 
     let union_param = interner.function(FunctionShape {
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: string_or_number,
             optional: false,
@@ -208,6 +216,7 @@ fn test_function_param_type_contravariance() {
 
     let string_param = interner.function(FunctionShape {
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::STRING,
             optional: false,
@@ -238,12 +247,14 @@ fn test_function_optional_param() {
     let func = interner.function(FunctionShape {
         params: vec![
             ParamInfo {
+                suppress_display_optional: false,
                 name: Some(interner.intern_string("required")),
                 type_id: TypeId::STRING,
                 optional: false,
                 rest: false,
             },
             ParamInfo {
+                suppress_display_optional: false,
                 name: Some(interner.intern_string("optional")),
                 type_id: TypeId::NUMBER,
                 optional: true,
@@ -279,12 +290,14 @@ fn test_function_rest_param() {
     let func = interner.function(FunctionShape {
         params: vec![
             ParamInfo {
+                suppress_display_optional: false,
                 name: Some(interner.intern_string("first")),
                 type_id: TypeId::STRING,
                 optional: false,
                 rest: false,
             },
             ParamInfo {
+                suppress_display_optional: false,
                 name: Some(interner.intern_string("rest")),
                 type_id: interner.array(TypeId::NUMBER),
                 optional: false,
@@ -320,6 +333,7 @@ fn test_function_assignable_to_any() {
 
     let func = interner.function(FunctionShape {
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::NUMBER,
             optional: false,
@@ -346,6 +360,7 @@ fn test_any_assignable_to_function() {
 
     let func = interner.function(FunctionShape {
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::NUMBER,
             optional: false,
@@ -375,6 +390,7 @@ fn test_function_identity_stability() {
 
     let shape = FunctionShape {
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::NUMBER,
             optional: false,
@@ -409,6 +425,7 @@ fn test_function_not_subtype_different_param_count() {
 
     let one_param = interner.function(FunctionShape {
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::NUMBER,
             optional: false,
@@ -425,12 +442,14 @@ fn test_function_not_subtype_different_param_count() {
     let two_params = interner.function(FunctionShape {
         params: vec![
             ParamInfo {
+                suppress_display_optional: false,
                 name: Some(interner.intern_string("x")),
                 type_id: TypeId::NUMBER,
                 optional: false,
                 rest: false,
             },
             ParamInfo {
+                suppress_display_optional: false,
                 name: Some(interner.intern_string("y")),
                 type_id: TypeId::NUMBER,
                 optional: false,
@@ -465,6 +484,7 @@ fn test_never_assignable_to_function() {
 
     let func = interner.function(FunctionShape {
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::NUMBER,
             optional: false,
@@ -494,6 +514,7 @@ fn test_method_flag() {
 
     let method = interner.function(FunctionShape {
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::NUMBER,
             optional: false,
@@ -525,6 +546,7 @@ fn test_constructor_flag() {
 
     let constructor = interner.function(FunctionShape {
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("value")),
             type_id: TypeId::STRING,
             optional: false,
@@ -556,6 +578,7 @@ fn test_function_void_return() {
 
     let func = interner.function(FunctionShape {
         params: vec![ParamInfo {
+            suppress_display_optional: false,
             name: Some(interner.intern_string("x")),
             type_id: TypeId::NUMBER,
             optional: false,

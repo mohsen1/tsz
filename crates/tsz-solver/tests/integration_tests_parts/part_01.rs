@@ -120,7 +120,7 @@ mod typescript_quirks_tests {
         // (x: number) => void
         let callback_void = interner.function(FunctionShape {
             type_params: vec![],
-            params: vec![ParamInfo {
+            params: vec![ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("x")),
                 type_id: TypeId::NUMBER,
                 optional: false,
@@ -136,7 +136,7 @@ mod typescript_quirks_tests {
         // (x: number) => string
         let callback_string = interner.function(FunctionShape {
             type_params: vec![],
-            params: vec![ParamInfo {
+            params: vec![ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("x")),
                 type_id: TypeId::NUMBER,
                 optional: false,
@@ -225,7 +225,7 @@ mod typescript_quirks_tests {
         // (x: Animal) => void
         let handler_animal = interner.function(FunctionShape {
             type_params: vec![],
-            params: vec![ParamInfo {
+            params: vec![ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("x")),
                 type_id: animal_type,
                 optional: false,
@@ -241,7 +241,7 @@ mod typescript_quirks_tests {
         // (x: Cat) => void
         let handler_cat = interner.function(FunctionShape {
             type_params: vec![],
-            params: vec![ParamInfo {
+            params: vec![ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("x")),
                 type_id: cat_type,
                 optional: false,
@@ -294,7 +294,7 @@ mod typescript_quirks_tests {
         // (x: Animal) => void
         let handler_animal = interner.function(FunctionShape {
             type_params: vec![],
-            params: vec![ParamInfo {
+            params: vec![ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("x")),
                 type_id: animal_type,
                 optional: false,
@@ -310,7 +310,7 @@ mod typescript_quirks_tests {
         // (x: Cat) => void
         let handler_cat = interner.function(FunctionShape {
             type_params: vec![],
-            params: vec![ParamInfo {
+            params: vec![ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("x")),
                 type_id: cat_type,
                 optional: false,
@@ -704,7 +704,7 @@ mod typescript_parity_tuple_array_tests {
         // (items: string[]) => void
         let callback_array_param = interner.function(FunctionShape {
             type_params: vec![],
-            params: vec![ParamInfo {
+            params: vec![ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("items")),
                 type_id: interner.array(TypeId::STRING),
                 optional: false,
@@ -736,7 +736,7 @@ mod typescript_parity_tuple_array_tests {
         // (items: [string, string]) => void
         let callback_tuple_param = interner.function(FunctionShape {
             type_params: vec![],
-            params: vec![ParamInfo {
+            params: vec![ParamInfo { suppress_display_optional: false,
                 name: Some(interner.intern_string("items")),
                 type_id: tuple_type,
                 optional: false,

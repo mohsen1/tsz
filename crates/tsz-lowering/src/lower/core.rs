@@ -1779,6 +1779,7 @@ impl<'a> TypeLowering<'a> {
                 type_id
             };
             lowered.push(ParamInfo {
+                suppress_display_optional: false,
                 name: self.lower_parameter_name(param_data.name),
                 type_id: sig_type_id,
                 optional,

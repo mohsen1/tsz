@@ -133,7 +133,12 @@ impl<'a> TypeFormatter<'a> {
             let name = p
                 .name
                 .map_or_else(|| "_".to_string(), |atom| self.atom(atom).to_string());
-            rendered.push(self.render_param_display(&name, p.optional, p.rest, p.type_id));
+            rendered.push(self.render_param_display(
+                &name,
+                p.displays_optional(),
+                p.rest,
+                p.type_id,
+            ));
         }
 
         rendered

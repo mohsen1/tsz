@@ -1131,6 +1131,7 @@ fn strip_shape(
     let x = interner.intern_string("x");
     crate::types::FunctionShape::new(
         vec![crate::types::ParamInfo {
+            suppress_display_optional: false,
             name: Some(x),
             type_id: body,
             optional: false,

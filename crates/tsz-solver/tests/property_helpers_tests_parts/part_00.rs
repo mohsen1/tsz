@@ -187,7 +187,7 @@ fn test_validate_slice_case_reducers_keeps_plain_reducer_property_type() {
 
     let reducer_fn = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(state_name),
             type_id: TypeId::STRING,
             optional: false,
@@ -216,7 +216,7 @@ fn test_validate_slice_case_reducers_keeps_plain_reducer_property_type() {
         reducer_name,
         interner.function(FunctionShape {
             type_params: vec![],
-            params: vec![ParamInfo {
+            params: vec![ParamInfo { suppress_display_optional: false,
                 name: Some(state_name),
                 type_id: TypeId::STRING,
                 optional: false,
@@ -1738,7 +1738,7 @@ fn make_array_and_readonly_array_env(interner: &TypeInterner) {
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
     let push_fn = interner.function(FunctionShape {
-        params: vec![ParamInfo {
+        params: vec![ParamInfo { suppress_display_optional: false,
             name: Some(interner.intern_string("value")),
             type_id: t_type,
             optional: false,
