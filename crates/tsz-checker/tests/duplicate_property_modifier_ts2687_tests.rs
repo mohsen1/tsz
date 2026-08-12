@@ -132,38 +132,46 @@ fn computed_names_resolving_to_same_value_report_ts2687_and_ts2300() {
 }
 
 #[test]
-fn interface_computed_names_resolving_to_same_value_report_ts2687_without_ts2300() {
+fn interface_computed_names_resolving_to_same_value_report_ts2687_and_ts2300() {
     // The interface container applies the same rule as the type-literal one:
-    // an all-late-bound computed group merges silently (no TS2300) but the
-    // readonly disagreement still reports TS2687 on both.
+    // oracle-confirmed (typescript@7.0.2, re-verified for #17203) a computed
+    // group still reports TS2300 regardless of late/eager binding, alongside
+    // TS2687 for the readonly disagreement. This test previously pinned zero
+    // TS2300s (introduced by #17209's since-reverted eager-member gate); that
+    // was itself a stale/incorrect expectation, not a regression.
     let source = "const c0 = \"a\";\nconst c1 = \"a\";\n\
         interface I { readonly [c0]: number; [c1]: number }";
     let diagnostics = check_source(source, "test.ts", CheckerOptions::default());
     assert_eq!(diagnostics.iter().filter(|d| d.code == 2687).count(), 2);
-    assert_eq!(diagnostics.iter().filter(|d| d.code == 2300).count(), 0);
+    assert_eq!(diagnostics.iter().filter(|d| d.code == 2300).count(), 2);
 }
 
 #[test]
-fn all_computed_group_with_identical_modifiers_reports_nothing() {
-    // All late-bound, identical modifiers and types: no TS2300, no TS2687,
-    // no TS2717 — the two computed members merge into one property.
+fn all_computed_group_with_identical_modifiers_reports_ts2300_only() {
+    // Oracle-confirmed (typescript@7.0.2, re-verified for #17203): two
+    // computed members resolving to the same key still collide as TS2300
+    // even with identical modifiers and types (no TS2687, no TS2717 — those
+    // are consistency checks over an already-flagged duplicate group, not a
+    // silent merge). #17209's "all-late-bound groups merge silently" premise
+    // does not hold for `const`-literal-typed computed names.
     let source = "const c0 = \"a\";\nconst c1 = \"a\";\n\
         type X = { [c0]: number; [c1]: number };";
     let diagnostics = check_source(source, "test.ts", CheckerOptions::default());
-    assert_eq!(diagnostics.iter().filter(|d| d.code == 2300).count(), 0);
+    assert_eq!(diagnostics.iter().filter(|d| d.code == 2300).count(), 2);
     assert_eq!(diagnostics.iter().filter(|d| d.code == 2687).count(), 0);
     assert_eq!(diagnostics.iter().filter(|d| d.code == 2717).count(), 0);
 }
 
 #[test]
-fn all_computed_group_binder_name_independent_still_no_ts2300() {
-    // Behaviour keys off the late-bound shape, not the chosen identifiers:
-    // renaming the binders leaves the result unchanged.
+fn all_computed_group_binder_name_independent_still_reports_ts2300() {
+    // Behaviour keys off the resolved key, not the chosen identifiers:
+    // renaming the binders leaves the result unchanged. Oracle-confirmed
+    // (typescript@7.0.2, re-verified for #17203): TS2300 fires here too.
     let source = "const zebra = \"k\";\nconst yak = \"k\";\n\
         type Renamed = { readonly [zebra]: number; [yak]: number };";
     let diagnostics = check_source(source, "test.ts", CheckerOptions::default());
     assert_eq!(diagnostics.iter().filter(|d| d.code == 2687).count(), 2);
-    assert_eq!(diagnostics.iter().filter(|d| d.code == 2300).count(), 0);
+    assert_eq!(diagnostics.iter().filter(|d| d.code == 2300).count(), 2);
 }
 
 #[test]
@@ -187,13 +195,14 @@ fn literal_spelled_computed_name_is_eager_and_reports_ts2300() {
 }
 
 #[test]
-fn all_computed_group_type_mismatch_still_suppresses_ts2300() {
-    // Two late-bound computed members resolving to the same key with *different*
-    // types are still an all-late-bound group: TS2300 stays suppressed. (The
-    // TS2717 same-type consistency check is a separate, unchanged path and is
-    // not asserted here.)
+fn all_computed_group_type_mismatch_reports_ts2300_and_ts2717() {
+    // Two computed members resolving to the same key with *different* types:
+    // oracle-confirmed (typescript@7.0.2, re-verified for #17203) TS2300
+    // fires on both declarations, and TS2717 fires once on the subsequent
+    // declaration whose type disagrees with the reference.
     let source = "const c0 = \"a\";\nconst c1 = \"a\";\n\
         type X = { [c0]: number; [c1]: string };";
     let diagnostics = check_source(source, "test.ts", CheckerOptions::default());
-    assert_eq!(diagnostics.iter().filter(|d| d.code == 2300).count(), 0);
+    assert_eq!(diagnostics.iter().filter(|d| d.code == 2300).count(), 2);
+    assert_eq!(diagnostics.iter().filter(|d| d.code == 2717).count(), 1);
 }

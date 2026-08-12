@@ -1072,20 +1072,7 @@ impl<'a> CheckerState<'a> {
                 // TS2717, by contrast, names the member by the *subsequent*
                 // declaration's spelling — the asymmetry is deliberate on
                 // both sides.
-                // The group's first eagerly-bound declaration, if any. TS2300
-                // requires at least one such member: tsc's binder only collides
-                // eagerly-bound (syntactic / literal-spelled) member names; a
-                // computed name over an entity reference (`[c0]` for `const c0
-                // = "a"`) is late-bound, and `lateBindMember` reports a
-                // duplicate only on a genuine symbol-flags exclusion (method
-                // vs. accessor), never for two plain property members that
-                // merely resolve to the same key. So a group whose members are
-                // *all* late-bound merges silently — no TS2300 — while the
-                // checker-level consistency checks (TS2687 modifiers, TS2717
-                // type) still fire.
-                let eager_entry = entries.iter().find(|entry| entry.2);
-                let group_has_eager = eager_entry.is_some();
-                let render_entry = *eager_entry.unwrap_or(&entries[0]);
+                let render_entry = *entries.iter().find(|entry| entry.2).unwrap_or(&entries[0]);
                 let render_idx = render_entry.0;
                 let first_name_node = self
                     .get_interface_member_name_node(render_idx)
@@ -1120,19 +1107,19 @@ impl<'a> CheckerState<'a> {
                 for &(idx, type_ann, _) in entries.iter() {
                     let error_node = self.get_interface_member_name_node(idx).unwrap_or(idx);
 
-                    // TS2300 on every declaration in the group, but only when
-                    // the group has an eagerly-bound member (see
-                    // `group_has_eager`). How each name was spelled does not
-                    // matter — a computed name that reached this point resolved
-                    // to a real member key, so it names the same member as its
-                    // group siblings.
-                    if group_has_eager {
-                        self.error_at_node_msg(
-                            error_node,
-                            diagnostic_codes::DUPLICATE_IDENTIFIER,
-                            &[&display_name],
-                        );
-                    }
+                    // TS2300 on every declaration in the group. How each name
+                    // was spelled does not matter — a computed name that
+                    // reached this point resolved to a real member key, so it
+                    // names the same member as its group siblings.
+                    // Oracle-confirmed against `typescript@7.0.2`
+                    // (re-verified for #17203): this fires unconditionally,
+                    // including for an all-late-bound group — tsc does NOT
+                    // merge that silently.
+                    self.error_at_node_msg(
+                        error_node,
+                        diagnostic_codes::DUPLICATE_IDENTIFIER,
+                        &[&display_name],
+                    );
 
                     // TS2717 on every declaration OTHER than the reference,
                     // when its type differs from the reference's.
