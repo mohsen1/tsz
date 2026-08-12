@@ -1355,11 +1355,14 @@ impl<'a> TypePrinter<'a> {
 
         if let Some(func_id) = visitor::function_shape_id(self.interner, property.type_id) {
             let func_shape = self.interner.function_shape(func_id);
+            let display_params = self
+                .interner
+                .display_params_for_function_shape(func_id, &func_shape.params);
             return Some(self.print_method_signature(
                 &printed_name,
                 property.optional,
                 &func_shape.type_params,
-                &func_shape.params,
+                &display_params,
                 func_shape.type_predicate.as_ref(),
                 func_shape.return_type,
             ));

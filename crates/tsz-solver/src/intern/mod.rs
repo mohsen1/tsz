@@ -33,6 +33,7 @@ mod union_mode;
 // Re-export primary public type from core implementation
 pub use self::core::SharedDefVariance;
 pub use self::core::TypeInterner;
+pub(crate) use self::core::apply_arity_optional_display_mask;
 pub use self::core::clear_thread_local_cache;
 pub(crate) use self::core::{PredicateCacheKind, TEMPLATE_LITERAL_EXPANSION_LIMIT, TypeListBuffer};
 pub(crate) use self::tuple_normalization::tuple_normalized;

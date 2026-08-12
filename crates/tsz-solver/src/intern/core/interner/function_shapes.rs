@@ -13,11 +13,49 @@
 //! widening `FunctionShape` itself.
 
 use super::TypeInterner;
-use crate::types::{FunctionShape, FunctionShapeId, TypeId};
+use crate::types::{FunctionShape, FunctionShapeId, ParamInfo, TypeId};
 use dashmap::DashMap;
 use dashmap::mapref::entry::Entry;
 use rustc_hash::FxBuildHasher;
+use std::borrow::Cow;
 use std::sync::Arc;
+
+/// Apply an arity-only-optional display mask to a parameter slice: at every
+/// position where `mask[i]` is true, the parameter renders as required
+/// (`optional: false`) even though its `FunctionShape` keeps `optional: true`
+/// for JS call-arity leniency (see
+/// [`TypeInterner::function_with_arity_optional_mask`]). Positions without a
+/// set bit — and every parameter when there is no mask or the mask length does
+/// not match — are borrowed untouched, so unmasked shapes (the common case)
+/// allocate nothing.
+///
+/// This is the single owner of the mask→display rule; both the `.d.ts` emit
+/// printer and the solver diagnostics formatter route through it so the two
+/// surfaces render bare JS parameters identically.
+pub(crate) fn apply_arity_optional_display_mask<'p>(
+    mask: Option<&[bool]>,
+    params: &'p [ParamInfo],
+) -> Cow<'p, [ParamInfo]> {
+    match mask {
+        Some(mask) if mask.len() == params.len() => Cow::Owned(
+            params
+                .iter()
+                .zip(mask.iter())
+                .map(|(param, &arity_only)| {
+                    if arity_only {
+                        ParamInfo {
+                            optional: false,
+                            ..*param
+                        }
+                    } else {
+                        *param
+                    }
+                })
+                .collect(),
+        ),
+        _ => Cow::Borrowed(params),
+    }
+}
 
 /// Dedup key for a masked shape: the plain shape plus its display mask.
 type MaskedShapeKey = (Arc<FunctionShape>, Box<[bool]>);
@@ -90,5 +128,22 @@ impl TypeInterner {
             .masks
             .get(&id)
             .map(|entry| Arc::clone(entry.value()))
+    }
+
+    /// Parameters as they should DISPLAY for the function shape `id`: a bare,
+    /// unannotated JS parameter (marked `optional` only for call-arity
+    /// leniency) renders as required, matching `tsc`. Shapes without a
+    /// recorded mask borrow their params untouched. Shared by the `.d.ts` emit
+    /// printer and the solver diagnostics formatter via
+    /// [`apply_arity_optional_display_mask`].
+    pub fn display_params_for_function_shape<'p>(
+        &self,
+        id: FunctionShapeId,
+        params: &'p [ParamInfo],
+    ) -> Cow<'p, [ParamInfo]> {
+        apply_arity_optional_display_mask(
+            self.function_shape_arity_optional_mask(id).as_deref(),
+            params,
+        )
     }
 }
