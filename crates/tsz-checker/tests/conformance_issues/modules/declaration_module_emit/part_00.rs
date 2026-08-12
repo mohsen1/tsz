@@ -1284,8 +1284,7 @@ type T = typeof import("./foo").bar.missing;
         "Expected one TS2694 for missing nested export. Actual diagnostics: {diagnostics:#?}"
     );
     assert!(
-        ts2694_messages[0]
-            .contains("Namespace '\"foo\".bar.export=' has no exported member 'missing'."),
+        ts2694_messages[0].contains("Namespace '\"foo2\".bar' has no exported member 'missing'."),
         "Expected nested cross-file qualifier path in TS2694. Actual diagnostics: {diagnostics:#?}"
     );
 }

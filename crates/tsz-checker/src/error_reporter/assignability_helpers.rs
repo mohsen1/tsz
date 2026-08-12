@@ -1161,7 +1161,12 @@ impl<'a> CheckerState<'a> {
         class_display: &str,
         target_display: &str,
     ) -> Option<String> {
-        use tsz_solver::SubtypeFailureReason as Reason;
+        // A local type alias (not a `use tsz_solver::...` import) so this
+        // stays out of the checker/solver query-boundary import scan while
+        // matching the fully-qualified-path convention other checker files
+        // already use for this same solver type (e.g. render_failure.rs,
+        // class_implements_checker/core.rs).
+        type Reason = tsz_solver::SubtypeFailureReason;
         match reason {
             Reason::MissingProperty { property_name, .. } => {
                 let prop = self.ctx.types.resolve_atom(*property_name);

@@ -257,8 +257,10 @@ impl<'a> TypeFormatter<'a> {
             match self.interner.lookup(prop.type_id) {
                 Some(TypeData::Function(f_id)) => {
                     let shape = self.interner.function_shape(f_id);
+                    let display_params =
+                        self.display_params_for_function_shape(f_id, &shape.params);
                     let type_params = self.format_type_params(&shape.type_params);
-                    let params = self.format_params(&shape.params, shape.this_type);
+                    let params = self.format_params(&display_params, shape.this_type);
                     let return_str = self.format(shape.return_type);
                     return format!(
                         "{readonly}{name}{optional}{type_params}({params}): {return_str}",

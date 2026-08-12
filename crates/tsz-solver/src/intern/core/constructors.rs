@@ -9,9 +9,9 @@ use super::interner::{
 };
 use crate::def::DefId;
 use crate::types::{
-    CallableShape, ConditionalType, FunctionShape, IntrinsicKind, LiteralValue, MappedType,
-    ObjectFlags, ObjectShape, ObjectShapeId, OrderedFloat, PropertyInfo, SymbolRef, TemplateSpan,
-    TupleElement, TypeApplication, TypeData, TypeId, TypeParamInfo,
+    CallableShape, ConditionalType, FunctionShape, FunctionShapeId, IntrinsicKind, LiteralValue,
+    MappedType, ObjectFlags, ObjectShape, ObjectShapeId, OrderedFloat, PropertyInfo, SymbolRef,
+    TemplateSpan, TupleElement, TypeApplication, TypeData, TypeId, TypeParamInfo,
     normalize_display_property_order,
 };
 use rustc_hash::FxHashSet;
@@ -1746,6 +1746,14 @@ impl TypeInterner {
     /// Intern a function type
     pub fn function(&self, shape: FunctionShape) -> TypeId {
         let shape_id = self.intern_function_shape(shape);
+        self.intern(TypeData::Function(shape_id))
+    }
+
+    /// Get the `TypeId` for an already-interned function shape.
+    pub(in crate::intern) fn function_type_from_shape_id(
+        &self,
+        shape_id: FunctionShapeId,
+    ) -> TypeId {
         self.intern(TypeData::Function(shape_id))
     }
 

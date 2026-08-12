@@ -401,10 +401,15 @@ impl<'a> TypeFormatter<'a> {
         }
     }
 
-    pub(super) fn format_function(&mut self, shape: &FunctionShape) -> String {
+    pub(super) fn format_function(
+        &mut self,
+        shape_id: crate::types::FunctionShapeId,
+        shape: &FunctionShape,
+    ) -> String {
+        let params = self.display_params_for_function_shape(shape_id, &shape.params);
         self.format_signature_with_predicate(
             &shape.type_params,
-            &shape.params,
+            &params,
             shape.return_type,
             &SignatureFormatOpts {
                 this_type: shape.this_type,
@@ -623,9 +628,10 @@ impl<'a> TypeFormatter<'a> {
         match self.interner.lookup(func_type)? {
             TypeData::Function(shape_id) => {
                 let shape = self.interner.function_shape(shape_id);
+                let params = self.display_params_for_function_shape(shape_id, &shape.params);
                 Some(self.format_signature_with_predicate(
                     &shape.type_params,
-                    &shape.params,
+                    &params,
                     shape.return_type,
                     &SignatureFormatOpts {
                         this_type: shape.this_type,

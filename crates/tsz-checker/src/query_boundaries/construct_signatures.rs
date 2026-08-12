@@ -212,6 +212,23 @@ pub(crate) fn function_type_from_call_signature(
     db.function(function_shape_from_call_signature(sig, is_constructor))
 }
 
+/// Intern a function type from a signature together with a per-parameter
+/// "optional only for JS call-arity leniency" display mask. `mask[i]` flags
+/// `sig.params[i]` as a bare, unannotated JS parameter: it stays `optional`
+/// for arity checking and subtyping but displays as required, matching tsc.
+/// An empty or misaligned mask degrades to the plain intern.
+pub(crate) fn function_type_from_call_signature_with_arity_optional_mask(
+    db: &dyn TypeDatabase,
+    sig: &CallSignature,
+    is_constructor: bool,
+    mask: &[bool],
+) -> TypeId {
+    db.function_with_arity_optional_mask(
+        function_shape_from_call_signature(sig, is_constructor),
+        mask,
+    )
+}
+
 /// Intern a function type from a signature while preserving the signature's
 /// method variance bit.
 pub(crate) fn function_type_from_call_signature_preserving_method(

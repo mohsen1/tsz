@@ -639,13 +639,12 @@ foo.baz = 'hello';
 }
 
 #[test]
-fn void_zero_expando_assignments_are_recorded() {
-    // tsc 7.0.2 still DECLARES an expando member whose RHS is `void 0` /
-    // `undefined` / `null`: later reads never report TS2339, and only the
-    // member's inferred type collapses to implicit `any` (TS7008, reported by
-    // the checker's `expando_implicit_any` pass). The binder therefore records
-    // the member for every RHS shape; an earlier version of this test pinned
-    // the pre-#17229 bail-out behavior.
+fn void_zero_expando_assignments_are_tracked() {
+    // Per #17229: tsc 7.0.2 still declares a member whose only assignment is
+    // `void 0`/`undefined`/`null` (inferred type collapses to implicit `any`,
+    // reported once as TS7008 at check time), it does not leave the member
+    // undeclared. The binder must record these writes as expando properties
+    // so later reads don't wrongly report TS2339.
     let source = r#"
 exports.k = void 0;
 var o = {};
@@ -662,7 +661,7 @@ o.y = void 0;
             .expando_properties
             .get("exports")
             .is_some_and(|props| props.contains("k")),
-        "missing exports expando tracking: {:?}",
+        "expected exports expando tracking: {:?}",
         binder.expando_properties
     );
     assert!(
@@ -670,7 +669,7 @@ o.y = void 0;
             .expando_properties
             .get("o")
             .is_some_and(|props| props.contains("y")),
-        "missing object expando tracking: {:?}",
+        "expected object expando tracking: {:?}",
         binder.expando_properties
     );
 }

@@ -454,6 +454,15 @@ impl<'a> CheckerState<'a> {
         let Some(target_idx) = self.ctx.resolve_import_target(module_specifier) else {
             return false;
         };
+        self.file_has_export_equals(target_idx)
+    }
+
+    /// File-index variant of `target_module_has_export_equals`'s AST scan, for
+    /// callers that already hold a resolved target file index rather than a
+    /// module specifier — e.g. a namespace-identity crossing discovered by
+    /// resolving a qualified-name segment to a symbol owned by a different
+    /// file (see `resolve_typeof_import_query`'s redirect tracking).
+    pub(crate) fn file_has_export_equals(&self, target_idx: usize) -> bool {
         let target_arena = self.ctx.get_arena_for_file(target_idx as u32);
         let Some(sf) = target_arena.source_files.first() else {
             return false;
@@ -534,8 +543,18 @@ impl<'a> CheckerState<'a> {
         &self,
         module_specifier: &str,
     ) -> Option<String> {
-        use tsz_parser::parser::syntax_kind_ext;
         let target_idx = self.ctx.resolve_import_target(module_specifier)?;
+        self.export_equals_target_named_display_for_file(target_idx)
+    }
+
+    /// File-index variant of `export_equals_target_named_display`, for callers
+    /// that already hold a resolved target file index. See
+    /// `file_has_export_equals` for why this split exists.
+    pub(crate) fn export_equals_target_named_display_for_file(
+        &self,
+        target_idx: usize,
+    ) -> Option<String> {
+        use tsz_parser::parser::syntax_kind_ext;
         let target_arena = self.ctx.get_arena_for_file(target_idx as u32);
         let sf = target_arena.source_files.first()?;
         for &stmt_idx in &sf.statements.nodes {
