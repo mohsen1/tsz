@@ -291,7 +291,19 @@ impl<'a> CheckerState<'a> {
         let diag_idx = source_idx;
         let source = self.narrow_this_from_enclosing_typeof_guard(source_idx, source);
         if self.should_suppress_assignability_diagnostic(source, target) {
-            return true;
+            // A missing required property is real even with an unrelated
+            // error type elsewhere in target (tsc still reports TS2741 for
+            // `{onClick:..} satisfies Handler<{onClick:string; onKey:Unresolved}>`);
+            // only the generic cascade needs this suppression.
+            let is_missing_property_reason = matches!(
+                self.analyze_assignability_failure(source, target)
+                    .failure_reason,
+                Some(tsz_solver::SubtypeFailureReason::MissingProperty { .. })
+                    | Some(tsz_solver::SubtypeFailureReason::MissingProperties { .. })
+            );
+            if !is_missing_property_reason {
+                return true;
+            }
         }
         if self.should_suppress_assignability_for_parse_recovery(source_idx, diag_idx) {
             return true;

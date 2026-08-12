@@ -779,7 +779,34 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                             // This is different from `as` which coerces the type.
                             self.checker.ensure_relation_input_ready(expr_type);
                             self.checker.ensure_relation_input_ready(asserted_type);
-                            if !self.checker.type_contains_error(asserted_type) {
+                            // An error type nested in `asserted_type` (e.g. an
+                            // unresolved type reference on a sibling
+                            // mapped-type argument) normally skips the whole
+                            // satisfies check to avoid a noisy cascade. But a
+                            // structurally missing required property is real
+                            // regardless of that unrelated error — tsc still
+                            // reports TS2741/TS2739 for it (verified against
+                            // 7.0.2: `{ onClick: (e: string) => {} }
+                            // satisfies Handler<{ onClick: string; onKey:
+                            // Unresolved }>` still reports the missing
+                            // `onKey` alongside the unrelated TS2304 for
+                            // `Unresolved`), so only skip the call when the
+                            // failure is not a missing-property shape.
+                            let asserted_type_has_error_but_missing_property = self
+                                .checker
+                                .type_contains_error(asserted_type)
+                                && matches!(
+                                    self.checker
+                                        .analyze_assignability_failure(expr_type, asserted_type)
+                                        .failure_reason,
+                                    Some(tsz_solver::SubtypeFailureReason::MissingProperty { .. })
+                                        | Some(
+                                            tsz_solver::SubtypeFailureReason::MissingProperties { .. }
+                                        )
+                                );
+                            if !self.checker.type_contains_error(asserted_type)
+                                || asserted_type_has_error_but_missing_property
+                            {
                                 let _ = self.checker.check_satisfies_assignable_or_report(
                                     expr_type,
                                     asserted_type,
