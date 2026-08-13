@@ -797,54 +797,47 @@ impl ParserState {
                 }
             }
 
-            /// Whether a `\q{...}` body — the raw bytes between the braces —
-            /// denotes a set containing anything other than single characters.
-            /// Each `|`-separated alternative is a `ClassString`, and the
-            /// disjunction may contain strings as soon as one alternative is
-            /// not exactly one code point. An escape sequence contributes
-            /// exactly one code point, so `\q{a}` is a single character
-            /// and must not be judged by its six source bytes.
-            fn class_string_disjunction_may_contain_strings(alternatives: &[u8]) -> bool {
+            /// Scan a `\q{...}` body starting just after the opening `{`,
+            /// advancing `pos` to the terminating `}` (or the body end), and
+            /// return whether the `ClassStringDisjunction` may contain a string
+            /// — true as soon as any `|`-separated alternative is not exactly
+            /// one code point. A `\` escapes the next character (so `\}` does
+            /// not close the disjunction) and `\u{H+}` spans its own braces;
+            /// both contribute one code point, so `\q{a}` and `\q{\u{1F600}}`
+            /// are single characters and must not be judged by their source
+            /// bytes or truncated at a brace that belongs to an escape.
+            fn scan_class_string_disjunction(body: &[u8], pos: &mut usize) -> bool {
                 let mut code_points = 0usize;
-                let mut pos = 0usize;
+                let mut may_contain_strings = false;
 
-                while pos < alternatives.len() {
-                    match alternatives[pos] {
+                while *pos < body.len() && body[*pos] != b'}' {
+                    match body[*pos] {
                         b'|' => {
-                            if code_points != 1 {
-                                return true;
-                            }
+                            may_contain_strings |= code_points != 1;
                             code_points = 0;
-                            pos += 1;
+                            *pos += 1;
                         }
                         b'\\' => {
                             code_points += 1;
-                            pos += 1;
-                            // `\u{H+}` spans to its closing brace; every other
-                            // escape is sized by the walker that follows, and
-                            // consuming the single byte after the backslash is
-                            // enough to keep `|` and code-point counting
-                            // aligned for all of them.
-                            if alternatives.get(pos) == Some(&b'u')
-                                && alternatives.get(pos + 1) == Some(&b'{')
-                            {
-                                pos += 2;
-                                while pos < alternatives.len() && alternatives[pos] != b'}' {
-                                    pos += 1;
+                            *pos += 1;
+                            if body.get(*pos) == Some(&b'u') && body.get(*pos + 1) == Some(&b'{') {
+                                *pos += 2;
+                                while *pos < body.len() && body[*pos] != b'}' {
+                                    *pos += 1;
                                 }
                             }
-                            pos += 1;
+                            *pos += 1;
                         }
                         _ => {
-                            let advance = next_utf8_char(alternatives, alternatives.len(), pos)
+                            let advance = next_utf8_char(body, body.len(), *pos)
                                 .map_or(1, |(_ch, char_len)| char_len);
                             code_points += 1;
-                            pos += advance;
+                            *pos += advance;
                         }
                     }
                 }
 
-                code_points != 1
+                may_contain_strings || code_points != 1
             }
 
             fn scan_character_class_escape(
@@ -940,20 +933,12 @@ impl ParserState {
                     b'q' if unicode_sets_mode => {
                         *pos += 1;
                         if *pos < body.len() && body[*pos] == b'{' {
+                            // `\q{...}` denotes a set of string literals; it can
+                            // match other than exactly one character as soon as
+                            // any `|`-separated alternative is not one code point
+                            // — including the empty alternative in `\q{}`.
                             *pos += 1;
-                            let alternatives_start = *pos;
-                            while *pos < body.len() && body[*pos] != b'}' {
-                                *pos += 1;
-                            }
-                            // `\q{...}` denotes a set of string literals. It
-                            // can match other than exactly one character as
-                            // soon as any single `|`-separated alternative is
-                            // not exactly one code point long — including the
-                            // empty alternative in `\q{}`, which matches the
-                            // empty string.
-                            if class_string_disjunction_may_contain_strings(
-                                &body[alternatives_start..*pos],
-                            ) {
+                            if scan_class_string_disjunction(body, pos) {
                                 *may_contain_strings = true;
                             }
                             if *pos < body.len() {
@@ -1131,6 +1116,33 @@ impl ParserState {
                         }
                     }
                     return;
+                }
+
+                // A bare `v`-mode `ClassSetSyntaxCharacter` the surrounding
+                // productions do not claim (`[`/`]`/`\` handled above, a
+                // range-separator `-` by the caller): tsc reports TS1508.
+                if ctx.unicode_sets_mode
+                    && let Some(symbol) = match ch {
+                        b'(' => Some("("),
+                        b')' => Some(")"),
+                        b'{' => Some("{"),
+                        b'}' => Some("}"),
+                        b'/' => Some("/"),
+                        b'|' => Some("|"),
+                        b'-' => Some("-"),
+                        _ => None,
+                    }
+                {
+                    (ctx.emit)(
+                        parser,
+                        *pos,
+                        1,
+                        &format_message(
+                            diagnostic_messages::UNEXPECTED_DID_YOU_MEAN_TO_ESCAPE_IT_WITH_BACKSLASH,
+                            &[symbol],
+                        ),
+                        diagnostic_codes::UNEXPECTED_DID_YOU_MEAN_TO_ESCAPE_IT_WITH_BACKSLASH,
+                    );
                 }
 
                 if let Some((_ch, char_len)) = next_utf8_char(ctx.body, ctx.body_end, *pos) {
@@ -1320,36 +1332,8 @@ impl ParserState {
                         continue;
                     }
 
-                    // A bare `-` is only a legal `ClassSetCharacter` when it
-                    // is consumed as a range separator immediately after the
-                    // atom it follows, in the same iteration (the `-` check
-                    // below, right after `scan_class_atom`). Any `-` that
-                    // instead reaches the *top* of this loop as a fresh atom
-                    // to scan — because it opens the class, or because the
-                    // previous iteration ended without chaining into it as a
-                    // range — is not a legal `ClassSetCharacter` in `v` mode
-                    // and reports TS1508: `/[-a]/v`, `/[-]/v`, and
-                    // `/[a-b-]/v`'s second `-` (which follows a *completed*
-                    // range, not a fresh atom) all take this path, while
-                    // `/[a-]/v` and `/[ab-]/v` never reach it because their
-                    // trailing `-` is consumed by the range-separator check
-                    // instead. Reported once per occurrence, not once per
-                    // class — `/[-a-b-c]/v` draws two, on the leading `-`
-                    // and the one after the completed `a-b` range.
-                    if ctx.unicode_sets_mode && ctx.body[*pos] == b'-' {
-                        let message = format_message(
-                            diagnostic_messages::UNEXPECTED_DID_YOU_MEAN_TO_ESCAPE_IT_WITH_BACKSLASH,
-                            &["-"],
-                        );
-                        (ctx.emit)(
-                            parser,
-                            *pos,
-                            1,
-                            &message,
-                            diagnostic_codes::UNEXPECTED_DID_YOU_MEAN_TO_ESCAPE_IT_WITH_BACKSLASH,
-                        );
-                    }
-
+                    // A fresh-atom `-` reaches `scan_class_atom` for its TS1508;
+                    // a range-separator `-` is consumed below and stays legal.
                     let mut atoms = Vec::new();
                     let min_start = *pos;
                     let mut atom_may_contain_strings = false;
