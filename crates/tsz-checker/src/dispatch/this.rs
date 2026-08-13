@@ -170,6 +170,10 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
             .enclosing_class
             .as_ref()
             .map(|info| info.class_idx)
+            // A `this` inside a class's own `extends`/`implements` heritage clause
+            // is evaluated in the class's enclosing scope (tsc `getThisContainer`),
+            // so the class being declared is not its `this` container.
+            .filter(|&class_idx| self.checker.class_owning_heritage_of(idx) != Some(class_idx))
             .or_else(|| {
                 (!has_intermediate_function
                     && !contextual_owner.is_some_and(|owner_idx| {
@@ -177,7 +181,7 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                             owner.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
                         })
                     }))
-                .then(|| self.checker.nearest_enclosing_class(idx))
+                .then(|| self.checker.nearest_enclosing_class_for_this(idx))
                 .flatten()
             })
         {

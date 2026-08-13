@@ -9,6 +9,28 @@ use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 impl<'a> CheckerState<'a> {
+    /// Heritage base-expression kinds that already own a dedicated diagnostic
+    /// path in `check_heritage_clauses_for_unresolved_names`, and so must not be
+    /// re-typed by the generic value-expression constructor check:
+    /// - named identifiers and property accesses resolve through the symbol path;
+    /// - a call expression keeps its `TS2508`/`TS2315` mixin-aware handling;
+    /// - literal keywords (`null`, `undefined`, `true`, `false`, `void`, numeric,
+    ///   and string) are reported — or, for `null`, accepted — by the literal
+    ///   block below.
+    const fn heritage_base_has_dedicated_diagnostic_path(kind: u16) -> bool {
+        use tsz_scanner::SyntaxKind;
+        kind == SyntaxKind::Identifier as u16
+            || kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            || kind == syntax_kind_ext::CALL_EXPRESSION
+            || kind == SyntaxKind::NullKeyword as u16
+            || kind == SyntaxKind::UndefinedKeyword as u16
+            || kind == SyntaxKind::TrueKeyword as u16
+            || kind == SyntaxKind::FalseKeyword as u16
+            || kind == SyntaxKind::VoidKeyword as u16
+            || kind == SyntaxKind::NumericLiteral as u16
+            || kind == SyntaxKind::StringLiteral as u16
+    }
+
     fn symbol_is_import_equals_alias(&self, symbol: &tsz_binder::Symbol) -> bool {
         symbol.has_any_flags(symbol_flags::ALIAS)
             && symbol.all_declarations().iter().any(|&decl_idx| {
@@ -1115,6 +1137,46 @@ impl<'a> CheckerState<'a> {
                     if let Some(expr_node) = self.ctx.arena.get(expr_idx)
                         && expr_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
                     {
+                        continue;
+                    }
+
+                    // A class `extends <expr>` base whose expression is a value
+                    // expression other than a named identifier, property access, or
+                    // literal keyword (`this`, `new X()`, `(expr)`, an array/object
+                    // literal, a class/function expression, …) is typed by tsc via
+                    // `checkExpression` and reported TS2507 when the resulting type is
+                    // concrete (non-`any`, non-`error`) but not a constructor function
+                    // type — regardless of the expression's syntactic shape. tsz's
+                    // symbol/identifier/literal paths only cover named and bare-keyword
+                    // bases; every other value-expression base is handled here. A
+                    // non-constructor *call* base (`extends f()`) keeps its dedicated
+                    // TS2508/TS2315 handling above to avoid mixin-return false
+                    // positives, so calls are excluded.
+                    if is_extends_clause
+                        && is_class_declaration
+                        && let Some(expr_node) = self.ctx.arena.get(expr_idx)
+                        && !Self::heritage_base_has_dedicated_diagnostic_path(expr_node.kind)
+                    {
+                        let base_type = self.get_type_of_node(expr_idx);
+                        let evaluated = self.evaluate_type_for_assignability(base_type);
+                        if evaluated != TypeId::ERROR
+                            && evaluated != TypeId::ANY
+                            && !self.is_constructor_type(evaluated)
+                        {
+                            use crate::diagnostics::{
+                                diagnostic_codes, diagnostic_messages, format_message,
+                            };
+                            let type_name = self.format_type(evaluated);
+                            let message = format_message(
+                                diagnostic_messages::TYPE_IS_NOT_A_CONSTRUCTOR_FUNCTION_TYPE,
+                                &[&type_name],
+                            );
+                            self.error_at_node(
+                                expr_idx,
+                                &message,
+                                diagnostic_codes::TYPE_IS_NOT_A_CONSTRUCTOR_FUNCTION_TYPE,
+                            );
+                        }
                         continue;
                     }
 

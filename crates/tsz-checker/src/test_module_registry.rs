@@ -441,6 +441,8 @@ mod global_this_typeof_surface_tests;
 mod heritage_constraint_structural_name_lookup_arch_tests;
 #[path = "tests/heritage_flow_narrowed_base_tests.rs"]
 mod heritage_flow_narrowed_base_tests;
+#[path = "tests/heritage_value_base_constructor_tests.rs"]
+mod heritage_value_base_constructor_tests;
 #[path = "tests/higher_order_regeneralization_tests.rs"]
 mod higher_order_regeneralization_tests;
 #[path = "tests/homomorphic_mapped_member_override_tests.rs"]

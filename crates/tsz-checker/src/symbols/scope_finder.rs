@@ -479,6 +479,76 @@ impl<'a> CheckerState<'a> {
         None
     }
 
+    /// The class whose `extends`/`implements` heritage clause directly encloses
+    /// `idx`, if any.
+    ///
+    /// tsc's `getThisContainer` never treats a class as the `this` container for
+    /// its own heritage expression: a class's base expression is evaluated in the
+    /// scope that *contains* the class, so a `this` there is the outer `this`
+    /// (`typeof globalThis` in a script, `undefined` in a module), not the class
+    /// being declared. This walk answers "is `idx` in a class's own heritage" by
+    /// checking whether the immediate child of the class on the upward path is a
+    /// `HERITAGE_CLAUSE`.
+    pub(crate) fn class_owning_heritage_of(&self, idx: NodeIndex) -> Option<NodeIndex> {
+        use syntax_kind_ext::{CLASS_DECLARATION, CLASS_EXPRESSION, HERITAGE_CLAUSE};
+
+        let mut current = idx;
+        let mut child_kind: u16 = 0;
+        let mut iterations = 0;
+        while current.is_some() {
+            iterations += 1;
+            if iterations > MAX_TREE_WALK_ITERATIONS {
+                return None;
+            }
+            let node = self.ctx.arena.get(current)?;
+            if node.kind == CLASS_DECLARATION || node.kind == CLASS_EXPRESSION {
+                return (child_kind == HERITAGE_CLAUSE).then_some(current);
+            }
+            child_kind = node.kind;
+            let ext = self.ctx.arena.get_extended(current)?;
+            if ext.parent.is_none() {
+                return None;
+            }
+            current = ext.parent;
+        }
+        None
+    }
+
+    /// Like [`Self::nearest_enclosing_class`], but honours tsc's rule that a
+    /// class is not the `this` container for its own heritage expression.
+    ///
+    /// When `idx` sits inside a class's `extends`/`implements` clause, that class
+    /// is skipped and the walk continues to the next enclosing class (e.g. an
+    /// outer class when the base sits in a nested class-expression's heritage).
+    /// A `this` in a class *body* still resolves to that class, exactly as
+    /// [`Self::nearest_enclosing_class`] does.
+    pub(crate) fn nearest_enclosing_class_for_this(&self, idx: NodeIndex) -> Option<NodeIndex> {
+        use syntax_kind_ext::{CLASS_DECLARATION, CLASS_EXPRESSION, HERITAGE_CLAUSE};
+
+        let mut current = idx;
+        let mut child_kind: u16 = 0;
+        let mut iterations = 0;
+        while current.is_some() {
+            iterations += 1;
+            if iterations > MAX_TREE_WALK_ITERATIONS {
+                return None;
+            }
+            let node = self.ctx.arena.get(current)?;
+            if (node.kind == CLASS_DECLARATION || node.kind == CLASS_EXPRESSION)
+                && child_kind != HERITAGE_CLAUSE
+            {
+                return Some(current);
+            }
+            child_kind = node.kind;
+            let ext = self.ctx.arena.get_extended(current)?;
+            if ext.parent.is_none() {
+                return None;
+            }
+            current = ext.parent;
+        }
+        None
+    }
+
     /// Whether `idx` sits inside a `typeof T` **type** query, i.e. a type
     /// position rather than a value position.
     ///
