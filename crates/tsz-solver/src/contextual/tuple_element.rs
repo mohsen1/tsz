@@ -48,6 +48,17 @@ impl<'a> ContextualTypeContext<'a> {
     ) -> Option<TypeId> {
         let expected = self.expected?;
 
+        // `readonly` is transparent for element extraction: `readonly [A, B]`
+        // contextually types its elements exactly like `[A, B]`.
+        if let Some(TypeData::ReadonlyType(inner)) = self.interner.lookup(expected) {
+            let ctx = ContextualTypeContext::with_expected(self.interner, inner);
+            return ctx.get_tuple_element_type_inner(
+                index,
+                element_count,
+                strip_optional_undefined,
+            );
+        }
+
         // Handle Union explicitly - collect tuple element types from all members,
         // preserving literal arms (see `collect_single_or_union_preserve`) so a
         // fresh literal element keyed by `number | 2` is not widened to `number`.
