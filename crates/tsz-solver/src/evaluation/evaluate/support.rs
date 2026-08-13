@@ -669,6 +669,15 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         let mut evaluated_members = Vec::with_capacity(members.len());
         for &member in members.iter() {
             let evaluated = self.evaluate_compound_member(member);
+            tracing::trace!(
+                target: "tsz::solver::eval_intersection",
+                member = member.0,
+                evaluated = evaluated.0,
+                member_data = ?self.interner.lookup(member),
+                evaluated_data = ?self.interner.lookup(evaluated),
+                preserved_nominal = self.nominal_reference_expands_to_intersection(member, evaluated),
+                "evaluate_intersection member"
+            );
             // When an Application/Lazy member fails to reduce and falls back to
             // `unknown` or to the empty object `{}` (e.g. depth-limit / cycle /
             // cross-file resolution gap that can't expand the alias body), keep
@@ -688,6 +697,19 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             let preserved =
                 if opaque_orig && (evaluated == TypeId::UNKNOWN || evaluated_is_empty_object) {
                     member
+                } else if self.nominal_reference_expands_to_intersection(member, evaluated) {
+                    // A bare `Lazy` reference to a class/interface that
+                    // evaluates to an intersection (multi-parent heritage or
+                    // merged declarations) must keep its reference identity
+                    // here: re-interning below would splice the expansion's
+                    // constituents into THIS member list, and the reference's
+                    // `DefId` — which the nominal fast path and the
+                    // coinductive cycle guard both key on — is unrecoverable
+                    // from the spliced parts (#17332, the `Window & typeof
+                    // globalThis <: Window` family). Downstream passes resolve
+                    // `Lazy` members on demand, exactly as they do for the
+                    // opaque fallback above.
+                    member
                 } else {
                     evaluated
                 };
@@ -705,6 +727,45 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         self.propagate_display_properties_for_intersection(members.as_ref(), result);
 
         result
+    }
+
+    /// True when `member` is a bare `Lazy` reference to a class or interface
+    /// def and `evaluated` is the intersection its body expanded into.
+    ///
+    /// A multi-parent heritage interface (`interface Window extends
+    /// EventTarget, GlobalEventHandlers, ...`) resolves to an intersection of
+    /// its parents plus its own shape, and a multi-declaration merge resolves
+    /// to an intersection of per-declaration shapes. Neither expansion carries
+    /// the def identity of the reference it came from.
+    fn nominal_reference_expands_to_intersection(&self, member: TypeId, evaluated: TypeId) -> bool {
+        if evaluated == member
+            || !matches!(
+                self.interner.lookup(evaluated),
+                Some(TypeData::Intersection(_))
+            )
+        {
+            return false;
+        }
+        // A plain interface/class reference is commonly interned either as a
+        // bare `Lazy(def)` or as `Application(Lazy(def), args)` — even with
+        // empty `args` (see `def_id_for_type_reference` in
+        // `relations/subtype/rules/objects.rs`, which unwraps the same two
+        // forms on the consuming side).
+        let def_id = match self.interner.lookup(member) {
+            Some(TypeData::Lazy(def_id)) => def_id,
+            Some(TypeData::Application(app_id)) => {
+                let base = self.interner.type_application(app_id).base;
+                match self.interner.lookup(base) {
+                    Some(TypeData::Lazy(def_id)) => def_id,
+                    _ => return false,
+                }
+            }
+            _ => return false,
+        };
+        matches!(
+            self.resolver.get_def_kind(def_id),
+            Some(crate::def::DefKind::Class | crate::def::DefKind::Interface)
+        )
     }
 
     /// Propagate display properties from intersection members to the result.

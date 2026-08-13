@@ -378,6 +378,48 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
         // For object-like targets, skip this shortcut and let structural checks
         // determine compatibility (avoids accepting conflicting intersections).
         let member_list = self.checker.interner.type_list(TypeListId(list_id));
+        tracing::trace!(
+            target: "tsz::solver::relation_intersection",
+            source = self.source.0,
+            relation_target = self.target.0,
+            target_data = ?self.checker.interner.lookup(self.target),
+            members = ?member_list
+                .iter()
+                .take(12)
+                .map(|&m| (m.0, self.checker.interner.lookup(m)))
+                .collect::<Vec<_>>(),
+            "visit_intersection source members"
+        );
+        // O(1) nominal short-circuit before paying for anything else — even
+        // the target evaluation below: if any single member's verified
+        // heritage chain already reaches the target's def, the whole
+        // intersection is a subtype regardless of the other members
+        // (subtyping is transitive through nominal inheritance). This is
+        // what lets a source like `Window & { extra: number }` avoid
+        // re-walking `Window`'s full DOM-lib structural shape on every
+        // relation (#16089) the way a plain `interface W extends Window {}`
+        // source already does.
+        //
+        // Deliberately run BEFORE `evaluate_type(self.target)` and NOT gated
+        // on the evaluated target being object-like: a multi-parent lib
+        // interface reference (`Window`) evaluates to an *intersection* of
+        // its heritage constituents — an evaluation that is itself expensive
+        // and that destroys the def identity this check keys on — so both
+        // the old object-like gate and the eager target evaluation skipped
+        // or starved exactly the DOM-lib targets this fast path exists for.
+        // `Window & typeof globalThis <: Window` then re-walked the full DOM
+        // graph and died on the relation budget with a false TS2859/TS2322
+        // (#17332). Def resolution here works on the un-evaluated reference
+        // forms; the evaluated shape (passed below for the object-like case)
+        // is only a hint.
+        for &member in member_list.iter() {
+            if self
+                .checker
+                .intersection_member_nominally_extends_target(member, self.target, None)
+            {
+                return SubtypeResult::True;
+            }
+        }
         let evaluated_target = self.checker.evaluate_type(self.target);
         let target_shape = object_shape_id(self.checker.interner, evaluated_target)
             .map(|id| self.checker.interner.object_shape(id))
@@ -386,16 +428,10 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
                     .map(|id| self.checker.interner.object_shape(id))
             });
         let target_is_object_like = target_shape.is_some();
+        // Second chance with the evaluated shape as a resolution hint: an
+        // annotation can reach this relation as a bare structural shape
+        // whose def is only recoverable through the shape's symbol.
         if target_is_object_like {
-            // O(1) nominal short-circuit before paying for the merged-property
-            // structural walk below: if any single member's verified heritage
-            // chain already reaches the target's def, the whole intersection
-            // is a subtype regardless of the other members (subtyping is
-            // transitive through nominal inheritance). This is what lets a
-            // source like `Window & { extra: number }` avoid re-walking
-            // `Window`'s full DOM-lib structural shape on every relation
-            // (#16089) the way a plain `interface W extends Window {}` source
-            // already does.
             for &member in member_list.iter() {
                 if self.checker.intersection_member_nominally_extends_target(
                     member,

@@ -34,7 +34,7 @@ use crate::def::DefId;
 use crate::def::DefKind;
 use crate::relations::subtype::SubtypeChecker;
 use crate::relations::subtype::TypeResolver;
-use crate::types::{SymbolRef, TypeId};
+use crate::types::{PropertyInfo, SymbolRef, TypeId};
 use std::collections::HashMap;
 
 #[derive(Default)]
@@ -228,4 +228,91 @@ fn intersection_member_multi_hop_chain_walks_to_target() {
     let target_receiver = interner.lazy(target_def);
 
     assert!(checker.intersection_member_nominally_extends_target(member, target_receiver, None,));
+}
+
+/// Zero-hop identity must NOT require the target to be a lib def: `X & Other
+/// <: X` holds by reflexivity for a user-program interface exactly as it does
+/// for `Window` (#17332). Only the heritage WALK stays behind the lib gate —
+/// trusting extends-edges needs the checker-verified maps the gate vouches
+/// for; trusting `X == X` needs nothing.
+#[test]
+fn intersection_member_identity_accepts_without_lib_gate() {
+    let interner = TypeInterner::new();
+    let target_def = DefId(1);
+    let resolver = FakeHeritageResolver::default().with_kind(target_def, DefKind::Interface);
+    // deliberately NO with_lib_def(target_def)
+    let checker = SubtypeChecker::with_resolver(&interner, &resolver);
+
+    let member = interner.lazy(target_def);
+    let target_receiver = interner.lazy(target_def);
+
+    assert!(checker.intersection_member_nominally_extends_target(member, target_receiver, None,));
+}
+
+/// The identity acceptance above must not leak into the heritage walk: a
+/// verified extends-edge to a NON-lib target still declines (this pins the
+/// gate's position between the identity check and the walk).
+#[test]
+fn intersection_member_heritage_edge_still_requires_lib_target() {
+    let interner = TypeInterner::new();
+    let member_def = DefId(1);
+    let target_def = DefId(2);
+    let resolver = FakeHeritageResolver::default()
+        .with_kind(member_def, DefKind::Class)
+        .with_kind(target_def, DefKind::Class)
+        .with_class_extends(member_def, target_def);
+    // deliberately NO with_lib_def(target_def)
+    let checker = SubtypeChecker::with_resolver(&interner, &resolver);
+
+    let member = interner.lazy(member_def);
+    let target_receiver = interner.lazy(target_def);
+
+    assert!(!checker.intersection_member_nominally_extends_target(member, target_receiver, None,));
+}
+
+/// A plain interface reference used as a relation target is routinely
+/// interned as `Application(Lazy(def), [])` with empty args. The fast path
+/// must resolve that form to its base def rather than declining (declining
+/// re-runs the full structural walk, which for DOM-lib targets is exactly
+/// the #17332 relation-budget blowup). Safe because the walk itself refuses
+/// any target def that has type parameters.
+#[test]
+fn intersection_member_identity_accepts_application_wrapped_target() {
+    let interner = TypeInterner::new();
+    let target_def = DefId(1);
+    let resolver = FakeHeritageResolver::default()
+        .with_kind(target_def, DefKind::Interface)
+        .with_lib_def(target_def);
+    let checker = SubtypeChecker::with_resolver(&interner, &resolver);
+
+    let member = interner.lazy(target_def);
+    let target_receiver = interner.application(interner.lazy(target_def), vec![]);
+
+    assert!(checker.intersection_member_nominally_extends_target(member, target_receiver, None,));
+}
+
+/// A target that is an anonymous structural re-mint (no `Lazy` form, no
+/// `def_for_type` registration, no shape symbol) whose only remaining
+/// provenance is the interner's display-alias link back to the reference it
+/// was derived from must still resolve for the fast path. This is the
+/// checker's shape for lib interfaces that never get a `Lazy` wrapper
+/// (`type_reference_symbol_type` returns index-signature interfaces
+/// structurally) and then get re-minted by `this`-substitution (#17332).
+#[test]
+fn intersection_member_identity_accepts_display_alias_provenance_target() {
+    let interner = TypeInterner::new();
+    let target_def = DefId(1);
+    let resolver = FakeHeritageResolver::default()
+        .with_kind(target_def, DefKind::Interface)
+        .with_lib_def(target_def);
+    let checker = SubtypeChecker::with_resolver(&interner, &resolver);
+
+    let member = interner.lazy(target_def);
+    let structural = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("document"),
+        TypeId::STRING,
+    )]);
+    interner.store_display_alias(structural, interner.lazy(target_def));
+
+    assert!(checker.intersection_member_nominally_extends_target(member, structural, None,));
 }

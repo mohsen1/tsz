@@ -1691,3 +1691,7 @@ mod orchestrator_tests;
 #[cfg(test)]
 #[path = "../../tests/union_simplification_generic_member_tests.rs"]
 mod union_simplification_generic_member_tests;
+
+#[cfg(test)]
+#[path = "../../tests/evaluate_intersection_member_identity_tests.rs"]
+mod evaluate_intersection_member_identity_tests;
