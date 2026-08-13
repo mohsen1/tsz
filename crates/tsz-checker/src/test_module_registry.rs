@@ -181,8 +181,6 @@ mod closure_destructuring_top_level_diagnostics_tests;
 mod comlink_row_regression_tests;
 #[path = "tests/commonjs_export_assignment_chain_tests.rs"]
 mod commonjs_export_assignment_chain_tests;
-#[path = "tests/commonjs_export_assignment_conflict_named_export_lookup_tests.rs"]
-mod commonjs_export_assignment_conflict_named_export_lookup_tests;
 #[path = "tests/commonjs_export_declaration_level_type_tests.rs"]
 mod commonjs_export_declaration_level_type_tests;
 #[path = "tests/commonjs_module_exports_jsdoc_type_declared_tests.rs"]

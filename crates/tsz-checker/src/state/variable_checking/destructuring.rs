@@ -302,35 +302,6 @@ impl<'a> CheckerState<'a> {
         })
     }
 
-    fn binding_pattern_direct_source_is_this(&self, pattern_idx: NodeIndex) -> bool {
-        let Some(ext) = self.ctx.arena.get_extended(pattern_idx) else {
-            return false;
-        };
-        let parent_idx = ext.parent;
-        let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
-            return false;
-        };
-
-        let source_expr = if parent_node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
-            self.ctx
-                .arena
-                .get_variable_declaration(parent_node)
-                .map(|decl| decl.initializer)
-        } else {
-            None
-        };
-
-        source_expr.is_some_and(|expr_idx| {
-            let expr_idx = self.ctx.arena.skip_parenthesized_and_assertions(expr_idx);
-            self.is_this_expression(expr_idx)
-        })
-    }
-
-    fn add_undefined_if_missing_for_destructuring(&self, ty: TypeId) -> TypeId {
-        // Route through flow observation boundary for centralized policy.
-        flow_boundary::add_undefined_for_indexed_access(self.ctx.types, ty)
-    }
-
     /// Returns true when the given binding pattern is the name of a function
     /// parameter that has a default initializer (e.g. `function f([x, y] = [])
     /// {}`). In that case tsc does not emit TS2493 for out-of-bounds element
@@ -1542,14 +1513,7 @@ impl<'a> CheckerState<'a> {
                         } else {
                             false
                         };
-                        if !emitted_ts2538
-                            && (computed_expr.is_some()
-                                || !self.report_require_destructure_missing_export(
-                                    pattern_idx,
-                                    error_node,
-                                    prop_name_str,
-                                ))
-                        {
+                        if !emitted_ts2538 {
                             // In tsc, destructuring uses the *apparent* type in the
                             // error message: `object` → `{}`, and primitives widen
                             // to their wrapper class (`string` → `String`,

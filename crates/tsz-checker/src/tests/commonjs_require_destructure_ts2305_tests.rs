@@ -291,3 +291,68 @@ mod1.f();
             .collect::<Vec<_>>(),
     );
 }
+
+/// The conflict is syntactic (whole-module reassignment plus a later named
+/// write), not conditioned on the RHS shape — a class value in the
+/// `module.exports = X` position must hide the sibling exactly like the
+/// arrow-function case above.
+#[test]
+fn require_destructure_of_conflict_excluded_property_reports_ts2305_for_class_export() {
+    let diags = check(
+        &[
+            (
+                "./mod.js",
+                r#"class Donkey {}
+function funky(declaration) { return false; }
+module.exports = Donkey;
+module.exports.funky = funky;
+"#,
+            ),
+            (
+                "./usage.js",
+                r#"const { funky } = require('./mod');
+"#,
+            ),
+        ],
+        "./usage.js",
+    );
+    assert!(
+        codes(&diags).contains(&diagnostic_codes::MODULE_HAS_NO_EXPORTED_MEMBER),
+        "expected TS2305 for a class direct-export conflict, got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, d.message_text.clone()))
+            .collect::<Vec<_>>(),
+    );
+}
+
+/// Same conflict, object-literal RHS — the third distinct
+/// `module.exports = X` shape (function/class/object-literal) the structural
+/// rule must cover uniformly.
+#[test]
+fn require_destructure_of_conflict_excluded_property_reports_ts2305_for_object_literal_export() {
+    let diags = check(
+        &[
+            (
+                "./mod.js",
+                r#"module.exports = { a: 1 };
+module.exports.funky = function (d) { return d; };
+"#,
+            ),
+            (
+                "./usage.js",
+                r#"const { funky } = require('./mod');
+"#,
+            ),
+        ],
+        "./usage.js",
+    );
+    assert!(
+        codes(&diags).contains(&diagnostic_codes::MODULE_HAS_NO_EXPORTED_MEMBER),
+        "expected TS2305 for the object-literal conflict too, got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, d.message_text.clone()))
+            .collect::<Vec<_>>(),
+    );
+}

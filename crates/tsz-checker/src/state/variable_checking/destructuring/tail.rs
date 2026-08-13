@@ -4,8 +4,38 @@
 
 use super::*;
 use crate::query_boundaries::binding_patterns;
+use crate::query_boundaries::flow as flow_boundary;
 
 impl<'a> CheckerState<'a> {
+    pub(super) fn add_undefined_if_missing_for_destructuring(&self, ty: TypeId) -> TypeId {
+        // Route through flow observation boundary for centralized policy.
+        flow_boundary::add_undefined_for_indexed_access(self.ctx.types, ty)
+    }
+
+    pub(super) fn binding_pattern_direct_source_is_this(&self, pattern_idx: NodeIndex) -> bool {
+        let Some(ext) = self.ctx.arena.get_extended(pattern_idx) else {
+            return false;
+        };
+        let parent_idx = ext.parent;
+        let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
+            return false;
+        };
+
+        let source_expr = if parent_node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
+            self.ctx
+                .arena
+                .get_variable_declaration(parent_node)
+                .map(|decl| decl.initializer)
+        } else {
+            None
+        };
+
+        source_expr.is_some_and(|expr_idx| {
+            let expr_idx = self.ctx.arena.skip_parenthesized_and_assertions(expr_idx);
+            self.is_this_expression(expr_idx)
+        })
+    }
+
     pub(super) fn preserve_actual_lib_namespace_binding_parent_type(
         &mut self,
         original_type: TypeId,
