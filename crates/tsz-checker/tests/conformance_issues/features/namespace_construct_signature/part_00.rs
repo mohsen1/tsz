@@ -1369,7 +1369,14 @@ const z = x[x.S];
 }
 
 #[test]
-fn test_js_late_bound_module_exports_write_diagnostics_preserve_js_extension() {
+fn test_js_late_bound_module_exports_write_diagnostics_strip_js_extension() {
+    // tsc@7.0.2 never preserves the source extension in a `typeof
+    // import("...")` display name — not even for a diagnostic reported in
+    // the same file whose own `module.exports[...]` write is being flagged.
+    // conformance/salsa/lateBoundAssignmentDeclarationSupport2.ts's oracle
+    // baseline (tsc-cache-full.json) reports
+    // `typeof import("lateBoundAssignmentDeclarationSupport2")` for these
+    // same-file writes, matching the cross-file `require(...)` read case.
     let diagnostics = compile_and_get_diagnostics_named(
         "lateBoundAssignmentDeclarationSupport2.js",
         r#"
@@ -1404,9 +1411,9 @@ module.exports.S = _sym;
     );
     assert!(
         ts7053_messages.iter().all(|message| {
-            message.contains("typeof import(\"lateBoundAssignmentDeclarationSupport2.js\")")
+            message.contains("typeof import(\"lateBoundAssignmentDeclarationSupport2\")")
         }),
-        "Expected current-file module.exports diagnostics to preserve the .js extension in `typeof import(...)`. Actual diagnostics: {diagnostics:#?}"
+        "Expected current-file module.exports diagnostics to strip the .js extension in `typeof import(...)`, matching tsc@7.0.2. Actual diagnostics: {diagnostics:#?}"
     );
 }
 

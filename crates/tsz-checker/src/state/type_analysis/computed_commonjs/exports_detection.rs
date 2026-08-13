@@ -254,24 +254,20 @@ impl<'a> CheckerState<'a> {
                 .is_some_and(|lit| lit.text == "0")
     }
 
+    /// The current file's CommonJS `module.exports`/`exports` namespace type,
+    /// tagged with its `typeof import("...")` display name.
+    ///
+    /// `tsc` (7.0.2) always strips the source file's extension from this
+    /// display name, whether the diagnostic is reported in the current file
+    /// (a `module.exports[...] = ...` write) or in a file that `require`s it
+    /// — the tsc-cache oracle has zero `typeof import("....js")` fingerprints
+    /// anywhere in the conformance corpus.
     pub(crate) fn current_file_commonjs_namespace_type(&mut self) -> TypeId {
-        self.current_file_commonjs_namespace_type_with_display_extension(false)
-    }
-
-    pub(crate) fn current_file_commonjs_module_exports_namespace_type(&mut self) -> TypeId {
-        self.current_file_commonjs_namespace_type_with_display_extension(true)
-    }
-
-    fn current_file_commonjs_namespace_type_with_display_extension(
-        &mut self,
-        preserve_js_extension: bool,
-    ) -> TypeId {
         if self.current_source_file_has_esm_syntax() {
             let empty_namespace = js_exports_query::commonjs_empty_namespace_type(self.ctx.types);
-            self.ctx.namespace_module_names.insert(
-                empty_namespace,
-                self.current_file_commonjs_module_name(preserve_js_extension),
-            );
+            self.ctx
+                .namespace_module_names
+                .insert(empty_namespace, self.current_file_commonjs_module_name());
             return empty_namespace;
         }
 
@@ -324,7 +320,7 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        let display_name = self.current_file_commonjs_module_name(preserve_js_extension);
+        let display_name = self.current_file_commonjs_module_name();
         js_exports_query::current_file_commonjs_namespace_type(
             self,
             surface,
@@ -691,10 +687,8 @@ impl<'a> CheckerState<'a> {
                 .is_some_and(|ident| ident.escaped_text == "exports")
     }
 
-    fn current_file_commonjs_module_name(&self, preserve_js_extension: bool) -> String {
-        if !preserve_js_extension
-            && let Some(specifier) = self.current_file_explicit_js_module_specifier()
-        {
+    fn current_file_commonjs_module_name(&self) -> String {
+        if let Some(specifier) = self.current_file_explicit_js_module_specifier() {
             let basename = specifier
                 .rsplit(|ch| ['/', '\\'].contains(&ch))
                 .next()
@@ -709,11 +703,7 @@ impl<'a> CheckerState<'a> {
             .first()
             .map(|sf| sf.file_name.as_str())
             .unwrap_or(self.ctx.file_name.as_str());
-        let stripped = if preserve_js_extension {
-            Self::strip_typescript_module_extension(file_name)
-        } else {
-            Self::strip_known_module_extension(file_name)
-        };
+        let stripped = tsz_common::file_extensions::strip_known_extension(file_name);
         stripped
             .rsplit(|ch| ['/', '\\'].contains(&ch))
             .next()
@@ -730,13 +720,5 @@ impl<'a> CheckerState<'a> {
             (target_idx == self.ctx.current_file_idx && ends_with_js_ext)
                 .then_some(specifier.as_str())
         })
-    }
-
-    fn strip_known_module_extension(path: &str) -> &str {
-        tsz_common::file_extensions::strip_known_extension(path)
-    }
-
-    fn strip_typescript_module_extension(path: &str) -> &str {
-        tsz_common::file_extensions::strip_ts_extension(path)
     }
 }
