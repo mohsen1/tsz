@@ -1424,6 +1424,25 @@ impl<'a> CheckerState<'a> {
                 .or_else(|| self.ctx.binder.get_symbol(obj_sym))
             && symbol.has_any_flags(tsz_binder::symbol_flags::FUNCTION)
             && !symbol.has_any_flags(tsz_binder::symbol_flags::CLASS)
+            // A function merged with a namespace (`function F() {} namespace F
+            // { export var p = 1; }`) already declares `p` with a concrete
+            // type through the merge. `F.p = value` is then an assignment to
+            // an existing member, not a fresh expando declaration, so it must
+            // not take the expando `any`-typed target path below — tsc checks
+            // it against `p`'s declared type (TS2322 on a mismatch). Only the
+            // merged namespace's own exports count: a property introduced
+            // purely by a prior expando write is not in `exports` and keeps
+            // the expando path.
+            && !self
+                .ctx
+                .arena
+                .get_identifier_at(access.name_or_argument)
+                .is_some_and(|ident| {
+                    symbol
+                        .exports
+                        .as_ref()
+                        .is_some_and(|exports| exports.get(&ident.escaped_text).is_some())
+                })
         {
             let symbol_declarations = symbol.declarations.clone();
             let declaration_is_function_value = |decl_idx: NodeIndex| -> bool {
