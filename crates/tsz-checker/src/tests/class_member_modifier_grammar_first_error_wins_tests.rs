@@ -118,6 +118,61 @@ fn accessibility_after_static_still_reports_ts1029() {
     assert_eq!(codes(source), vec![TS1029], "codes: {:?}", codes(source));
 }
 
+// --- `async`+`abstract` TS1243 always anchors at `async`, in EITHER order —
+// --- unlike `private`/`static`, which anchor at whichever modifier is
+// --- written second (oracle: `classAbstractMixedWithModifiers.ts`, both
+// --- `abstract async` and `async abstract` point at `async`) --------------
+
+#[test]
+fn abstract_then_async_anchors_ts1243_at_async_not_abstract() {
+    let source = "abstract class C { abstract async m(): Promise<void>; }\n";
+    let diags = crate::test_utils::check_source_non_strict(source);
+    let ts1243 = diags
+        .iter()
+        .find(|d| d.code == TS1243)
+        .unwrap_or_else(|| panic!("expected TS1243: {diags:?}"));
+    let async_offset = source.find("async").unwrap() as u32;
+    assert_eq!(
+        ts1243.start, async_offset,
+        "`abstract async` TS1243 must anchor at `async`, not `abstract`"
+    );
+}
+
+#[test]
+fn async_then_abstract_anchors_ts1243_at_async_not_abstract() {
+    let source = "abstract class C { async abstract m(): Promise<void>; }\n";
+    let diags = crate::test_utils::check_source_non_strict(source);
+    let ts1243 = diags
+        .iter()
+        .find(|d| d.code == TS1243)
+        .unwrap_or_else(|| panic!("expected TS1243: {diags:?}"));
+    let async_offset = source.find("async").unwrap() as u32;
+    assert_eq!(
+        ts1243.start, async_offset,
+        "`async abstract` TS1243 must anchor at `async` (the FIRST modifier here), not `abstract`"
+    );
+}
+
+// --- regression guard: `private`/`static` keep the "whichever comes
+// --- second" anchor, unaffected by the `async` special-case ---------------
+
+#[test]
+fn static_then_abstract_anchors_ts1243_at_abstract_not_static() {
+    let source = "abstract class C { static abstract m(): void; }\n";
+    let diags = crate::test_utils::check_source_non_strict(source);
+    let ts1243 = diags
+        .iter()
+        .find(|d| d.code == TS1243)
+        .unwrap_or_else(|| panic!("expected TS1243: {diags:?}"));
+    // `rfind`: the class header's own `abstract` modifier precedes the
+    // member's, so the member-level occurrence is the last one.
+    let abstract_offset = source.rfind("abstract").unwrap() as u32;
+    assert_eq!(
+        ts1243.start, abstract_offset,
+        "`static abstract` TS1243 must anchor at `abstract` (the second modifier)"
+    );
+}
+
 // --- declare/accessor pairing (TS1243) yields to the private-identifier
 // --- walk (TS18019) for a private name, in both source orders -------------
 
