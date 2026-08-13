@@ -727,9 +727,12 @@ impl<'a> CheckerState<'a> {
         }
         // Destructuring parameters need recursive implicit-any checking, but only
         // when the outer initializer doesn't provide type info for the bindings.
-        // E.g., `({ json = [] } = {})` — the `{}` default is empty, so `json` is
-        // implicitly `any[]`. But `({x} = { x: new Class() })` has a non-empty
-        // initializer that types `x` as `Class`, so no TS7031.
+        // E.g., `({ x } = {})` — the `{}` default is empty and `x` has no
+        // initializer of its own, so `x` is implicitly `any`. But
+        // `({x} = { x: new Class() })` has a non-empty initializer that types `x`
+        // as `Class`, so no TS7031, and a leaf with its own initializer
+        // (`{ json = [] }`) takes its type from that initializer — the recursion
+        // reports only leaves that are genuinely uninitialized.
         if let Some(name_node) = self.ctx.arena.get(param.name) {
             use tsz_parser::parser::syntax_kind_ext;
             let kind = name_node.kind;
@@ -1191,6 +1194,12 @@ impl<'a> CheckerState<'a> {
 
         let pattern_kind = pattern_node.kind;
 
+        // In JS (`checkJs`) tsc reports TS7031 for a leaf whose default is an
+        // empty array literal (`{ json = [] }` → `any[]`); a TS file infers the
+        // parameter type from the binding pattern and stays silent. See
+        // `destructuringParameterDeclaration9` (JS) vs `10` (TS).
+        let report_empty_array_default_leaf = self.is_js_file();
+
         // Handle object binding patterns: { x, y, z }
         if pattern_kind == syntax_kind_ext::OBJECT_BINDING_PATTERN {
             if let Some(pattern) = self.ctx.arena.get_binding_pattern(pattern_node) {
@@ -1226,13 +1235,20 @@ impl<'a> CheckerState<'a> {
                             is_rest_parameter,
                         );
                     } else {
-                        // Leaf binding — report when no initializer or empty array default
+                        // Leaf binding — report when it has no initializer. A leaf
+                        // with an initializer takes its type from that initializer
+                        // and is not implicit-any, so a TS file stays silent even
+                        // for `{ json = [] }` (type `any[]`), matching tsc's
+                        // `reportErrorsFromWidening`. In JS (`checkJs`) tsc still
+                        // reports an empty-array default leaf, so keep it there.
                         let implicit_type = if binding_elem.initializer.is_none() {
                             Some(if is_rest_parameter { "any[]" } else { "any" })
-                        } else if Self::is_empty_array_literal_init(
-                            self.ctx.arena,
-                            binding_elem.initializer,
-                        ) {
+                        } else if report_empty_array_default_leaf
+                            && Self::is_empty_array_literal_init(
+                                self.ctx.arena,
+                                binding_elem.initializer,
+                            )
+                        {
                             Some("any[]")
                         } else {
                             None
@@ -1287,13 +1303,19 @@ impl<'a> CheckerState<'a> {
                         is_rest_parameter,
                     );
                 } else {
-                    // Leaf binding — report when no initializer or empty array default
+                    // Leaf binding — report when it has no initializer. A TS file
+                    // stays silent for a leaf with an initializer (including an
+                    // empty-array `= []`, type `any[]`); JS (`checkJs`) still
+                    // reports the empty-array default leaf. See the object-pattern
+                    // branch above.
                     let implicit_type = if binding_elem.initializer.is_none() {
                         Some(if is_rest_parameter { "any[]" } else { "any" })
-                    } else if Self::is_empty_array_literal_init(
-                        self.ctx.arena,
-                        binding_elem.initializer,
-                    ) {
+                    } else if report_empty_array_default_leaf
+                        && Self::is_empty_array_literal_init(
+                            self.ctx.arena,
+                            binding_elem.initializer,
+                        )
+                    {
                         Some("any[]")
                     } else {
                         None
@@ -1337,6 +1359,11 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
+        // JS (`checkJs`) reports TS7031 for a leaf whose default is an empty
+        // array literal; a TS file stays silent. See
+        // `emit_implicit_any_parameter_for_pattern`.
+        let report_empty_array_default_leaf = self.is_js_file();
+
         for (logical_index, &element_idx) in pattern.elements.nodes.iter().enumerate() {
             // Indices within the literal get their type from the corresponding
             // literal element; nothing to report.
@@ -1377,15 +1404,20 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
-            // Leaf binding: emit TS7031 only when it has no own initializer
-            // (or an empty array literal default).
+            // Leaf binding: emit TS7031 when it has no own initializer. A leaf
+            // with an initializer takes its type from that initializer, so a TS
+            // file stays silent even for an empty-array `= []`; JS (`checkJs`)
+            // still reports the empty-array default leaf. See
+            // `emit_implicit_any_parameter_for_pattern`.
             let implicit_type = if binding_elem.initializer.is_none() {
                 Some(if is_rest_parameter || is_rest_element {
                     "any[]"
                 } else {
                     "any"
                 })
-            } else if Self::is_empty_array_literal_init(self.ctx.arena, binding_elem.initializer) {
+            } else if report_empty_array_default_leaf
+                && Self::is_empty_array_literal_init(self.ctx.arena, binding_elem.initializer)
+            {
                 Some("any[]")
             } else {
                 None
