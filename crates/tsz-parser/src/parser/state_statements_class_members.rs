@@ -149,13 +149,27 @@ impl ParserState {
                     reported_accessibility_duplicate = true;
                 }
                 // TS1029: accessibility must come after certain modifiers.
-                // `abstract` is deliberately excluded: an accessibility
-                // modifier and `abstract` are never in a valid order (tsc
-                // reports the pairwise TS1243 "cannot be used with" instead
-                // of an ordering error, regardless of which one is written
-                // first), unlike static/readonly/override/accessor/async
-                // where accessibility genuinely has to come first.
-                if seen_static || seen_readonly || seen_override || seen_accessor || seen_async {
+                // `private` is excluded from the `abstract` arm: `private` and
+                // `abstract` are never in a valid order (tsc reports the
+                // pairwise TS1243 "cannot be used with" instead of an
+                // ordering error, regardless of which one is written first —
+                // see `check_modifier_combinations` in
+                // `overload_compatibility.rs`), but `public`/`protected` DO
+                // have a valid order with `abstract` (before it), so writing
+                // either after `abstract` is exactly the same ordering
+                // mistake as writing it after static/readonly/override/
+                // accessor/async. `abstract` is the lowest-priority conflict
+                // in the chain below, matching tsc's modifier walk: any of
+                // static/readonly/override/accessor/async outranks it when
+                // more than one precedes the accessibility modifier.
+                let abstract_conflict = seen_abstract && current_kind != SyntaxKind::PrivateKeyword;
+                if seen_static
+                    || seen_readonly
+                    || seen_override
+                    || seen_accessor
+                    || seen_async
+                    || abstract_conflict
+                {
                     use tsz_common::diagnostics::diagnostic_codes;
                     let current_mod = match current_kind {
                         SyntaxKind::PublicKeyword => "public",
@@ -171,8 +185,10 @@ impl ParserState {
                         "override"
                     } else if seen_accessor {
                         "accessor"
-                    } else {
+                    } else if seen_async {
                         "async"
+                    } else {
+                        "abstract"
                     };
                     self.parse_error_at_current_token(
                         &format!(

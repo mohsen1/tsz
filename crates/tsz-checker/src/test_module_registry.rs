@@ -193,6 +193,8 @@ mod commonjs_require_binding_type_meaning_tests;
 mod commonjs_require_destructure_ts2305_tests;
 #[path = "tests/compound_nullish_widening_implicit_any_ts7005_tests.rs"]
 mod compound_nullish_widening_implicit_any_ts7005_tests;
+#[path = "tests/compound_nullish_widening_implicit_any_ts7010_tests.rs"]
+mod compound_nullish_widening_implicit_any_ts7010_tests;
 #[path = "tests/computed_alias_source_display_tests.rs"]
 mod computed_alias_source_display_tests;
 #[path = "tests/computed_index_member_source_display_tests.rs"]
@@ -353,6 +355,8 @@ mod fresh_object_literal_array_like_union_drill_gate_tests;
 mod fresh_object_literal_union_literal_kind_display_tests;
 #[path = "tests/function_callee_spread_ts2556_tests.rs"]
 mod function_callee_spread_ts2556_tests;
+#[path = "tests/function_namespace_merge_property_write_ts2322_tests.rs"]
+mod function_namespace_merge_property_write_ts2322_tests;
 #[path = "tests/function_parameter_mismatch_elaboration_tests.rs"]
 mod function_parameter_mismatch_elaboration_tests;
 #[path = "tests/function_type_parameter_grammar_tests.rs"]

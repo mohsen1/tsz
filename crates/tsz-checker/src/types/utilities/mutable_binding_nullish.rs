@@ -196,4 +196,52 @@ impl<'a> CheckerState<'a> {
         crate::query_boundaries::widening::widen_nullish_to_any_deep(self.ctx.types, leaf_type)
             == leaf_type
     }
+
+    /// Whether `expr` (an array literal) has at least one immediate element
+    /// that is a genuine nullish-widening source — the bare `null`/`undefined`
+    /// keyword, an elided hole, or the global `undefined` identifier.
+    ///
+    /// Unlike [`Self::initializer_nullish_leaves_are_widening`] (an `all`
+    /// question: "is it *safe* to widen whatever nullish leaves exist"), this
+    /// is an `any` question: "does a genuine widening leaf exist at all". The
+    /// distinction matters for a resulting-type-only gate (`array_element_type
+    /// == ANY`): `declare var y: any; var b = [y];` also ends with element
+    /// type `any` (from `y`'s own declared type, not widening), and
+    /// `initializer_nullish_leaves_are_widening` vacantly returns `true` for
+    /// it too (the widener never touches an already-`any` leaf, so it can't
+    /// make widening "unsafe") — but tsc reports no diagnostic there. This
+    /// walk distinguishes the two by requiring an actual nullish leaf, not
+    /// just the absence of a leaf the widener would mishandle.
+    pub(crate) fn array_literal_has_direct_nullish_leaf(&self, expr: NodeIndex) -> bool {
+        let expr = self.ctx.arena.skip_parenthesized(expr);
+        let Some(node) = self.ctx.arena.get(expr) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::ARRAY_LITERAL_EXPRESSION {
+            return false;
+        }
+        let Some(array) = self.ctx.arena.get_literal_expr(node) else {
+            return false;
+        };
+        array.elements.nodes.iter().any(|&elem| {
+            if elem == NodeIndex::NONE {
+                return true;
+            }
+            let elem = self.ctx.arena.skip_parenthesized(elem);
+            let Some(elem_node) = self.ctx.arena.get(elem) else {
+                return false;
+            };
+            if elem_node.kind == SyntaxKind::NullKeyword as u16
+                || elem_node.kind == SyntaxKind::UndefinedKeyword as u16
+            {
+                return true;
+            }
+            elem_node.kind == SyntaxKind::Identifier as u16
+                && crate::control_flow::narrowing_helpers::is_global_undefined_identifier(
+                    self.ctx.arena,
+                    self.ctx.binder,
+                    elem,
+                )
+        })
+    }
 }

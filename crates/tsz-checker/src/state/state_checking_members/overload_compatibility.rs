@@ -352,6 +352,7 @@ impl<'a> CheckerState<'a> {
         }
         // TypeScript does not report TS7010/TS7011 when all value-return paths use
         // an explicit `as any`/`<any>` assertion.
+        let mut array_nullish_widening_implicit_any = false;
         if let Some(node) = self.ctx.arena.get(fallback_node) {
             let body = if let Some(func) = self.ctx.arena.get_function(node) {
                 Some(func.body)
@@ -383,9 +384,32 @@ impl<'a> CheckerState<'a> {
                 {
                     return;
                 }
+                // The array twin of the same rule: `function f() { return
+                // [undefined, null]; }` widens its return contribution to
+                // `any[]` (`widen_nullish_return_contribution`), which
+                // `should_report_implicit_any_return` below doesn't recognize
+                // (it only accepts a return type of exactly `any`, deliberately
+                // so a deeply-nested `any` inside e.g. `Promise<any>` doesn't
+                // false-positive). Recover that case here, gated on genuine
+                // nullish-leaf provenance so `declare var y: any; function f()
+                // { return [y]; }` — element type `any` from `y`'s own
+                // declaration, not widening — stays silent (oracle-verified,
+                // typescript@7.0.2).
+                if return_type != TypeId::ANY
+                    && !self.ctx.strict_null_checks()
+                    && crate::query_boundaries::common::array_element_type(
+                        self.ctx.types,
+                        return_type,
+                    ) == Some(TypeId::ANY)
+                    && self.any_return_is_array_literal_with_nullish_leaf(body_idx)
+                {
+                    array_nullish_widening_implicit_any = true;
+                }
             }
         }
-        if !self.should_report_implicit_any_return(return_type) {
+        if !self.should_report_implicit_any_return(return_type)
+            && !array_nullish_widening_implicit_any
+        {
             return;
         }
 
@@ -1206,14 +1230,27 @@ impl<'a> CheckerState<'a> {
                     &[name, "abstract"],
                 );
 
-                // Point to whichever modifier comes second
-                let (abs_start, _) = self.get_node_span(abs_node).unwrap_or((0, 0));
-                let (con_start, _) = self.get_node_span(conflict_idx).unwrap_or((0, 0));
-
-                let error_node = if con_start > abs_start {
+                // `private`/`static` anchor at whichever modifier comes
+                // second, matching tsc's generic pairwise modifier walk
+                // (each keyword's own switch-arm reports the conflict at
+                // itself once it sees the other flag already set — so the
+                // later-written modifier is always the one reported).
+                // `async` does not follow that pattern: tsc validates it via
+                // a dedicated async-modifier grammar check that always
+                // anchors at the `async` keyword itself, regardless of
+                // whether it is written before or after `abstract` (oracle:
+                // `classAbstractMixedWithModifiers.ts`'s `abstract async`
+                // and `async abstract` cases both anchor on `async`).
+                let error_node = if name == "async" {
                     conflict_idx
                 } else {
-                    abs_node
+                    let (abs_start, _) = self.get_node_span(abs_node).unwrap_or((0, 0));
+                    let (con_start, _) = self.get_node_span(conflict_idx).unwrap_or((0, 0));
+                    if con_start > abs_start {
+                        conflict_idx
+                    } else {
+                        abs_node
+                    }
                 };
 
                 self.error_at_node(

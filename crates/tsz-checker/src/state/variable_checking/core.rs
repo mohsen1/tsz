@@ -901,13 +901,18 @@ impl<'a> CheckerState<'a> {
             // (var/let vs const-like), because there is no evolving-any
             // mechanism for a non-empty literal to defer through.
             //
-            // Gating on the *resulting* element type (rather than walking the
-            // initializer's syntax for a nullish leaf) is required, not just
-            // convenient: a mixed literal like `[1, undefined]` reduces its
-            // best-common-type to `number` (undefined contributes nothing
-            // when a concrete sibling is present) and tsc reports nothing —
-            // an AST-only "does this literal contain a nullish leaf" gate
-            // would wrongly fire here.
+            // Gating on the *resulting* element type alone is not enough: a
+            // mixed literal like `[1, undefined]` reduces its best-common-type
+            // to `number` (undefined contributes nothing when a concrete
+            // sibling is present) and tsc reports nothing there, which the
+            // element-type check already excludes — but `declare var y: any;
+            // var b = [y];` also ends with element type `any` purely because
+            // `y` was already `any`-typed, and tsc stays silent there too
+            // (oracle-verified, typescript@7.0.2). The resulting-type check
+            // can't distinguish "any` from widening" vs "any` that was already
+            // there", so it is paired with `array_literal_has_direct_nullish_leaf`
+            // to require at least one genuine `null`/`undefined`/elided-hole
+            // leaf among the literal's own elements.
             //
             // Object literals are deliberately excluded: an implicit-any
             // property inside a fresh object literal already gets its own
@@ -931,7 +936,8 @@ impl<'a> CheckerState<'a> {
                                 .get_literal_expr(init_node)
                                 .is_some_and(|lit| !lit.elements.nodes.is_empty())
                     })
-                && query::array_element_type(self.ctx.types, final_type) == Some(TypeId::ANY);
+                && query::array_element_type(self.ctx.types, final_type) == Some(TypeId::ANY)
+                && self.array_literal_has_direct_nullish_leaf(var_decl.initializer);
             if compound_nullish_widening_implicit_any {
                 let is_destructuring_pattern =
                     self.ctx.arena.get(var_decl.name).is_some_and(|name_node| {
