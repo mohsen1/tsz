@@ -578,6 +578,9 @@ mod position_invalid_export_specifier_resolution_tests;
 #[cfg(test)]
 #[path = "../tests/position_invalid_module_element_module_axis_tests.rs"]
 mod position_invalid_module_element_module_axis_tests;
+#[cfg(test)]
+#[path = "../tests/ts2448_binding_pattern_initializer_tdz_tests.rs"]
+mod ts2448_binding_pattern_initializer_tdz_tests;
 
 #[cfg(test)]
 #[path = "../tests/jsdoc_readonly_tests.rs"]
