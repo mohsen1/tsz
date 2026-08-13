@@ -196,10 +196,9 @@ var b = [y];
 /// Negative control: a destructuring pattern binding never gets TS7005 from
 /// this path — mirrors the existing bare-scalar and empty-array guards'
 /// identical exclusion. (tsc instead reports per-element `TS7031` here —
-/// `Binding element 'a'/'b' implicitly has an 'any' type.` — a distinct
-/// mechanism, now covered by `ts7031_destructuring_nullish_array_literal_tests.rs`;
-/// the assertion here only pins down that TS7005 itself never fires on a
-/// pattern.)
+/// `Binding element 'a'/'b' implicitly has an 'any' type.` — a distinct,
+/// pre-existing, unimplemented mechanism this PR does not touch; the
+/// assertion only pins down that TS7005 itself never fires on a pattern.)
 #[test]
 fn destructuring_pattern_never_reports_ts7005() {
     let source = "var [a, b] = [undefined, null];";
