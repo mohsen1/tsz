@@ -735,10 +735,19 @@ impl<'a> CheckerState<'a> {
             // whole-module value for a re-export the same as it does for
             // `import { default as X } from` — matched here through the same
             // `module_can_use_synthetic_default_import` eligibility check that
-            // path already uses.
+            // path already uses. The eligibility helper only judges module
+            // *shape*; synthesis additionally requires
+            // `allowSyntheticDefaultImports`/`esModuleInterop` and never
+            // applies to a `.ts`/`.tsx` *source* target — tsc's
+            // `canHaveSyntheticDefault` gives a non-JS source file a default
+            // only through `export =` (the flag-gated `export=` arm above), so
+            // re-exporting a missing `default` from a TS source module stays
+            // TS2305 even with interop on (`reexportMissingDefault1/2`).
             if export_name == "default"
                 && !module_exports.has("__esModule")
                 && resolution_mode.is_none()
+                && self.ctx.allow_synthetic_default_imports()
+                && !self.is_source_file_import(module_name)
                 && self.module_can_use_synthetic_default_import(module_name)
             {
                 continue;

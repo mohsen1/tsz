@@ -913,6 +913,8 @@ mod symbol_env_registration_arch_tests;
 mod symbol_for_identity_helper_tests;
 #[path = "tests/syntax_constraint_relation_routing_arch_tests.rs"]
 mod syntax_constraint_relation_routing_arch_tests;
+#[path = "tests/synthetic_default_ts_source_gate_tests.rs"]
+mod synthetic_default_ts_source_gate_tests;
 #[path = "tests/synthetic_unique_atom_union_display_tests.rs"]
 mod synthetic_unique_atom_union_display_tests;
 #[path = "tests/this_context_self_type_tests.rs"]
