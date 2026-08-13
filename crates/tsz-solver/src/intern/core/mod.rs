@@ -4,9 +4,11 @@
 //! - `interner`: `TypeInterner` struct, intern/lookup hot paths, and component
 //!   accessors (further split into `storage`, `display`, and `cache`)
 //! - `constructors`: Type construction convenience methods (literal, union, etc.)
+//! - `union_member_order`: tsc `stableTypeOrdering` comparator for union members
 
 mod constructors;
 mod interner;
+mod union_member_order;
 
 // Re-export everything that was previously public from core.rs
 #[cfg(test)]
