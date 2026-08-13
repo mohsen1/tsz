@@ -306,6 +306,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // against the default - the default is a fallback, not a constraint.
         let mut default_fallback_tp_names: FxHashSet<tsz_common::Atom> = FxHashSet::default();
         for (tp, &var) in func.type_params.iter().zip(type_param_vars.iter()) {
+            // #17282: capture the Round-1 fix before re-derivation can widen it.
+            let frozen_fixed_ty = infer_ctx.frozen_fixed_value(var);
             let constraints = infer_ctx.get_constraints(var);
             // Check both ConstraintSet (covariant candidates + upper bounds) and
             // usable contra_candidates. Contra-candidates are NOT in
@@ -959,6 +961,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 ty
             };
             let ty = self.checker.normalize_inferred_type(ty);
+            // #17282: undo a context-sensitive callback candidate that merely
+            // widened a Round-1 fix.
+            let ty = self.restore_widened_frozen_fix(&mut infer_ctx, var, frozen_fixed_ty, ty);
             trace!(
                 type_param_name = %type_param_name.as_str(),
                 var = ?var,

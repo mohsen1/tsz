@@ -669,20 +669,15 @@ impl<'a> CheckerState<'a> {
                             else {
                                 continue;
                             };
-                        (
-                            name,
-                            delegated_member_types
-                                .as_ref()
-                                .and_then(|types| types.get(&member_idx).copied())
-                                .unwrap_or_else(|| {
-                                    instantiate_type(
-                                        self.ctx.types,
-                                        self.get_type_of_interface_member_simple(member_idx),
-                                        &substitution,
-                                    )
-                                }),
+                        let member_type = self.ts2320_direct_property_type(
+                            member_idx,
+                            delegated_member_types.as_ref(),
+                            &substitution,
+                            iface_arena,
                             sig.question_token,
-                        )
+                            sig.type_annotation,
+                        );
+                        (name, member_type, sig.question_token)
                     } else {
                         continue;
                     };
@@ -888,8 +883,12 @@ impl<'a> CheckerState<'a> {
                             // isTypeIdenticalTo for TS2320. Assignability is too loose
                             // when `any` is involved (e.g., `f(x: any): any` vs `f<T>(x: T): T`
                             // are mutually assignable but not identical).
-                            let type_incompatible =
-                                !self.are_var_decl_types_compatible(member_type, *prev_member_type);
+                            let member_type_norm =
+                                self.ts2320_identity_type(member_type, member_optional);
+                            let prev_type_norm =
+                                self.ts2320_identity_type(*prev_member_type, *prev_optional);
+                            let type_incompatible = !self
+                                .are_var_decl_types_compatible(member_type_norm, prev_type_norm);
                             if type_incompatible || optionality_differs {
                                 self.error_at_node(
                                         iface_data.name,
@@ -1056,27 +1055,29 @@ impl<'a> CheckerState<'a> {
                                 (ancestor_type_idx, None)
                             };
 
-                            let ancestor_resolution = self.resolve_heritage_symbol(ancestor_expr);
-                            if let Some(ancestor_sym_id) = ancestor_resolution
-                                && let Some(ancestor_sym) =
-                                    self.ctx.binder.get_symbol(ancestor_sym_id)
-                            {
-                                for &decl_idx in &ancestor_sym.declarations {
-                                    let decl_arena = self.ctx.binder.arena_for_declaration_or(
-                                        ancestor_sym_id,
-                                        decl_idx,
-                                        self.ctx.arena,
-                                    );
-                                    if let Some(dn) = decl_arena.get(decl_idx)
-                                        && decl_arena.get_interface(dn).is_some()
-                                    {
-                                        worklist.push((
-                                            ancestor_sym_id,
-                                            decl_idx,
-                                            ancestor_type_args_opt.clone(),
-                                        ));
-                                    }
-                                }
+                            let Some(ancestor_sym_id) = self.resolve_heritage_symbol(ancestor_expr)
+                            else {
+                                continue;
+                            };
+                            // Interface ancestor extends `worklist`; mapped/alias ancestor folds. See mapped_heritage.rs.
+                            let mut ts2320_ctx = crate::classes_domain::class_checker_compat_mapped_heritage::Ts2320CrossBaseCtx {
+                                substitution: &substitution,
+                                type_idx,
+                                base_name: &base_name,
+                                derived_name: &derived_name,
+                                iface_name_node: iface_data.name,
+                                derived_members: &derived_members,
+                                seen_member_keys: &mut seen_member_keys,
+                                inherited_member_sources: &mut inherited_member_sources,
+                            };
+                            if self.route_ancestor_for_ts2320(
+                                ancestor_sym_id,
+                                &ancestor_type_args_opt,
+                                &mut worklist,
+                                &mut ts2320_ctx,
+                            ) {
+                                self.pop_type_parameters(level_type_param_updates);
+                                return;
                             }
                         }
                     }

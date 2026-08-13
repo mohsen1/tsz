@@ -102,10 +102,11 @@ function f() {
 }
 
 #[test]
-fn if_false_throw_no_else_does_not_report_unreachable() {
-    // Negative control: a constant-FALSE condition with no else always falls
-    // through unconditionally (the `then` branch never executes), regardless
-    // of whether that branch would itself terminate.
+fn if_false_throw_no_else_reports_unreachable_inside_dead_branch() {
+    // A constant-FALSE condition with no else makes the `then` branch itself
+    // dead code (tsc reports TS7027 on the `throw` verified against
+    // typescript@7.0.2), while code after the `if` stays reachable (the
+    // branch never executes, so the `if` as a whole always falls through).
     let codes = unreachable_codes(
         r#"
 function f() {
@@ -117,8 +118,8 @@ function f() {
 "#,
     );
     assert!(
-        !codes.contains(&7027),
-        "did not expect TS7027 after `if (false) {{ throw }}`, got {codes:?}"
+        codes.contains(&7027),
+        "expected TS7027 on the dead `throw` inside `if (false) {{ ... }}`, got {codes:?}"
     );
 }
 
@@ -270,6 +271,127 @@ function f(): number {
         codes.contains(&2355),
         "`while ((true))` is not an infinite loop for tsc, so the function can \
          fall off the end and must report TS2355; got {codes:?}"
+    );
+}
+
+// `check_unreachable_condition_branch_with_request` used to force
+// `has_reported_unreachable = true` and `allow_unreachable_code = Some(true)`
+// before checking a constant-condition's dead branch, which unconditionally
+// suppressed TS7027 for anything inside it. tsc still reports TS7027 for the
+// dead branch itself (verified against typescript@7.0.2) — only code that
+// stays reachable after the `if` completes must be spared. These cover the
+// `else`-present shape (the no-else shape is above,
+// `if_false_throw_no_else_reports_unreachable_inside_dead_branch`).
+
+#[test]
+fn if_true_else_dead_return_reports_unreachable_in_else_branch() {
+    let codes = unreachable_codes(
+        r#"
+function f(x: boolean): number {
+    if (true) {
+        x = false;
+    }
+    else {
+        return 1;
+    }
+}
+"#,
+    );
+    assert!(
+        codes.contains(&7027),
+        "expected TS7027 on the dead `return` in the `else` of `if (true)`, got {codes:?}"
+    );
+}
+
+#[test]
+fn if_false_else_live_dead_then_reports_unreachable_in_then_branch() {
+    let codes = unreachable_codes(
+        r#"
+function f(x: boolean): number {
+    if (false) {
+        return 1;
+    }
+    else {
+        x = false;
+    }
+}
+"#,
+    );
+    assert!(
+        codes.contains(&7027),
+        "expected TS7027 on the dead `return` in the `then` of `if (false)`, got {codes:?}"
+    );
+}
+
+#[test]
+fn if_true_else_dead_branch_inside_try_reports_unreachable() {
+    // Adjacent case: the dead branch sits inside a `try`, matching the
+    // `reachabilityChecks5.ts`/`6.ts` corpus shape (f8) where the `catch`'s
+    // own `return` keeps the function from getting TS2355 instead of TS7030.
+    let codes = unreachable_codes(
+        r#"
+function f(x: boolean): number {
+    try {
+        if (true) {
+            x = false;
+        }
+        else {
+            return 1;
+        }
+    }
+    catch (e) {
+        return 1;
+    }
+}
+"#,
+    );
+    assert!(
+        codes.contains(&7027),
+        "expected TS7027 on the dead `return` inside a `try`'s `if (true) {{ }} else {{ }}`, got {codes:?}"
+    );
+}
+
+#[test]
+fn if_renamed_condition_true_else_dead_reports_unreachable() {
+    // Adjacent case: renamed binders guard against any accidental name-based
+    // suppression (Anti-Hardcoding Gate).
+    let codes = unreachable_codes(
+        r#"
+function computeWidgetTotal(quantityAvailable: boolean): number {
+    if (true) {
+        quantityAvailable = false;
+    }
+    else {
+        return 99;
+    }
+}
+"#,
+    );
+    assert!(
+        codes.contains(&7027),
+        "expected TS7027 on the dead `else` branch regardless of binder names, got {codes:?}"
+    );
+}
+
+#[test]
+fn if_non_constant_condition_else_does_not_report_unreachable() {
+    // Negative control: a non-constant condition never makes either branch
+    // provably dead, so neither should be flagged.
+    let codes = unreachable_codes(
+        r#"
+function f(cond: boolean, x: boolean): number {
+    if (cond) {
+        x = false;
+    }
+    else {
+        return 1;
+    }
+}
+"#,
+    );
+    assert!(
+        !codes.contains(&7027),
+        "did not expect TS7027 in either branch of a non-constant `if`/`else`, got {codes:?}"
     );
 }
 
