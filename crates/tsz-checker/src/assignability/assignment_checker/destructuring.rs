@@ -12,6 +12,20 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    /// Element type of an `Array<T>`/`T[]` source, shared by the contextual,
+    /// element-slice, and rest-slice walks in this module.
+    fn destructuring_array_element_type(&self, source_type: TypeId) -> Option<TypeId> {
+        crate::query_boundaries::common::array_element_type(self.ctx.types, source_type)
+    }
+
+    /// Whether a destructuring source is a union. A union's per-index element
+    /// type is the union of each constituent's element at that index, which
+    /// the flattened element walks in this module cannot answer — both the
+    /// leaf judgement and the iterable element fallback skip union sources.
+    fn destructuring_source_is_union(&self, source_type: TypeId) -> bool {
+        crate::query_boundaries::common::is_union_type(self.ctx.types, source_type)
+    }
+
     fn contextual_type_for_assignment_target(&mut self, target_idx: NodeIndex) -> TypeId {
         let target_type = self.get_type_of_assignment_target(target_idx);
         let target_type = self.resolve_type_query_type(target_type);
@@ -61,11 +75,9 @@ impl<'a> CheckerState<'a> {
                             .skip_parenthesized_and_assertions(spread_target);
                         let spread_target_type =
                             self.contextual_type_for_assignment_target(spread_target);
-                        let rest_elem_type = crate::query_boundaries::common::array_element_type(
-                            self.ctx.types,
-                            spread_target_type,
-                        )
-                        .unwrap_or(TypeId::ANY);
+                        let rest_elem_type = self
+                            .destructuring_array_element_type(spread_target_type)
+                            .unwrap_or(TypeId::ANY);
                         (rest_elem_type, true)
                     } else if elem_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
                         || elem_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
@@ -825,12 +837,7 @@ impl<'a> CheckerState<'a> {
                         // Both make no judgement rather than a wrong one; the
                         // precise element types they need are follow-up work at
                         // the rest-slice and union-constituent owners.
-                        if !positional_source
-                            || crate::query_boundaries::common::is_union_type(
-                                self.ctx.types,
-                                source_type,
-                            )
-                        {
+                        if !positional_source || self.destructuring_source_is_union(source_type) {
                             continue;
                         }
                         let index_key = index.to_string();
@@ -900,10 +907,7 @@ impl<'a> CheckerState<'a> {
                 if first_rest + 1 != elems.len() {
                     return None;
                 }
-                return crate::query_boundaries::common::array_element_type(
-                    self.ctx.types,
-                    elems[first_rest].type_id,
-                );
+                return self.destructuring_array_element_type(elems[first_rest].type_id);
             }
             if index < elems.len() {
                 return Some(elems[index].type_id);
@@ -911,7 +915,25 @@ impl<'a> CheckerState<'a> {
             return None;
         }
         // Fall back to array element type
-        crate::query_boundaries::common::array_element_type(self.ctx.types, source_type)
+        if let Some(elem) = self.destructuring_array_element_type(source_type) {
+            return Some(elem);
+        }
+        // A non-tuple, non-array *iterable* source (custom `[Symbol.iterator]()`
+        // object, generator, `Map`, …) yields its iterated element type at every
+        // index — the same protocol walk `compute_rest_type_for_destructuring`
+        // already applies to the rest slice, so element and rest targets of one
+        // pattern judge against the same element type. A union source is left
+        // alone: its per-index type is the union of each constituent's element
+        // at that index, which this flattened walk cannot answer (same rule as
+        // the leaf judgement's union guard below).
+        if self.destructuring_source_is_union(source_type) {
+            return None;
+        }
+        let iterated = self.for_of_element_type(source_type, false);
+        if iterated == TypeId::ANY || iterated == TypeId::ERROR {
+            return None;
+        }
+        Some(iterated)
     }
 
     /// TS2322: Check that a source property type is assignable to a leaf
@@ -1059,30 +1081,35 @@ impl<'a> CheckerState<'a> {
         {
             return;
         }
-        // Emit TS2322 directly. Format source type from the TypeId rather
-        // than from the anchor node — the anchor is the assignment target,
-        // not the source expression. Using the standard error pipeline
-        // with the target node would incorrectly resolve the target's own
-        // type as the source display string.
-        let source_for_display = {
-            let widened = self.widen_literal_type(prop_type);
-            if widened == TypeId::NUMBER {
-                widened
-            } else {
-                prop_type
-            }
-        };
-        let source_str = self.format_type_diagnostic(source_for_display);
-        let target_str = self.format_type_diagnostic(target_type);
-        let message = crate::diagnostics::format_message(
-            diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-            &[&source_str, &target_str],
-        );
-        self.error_at_node(
-            target_idx,
-            &message,
-            diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-        );
+        // Report through the assignability pipeline so the failure reason
+        // drives code selection (TS2741/TS2740 for missing-property leaves,
+        // TS2322 otherwise) and elaboration, exactly as tsc's
+        // `checkDestructuringAssignment` routes each leaf through
+        // `checkTypeAssignableToAndOptionallyElaborate`.
+        //
+        // A default-bearing target (`{ 0: a = "" }`) shares its anchor with the
+        // default-vs-target judgement, whose genuine source expression is the
+        // default — the anchor-derived display machinery would repaint this
+        // *slice* judgement's source with the default's type. Keep the exact
+        // computed pair in the display for that shape via the pre-resolved
+        // emit; plain leaf targets take the reason-driven pipeline (their
+        // anchors carry no source expression at all, which the display
+        // derivation now understands).
+        if has_default {
+            self.check_pre_resolved_assignable_or_report_at_exact_anchor(
+                prop_type,
+                target_type,
+                target_idx,
+                target_idx,
+            );
+        } else {
+            self.check_assignable_or_report_at_exact_anchor(
+                prop_type,
+                target_type,
+                target_idx,
+                target_idx,
+            );
+        }
     }
 
     fn try_report_object_default_property_mismatch(

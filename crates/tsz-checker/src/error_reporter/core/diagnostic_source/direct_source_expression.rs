@@ -14,6 +14,13 @@ impl CheckerState<'_> {
         // For `<foo>({})`, we want the type assertion node (type `foo`),
         // not the inner `{}` expression.
         let expr_idx = self.ctx.arena.skip_parenthesized(anchor_idx);
+        // A destructuring-pattern write target is not a source expression:
+        // the value flowing into it is a computed slice with no node of its
+        // own, and treating the target as the source repaints the message's
+        // source side with the target's own declared annotation.
+        if self.anchor_is_destructuring_assignment_write_target(expr_idx) {
+            return None;
+        }
         let node = self.ctx.arena.get(expr_idx)?;
         if node.kind == syntax_kind_ext::RETURN_STATEMENT
             && let Some(return_stmt) = self.ctx.arena.get_return_statement(node)
