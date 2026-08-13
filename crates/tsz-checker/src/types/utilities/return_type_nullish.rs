@@ -65,6 +65,20 @@ impl CheckerState<'_> {
         };
         let kind = node.kind;
 
+        // A plain assignment expression (`x = <value>`) evaluates to its RHS
+        // value, so its widening provenance is the RHS's, not the assignment
+        // node's own leaf type. Mirrors the mutable-binding seam's identical
+        // unwrap (`mutable_binding_nullish.rs`); `return intermediate =
+        // [undefined];` must recurse into `[undefined]` to see the widening
+        // source instead of failing closed at the assignment leaf. Compound
+        // assignments are excluded: their value type is not simply the RHS's.
+        if kind == syntax_kind_ext::BINARY_EXPRESSION
+            && let Some(binary) = self.ctx.arena.get_binary_expr(node)
+            && binary.operator_token == SyntaxKind::EqualsToken as u16
+        {
+            return self.return_contribution_nullish_leaves_are_widening(binary.right, depth + 1);
+        }
+
         // Fresh literal structure: the widening flavour of a leaf propagates to
         // the array/object literal built around it, so recurse into the members
         // instead of judging the composite node itself.
