@@ -160,3 +160,18 @@ fn mixed_array_and_naked_candidate_keeps_array_leftmost() {
         "mixed array+naked keeps the array candidate (boolean); the naked `0` fails"
     );
 }
+
+#[test]
+fn mixed_number_array_string_naked_keeps_number_array_candidate() {
+    // Complementary mixed witness where the *array* candidate has the higher
+    // TS7 rank than the naked one (`number`-array vs `string`-naked). An
+    // `any`-from-array id-sort would flip `T` to `string` and reject the array
+    // elements with TS2322; tsc keeps `T = number` (the array candidate) and
+    // reports only the naked `"a"` argument with TS2345.
+    let source = "declare function f<T>(a: T[], b: T): void;\nf([1, 2], \"a\");\n";
+    assert_eq!(
+        coded_anchors(source),
+        vec![(2345, 2, 11)],
+        "array candidate `number` must win; only the naked string argument fails"
+    );
+}
