@@ -138,9 +138,17 @@ impl BinderState {
                     let sym_id =
                         self.declare_symbol(arena, name, symbol_flags::ALIAS, spec_idx, false);
 
-                    // Get property name before mutable borrow to avoid borrow checker error
+                    // Get property name before mutable borrow to avoid borrow checker error.
+                    // `property_name` is the *source* export name (`import { X as local }`)
+                    // and, since ES2022, may be a string literal (`import { "a,b" as local }
+                    // from "mod"`) rather than an identifier. Using the identifier-only
+                    // getter here silently dropped the real export name for any
+                    // string-literal-named specifier, falling through to the `else`
+                    // branch below and recording the *local* alias as the import's
+                    // source name instead — so cross-file export lookup searched the
+                    // target module for the wrong name and always missed.
                     let prop_name = if spec.name.is_some() && spec.property_name.is_some() {
-                        Self::get_identifier_name(arena, spec.property_name)
+                        Self::get_identifier_or_string_literal_name(arena, spec.property_name)
                     } else {
                         None
                     };

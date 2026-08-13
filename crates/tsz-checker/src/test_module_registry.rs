@@ -457,6 +457,8 @@ mod identifier_relation_routing_arch_tests;
 mod import_attributes_relation_routing_arch_tests;
 #[path = "tests/import_shadows_global_ctor_tests.rs"]
 mod import_shadows_global_ctor_tests;
+#[path = "tests/import_specifier_string_literal_export_name_tests.rs"]
+mod import_specifier_string_literal_export_name_tests;
 #[path = "tests/imported_predicate_false_branch_tests.rs"]
 mod imported_predicate_false_branch_tests;
 #[path = "tests/imported_type_reference_raw_symbol_collision_tests.rs"]
