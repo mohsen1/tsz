@@ -268,7 +268,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// methods. When a structural check finds a required property absent from the source,
     /// this fallback allows the check to pass if the global Object type provides a
     /// compatible property.
-    fn get_object_base_property(&mut self, name: Atom) -> Option<PropertyInfo> {
+    pub(crate) fn get_object_base_property(&mut self, name: Atom) -> Option<PropertyInfo> {
         let object_type = self.resolver.get_boxed_type(IntrinsicKind::Object)?;
         let object_type = self.evaluate_type(object_type);
         let shape_id = object_shape_id(self.interner, object_type)?;
