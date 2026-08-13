@@ -105,6 +105,26 @@ const o1 = {
 }
 
 #[test]
+fn outer_type_tag_on_property_assignment_rhs_does_not_reach_unannotated_method() {
+    // Same boundary when the object literal is the right-hand side of a
+    // property assignment (`ns.x = {...}`) rather than a variable
+    // initializer — reduced from contextualTypedSpecialAssignment.ts.
+    let messages = ts8030_messages(concat!(
+        "/** @typedef {{ status: 'done', m(n: number): void }} DoneStatus */\n",
+        "var ns = {};\n",
+        "/** @type {DoneStatus} */\n",
+        "ns.x = {\n",
+        "    status: 'done',\n",
+        "    m(n) { }\n",
+        "};\n",
+    ));
+    assert!(
+        messages.is_empty(),
+        "outer @type tag on a property-assignment RHS must not reach the nested method; got: {messages:?}"
+    );
+}
+
+#[test]
 fn outer_type_tag_is_binder_and_method_name_independent() {
     for (var_name, method_name, shape) in [
         ("o1", "a", "{ a(): void }"),
