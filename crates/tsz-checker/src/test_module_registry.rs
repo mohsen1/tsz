@@ -813,6 +813,8 @@ mod property_receiver_display_recursion_overflow_tests;
 mod property_receiver_relation_routing_arch_tests;
 #[path = "tests/reachability_if_no_else_const_condition_tests.rs"]
 mod reachability_if_no_else_const_condition_tests;
+#[path = "tests/reachability_labeled_break_completion_tests.rs"]
+mod reachability_labeled_break_completion_tests;
 #[path = "tests/readonly_assignment_no_flow_narrow_tests.rs"]
 mod readonly_assignment_no_flow_narrow_tests;
 #[path = "tests/readonly_property_assignment_narrowing_tests.rs"]
