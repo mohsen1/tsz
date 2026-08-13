@@ -387,12 +387,18 @@ type Use = import('./types.js').FOO;
 }
 
 #[test]
-fn jsdoc_type_comment_member_that_is_a_value_only_const_export_reports_ts2694() {
-    // Same structural rule as above, but through the actual JSDoc `@type`
-    // comment path (`jsdocImportTypeReferenceToStringLiteral.ts` upstream) —
-    // not the TS `type X = import(...).Y` alias-declaration path. These are
-    // parsed/resolved through different entry points, so the TS-syntax
-    // coverage above does not guarantee this one is fixed.
+fn jsdoc_type_comment_member_of_a_value_only_const_export_resolves_to_its_value_type() {
+    // Unlike the TS `type X = import(...).Y` alias-declaration path above,
+    // the JSDoc `@type` comment path's `import(...).Member` query falls back
+    // to the exported value's own type when `Member` has no type meaning,
+    // instead of reporting TS2694 — this is the literal upstream conformance
+    // case `jsdocImportTypeReferenceToStringLiteral.ts`
+    // (`TypeScript/tests/cases/conformance/jsdoc/`), whose `.types` baseline
+    // records `x : "foo"` and has no `.errors.txt` baseline (zero
+    // diagnostics). Oracle-verified against `tsc` 6.0.2 too, including with
+    // a forced consumption (`x = 5` reports `TS2322: Type '5' is not
+    // assignable to type '"foo"'.`, proving the query resolves to `FOO`'s
+    // literal type rather than silently falling back to `any`).
     let diagnostics = check_consumer_with_js_typedef_source(
         r#"
 export const FOO = "foo";
@@ -404,8 +410,8 @@ let x;
 "#,
     );
     assert!(
-        !ts2694_diagnostics(&diagnostics, "FOO").is_empty(),
-        "Expected TS2694 for a value-only const export referenced via JSDoc @type import('./js').Member, got: {diagnostics:?}"
+        ts2694_diagnostics(&diagnostics, "FOO").is_empty(),
+        "Expected no TS2694 for a value-only const export referenced via JSDoc @type import('./js').Member (tsc resolves it to the value's own type), got: {diagnostics:?}"
     );
 }
 

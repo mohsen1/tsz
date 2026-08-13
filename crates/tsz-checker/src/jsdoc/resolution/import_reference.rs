@@ -130,17 +130,30 @@ impl<'a> CheckerState<'a> {
             member_name,
             resolution_mode,
         ) {
-            // `import(...).Member` (without a leading `typeof`) is a bare
-            // type-position reference: `Member` must be type-eligible
-            // (interface/class/enum/type-alias/namespace/typedef), not a
-            // plain value export. `BareTypeReference` mode rejects a
-            // plain-value symbol (returns `ERROR`) the same way a local
-            // bare name reference already does; `ValuePosition` mode would
-            // silently hand back the value's own type instead.
+            // `import(...).Member` (without a leading `typeof`) first tries
+            // `Member` as a type-eligible export (interface/class/enum/
+            // type-alias/namespace/typedef) via `BareTypeReference` mode, the
+            // same way a local bare name reference resolves.
             let resolved =
                 self.resolve_jsdoc_symbol_type_with_mode(sym_id, JsdocNameMode::BareTypeReference);
             if resolved != TypeId::ERROR && resolved != TypeId::UNKNOWN {
                 return Some(Ok(resolved));
+            }
+            // Unlike a local bare identifier (which stays a TS2749
+            // value-used-as-type error) and unlike the TS-syntax `type T =
+            // import("./m").Member` walk (`import_type.rs`, which keeps
+            // TS2694 for a plain value), tsc's JSDoc `import("./m").Member`
+            // type-position query falls back to the exported value's own
+            // type when `Member` has no type meaning — oracle-verified
+            // (tsc 6.0.2): `@type {import("./dep").value}` resolves to
+            // `number` for `export declare const value: number`, and to a
+            // function export's call-signature type. `Member` is already
+            // confirmed to exist (`sym_id` resolved above), so tsc never
+            // reports TS2694 here; only the type-vs-value fallback differs.
+            let value_resolved =
+                self.resolve_jsdoc_symbol_type_with_mode(sym_id, JsdocNameMode::ValuePosition);
+            if value_resolved != TypeId::ERROR && value_resolved != TypeId::UNKNOWN {
+                return Some(Ok(value_resolved));
             }
         }
         if let Some(typedef_type) =
