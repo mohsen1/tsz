@@ -157,11 +157,63 @@ impl<'a> AutoImportCandidateContext<'a> {
             })
             .cloned()
     }
+
+    /// All non-excluded module specifiers that reach `file_name`, in ranked
+    /// order. Unlike `first_allowed_module_specifier`, this keeps every
+    /// distinct specifier form (e.g. a package.json `imports` subpath *and*
+    /// the plain relative path to the same target) — tsc's `getNewImportFixes`
+    /// (`codefixes/importFixes.ts`) maps a fix over every entry `getModuleSpecifiers`
+    /// returns for a candidate declaration, not just the best one, so a missing-import
+    /// quickfix must offer one action per specifier. Auto-import completions use the
+    /// single-best specifier instead (`getModuleSpecifierForBestExportInfo` in
+    /// `completions.ts`), so callers on that path should keep using
+    /// `first_allowed_module_specifier`.
+    pub(super) fn allowed_module_specifiers(
+        &mut self,
+        project: &Project,
+        file_name: &str,
+    ) -> Vec<String> {
+        let Self {
+            from_file,
+            allowed_packages,
+            existing_imported_packages,
+            source_cache,
+            module_specifiers_cache,
+            ..
+        } = self;
+
+        let module_specifiers = module_specifiers_cache
+            .entry(file_name.to_string())
+            .or_insert_with(|| {
+                project.auto_import_module_specifiers_from_files(from_file.file_name(), file_name)
+            });
+
+        module_specifiers
+            .iter()
+            .filter(|module_specifier| {
+                !project.is_auto_import_candidate_excluded(
+                    file_name,
+                    module_specifier,
+                    from_file.source_text(),
+                    allowed_packages.as_ref(),
+                    existing_imported_packages,
+                    source_cache,
+                )
+            })
+            .cloned()
+            .collect()
+    }
 }
 
 #[derive(Clone, Copy)]
 pub(super) struct ImportCandidateCollectionMode {
     pub(super) include_namespace_default: bool,
+    /// When true, emit one `ImportCandidate` per allowed module specifier for
+    /// a matching export instead of only the best one. Set for the
+    /// missing-import code-fix path (matches tsc's `getNewImportFixes`);
+    /// left `false` for completions, which show a single best specifier per
+    /// symbol.
+    pub(super) emit_all_specifiers: bool,
 }
 
 fn import_candidate_kind_key(kind: &ImportCandidateKind) -> String {

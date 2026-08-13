@@ -129,6 +129,7 @@ impl Project {
         let mut sink = ImportCandidateSink::new(output, seen);
         let mode = ImportCandidateCollectionMode {
             include_namespace_default: is_namespace_missing,
+            emit_all_specifiers: true,
         };
 
         if !self.collect_import_candidates_for_symbol_from_files(
@@ -185,6 +186,7 @@ impl Project {
         let mut sink = ImportCandidateSink::new(output, seen);
         let mode = ImportCandidateCollectionMode {
             include_namespace_default: false,
+            emit_all_specifiers: false,
         };
 
         // Get all symbols that match the prefix using the sorted symbol index
