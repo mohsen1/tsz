@@ -134,7 +134,29 @@ pub fn discover_ts_files(options: &FileDiscoveryOptions) -> Result<Vec<PathBuf>>
             list.push(path);
         }
     }
-    list.extend(files);
+    // tsc's directory walker (`matchFiles`/`readDirectory`) buckets discovered
+    // files by extension group — TypeScript family entirely before JavaScript
+    // family, JSON last when `resolveJsonModule` is set — and only flattens
+    // the buckets once the walk completes, so a `.ts` file always precedes a
+    // sibling `.js` file in the program's root-file order regardless of
+    // alphabetical filename order. A single alphabetically-sorted `BTreeSet`
+    // loses that bucket priority; partition it into the same three groups,
+    // preserving each group's alphabetical sub-order.
+    let mut ts_files = Vec::new();
+    let mut js_files = Vec::new();
+    let mut json_files = Vec::new();
+    for path in files {
+        if is_ts_file(&path) {
+            ts_files.push(path);
+        } else if is_json_file(&path) {
+            json_files.push(path);
+        } else {
+            js_files.push(path);
+        }
+    }
+    list.extend(ts_files);
+    list.extend(js_files);
+    list.extend(json_files);
     Ok(list)
 }
 
@@ -925,6 +947,47 @@ mod tests {
             .map(|path| path.file_name().unwrap().to_string_lossy().to_string())
             .collect();
         assert_eq!(names, vec!["b.js", "a.ts"]);
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_discover_pattern_matched_files_bucket_ts_before_js_regardless_of_name() {
+        // tsc's `matchFiles` directory walker buckets discovered files by
+        // extension group (TS family entirely before JS family) and only
+        // flattens the buckets after the walk, so a `.ts` file always
+        // precedes a sibling `.js` file in program root-file order even when
+        // the `.js` file's name sorts alphabetically first. This ordering is
+        // load-bearing for cross-file declaration-merge diagnostics such as
+        // TS2403 (which declaration is "first" vs "subsequent").
+        let dir = std::env::temp_dir().join("tsz_fs_test_ts_before_js_bucket");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("a.js"), "var x = 1;").unwrap();
+        fs::write(dir.join("b.ts"), "var x = 1;").unwrap();
+
+        let options = FileDiscoveryOptions {
+            base_dir: dir.clone(),
+            files: vec![],
+            files_explicitly_set: false,
+            include: None,
+            exclude: None,
+            out_dir: None,
+            follow_links: false,
+            allow_js: true,
+            resolve_json_module: false,
+        };
+
+        let result = discover_ts_files(&options).unwrap();
+        let names: Vec<_> = result
+            .iter()
+            .map(|path| path.file_name().unwrap().to_string_lossy().to_string())
+            .collect();
+        assert_eq!(
+            names,
+            vec!["b.ts", "a.js"],
+            "the .ts file must precede the alphabetically-earlier .js file"
+        );
 
         let _ = fs::remove_dir_all(&dir);
     }
