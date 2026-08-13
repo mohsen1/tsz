@@ -220,11 +220,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         names
     }
 
-    fn is_late_bound_symbol_property_name(&self, name: tsz_common::interner::Atom) -> bool {
-        let name = self.interner.resolve_atom_ref(name);
-        name.starts_with("[Symbol.") || name.starts_with("__@")
-    }
-
     /// Returns `true` if `type_id` is function-like — i.e. has at least one
     /// call or construct signature. Used by TS2739/TS2741 explain code to skip
     /// `prototype` from the missing-property list (tsc treats `prototype` as
@@ -1575,7 +1570,21 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     continue;
                 }
                 let s_prop = self.lookup_property(source_props, source_shape_id, t_prop.name);
-                if s_prop.is_none() && seen_names.insert(t_prop.name) {
+                // A target member absent from the source's own properties is
+                // still not "missing" when the implicit `Object.prototype`
+                // members every object value carries supply it: tsc's
+                // `getUnmatchedProperties` resolves each target name through
+                // `getPropertyOfType(source, …)`, whose lookup falls back to
+                // the global `Object` interface, so `toString`/`toLocaleString`
+                // etc. never appear in a TS2739/TS2740/TS2741 missing list —
+                // even when the source's own member of that name would be
+                // incompatible (presence, not compatibility, is what removes
+                // it from the *missing* list; a bad own member surfaces as a
+                // property mismatch instead).
+                if s_prop.is_none()
+                    && self.get_object_base_property(t_prop.name).is_none()
+                    && seen_names.insert(t_prop.name)
+                {
                     missing_with_order.push((
                         t_prop.name,
                         t_prop.declaration_order,
@@ -1630,31 +1639,16 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 }
             },
         );
-        if matches!(
-            crate::type_queries::extended::classify_array_like(self.interner, target),
-            crate::type_queries::extended::ArrayLikeKind::Array(_)
-                | crate::type_queries::extended::ArrayLikeKind::Tuple
-                | crate::type_queries::extended::ArrayLikeKind::Readonly(_)
-        ) {
-            // For array-like targets, tsc treats `[Symbol.iterator]` /
-            // `[Symbol.unscopables]` as implicitly satisfied by any object
-            // source (via the iteration protocol fallback), and omits them
-            // from the TS2739/TS2740 missing list. Keep this behavior so that
-            // e.g. `Type 'I1' is missing the following properties from type
-            // 'any[]': length, pop, push, concat, and 25 more` — not 27.
-            //
-            // When every missing property is a late-bound symbol, this empties
-            // the list and the relation falls through to property-type checking
-            // or `TypeMismatch`, matching tsc.
-            missing_with_order
-                .retain(|(name, _, _)| !self.is_late_bound_symbol_property_name(*name));
-        }
-        // For non-array targets (e.g. `ArrayConstructor`, `Disposable`,
-        // `Iterable<T>`), tsc lists both named and symbol-keyed properties in
-        // TS2739/TS2741 (e.g. `isArray, from, of, [Symbol.species]`, or a lone
-        // `[Symbol.dispose]`). Keep the full list — including symbol-only missing
-        // — so the missing-property elaboration is produced rather than collapsing
-        // to a flat `TypeMismatch`.
+        // Well-known-symbol members (`[Symbol.iterator]`, `[Symbol.unscopables]`,
+        // `[Symbol.species]`, …) are ordinary members of the missing list: tsc
+        // counts and lists them like any other property, for array-like and
+        // non-array targets alike (e.g. `Type 'C' is missing the following
+        // properties from type 'Bar[]': length, pop, push, concat, and 24 more.`
+        // — the 24 includes `[Symbol.unscopables]` when the source supplies its
+        // own `[Symbol.iterator]`, and a lone missing symbol member renders as
+        // `Property '[Symbol.iterator]' is missing in type 'X' …`). The
+        // `Object.prototype` presence fallback above is the only implicit
+        // matching tsc applies here.
 
         // tsc treats `prototype` as implicit on callable sources (any function
         // or class value has a `.prototype` in JS), so it never lists it as a

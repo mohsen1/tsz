@@ -305,6 +305,8 @@ mod error_reporter_assignability_display_boundary_arch_tests;
 mod excess_prop_object_union_display_tests;
 #[path = "tests/expando_annotated_receiver_tests.rs"]
 mod expando_annotated_receiver_tests;
+#[path = "tests/expando_binding_form_eligibility_tests.rs"]
+mod expando_binding_form_eligibility_tests;
 #[path = "tests/expected_type_from_property_tests.rs"]
 mod expected_type_from_property_tests;
 #[path = "tests/expected_type_from_return_tests.rs"]
@@ -561,6 +563,8 @@ mod jsdoc_shadowed_type_param_identity_tests;
 mod jsdoc_template_reference_scope_tests;
 #[path = "tests/jsdoc_typedef_bare_import_tests.rs"]
 mod jsdoc_typedef_bare_import_tests;
+#[path = "tests/jsdoc_typedef_commonjs_indirect_export_root_ts2300_tests.rs"]
+mod jsdoc_typedef_commonjs_indirect_export_root_ts2300_tests;
 #[path = "tests/jsdoc_typedef_distinct_alias_names_tests.rs"]
 mod jsdoc_typedef_distinct_alias_names_tests;
 #[path = "tests/jsx_children_relation_routing_arch_tests.rs"]
@@ -651,6 +655,8 @@ mod method_return_type_elaboration_tests;
 mod missing_property_base_class_head_tests;
 #[path = "tests/missing_property_declared_here_tests.rs"]
 mod missing_property_declared_here_tests;
+#[path = "tests/missing_property_symbol_members_object_fallback_tests.rs"]
+mod missing_property_symbol_members_object_fallback_tests;
 #[path = "tests/module_scoped_var_shadows_lib_global_ts2300_tests.rs"]
 mod module_scoped_var_shadows_lib_global_ts2300_tests;
 #[path = "tests/multi_overload_infer_capture_tests.rs"]

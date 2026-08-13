@@ -647,6 +647,16 @@ impl<'a> CheckerState<'a> {
                             .get_accessor(member_node)
                             .is_some_and(|a| self.has_override_modifier(&a.modifiers))
                     }
+                    // An index signature is not a member of the own-member
+                    // summary the main loop walks (it is type-resolution
+                    // metadata), so it needs its own detection here or this
+                    // fast path returns before `report_index_signature_overrides_without_base`
+                    // ever runs.
+                    k if k == syntax_kind_ext::INDEX_SIGNATURE => self
+                        .ctx
+                        .arena
+                        .get_index_signature(member_node)
+                        .is_some_and(|idx| self.has_override_modifier(&idx.modifiers)),
                     _ => false,
                 }
             });
@@ -714,6 +724,8 @@ impl<'a> CheckerState<'a> {
             );
         }
 
+        self.report_index_signature_overrides_without_base(class_data, derived_class_name);
+
         // Also check constructor parameter properties
         self.check_constructor_parameter_property_overrides(
             class_data,
@@ -724,6 +736,56 @@ impl<'a> CheckerState<'a> {
             &rustc_hash::FxHashSet::default(),
             no_implicit_override,
         );
+    }
+
+    /// TS4112 for a class **index signature** carrying `override` when the
+    /// class extends nothing.
+    ///
+    /// `override` is never legal on a class index signature — the grammar walk
+    /// reports TS1071 for it separately — but `tsc` additionally reports TS4112
+    /// there, exactly as it does for an ordinary member, anchored at the
+    /// `override` token:
+    ///
+    /// ```text
+    /// class K { override [k: string]: number; }
+    ///           ^ (1,11) TS1071   (1,11) TS4112
+    /// ```
+    ///
+    /// Index signatures are type-resolution metadata rather than members, so
+    /// they never appear in the own-member summary the caller's main loop
+    /// walks; this scans the class body directly. `declare override` reports
+    /// only TS1071 (verified against `typescript@7.0.2`), matching the
+    /// `has_declare` suppression the main loop already applies.
+    fn report_index_signature_overrides_without_base(
+        &mut self,
+        class_data: &tsz_parser::parser::node::ClassData,
+        derived_class_name: &str,
+    ) {
+        for member_idx in class_data.members.nodes.clone() {
+            let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                continue;
+            };
+            if member_node.kind != syntax_kind_ext::INDEX_SIGNATURE {
+                continue;
+            }
+            let Some(index_sig) = self.ctx.arena.get_index_signature(member_node) else {
+                continue;
+            };
+            if self.has_declare_modifier(&index_sig.modifiers) {
+                continue;
+            }
+            let Some(override_idx) = self.find_override_modifier(&index_sig.modifiers) else {
+                continue;
+            };
+            self.error_at_node(
+                override_idx,
+                &crate::diagnostics::format_message(
+                    diagnostic_messages::THIS_MEMBER_CANNOT_HAVE_AN_OVERRIDE_MODIFIER_BECAUSE_ITS_CONTAINING_CLASS_DOES_N,
+                    &[derived_class_name],
+                ),
+                diagnostic_codes::THIS_MEMBER_CANNOT_HAVE_AN_OVERRIDE_MODIFIER_BECAUSE_ITS_CONTAINING_CLASS_DOES_N,
+            );
+        }
     }
 
     /// Find a close member name from base class members for "Did you mean ...?".
