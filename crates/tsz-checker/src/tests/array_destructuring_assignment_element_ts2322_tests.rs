@@ -630,3 +630,177 @@ fn array_rest_source_still_clean() {
         "array rest source should stay clean, got: {codes:?}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Display and code parity for the judgements above, pinned against
+// `typescript@7.0.2` (the `tsc-cache-full.json` oracle) and cross-checked on a
+// local `tsc`. Before this family's fix, a destructuring write-target anchor
+// was treated as a *source expression* by the diagnostic display derivation,
+// so the message's source side was repainted with the target's own declared
+// annotation — `Type 'string[]' is not assignable to type 'string[]'`
+// (`conformance/es6/destructuring/iterableArrayPattern6.ts`), and the
+// element-level judgement for a non-array iterable source did not run at all
+// (`iterableArrayPattern5.ts`/`7.ts` reported nothing).
+// ---------------------------------------------------------------------------
+
+/// Non-strict `(code, message)` rows with the ES2015+ lib bundle loaded, in
+/// source order.
+fn lib_rows_non_strict(source: &str) -> Vec<(u32, String)> {
+    let libs = load_default_lib_files();
+    let mut diags = check_source_with_libs(
+        source,
+        "test.ts",
+        CheckerOptions {
+            strict: false,
+            ..CheckerOptions::default()
+        },
+        &libs,
+    );
+    diags.sort_by_key(|d| d.start);
+    diags
+        .into_iter()
+        .map(|d| (d.code, d.message_text))
+        .collect()
+}
+
+#[test]
+fn iterable_rest_source_incompatible_renders_iterated_array_source() {
+    // tsc 7.0.2 (`iterableArrayPattern6.ts` shape, renamed binders):
+    //   Type 'Gadget[]' is not assignable to type 'number[]'.
+    // The source side is the *iterated element array*, never the rest
+    // target's own declared annotation.
+    let source = concat!(
+        "\nclass Widget { w: number = 1; }",
+        "\nclass Gadget extends Widget { g: number = 2; }",
+        "\nclass Stream {",
+        "\n    next() { return { value: new Gadget(), done: false }; }",
+        "\n    [Symbol.iterator]() { return this; }",
+        "\n}",
+        "\nvar lead: Widget, tail: number[];",
+        "\n[lead, ...tail] = new Stream();\n"
+    );
+    let rows = lib_rows_non_strict(source);
+    let ts2322: Vec<_> = rows.iter().filter(|r| r.0 == 2322).collect();
+    assert_eq!(ts2322.len(), 1, "exactly one TS2322, got rows: {rows:?}");
+    assert_eq!(
+        ts2322[0].1, "Type 'Gadget[]' is not assignable to type 'number[]'.",
+        "rest source must render the iterated element array"
+    );
+}
+
+#[test]
+fn tuple_rest_slice_renders_tuple_slice_source() {
+    // tsc 7.0.2: Type '[Gadget]' is not assignable to type 'string[]'.
+    let source = concat!(
+        "\nclass Gadget { g: number = 2; }",
+        "\nvar first: Gadget, rest: string[];",
+        "\n[first, ...rest] = [new Gadget(), new Gadget()];\n"
+    );
+    let rows = lib_rows_non_strict(source);
+    let ts2322: Vec<_> = rows.iter().filter(|r| r.0 == 2322).collect();
+    assert_eq!(ts2322.len(), 1, "exactly one TS2322, got rows: {rows:?}");
+    assert_eq!(
+        ts2322[0].1, "Type '[Gadget]' is not assignable to type 'string[]'.",
+        "rest source must render the tuple slice"
+    );
+}
+
+#[test]
+fn iterable_element_target_incompatible_reports_scalar_ts2322() {
+    // `iterableArrayPattern5.ts` shape (renamed binders): each non-spread
+    // element judges against the iterated element type. tsc 7.0.2:
+    //   Type 'Gadget' is not assignable to type 'string'.
+    let source = concat!(
+        "\nclass Widget { w: number = 1; }",
+        "\nclass Gadget extends Widget { g: number = 2; }",
+        "\nclass Stream {",
+        "\n    next() { return { value: new Gadget(), done: false }; }",
+        "\n    [Symbol.iterator]() { return this; }",
+        "\n}",
+        "\nvar lead: Widget, second: string;",
+        "\n[lead, second] = new Stream();\n"
+    );
+    let rows = lib_rows_non_strict(source);
+    let ts2322: Vec<_> = rows.iter().filter(|r| r.0 == 2322).collect();
+    assert_eq!(ts2322.len(), 1, "exactly one TS2322, got rows: {rows:?}");
+    assert_eq!(
+        ts2322[0].1,
+        "Type 'Gadget' is not assignable to type 'string'."
+    );
+}
+
+#[test]
+fn iterable_element_target_missing_property_reports_ts2741() {
+    // A single-missing-property element failure selects TS2741, exactly as
+    // tsc's `checkTypeAssignableToAndOptionallyElaborate` does. tsc 7.0.2:
+    //   Property 'q' is missing in type 'Item' but required in type '{ q: number; }'.
+    let source = concat!(
+        "\nclass Item { y: number = 1; }",
+        "\nclass Feed {",
+        "\n    next() { return { value: new Item(), done: false }; }",
+        "\n    [Symbol.iterator]() { return this; }",
+        "\n}",
+        "\nvar head: { q: number };",
+        "\n[head] = new Feed();\n"
+    );
+    let rows = lib_rows_non_strict(source);
+    let ts2741: Vec<_> = rows.iter().filter(|r| r.0 == 2741).collect();
+    assert_eq!(ts2741.len(), 1, "exactly one TS2741, got rows: {rows:?}");
+    assert_eq!(
+        ts2741[0].1,
+        "Property 'q' is missing in type 'Item' but required in type '{ q: number; }'."
+    );
+}
+
+#[test]
+fn iterable_element_target_compatible_stays_clean() {
+    // Negative control (`iterableArrayPattern4.ts` shape): compatible element
+    // targets report nothing.
+    let source = concat!(
+        "\nclass Widget { w: number = 1; }",
+        "\nclass Gadget extends Widget { g: number = 2; }",
+        "\nclass Stream {",
+        "\n    next() { return { value: new Gadget(), done: false }; }",
+        "\n    [Symbol.iterator]() { return this; }",
+        "\n}",
+        "\nvar lead: Widget, second: Widget;",
+        "\n[lead, second] = new Stream();\n"
+    );
+    let rows = lib_rows_non_strict(source);
+    assert!(
+        rows.iter().all(|r| !matches!(r.0, 2322 | 2740 | 2741)),
+        "compatible iterable element targets must stay clean, got: {rows:?}"
+    );
+}
+
+#[test]
+fn default_bearing_object_leaf_keeps_union_slice_display() {
+    // `restElementWithAssignmentPattern2.ts` shape: the slice judgement at a
+    // default-bearing target renders the *computed* union slice, not the
+    // default expression's type. tsc 7.0.2:
+    //   Type 'string | number' is not assignable to type 'string'.
+    let source = concat!(
+        "\nvar a: string, b: number;",
+        "\n[...{ 0: a = \"\", b }] = [\"\", 1];\n"
+    );
+    let rows = ts2322(source);
+    assert_eq!(rows.len(), 1, "exactly one TS2322, got: {rows:?}");
+    assert_eq!(
+        rows[0].3,
+        "Type 'string | number' is not assignable to type 'string'."
+    );
+}
+
+#[test]
+fn in_pattern_default_fresh_literal_still_widens() {
+    // The default-vs-target judgement keeps its genuine source expression:
+    // a fresh literal default widens in the message (`for-of46.ts` family).
+    // tsc 7.0.2: Type 'boolean' is not assignable to type 'string'.
+    let source = concat!("\nvar k: string;", "\n[k = false] = [];\n");
+    let rows = ts2322(source);
+    assert_eq!(rows.len(), 1, "exactly one TS2322, got: {rows:?}");
+    assert_eq!(
+        rows[0].3,
+        "Type 'boolean' is not assignable to type 'string'."
+    );
+}
