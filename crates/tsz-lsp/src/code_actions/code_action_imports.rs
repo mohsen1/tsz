@@ -1680,7 +1680,12 @@ impl<'a> CodeActionProvider<'a> {
             if candidate.local_name != missing_name {
                 continue;
             }
-            if usage == ImportUsage::Value && candidate.is_type_only {
+            // A JSDoc typedef candidate is always type-only by construction
+            // even when `usage` misreads as `Value` — JSDoc comment text has
+            // no backing AST `Identifier` node for `import_usage_for_node`
+            // to classify, so `diagnostic_identifier_usage` falls back to
+            // parsing the diagnostic message and defaults to `Value`.
+            if usage == ImportUsage::Value && candidate.is_type_only && !candidate.jsdoc_typedef {
                 continue;
             }
 
