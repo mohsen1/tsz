@@ -472,7 +472,16 @@ impl<'a> CheckerState<'a> {
         root_name: &str,
         base_type: TypeId,
     ) -> TypeId {
-        let Some(source_file) = self.ctx.arena.source_files.get(self.ctx.current_file_idx) else {
+        // `self.ctx.arena` is the per-file arena of the file whose symbol is
+        // being typed (own-file session or a delegated cross-file child
+        // checker); it holds exactly one source file at position 0. Selecting it
+        // by the program-global `current_file_idx` only succeeds when that file
+        // happens to sit at program index 0, so the `Object.defineProperty`
+        // members were silently dropped for any host file at a non-zero index —
+        // an order-dependence unmasked by the tsc-accurate ts-before-js root
+        // ordering (#17410). Use `.first()` like the 98 sibling sites so the
+        // augmentation depends on the declaring arena, not on file order.
+        let Some(source_file) = self.ctx.arena.source_files.first() else {
             return base_type;
         };
 
