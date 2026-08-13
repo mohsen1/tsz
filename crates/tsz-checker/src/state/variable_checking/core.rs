@@ -886,6 +886,69 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
+            // TS7005 for a *non-empty* array literal initializer whose widened
+            // element type is `any` — e.g. `var b = [undefined, null]` widens
+            // to `any[]` under non-strict null checks (a plain array literal
+            // with no contextual tuple type always infers as `T[]`, never a
+            // tuple, matching tsc). Distinct from `direct_empty_array_implicit_any`
+            // above: an empty array literal is an "evolving" any that control
+            // flow may later resolve, so it defers via
+            // `pending_implicit_any_vars`. A non-empty literal gets its final
+            // (non-evolving) element type immediately from its constituent
+            // elements' best-common-type, so this reports at the declaration
+            // site unconditionally — unlike the bare scalar-any case above,
+            // it is not gated on `emit_declaration_site_implicit_any`
+            // (var/let vs const-like), because there is no evolving-any
+            // mechanism for a non-empty literal to defer through.
+            //
+            // Gating on the *resulting* element type (rather than walking the
+            // initializer's syntax for a nullish leaf) is required, not just
+            // convenient: a mixed literal like `[1, undefined]` reduces its
+            // best-common-type to `number` (undefined contributes nothing
+            // when a concrete sibling is present) and tsc reports nothing —
+            // an AST-only "does this literal contain a nullish leaf" gate
+            // would wrongly fire here.
+            //
+            // Object literals are deliberately excluded: an implicit-any
+            // property inside a fresh object literal already gets its own
+            // per-property TS7018 (`Object literal's property 'p' implicitly
+            // has an 'any' type.`), and tsc does not additionally report
+            // TS7005 for the enclosing variable in that case.
+            let compound_nullish_widening_implicit_any = self.ctx.no_implicit_any()
+                && !self.ctx.has_real_syntax_errors
+                && !self.ctx.strict_null_checks()
+                && var_decl.type_annotation.is_none()
+                && var_decl.initializer.is_some()
+                && self
+                    .ctx
+                    .arena
+                    .get(var_decl.initializer)
+                    .is_some_and(|init_node| {
+                        init_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                            && self
+                                .ctx
+                                .arena
+                                .get_literal_expr(init_node)
+                                .is_some_and(|lit| !lit.elements.nodes.is_empty())
+                    })
+                && query::array_element_type(self.ctx.types, final_type) == Some(TypeId::ANY);
+            if compound_nullish_widening_implicit_any {
+                let is_destructuring_pattern =
+                    self.ctx.arena.get(var_decl.name).is_some_and(|name_node| {
+                        name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                            || name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+                    });
+                if !is_destructuring_pattern && let Some(ref name) = var_name {
+                    use crate::diagnostics::diagnostic_codes;
+                    let type_display = self.format_type_for_assignability_message(final_type);
+                    self.error_at_node_msg(
+                        var_decl.name,
+                        diagnostic_codes::VARIABLE_IMPLICITLY_HAS_AN_TYPE,
+                        &[name, &type_display],
+                    );
+                }
+            }
+
             // TS7022/TS7023: Circular initializer/return type implicit any diagnostics.
             // Gated by noImplicitAny (like all TS7xxx implicit-any diagnostics).
             //
