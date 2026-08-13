@@ -1001,6 +1001,32 @@ impl Project {
             })
     }
 
+    /// Whether `from_file` resolves modules under `node16`/`nodenext` — the
+    /// two resolution kinds where Node's own loader is on the other end, as
+    /// opposed to `bundler` (a bundler resolves extension-less specifiers
+    /// itself, so tsc's specifier preference does not force an extension
+    /// there).
+    fn module_resolution_is_node16_or_nodenext(&self, from_file: &str) -> bool {
+        let Some((_, compiler_options)) = self.nearest_compiler_options_for_file(from_file) else {
+            return false;
+        };
+
+        if let Some(module_resolution) = compiler_options
+            .get("moduleResolution")
+            .and_then(serde_json::Value::as_str)
+        {
+            return module_resolution.eq_ignore_ascii_case("node16")
+                || module_resolution.eq_ignore_ascii_case("nodenext");
+        }
+
+        compiler_options
+            .get("module")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|module| {
+                module.eq_ignore_ascii_case("node16") || module.eq_ignore_ascii_case("nodenext")
+            })
+    }
+
     fn exports_resolution_mode_for_importer(&self, from_file: &str) -> ExportsResolutionMode {
         if from_file.ends_with(".cts") || from_file.ends_with(".cjs") {
             return ExportsResolutionMode::Require;
@@ -1315,6 +1341,21 @@ impl Project {
 
         if from_file.ends_with(".mts") {
             return RelativeImportStyle::Minimal;
+        }
+
+        // tsc's `getAllowedEndingsInPreferredOrder` (moduleSpecifiers.ts) hard-forces
+        // an extension-bearing ending whenever the importing file's implied module
+        // format is ESM under `node16`/`nodenext` resolution — Node's own ESM loader
+        // requires an explicit extension, so this does not depend on whatever ending
+        // style the file's existing imports (if any) happen to use.
+        if self.module_resolution_is_node16_or_nodenext(from_file)
+            && self.exports_resolution_mode_for_importer(from_file) == ExportsResolutionMode::Import
+        {
+            return if self.allow_importing_ts_extensions {
+                RelativeImportStyle::Ts
+            } else {
+                RelativeImportStyle::Js
+            };
         }
 
         let Some(file) = self.files.get(from_file) else {
