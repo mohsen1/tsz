@@ -537,7 +537,11 @@ STRUCT_FIELD_COUNT_CHECKS = [
         # parameters whose parser-emitted grammar diagnostics tsc's single
         # early-return `checkGrammarParameterList` never reached, so the driver
         # can drop them (#16644).
-        256,
+        # 256 -> 257: `suppress_unreachable_reporting` mirrors tsc's
+        # `withinUnreachableCode` — TS7027 stays silent beneath a statement
+        # already covered by a reported unreachable range (namespace bodies,
+        # class member bodies) while normal checking continues.
+        257,
     ),
 ]
 

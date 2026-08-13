@@ -95,7 +95,7 @@ jobs:
           targets: ${{ matrix.target }}
 
       - name: Cache cargo registry + target
-        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        uses: Swatinem/rust-cache@258712b0b7b1ddf8bddc9fc3b0faca682b2736c3 # v2
         with:
           prefix-key: "npm-${{ matrix.target }}"
           shared-key: "npm-${{ matrix.target }}"
@@ -104,7 +104,7 @@ jobs:
 
       - name: Install cross
         if: matrix.cross == true
-        uses: taiki-e/install-action@67729d5c413db75907f0ad1e39bb04b9c868ff60 # v2
+        uses: taiki-e/install-action@7f4eb899022d8fe70b20c4f3de697aa85c309026 # v2
         with:
           tool: cross
 

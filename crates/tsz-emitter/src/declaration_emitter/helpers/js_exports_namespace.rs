@@ -1385,10 +1385,10 @@ impl<'a> DeclarationEmitter<'a> {
                 continue;
             };
             for jsdoc in self.leading_jsdoc_comment_chain_for_pos(stmt_node.pos) {
-                if let Some(decl) = Self::parse_jsdoc_type_alias_decl(&jsdoc)
-                    && seen.insert(decl.name.clone())
-                {
-                    names.push(decl.name);
+                for decl in Self::parse_jsdoc_type_alias_decls(&jsdoc) {
+                    if seen.insert(decl.name.clone()) {
+                        names.push(decl.name);
+                    }
                 }
             }
         }
@@ -1397,10 +1397,10 @@ impl<'a> DeclarationEmitter<'a> {
             return names;
         };
         for jsdoc in self.leading_jsdoc_comment_chain_for_pos(eof_pos) {
-            if let Some(decl) = Self::parse_jsdoc_type_alias_decl(&jsdoc)
-                && seen.insert(decl.name.clone())
-            {
-                names.push(decl.name);
+            for decl in Self::parse_jsdoc_type_alias_decls(&jsdoc) {
+                if seen.insert(decl.name.clone()) {
+                    names.push(decl.name);
+                }
             }
         }
 

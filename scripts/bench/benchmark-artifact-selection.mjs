@@ -7,6 +7,7 @@ import {
 } from "./project-rows.mjs";
 import {
   isGreen,
+  isSpeedRatioEligible,
 } from "./row-utils.mjs";
 
 export function readBenchmarkArtifact(file) {
@@ -23,11 +24,6 @@ export function benchmarkGeneratedAtMs(data) {
   return Number.isFinite(timestamp) ? timestamp : Number.NEGATIVE_INFINITY;
 }
 
-function hasTiming(value) {
-  const time = Number(value);
-  return Number.isFinite(time) && time > 0;
-}
-
 const APPLICATION_PROJECT_ROW_NAMES = PROJECT_ROW_DEFINITIONS
   .filter((row) => row.category === "application")
   .map((row) => row.name);
@@ -36,9 +32,10 @@ const PERF_TIMED_PROJECT_ROW_NAMES = new Set(PERF_TIMED_PROJECT_ROWS);
 export function successfulProjectTimingPairCount(data) {
   return (Array.isArray(data?.results) ? data.results : []).filter((row) => (
     Object.hasOwn(PROJECT_ROWS_BY_NAME, String(row?.name || "")) &&
-    hasTiming(row?.tsz_ms) &&
-    hasTiming(row?.tsgo_ms) &&
-    row?.winner !== "error" &&
+    // Shared bench gate (`row-utils.mjs`): measured timing pair, run did not
+    // fail, and the row actually finished — the did-not-finish guard this
+    // count previously lacked (#17302) — on top of the green-compat check.
+    isSpeedRatioEligible(row) &&
     isGreen(row)
   )).length;
 }
@@ -58,15 +55,14 @@ function hasGreenCompatibilityEvidence(row) {
     && (!diagnosticStatus || diagnosticStatus === "none");
 }
 
-function hasTimingPair(row) {
-  return hasTiming(row?.tsz_ms) && hasTiming(row?.tsgo_ms) && row?.winner !== "error" && !row?.status;
-}
-
 export function greenProjectTimingPairGapCount(data) {
   return (Array.isArray(data?.results) ? data.results : []).filter((row) => (
     PERF_TIMED_PROJECT_ROW_NAMES.has(String(row?.name || "")) &&
     hasGreenCompatibilityEvidence(row) &&
-    !hasTimingPair(row)
+    // `isSpeedRatioEligible` (row-utils.mjs) adds the did-not-finish guard this
+    // gap count previously lacked (#17302), so a green-compat row killed at the
+    // ceiling is correctly reported as a missing timing pair.
+    !isSpeedRatioEligible(row)
   )).length;
 }
 

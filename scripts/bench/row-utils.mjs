@@ -90,6 +90,53 @@ export function didNotFinish(row) {
   return false;
 }
 
+// True when `value` is a positive, finite wall-clock time in ms. Missing and
+// sentinel timings (`null`/`undefined`/`""`/non-numeric, or a `<= 0` value)
+// coerce to a non-positive or non-finite number and are rejected, so a row
+// carrying a ceiling/error sentinel or an absent timing never reads as a real
+// measurement. This is the single definition of "a usable timing"; the
+// open-coded `hasTiming` / `Number.isFinite(x) && x > 0` timing checks that
+// gated the speed-ratio surfaces route through it. (Helpers with a different
+// contract stay put: `finiteNumber` returns `number | null` for width/format
+// math, and the aggregate-mean label intentionally admits a zero denominator.)
+export function isPositiveFiniteTiming(value) {
+  const time = Number(value);
+  return Number.isFinite(time) && time > 0;
+}
+
+// Canonical "successful timing pair" gate. A row is eligible to contribute a
+// *measured* tsz/tsgo speed ratio — a per-row win or an aggregate datapoint —
+// only when the run itself did not fail (`!status`), the row actually finished
+// (`!didNotFinish`, which subsumes `winner === "error"` and the timeout /
+// nonzero-exit ceiling sentinels — see it for the #16196 rationale), and BOTH
+// compilers recorded a positive finite wall time.
+//
+// Every readiness gate, artifact-selection count, website chart, and README
+// headline routes its eligibility question through this one predicate so that
+// a did-not-finish row can never leak a fabricated `ceiling / other_time` ratio
+// into any surface, and so "eligible for a speed ratio" cannot come to mean
+// different things depending on which script asks (#16196, #17302).
+export function isSpeedRatioEligible(row) {
+  if (!row || row.status) return false;
+  if (didNotFinish(row)) return false;
+  return isPositiveFiniteTiming(row.tsz_ms) && isPositiveFiniteTiming(row.tsgo_ms);
+}
+
+// The slowdown-failure threshold shared by the bench harness
+// (`scripts/bench/project-fixtures.sh tsz_project_slowdown_failure_factor`),
+// the website speed chart, and the README headline: a row where tsz is at or
+// beyond `factor`x tsgo is a speed failure that must not render or count.
+export const SLOWDOWN_FAILURE_FACTOR = 1.5;
+
+// Canonical chart / headline gate: a row that is speed-ratio-eligible AND fast
+// enough to chart (tsz strictly under `factor`x tsgo). Layered on the base gate
+// so a did-not-finish row whose short-ceiling sentinel happens to land under
+// the threshold still cannot leak into the chart or the headline average.
+export function isSpeedChartEligible(row, factor = SLOWDOWN_FAILURE_FACTOR) {
+  if (!isSpeedRatioEligible(row)) return false;
+  return Number(row.tsz_ms) < factor * Number(row.tsgo_ms);
+}
+
 export const GREEN_COMPAT = {
   state: "green",
   phase: "check",

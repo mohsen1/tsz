@@ -308,6 +308,9 @@ mod ts2303_tests;
 #[path = "../tests/ts2304_tests.rs"]
 mod ts2304_tests;
 #[cfg(test)]
+#[path = "../tests/ts2320_mapped_type_ancestor_tests.rs"]
+mod ts2320_mapped_type_ancestor_tests;
+#[cfg(test)]
 #[path = "../tests/ts2320_tests.rs"]
 mod ts2320_tests;
 #[cfg(test)]

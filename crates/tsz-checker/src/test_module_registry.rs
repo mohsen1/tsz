@@ -615,6 +615,8 @@ mod libtype_structural_name_lookup_arch_tests;
 mod literal_spelled_computed_key_index_signature_code_tests;
 #[path = "tests/local_type_alias_shadowing_tests.rs"]
 mod local_type_alias_shadowing_tests;
+#[path = "tests/local_type_vs_type_parameter_declaration_space_tests.rs"]
+mod local_type_vs_type_parameter_declaration_space_tests;
 #[path = "tests/logical_assignment_member_narrowing_tests.rs"]
 mod logical_assignment_member_narrowing_tests;
 #[path = "tests/loop_self_referential_property_read_tests.rs"]
@@ -649,6 +651,8 @@ mod module_scoped_var_shadows_lib_global_ts2300_tests;
 mod multi_overload_infer_capture_tests;
 #[path = "tests/mutable_binding_widening_from_const_literal_tests.rs"]
 mod mutable_binding_widening_from_const_literal_tests;
+#[path = "tests/namespace_body_reachability_tests.rs"]
+mod namespace_body_reachability_tests;
 #[path = "tests/namespace_property_mismatch_boundary_arch_tests.rs"]
 mod namespace_property_mismatch_boundary_arch_tests;
 #[path = "tests/narrowed_union_source_display_tests.rs"]
@@ -807,6 +811,8 @@ mod property_index_key_relation_routing_arch_tests;
 mod property_receiver_display_recursion_overflow_tests;
 #[path = "tests/property_receiver_relation_routing_arch_tests.rs"]
 mod property_receiver_relation_routing_arch_tests;
+#[path = "tests/reachability_if_no_else_const_condition_tests.rs"]
+mod reachability_if_no_else_const_condition_tests;
 #[path = "tests/readonly_assignment_no_flow_narrow_tests.rs"]
 mod readonly_assignment_no_flow_narrow_tests;
 #[path = "tests/readonly_property_assignment_narrowing_tests.rs"]

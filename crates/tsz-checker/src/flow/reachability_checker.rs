@@ -611,7 +611,19 @@ impl<'a> CheckerState<'a> {
                 };
                 let then_falls = self.statement_falls_through(if_data.then_statement);
                 if if_data.else_statement.is_none() {
-                    return true;
+                    // A missing else branch normally means execution can skip
+                    // the `then` branch entirely, so the statement as a whole
+                    // falls through regardless of `then_falls`. But when the
+                    // condition is a compile-time-true constant there is no
+                    // implicit else path — the `then` branch always runs, so
+                    // completion follows it exactly (mirrors
+                    // `loop_falls_through`'s `is_true_condition` handling for
+                    // `while (true)` with no reachable `break`).
+                    return if self.is_true_condition(if_data.expression) {
+                        then_falls
+                    } else {
+                        true
+                    };
                 }
                 let else_falls = self.statement_falls_through(if_data.else_statement);
                 then_falls || else_falls
@@ -841,22 +853,26 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Check if a condition is always true.
+    ///
+    /// Mirrors `tsc`'s reachability rule, which is narrower than general
+    /// constant folding. `binder.ts`'s `createFlowCondition` tests
+    /// `expression.kind === SyntaxKind.TrueKeyword` on the condition node
+    /// **as written** — it does not skip parentheses and does not fold a
+    /// prefix `!`. So `if (true)` marks the implicit else unreachable while
+    /// `if ((true))` and `if (!false)` do not.
+    ///
+    /// `&&`/`||` still compose, but for a different reason than folding:
+    /// `bindCondition` recurses into a logical expression and binds each
+    /// operand against its own branch targets, so the literal `true` inside
+    /// `true && true` is what reaches the kind check. Reproducing that as
+    /// recursion here gives the same answer, and stopping at parentheses and
+    /// `!` reproduces where `tsc` stops.
     pub(crate) fn is_true_condition(&self, condition_idx: NodeIndex) -> bool {
-        let condition_idx = self
-            .ctx
-            .arena
-            .skip_parenthesized_and_assertions(condition_idx);
         let Some(node) = self.ctx.arena.get(condition_idx) else {
             return false;
         };
         if node.kind == SyntaxKind::TrueKeyword as u16 {
             return true;
-        }
-        if let Some(unary) = self.ctx.arena.get_unary_expr(node)
-            && node.kind == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
-            && unary.operator == SyntaxKind::ExclamationToken as u16
-        {
-            return self.is_false_condition(unary.operand);
         }
         if let Some(bin) = self.ctx.arena.get_binary_expr(node) {
             if bin.operator_token == SyntaxKind::AmpersandAmpersandToken as u16 {
@@ -870,22 +886,15 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Check if a condition is always false.
+    ///
+    /// The `FalseKeyword` counterpart of [`Self::is_true_condition`], with the
+    /// same stop conditions: no parenthesis skipping, no prefix-`!` folding.
     pub(crate) fn is_false_condition(&self, condition_idx: NodeIndex) -> bool {
-        let condition_idx = self
-            .ctx
-            .arena
-            .skip_parenthesized_and_assertions(condition_idx);
         let Some(node) = self.ctx.arena.get(condition_idx) else {
             return false;
         };
         if node.kind == SyntaxKind::FalseKeyword as u16 {
             return true;
-        }
-        if let Some(unary) = self.ctx.arena.get_unary_expr(node)
-            && node.kind == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
-            && unary.operator == SyntaxKind::ExclamationToken as u16
-        {
-            return self.is_true_condition(unary.operand);
         }
         if let Some(bin) = self.ctx.arena.get_binary_expr(node) {
             if bin.operator_token == SyntaxKind::AmpersandAmpersandToken as u16 {

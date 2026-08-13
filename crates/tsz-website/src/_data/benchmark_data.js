@@ -9,6 +9,13 @@ import {
   REQUIRED_PROJECT_ROWS,
 } from "../../../../scripts/bench/project-rows.mjs";
 import { selectLatestBenchmarkArtifact } from "../../../../scripts/bench/benchmark-artifact-selection.mjs";
+import {
+  didNotFinish,
+  isPositiveFiniteTiming,
+  isSpeedChartEligible,
+  isSpeedRatioEligible,
+  SLOWDOWN_FAILURE_FACTOR,
+} from "../../../../scripts/bench/row-utils.mjs";
 import { subsystemForCode } from "../../../../scripts/ci/diagnostic-subsystems.mjs";
 import { fmt } from "./loc.js";
 import { generatedBenchmarkSource } from "./benchmark_generated_sources.js";
@@ -168,7 +175,7 @@ function renderBenchmarkBar(kind, widthPx, label) {
 function formatSpeedupLabel(tszMs, tsgoMs) {
   const tsz = Number(tszMs);
   const tsgo = Number(tsgoMs);
-  if (!Number.isFinite(tsz) || !Number.isFinite(tsgo) || tsz <= 0 || tsgo <= 0) return "";
+  if (!isPositiveFiniteTiming(tsz) || !isPositiveFiniteTiming(tsgo)) return "";
 
   const factor = Math.max(tsz, tsgo) / Math.min(tsz, tsgo);
   if (factor < 1.05) return "equal";
@@ -176,11 +183,6 @@ function formatSpeedupLabel(tszMs, tsgoMs) {
   return tsz < tsgo
     ? `tsz ${factor.toFixed(1)}x faster`
     : `tsgo ${factor.toFixed(1)}x faster`;
-}
-
-function hasTiming(value) {
-  const time = Number(value);
-  return Number.isFinite(time) && time > 0;
 }
 
 function isProjectBenchmark(row) {
@@ -203,14 +205,14 @@ function hasGreenProjectCompatibility(row) {
 }
 
 function fastestTiming(row) {
-  const timings = [row?.tsz_ms, row?.tsgo_ms].map(Number).filter((time) => Number.isFinite(time) && time > 0);
+  const timings = [row?.tsz_ms, row?.tsgo_ms].map(Number).filter(isPositiveFiniteTiming);
   return timings.length ? Math.min(...timings) : Infinity;
 }
 
 function tszSpeedupScore(row) {
   const tsz = Number(row?.tsz_ms);
   const tsgo = Number(row?.tsgo_ms);
-  if (!Number.isFinite(tsz) || !Number.isFinite(tsgo) || tsz <= 0 || tsgo <= 0) {
+  if (!isPositiveFiniteTiming(tsz) || !isPositiveFiniteTiming(tsgo)) {
     return -Infinity;
   }
   return tsgo / tsz;
@@ -228,25 +230,18 @@ function compareByTszSpeedup(a, b) {
   return String(a?.name || "").localeCompare(String(b?.name || ""));
 }
 
+// Local name for the shared bench/website gate (`row-utils.mjs`); see the
+// canonical predicate there for the #16196/#17302 rationale.
 function hasSuccessfulTimingPair(row) {
-  return !row?.status
-    && row?.winner !== "error"
-    && hasTiming(row?.tsz_ms)
-    && hasTiming(row?.tsgo_ms);
+  return isSpeedRatioEligible(row);
 }
 
-// We run every benchmark and let individual ones fail; the chart renders only
-// the ones that "succeeded", where success means SPEED, not tsc-compatibility:
-// both compilers produced a timing AND tsgo is not >= 1.5x faster than tsz.
-// A row that keeps up with tsgo renders even if it diverges from tsc (yellow);
-// a row where tsz is >= 1.5x slower, errored, or timed out simply does not
-// render — it never blocks the rest of the chart.
-const CHART_MAX_TSZ_TO_TSGO_RATIO = 1.5;
+// The chart renders only rows that "succeeded" at SPEED (not tsc-compatibility):
+// a measured timing pair whose tsz is under the slowdown-failure threshold of
+// tsgo. A row that keeps up with tsgo renders even if it diverges from tsc
+// (yellow); a row that is >= threshold slower, errored, or timed out does not.
 function isChartEligible(row) {
-  const tsz = Number(row?.tsz_ms);
-  const tsgo = Number(row?.tsgo_ms);
-  if (!(tsz > 0) || !(tsgo > 0) || row?.winner === "error") return false;
-  return tsz < tsgo * CHART_MAX_TSZ_TO_TSGO_RATIO;
+  return isSpeedChartEligible(row);
 }
 
 // A row that produced a real timing pair but is too slow to chart (tsgo is
@@ -260,14 +255,17 @@ function isExcludedSlowTimedRow(row) {
 
 function isFailedBenchmark(row) {
   if (!row || hasSuccessfulTimingPair(row)) return false;
-  return Boolean(row.status) || row.winner === "error" || hasTiming(row.tsz_ms) || hasTiming(row.tsgo_ms);
+  return Boolean(row.status) || row.winner === "error" || isPositiveFiniteTiming(row.tsz_ms) || isPositiveFiniteTiming(row.tsgo_ms);
 }
 
 function statusLabel(row) {
   if (row?.status) return String(row.status);
+  // Say "did not finish" rather than deriving a slower/faster label from a
+  // killed/errored row's sentinel timing (#16196).
+  if (didNotFinish(row)) return "did not finish";
   const tsz = Number(row?.tsz_ms);
   const tsgo = Number(row?.tsgo_ms);
-  if (tsz > 0 && tsgo > 0 && tsz >= tsgo * CHART_MAX_TSZ_TO_TSGO_RATIO) {
+  if (tsz > 0 && tsgo > 0 && tsz >= tsgo * SLOWDOWN_FAILURE_FACTOR) {
     return `tsz ${(tsz / tsgo).toFixed(1)}x slower than tsgo`;
   }
   return "timing unavailable";
@@ -1449,7 +1447,7 @@ function truncateReadme(text) {
 function comparison(row) {
   const tsz = Number(row.tsz_ms);
   const tsgo = Number(row.tsgo_ms);
-  if (!Number.isFinite(tsz) || !Number.isFinite(tsgo) || tsz <= 0 || tsgo <= 0) {
+  if (!isPositiveFiniteTiming(tsz) || !isPositiveFiniteTiming(tsgo)) {
     return {
       available: false,
       winner: row.status ? "unavailable" : "unknown",
@@ -1471,6 +1469,9 @@ function comparison(row) {
 
 function decorateRow(row, category, options = {}) {
   const maxMs = Math.max(Number(row.tsz_ms) || 0, Number(row.tsgo_ms) || 0);
+  // A killed/errored row never carries a speed ratio (#16196); compute the flag
+  // once and gate the labels themselves, so no downstream view reads a win off it.
+  const rowDidNotFinish = didNotFinish(row);
   const sourceFiles = sourceFilesForBenchmark(row, category);
   const focus = benchmarkFocus(row, category);
   const readme = readProjectReadme(row, category);
@@ -1494,13 +1495,15 @@ function decorateRow(row, category, options = {}) {
     tsgo_time: row.tsgo_ms ? formatDurationMs(row.tsgo_ms, 2) : "",
     tsz_width: maxMs > 0 && row.tsz_ms ? Math.max(1, (row.tsz_ms / maxMs) * 100).toFixed(2) : "1.00",
     tsgo_width: maxMs > 0 && row.tsgo_ms ? Math.max(1, (row.tsgo_ms / maxMs) * 100).toFixed(2) : "1.00",
-    status_label: row.status ? statusLabel(row) : "",
+    status_label: (row.status || rowDidNotFinish) ? statusLabel(row) : "",
     failed: isFailedBenchmark(row),
     is_aggregate: Boolean(options.isAggregate),
   };
   decorated.source_files_json = escapeAttributeJson(decorated.source_files);
   decorated.comparison = comparison(decorated);
-  decorated.speedup_label = formatSpeedupLabel(decorated.tsz_ms, decorated.tsgo_ms);
+  decorated.speedup_label = rowDidNotFinish
+    ? ""
+    : formatSpeedupLabel(decorated.tsz_ms, decorated.tsgo_ms);
   return decorated;
 }
 

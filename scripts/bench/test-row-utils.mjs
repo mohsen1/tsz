@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 
-import { didNotFinish } from "./row-utils.mjs";
+import {
+  didNotFinish,
+  isPositiveFiniteTiming,
+  isSpeedChartEligible,
+  isSpeedRatioEligible,
+  SLOWDOWN_FAILURE_FACTOR,
+} from "./row-utils.mjs";
 
 // A completed measurement (both compilers finished, exit 0) is never DNF.
 assert.equal(
@@ -82,5 +88,87 @@ for (const [name, exit_class, exit_codes, message] of [
 assert.equal(didNotFinish(null), false);
 assert.equal(didNotFinish(undefined), false);
 assert.equal(didNotFinish({ name: "bare" }), false, "a row with no compatibility metadata is not DNF");
+
+// --- isPositiveFiniteTiming: the single definition of "a usable timing" ---
+for (const value of [null, undefined, "", 0, -1, -0.5, "x", NaN, Infinity, -Infinity]) {
+  assert.equal(isPositiveFiniteTiming(value), false, `${String(value)} is not a usable timing`);
+}
+for (const value of [0.5, 1, 8, "12", 1500]) {
+  assert.equal(isPositiveFiniteTiming(value), true, `${String(value)} is a usable timing`);
+}
+
+// --- isSpeedRatioEligible: the one canonical "successful timing pair" gate ---
+// The regression this consolidation fixes (#17302): a row that did NOT finish
+// but still carries finite timings and a non-error winner must be excluded from
+// every speed-ratio surface. Two sites (check-artifact-readiness and
+// benchmark-artifact-selection) previously omitted this guard.
+const dnfWithFiniteTimings = [
+  {
+    label: "timeout ceiling",
+    row: { name: "big", tsz_ms: 1_500_000, tsgo_ms: 40_000, winner: "tsz", compatibility: { exit_class: "timeout" } },
+  },
+  {
+    label: "nonzero exit_class",
+    row: { name: "err", tsz_ms: 10, tsgo_ms: 12, winner: "tsz", compatibility: { exit_class: "nonzero exit" } },
+  },
+  {
+    label: "nonzero exit code on one side",
+    row: { name: "killed", tsz_ms: 10, tsgo_ms: 12, winner: "tsz", compatibility: { exit_codes: { tsz: [0], tsgo: [1] } } },
+  },
+  {
+    label: "winner:error stub",
+    row: { name: "stub", tsz_ms: 10, tsgo_ms: 12, winner: "error" },
+  },
+];
+for (const { label, row } of dnfWithFiniteTimings) {
+  assert.ok(didNotFinish(row), `sanity: ${label} row is DNF`);
+  assert.equal(isSpeedRatioEligible(row), false, `${label}: DNF row with finite timings is not speed-ratio eligible`);
+  assert.equal(isSpeedChartEligible(row), false, `${label}: DNF row with finite timings never charts`);
+}
+
+// A status error, or a missing/sentinel timing on either side, is ineligible.
+assert.equal(isSpeedRatioEligible({ tsz_ms: 8, tsgo_ms: 12, status: "error" }), false, "status error is ineligible");
+assert.equal(isSpeedRatioEligible({ tsz_ms: 8, tsgo_ms: null }), false, "missing tsgo timing is ineligible");
+assert.equal(isSpeedRatioEligible({ tsz_ms: 0, tsgo_ms: 12 }), false, "zero tsz timing is ineligible");
+assert.equal(isSpeedRatioEligible(null), false, "null row is ineligible");
+assert.equal(isSpeedRatioEligible(undefined), false, "undefined row is ineligible");
+
+// A clean completed pair is eligible.
+const cleanPair = { name: "ok", tsz_ms: 8, tsgo_ms: 12, winner: "tsz" };
+assert.equal(isSpeedRatioEligible(cleanPair), true, "a clean measured pair is eligible");
+assert.equal(
+  isSpeedRatioEligible({ name: "ok-green", tsz_ms: 8, tsgo_ms: 12, winner: "tsz", compatibility: { exit_class: "exit success", exit_codes: { tsz: [0], tsgo: [0] } } }),
+  true,
+  "a green completed pair is eligible",
+);
+
+// --- isSpeedChartEligible: base gate + the slowdown-failure threshold ---
+assert.equal(SLOWDOWN_FAILURE_FACTOR, 1.5, "the shared slowdown-failure threshold is 1.5x");
+assert.equal(isSpeedChartEligible(cleanPair), true, "a fast eligible pair charts");
+assert.equal(
+  isSpeedChartEligible({ tsz_ms: 20, tsgo_ms: 12 }),
+  false,
+  "a >=1.5x-slower pair is eligible for a ratio but must not chart",
+);
+assert.equal(
+  isSpeedRatioEligible({ tsz_ms: 20, tsgo_ms: 12 }),
+  true,
+  "a >=1.5x-slower pair still has a real measured ratio",
+);
+assert.equal(
+  isSpeedChartEligible({ tsz_ms: 18, tsgo_ms: 12 }),
+  false,
+  "exactly 1.5x is a failure (threshold is a strict <)",
+);
+assert.equal(
+  isSpeedChartEligible({ tsz_ms: 12, tsgo_ms: 12 }, 1),
+  false,
+  "the threshold factor is configurable: at factor 1 a tsz equal to tsgo is dropped",
+);
+assert.equal(
+  isSpeedChartEligible({ tsz_ms: 12, tsgo_ms: 12 }),
+  true,
+  "the same row charts at the default 1.5x factor",
+);
 
 console.log("test-row-utils.mjs: all assertions passed");
