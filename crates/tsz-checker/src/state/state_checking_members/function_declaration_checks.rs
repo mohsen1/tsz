@@ -181,8 +181,14 @@ impl<'a> CheckerState<'a> {
         self.check_duplicate_type_parameters(&func.type_parameters);
         self.check_type_parameters_for_missing_names(&func.type_parameters);
 
-        // TS1274: Variance modifiers (in/out) not allowed on function type parameters
-        self.check_variance_on_function_type_parameters(func.type_parameters.as_ref());
+        // TS1273/TS1274: function type parameters allow `const` but not
+        // variance (`in`/`out`); all other modifiers are never valid. First
+        // grammar error wins per parameter.
+        self.check_type_parameter_modifier_grammar(
+            func.type_parameters.as_ref(),
+            /* const_allowed */ true,
+            /* variance_allowed */ false,
+        );
         if func.type_parameters.is_none() {
             self.check_jsdoc_function_template_variance_modifiers(func_idx);
         }
