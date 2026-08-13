@@ -115,16 +115,23 @@ impl<'a> CheckerState<'a> {
         if matches!(element_type, TypeId::ERROR | TypeId::UNKNOWN) {
             return None;
         }
-        let widened_element = self.normalize_assignability_display_type(
-            crate::query_boundaries::widening::widen_type_for_display_preserving_non_fresh(
-                self.ctx.types,
-                element_type,
-            ),
-        );
+        // `tsc` renders a non-fresh array source's element types verbatim: an
+        // annotated `Array<1>` / `1[]` / `(1 | 2)[]` source (or `ReadonlyArray<1>`)
+        // keeps `1` / `1 | 2` in its assignability message, because
+        // `getWidenedType` widens only types carrying the fresh-literal flag.
+        // A *fresh* array literal source is already widened to its primitive
+        // element type at expression typing (`const y: string = [1, 2]` types
+        // `[1, 2]` as `number[]`), so it reaches this display already widened and
+        // needs no further widening here. Widening the element unconditionally
+        // therefore only mangled the non-fresh case, rendering `number[]` where
+        // `tsc` shows `1[]`. Keep the element as written and let the normalizer
+        // handle display canonicalization; non-fresh nested object/tuple members
+        // are likewise preserved by `tsc`.
+        let display_element = self.normalize_assignability_display_type(element_type);
         let rebuilt = diagnostic_query::rebuilt_array_source_display_type(
             self.ctx.types,
             source_type,
-            widened_element,
+            display_element,
         );
         Some(self.format_assignability_type_for_message(rebuilt, target))
     }

@@ -51,6 +51,8 @@ mod array_like_constraint_relation_routing_arch_tests;
 mod array_literal_relation_routing_arch_tests;
 #[path = "tests/array_literal_spread_inference_widening_tests.rs"]
 mod array_literal_spread_inference_widening_tests;
+#[path = "tests/array_source_literal_element_display_tests.rs"]
+mod array_source_literal_element_display_tests;
 #[path = "tests/as_const_nested_literal_display_tests.rs"]
 mod as_const_nested_literal_display_tests;
 #[path = "tests/assertion_thenable_comparability_tests.rs"]
@@ -1043,6 +1045,8 @@ mod ts2591_node_global_type_position_tests;
 mod ts2693_signature_binding_shadowed_primitive_tests;
 #[path = "tests/ts2739_alias_unfold_display_tests.rs"]
 mod ts2739_alias_unfold_display_tests;
+#[path = "tests/ts7031_destructuring_nullish_array_literal_tests.rs"]
+mod ts7031_destructuring_nullish_array_literal_tests;
 #[path = "tests/ts7053_apparent_receiver_display_tests.rs"]
 mod ts7053_apparent_receiver_display_tests;
 #[path = "tests/ts7053_index_reason_chain_tests.rs"]

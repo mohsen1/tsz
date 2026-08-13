@@ -472,6 +472,13 @@ impl<'a> CheckerState<'a> {
         root_name: &str,
         base_type: TypeId,
     ) -> TypeId {
+        // Whole-file scan below does not respect statement order relative to
+        // the property access being checked (see #17410 follow-up): switching
+        // this to `source_files.first()` unmasked a false-positive TS2322
+        // regression where a later `Object.defineProperty` call's type leaked
+        // backward into an earlier assignment's assignability check
+        // (`ensureNoCrashExportAssignmentDefineProperrtyPotentialMerge.ts`).
+        // Reverted to `get(current_file_idx)` until a position-aware fix lands.
         let Some(source_file) = self.ctx.arena.source_files.get(self.ctx.current_file_idx) else {
             return base_type;
         };
