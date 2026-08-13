@@ -510,26 +510,9 @@ impl<'a> TypeFormatter<'a> {
             parts.push(format!("{ro}[{key_name}: {key_type_str}]: {value_str}"));
         }
         let mut sorted_props: Vec<&PropertyInfo> = shape.properties.iter().collect();
-        // Sort by declaration_order (same logic as format_object)
-        sorted_props.sort_by(|a, b| {
-            let ord = a.declaration_order.cmp(&b.declaration_order);
-            if ord != std::cmp::Ordering::Equal
-                && a.declaration_order > 0
-                && b.declaration_order > 0
-            {
-                return ord;
-            }
-            let a_name = self.interner.resolve_atom_ref(a.name);
-            let b_name = self.interner.resolve_atom_ref(b.name);
-            let a_num = a_name.parse::<u64>();
-            let b_num = b_name.parse::<u64>();
-            match (a_num, b_num) {
-                (Ok(an), Ok(bn)) => an.cmp(&bn),
-                (Ok(_), Err(_)) => std::cmp::Ordering::Less,
-                (Err(_), Ok(_)) => std::cmp::Ordering::Greater,
-                (Err(_), Err(_)) => std::cmp::Ordering::Equal,
-            }
-        });
+        // Sort by declaration_order with a deterministic content-based tiebreak
+        // (shared with `format_object`; see `compare_display_property_order`).
+        sorted_props.sort_by(|a, b| self.compare_display_property_order(a, b));
         let mut prop_parts = Vec::with_capacity(sorted_props.len());
         for prop in sorted_props {
             prop_parts.push(self.format_property(prop));
