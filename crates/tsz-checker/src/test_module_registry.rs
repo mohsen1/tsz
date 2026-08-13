@@ -51,6 +51,8 @@ mod array_like_constraint_relation_routing_arch_tests;
 mod array_literal_relation_routing_arch_tests;
 #[path = "tests/array_literal_spread_inference_widening_tests.rs"]
 mod array_literal_spread_inference_widening_tests;
+#[path = "tests/array_source_literal_element_display_tests.rs"]
+mod array_source_literal_element_display_tests;
 #[path = "tests/as_const_nested_literal_display_tests.rs"]
 mod as_const_nested_literal_display_tests;
 #[path = "tests/assertion_thenable_comparability_tests.rs"]
