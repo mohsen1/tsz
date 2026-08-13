@@ -151,7 +151,7 @@ fn strict_null_checks_on_does_not_report_ts7005() {
     );
 }
 
-/// Negative control: `noImplicitAny` off suppresses every TS7xxx implicit-any
+/// Negative control: `noImplicitAny` off suppresses every `TS7xxx` implicit-any
 /// diagnostic, including this new compound path.
 #[test]
 fn no_implicit_any_off_does_not_report_ts7005() {
