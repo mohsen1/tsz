@@ -9,6 +9,19 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 use tsz_solver::TypeParamInfo;
 
+/// Bundles the per-top-level-heritage-entry context that
+/// `enqueue_or_fold_heritage_ancestor`'s cross-base TS2320 fold needs, so
+/// passing it doesn't push either function over the workspace's `clippy`
+/// argument-count cap.
+#[derive(Clone, Copy)]
+pub(super) struct CrossBaseHeritageInfo<'b> {
+    pub(super) type_idx: NodeIndex,
+    pub(super) base_name: &'b str,
+    pub(super) iface_name_node: NodeIndex,
+    pub(super) derived_name: &'b str,
+    pub(super) derived_members: &'b [(String, TypeId, NodeIndex, u16, bool, bool)],
+}
+
 impl<'a> CheckerState<'a> {
     pub(super) fn is_direct_this_type(&self, type_id: TypeId) -> bool {
         crate::query_boundaries::type_predicates::is_this_type(self.ctx.types, type_id)
@@ -492,5 +505,156 @@ impl<'a> CheckerState<'a> {
             .exports
             .as_ref()
             .and_then(|exports| exports.get(&name))
+    }
+
+    /// Enqueues an interface-declared heritage ancestor onto `worklist` (as
+    /// `check_interface_extension_compatibility`'s cross-base TS2320/TS2430
+    /// walk always has), or — when the ancestor is not an interface
+    /// declaration at all (e.g. a mapped-type alias like `Partial<T>`) —
+    /// folds its resolved structural property set into the same cross-base
+    /// comparison instead of silently dropping it. tsc's `getBaseTypes` has
+    /// no restriction on an ancestor's declaration kind, so
+    /// `http.AgentOptions extends Partial<TcpSocketConnectOpts>` must still
+    /// surface `Partial`'s members for the TS2320
+    /// ("Interface ... cannot simultaneously extend types ... and ...")
+    /// comparison. Returns `true` if a TS2320 was reported (the caller must
+    /// stop processing this interface, matching tsc's single-conflict-then-
+    /// stop behavior).
+    pub(super) fn enqueue_or_fold_heritage_ancestor(
+        &mut self,
+        ancestor_expr: NodeIndex,
+        ancestor_type_args_opt: Option<Vec<TypeId>>,
+        info: CrossBaseHeritageInfo<'_>,
+        worklist: &mut Vec<(SymbolId, NodeIndex, Option<Vec<TypeId>>)>,
+        seen_member_keys: &mut rustc_hash::FxHashSet<String>,
+        inherited_member_sources: &mut rustc_hash::FxHashMap<
+            String,
+            (NodeIndex, String, TypeId, bool, bool),
+        >,
+    ) -> bool {
+        let Some(ancestor_sym_id) = self.resolve_heritage_symbol(ancestor_expr) else {
+            return false;
+        };
+        let Some(ancestor_sym) = self.ctx.binder.get_symbol(ancestor_sym_id) else {
+            return false;
+        };
+        let mut pushed_any_interface = false;
+        for &decl_idx in &ancestor_sym.declarations {
+            let decl_arena =
+                self.ctx
+                    .binder
+                    .arena_for_declaration_or(ancestor_sym_id, decl_idx, self.ctx.arena);
+            if let Some(dn) = decl_arena.get(decl_idx)
+                && decl_arena.get_interface(dn).is_some()
+            {
+                worklist.push((ancestor_sym_id, decl_idx, ancestor_type_args_opt.clone()));
+                pushed_any_interface = true;
+            }
+        }
+        if pushed_any_interface {
+            return false;
+        }
+        self.fold_structural_heritage_ancestor_into_cross_base_check(
+            ancestor_sym_id,
+            ancestor_type_args_opt,
+            info,
+            seen_member_keys,
+            inherited_member_sources,
+        )
+    }
+
+    /// Fold a *structural* (non-interface-declaration) heritage ancestor's own
+    /// property set into the cross-base TS2320 comparison. See
+    /// `enqueue_or_fold_heritage_ancestor`, its only caller, for the
+    /// structural rule this implements.
+    ///
+    /// Resolves the ancestor's type from its symbol (`Lazy(DefId)` applied to
+    /// `ancestor_type_args_opt`, already instantiated against the enclosing
+    /// interface's type parameters by the caller) the same way this file's
+    /// top-level base resolution does, rather than re-evaluating the raw
+    /// heritage AST node — `get_type_from_type_node` on an ancestor node
+    /// reached outside its owning interface's own check pass returns
+    /// `TypeId::ERROR` here, since that node was never the current checking
+    /// target.
+    fn fold_structural_heritage_ancestor_into_cross_base_check(
+        &mut self,
+        ancestor_sym_id: SymbolId,
+        ancestor_type_args_opt: Option<Vec<TypeId>>,
+        info: CrossBaseHeritageInfo<'_>,
+        seen_member_keys: &mut rustc_hash::FxHashSet<String>,
+        inherited_member_sources: &mut rustc_hash::FxHashMap<
+            String,
+            (NodeIndex, String, TypeId, bool, bool),
+        >,
+    ) -> bool {
+        let CrossBaseHeritageInfo {
+            type_idx,
+            base_name,
+            iface_name_node,
+            derived_name,
+            derived_members,
+        } = info;
+        let ancestor_type = match ancestor_type_args_opt {
+            Some(args) if !args.is_empty() => {
+                let def_id = self.ctx.get_or_create_def_id(ancestor_sym_id);
+                let factory = self.ctx.types.factory();
+                let lazy_type = factory.lazy(def_id);
+                let app = factory.application(lazy_type, args);
+                self.evaluate_type_with_env(app)
+            }
+            _ => self.get_type_of_symbol(ancestor_sym_id),
+        };
+        let ancestor_apparent = self.evaluate_type_for_assignability(ancestor_type);
+
+        for prop in self
+            .ctx
+            .types
+            .collect_object_spread_properties(ancestor_apparent)
+        {
+            if prop.is_method {
+                continue;
+            }
+            let member_key = self.ctx.types.resolve_atom(prop.name);
+            if !seen_member_keys.insert(member_key.clone()) {
+                continue;
+            }
+            // A member the derived interface redeclares itself takes the
+            // TS2430 override path elsewhere in the caller; not this one.
+            if derived_members.iter().any(|(name, ..)| name == &member_key) {
+                continue;
+            }
+
+            if let Some((prev_heritage_idx, prev_base_name, prev_member_type, prev_optional, _)) =
+                inherited_member_sources.get(&member_key)
+            {
+                if *prev_heritage_idx != type_idx {
+                    let optionality_differs = prop.optional != *prev_optional;
+                    let type_incompatible =
+                        !self.are_var_decl_types_compatible(prop.type_id, *prev_member_type);
+                    if type_incompatible || optionality_differs {
+                        self.error_at_node(
+                            iface_name_node,
+                            &format!(
+                                "Interface '{derived_name}' cannot simultaneously extend types '{prev_base_name}' and '{base_name}'."
+                            ),
+                            crate::diagnostics::diagnostic_codes::INTERFACE_CANNOT_SIMULTANEOUSLY_EXTEND_TYPES_AND,
+                        );
+                        return true;
+                    }
+                }
+            } else {
+                inherited_member_sources.insert(
+                    member_key,
+                    (
+                        type_idx,
+                        base_name.to_string(),
+                        prop.type_id,
+                        prop.optional,
+                        false,
+                    ),
+                );
+            }
+        }
+        false
     }
 }

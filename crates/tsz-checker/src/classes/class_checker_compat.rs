@@ -1056,27 +1056,27 @@ impl<'a> CheckerState<'a> {
                                 (ancestor_type_idx, None)
                             };
 
-                            let ancestor_resolution = self.resolve_heritage_symbol(ancestor_expr);
-                            if let Some(ancestor_sym_id) = ancestor_resolution
-                                && let Some(ancestor_sym) =
-                                    self.ctx.binder.get_symbol(ancestor_sym_id)
-                            {
-                                for &decl_idx in &ancestor_sym.declarations {
-                                    let decl_arena = self.ctx.binder.arena_for_declaration_or(
-                                        ancestor_sym_id,
-                                        decl_idx,
-                                        self.ctx.arena,
-                                    );
-                                    if let Some(dn) = decl_arena.get(decl_idx)
-                                        && decl_arena.get_interface(dn).is_some()
-                                    {
-                                        worklist.push((
-                                            ancestor_sym_id,
-                                            decl_idx,
-                                            ancestor_type_args_opt.clone(),
-                                        ));
-                                    }
-                                }
+                            // Enqueues an interface-declared ancestor onto `worklist`
+                            // as before; a structural ancestor (e.g. a mapped-type
+                            // alias like `Partial<T>`) instead folds its resolved
+                            // property set into the cross-base TS2320 check — see
+                            // `enqueue_or_fold_heritage_ancestor`.
+                            if self.enqueue_or_fold_heritage_ancestor(
+                                ancestor_expr,
+                                ancestor_type_args_opt,
+                                super::interface_heritage_index_compat::CrossBaseHeritageInfo {
+                                    type_idx,
+                                    base_name: &base_name,
+                                    iface_name_node: iface_data.name,
+                                    derived_name: &derived_name,
+                                    derived_members: &derived_members,
+                                },
+                                &mut worklist,
+                                &mut seen_member_keys,
+                                &mut inherited_member_sources,
+                            ) {
+                                self.pop_type_parameters(level_type_param_updates);
+                                return;
                             }
                         }
                     }

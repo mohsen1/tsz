@@ -376,3 +376,74 @@ interface SeqIndexed<T> extends Seq<number, T>, CollectionIndexed<T> {
         "Expected one TS2320 for SeqIndexed's conflicting recursive bases. Got: {diags:?}"
     );
 }
+
+#[test]
+fn ts2320_conflicting_property_through_mapped_type_alias_ancestor() {
+    // `Mid` extends `Wrap<Base1>`, a mapped-type alias — not an interface
+    // declaration. tsc's `getBaseTypes` has no declaration-kind restriction,
+    // so `Wrap<Base1>`'s structural `x: number` is still part of `Mid`'s
+    // inherited surface and conflicts with `Other`'s `x: string`.
+    let source = r#"
+type Wrap<T> = { [K in keyof T]: T[K] };
+interface Base1 {
+    x: number;
+}
+interface Mid extends Wrap<Base1> {
+}
+interface Other {
+    x: string;
+}
+interface Combined extends Mid, Other {
+}
+"#;
+    assert!(
+        has_error(source, 2320),
+        "Expected TS2320: Mid's Wrap<Base1> ancestor structurally carries x:number, conflicting with Other's x:string"
+    );
+}
+
+#[test]
+fn ts2320_optionality_conflict_through_mapped_type_alias_ancestor() {
+    // Same shape, but the conflict is optionality (via a `Partial`-shaped
+    // mapped alias) rather than an incompatible type.
+    let source = r#"
+type PartialLike<T> = { [K in keyof T]?: T[K] };
+interface Base1 {
+    x: number;
+}
+interface Mid extends PartialLike<Base1> {
+}
+interface Other {
+    x: number;
+}
+interface Combined extends Mid, Other {
+}
+"#;
+    assert!(
+        has_error(source, 2320),
+        "Expected TS2320: Mid's PartialLike<Base1> ancestor makes x optional, conflicting with Other's required x"
+    );
+}
+
+#[test]
+fn ts2320_compatible_property_through_mapped_type_alias_ancestor_no_error() {
+    // Negative control: same shape, but the structurally-inherited property
+    // is identical across both bases, so no TS2320 should fire.
+    let source = r#"
+type Wrap<T> = { [K in keyof T]: T[K] };
+interface Base1 {
+    x: number;
+}
+interface Mid extends Wrap<Base1> {
+}
+interface Other {
+    x: number;
+}
+interface Combined extends Mid, Other {
+}
+"#;
+    assert!(
+        !has_error(source, 2320),
+        "Expected no TS2320: Mid's Wrap<Base1> ancestor and Other agree on x:number"
+    );
+}
