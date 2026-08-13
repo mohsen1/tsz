@@ -1684,14 +1684,32 @@ impl<'a> CheckerState<'a> {
         &mut self,
         ctx: &RenderContext,
         index_kind: &str,
+        property_name: Option<tsz_common::interner::Atom>,
         source_value_type: TypeId,
         target_value_type: TypeId,
         nested_reason: Option<&tsz_solver::SubtypeFailureReason>,
     ) -> Diagnostic {
-        let incompat_message = format_message(
-            diagnostic_messages::INDEX_SIGNATURES_ARE_INCOMPATIBLE,
-            &[index_kind],
-        );
+        // A source *property* that violates the target index signature elaborates
+        // as `TS2530` "Property '{name}' is incompatible with index signature.";
+        // only a source *index signature* vs the target index is the `TS2634`
+        // "'{kind}' index signatures are incompatible." line. `tsc` splits these
+        // two codes on exactly this distinction.
+        let (incompat_message, incompat_code) = match property_name {
+            Some(name) => (
+                format_message(
+                    diagnostic_messages::PROPERTY_IS_INCOMPATIBLE_WITH_INDEX_SIGNATURE,
+                    &[&self.ctx.types.resolve_atom_ref(name)],
+                ),
+                diagnostic_codes::PROPERTY_IS_INCOMPATIBLE_WITH_INDEX_SIGNATURE,
+            ),
+            None => (
+                format_message(
+                    diagnostic_messages::INDEX_SIGNATURES_ARE_INCOMPATIBLE,
+                    &[index_kind],
+                ),
+                diagnostic_codes::INDEX_SIGNATURES_ARE_INCOMPATIBLE,
+            ),
+        };
 
         let mut diag = if ctx.depth == 0 {
             let source_str = self.format_type_for_diagnostic_role(
@@ -1717,7 +1735,7 @@ impl<'a> CheckerState<'a> {
                 ctx.start,
                 ctx.length,
                 incompat_message,
-                diagnostic_codes::INDEX_SIGNATURES_ARE_INCOMPATIBLE,
+                incompat_code,
                 0,
             );
             diag
@@ -1727,7 +1745,7 @@ impl<'a> CheckerState<'a> {
                 ctx.start,
                 ctx.length,
                 incompat_message,
-                diagnostic_codes::INDEX_SIGNATURES_ARE_INCOMPATIBLE,
+                incompat_code,
             )
         };
 

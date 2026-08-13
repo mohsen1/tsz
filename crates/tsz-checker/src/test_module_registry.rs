@@ -467,6 +467,8 @@ mod index_sig_param_intersection_validity_tests;
 mod index_sig_param_resolved_key_type_tests;
 #[path = "tests/index_signature_check_relation_routing_arch_tests.rs"]
 mod index_signature_check_relation_routing_arch_tests;
+#[path = "tests/index_signature_named_member_ts2530_tests.rs"]
+mod index_signature_named_member_ts2530_tests;
 #[path = "tests/index_signature_nested_object_literal_elaboration_tests.rs"]
 mod index_signature_nested_object_literal_elaboration_tests;
 #[path = "tests/index_signature_property_relation_routing_arch_tests.rs"]
