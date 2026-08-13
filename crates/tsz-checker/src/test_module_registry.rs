@@ -561,6 +561,8 @@ mod jsdoc_shadowed_type_param_identity_tests;
 mod jsdoc_template_reference_scope_tests;
 #[path = "tests/jsdoc_typedef_bare_import_tests.rs"]
 mod jsdoc_typedef_bare_import_tests;
+#[path = "tests/jsdoc_typedef_commonjs_indirect_export_root_ts2300_tests.rs"]
+mod jsdoc_typedef_commonjs_indirect_export_root_ts2300_tests;
 #[path = "tests/jsdoc_typedef_distinct_alias_names_tests.rs"]
 mod jsdoc_typedef_distinct_alias_names_tests;
 #[path = "tests/jsx_children_relation_routing_arch_tests.rs"]
