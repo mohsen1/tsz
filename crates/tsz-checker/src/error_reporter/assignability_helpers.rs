@@ -1400,6 +1400,27 @@ impl<'a> CheckerState<'a> {
         let named_target = self.named_type_display_name(target_type).is_some();
         let date_target = self.named_type_display_name(target_type).as_deref() == Some("Date");
         ordered.sort_by(|(left_index, left_name), (right_index, right_name)| {
+            // tsc resolves early-bound (string/number-keyed) members first and
+            // appends late-bound (symbol-keyed) members after them, so a
+            // missing `[Symbol.iterator]` lists after every missing
+            // string-named property regardless of declaration position
+            // (`alpha, beta, [Symbol.iterator]`). Symbol-keyed members are
+            // recognized by their internal atom encodings: the canonical
+            // `[Symbol.xxx]` well-known key (legacy paths: tsc-escaped
+            // `__@xxx`) and the `__unique_<id>`/`__symbol_<file>_<id>`
+            // binding-identity atoms of user `unique symbol` keys.
+            let symbol_keyed = |name: &tsz_common::interner::Atom| {
+                let text = self.ctx.types.resolve_atom_ref(*name);
+                text.starts_with("[Symbol.")
+                    || text.starts_with("__@")
+                    || text.starts_with("__unique_")
+                    || text.starts_with("__symbol_")
+            };
+            match (symbol_keyed(left_name), symbol_keyed(right_name)) {
+                (false, true) => return std::cmp::Ordering::Less,
+                (true, false) => return std::cmp::Ordering::Greater,
+                _ => {}
+            }
             if array_like_target {
                 let left_text = self.ctx.types.resolve_atom_ref(*left_name);
                 let right_text = self.ctx.types.resolve_atom_ref(*right_name);

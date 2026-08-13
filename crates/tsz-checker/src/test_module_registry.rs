@@ -651,6 +651,8 @@ mod method_return_type_elaboration_tests;
 mod missing_property_base_class_head_tests;
 #[path = "tests/missing_property_declared_here_tests.rs"]
 mod missing_property_declared_here_tests;
+#[path = "tests/missing_property_symbol_members_object_fallback_tests.rs"]
+mod missing_property_symbol_members_object_fallback_tests;
 #[path = "tests/module_scoped_var_shadows_lib_global_ts2300_tests.rs"]
 mod module_scoped_var_shadows_lib_global_ts2300_tests;
 #[path = "tests/multi_overload_infer_capture_tests.rs"]
