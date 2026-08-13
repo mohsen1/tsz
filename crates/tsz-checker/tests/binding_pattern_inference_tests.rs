@@ -371,3 +371,108 @@ function f({ show: showRename = v => v }: Show) {}
          Got diagnostics: {diagnostics:#?}"
     );
 }
+
+/// In a TS file a destructuring-parameter leaf with its own empty-array
+/// initializer (`{ entries = [] }`) is NOT implicit-any: its parameter type is
+/// inferred from the binding pattern and tsc's `reportErrorsFromWidening` does
+/// not fire for an empty-array initializer, so no TS7031 must be reported.
+/// Regression for `destructuringParameterDeclaration10.ts` (the JS counterpart
+/// `destructuringParameterDeclaration9.ts` DOES report — see the JS test below).
+#[test]
+fn no_ts7031_for_binding_leaf_with_empty_array_initializer() {
+    // Binder names are varied (`entries`, `rows`, `items`, `queue`) so the fix
+    // is a structural rule, not a name-scoped suppression.
+    let source = r#"
+export function nested({ group: { entries = [] } = {} } = {}) { entries }
+export function singleLevel({ rows = [] } = {}) { rows }
+export function noOuterDefault({ items = [] }) { items }
+export function arrayPattern([queue = []] = []) { queue }
+export function beyondDefault([head, tail = []] = [1]) { head; tail }
+"#;
+    let diagnostics = compile_and_get_diagnostics(
+        source,
+        CheckerOptions {
+            strict: true,
+            strict_null_checks: true,
+            no_implicit_any: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+    let ts7031: Vec<&(u32, String)> = diagnostics.iter().filter(|(c, _)| *c == 7031).collect();
+    assert!(
+        ts7031.is_empty(),
+        "A binding leaf with its own `= []` initializer must not report TS7031. Got: {ts7031:#?}"
+    );
+}
+
+/// The fix must not silence genuine implicit-any: a leaf with NO initializer of
+/// its own (whether or not the outer pattern has an empty default) is still
+/// implicit-any and must report TS7031, and a `= []` sibling on the same
+/// pattern does not suppress it.
+#[test]
+fn ts7031_still_fires_for_uninitialized_binding_leaf_alongside_empty_array_default() {
+    let source = r#"
+export function mixed({ seeded = [], bare }) { seeded; bare }
+export function arrayMixed([primed = [], plain] = []) { primed; plain }
+"#;
+    let diagnostics = compile_and_get_diagnostics(
+        source,
+        CheckerOptions {
+            strict: true,
+            strict_null_checks: true,
+            no_implicit_any: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+    let ts7031_names: Vec<&str> = diagnostics
+        .iter()
+        .filter(|(c, _)| *c == 7031)
+        .map(|(_, m)| m.as_str())
+        .collect();
+    assert_eq!(
+        ts7031_names.len(),
+        2,
+        "expected TS7031 only for the two uninitialized leaves (`bare`, `plain`), got {ts7031_names:#?}"
+    );
+    assert!(
+        ts7031_names.iter().any(|m| m.contains("'bare'"))
+            && ts7031_names.iter().any(|m| m.contains("'plain'")),
+        "TS7031 must fire for the uninitialized leaves, not the `= []` ones. Got {ts7031_names:#?}"
+    );
+}
+
+/// In a JS file with `checkJs`, tsc DOES report TS7031 for a leaf whose default
+/// is an empty array literal (`{ json = [] }` → `any[]`), unlike the TS case.
+/// This is the `destructuringParameterDeclaration9.ts` behavior; the fix that
+/// suppresses the TS false positive must remain JS-scoped and not silence this.
+#[test]
+fn ts7031_fires_for_empty_array_default_leaf_in_js_checkjs() {
+    let source = r#"
+export function withoutAnnotation({ additionalFiles: { entries = [] } = {} } = {}) { entries }
+"#;
+    let diagnostics = compile_js_and_get_diagnostics(
+        source,
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            strict: true,
+            strict_null_checks: true,
+            no_implicit_any: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+    let ts7031: Vec<&str> = diagnostics
+        .iter()
+        .filter(|(c, _)| *c == 7031)
+        .map(|(_, m)| m.as_str())
+        .collect();
+    assert!(
+        ts7031
+            .iter()
+            .any(|m| m.contains("'entries'") && m.contains("any[]")),
+        "JS (`checkJs`) must report TS7031 `any[]` for an empty-array default leaf. Got {ts7031:#?}"
+    );
+}
