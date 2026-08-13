@@ -125,6 +125,13 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                 self.resolve_literal(request, Some(literal_type), TypeId::BOOLEAN)
             }
             k if k == SyntaxKind::NullKeyword as u16 => TypeId::NULL,
+            // A bare private identifier reached as an expression (e.g. `#a;`,
+            // `return #a;`, or `(#a) in obj`) — grammar-only check (TS18016 /
+            // TS1451); see `check_bare_private_identifier_expression`.
+            k if k == SyntaxKind::PrivateIdentifier as u16 => {
+                self.checker.check_bare_private_identifier_expression(idx);
+                TypeId::ERROR
+            }
             // Binary expressions
             k if k == syntax_kind_ext::BINARY_EXPRESSION => self
                 .checker

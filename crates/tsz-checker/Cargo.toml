@@ -2851,6 +2851,9 @@ path = "tests/ts1501_tests.rs"
 name = "ts18036_class_decorator_static_private_identifier_tests"
 path = "tests/ts18036_class_decorator_static_private_identifier_tests.rs"
 [[test]]
+name = "ts18016_ts1451_bare_private_identifier_expression_tests"
+path = "tests/ts18016_ts1451_bare_private_identifier_expression_tests.rs"
+[[test]]
 name = "import_namespace_ts1147_tests"
 path = "tests/import_namespace_ts1147_tests.rs"
 

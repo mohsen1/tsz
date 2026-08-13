@@ -428,6 +428,54 @@ impl<'a> CheckerState<'a> {
         // needed: tsc does NOT require the RHS to be assignable to the declaring type.
     }
 
+    /// Grammar check for a `PrivateIdentifier` reached as a standalone
+    /// expression through the general expression dispatcher, mirroring tsc's
+    /// `checkGrammarPrivateIdentifierExpression`.
+    ///
+    /// A private name is legal only as a member-access name, a class-member
+    /// declaration, or the direct (unparenthesized) left-hand side of an
+    /// `in` expression. The first two never reach the expression dispatcher
+    /// (their name node is read directly, not type-checked as an
+    /// expression), and the direct `in`-LHS case is excluded below —
+    /// `check_private_identifier_in_expression` already owns it. Every other
+    /// position reports TS18016 when there is no enclosing class at all, or
+    /// TS1451 when there is one but this position is still invalid (e.g.
+    /// `return #a;` inside a method, or `(#a) in obj` — parenthesizing the
+    /// LHS of `in` also makes it a standalone expression).
+    pub(crate) fn check_bare_private_identifier_expression(&mut self, idx: NodeIndex) {
+        if self.is_direct_in_operator_lhs(idx) {
+            return;
+        }
+        let (_, saw_class_scope) = self.resolve_private_identifier_symbols(idx);
+        use crate::diagnostics::diagnostic_codes;
+        let code = if saw_class_scope {
+            diagnostic_codes::PRIVATE_IDENTIFIERS_ARE_ONLY_ALLOWED_IN_CLASS_BODIES_AND_MAY_ONLY_BE_USED_AS_PAR
+        } else {
+            diagnostic_codes::PRIVATE_IDENTIFIERS_ARE_NOT_ALLOWED_OUTSIDE_CLASS_BODIES
+        };
+        self.error_at_node_msg(idx, code, &[]);
+    }
+
+    /// Whether `idx` is exactly the (unparenthesized) left operand of an
+    /// `in` `BinaryExpression` — the one syntactic position where a bare
+    /// `PrivateIdentifier` expression is valid.
+    fn is_direct_in_operator_lhs(&self, idx: NodeIndex) -> bool {
+        let Some(parent_idx) = self.ctx.arena.get_extended(idx).map(|ext| ext.parent) else {
+            return false;
+        };
+        let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
+            return false;
+        };
+        parent_node.kind == syntax_kind_ext::BINARY_EXPRESSION
+            && self
+                .ctx
+                .arena
+                .get_binary_expr(parent_node)
+                .is_some_and(|binary| {
+                    binary.operator_token == SyntaxKind::InKeyword as u16 && binary.left == idx
+                })
+    }
+
     // --- Type Name Validation ---
 
     /// Check a parameter's type annotation for missing type names.
