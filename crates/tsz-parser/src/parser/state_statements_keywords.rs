@@ -1502,11 +1502,20 @@ impl ParserState {
         })
     }
 
-    /// Look ahead to see if we have "await using"
+    /// Look ahead to see if a statement-leading `using` starts a `using`
+    /// declaration (tsc's `isUsingDeclaration` →
+    /// `nextTokenIsBindingIdentifierOrStartOfObjectDestructuringOnSameLine`).
+    ///
+    /// The binding must be a binding identifier or object-destructuring `{` and
+    /// must sit on the **same line** as `using`: `using\nx = 1;` is not a
+    /// declaration — ASI ends the `using` expression statement, and `using` /
+    /// `x` are two ordinary identifier references (tsc reports TS2304 on each).
     pub(crate) fn look_ahead_is_using_declaration(&mut self) -> bool {
-        look_ahead_is(&mut self.scanner, self.current_token, |token| {
-            is_identifier_or_keyword(token) || token == SyntaxKind::OpenBraceToken
-        })
+        look_ahead_is_on_same_line(
+            &mut self.scanner,
+            self.current_token,
+            is_using_declaration_binding_start,
+        )
     }
 
     /// Look ahead for `using` in a for-statement initializer position.
@@ -1533,20 +1542,27 @@ impl ParserState {
                 || next2 == SyntaxKind::SemicolonToken
                 || next2 == SyntaxKind::ColonToken
         } else {
-            (is_identifier_or_keyword(next) || next == SyntaxKind::OpenBraceToken)
-                && !self.scanner.has_preceding_line_break()
+            is_using_declaration_binding_start(next) && !self.scanner.has_preceding_line_break()
         };
 
         self.scanner.restore_state(snapshot);
         result
     }
 
+    /// Look ahead to see if a statement-leading `await using` starts an
+    /// `await using` declaration (tsc's `isAwaitUsingDeclaration` →
+    /// `nextIsUsingKeywordThenBindingIdentifierOrStartOfObjectDestructuringOnSameLine`).
+    ///
+    /// As with the plain `using` form, the binding after `using` must be a
+    /// binding identifier or object-destructuring `{` on the **same line** as
+    /// `using`: `await using\nx = 1;` is not a declaration (ASI splits it).
     pub(crate) fn look_ahead_is_await_using_declaration(&mut self) -> bool {
         let snapshot = self.scanner.save_state();
         let t1 = self.scanner.scan();
         let t2 = self.scanner.scan();
         let result = t1 == SyntaxKind::UsingKeyword
-            && (is_identifier_or_keyword(t2) || t2 == SyntaxKind::OpenBraceToken);
+            && is_using_declaration_binding_start(t2)
+            && !self.scanner.has_preceding_line_break();
         self.scanner.restore_state(snapshot);
         result
     }
@@ -1560,17 +1576,20 @@ impl ParserState {
         let snapshot = self.scanner.save_state();
         let t1 = self.scanner.scan(); // should be `using`
         let t2 = self.scanner.scan(); // binding name or `of`/`in`
+        // The binding must be on the same line as `using` (ASI): `for (await
+        // using\n x of [])` is not a declaration — `using` ends an expression.
+        let t2_same_line = !self.scanner.has_preceding_line_break();
         let result = if t1 != SyntaxKind::UsingKeyword {
             false
         } else if t2 == SyntaxKind::OfKeyword {
             // `await using of` — check if the next token is also `of`,
             // meaning the first `of` is the binding name (e.g., `await using of of [...]`).
             let t3 = self.scanner.scan();
-            t3 == SyntaxKind::OfKeyword
+            t3 == SyntaxKind::OfKeyword && t2_same_line
         } else if t2 == SyntaxKind::InKeyword {
             false
         } else {
-            is_identifier_or_keyword(t2) || t2 == SyntaxKind::OpenBraceToken
+            is_using_declaration_binding_start(t2) && t2_same_line
         };
         self.scanner.restore_state(snapshot);
         result

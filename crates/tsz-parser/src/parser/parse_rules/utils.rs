@@ -18,6 +18,21 @@ pub fn is_identifier_or_contextual_keyword(token: SyntaxKind) -> bool {
         || (tsz_scanner::token_is_keyword(token) && !tsz_scanner::token_is_reserved_word(token))
 }
 
+/// tsc's binding-start test for a `using` / `await using` declaration
+/// (`nextTokenIsBindingIdentifierOrStartOfObjectDestructuring`): the token that
+/// immediately follows `using` begins a `using` declaration only when it is a
+/// binding identifier — an identifier or a *contextual* keyword, so genuine
+/// reserved words (`class`, `if`, `for`, …) are excluded while `yield` / `await`
+/// (reserved only by context) are not — or an object-destructuring `{`. An array
+/// `[` is deliberately not accepted: tsc parses `using [a] = x` as an
+/// element-access expression, never a declaration. The same-line (ASI)
+/// requirement that pairs with this predicate is applied by each caller, since
+/// only the caller knows which scanned token carries the preceding-line-break
+/// flag.
+pub fn is_using_declaration_binding_start(token: SyntaxKind) -> bool {
+    is_identifier_or_contextual_keyword(token) || token == SyntaxKind::OpenBraceToken
+}
+
 /// Look ahead to check if current token is followed by a token matching `check`.
 pub fn look_ahead_is<F>(scanner: &mut ScannerState, _current_token: SyntaxKind, check: F) -> bool
 where
