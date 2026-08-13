@@ -336,6 +336,21 @@ impl<'a> InferenceContext<'a> {
             || has_null
             || all_signature_bearing
             || (array_element_first_wins && all_bare_primitive_intrinsic);
+        // For the bare-primitive array-element case, tsc does not keep the
+        // source-order-leftmost candidate: it orders the candidates by their
+        // TS7 `TypeFlags` rank (the same canonical rank `ts7_union_sort_rank`
+        // uses for union-member print order) before the `reduceLeft`
+        // leftmost-wins fallback runs. `new Map([["", true], ["", 0]])`
+        // infers `V = number` (rank 64) over `boolean` (rank 256) — and the
+        // TS2769 anchor lands on the *other* candidate's element — regardless
+        // of which literal appears first in the source array (issue #17364).
+        // Other first-wins reasons (nullable-stripped, function signatures)
+        // are unaffected: they keep true leftmost-wins.
+        if array_element_first_wins && all_bare_primitive_intrinsic {
+            primary_types.sort_by_key(|&ty| {
+                crate::type_queries::ts7_sort_order::ts7_primitive_rank(ty).unwrap_or(u32::MAX)
+            });
+        }
         let mut result = primary_types[0];
         for &candidate in &primary_types[1..] {
             if self.is_subtype(candidate, result) {

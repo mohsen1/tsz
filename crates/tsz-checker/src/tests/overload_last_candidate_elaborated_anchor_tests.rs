@@ -150,3 +150,53 @@ new Feed(rows);
         "TS2769 must anchor at the argument identifier"
     );
 }
+
+/// Generic `V` inference (issue #17364, `for-of39.ts`): when a type
+/// parameter's candidates come from array-literal tuple elements and are
+/// incompatible bare primitives, tsc does not keep the source-order-leftmost
+/// candidate — it orders candidates by TS7 `TypeFlags` rank (`number` = 64
+/// beats `boolean` = 256) before the `reduceLeft` leftmost-wins fallback
+/// runs. `V` infers to `number`, so `true` (not `0`) is the rejected element
+/// and the anchor lands there, even though `true` is the first entry.
+#[test]
+fn generic_v_inference_prefers_lower_ts7_rank_over_source_order() {
+    let source = r#"
+interface PairStoreCtor {
+    new (): object;
+    new <V>(entries?: readonly (readonly [string, V])[] | null): object;
+    new <V>(entries: readonly (readonly [string, V])[], hint?: string): object;
+}
+declare var PairStore: PairStoreCtor;
+new PairStore([["", true], ["", 0]]);
+"#;
+    let diag = only_ts2769(source);
+    let expected = source.find("true").expect("`true` present") as u32;
+    assert_eq!(
+        (diag.start, diag.length),
+        (expected, 4),
+        "V must infer to number (lower TS7 rank); boolean is the rejected element"
+    );
+}
+
+/// Same family, source order swapped: the winning candidate (`number`) must
+/// stay the same regardless of which literal appears first in the array —
+/// tsc's TypeFlags-rank ordering is not source-order dependent.
+#[test]
+fn generic_v_inference_rank_is_source_order_independent() {
+    let source = r#"
+interface PairStoreCtor {
+    new (): object;
+    new <V>(entries?: readonly (readonly [string, V])[] | null): object;
+    new <V>(entries: readonly (readonly [string, V])[], hint?: string): object;
+}
+declare var PairStore: PairStoreCtor;
+new PairStore([["", 0], ["", true]]);
+"#;
+    let diag = only_ts2769(source);
+    let expected = source.rfind("true").expect("`true` present") as u32;
+    assert_eq!(
+        (diag.start, diag.length),
+        (expected, 4),
+        "swapping source order must not change the winning candidate (V = number)"
+    );
+}
