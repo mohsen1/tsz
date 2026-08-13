@@ -972,14 +972,10 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
     ) {
         let prev_unreachable = self.ctx.is_unreachable;
         let prev_reported = self.ctx.has_reported_unreachable;
-        let prev_allow_unreachable = self.ctx.compiler_options.allow_unreachable_code;
 
         self.ctx.is_unreachable = true;
-        self.ctx.has_reported_unreachable = true;
-        self.ctx.compiler_options.allow_unreachable_code = Some(true);
         CheckerState::check_statement_with_request(self, stmt_idx, request);
 
-        self.ctx.compiler_options.allow_unreachable_code = prev_allow_unreachable;
         self.ctx.is_unreachable = prev_unreachable;
         self.ctx.has_reported_unreachable = prev_reported;
     }
