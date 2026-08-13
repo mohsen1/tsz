@@ -33,13 +33,14 @@
 //! renderer's intersection-target downgrade
 //! (`resolve_intersection_target_for_display_kind`).
 //!
-//! Known residual (NOT pinned here): the order of names *within* the flat
-//! list still differs from tsc for generic multi-declaration lib interfaces —
-//! tsc lists declarations in lib load order (`clear, delete, forEach, get`
-//! first for `Map`) while tsz currently interleaves by per-declaration
-//! member rank. These tests pin the invariants the fix established (code,
-//! count, named-reference display, full-surface membership) without freezing
-//! the known-divergent order.
+//! Member order within the flat list matches tsc's `getPropertiesOfType`
+//! enumeration (#17351): the per-declaration contributions are merged in
+//! canonical lib-file order (`es2015.collection` before `es2015.iterable`
+//! before `es2015.symbol.wellknown`), and symbol-named members
+//! (`[Symbol.iterator]`, `[Symbol.toStringTag]`) are grouped after every
+//! string-named member. So `Map`'s list is `clear, delete, forEach, get, has,
+//! set, size, entries, keys, values, [Symbol.iterator], [Symbol.toStringTag]`,
+//! byte-identical to tsc 6.0.2.
 
 use crate::context::CheckerOptions;
 use crate::test_utils::{check_source_diagnostics, check_source_with_libs, load_default_lib_files};
@@ -76,16 +77,12 @@ fn empty_object_to_map_reports_flat_ts2740_over_all_declarations() {
     );
     let diag = &diags[0];
     assert_eq!(diag.code, 2740, "message: {}", diag.message_text);
-    assert!(
-        diag.message_text
-            .contains("from type 'Map<string, number>'"),
-        "target must render as the named reference, got: {}",
-        diag.message_text
-    );
-    assert!(
-        diag.message_text.contains("and 8 more"),
-        "count must span all three declarations (12 members), got: {}",
-        diag.message_text
+    // Byte-identical to tsc 6.0.2: collection members (in declaration order)
+    // first, then the truncation count, with no per-constituent elaboration.
+    assert_eq!(
+        diag.message_text,
+        "Type '{}' is missing the following properties from type \
+         'Map<string, number>': clear, delete, forEach, get, and 8 more.",
     );
     assert!(
         diag.related_information.is_empty(),
@@ -98,6 +95,42 @@ fn empty_object_to_map_reports_flat_ts2740_over_all_declarations() {
     );
 }
 
+/// The full member order (string members in lib-file order, then symbol
+/// members) matches tsc exactly. A source satisfying the `es2015.collection`
+/// members leaves the iterable + well-known members, revealed in full (5 ⇒ no
+/// truncation): `entries, keys, values, [Symbol.iterator], [Symbol.toStringTag]`
+/// — note `[Symbol.iterator]`, declared FIRST in `es2015.iterable`, is listed
+/// after the string members `entries`/`keys`/`values`, exactly as tsc does.
+#[test]
+fn map_missing_list_orders_string_before_symbol_in_lib_file_order() {
+    let diags = check_with_libs(
+        r#"
+declare const collection: {
+  clear(): void;
+  delete(k: string): boolean;
+  forEach(cb: (v: number, k: string, m: Map<string, number>) => void): void;
+  get(k: string): number | undefined;
+  has(k: string): boolean;
+  set(k: string, v: number): Map<string, number>;
+  size: number;
+};
+const m: Map<string, number> = collection;
+"#,
+    );
+    assert_eq!(diags.len(), 1);
+    let diag = &diags[0];
+    assert_eq!(diag.code, 2739, "message: {}", diag.message_text);
+    assert_eq!(
+        diag.message_text,
+        "Type '{ clear(): void; delete(k: string): boolean; \
+         forEach(cb: (v: number, k: string, m: Map<string, number>) => void): void; \
+         get(k: string): number | undefined; has(k: string): boolean; \
+         set(k: string, v: number): Map<string, number>; size: number; }' is \
+         missing the following properties from type 'Map<string, number>': \
+         entries, keys, values, [Symbol.iterator], [Symbol.toStringTag]",
+    );
+}
+
 /// `WeakMap<K, V>` merges `es2015.collection` (4 members) with
 /// `es2015.symbol.wellknown` (1 member): exactly five missing ⇒ TS2739 with
 /// the full list (no "and N more"), including members from BOTH declarations.
@@ -107,24 +140,12 @@ fn empty_object_to_weakmap_lists_both_declarations_members() {
     assert_eq!(diags.len(), 1);
     let diag = &diags[0];
     assert_eq!(diag.code, 2739, "message: {}", diag.message_text);
-    assert!(
-        diag.message_text
-            .contains("from type 'WeakMap<object, number>'"),
-        "got: {}",
-        diag.message_text
-    );
-    for member in ["delete", "get", "has", "set", "[Symbol.toStringTag]"] {
-        assert!(
-            diag.message_text.contains(member),
-            "missing list must span both declarations; `{member}` absent \
-             from: {}",
-            diag.message_text
-        );
-    }
-    assert!(
-        !diag.message_text.contains("more"),
-        "exactly five missing members list in full, got: {}",
-        diag.message_text
+    // Byte-identical to tsc 6.0.2: `es2015.collection` members in declaration
+    // order, then the `es2015.symbol.wellknown` symbol member last.
+    assert_eq!(
+        diag.message_text,
+        "Type '{}' is missing the following properties from type \
+         'WeakMap<object, number>': delete, get, has, set, [Symbol.toStringTag]",
     );
 }
 

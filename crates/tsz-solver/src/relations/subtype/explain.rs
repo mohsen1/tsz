@@ -1553,10 +1553,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // missing properties in declaration order, not Atom/hash order).
         // For class inheritance, we need to show own properties first, then inherited.
         let target_symbol = get_object_symbol(self.interner, target);
+        // (name, declaration_order, parent, is_symbol_named) — see the sort below.
         let mut missing_with_order: Vec<(
             tsz_common::interner::Atom,
             u32,
             Option<tsz_binder::SymbolId>,
+            bool,
         )> = Vec::new();
         let mut seen_names: rustc_hash::FxHashSet<tsz_common::interner::Atom> =
             rustc_hash::FxHashSet::default();
@@ -1589,17 +1591,24 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                         t_prop.name,
                         t_prop.declaration_order,
                         t_prop.parent_id,
+                        t_prop.is_symbol_named,
                     ));
                 }
             }
         }
         missing_with_order.sort_by(
-            |(left_name, left_order, left_parent), (right_name, right_order, right_parent)| {
+            |(left_name, left_order, left_parent, left_symbol),
+             (right_name, right_order, right_parent, right_symbol)| {
                 let name_order = || {
                     self.interner
                         .resolve_atom_ref(*left_name)
                         .cmp(&self.interner.resolve_atom_ref(*right_name))
                 };
+                // `tsc` lists every string-keyed member before any symbol-keyed
+                // one, so group symbol-named members last (#17351).
+                if left_symbol != right_symbol {
+                    return left_symbol.cmp(right_symbol);
+                }
                 // For class types, own properties (where parent_id matches the target symbol)
                 // should come before inherited properties
                 let left_is_own = target_symbol.is_some() && *left_parent == target_symbol;
@@ -1657,11 +1666,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // Strip it here if the source has call or construct signatures.
         if !missing_with_order.is_empty() && self.type_has_callable_signature(source) {
             let prototype_atom = self.interner.intern_string("prototype");
-            missing_with_order.retain(|(name, _, _)| *name != prototype_atom);
+            missing_with_order.retain(|(name, _, _, _)| *name != prototype_atom);
         }
         let missing_props: Vec<tsz_common::interner::Atom> = missing_with_order
             .into_iter()
-            .map(|(name, _, _)| name)
+            .map(|(name, _, _, _)| name)
             .collect();
 
         if missing_props.len() > 1 {

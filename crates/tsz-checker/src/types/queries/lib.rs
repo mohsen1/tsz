@@ -217,7 +217,12 @@ impl<'a> CheckerState<'a> {
         let factory = self.ctx.types.factory();
         let lib_contexts = self.ctx.lib_contexts.clone();
 
-        let mut lib_types: Vec<TypeId> = Vec::new();
+        // Each contribution is tagged with its lib file's canonical processing
+        // rank so a merged multi-file interface (`Map`/`Set`/`Promise`, split
+        // across `es2015.collection`/`.iterable`/`.symbol.wellknown`) is merged
+        // in `tsc`'s file order regardless of the (parallel-binding-dependent)
+        // `lib_contexts` iteration order — see the sort before the merge below.
+        let mut lib_types: Vec<(u32, TypeId)> = Vec::new();
         let mut first_params: Option<Vec<TypeParamInfo>> = None;
         let mut symbol_has_interface = false;
         // Track canonical TypeIds for the first definition's type parameters.
@@ -229,6 +234,11 @@ impl<'a> CheckerState<'a> {
                 && let Some(symbol) = lib_ctx.binder.get_symbol(sym_id)
             {
                 symbol_has_interface |= symbol.has_any_flags(symbol_flags::INTERFACE);
+                // Canonical processing rank of this lib file, used to order the
+                // per-context contributions before merging (below).
+                let ctx_rank = lib_ctx.arena.source_files.first().map_or(u32::MAX, |sf| {
+                    tsz_common::lib_capabilities::lib_file_order_rank(&sf.file_name)
+                });
                 // Multi-arena setup: Get the fallback arena
                 let fallback_arena: &NodeArena = resolve_lib_context_fallback_arena(
                     &lib_ctx.binder,
@@ -333,7 +343,7 @@ impl<'a> CheckerState<'a> {
                                     params.clone(),
                                 );
 
-                                lib_types.push(ty);
+                                lib_types.push((ctx_rank, ty));
                             } else if !params.is_empty() && !canonical_param_type_ids.is_empty() {
                                 // For subsequent definitions with type params, substitute them
                                 // with the canonical TypeIds to ensure consistency.
@@ -347,12 +357,12 @@ impl<'a> CheckerState<'a> {
                                 if !subst.is_empty() {
                                     let substituted_ty =
                                         instantiate_type(self.ctx.types, ty, &subst);
-                                    lib_types.push(substituted_ty);
+                                    lib_types.push((ctx_rank, substituted_ty));
                                 } else {
-                                    lib_types.push(ty);
+                                    lib_types.push((ctx_rank, ty));
                                 }
                             } else {
-                                lib_types.push(ty);
+                                lib_types.push((ctx_rank, ty));
                             }
                             continue;
                         }
@@ -371,7 +381,7 @@ impl<'a> CheckerState<'a> {
                                 // collisions between per-lib-context and main binder identities.
                                 self.ctx
                                     .cache_canonical_lib_type_params(name, sym_id, params);
-                                lib_types.push(ty);
+                                lib_types.push((ctx_rank, ty));
                                 break;
                             }
                         }
@@ -390,18 +400,41 @@ impl<'a> CheckerState<'a> {
                         .and_then(|v| v.first())
                         .map_or(fallback_arena, |arc| arc.as_ref());
                     let value_lowering = lowering.with_arena(value_arena);
-                    lib_types.push(value_lowering.lower_type(decl_idx));
+                    lib_types.push((ctx_rank, value_lowering.lower_type(decl_idx)));
                     break;
                 }
             }
         }
 
+        // Merge the per-context contributions in canonical lib-file order. The
+        // `lib_contexts` iteration order is parallel-binding dependent and does
+        // not match `tsc`'s file processing order (it can visit
+        // `es2015.iterable` before `es2015.collection`), so sort by each
+        // contribution's file rank first — a stable sort keeps equal-rank and
+        // unlisted (`u32::MAX`, e.g. a value declaration) contributions in their
+        // original relative order.
+        lib_types.sort_by_key(|(rank, _)| *rank);
         let mut lib_type_id = match lib_types.len() {
-            1 => Some(lib_types[0]),
+            1 => Some(lib_types[0].1),
             n if n > 1 => {
-                let mut merged = lib_types[0];
-                for &ty in &lib_types[1..] {
-                    merged = if symbol_has_interface && self.ctx.emit_declarations() {
+                let mut merged = lib_types[0].1;
+                for &(_, ty) in &lib_types[1..] {
+                    // Merge repeated lib interface declarations with interface-merge
+                    // semantics (a single ordered object shape) instead of a raw
+                    // intersection — unconditionally, matching the sibling
+                    // `resolve_lib_type_by_name`. A generic multi-declaration lib
+                    // interface (`Map`/`Set`/`WeakMap`/`Promise`, split across
+                    // `es2015.collection`/`.iterable`/`.symbol.wellknown`) otherwise
+                    // resolves to an `Intersection` of per-declaration shapes whose
+                    // members each restart `declaration_order` at 1, so a missing-
+                    // property diagnostic interleaves them instead of listing
+                    // declarations in lib-load order the way `tsc` does (#17351). The
+                    // interface merge rebases each declaration's members after the
+                    // previous one, yielding the flat cross-declaration order; it also
+                    // preserves construct signatures that intersecting callable shapes
+                    // would drop (the `RangeErrorConstructor` split). Non-interface lib
+                    // entities still intersect.
+                    merged = if symbol_has_interface {
                         self.merge_interface_types(merged, ty)
                     } else {
                         factory.intersection2(merged, ty)

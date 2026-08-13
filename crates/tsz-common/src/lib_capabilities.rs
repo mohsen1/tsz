@@ -251,9 +251,132 @@ pub fn dom_global_symbols() -> impl Iterator<Item = &'static str> {
         .map(|entry| entry.symbol)
 }
 
+/// Canonical processing order of the standard-lib `.d.ts` files, in the same
+/// relative sequence `tsc` loads them (an `es5` base, then each `esNNNN`
+/// version's atomic sublibs in `es2015.core`, `es2015.collection`,
+/// `es2015.generator`, `es2015.iterable`, `…` order). Only the relative order
+/// matters, and only for files that co-declare the same merged interface.
+///
+/// This is a display-ordering concern, not a semantic one: it lets a merged
+/// standard-lib interface (`Map`/`Set`/`WeakMap`/`Promise`, split across several
+/// lib files) present its members — in a missing-property diagnostic — in the
+/// order `tsc`'s `getPropertiesOfType` enumerates them (declaration/file order,
+/// with symbol-named members grouped last by the consumer). Files absent from
+/// this list rank last, so a user `.ts` module or an unlisted lib keeps its
+/// existing relative position under a stable sort. Kept in sync with the
+/// `VALID_LIB_VALUES` catalog in `tsz-core`; `lib_file_order_is_monotonic`
+/// pins the family invariants a drift would break.
+const LIB_FILE_ORDER: &[&str] = &[
+    "es5",
+    "es2015.core",
+    "es2015.collection",
+    "es2015.generator",
+    "es2015.iterable",
+    "es2015.promise",
+    "es2015.proxy",
+    "es2015.reflect",
+    "es2015.symbol",
+    "es2015.symbol.wellknown",
+    "es2016.array.include",
+    "es2016.intl",
+    "es2017.arraybuffer",
+    "es2017.date",
+    "es2017.object",
+    "es2017.sharedmemory",
+    "es2017.string",
+    "es2017.intl",
+    "es2017.typedarrays",
+    "es2018.asyncgenerator",
+    "es2018.asynciterable",
+    "es2018.intl",
+    "es2018.promise",
+    "es2018.regexp",
+    "es2019.array",
+    "es2019.object",
+    "es2019.string",
+    "es2019.symbol",
+    "es2019.intl",
+    "es2020.bigint",
+    "es2020.date",
+    "es2020.promise",
+    "es2020.sharedmemory",
+    "es2020.string",
+    "es2020.symbol.wellknown",
+    "es2020.intl",
+    "es2020.number",
+    "es2021.promise",
+    "es2021.string",
+    "es2021.weakref",
+    "es2021.intl",
+    "es2022.array",
+    "es2022.error",
+    "es2022.intl",
+    "es2022.object",
+    "es2022.string",
+    "es2022.regexp",
+    "es2023.array",
+    "es2023.collection",
+    "es2023.intl",
+    "es2024.arraybuffer",
+    "es2024.collection",
+    "es2024.object",
+    "es2024.promise",
+    "es2024.regexp",
+    "es2024.sharedmemory",
+    "es2024.string",
+    "es2025.collection",
+    "es2025.float16",
+    "es2025.intl",
+    "es2025.iterator",
+    "es2025.promise",
+    "es2025.regexp",
+    "dom",
+    "dom.iterable",
+    "dom.asynciterable",
+    "webworker",
+    "webworker.iterable",
+    "webworker.asynciterable",
+    "scripthost",
+];
+
+/// Canonical ordering rank of a `lib.*.d.ts` file (see [`LIB_FILE_ORDER`]).
+/// Accepts a path or a bare file name; reduces it to the catalog key
+/// (`lib.es2015.collection.d.ts` → `es2015.collection`). Unlisted names —
+/// including any user `.ts` file — rank `u32::MAX`.
+#[must_use]
+pub fn lib_file_order_rank(file_name: &str) -> u32 {
+    let base = file_name.rsplit(['/', '\\']).next().unwrap_or(file_name);
+    let key = base
+        .strip_prefix("lib.")
+        .unwrap_or(base)
+        .strip_suffix(".d.ts")
+        .unwrap_or(base);
+    LIB_FILE_ORDER
+        .iter()
+        .position(|&candidate| candidate == key)
+        .map_or(u32::MAX, |idx| idx as u32)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lib_file_order_is_monotonic() {
+        // The families that co-declare a merged standard-lib interface must be
+        // ordered exactly as `tsc` processes their files.
+        let rank = |name: &str| lib_file_order_rank(name);
+        // Map/Set/WeakMap/ReadonlyMap.
+        assert!(rank("lib.es2015.collection.d.ts") < rank("lib.es2015.iterable.d.ts"));
+        assert!(rank("lib.es2015.iterable.d.ts") < rank("lib.es2015.symbol.wellknown.d.ts"));
+        // Promise: the es2018 augment's string member (`finally`) still ranks by
+        // file after the es2015 base, and both before the well-known-symbol file.
+        assert!(rank("lib.es2015.promise.d.ts") < rank("lib.es2018.promise.d.ts"));
+        // Array-family base precedes its es2015 iteration augment.
+        assert!(rank("es5") < rank("es2015.iterable"));
+        // Unlisted (user) files rank last.
+        assert_eq!(rank("/proj/src/main.ts"), u32::MAX);
+    }
 
     #[test]
     fn baseline_validation_excludes_dom_globals() {
