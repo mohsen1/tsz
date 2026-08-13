@@ -44,6 +44,9 @@ path = "tests/evolving_array_assignment_contextual_inference_tests.rs"
 name = "arithmetic_nullish_operand_non_strict_tests"
 path = "tests/arithmetic_nullish_operand_non_strict_tests.rs"
 [[test]]
+name = "implicit_any_var_undefined_flow_tests"
+path = "tests/implicit_any_var_undefined_flow_tests.rs"
+[[test]]
 name = "enum_member_binding_widening_tests"
 path = "tests/enum_member_binding_widening_tests.rs"
 [[test]]

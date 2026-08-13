@@ -109,7 +109,22 @@ impl<'a> CheckerState<'a> {
         // x has a definite value — TS2454 should not fire in narrowed branches.
         trace!("Applying flow narrowing");
         let mut narrowed_type = self.apply_flow_narrowing(idx, declared_type);
-        if declared_type == TypeId::ANY && self.is_control_flow_typed_any_symbol(sym_id) {
+        // The auto/evolving-any treatment of an unannotated `var`/`let` — evolving
+        // its read type from control-flow assignments, and (under strictNullChecks)
+        // surfacing `undefined` before assignment — is tsc's `noImplicitAny`
+        // behavior. With `noImplicitAny` OFF the declaration is a *plain* `any`:
+        // `getTypeOfVariableOrParameterOrProperty` returns `anyType` and
+        // `convertAutoToAny` resolves every read to `any`, so no read ever evolves
+        // to a concrete type (`var x; x = 1; x.foo` is clean) or narrows to
+        // `undefined` (`var s; switch (s) { case "a": }` is clean). Gating the whole
+        // evolving block on `no_implicit_any()` keeps the concrete/undefined reads
+        // for the `noImplicitAny` mode that produces them and leaves plain `any`
+        // untouched otherwise. See `controlFlowCaching.ts` (a `@strict: false`
+        // `@strictNullChecks: true` fixture) for the false positives this removes.
+        if declared_type == TypeId::ANY
+            && self.ctx.no_implicit_any()
+            && self.is_control_flow_typed_any_symbol(sym_id)
+        {
             let is_assigned = self.is_definitely_assigned_at_with_symbol(idx, Some(sym_id));
             if is_assigned {
                 let evolved_type = self.apply_flow_narrowing_with_initial_type(
@@ -127,10 +142,11 @@ impl<'a> CheckerState<'a> {
             {
                 // For control-flow-typed `any` variables (e.g., `var p;`) that are
                 // NOT definitely assigned at the usage point, the runtime value is
-                // `undefined` (var hoisting initializes to undefined). tsc uses
-                // `undefined` as the initial type for such variables in its control
-                // flow analysis. This causes downstream diagnostics like TS18048
-                // ("'p' is possibly 'undefined'") when `p` is used in comparisons.
+                // `undefined` (var hoisting initializes to undefined). Under
+                // `noImplicitAny` tsc uses `undefined` as the initial type for such
+                // variables in its control flow analysis. This causes downstream
+                // diagnostics like TS18048 ("'p' is possibly 'undefined'") when `p`
+                // is used in comparisons.
                 //
                 // Guards:
                 // - strictNullChecks only: with it off, tsc's convertAutoToAny
