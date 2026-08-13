@@ -170,10 +170,14 @@ impl<'a> CheckerState<'a> {
         result
     }
 
-    pub(crate) fn source_file_has_jsdoc_typedef_named(
-        source_file: &SourceFileData,
-        name: &str,
-    ) -> bool {
+    /// Whether `source_file` declares a JSDoc `@typedef`/`@callback`/`@import`
+    /// tag named `name`, regardless of whether that name is otherwise
+    /// exported. tsc lets an unexported JSDoc typedef be referenced from
+    /// another file via an inline `import("./mod").Name` type query (see
+    /// `resolve_jsdoc_import_type_reference`) — this is the query boundary
+    /// LSP code actions use to find that quirk's candidates without owning
+    /// the JSDoc text-parsing algorithm themselves.
+    pub fn source_file_has_jsdoc_typedef_named(source_file: &SourceFileData, name: &str) -> bool {
         use tsz_common::comments::{get_jsdoc_content, is_jsdoc_comment};
 
         if source_file.comments.is_empty() {

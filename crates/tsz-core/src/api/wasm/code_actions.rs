@@ -49,6 +49,7 @@ impl TryFrom<ImportCandidateInput> for ImportCandidate {
             local_name,
             kind,
             is_type_only: input.is_type_only,
+            jsdoc_typedef: false,
         })
     }
 }

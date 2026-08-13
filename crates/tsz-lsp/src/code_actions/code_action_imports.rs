@@ -1680,27 +1680,51 @@ impl<'a> CodeActionProvider<'a> {
             if candidate.local_name != missing_name {
                 continue;
             }
-            if usage == ImportUsage::Value && candidate.is_type_only {
+            // A JSDoc typedef candidate is always type-only by construction
+            // even when `usage` misreads as `Value` — JSDoc comment text has
+            // no backing AST `Identifier` node for `import_usage_for_node`
+            // to classify, so `diagnostic_identifier_usage` falls back to
+            // parsing the diagnostic message and defaults to `Value`.
+            if usage == ImportUsage::Value && candidate.is_type_only && !candidate.jsdoc_typedef {
                 continue;
             }
 
-            let mut resolved = candidate.clone();
-            // Use `import type` when the identifier is only used in a type position
-            // (type annotations, implements clauses, etc.). For value usage, use a
-            // regular import so the symbol is available at runtime.
-            resolved.is_type_only = usage == ImportUsage::Type;
+            let (edits, title) = if candidate.jsdoc_typedef {
+                // Not formally exported, but tsc still resolves an unexported
+                // JSDoc typedef/callback/import name through an inline
+                // `import("./mod").Name` type query — insert that qualifier
+                // right before the usage instead of adding an import
+                // declaration (TS18042: a real import of a pure type is
+                // rejected in a JS file). See `ImportCandidate::jsdoc_typedef`.
+                let insert_range = Range {
+                    start: diag.range.start,
+                    end: diag.range.start,
+                };
+                let prefix = format!("import(\"{}\").", candidate.module_specifier);
+                let title = format!(
+                    "Import '{}' via 'import(\"{}\").{}'",
+                    candidate.local_name, candidate.module_specifier, candidate.local_name
+                );
+                (vec![TextEdit::new(insert_range, prefix)], title)
+            } else {
+                let mut resolved = candidate.clone();
+                // Use `import type` when the identifier is only used in a type position
+                // (type annotations, implements clauses, etc.). For value usage, use a
+                // regular import so the symbol is available at runtime.
+                resolved.is_type_only = usage == ImportUsage::Type;
 
-            let Some(edits) = self.build_import_edit(root, &resolved) else {
-                continue;
+                let Some(edits) = self.build_import_edit(root, &resolved) else {
+                    continue;
+                };
+                let title = format!(
+                    "Import '{}' from '{}'",
+                    candidate.local_name, candidate.module_specifier
+                );
+                (edits, title)
             };
 
             let mut changes = FxHashMap::default();
             changes.insert(self.file_name.clone(), edits);
-
-            let title = format!(
-                "Import '{}' from '{}'",
-                candidate.local_name, candidate.module_specifier
-            );
             actions.push(CodeAction {
                 title,
                 kind: CodeActionKind::QuickFix,
