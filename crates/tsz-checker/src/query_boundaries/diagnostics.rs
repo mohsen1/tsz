@@ -1045,6 +1045,31 @@ pub(crate) fn type_application(
     tsz_solver::type_queries::get_type_application(db, type_id)
 }
 
+/// Whether `ty` is a reference to an `interface` definition — a `Lazy(DefId)`
+/// or an `Application(Lazy(DefId), …)` instantiation whose definition kind is
+/// `DefKind::Interface`.
+///
+/// A merged multi-declaration interface (e.g. the lib's `Map<K, V>`, declared
+/// across `es2015.collection` / `es2015.iterable` / `es2015.symbol.wellknown`)
+/// structurally evaluates to an intersection of its per-declaration shapes,
+/// but tsc reports relation failures against it as one named interface
+/// surface, never with the written-intersection framing. Diagnostic decision
+/// sites that special-case intersection targets use this to keep that
+/// distinction. A type-alias reference (including a written `A & B` alias
+/// body) is not an interface reference.
+pub(crate) fn is_interface_reference(
+    db: &dyn tsz_solver::construction::TypeDatabase,
+    def_store: &tsz_solver::def::DefinitionStore,
+    ty: TypeId,
+) -> bool {
+    let base = type_application(db, ty).map_or(ty, |app| app.base);
+    crate::query_boundaries::common::lazy_def_id(db, base).is_some_and(|def_id| {
+        def_store
+            .get(def_id)
+            .is_some_and(|def| def.kind == tsz_solver::def::DefKind::Interface)
+    })
+}
+
 pub(crate) fn same_non_class_nominal_application_surface<R: tsz_solver::resolver::TypeResolver>(
     db: &dyn tsz_solver::construction::TypeDatabase,
     resolver: &R,

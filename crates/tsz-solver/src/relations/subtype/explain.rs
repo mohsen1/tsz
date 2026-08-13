@@ -134,7 +134,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// Collect source properties including those from intersection members.
     /// This ensures merged types (e.g., `{ a: string } & { b: number }`) have
     /// all properties available for missing property checks.
-    fn collect_source_properties(&self, source: TypeId) -> Vec<PropertyInfo> {
+    pub(in crate::relations::subtype) fn collect_source_properties(
+        &self,
+        source: TypeId,
+    ) -> Vec<PropertyInfo> {
         use crate::type_queries::data::get_intersection_members;
 
         let mut props = Vec::new();
@@ -455,11 +458,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // properties is misleading. Return TypeMismatch so the checker emits TS2322.
         // Check BEFORE evaluate_type, which may merge intersection members into
         // a single object, losing the intersection information.
-        if crate::visitor::intersection_list_id(self.interner, resolved_target).is_some() {
-            return Some(SubtypeFailureReason::TypeMismatch {
-                source_type: source,
-                target_type: target,
-            });
+        if let Some(reason) =
+            self.explain_intersection_target(source, target, resolved_source, resolved_target)
+        {
+            return Some(reason);
         }
 
         // Evaluate meta-types (Mapped, Conditional, KeyOf, etc.) to structural forms.
@@ -1541,7 +1543,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     }
 
     /// Explain why an object type assignment failed.
-    fn explain_object_failure(
+    pub(in crate::relations::subtype) fn explain_object_failure(
         &mut self,
         source: TypeId,
         target: TypeId,

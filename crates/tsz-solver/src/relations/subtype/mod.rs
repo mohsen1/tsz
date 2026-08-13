@@ -16,6 +16,7 @@ pub(crate) mod explain;
 pub(crate) mod explain_function;
 pub(crate) mod explain_guard;
 pub(crate) mod explain_indexes;
+pub(crate) mod explain_merged_interface;
 pub(crate) mod explain_tuple;
 pub(crate) mod explain_union_discriminant;
 pub(crate) mod explain_union_order;

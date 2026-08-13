@@ -1075,6 +1075,17 @@ impl<'a> CheckerState<'a> {
         target: TypeId,
         anchor_idx: NodeIndex,
     ) -> Option<(TypeId, bool)> {
+        // A merged multi-declaration interface reference (e.g. the lib's
+        // `Map<K, V>`) evaluates to an intersection of its per-declaration
+        // shapes, but tsc reports a missing-property failure against it as ONE
+        // named interface surface (flat TS2740/TS2739/TS2741 naming
+        // `Map<string, number>`), never with the intersection downgrade or the
+        // per-member elaboration this helper drives.
+        if [target, target_type].into_iter().any(|t| {
+            diagnostic_query::is_interface_reference(self.ctx.types, &self.ctx.definition_store, t)
+        }) {
+            return None;
+        }
         let evaluated = self.evaluate_type_with_env(target);
         if let Some(direct) = [evaluated, target, target_type]
             .into_iter()
