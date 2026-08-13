@@ -127,3 +127,91 @@ fn readonly_or_static_index_signature_has_no_ts1071() {
 fn bare_index_signature_has_no_ts1071() {
     assert_ts1071_count("class", "", 0);
 }
+
+// =========================================================================
+// TS4112 — `override` on a class index signature also draws the
+// "containing class does not extend another class" diagnostic.
+//
+// `override` is never legal on a class index signature (TS1071 above), but
+// tsc reports TS4112 alongside it exactly as it does for an ordinary member,
+// because the index signature is still a member of a class that extends
+// nothing. Verified against typescript@7.0.2:
+//
+//   class K { override [k: string]: number; }
+//             ^ (1,11) TS1071   (1,11) TS4112
+//   class L extends B { override [k: string]: number; }   -> TS1071 only
+//   class M { declare override [k: string]: number; }     -> TS1071 only
+//
+// Index signatures are type-resolution metadata rather than members, so they
+// never reach the own-member summary that carries the ordinary-member TS4112
+// walk; before this fix the shape produced TS1071 alone.
+// =========================================================================
+
+/// Count of `code` for `<decl>` swept over the class-name × key-name matrix.
+fn assert_code_count(decl: &str, code: u32, expected: usize) {
+    for name in CLASS_NAMES {
+        for key in KEY_NAMES {
+            let source = decl.replace("$NAME", name).replace("$KEY", key);
+            let count = diags(&source).iter().filter(|&&c| c == code).count();
+            assert_eq!(
+                count,
+                expected,
+                "expected {expected} TS{code} in `{source}`, got {:?}",
+                diags(&source)
+            );
+        }
+    }
+}
+
+#[test]
+fn override_index_signature_without_base_reports_ts4112() {
+    assert_code_count("class $NAME { override [$KEY: string]: number; }", 4112, 1);
+}
+
+#[test]
+fn override_index_signature_with_base_does_not_report_ts4112() {
+    // With a base class the `override` is still illegal on an index signature
+    // (TS1071), but TS4112 is specifically about extending nothing.
+    assert_code_count(
+        "class Base0 {} class $NAME extends Base0 { override [$KEY: string]: number; }",
+        4112,
+        0,
+    );
+}
+
+#[test]
+fn declare_override_index_signature_suppresses_ts4112() {
+    // `declare` + `override` already produced its own grammar diagnostic, and
+    // tsc reports only TS1071 here — the same suppression the ordinary-member
+    // walk applies via its `has_declare` guard.
+    assert_code_count(
+        "class $NAME { declare override [$KEY: string]: number; }",
+        4112,
+        0,
+    );
+}
+
+#[test]
+fn override_index_signature_still_reports_its_ts1071() {
+    // The new TS4112 must not displace the grammar diagnostic: tsc emits both,
+    // anchored at the same `override` token.
+    assert_ts1071_count("class", "override ", 1);
+}
+
+#[test]
+fn readonly_and_static_index_signatures_never_report_ts4112() {
+    // Legal modifiers, no `override` — the new walk must stay silent.
+    for prefix in ["", "readonly ", "static ", "static readonly "] {
+        assert_code_count(
+            &format!("class $NAME {{ {prefix}[$KEY: string]: number; }}"),
+            4112,
+            0,
+        );
+    }
+}
+
+#[test]
+fn interface_index_signature_never_reports_ts4112() {
+    // TS4112 is a class-member rule; an interface index signature is untouched.
+    assert_code_count("interface $NAME { [$KEY: string]: number; }", 4112, 0);
+}
