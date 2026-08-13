@@ -251,7 +251,14 @@ class C {
 }
 
 #[test]
-fn checked_js_const_merged_with_ambient_class_reports_ts2739_not_ts2451() {
+fn checked_js_const_conflicting_with_ambient_class_reports_ts2451_not_ts2739() {
+    // A `const` does not declaration-merge with a class (only `function`
+    // does — `FUNCTION_EXCLUDES` omits `CLASS`), so this is an ordinary
+    // cross-file block-scoped-variable-vs-class name conflict. Verified
+    // against the pinned `typescript@7.0.2` oracle: `declare class A {
+    // static d: number; }` + `const A = {};` reports `TS2451` on *both*
+    // files and nothing else — no assignability check runs, because there
+    // is no merge to check the initializer against.
     let diagnostics = check_entry_with_libs(
         &[
             (
@@ -273,26 +280,18 @@ declare class A {
         },
     );
 
-    assert!(
-        !diagnostics.iter().any(|(code, _)| *code == 2451),
-        "Did not expect TS2451 for checked-JS const merged with ambient class. Actual diagnostics: {diagnostics:#?}"
-    );
-
-    let ts2739: Vec<_> = diagnostics
+    let ts2451: Vec<_> = diagnostics
         .iter()
-        .filter(|(code, _)| *code == 2739)
+        .filter(|(code, _)| *code == 2451)
         .collect();
     assert_eq!(
-        ts2739.len(),
+        ts2451.len(),
         1,
-        "Expected exactly one TS2739 for the merged JS/class constructor-side value. Actual diagnostics: {diagnostics:#?}"
+        "Expected exactly one TS2451 for the JS `const` vs TS `class` name conflict. Actual diagnostics: {diagnostics:#?}"
     );
+
     assert!(
-        ts2739[0]
-            .1
-            .contains("Type '{}' is missing the following properties from type 'typeof A'")
-            && ts2739[0].1.contains("prototype")
-            && ts2739[0].1.contains("d"),
-        "Expected the checked-JS const initializer to be checked against the ambient class value shape. Actual diagnostics: {diagnostics:#?}"
+        !diagnostics.iter().any(|(code, _)| *code == 2739),
+        "Did not expect TS2739 — a variable never merges with a class. Actual diagnostics: {diagnostics:#?}"
     );
 }
