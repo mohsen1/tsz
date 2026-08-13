@@ -1206,14 +1206,27 @@ impl<'a> CheckerState<'a> {
                     &[name, "abstract"],
                 );
 
-                // Point to whichever modifier comes second
-                let (abs_start, _) = self.get_node_span(abs_node).unwrap_or((0, 0));
-                let (con_start, _) = self.get_node_span(conflict_idx).unwrap_or((0, 0));
-
-                let error_node = if con_start > abs_start {
+                // `private`/`static` anchor at whichever modifier comes
+                // second, matching tsc's generic pairwise modifier walk
+                // (each keyword's own switch-arm reports the conflict at
+                // itself once it sees the other flag already set — so the
+                // later-written modifier is always the one reported).
+                // `async` does not follow that pattern: tsc validates it via
+                // a dedicated async-modifier grammar check that always
+                // anchors at the `async` keyword itself, regardless of
+                // whether it is written before or after `abstract` (oracle:
+                // `classAbstractMixedWithModifiers.ts`'s `abstract async`
+                // and `async abstract` cases both anchor on `async`).
+                let error_node = if name == "async" {
                     conflict_idx
                 } else {
-                    abs_node
+                    let (abs_start, _) = self.get_node_span(abs_node).unwrap_or((0, 0));
+                    let (con_start, _) = self.get_node_span(conflict_idx).unwrap_or((0, 0));
+                    if con_start > abs_start {
+                        conflict_idx
+                    } else {
+                        abs_node
+                    }
                 };
 
                 self.error_at_node(
