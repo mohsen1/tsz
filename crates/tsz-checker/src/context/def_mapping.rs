@@ -768,11 +768,29 @@ impl CheckerContext<'_> {
                         //    actually NAMED `name`.
                         //
                         // 3. Historical highest-`symbol_id` tiebreak.
-                        let sym_id = self
-                            .definition_store
-                            .get(*def_id)
-                            .and_then(|info| info.symbol_id)
-                            .map(SymbolId);
+                        //
+                        // 4. Deterministic authoritative-identity tiebreak
+                        //    (#16309 evidence #1/#2). Under parallel fresh
+                        //    checking a per-file checker can mint an
+                        //    intermediate, pre-heritage-merge def for the SAME
+                        //    lib symbol (same `symbol_id`) as the pre-populated
+                        //    `u32::MAX`-sentinel def (the materialized
+                        //    heritage-merged identity). Those defs tie on keys
+                        //    1-3, so `max_by_key` fell through to the
+                        //    `find_defs_by_name` push order, i.e. whichever
+                        //    thread registered last: the resolved
+                        //    `DecoratorContext` body one run, an unresolved
+                        //    placeholder (`["kind"]` collapsing to `undefined`)
+                        //    the next. Prefer the sentinel — a FIXED structural
+                        //    witness (`file_id`), unlike body-materialization
+                        //    state, which is itself thread-timing dependent and
+                        //    so cannot key a deterministic order. Fires only
+                        //    when keys 1-3 already tie (same-symbol duplicates),
+                        //    which are otherwise content-equivalent, so
+                        //    single-threaded / non-duplicated election is
+                        //    unchanged.
+                        let sym_id = self.definition_store.get_symbol_id(*def_id).map(SymbolId);
+                        let is_sentinel = self.definition_store.def_is_non_program(*def_id);
                         let canonical_match = sym_id == Some(canonical_sym);
                         let name_verified = sym_id.is_some_and(|sym| {
                             self.binder
@@ -789,6 +807,7 @@ impl CheckerContext<'_> {
                             canonical_match,
                             name_verified,
                             sym_id.map(|s| s.0).unwrap_or_default(),
+                            is_sentinel,
                         )
                     })
             })
