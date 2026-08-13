@@ -65,6 +65,10 @@ pub(crate) use fingerprint_policy::{
 };
 
 #[cfg(test)]
+#[path = "fingerprint_policy_tests.rs"]
+mod fingerprint_policy_tests;
+
+#[cfg(test)]
 #[path = "render_request_tests.rs"]
 mod render_request_tests;
 

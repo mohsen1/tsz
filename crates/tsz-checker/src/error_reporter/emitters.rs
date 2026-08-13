@@ -4,6 +4,7 @@
 use crate::diagnostics::{Diagnostic, format_message};
 use crate::error_reporter::fingerprint_policy::{
     DiagnosticAnchorKind, DiagnosticRenderRequest, RelatedInfoStrategy, ResolvedDiagnosticAnchor,
+    normalize_related_information_blocks,
 };
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
@@ -408,7 +409,7 @@ impl<'a> CheckerState<'a> {
         }
 
         if !diag.related_information.is_empty() {
-            diag.related_information = self.normalize_related_information(
+            diag.related_information = normalize_related_information_blocks(
                 std::mem::take(&mut diag.related_information),
                 request.related_policy,
             );
@@ -455,7 +456,7 @@ impl<'a> CheckerState<'a> {
         }
 
         if !diag.related_information.is_empty() {
-            diag.related_information = self.normalize_related_information(
+            diag.related_information = normalize_related_information_blocks(
                 std::mem::take(&mut diag.related_information),
                 request.related_policy,
             );
