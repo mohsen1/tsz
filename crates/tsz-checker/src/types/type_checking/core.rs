@@ -434,16 +434,18 @@ impl<'a> CheckerState<'a> {
     ///
     /// A private name is legal only as a member-access name, a class-member
     /// declaration, or the direct (unparenthesized) left-hand side of an
-    /// `in` expression. The first two never reach the expression dispatcher
-    /// (their name node is read directly, not type-checked as an
-    /// expression), and the direct `in`-LHS case is excluded below —
-    /// `check_private_identifier_in_expression` already owns it. Every other
-    /// position reports TS18016 when there is no enclosing class at all, or
-    /// TS1451 when there is one but this position is still invalid (e.g.
-    /// `return #a;` inside a method, or `(#a) in obj` — parenthesizing the
-    /// LHS of `in` also makes it a standalone expression).
+    /// `in` expression. Class-member declarations never reach the expression
+    /// dispatcher (their name node is read directly, not type-checked as an
+    /// expression); the other two are excluded below — property access and
+    /// `check_private_identifier_in_expression` already own them (a
+    /// property-access name on an `any`-typed receiver, in particular, does
+    /// still reach general expression evaluation for its name node). Every
+    /// other position reports TS18016 when there is no enclosing class at
+    /// all, or TS1451 when there is one but this position is still invalid
+    /// (e.g. `return #a;` inside a method, or `(#a) in obj` — parenthesizing
+    /// the LHS of `in` also makes it a standalone expression).
     pub(crate) fn check_bare_private_identifier_expression(&mut self, idx: NodeIndex) {
-        if self.is_direct_in_operator_lhs(idx) {
+        if self.private_identifier_is_in_valid_expression_position(idx) {
             return;
         }
         let (_, saw_class_scope) = self.resolve_private_identifier_symbols(idx);
@@ -456,16 +458,24 @@ impl<'a> CheckerState<'a> {
         self.error_at_node_msg(idx, code, &[]);
     }
 
-    /// Whether `idx` is exactly the (unparenthesized) left operand of an
-    /// `in` `BinaryExpression` — the one syntactic position where a bare
-    /// `PrivateIdentifier` expression is valid.
-    fn is_direct_in_operator_lhs(&self, idx: NodeIndex) -> bool {
+    /// Whether `idx` sits in one of the two *expression* positions where a
+    /// `PrivateIdentifier` is grammatically valid and already owned by a
+    /// dedicated check: the name of a member access (`obj.#field`), or the
+    /// direct (unparenthesized) left operand of an `in` `BinaryExpression`
+    /// (`#field in obj`).
+    fn private_identifier_is_in_valid_expression_position(&self, idx: NodeIndex) -> bool {
         let Some(parent_idx) = self.ctx.arena.get_extended(idx).map(|ext| ext.parent) else {
             return false;
         };
         let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
             return false;
         };
+        if parent_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && let Some(access) = self.ctx.arena.get_access_expr(parent_node)
+            && access.name_or_argument == idx
+        {
+            return true;
+        }
         parent_node.kind == syntax_kind_ext::BINARY_EXPRESSION
             && self
                 .ctx

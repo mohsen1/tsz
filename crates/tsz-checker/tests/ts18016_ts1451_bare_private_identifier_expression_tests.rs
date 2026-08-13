@@ -244,3 +244,48 @@ class Widget {
         "`this.#field` member access must stay clean, got: {codes:?}"
     );
 }
+
+/// `box.#handle` where `box: any`, outside any class: tsc still reports
+/// TS18016 here — an `any` receiver can't resolve `#handle` against any
+/// lexically enclosing class, and there is none. tsz already emits this
+/// through the pre-existing, dedicated `get_type_of_private_property_access`
+/// path (`crates/tsz-checker/src/state/type_analysis/computed_helpers_private.rs`),
+/// which never routes the name through the general expression dispatcher —
+/// this asserts the new grammar check does not layer a second TS18016 (or a
+/// spurious TS1451) on top of it.
+#[test]
+fn member_access_on_any_receiver_outside_class_reports_ts18016_exactly_once() {
+    let codes = check_source_codes("declare const box: any;\nconst v = box.#handle;\nexport {};\n");
+    assert_eq!(
+        count(&codes, 18016),
+        1,
+        "`box.#handle` outside a class must report TS18016 exactly once, got: {codes:?}"
+    );
+    assert_eq!(count(&codes, 1451), 0, "got: {codes:?}");
+}
+
+/// `c.#h` on a receiver typed as the declaring class, accessed from outside
+/// it: tsc reports TS18013 (private-member visibility), not the grammar
+/// check — the two are different diagnostics and must not collide.
+#[test]
+fn valid_member_access_on_typed_receiver_stays_clean_of_grammar_codes() {
+    let codes = check_source_codes(
+        "class C { #h = 1; }\ndeclare const c: C;\nconst v = c.#h;\nexport {};\n",
+    );
+    assert_eq!(
+        count(&codes, 18016) + count(&codes, 1451),
+        0,
+        "`c.#h` must not report the grammar codes (TS18013 owns this instead), got: {codes:?}"
+    );
+}
+
+#[test]
+fn valid_optional_chain_member_access_stays_clean() {
+    let codes =
+        check_source_codes("class C { #h = 1;\n read() { return this?.#h; } }\nexport {};\n");
+    assert_eq!(
+        count(&codes, 18016) + count(&codes, 1451),
+        0,
+        "`this?.#h` optional-chain member access must stay clean, got: {codes:?}"
+    );
+}
