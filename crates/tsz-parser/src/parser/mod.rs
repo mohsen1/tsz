@@ -339,6 +339,10 @@ mod regex_class_set_operator_mixing_tests;
 mod regex_class_set_bare_hyphen_tests;
 
 #[cfg(test)]
+#[path = "../../tests/regex_class_set_syntax_character_tests.rs"]
+mod regex_class_set_syntax_character_tests;
+
+#[cfg(test)]
 #[path = "../../tests/regex_class_set_operand_missing_tests.rs"]
 mod regex_class_set_operand_missing_tests;
 
