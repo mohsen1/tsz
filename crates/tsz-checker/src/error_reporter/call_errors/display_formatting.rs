@@ -791,6 +791,26 @@ impl<'a> CheckerState<'a> {
         ty
     }
 
+    /// Like [`Self::elaboration_source_expression_type`], but typed under a
+    /// contextual expected type. Elementwise elaboration needs this: a nested
+    /// array literal re-typed with no context degrades to `(A | B)[]` and
+    /// spuriously fails against a tuple target it actually satisfies.
+    pub(in crate::error_reporter) fn elaboration_source_expression_type_with_context(
+        &mut self,
+        expr_idx: NodeIndex,
+        expected: TypeId,
+    ) -> TypeId {
+        let snap = crate::context::speculation::DiagnosticSpeculationSnapshot::new(&self.ctx);
+
+        let ty = self.compute_type_of_node_with_request(
+            expr_idx,
+            &TypingRequest::with_contextual_type(expected),
+        );
+
+        snap.rollback(&mut self.ctx.diagnostic_state());
+        ty
+    }
+
     /// The display type of a call argument in elaboration paths: its own
     /// fresh literal type when the argument is a literal (tsc renders the
     /// unwidened checked type in diagnostics), otherwise the elaboration

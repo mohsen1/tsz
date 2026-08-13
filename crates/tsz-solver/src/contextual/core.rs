@@ -1050,6 +1050,13 @@ impl<'a> ContextualTypeContext<'a> {
     pub fn get_array_element_type(&self) -> Option<TypeId> {
         let expected = self.expected?;
 
+        // `readonly` is transparent for element extraction: `readonly T[]`
+        // contextually types its elements exactly like `T[]`.
+        if let Some(TypeData::ReadonlyType(inner)) = self.interner.lookup(expected) {
+            let ctx = ContextualTypeContext::with_expected(self.interner, inner);
+            return ctx.get_array_element_type();
+        }
+
         // Handle Union explicitly - collect element types from all array members
         if let Some(TypeData::Union(members)) = self.interner.lookup(expected) {
             let members = self.interner.type_list(members);

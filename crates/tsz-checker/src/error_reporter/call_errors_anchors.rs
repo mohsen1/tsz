@@ -629,14 +629,8 @@ impl<'a> CheckerState<'a> {
             } else if let Some(t) = ctx_helper.get_array_element_type() {
                 t
             } else {
-                tracing::debug!(
-                    "array_literal_mismatch_anchor: no target element type for index {index} of param {param_type:?}"
-                );
                 continue;
             };
-            tracing::debug!(
-                "array_literal_mismatch_anchor: index {index} target_element_type {target_element_type:?}"
-            );
 
             if let Some(anchor) =
                 self.literal_argument_mismatch_anchor(elem_idx, target_element_type)
@@ -644,7 +638,8 @@ impl<'a> CheckerState<'a> {
                 return Some(anchor);
             }
 
-            let elem_type = self.elaboration_source_expression_type(elem_idx);
+            let elem_type =
+                self.elaboration_source_expression_type_with_context(elem_idx, target_element_type);
             if elem_type == TypeId::ERROR
                 || elem_type == TypeId::ANY
                 || target_element_type == TypeId::ERROR
