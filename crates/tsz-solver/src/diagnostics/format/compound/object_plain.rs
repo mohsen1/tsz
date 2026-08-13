@@ -143,6 +143,59 @@ impl<'a> TypeFormatter<'a> {
             .collect()
     }
 
+    /// Deterministic display ordering for a pair of object properties.
+    ///
+    /// Primary key is `declaration_order` — the tsc source-order signal — used
+    /// when BOTH properties carry a real (`> 0`) order, so the parity path
+    /// (declared members rendered in source order) is unchanged. When the
+    /// primary key does not decide (at least one property carries no order, or
+    /// both share one — the synthesized-object case), numeric keys sort
+    /// numerically and ahead of string keys (tsc lists numeric index members
+    /// first), and string keys fall back to `declaration_order` again followed
+    /// by the property NAME string.
+    ///
+    /// That final `declaration_order`-then-name fallback replaces a former
+    /// reliance on the stable sort preserving the stored property order.
+    /// Properties are stored sorted by `Atom` id for identity/hashing, and
+    /// `Atom` ids are handed out in string-interning order by an interner
+    /// shared across the parallel checker's worker threads — so that order is
+    /// thread-schedule dependent, and the same synthesized object rendered its
+    /// members in different orders run to run (#16309, evidence #3). Preferring
+    /// the recorded `declaration_order` keeps a first/synthesized member
+    /// (`declaration_order == 0`) ahead of a later one — matching tsc's
+    /// insertion order and the interning order the stable sort used to land on
+    /// — and the name is the last resort only for members the binder left
+    /// genuinely tied. The result is a pure function of the type, independent
+    /// of interning/allocation order.
+    pub(super) fn compare_display_property_order(
+        &self,
+        a: &PropertyInfo,
+        b: &PropertyInfo,
+    ) -> std::cmp::Ordering {
+        use std::cmp::Ordering;
+        // Primary: declaration_order, but only when both members carry a real
+        // (`> 0`) order — preserving the established `format_object` contract.
+        let ord = a.declaration_order.cmp(&b.declaration_order);
+        if ord != Ordering::Equal && a.declaration_order > 0 && b.declaration_order > 0 {
+            return ord;
+        }
+        // Tiebreak: numeric keys sort numerically and ahead of string keys;
+        // string keys fall back to the recorded declaration_order (a
+        // first/synthesized `0` member sorts ahead of a later one) and then a
+        // deterministic, interning-order-independent name comparison.
+        let a_name = self.interner.resolve_atom_ref(a.name);
+        let b_name = self.interner.resolve_atom_ref(b.name);
+        match (a_name.parse::<u64>(), b_name.parse::<u64>()) {
+            (Ok(an), Ok(bn)) => an.cmp(&bn),
+            (Ok(_), Err(_)) => Ordering::Less,
+            (Err(_), Ok(_)) => Ordering::Greater,
+            (Err(_), Err(_)) => a
+                .declaration_order
+                .cmp(&b.declaration_order)
+                .then_with(|| a_name.as_ref().cmp(b_name.as_ref())),
+        }
+    }
+
     pub(in crate::diagnostics::format) fn format_object(
         &mut self,
         props: &[PropertyInfo],
@@ -152,35 +205,10 @@ impl<'a> TypeFormatter<'a> {
         }
         let mut display_props = self.visible_object_properties(props);
         // Sort properties for display. Use declaration_order as primary key when
-        // available, with tsc-compatible tiebreaking: numeric keys in numeric order,
-        // then string keys in existing order (stable sort preserves Atom ID order).
-        // Properties are stored sorted by Atom ID for identity/hashing, so display
-        // order must be restored here.
-        display_props.sort_by(|a, b| {
-            // Primary: declaration_order (0 means unset, treated as equal)
-            let ord = a.declaration_order.cmp(&b.declaration_order);
-            if ord != std::cmp::Ordering::Equal
-                && a.declaration_order > 0
-                && b.declaration_order > 0
-            {
-                return ord;
-            }
-            // Tiebreak for properties with same declaration_order:
-            // numeric keys get sorted numerically (tsc puts them first),
-            // but string keys preserve their existing order via stable sort.
-            let a_name = self.interner.resolve_atom_ref(a.name);
-            let b_name = self.interner.resolve_atom_ref(b.name);
-            let a_num = a_name.parse::<u64>();
-            let b_num = b_name.parse::<u64>();
-            match (a_num, b_num) {
-                (Ok(an), Ok(bn)) => an.cmp(&bn),
-                (Ok(_), Err(_)) => std::cmp::Ordering::Less,
-                (Err(_), Ok(_)) => std::cmp::Ordering::Greater,
-                // For non-numeric keys with same decl_order, preserve existing
-                // order (stable sort) — Atom ID order often matches source order
-                (Err(_), Err(_)) => std::cmp::Ordering::Equal,
-            }
-        });
+        // available, with a deterministic content-based tiebreak (see
+        // `compare_display_property_order`). Properties are stored sorted by
+        // Atom ID for identity/hashing, so display order must be restored here.
+        display_props.sort_by(|a, b| self.compare_display_property_order(a, b));
         if display_props.len() >= 22 {
             return self.format_large_object(&display_props);
         }

@@ -1228,6 +1228,47 @@ impl<'a> CheckerState<'a> {
         surface.has_commonjs_exports && !surface.has_named_export(export_name, self.ctx.types)
     }
 
+    /// Whether `module_name` resolves to a CommonJS JS module with an export
+    /// surface at all, without asking whether any particular name is present.
+    ///
+    /// `JsExportSurface::named_exports` records every `module.exports.p = …`
+    /// / `exports.p = …` write syntactically, even ones a TS7
+    /// `module.exports = X` assignment conflict (TS2309) later drops from
+    /// the module's real merged type — `has_named_export` alone can't tell
+    /// "genuinely exported" from "written but excluded by the conflict"
+    /// (`JsExportSurface::suppresses_expando_merge`). A caller that has
+    /// already resolved the `require()` call's own (conflict-aware) type and
+    /// found a property missing from *that* only needs this to confirm the
+    /// source is a real CJS module — not re-derive absence from the
+    /// syntactic surface.
+    pub(crate) fn js_commonjs_require_target_is_js_module(
+        &mut self,
+        module_name: &str,
+        source_file_idx: Option<usize>,
+    ) -> bool {
+        let Some(target_file_idx) = source_file_idx
+            .and_then(|file_idx| {
+                self.ctx
+                    .resolve_import_target_from_file(file_idx, module_name)
+            })
+            .or_else(|| self.ctx.resolve_import_target(module_name))
+        else {
+            return false;
+        };
+
+        let target_arena = self.ctx.get_arena_for_file(target_file_idx as u32);
+        let target_is_js = target_arena
+            .source_files
+            .first()
+            .is_some_and(|source_file| is_js_file_name(&source_file.file_name));
+        if !target_is_js {
+            return false;
+        }
+
+        self.resolve_js_export_surface(target_file_idx)
+            .has_commonjs_exports
+    }
+
     /// Build the namespace type for a CommonJS file from its export surface.
     ///
     /// This is the canonical replacement for `commonjs_namespace_type_for_file`.

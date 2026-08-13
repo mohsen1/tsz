@@ -177,7 +177,7 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                             owner.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
                         })
                     }))
-                .then(|| self.checker.nearest_enclosing_class(idx))
+                .then(|| self.checker.nearest_enclosing_class_for_this_binding(idx))
                 .flatten()
             })
         {

@@ -191,6 +191,8 @@ mod commonjs_module_exports_jsdoc_type_declared_tests;
 mod commonjs_reentrant_surface_tests;
 #[path = "tests/commonjs_require_binding_type_meaning_tests.rs"]
 mod commonjs_require_binding_type_meaning_tests;
+#[path = "tests/commonjs_require_destructure_ts2305_tests.rs"]
+mod commonjs_require_destructure_ts2305_tests;
 #[path = "tests/computed_alias_source_display_tests.rs"]
 mod computed_alias_source_display_tests;
 #[path = "tests/computed_index_member_source_display_tests.rs"]
@@ -1005,6 +1007,8 @@ mod ts2383_overload_flag_agreement_tests;
 mod ts2391_default_export_overload_group_tests;
 #[path = "tests/ts2445_protected_access_via_subclass_this_tests.rs"]
 mod ts2445_protected_access_via_subclass_this_tests;
+#[path = "tests/ts2507_extends_non_constructor_value_base_tests.rs"]
+mod ts2507_extends_non_constructor_value_base_tests;
 #[path = "tests/ts2515_ambient_class_abstract_member_tests.rs"]
 mod ts2515_ambient_class_abstract_member_tests;
 #[path = "tests/ts2528_default_export_function_overload_tests.rs"]

@@ -23,24 +23,6 @@ use tsz_common::interner::Atom;
 use super::InferenceContext;
 use super::infer_bct_guard_state as guard_state;
 
-/// Rank for tsc's primitive common-supertype tie-break, matching the intrinsic
-/// creation order in the TypeScript checker: `string < number < bigint < symbol
-/// < boolean` (`boolean` is the `false | true` union, interned after the simple
-/// intrinsics, so it sorts last). `getCommonSupertype`'s reduceLeft over a
-/// type-id-sorted union keeps the lowest-ranked disjoint primitive; tsz's own
-/// `TypeId` ordering differs, so this rank reproduces tsc's order-independent
-/// winner. Non-primitive types rank last and are never selected through here.
-const fn tsc_primitive_supertype_rank(ty: TypeId) -> u8 {
-    match ty {
-        TypeId::STRING => 0,
-        TypeId::NUMBER => 1,
-        TypeId::BIGINT => 2,
-        TypeId::SYMBOL => 3,
-        TypeId::BOOLEAN => 4,
-        _ => u8::MAX,
-    }
-}
-
 impl<'a> InferenceContext<'a> {
     // =========================================================================
     // Best Common Type
@@ -354,30 +336,6 @@ impl<'a> InferenceContext<'a> {
                 TypeId::STRING | TypeId::NUMBER | TypeId::BOOLEAN | TypeId::BIGINT | TypeId::SYMBOL
             )
         });
-        // When *every* disjoint bare-primitive candidate came from an
-        // array-literal element position, tsc's `getCommonSupertype` runs its
-        // reduceLeft tournament over `getUnionType(candidates)`, so the
-        // candidates are visited in ascending intrinsic type-id order rather
-        // than argument-source order and, since none is a subtype of another,
-        // the lowest-id member wins — an *order-independent* winner. tsc's
-        // intrinsic creation order is `string < number < bigint < symbol <
-        // boolean` (`boolean` is the `false | true` union, minted after the
-        // simple intrinsics), which is not tsz's `TypeId` order, so we
-        // reproduce it with an explicit rank. Without this, inferring `V` for
-        // `new Map([["", true], ["", 0]])` picked the source-first `boolean`
-        // candidate; tsc pins `V = number` and anchors the TS2769 last-overload
-        // chain at the `boolean` element (#17364). This is gated on
-        // *all*-from-array-element so the mixed array+naked case (#9667), where
-        // tsc keeps the leftmost array candidate, still flows through the
-        // source-order first-wins below.
-        if all_from_array_element
-            && all_bare_primitive_intrinsic
-            && let Some(&winner) = primary_types
-                .iter()
-                .min_by_key(|&&ty| tsc_primitive_supertype_rank(ty))
-        {
-            return self.add_nullable_to_result(winner, has_undefined, has_null);
-        }
         let all_signature_bearing = primary_types
             .iter()
             .all(|&ty| visitor::is_function_type(self.interner, ty));
@@ -385,17 +343,24 @@ impl<'a> InferenceContext<'a> {
             || has_null
             || all_signature_bearing
             || (array_element_first_wins && all_bare_primitive_intrinsic);
-        // For the bare-primitive array-element case, tsc does not keep the
+        // When *every* disjoint bare-primitive candidate came from an
+        // array-literal element position, tsc does not keep the
         // source-order-leftmost candidate: it orders the candidates by their
         // TS7 `TypeFlags` rank (the same canonical rank `ts7_union_sort_rank`
         // uses for union-member print order) before the `reduceLeft`
-        // leftmost-wins fallback runs. `new Map([["", true], ["", 0]])`
-        // infers `V = number` (rank 64) over `boolean` (rank 256) — and the
-        // TS2769 anchor lands on the *other* candidate's element — regardless
-        // of which literal appears first in the source array (issue #17364).
-        // Other first-wins reasons (nullable-stripped, function signatures)
-        // are unaffected: they keep true leftmost-wins.
-        if array_element_first_wins && all_bare_primitive_intrinsic {
+        // leftmost-wins fallback runs. `new Map([["", true], ["", 0]])` infers
+        // `V = number` (rank 64) over `boolean` (rank 256) — and the TS2769
+        // anchor lands on the *other* candidate's element — regardless of which
+        // literal appears first in the source array (issue #17364).
+        //
+        // Gated on *all*-from-array-element, not merely *any*: the mixed
+        // array + naked case (#9667, e.g. `f<T>(a: T[], b: T)` called
+        // `f([1, 2], "a")`) keeps the leftmost *array* candidate and reports the
+        // conflicting naked argument, so it stays on source-order first-wins;
+        // id-sorting it would flip the winner and reject the wrong operand.
+        // Other first-wins reasons (nullable-stripped, function signatures) keep
+        // true leftmost-wins.
+        if all_from_array_element && all_bare_primitive_intrinsic {
             primary_types.sort_by_key(|&ty| {
                 crate::type_queries::ts7_sort_order::ts7_primitive_rank(ty).unwrap_or(u32::MAX)
             });

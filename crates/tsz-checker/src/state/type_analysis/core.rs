@@ -1768,21 +1768,29 @@ impl CheckerState<'_> {
                 // result with the colliding alias's name. So this top-level
                 // name-display gate stays conservative; the formatter owns the
                 // broader shape reduction where no reverse lookup intervenes.
+                // Reduced form of the alias result, driving the collapse-shape
+                // gates below (a generic application only takes its array/tuple
+                // shape after evaluation). Guarded like the evaluated-form
+                // registration below to stay clear of cycles and free params.
+                let alias_result_is_evaluable =
+                    !generic_query::contains_free_type_parameters(self.ctx.types, result)
+                        && self.can_register_evaluated_alias_form(def_id, result);
+                let evaluated_alias_result = if alias_result_is_evaluable {
+                    self.evaluate_type_with_env(result)
+                } else {
+                    result
+                };
                 let reducing_object_application = alias_is_non_generic
                     && diagnostic_query::application_base_has_conditional_alias_body(
                         self.ctx.types.as_type_database(),
                         &self.ctx.definition_store,
                         result,
                     )
-                    && !generic_query::contains_free_type_parameters(self.ctx.types, result)
-                    && self.can_register_evaluated_alias_form(def_id, result)
-                    && {
-                        let evaluated = self.evaluate_type_with_env(result);
-                        diagnostic_query::is_object_or_mapped_type(
-                            self.ctx.types.as_type_database(),
-                            evaluated,
-                        )
-                    };
+                    && alias_result_is_evaluable
+                    && diagnostic_query::is_object_or_mapped_type(
+                        self.ctx.types.as_type_database(),
+                        evaluated_alias_result,
+                    );
                 let body_is_computed = reducing_object_application
                     || (alias_is_non_generic
                         && self.ctx.binder.get_symbol(sym_id).is_some_and(|symbol| {
@@ -1792,6 +1800,7 @@ impl CheckerState<'_> {
                                     self.ctx.types,
                                     decl_idx,
                                     result,
+                                    evaluated_alias_result,
                                 )
                             })
                         }));
@@ -1809,26 +1818,21 @@ impl CheckerState<'_> {
                 // producing a new TypeId.  Register this evaluated TypeId too so
                 // diagnostic formatting can display the alias name regardless of
                 // whether the raw or evaluated form is referenced.
-                if !generic_query::contains_free_type_parameters(self.ctx.types, result)
-                    && self.can_register_evaluated_alias_form(def_id, result)
-                {
-                    let evaluated = self.evaluate_type_with_env(result);
-                    if evaluated != result {
-                        self.ctx
-                            .definition_store
-                            .register_type_to_def(evaluated, def_id);
-                        // A computed body keeps the same provenance after a second
-                        // evaluation pass collapses its Lazy members: the evaluated
-                        // form must also be skipped by `find_type_alias_by_body`,
-                        // otherwise the reverse lookup repaints the alias name onto
-                        // the shared structural result (e.g. a conditional that
-                        // reduces to `{ a: 1; }`).
-                        self.record_alias_body_provenance(
-                            evaluated,
-                            body_is_computed,
-                            alias_is_non_generic,
-                        );
-                    }
+                if alias_result_is_evaluable && evaluated_alias_result != result {
+                    self.ctx
+                        .definition_store
+                        .register_type_to_def(evaluated_alias_result, def_id);
+                    // A computed body keeps the same provenance after a second
+                    // evaluation pass collapses its Lazy members: the evaluated
+                    // form must also be skipped by `find_type_alias_by_body`,
+                    // otherwise the reverse lookup repaints the alias name onto
+                    // the shared structural result (e.g. a conditional that
+                    // reduces to `{ a: 1; }`).
+                    self.record_alias_body_provenance(
+                        evaluated_alias_result,
+                        body_is_computed,
+                        alias_is_non_generic,
+                    );
                 }
             }
         }
