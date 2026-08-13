@@ -1138,27 +1138,17 @@ impl CheckerState<'_> {
         left_type: TypeId,
         right_type: TypeId,
     ) -> TypeId {
-        // TS1451: Private identifiers must be the direct LHS of `in`, not wrapped
-        // in parentheses. `(#field) in v` is invalid — #field is a standalone expression.
-        // Skip through parens to find if the LHS contains a private identifier.
-        let left_stripped = self.ctx.arena.skip_parenthesized_and_assertions(left_idx);
-        let left_node_kind = self
-            .ctx
-            .arena
-            .get(left_stripped)
-            .map(|n| n.kind)
-            .unwrap_or(0);
-        if left_node_kind == SyntaxKind::PrivateIdentifier as u16 && left_stripped != left_idx {
-            // TS1451: private identifier wrapped in parens is a standalone expression
-            use crate::diagnostics::diagnostic_codes;
-            self.error_at_node_msg(
-                left_stripped,
-                diagnostic_codes::PRIVATE_IDENTIFIERS_ARE_ONLY_ALLOWED_IN_CLASS_BODIES_AND_MAY_ONLY_BE_USED_AS_PAR,
-                &[],
-            );
-        } else if left_node_kind == SyntaxKind::PrivateIdentifier as u16 {
-            // Direct private identifier as LHS — validate it
-            self.check_private_identifier_in_expression(left_stripped, right_idx, right_type);
+        // A private identifier is valid as the LHS of `in` only when it is the
+        // *direct*, non-parenthesized left operand (`#field in v`). A
+        // parenthesized `(#field) in v` is a standalone private-identifier
+        // expression that the expression dispatcher's grammar check
+        // (`check_grammar_private_identifier_expression`) already rejects with
+        // TS18016/TS1451 by class scope — matching tsc — so it must not be
+        // re-reported here.
+        let left_node_kind = self.ctx.arena.get(left_idx).map(|n| n.kind).unwrap_or(0);
+        if left_node_kind == SyntaxKind::PrivateIdentifier as u16 {
+            // Direct private identifier as LHS — validate it.
+            self.check_private_identifier_in_expression(left_idx, right_idx, right_type);
         } else if let Some(left_key_type) = self.check_in_operand_non_null(left_idx, left_type) {
             // The key check runs on the non-nullish remainder so e.g.
             // `string | undefined` is not also rejected as a bad key.

@@ -1567,6 +1567,16 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
             // `import` keyword token in structural positions (import declarations,
             // `ExpressionWithTypeArguments`). Not a value-producing expression.
             k if k == SyntaxKind::ImportKeyword as u16 => TypeId::VOID,
+            // A `PrivateIdentifier` reaching general expression checking is a
+            // standalone-expression use in an invalid position (the valid
+            // member-access and direct-`in`-LHS positions are handled by their
+            // own checks). tsc's `checkGrammarPrivateIdentifierExpression`
+            // rejects it with TS18016/TS1451; mirror that here.
+            k if k == SyntaxKind::PrivateIdentifier as u16 => {
+                self.checker
+                    .check_grammar_private_identifier_expression(idx);
+                TypeId::ERROR
+            }
             // Default case - unknown node kind is an error
             _ => {
                 tracing::warn!(

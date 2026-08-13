@@ -793,6 +793,8 @@ mod predicate_narrowed_top_type_source_display_tests;
 mod predicate_narrowed_unknown_any_source_display_tests;
 #[path = "tests/private_field_no_spelling_suggestion_tests.rs"]
 mod private_field_no_spelling_suggestion_tests;
+#[path = "tests/private_identifier_expression_grammar_tests.rs"]
+mod private_identifier_expression_grammar_tests;
 #[path = "tests/private_member_relation_routing_arch_tests.rs"]
 mod private_member_relation_routing_arch_tests;
 #[path = "tests/private_name_modifier_grammar_order_tests.rs"]

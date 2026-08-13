@@ -428,6 +428,67 @@ impl<'a> CheckerState<'a> {
         // needed: tsc does NOT require the RHS to be assignable to the declaring type.
     }
 
+    /// tsc's `checkGrammarPrivateIdentifierExpression`: a `PrivateIdentifier`
+    /// (`#field`) is legal in only three positions — the name of a member
+    /// access (`obj.#field`), the direct left-hand side of an `in` expression
+    /// (`#field in obj`), or a class-member declaration. Anywhere else it
+    /// reaches expression checking as a standalone expression, which tsc
+    /// rejects: `TS18016` (`Private identifiers are not allowed outside class
+    /// bodies`) when the name is outside any class body, and `TS1451`
+    /// (`... may only be used as part of a class member declaration, property
+    /// access, or on the left-hand-side of an 'in' expression`) when it is
+    /// inside a class but still in an invalid position.
+    ///
+    /// The two valid *expression* positions are already validated by dedicated
+    /// checks (`get_type_of_private_property_access` for member access,
+    /// [`Self::check_private_identifier_in_expression`] for the direct
+    /// `in`-LHS), so this grammar check skips them to avoid double-reporting.
+    /// A parenthesized `in`-LHS (`(#field) in obj`) is *not* a direct LHS, so
+    /// it correctly falls through to the standalone-expression rejection here.
+    pub(crate) fn check_grammar_private_identifier_expression(&mut self, idx: NodeIndex) {
+        if self.private_identifier_is_in_valid_expression_position(idx) {
+            return;
+        }
+        use crate::diagnostics::diagnostic_codes;
+        let (_symbols, saw_class_scope) = self.resolve_private_identifier_symbols(idx);
+        let code = if saw_class_scope {
+            diagnostic_codes::PRIVATE_IDENTIFIERS_ARE_ONLY_ALLOWED_IN_CLASS_BODIES_AND_MAY_ONLY_BE_USED_AS_PAR
+        } else {
+            diagnostic_codes::PRIVATE_IDENTIFIERS_ARE_NOT_ALLOWED_OUTSIDE_CLASS_BODIES
+        };
+        self.error_at_node_msg(idx, code, &[]);
+    }
+
+    /// Whether a `PrivateIdentifier` node sits in one of the two *expression*
+    /// positions where it is grammatically valid and already owned by a
+    /// dedicated check: the name of a member access (`obj.#field`), or the
+    /// direct (non-parenthesized) left operand of an `in` expression
+    /// (`#field in obj`). Used by
+    /// [`Self::check_grammar_private_identifier_expression`] to avoid
+    /// double-reporting the positions those checks already cover.
+    fn private_identifier_is_in_valid_expression_position(&self, idx: NodeIndex) -> bool {
+        let Some(parent_idx) = self.ctx.arena.parent_of(idx) else {
+            return false;
+        };
+        let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
+            return false;
+        };
+        if parent_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && let Some(access) = self.ctx.arena.get_access_expr(parent_node)
+            && access.name_or_argument == idx
+        {
+            return true;
+        }
+        if parent_node.kind == syntax_kind_ext::BINARY_EXPRESSION
+            && let Some(binary) = self.ctx.arena.get_binary_expr(parent_node)
+            && binary.operator_token == SyntaxKind::InKeyword as u16
+            && binary.left == idx
+        {
+            return true;
+        }
+        false
+    }
+
     // --- Type Name Validation ---
 
     /// Check a parameter's type annotation for missing type names.
