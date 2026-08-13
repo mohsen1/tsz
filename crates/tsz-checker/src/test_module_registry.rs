@@ -553,6 +553,8 @@ mod jsdoc_nested_type_tag_validation_tests;
 mod jsdoc_overload_call_resolution_tests;
 #[path = "tests/jsdoc_retired_tag_diagnostics_tests.rs"]
 mod jsdoc_retired_tag_diagnostics_tests;
+#[path = "tests/jsdoc_satisfies_duplicate_tag_tests.rs"]
+mod jsdoc_satisfies_duplicate_tag_tests;
 #[path = "tests/jsdoc_shadowed_type_param_identity_tests.rs"]
 mod jsdoc_shadowed_type_param_identity_tests;
 #[path = "tests/jsdoc_template_reference_scope_tests.rs"]

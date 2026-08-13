@@ -812,7 +812,6 @@ impl<'a> CheckerState<'a> {
         }
         if facts.initializer.is_some() {
             self.report_malformed_jsdoc_satisfies_tags(facts.decl_idx);
-            self.report_duplicate_jsdoc_satisfies_tags(facts.decl_idx);
             // TS7 dropped `@enum` type synthesis: the tag no longer contributes
             // an element type, so the object-literal members are not validated
             // against it (a bare reference to the value is TS2749 instead).
