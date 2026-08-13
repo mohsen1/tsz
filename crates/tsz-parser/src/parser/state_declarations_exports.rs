@@ -821,22 +821,18 @@ impl ParserState {
                 );
             }
             NodeIndex::NONE
-        } else if self.is_token(SyntaxKind::CloseBraceToken) {
-            // TS1109: `if (cond) }` — missing then-clause. Emit "Expression expected"
-            // at the `}` position and create an empty statement. Don't consume `}` so
-            // it can close the enclosing block.
-            self.error_expression_expected();
-            self.arena.add_token(
-                syntax_kind_ext::EMPTY_STATEMENT,
-                self.token_pos(),
-                self.token_pos(),
-            )
         } else {
             // Set IN_BLOCK flag so that `export`/`declare` in a single-
             // statement if-body emit TS1184, matching tsc's behavior.
+            //
+            // A missing then-clause (`if (cond) }`, `if (cond) else`) is handled
+            // by `parse_embedded_statement`: it reports TS1109 at the offending
+            // token and synthesizes a zero-width empty statement without
+            // consuming the token, so the `}`/`else` still closes/continues the
+            // enclosing construct.
             let saved_flags = self.context_flags;
             self.context_flags |= crate::parser::state::CONTEXT_FLAG_IN_BLOCK;
-            let stmt = self.parse_statement();
+            let stmt = self.parse_embedded_statement();
             self.context_flags = saved_flags;
             stmt
         };
@@ -858,7 +854,7 @@ impl ParserState {
             // Set IN_BLOCK for the else-clause's single-statement body too.
             let saved_flags = self.context_flags;
             self.context_flags |= crate::parser::state::CONTEXT_FLAG_IN_BLOCK;
-            let stmt = self.parse_statement();
+            let stmt = self.parse_embedded_statement();
             self.context_flags = saved_flags;
             self.check_using_outside_block(stmt);
             stmt
@@ -939,7 +935,7 @@ impl ParserState {
         let statement = if missing_open_paren_before_colon {
             self.parse_recovered_leading_colon_expression_statement()
         } else {
-            self.parse_statement()
+            self.parse_embedded_statement()
         };
         self.check_using_outside_block(statement);
 
@@ -1014,7 +1010,7 @@ impl ParserState {
                 // for () — empty parens. Emit TS1109 and skip to after )
                 self.error_expression_expected();
                 self.next_token(); // consume )
-                let body = self.parse_statement();
+                let body = self.parse_embedded_statement();
                 let end_pos = self.token_end();
                 return self.arena.add_loop(
                     syntax_kind_ext::FOR_STATEMENT,
@@ -1182,7 +1178,7 @@ impl ParserState {
 
         self.parse_expected(SyntaxKind::CloseParenToken);
 
-        let statement = self.parse_statement();
+        let statement = self.parse_embedded_statement();
 
         let end_pos = self.token_end();
         self.arena.add_loop(
@@ -1202,7 +1198,7 @@ impl ParserState {
         self.parse_optional(SyntaxKind::CloseParenToken);
 
         if !self.is_token(SyntaxKind::OpenBraceToken) {
-            return self.parse_statement();
+            return self.parse_embedded_statement();
         }
 
         let start_pos = self.token_pos();
@@ -1703,7 +1699,7 @@ impl ParserState {
         self.parse_expected(SyntaxKind::InKeyword);
         let expression = self.parse_expression();
         self.parse_expected(SyntaxKind::CloseParenToken);
-        let statement = self.parse_statement();
+        let statement = self.parse_embedded_statement();
         self.check_using_outside_block(statement);
 
         let end_pos = self.token_end();
@@ -1749,7 +1745,7 @@ impl ParserState {
         self.parse_expected(SyntaxKind::OfKeyword);
         let expression = self.parse_assignment_expression();
         self.parse_expected(SyntaxKind::CloseParenToken);
-        let statement = self.parse_statement();
+        let statement = self.parse_embedded_statement();
         self.check_using_outside_block(statement);
 
         let end_pos = self.token_end();
@@ -1899,7 +1895,7 @@ impl ParserState {
         let start_pos = self.token_pos();
         self.parse_expected(SyntaxKind::DoKeyword);
 
-        let statement = self.parse_statement();
+        let statement = self.parse_embedded_statement();
         self.check_using_outside_block(statement);
 
         self.parse_expected(SyntaxKind::WhileKeyword);
