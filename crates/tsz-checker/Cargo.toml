@@ -2527,6 +2527,9 @@ path = "tests/class_implements_ts2720_elaboration_tests.rs"
 name = "order_independent_alias_resolution_tests"
 path = "tests/order_independent_alias_resolution_tests.rs"
 [[test]]
+name = "order_independent_cross_file_js_facts_tests"
+path = "tests/order_independent_cross_file_js_facts_tests.rs"
+[[test]]
 name = "reexported_symbol_keyed_member_tests"
 path = "tests/reexported_symbol_keyed_member_tests.rs"
 [[test]]

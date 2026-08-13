@@ -738,7 +738,14 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        let Some(source_file) = self.ctx.arena.source_files.get(self.ctx.current_file_idx) else {
+        // `self.ctx.arena` is a per-file arena holding exactly one source file
+        // at position 0; selecting it by the program-global `current_file_idx`
+        // only succeeds when the file sits at program index 0. Any checkJs file
+        // at a non-zero index otherwise reported "not a module" here, silently
+        // suppressing TS2686 UMD-global-access diagnostics depending on file
+        // order (#17410). Use `.first()` like the 98 sibling sites so module
+        // detection depends on the file's own arena, not on program order.
+        let Some(source_file) = self.ctx.arena.source_files.first() else {
             return false;
         };
 
