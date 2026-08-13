@@ -495,8 +495,8 @@ impl<'a> CheckerState<'a> {
                     .and_then(|sym_id| self.ctx.binder.get_symbol(sym_id))
                     .is_some_and(|sym| {
                         !(sym.has_any_flags(symbol_flags::ALIAS) && sym.import_module().is_some())
-                            && sym.has_any_flags(symbol_flags::FUNCTION | symbol_flags::CLASS)
                     })
+                && self.js_prototype_write_root_is_callable_or_constructible(access.expression)
             {
                 return TypeId::ANY;
             }
@@ -1596,8 +1596,8 @@ impl<'a> CheckerState<'a> {
                         .is_some_and(|sym| {
                             !(sym.has_any_flags(symbol_flags::ALIAS)
                                 && sym.import_module().is_some())
-                                && sym.has_any_flags(symbol_flags::FUNCTION | symbol_flags::CLASS)
                         })
+                    && self.js_prototype_write_root_is_callable_or_constructible(access.expression)
                 {
                     return TypeId::ANY;
                 }
