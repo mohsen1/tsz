@@ -31,15 +31,26 @@ impl<'a> ImportCandidateSink<'a> {
         self.output.len()
     }
 
-    pub(super) fn push(&mut self, candidate: ImportCandidate) {
-        if self.seen.insert((
+    /// Pushes `candidate`, returning whether it was newly inserted (`false`
+    /// when an equal `(specifier, name, kind, is_type_only)` candidate was
+    /// already seen — e.g. two files that both resolve to the same bare
+    /// specifier). Callers that derive a secondary candidate from a primary
+    /// one (see `ambiguous_relative_fallback_specifier`) use the return
+    /// value to skip that derivation when the primary itself was a
+    /// duplicate: the file that "owns" the shared specifier already
+    /// contributed its fallback, so a later file sharing that specifier must
+    /// not contribute a second, distinct fallback.
+    pub(super) fn push(&mut self, candidate: ImportCandidate) -> bool {
+        let inserted = self.seen.insert((
             candidate.module_specifier.clone(),
             candidate.local_name.clone(),
             import_candidate_kind_key(&candidate.kind),
             candidate.is_type_only,
-        )) {
+        ));
+        if inserted {
             self.output.push(candidate);
         }
+        inserted
     }
 }
 
@@ -156,6 +167,38 @@ impl<'a> AutoImportCandidateContext<'a> {
                 )
             })
             .cloned()
+    }
+
+    /// The relative-specifier fallback for a file whose primary offered
+    /// specifier is a conditionally ambiguous package-imports (`#pattern`)
+    /// alias (see `Project::auto_import_specifier_needs_relative_fallback`).
+    /// Returns `None` when unambiguous, already offered as `primary`, or
+    /// excluded like any other candidate.
+    pub(super) fn ambiguous_relative_fallback_specifier(
+        &mut self,
+        project: &Project,
+        file_name: &str,
+        primary: &str,
+    ) -> Option<String> {
+        if !primary.starts_with('#') {
+            return None;
+        }
+        let fallback = project
+            .auto_import_specifier_needs_relative_fallback(self.from_file.file_name(), file_name)?;
+        if fallback == primary {
+            return None;
+        }
+        if project.is_auto_import_candidate_excluded(
+            file_name,
+            &fallback,
+            self.from_file.source_text(),
+            self.allowed_packages.as_ref(),
+            &self.existing_imported_packages,
+            &mut self.source_cache,
+        ) {
+            return None;
+        }
+        Some(fallback)
     }
 }
 

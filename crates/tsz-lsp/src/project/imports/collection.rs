@@ -49,6 +49,11 @@ impl Project {
                 continue;
             }
 
+            if self.is_shadowed_by_ambiguous_package_import(context.request_file_name(), &file_name)
+            {
+                continue;
+            }
+
             if !context.has_module_specifiers_for(self, &file_name) {
                 continue;
             }
@@ -63,14 +68,30 @@ impl Project {
             else {
                 continue;
             };
+            let relative_fallback =
+                context.ambiguous_relative_fallback_specifier(self, &file_name, &module_specifier);
 
             for export_match in &matches {
-                sink.push(ImportCandidate {
+                let primary_is_new = sink.push(ImportCandidate {
                     module_specifier: module_specifier.clone(),
                     local_name: symbol_name.to_string(),
                     kind: export_match.kind.clone(),
                     is_type_only: export_match.is_type_only,
                 });
+                // Only the file that first claims the (shared) primary
+                // specifier contributes the relative fallback. A later file
+                // resolving to the same ambiguous bare specifier (e.g. both
+                // `browser.ts` and `node.ts` matching `#is-browser`) is
+                // already covered by the earlier file's fix and must not add
+                // its own distinct fallback specifier.
+                if primary_is_new && let Some(fallback) = relative_fallback.as_ref() {
+                    sink.push(ImportCandidate {
+                        module_specifier: fallback.clone(),
+                        local_name: symbol_name.to_string(),
+                        kind: export_match.kind.clone(),
+                        is_type_only: export_match.is_type_only,
+                    });
+                }
             }
 
             if mode.include_namespace_default
