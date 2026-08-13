@@ -1675,7 +1675,3 @@ impl<'a> CheckerState<'a> {
 #[cfg(test)]
 #[path = "intra_expression_inference_tests.rs"]
 mod intra_expression_inference_tests;
-
-#[cfg(test)]
-#[path = "type_parameter_fixing_context_sensitive_tests.rs"]
-mod type_parameter_fixing_context_sensitive_tests;

@@ -957,10 +957,6 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             .map(|(_, target_type, _, _)| *target_type);
         let mut aggregate_rest_inference_vars = Vec::new();
         let mut saw_deferred_arg = false;
-        // Whether any argument fed a function-typed parameter, i.e. could have
-        // contributed a candidate that must not widen a Round-1 fix (#17282).
-        // When it stays false the freeze/restore work below is skipped entirely.
-        let mut saw_context_sensitive_arg = false;
         // Track whether any deferred (context-sensitive) arg's target type
         // contains the return type bare var's placeholder. If so, Round 2 will
         // provide a better candidate for that var, and we should NOT seed from
@@ -1435,12 +1431,6 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 first_direct_primitive_candidate.insert(var, source_for_inference);
             }
 
-            let target_is_function = self.type_evaluates_to_function(contextual_target_type);
-            // #17282: tag the candidates a function-typed parameter's argument
-            // contributes (see `in_context_sensitive_arg`) so a Round-1 fix can't
-            // be widened by them.
-            infer_ctx.in_context_sensitive_arg = target_is_function;
-            saw_context_sensitive_arg |= target_is_function;
             self.constrain_types_for_arg_source(
                 i,
                 &mut infer_ctx,
@@ -1451,6 +1441,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             );
 
             let source_is_function = self.type_evaluates_to_function(source_for_inference);
+            let target_is_function = self.type_evaluates_to_function(contextual_target_type);
             // Skip constrain_return_context_structure when the target contains inference
             // placeholders. The solver's evaluate_type() cannot fully resolve Application
             // types that contain placeholders (it lacks the checker's TypeEnvironment
@@ -1514,8 +1505,6 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 }
             }
         }
-        // Clear the per-argument context-sensitivity tag left by the loop above.
-        infer_ctx.in_context_sensitive_arg = false;
 
         // Process rest tuple in Round 1 (it's non-contextual).
         // Skip when the rest param's type variable also appears in other parameter
@@ -1612,13 +1601,6 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         {
             // Fixing failed - this might indicate a constraint conflict
             // Continue with partial fixing, final resolution will detect errors
-        }
-        // Record the Round-1 fixes so the final resolution can keep them from
-        // being widened by a candidate a function-typed parameter contributed
-        // (issue #17282). Skipped when no argument fed a function-typed
-        // parameter, since then no such candidate can exist.
-        if saw_context_sensitive_arg {
-            infer_ctx.freeze_resolved_variables();
         }
         // Build a substitution from fixed variables (Round 1 results).
         // This maps placeholder names to their resolved types, but ONLY for
@@ -1959,34 +1941,5 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             first_direct_primitive_mismatch,
             saw_deferred_arg,
         })
-    }
-
-    /// Undo a context-sensitive (callback) candidate that merely *widened* a
-    /// Round-1 fix.
-    ///
-    /// A type parameter fixed from the mandatory (non-context-sensitive)
-    /// arguments is immutable per tsc's `InferenceInfo.isFixed`. When the final
-    /// constraint re-derivation unions that fix with a supertype a callback
-    /// argument contributed — the swapped-role shape in issue #17282 — this
-    /// restores the fix. Gated on an actual context-sensitive candidate so a
-    /// parameter that legitimately unions several non-context-sensitive
-    /// arguments, and any unrelated or narrower re-derivation, are left alone.
-    pub(super) fn restore_widened_frozen_fix(
-        &mut self,
-        infer_ctx: &mut InferenceContext<'_>,
-        var: InferenceVar,
-        frozen_fixed_ty: Option<TypeId>,
-        re_derived: TypeId,
-    ) -> TypeId {
-        match frozen_fixed_ty {
-            Some(fixed)
-                if fixed != re_derived
-                    && infer_ctx.has_context_sensitive_candidate(var)
-                    && self.checker.is_assignable_to(fixed, re_derived) =>
-            {
-                self.checker.normalize_inferred_type(fixed)
-            }
-            _ => re_derived,
-        }
     }
 }
