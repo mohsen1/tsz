@@ -146,21 +146,26 @@ impl<'a> TypeFormatter<'a> {
     /// Deterministic display ordering for a pair of object properties.
     ///
     /// Primary key is `declaration_order` — the tsc source-order signal — used
-    /// only when BOTH properties carry a real (`> 0`) order, so the parity path
+    /// when BOTH properties carry a real (`> 0`) order, so the parity path
     /// (declared members rendered in source order) is unchanged. When the
-    /// primary key does not decide (an unset or tied `declaration_order`, the
-    /// case for synthesized objects that carry no source order), numeric keys
-    /// sort numerically and ahead of string keys — tsc lists numeric index
-    /// members first — and the final tiebreak is the property NAME string.
+    /// primary key does not decide (at least one property carries no order, or
+    /// both share one — the synthesized-object case), numeric keys sort
+    /// numerically and ahead of string keys (tsc lists numeric index members
+    /// first), and string keys fall back to `declaration_order` again followed
+    /// by the property NAME string.
     ///
-    /// The name tiebreak replaces a former reliance on the stable sort
-    /// preserving the stored property order. Properties are stored sorted by
-    /// `Atom` id for identity/hashing, and `Atom` ids are handed out in
-    /// string-interning order by an interner shared across the parallel
-    /// checker's worker threads — so that order is thread-schedule dependent,
-    /// and the same synthesized object rendered its members in different orders
-    /// run to run (#16309, evidence #3). Keying the last resort on the name
-    /// string makes the rendered order a pure function of the type, independent
+    /// That final `declaration_order`-then-name fallback replaces a former
+    /// reliance on the stable sort preserving the stored property order.
+    /// Properties are stored sorted by `Atom` id for identity/hashing, and
+    /// `Atom` ids are handed out in string-interning order by an interner
+    /// shared across the parallel checker's worker threads — so that order is
+    /// thread-schedule dependent, and the same synthesized object rendered its
+    /// members in different orders run to run (#16309, evidence #3). Preferring
+    /// the recorded `declaration_order` keeps a first/synthesized member
+    /// (`declaration_order == 0`) ahead of a later one — matching tsc's
+    /// insertion order and the interning order the stable sort used to land on
+    /// — and the name is the last resort only for members the binder left
+    /// genuinely tied. The result is a pure function of the type, independent
     /// of interning/allocation order.
     pub(super) fn compare_display_property_order(
         &self,
@@ -168,21 +173,26 @@ impl<'a> TypeFormatter<'a> {
         b: &PropertyInfo,
     ) -> std::cmp::Ordering {
         use std::cmp::Ordering;
-        // Primary: declaration_order (0 means unset, treated as equal).
+        // Primary: declaration_order, but only when both members carry a real
+        // (`> 0`) order — preserving the established `format_object` contract.
         let ord = a.declaration_order.cmp(&b.declaration_order);
         if ord != Ordering::Equal && a.declaration_order > 0 && b.declaration_order > 0 {
             return ord;
         }
-        // Tiebreak for properties with the same declaration_order: numeric keys
-        // sort numerically and ahead of string keys, then a deterministic,
-        // interning-order-independent name comparison.
+        // Tiebreak: numeric keys sort numerically and ahead of string keys;
+        // string keys fall back to the recorded declaration_order (a
+        // first/synthesized `0` member sorts ahead of a later one) and then a
+        // deterministic, interning-order-independent name comparison.
         let a_name = self.interner.resolve_atom_ref(a.name);
         let b_name = self.interner.resolve_atom_ref(b.name);
         match (a_name.parse::<u64>(), b_name.parse::<u64>()) {
             (Ok(an), Ok(bn)) => an.cmp(&bn),
             (Ok(_), Err(_)) => Ordering::Less,
             (Err(_), Ok(_)) => Ordering::Greater,
-            (Err(_), Err(_)) => a_name.as_ref().cmp(b_name.as_ref()),
+            (Err(_), Err(_)) => a
+                .declaration_order
+                .cmp(&b.declaration_order)
+                .then_with(|| a_name.as_ref().cmp(b_name.as_ref())),
         }
     }
 

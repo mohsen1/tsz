@@ -1974,3 +1974,27 @@ fn object_member_display_order_is_interning_order_independent() {
     // The deterministic order is content-based (alphabetical): `done` < `value`.
     assert_eq!(done_lower_id, "{ done: boolean; value: number; }");
 }
+
+/// A first/synthesized member (`declaration_order == 0`) must render ahead of a
+/// later member, not in alphabetical position.
+///
+/// Expando types assign the first property a `declaration_order` of `0`
+/// (`Foo.inVariableInit = 1` before the later `Foo.bla = ...`), and tsc renders
+/// it first (insertion order). The deterministic display tiebreak must preserve
+/// that — keying purely on the property name would wrongly sort the `0` member
+/// by its name (#16309 fix must not regress `expandoFunctionNestedAssigments`).
+#[test]
+fn object_member_display_keeps_first_synthesized_member_ahead() {
+    let db = TypeInterner::new();
+    // `zebra` is the first-assigned (synthesized) member: declaration_order 0.
+    let zebra = PropertyInfo::new(db.intern_string("zebra"), TypeId::NUMBER);
+    // `apple` is a later member with a real declaration order.
+    let apple = PropertyInfo {
+        declaration_order: 2,
+        ..PropertyInfo::new(db.intern_string("apple"), TypeId::NUMBER)
+    };
+    let obj = db.object(vec![zebra, apple]);
+    let mut fmt = TypeFormatter::new(&db);
+    // Insertion order (zebra first), NOT alphabetical (apple first).
+    assert_eq!(fmt.format(obj).into_owned(), "{ zebra: number; apple: number; }");
+}
