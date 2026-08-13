@@ -14,7 +14,7 @@ use crate::types::{FunctionShape, ParamInfo, TypeData, TypeId, TypeParamInfo, Ty
 use rustc_hash::{FxHashMap, FxHashSet};
 use tracing::trace;
 
-use super::FinishGenericCallResolutionArgs;
+use super::{CallbackPositionVars, FinishGenericCallResolutionArgs};
 
 impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     fn transparent_bare_rest_type_parameter_query(
@@ -153,60 +153,6 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         substitution.protect_type_parameters(&func.type_params);
     }
 
-    /// Inference vars a context-sensitive callback argument reaches only through
-    /// a callback **parameter** (contravariant) position, never a callback
-    /// **return** (covariant) position. Round 2 body inference cannot recover
-    /// these from the callback body, so a contextual return type is allowed to
-    /// pin them even when they also appear in a direct-parameter slot.
-    ///
-    /// Evaluation of indexed-access/alias callback signatures (e.g.
-    /// `Ord<A>['compare']`) is performed here, after argument inference has
-    /// settled, so it cannot perturb in-flight inference.
-    fn callback_param_only_inference_vars(
-        &mut self,
-        func: &FunctionShape,
-        placeholder_subst: &TypeSubstitution,
-        var_map: &FxHashMap<TypeId, InferenceVar>,
-    ) -> FxHashSet<InferenceVar> {
-        let mut param_position: FxHashSet<InferenceVar> = FxHashSet::default();
-        let mut return_position: FxHashSet<InferenceVar> = FxHashSet::default();
-        let mut visited: FxHashSet<TypeId> = FxHashSet::default();
-        for param in &func.params {
-            let instantiated = instantiate_type(self.interner, param.type_id, placeholder_subst);
-            // Prefer the raw signature; only fall back to evaluation (which can
-            // resolve indexed-access/alias callbacks) when the raw type does not
-            // already expose a function shape.
-            let shape =
-                Self::get_contextual_signature_cached(self.interner, instantiated).or_else(|| {
-                    let evaluated = self.checker.evaluate_type(instantiated);
-                    (evaluated != instantiated)
-                        .then(|| Self::get_contextual_signature_cached(self.interner, evaluated))
-                        .flatten()
-                });
-            let Some(shape) = shape else {
-                continue;
-            };
-            for callback_param in &shape.params {
-                visited.clear();
-                param_position.extend(self.collect_direct_placeholder_vars_in_type(
-                    callback_param.type_id,
-                    var_map,
-                    &mut visited,
-                ));
-            }
-            visited.clear();
-            return_position.extend(self.collect_direct_placeholder_vars_in_type(
-                shape.return_type,
-                var_map,
-                &mut visited,
-            ));
-        }
-        param_position
-            .difference(&return_position)
-            .copied()
-            .collect()
-    }
-
     pub(super) fn finish_generic_call_resolution(
         &mut self,
         args: FinishGenericCallResolutionArgs<'_>,
@@ -222,6 +168,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             var_map,
             direct_param_vars,
             callback_placeholder_subst,
+            round1_fixed,
             noinfer_param_vars,
             rest_tuple_target_type,
             aggregate_rest_inference_vars,
@@ -295,8 +242,26 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // lambda under a contextual `Ord<string>`). Computed here, after argument
         // inference has settled, so the evaluation of indexed-access/alias callback
         // signatures cannot perturb in-flight inference.
-        let callback_param_only_vars =
-            self.callback_param_only_inference_vars(func, callback_placeholder_subst, var_map);
+        let CallbackPositionVars {
+            param_only: callback_param_only_vars,
+            return_position: callback_return_position_vars,
+        } = self.callback_position_inference_vars(func, callback_placeholder_subst, var_map);
+        // #17282: an `any`/`unknown` candidate on any Round-1-fixed callback
+        // return-position variable marks the whole call as `any`-tainted. tsc
+        // lets such an `any` collapse the type parameters and suppress the
+        // callback-return mismatch, and tsz's two-round resolver cannot propagate
+        // that collapse across a second callback's parameter. Rather than restore
+        // a fix that a propagated `any` would have erased, fall back to the
+        // widened (pre-#17282) inference for the entire call — the conservative,
+        // no-regression direction (e.g.
+        // `typeParameterFixingWithContextSensitiveArguments5`, whose `any`-typed
+        // callback body `tsc` accepts).
+        let any_tainted_frozen_call = callback_return_position_vars.iter().any(|&var| {
+            round1_fixed.contains_key(&var)
+                && infer_ctx
+                    .get_constraints(var)
+                    .is_some_and(|c| c.lower_bounds.iter().any(|b| b.is_any_unknown_or_error()))
+        });
 
         let mut final_subst = TypeSubstitution::new();
         self.protect_call_owned_type_parameters(func, &mut final_subst);
@@ -959,6 +924,28 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 ty
             };
             let ty = self.checker.normalize_inferred_type(ty);
+            // #17282: a type parameter fixed from the non-context-sensitive
+            // (Round-1) arguments is immutable per tsc's `InferenceInfo.isFixed`.
+            // A context-sensitive callback body may only *widen* it through a
+            // covariant callback **return** position, which tsc discards; restore
+            // the Round-1 fix so the body is re-checked against the fixed
+            // contextual return type (e.g.
+            // `f<T,U>(y:T, y1:U, p:(z:U)=>T, p1:(x:T)=>U)` called with identity
+            // lambdas reports TS2741 instead of widening `T`/`U` to `A|B`). See
+            // `should_restore_round1_fix` for the exceptions tsc keeps.
+            let ty = if let Some(&fixed) = round1_fixed.get(&var)
+                && self.should_restore_round1_fix(
+                    &mut infer_ctx,
+                    var,
+                    fixed,
+                    ty,
+                    &callback_return_position_vars,
+                    any_tainted_frozen_call,
+                ) {
+                self.checker.normalize_inferred_type(fixed)
+            } else {
+                ty
+            };
             trace!(
                 type_param_name = %type_param_name.as_str(),
                 var = ?var,
