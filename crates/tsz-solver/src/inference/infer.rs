@@ -76,15 +76,6 @@ pub(crate) struct InferenceCandidate {
     /// co/contra inference would otherwise replace a direct readonly argument
     /// with a mutable callback parameter candidate.
     pub(crate) from_readonly_source: bool,
-    /// Candidate was inferred from an argument that fills a *function-typed*
-    /// parameter — the parameter-level trigger for `tsc`-style context
-    /// sensitivity. Such a candidate reaches the type parameter only through the
-    /// parameter's contravariant/covariant legs, not as a direct value, so the
-    /// final resolution refuses to let it *widen* a type parameter already fixed
-    /// from the mandatory arguments (issue #17282). Broader than `tsc`'s
-    /// argument-level `isContextSensitive`: it also covers a fully-annotated
-    /// function argument, which must keep the fixed variable immutable too.
-    pub(crate) from_context_sensitive_arg: bool,
 }
 
 #[derive(Copy, Clone, Debug, Default)]
@@ -364,11 +355,6 @@ pub(crate) struct InferenceContext<'a> {
     pub(crate) vars_with_substituted_candidates: FxHashSet<InferenceVar>,
     /// Set during array element inference so candidates get `from_array_element = true`.
     pub(crate) in_array_element_context: bool,
-    /// Set while collecting inference from an argument that fills a
-    /// function-typed parameter, so candidates get
-    /// `from_context_sensitive_arg = true` (see that field on
-    /// [`InferenceCandidate`] and issue #17282).
-    pub(crate) in_context_sensitive_arg: bool,
     /// Set while inference is descending through a `readonly` array/tuple source
     /// (e.g. from an `as const` argument or a `readonly T[]` annotation). Literal
     /// candidates collected in this context are non-fresh — tsc does not widen the
@@ -403,18 +389,6 @@ pub(crate) struct InferenceContext<'a> {
     /// identical tuple inferred for an unrelated variable.
     pub(crate) spread_rest_var_modes:
         FxHashMap<InferenceVar, crate::inference::spread_rest_literals::SpreadRestLiteralMode>,
-    /// Snapshot of the inference variables *fixed* from the mandatory
-    /// (non-context-sensitive) arguments, taken at the Round 1 boundary by
-    /// [`InferenceContext::freeze_resolved_variables`]. It does not block later
-    /// candidate collection; it records which fixes were authoritative so the
-    /// final per-variable resolution can restore one when re-derivation from the
-    /// merged candidate set only *widened* it. Approximates tsc's
-    /// `InferenceInfo.isFixed`. Without it, two function parameters referencing
-    /// the same two type parameters in swapped covariant/contravariant roles
-    /// (e.g. `(z: U) => T` alongside `(x: T) => U`) union both fixed variables to
-    /// the same widened type, silently accepting calls tsc rejects (issue
-    /// #17282).
-    pub(crate) frozen_vars: FxHashSet<InferenceVar>,
 }
 
 impl<'a> InferenceContext<'a> {
@@ -476,12 +450,10 @@ impl<'a> InferenceContext<'a> {
             top_level_in_return_type_unfixed: FxHashSet::default(),
             vars_with_substituted_candidates: FxHashSet::default(),
             in_array_element_context: false,
-            in_context_sensitive_arg: false,
             in_readonly_source_context: false,
             implied_arities: FxHashMap::default(),
             original_type_param_for_var: FxHashMap::default(),
             spread_rest_var_modes: FxHashMap::default(),
-            frozen_vars: FxHashSet::default(),
         }
     }
 
@@ -509,12 +481,10 @@ impl<'a> InferenceContext<'a> {
             top_level_in_return_type_unfixed: FxHashSet::default(),
             vars_with_substituted_candidates: FxHashSet::default(),
             in_array_element_context: false,
-            in_context_sensitive_arg: false,
             in_readonly_source_context: false,
             implied_arities: FxHashMap::default(),
             original_type_param_for_var: FxHashMap::default(),
             spread_rest_var_modes: FxHashMap::default(),
-            frozen_vars: FxHashSet::default(),
         }
     }
 
@@ -899,7 +869,6 @@ impl<'a> InferenceContext<'a> {
                 source_is_type_annotation: candidate.source_is_type_annotation,
                 from_array_element: candidate.from_array_element,
                 from_readonly_source: candidate.from_readonly_source,
-                from_context_sensitive_arg: candidate.from_context_sensitive_arg,
             });
         }
 
@@ -1462,7 +1431,6 @@ impl<'a> InferenceContext<'a> {
             source_is_type_annotation: self.source_is_type_annotation,
             from_array_element: self.in_array_element_context,
             from_readonly_source: self.candidate_is_from_readonly_source(ty),
-            from_context_sensitive_arg: self.in_context_sensitive_arg,
         };
         self.table.union_value(
             root,
@@ -1565,7 +1533,6 @@ impl<'a> InferenceContext<'a> {
             source_is_type_annotation: self.source_is_type_annotation,
             from_array_element: self.in_array_element_context,
             from_readonly_source: self.candidate_is_from_readonly_source(ty),
-            from_context_sensitive_arg: self.in_context_sensitive_arg,
         };
         if self.collects_contra_candidates() {
             // In contravariant context (e.g., callback parameter structural
