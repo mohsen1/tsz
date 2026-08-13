@@ -2,10 +2,10 @@
 
 mod literal_name_grammar;
 mod private_error;
+mod super_member_kind_gates;
 mod super_static_access;
 mod union_restricted_property;
 
-use crate::classes_domain::class_summary::ClassMemberKind;
 use crate::query_boundaries::type_computation::complex::{
     ClassDeclTypeKind, classify_for_class_decl,
 };
@@ -90,7 +90,7 @@ impl<'a> CheckerState<'a> {
         error_node: NodeIndex,
         object_type: tsz_solver::TypeId,
     ) -> bool {
-        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+        use crate::diagnostics::diagnostic_codes;
         use crate::state::MemberAccessLevel;
 
         let is_property_identifier = self
@@ -206,42 +206,14 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        // TS2855 fires when `super.<field>` accesses a parent class **instance**
-        // field. From within a static member/initializer, `super` is the parent
-        // class object itself (not its prototype), so `super.x` resolves to the
-        // parent's *static* member — TS2855 must not fire there.
-        if self.is_super_expression(object_expr)
-            && !is_static
-            && !in_static_context
-            && !self.has_syntax_parse_errors()
-            && matches!(
-                self.class_chain_member_kind_name_only(class_idx, property_name, false, true)
-                    .map(|(kind, _)| kind),
-                Some(ClassMemberKind::FieldLike)
-            )
-        {
-            if self.ctx.compiler_options.target.is_es5() {
-                self.error_at_node(
-                    error_node,
-                    diagnostic_messages::ONLY_PUBLIC_AND_PROTECTED_METHODS_OF_THE_BASE_CLASS_ARE_ACCESSIBLE_VIA_THE_SUPER,
-                    diagnostic_codes::ONLY_PUBLIC_AND_PROTECTED_METHODS_OF_THE_BASE_CLASS_ARE_ACCESSIBLE_VIA_THE_SUPER,
-                );
-            } else {
-                use crate::diagnostics::format_message;
-                let display_name = self
-                    .class_chain_member_kind_name_only(class_idx, property_name, false, true)
-                    .map(|(_, display_name)| display_name)
-                    .unwrap_or_else(|| property_name.to_string());
-                let message = format_message(
-                    diagnostic_messages::CLASS_FIELD_DEFINED_BY_THE_PARENT_CLASS_IS_NOT_ACCESSIBLE_IN_THE_CHILD_CLASS_VIA,
-                    &[&display_name],
-                );
-                self.error_at_node(
-                    error_node,
-                    &message,
-                    diagnostic_codes::CLASS_FIELD_DEFINED_BY_THE_PARENT_CLASS_IS_NOT_ACCESSIBLE_IN_THE_CHILD_CLASS_VIA,
-                );
-            }
+        if !self.check_super_member_kind_gates(
+            object_expr,
+            property_name,
+            error_node,
+            class_idx,
+            is_static,
+            in_static_context,
+        ) {
             return false;
         }
 
@@ -368,7 +340,6 @@ impl<'a> CheckerState<'a> {
             MemberAccessLevel::Private => {
                 self.report_private_member_error(
                     error_node,
-                    object_expr,
                     property_name,
                     &access_info.declaring_class_name,
                 );
@@ -573,7 +544,6 @@ impl<'a> CheckerState<'a> {
                     MemberAccessLevel::Private => {
                         self.report_private_member_error(
                             error_node,
-                            object_expr,
                             property_name,
                             &access_info.declaring_class_name,
                         );
