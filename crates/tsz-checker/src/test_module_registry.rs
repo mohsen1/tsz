@@ -775,6 +775,8 @@ mod overload_arity_expanded_spread_count_tests;
 mod overload_elaboration_tests;
 #[path = "tests/overload_generic_wrapper_compat_tests.rs"]
 mod overload_generic_wrapper_compat_tests;
+#[path = "tests/overload_last_candidate_elaborated_anchor_tests.rs"]
+mod overload_last_candidate_elaborated_anchor_tests;
 #[path = "tests/overload_literal_source_generalization_tests.rs"]
 mod overload_literal_source_generalization_tests;
 #[path = "tests/overload_param_relation_routing_arch_tests.rs"]

@@ -140,7 +140,7 @@ impl<'a> CheckerState<'a> {
     /// failure. Argument failures carry a positional index; implicit
     /// method-`this` failures point at the receiver expression.
     pub(super) fn last_overload_failure_anchor(
-        &self,
+        &mut self,
         idx: NodeIndex,
         failures: &[tsz_solver::PendingDiagnostic],
     ) -> Option<super::fingerprint_policy::ResolvedDiagnosticAnchor> {
@@ -159,7 +159,18 @@ impl<'a> CheckerState<'a> {
         let index = last.argument_index?;
         let args = self.logical_call_argument_nodes(idx)?;
         let arg_idx = *args.get(index)?;
-        let drilled = self.drill_overload_argument_node(arg_idx);
+        // tsc elaborates the candidate's argument check elementwise and anchors
+        // the overload failure at the failing element (`new Map([["", true]])`
+        // anchors at `true` against an inferred `readonly [string, number]`
+        // entry type), so prefer the elaboration-aware descent driven by this
+        // candidate's expected parameter type. Only accept a strictly inner
+        // node: an outer-literal fallback (e.g. a missing-property failure on
+        // an object literal) keeps the historical first-leaf drilling.
+        let drilled = last
+            .type_pair()
+            .and_then(|(_, expected)| self.literal_argument_mismatch_anchor(arg_idx, expected))
+            .filter(|&anchor| anchor != arg_idx)
+            .unwrap_or_else(|| self.drill_overload_argument_node(arg_idx));
         self.resolve_diagnostic_anchor(drilled, DiagnosticAnchorKind::Exact)
     }
 
