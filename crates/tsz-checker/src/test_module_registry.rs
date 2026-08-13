@@ -649,6 +649,8 @@ mod member_modifier_placement_grammar_tests;
 mod member_name_source_quote_fidelity_tests;
 #[path = "tests/merged_interface_constraint_relation_routing_arch_tests.rs"]
 mod merged_interface_constraint_relation_routing_arch_tests;
+#[path = "tests/merged_interface_reference_flat_missing_tests.rs"]
+mod merged_interface_reference_flat_missing_tests;
 #[path = "tests/method_return_type_elaboration_tests.rs"]
 mod method_return_type_elaboration_tests;
 #[path = "tests/missing_property_base_class_head_tests.rs"]

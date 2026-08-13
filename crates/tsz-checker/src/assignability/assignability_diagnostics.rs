@@ -1498,6 +1498,18 @@ impl<'a> CheckerState<'a> {
     /// intersection as a display alias — a structural `TypeId` back-reference, not
     /// rendered text — so fall back to that to recover the constituents.
     fn target_intersection_constituents(&mut self, target: TypeId) -> Option<Vec<TypeId>> {
+        // A merged multi-declaration interface reference (e.g. the lib's
+        // `Map<K, V>`) evaluates to an intersection of its per-declaration
+        // shapes, but tsc relates and reports it as ONE named interface
+        // surface — the per-constituent elaboration frame applies only to
+        // written intersections.
+        if crate::query_boundaries::diagnostics::is_interface_reference(
+            self.ctx.types,
+            &self.ctx.definition_store,
+            target,
+        ) {
+            return None;
+        }
         let resolved = self.resolve_lazy_type(target);
         crate::query_boundaries::common::intersection_members(self.ctx.types, resolved)
             .map(|list| list.iter().copied().collect())
