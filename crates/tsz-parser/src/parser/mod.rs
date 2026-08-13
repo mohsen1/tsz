@@ -85,6 +85,9 @@ mod ambient_destructuring_initializer_tests;
 #[path = "../../tests/definite_assignment_assertion_tests.rs"]
 mod definite_assignment_assertion_tests;
 #[cfg(test)]
+#[path = "../../tests/embedded_statement_missing_body_tests.rs"]
+mod embedded_statement_missing_body_tests;
+#[cfg(test)]
 #[path = "../../tests/parser_abstract_before_export_declaration_tests.rs"]
 mod parser_abstract_before_export_declaration_tests;
 #[cfg(test)]

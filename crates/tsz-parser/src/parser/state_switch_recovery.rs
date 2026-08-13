@@ -336,7 +336,7 @@ impl ParserState {
 
         self.parse_expected(SyntaxKind::CloseParenToken);
 
-        let statement = self.parse_statement();
+        let statement = self.parse_embedded_statement();
 
         let end_pos = self.token_end();
 
@@ -362,6 +362,40 @@ impl ParserState {
 
         self.arena
             .add_token(syntax_kind_ext::DEBUGGER_STATEMENT, start_pos, end_pos)
+    }
+
+    /// Parse the single-statement body of an *embedded* statement position: the
+    /// then/else clause of an `if`, or the body of `while`/`for`/`for-in`/
+    /// `for-of`/`do`/`with`/a labeled statement.
+    ///
+    /// tsc's `parseStatement` always yields a node. When the next token cannot
+    /// begin a statement, `parsePrimaryExpression` synthesizes a missing
+    /// identifier via `createMissingNode`, which reports TS1109 (`Expression
+    /// expected.`) at that token *without consuming it* and leaves the token for
+    /// the enclosing construct. tsz's [`Self::parse_statement`] instead returns
+    /// [`NodeIndex::NONE`] for such a token (see
+    /// [`Self::parse_expression_statement`]'s early rejection), so an
+    /// embedded-body caller that forwarded that `NONE` unchanged would silently
+    /// drop the diagnostic — leaving the missing body unreported (`if (x) else`,
+    /// `while (x) }`) or letting a later semantic error surface where tsc emits
+    /// none (`if (x) else foo;`).
+    ///
+    /// This wrapper materializes the missing body the way tsc does: it emits
+    /// TS1109 at the offending token and returns a zero-width empty statement,
+    /// mirroring the existing `if (cond) }` recovery. The offending token is
+    /// left unconsumed, so the enclosing `if`/loop/label and the surrounding
+    /// statement list recover exactly as tsc does — the shared
+    /// [`Self::parse_error_at`] position dedup collapses any follow-on
+    /// TS1128/TS1313 emitted at the same position.
+    pub(crate) fn parse_embedded_statement(&mut self) -> NodeIndex {
+        let statement = self.parse_statement();
+        if statement != NodeIndex::NONE {
+            return statement;
+        }
+        self.error_expression_expected();
+        let pos = self.token_pos();
+        self.arena
+            .add_token(syntax_kind_ext::EMPTY_STATEMENT, pos, pos)
     }
 
     // Parse expression statement

@@ -1760,7 +1760,7 @@ impl ParserState {
         self.parse_expected(SyntaxKind::ColonToken);
 
         // Parse the statement
-        let statement = self.parse_statement();
+        let statement = self.parse_embedded_statement();
 
         // Remove the label from the current scope (labels are statement-scoped)
         // This allows sequential labels with the same name: target: stmt1; target: stmt2;
