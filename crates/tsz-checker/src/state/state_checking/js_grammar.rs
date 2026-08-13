@@ -212,9 +212,73 @@ impl<'a> CheckerState<'a> {
             );
         }
 
+        if node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            self.check_js_grammar_object_literal_private_names(node);
+        }
+
         for child_idx in self.ctx.arena.get_children(expr_idx) {
             if child_idx.is_some() {
                 self.check_js_grammar_expression(child_idx);
+            }
+        }
+    }
+
+    /// TS18016: private-identifier property/method/accessor names in an
+    /// object literal are not allowed outside class bodies.
+    ///
+    /// tsc raises this from `grammarErrorOnNode` (a checker-side grammar
+    /// check), so it fires for JS files exactly like the rest of this
+    /// `TS8xxx`-family pass (parse-driven, independent of `checkJs`). tsz's
+    /// parser has an equivalent check
+    /// (`crates/tsz-parser/src/parser/state_expressions_literals/object_members.rs`)
+    /// that correctly reports this for `.ts` files, but every JS file's
+    /// parser diagnostics are filtered through `is_ts1xxx_allowed_in_js`
+    /// (`crates/tsz-cli/src/driver/check_utils.rs`), which does not list
+    /// TS18016 — so the parser's copy is silently dropped for `.js` files.
+    /// This checker-side copy is not subject to that filter and is scoped to
+    /// `is_js_file()` callers only, so `.ts` behavior (parser-owned) is
+    /// unchanged.
+    fn check_js_grammar_object_literal_private_names(
+        &mut self,
+        node: &tsz_parser::parser::node::Node,
+    ) {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+
+        let Some(literal) = self.ctx.arena.get_literal_expr(node) else {
+            return;
+        };
+
+        for &element_idx in &literal.elements.nodes {
+            let Some(element_node) = self.ctx.arena.get(element_idx) else {
+                continue;
+            };
+            let name_idx = match element_node.kind {
+                k if k == syntax_kind_ext::PROPERTY_ASSIGNMENT => self
+                    .ctx
+                    .arena
+                    .get_property_assignment(element_node)
+                    .map(|d| d.name),
+                k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                    self.ctx.arena.get_method_decl(element_node).map(|d| d.name)
+                }
+                k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
+                    self.ctx.arena.get_accessor(element_node).map(|d| d.name)
+                }
+                _ => None,
+            };
+
+            let Some(name_idx) = name_idx else {
+                continue;
+            };
+            let Some(name_node) = self.ctx.arena.get(name_idx) else {
+                continue;
+            };
+            if name_node.kind == SyntaxKind::PrivateIdentifier as u16 {
+                self.error_at_node(
+                    name_idx,
+                    diagnostic_messages::PRIVATE_IDENTIFIERS_ARE_NOT_ALLOWED_OUTSIDE_CLASS_BODIES,
+                    diagnostic_codes::PRIVATE_IDENTIFIERS_ARE_NOT_ALLOWED_OUTSIDE_CLASS_BODIES,
+                );
             }
         }
     }
@@ -679,6 +743,15 @@ impl<'a> CheckerState<'a> {
                                         diagnostic_messages::TYPE_ANNOTATIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
                                         diagnostic_codes::TYPE_ANNOTATIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
                                     );
+                        }
+
+                        // Walk the initializer expression tree so nested
+                        // constructs (object literals, function expressions,
+                        // `as`/`satisfies` assertions, ...) still get their
+                        // JS-grammar checks — e.g. `const obj = { #x: 1 };`
+                        // reporting TS18016 for the private-identifier key.
+                        if var_decl.initializer.is_some() {
+                            self.check_js_grammar_expression(var_decl.initializer);
                         }
                     }
                 }
