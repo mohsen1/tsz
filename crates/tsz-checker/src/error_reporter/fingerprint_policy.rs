@@ -45,12 +45,6 @@ pub(crate) struct RelatedInformationPolicy {
     include_primary: bool,
     dedupe: bool,
     limit: Option<usize>,
-    /// Keep the reporter's insertion order instead of applying the
-    /// `(file, start, depth, message)` sort. Required for multi-chain
-    /// elaborations that share one anchor (e.g. the per-overload `TS2772`
-    /// chains), where the depth-keyed sort would interleave every chain's
-    /// header ahead of every chain's body and destroy the nesting.
-    preserve_order: bool,
 }
 
 impl RelatedInformationPolicy {
@@ -58,7 +52,6 @@ impl RelatedInformationPolicy {
         include_primary: true,
         dedupe: true,
         limit: None,
-        preserve_order: false,
     };
 
     /// Demote a diagnostic's primary message into the related chain, keeping any
@@ -68,7 +61,6 @@ impl RelatedInformationPolicy {
         include_primary: true,
         dedupe: true,
         limit: None,
-        preserve_order: false,
     };
 
     /// Flat overload-failure list (fewer than 2 argument-error candidates, or
@@ -79,7 +71,6 @@ impl RelatedInformationPolicy {
         include_primary: false,
         dedupe: false,
         limit: None,
-        preserve_order: false,
     };
 
     /// Per-overload elaboration for 2+ argument-error candidates: with 2 or 3,
@@ -87,14 +78,17 @@ impl RelatedInformationPolicy {
     /// following error.` (`TS2772`) header immediately followed by its
     /// applicability error at depth 1+; with four or more, a single `The last
     /// overload gave the following error.` (`TS2770`) header wraps only the
-    /// last candidate. Insertion order is declaration order and must be
-    /// preserved; dedupe is off so two overloads that fail identically still
-    /// each keep their own nested body under their distinct header.
+    /// last candidate. Every candidate's header shares one anchor (the call
+    /// site), so this is a set of sibling elaboration chains at one anchor:
+    /// block-aware normalization keeps each candidate's chain contiguous and
+    /// orders the candidates by their (shared) head anchor with a stable sort,
+    /// which preserves declaration order. Dedupe is off so two overloads that
+    /// fail identically still each keep their own nested body under their
+    /// distinct header.
     pub(crate) const OVERLOAD_CHAINS: Self = Self {
         include_primary: false,
         dedupe: false,
         limit: None,
-        preserve_order: true,
     };
 }
 
@@ -206,6 +200,114 @@ impl DiagnosticRenderRequest {
             related_policy: policy,
         }
     }
+}
+
+/// Normalize a diagnostic's flat related-information list one elaboration
+/// *block* at a time.
+///
+/// A block is a single root-anchored elaboration chain: it opens on a
+/// `depth == 0` line and runs through every deeper (`depth > 0`) line up to the
+/// next `depth == 0` line. `tsc` keeps each chain contiguous, in construction
+/// order, and never dedupes across chains — chains live inside `messageText`,
+/// not in `relatedInformation`. A flat per-line pass cannot represent that: at
+/// one `(file, start)` anchor a `(file, start, depth, message)` sort interleaves
+/// sibling chains by depth (all depth-0 headers, then all depth-1 leaves, …),
+/// and a global dedup merges an identical leaf line that legitimately sits under
+/// two *different* headers. Both failures vanish once normalization is scoped to
+/// a block:
+///
+/// * **Blocks stay whole and ordered by their head anchor.** The block ordering
+///   sort keys on the head line's `(file, start)` and is *stable*, so
+///   different-anchor chains keep their former positional order while sibling
+///   chains sharing one anchor — which the global sort used to interleave — now
+///   render in the order they were built. That build order is the order `tsc`
+///   emits them (e.g. overload candidates in declaration order), which
+///   generalizes the former per-overload `preserve_order` special case into the
+///   default mechanism.
+/// * **Dedup is per block.** A block-local `seen` set drops exact duplicate
+///   lines within a chain (as before) but never merges a shared leaf across
+///   chains, so both leaves survive under their respective headers.
+///
+/// Within a block the former depth-major sort is retained, so a header stays
+/// above its leaves and single-chain output is byte-identical to the previous
+/// per-line normalization.
+pub(crate) fn normalize_related_information_blocks(
+    items: Vec<DiagnosticRelatedInformation>,
+    policy: RelatedInformationPolicy,
+) -> Vec<DiagnosticRelatedInformation> {
+    // Partition into elaboration blocks. A depth-0 line is a chain head, so it
+    // opens a new block — but only once the block currently open already holds a
+    // head. That guard keeps the partition insensitive to intra-chain ordering:
+    // any leading deeper (`depth > 0`) lines that arrive before the first head
+    // attach to that head's block rather than orphaning into their own, so a
+    // chain whose lines are not appended head-first still lands in one block
+    // (the depth-major sort below then seats the head above them). Genuine
+    // sibling chains — a second head after a block already has one — still split.
+    let mut blocks: Vec<Vec<DiagnosticRelatedInformation>> = Vec::new();
+    let mut open_block_has_head = false;
+    for item in items {
+        let is_head = item.depth == 0;
+        if blocks.is_empty() || (is_head && open_block_has_head) {
+            blocks.push(Vec::new());
+            open_block_has_head = false;
+        }
+        open_block_has_head |= is_head;
+        blocks
+            .last_mut()
+            .expect("a block was just ensured to exist")
+            .push(item);
+    }
+
+    for block in &mut blocks {
+        if policy.dedupe {
+            let mut seen = FxHashSet::default();
+            block.retain(|item| {
+                seen.insert((
+                    item.category as u8,
+                    item.code,
+                    item.file.clone(),
+                    item.start,
+                    item.length,
+                    item.message_text.clone(),
+                ))
+            });
+        }
+
+        // Keep the header above its leaves within the chain. `depth` precedes
+        // the textual tiebreaker so a depth-0 header (e.g. "Types of property
+        // 'p' are incompatible.") always precedes its depth-1+ leaves (e.g.
+        // "Type 'X' is not assignable to type 'Y'."). Without the depth key the
+        // alphabetic compare reverses chains because "Type " (trailing space)
+        // sorts before "Types". Within the same depth the message-text
+        // tiebreaker still gives deterministic order when distinct code paths
+        // append items in different sequences.
+        block.sort_by(|a, b| {
+            a.file
+                .cmp(&b.file)
+                .then(a.start.cmp(&b.start))
+                .then(a.depth.cmp(&b.depth))
+                .then(a.message_text.cmp(&b.message_text))
+        });
+    }
+
+    // Order the chains by their head anchor. The sort is stable, so chains that
+    // share a `(file, start)` head keep construction order — sibling
+    // elaboration chains at one anchor render in the order they were built
+    // (which is the order `tsc` emits them), while different-anchor chains keep
+    // their former positional ordering.
+    blocks.sort_by(|a, b| {
+        let (a_head, b_head) = (&a[0], &b[0]);
+        a_head
+            .file
+            .cmp(&b_head.file)
+            .then(a_head.start.cmp(&b_head.start))
+    });
+
+    let mut normalized: Vec<DiagnosticRelatedInformation> = blocks.into_iter().flatten().collect();
+    if let Some(limit) = policy.limit {
+        normalized.truncate(limit);
+    }
+    normalized
 }
 
 impl<'a> CheckerState<'a> {
@@ -551,8 +653,8 @@ impl<'a> CheckerState<'a> {
                         ),
                         // Leaf sits one level beneath the `Types of property`
                         // header. See the sort-key comment in
-                        // `normalize_related_information` for why the chain
-                        // order depends on this.
+                        // `normalize_related_information_blocks` for why the
+                        // chain order depends on this.
                         depth: 1,
                         kind: RelatedInformationKind::ChainLink,
                     },
@@ -1060,67 +1162,7 @@ impl<'a> CheckerState<'a> {
         }
 
         items.extend(diag.related_information.iter().cloned());
-        self.normalize_related_information(items, policy)
-    }
-
-    pub(crate) fn normalize_related_information(
-        &self,
-        items: Vec<DiagnosticRelatedInformation>,
-        policy: RelatedInformationPolicy,
-    ) -> Vec<DiagnosticRelatedInformation> {
-        let mut normalized = Vec::new();
-        let mut seen = FxHashSet::default();
-
-        for item in items {
-            if policy.dedupe {
-                let key = (
-                    item.category as u8,
-                    item.code,
-                    item.file.clone(),
-                    item.start,
-                    item.length,
-                    item.message_text.clone(),
-                );
-                if !seen.insert(key) {
-                    continue;
-                }
-            }
-            normalized.push(item);
-            if let Some(limit) = policy.limit
-                && normalized.len() >= limit
-            {
-                break;
-            }
-        }
-
-        // Sort related information for consistent, deterministic fingerprint
-        // ordering. `depth` precedes the textual tiebreaker so a chain stays in
-        // outer-to-inner order: at the same anchor (file, start) a depth-0
-        // header (e.g. "Types of property 'p' are incompatible.") always
-        // precedes its depth-1+ leaves (e.g. "Type 'X' is not assignable to
-        // type 'Y'."). Without the depth key, the alphabetic compare reverses
-        // chains because "Type " (with a trailing space) sorts before "Types"
-        // — swapping the displayed type/interface output order between the
-        // main message and its note. Within the same depth the message-text
-        // tiebreaker still gives deterministic order when distinct code paths
-        // append items in different sequences.
-        //
-        // `preserve_order` policies (per-overload `TS2772` chains) opt out: they
-        // build several outer-to-inner chains at one anchor, so a global
-        // depth-keyed sort would pull every chain's depth-0 header ahead of the
-        // bodies and scramble the nesting. Their insertion order is already the
-        // correct declaration order.
-        if !policy.preserve_order {
-            normalized.sort_by(|a, b| {
-                a.file
-                    .cmp(&b.file)
-                    .then(a.start.cmp(&b.start))
-                    .then(a.depth.cmp(&b.depth))
-                    .then(a.message_text.cmp(&b.message_text))
-            });
-        }
-
-        normalized
+        normalize_related_information_blocks(items, policy)
     }
 
     /// Returns true when a contextual object-literal call mismatch is only caused by
