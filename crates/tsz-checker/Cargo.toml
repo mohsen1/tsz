@@ -729,6 +729,9 @@ path = "tests/unused_parameter_tests.rs"
 name = "private_brands"
 path = "tests/private_brands.rs"
 [[test]]
+name = "private_identifier_expression_grammar_tests"
+path = "tests/private_identifier_expression_grammar_tests.rs"
+[[test]]
 name = "lazy_class_constructor_type_tests"
 path = "tests/lazy_class_constructor_type_tests.rs"
 [[test]]

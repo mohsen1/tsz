@@ -1149,13 +1149,10 @@ impl CheckerState<'_> {
             .map(|n| n.kind)
             .unwrap_or(0);
         if left_node_kind == SyntaxKind::PrivateIdentifier as u16 && left_stripped != left_idx {
-            // TS1451: private identifier wrapped in parens is a standalone expression
-            use crate::diagnostics::diagnostic_codes;
-            self.error_at_node_msg(
-                left_stripped,
-                diagnostic_codes::PRIVATE_IDENTIFIERS_ARE_ONLY_ALLOWED_IN_CLASS_BODIES_AND_MAY_ONLY_BE_USED_AS_PAR,
-                &[],
-            );
+            // A parenthesized private identifier is a standalone expression, not
+            // the direct LHS of `in`, so it is invalid — the same TS18016/TS1451
+            // split the expression dispatcher applies to any standalone private id.
+            self.report_private_identifier_invalid_position(left_stripped);
         } else if left_node_kind == SyntaxKind::PrivateIdentifier as u16 {
             // Direct private identifier as LHS — validate it
             self.check_private_identifier_in_expression(left_stripped, right_idx, right_type);
