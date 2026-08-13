@@ -309,4 +309,33 @@ impl CheckerState<'_> {
             expr_idx,
         )
     }
+
+    /// Whether any `return <array literal>;` reachable in `body_idx` has at
+    /// least one direct `null`/`undefined`/elided-hole leaf — the return-position
+    /// twin of [`crate::state::CheckerState::array_literal_has_direct_nullish_leaf`]
+    /// (`mutable_binding_nullish.rs`), which the TS7005 mutable-binding site
+    /// uses for the identical rule.
+    ///
+    /// Structural rule: `function f() { return [undefined, null]; }` widens its
+    /// inferred return type to `any[]` under non-strict null checks (the same
+    /// `widen_nullish_return_contribution` seam this module owns), but a
+    /// resulting-type-only check (`array_element_type(return_type) == ANY`)
+    /// can't tell that apart from `declare var y: any; function f() { return
+    /// [y]; }`, whose `any[]` came from `y` already being `any` — tsc reports
+    /// TS7010 for the former and stays silent for the latter (oracle-verified,
+    /// typescript@7.0.2). This walk supplies the missing provenance leg.
+    pub(crate) fn any_return_is_array_literal_with_nullish_leaf(
+        &mut self,
+        body_idx: NodeIndex,
+    ) -> bool {
+        if body_idx.is_none() {
+            return false;
+        }
+        let mut return_exprs = Vec::new();
+        self.collect_return_expressions_in_function_body(body_idx, &mut return_exprs);
+        return_exprs.into_iter().any(|expr_idx| {
+            let expr_idx = self.unwrap_parenthesized_expression(expr_idx);
+            self.array_literal_has_direct_nullish_leaf(expr_idx)
+        })
+    }
 }
