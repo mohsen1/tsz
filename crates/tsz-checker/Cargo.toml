@@ -2734,6 +2734,9 @@ path = "tests/function_source_any_index_waiver_tests.rs"
 name = "function_source_numeric_index_target_tests"
 path = "tests/function_source_numeric_index_target_tests.rs"
 [[test]]
+name = "function_extends_interface_extra_property_tests"
+path = "tests/function_extends_interface_extra_property_tests.rs"
+[[test]]
 name = "conditional_initializer_preserves_narrowing_tests"
 path = "tests/conditional_initializer_preserves_narrowing_tests.rs"
 [[test]]

@@ -36,6 +36,7 @@ use crate::construction::TypeDatabase;
 use crate::def::resolver::TypeResolver;
 use crate::types::{IntrinsicKind, ObjectShape, ObjectShapeId};
 use crate::visitor::{lazy_def_id, object_shape_id, object_with_index_shape_id};
+use tsz_common::Atom;
 
 /// The global `Object` interface declares exactly 7 properties
 /// (`constructor`, `toString`, `toLocaleString`, `valueOf`, `hasOwnProperty`,
@@ -140,6 +141,19 @@ pub fn matches_global_object_interface_shape(db: &dyn TypeDatabase, type_id: Typ
 /// `apply`, `call`, and `bind`. This is the single shared copy of the
 /// historical sniff; prefer [`is_global_function_interface`] which tries
 /// identity first.
+///
+/// When the real boxed `Function` interface is registered on `db` (true for
+/// every compilation with a lib loaded), a shape must also declare no
+/// property outside the boxed interface's own surface. Without that check, a
+/// user interface that extends `Function` and adds a genuine data member
+/// (`interface Foo extends Function { x: number }`) still carries
+/// `apply`/`call`/`bind` from its heritage and fits comfortably under the
+/// property-count cap, so the old apply/call/bind-only probe misidentified it
+/// as `Function` itself — silencing the member check callers like
+/// `core_dispatch`'s function-value compatibility bridge run for a target
+/// they believe declares nothing beyond `Function`'s surface. `noLib`
+/// compilations (no boxed `Function` to compare against) keep the historical
+/// minimum-surface probe, since there is no ground truth to check against.
 pub fn object_shape_matches_global_function_interface(
     db: &dyn TypeDatabase,
     shape: &ObjectShape,
@@ -150,9 +164,29 @@ pub fn object_shape_matches_global_function_interface(
     let apply = db.intern_string("apply");
     let call = db.intern_string("call");
     let bind = db.intern_string("bind");
-    shape.properties.iter().any(|p| p.name == apply)
+    let has_minimum_surface = shape.properties.iter().any(|p| p.name == apply)
         && shape.properties.iter().any(|p| p.name == call)
-        && shape.properties.iter().any(|p| p.name == bind)
+        && shape.properties.iter().any(|p| p.name == bind);
+    if !has_minimum_surface {
+        return false;
+    }
+    match global_function_interface_own_property_names(db) {
+        Some(reference_names) => shape
+            .properties
+            .iter()
+            .all(|p| reference_names.contains(&p.name)),
+        None => true,
+    }
+}
+
+/// The boxed global `Function` interface's own declared property names, or
+/// `None` when no boxed `Function` is registered (`noLib`) or its shape is
+/// not (yet) an object shape.
+fn global_function_interface_own_property_names(db: &dyn TypeDatabase) -> Option<Vec<Atom>> {
+    let boxed = db.get_boxed_type(IntrinsicKind::Function)?;
+    let shape_id = object_like_shape_id(db, boxed)?;
+    let shape = db.object_shape(shape_id);
+    Some(shape.properties.iter().map(|p| p.name).collect())
 }
 
 /// Structural fallback for the global `Function` interface on a `TypeId`.
