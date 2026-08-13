@@ -270,6 +270,18 @@ impl<'a> CheckerState<'a> {
             has_json_default_export && self.current_file_uses_esm_import_syntax();
         let has_module_exports_binding =
             self.module_uses_module_exports_interop(module_name, resolution_mode);
+        // A JS CommonJS module's whole-module `module.exports = <value>` assignment
+        // (tracked as `JsExportSurface::direct_export_type`, not a binder symbol
+        // table entry) is invisible to `module_exports_for_module` /
+        // `resolve_export_in_file` — those only see binder-level `export=`/`default`
+        // symbols, which a plain JS assignment never creates. Under esModuleInterop,
+        // tsc synthesizes a default from that whole-module value regardless of import
+        // shape; `module_can_use_synthetic_default_import` already encodes exactly
+        // that eligibility check (used to suppress TS1192 for `import X from`).
+        // Without also consulting it here, `import { default as X }` and
+        // `export { default as X } from` fall through to the unconditional TS2305
+        // arm in `emit_no_default_export_error` even though `import X from` on the
+        // same module resolves cleanly.
         let has_default_binding = has_json_default_export
             || has_module_exports_binding
             || self.module_has_default_binding_fast_path(module_name, resolution_mode)
@@ -277,7 +289,9 @@ impl<'a> CheckerState<'a> {
                 table.has("default")
                     || table.has("export=")
                     || (has_module_exports_binding && table.has("module.exports"))
-            });
+            })
+            || (resolution_mode.is_none()
+                && self.module_can_use_synthetic_default_import(module_name));
         let resolved_target_has_js_esm_syntax = resolved_target
             .is_some_and(|target_idx| self.source_file_idx_is_js_with_esm_syntax(target_idx));
         let named_imports_resolve_via_export_equals_target = self

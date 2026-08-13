@@ -726,6 +726,23 @@ impl<'a> CheckerState<'a> {
             {
                 continue;
             }
+            // A JS CommonJS module's whole-module `module.exports = <value>`
+            // assignment is tracked as `JsExportSurface::direct_export_type`, a
+            // pure type computation with no binder `export=`/`default` symbol
+            // table entry, so `module_exports` (built from
+            // `resolve_effective_module_exports_with_mode`) never sees it.
+            // Under esModuleInterop, tsc still synthesizes a default from that
+            // whole-module value for a re-export the same as it does for
+            // `import { default as X } from` — matched here through the same
+            // `module_can_use_synthetic_default_import` eligibility check that
+            // path already uses.
+            if export_name == "default"
+                && !module_exports.has("__esModule")
+                && resolution_mode.is_none()
+                && self.module_can_use_synthetic_default_import(module_name)
+            {
+                continue;
+            }
 
             // Check if this name is exported from the source module
             if export_name != "*" && !module_exports.has(&export_name) {
