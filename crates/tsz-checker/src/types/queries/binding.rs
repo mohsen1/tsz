@@ -387,6 +387,29 @@ mod binding_contextual_type_tests {
         );
     }
 
+    /// Same rule for `var`, oracle-verified alongside `let` (typescript@7.0.2):
+    /// `var [second = 0] = [10, 20]; const y: 0 | 10 = second;` reports TS2322.
+    #[test]
+    fn var_array_default_widens_to_primitive() {
+        let codes = check_source_codes("var [second = 0] = [10, 20]; const y: 0 | 10 = second;");
+        assert!(
+            codes.contains(&2322),
+            "var binding widens to `number`, not assignable to `0 | 10`: {codes:?}"
+        );
+    }
+
+    /// Object-pattern sibling of `let_array_default_widens_to_primitive`
+    /// (oracle-verified, typescript@7.0.2): a `let` object-destructuring
+    /// default widens the same way an array-destructuring one does.
+    #[test]
+    fn let_object_default_widens_to_primitive() {
+        let codes = check_source_codes("let { p = 0 } = { p: 10 }; const z: 10 = p;");
+        assert!(
+            codes.contains(&2322),
+            "let object binding widens to `number`, not assignable to `10`: {codes:?}"
+        );
+    }
+
     /// String-literal defaults preserve string-literal source elements.
     #[test]
     fn const_array_string_default_preserves_literal_element() {

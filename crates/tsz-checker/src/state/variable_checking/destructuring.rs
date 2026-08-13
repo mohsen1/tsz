@@ -30,7 +30,7 @@ fn apparent_type_display_for_destructuring(type_id: TypeId) -> Option<String> {
 }
 
 impl<'a> CheckerState<'a> {
-    fn report_unknown_empty_binding_pattern(
+    pub(super) fn report_unknown_empty_binding_pattern(
         &mut self,
         pattern_idx: NodeIndex,
         parent_type: TypeId,
@@ -360,7 +360,7 @@ impl<'a> CheckerState<'a> {
     /// defaults widen. Nested patterns (`const [[a = 0]] = ...`) inherit the
     /// outer declaration's const-ness, so we walk up through binding
     /// elements/patterns to the owning `VariableDeclaration`.
-    fn binding_pattern_is_const_declaration(&self, pattern_idx: NodeIndex) -> bool {
+    pub(super) fn binding_pattern_is_const_declaration(&self, pattern_idx: NodeIndex) -> bool {
         let mut current = pattern_idx;
         for _ in 0..16 {
             let Some(ext) = self.ctx.arena.get_extended(current) else {
@@ -581,209 +581,24 @@ impl<'a> CheckerState<'a> {
     /// The binder creates symbols for identifiers inside binding patterns (e.g., `const [x] = arr;`),
     /// but their `value_declaration` is the identifier node, not the enclosing variable declaration.
     /// We infer the binding element type from the destructured value type and cache it on the symbol.
+    ///
+    /// See `destructuring_widened_any_report.rs`'s
+    /// `assign_binding_pattern_symbol_types_with_request_reporting` (the
+    /// reporting variant this delegates to, `report_widened_any: false`) for
+    /// the shared implementation — split into its own file to stay under
+    /// this file's line ratchet.
     pub(crate) fn assign_binding_pattern_symbol_types_with_request(
         &mut self,
         pattern_idx: NodeIndex,
         parent_type: TypeId,
         request: &TypingRequest,
     ) {
-        let parent_type =
-            self.normalize_parameter_binding_pattern_source_type(pattern_idx, parent_type);
-
-        // Skip nested pattern processing for ERROR types to prevent cascading
-        // diagnostics. When a parent element resolves to ERROR (e.g., from
-        // destructuring `unknown`), nested patterns should not emit further errors.
-        if parent_type == TypeId::ERROR {
-            return;
-        }
-
-        self.report_unknown_empty_binding_pattern(pattern_idx, parent_type);
-
-        // A binding default's literal type is only preserved (under `const`) when
-        // the destructuring source is a tuple — i.e. a fresh array literal or a
-        // tuple-typed value, where the positional element literal is meaningful
-        // (`const [first = 0] = [10, 20]` → `0 | 10`). For non-tuple sources
-        // (arrays, or unions like `RegExpMatchArray | never[]`) the default
-        // widens as usual, matching tsc once the source element is taken into
-        // account.
-        let source_is_tuple = query::tuple_elements(
-            self.ctx.types,
-            query::unwrap_readonly_deep(self.ctx.types, parent_type),
+        self.assign_binding_pattern_symbol_types_with_request_reporting(
+            pattern_idx,
+            parent_type,
+            request,
+            false,
         )
-        .is_some();
-
-        let Some(pattern_node) = self.ctx.arena.get(pattern_idx) else {
-            return;
-        };
-        let Some(pattern_data) = self.ctx.arena.get_binding_pattern(pattern_node) else {
-            return;
-        };
-
-        for (i, &element_idx) in pattern_data.elements.nodes.iter().enumerate() {
-            if element_idx.is_none() {
-                continue;
-            }
-
-            let Some(element_node) = self.ctx.arena.get(element_idx) else {
-                continue;
-            };
-            if element_node.kind == syntax_kind_ext::OMITTED_EXPRESSION {
-                continue;
-            }
-
-            let Some(element_data) = self.ctx.arena.get_binding_element(element_node) else {
-                continue;
-            };
-
-            let mut element_type = if parent_type == TypeId::ANY {
-                TypeId::ANY
-            } else {
-                self.get_binding_element_type_with_request(
-                    pattern_idx,
-                    i,
-                    parent_type,
-                    element_data,
-                    request,
-                )
-            };
-
-            // If there's an initializer, the type incorporates it.
-            // TypeScript widens the inferred type with the initializer type.
-            // Set contextual type for function-like defaults so parameter types
-            // are inferred from the expected element type (e.g., `{ f: id = arg => arg }: T`).
-            if element_data.initializer.is_some() {
-                // A default value guarantees the binding won't be undefined at runtime,
-                // so strip `undefined` from the element type. This matches tsc behavior:
-                // `{ name = "default" }: { name?: string }` gives `name` type `string`.
-                // Route through flow observation boundary for centralized policy.
-                if self.ctx.strict_null_checks() {
-                    element_type = flow_boundary::narrow_destructuring_default(
-                        self.ctx.types,
-                        element_type,
-                        true,
-                    );
-                }
-
-                // Provide the element type as contextual type for the default
-                // value expression. This is needed for:
-                // - Arrow/function defaults: infers parameter types
-                // - Array literal defaults: produces tuples instead of widened arrays
-                //   e.g., `[b, {x}]=["abc", {x: 10}]` needs the default typed as
-                //   a tuple `[string, {x: number}]`, not `(string | {x: number})[]`
-                let request = if element_type != TypeId::ANY
-                    && element_type != TypeId::UNKNOWN
-                    && element_type != TypeId::ERROR
-                {
-                    request.read().contextual(element_type)
-                } else {
-                    request.read().contextual_opt(None)
-                };
-                self.invalidate_expression_for_contextual_retry(element_data.initializer);
-                // Under `const`/`readonly`, tsc does not widen the default's literal
-                // type (`widenTypeInferredFromInitializer` skips the `Constant` case),
-                // so `const [first = 0] = [10, 20]` yields `0 | 10`, not `number`.
-                // `let`/`var`/parameter defaults widen, matching the standard path.
-                // Gated to tuple sources so non-tuple sources (e.g. a `number[]` or a
-                // `RegExpMatchArray | never[]` union) keep their widening behavior.
-                let prev_preserve = self.ctx.preserve_literal_types;
-                if source_is_tuple && self.binding_pattern_is_const_declaration(pattern_idx) {
-                    self.ctx.preserve_literal_types = true;
-                }
-                let init_type =
-                    self.get_type_of_node_with_request(element_data.initializer, &request);
-                self.ctx.preserve_literal_types = prev_preserve;
-
-                // When the destructuring SOURCE is genuinely `any`, every element is
-                // `any` and stays `any` (tsc's `isTypeAny(parentType)` short-circuit):
-                // do NOT fold the default initializer's type onto it, or a nested
-                // computed-key would then be checked against the init type and fire a
-                // spurious TS2537. The initializer is still evaluated above for its own
-                // checks; only the type override is skipped.
-                if parent_type != TypeId::ANY {
-                    if element_type == TypeId::ANY || element_type == TypeId::UNKNOWN {
-                        element_type = init_type;
-                    } else if !self
-                        .destructuring_relation_outcome(init_type, element_type)
-                        .related
-                    {
-                        element_type = binding_patterns::binding_pattern_initializer_union_type(
-                            self.ctx.types,
-                            element_type,
-                            init_type,
-                        );
-                    }
-                }
-            }
-
-            let Some(name_node) = self.ctx.arena.get(element_data.name) else {
-                continue;
-            };
-
-            // Identifier binding: cache the inferred type on the symbol.
-            if name_node.kind == SyntaxKind::Identifier as u16
-                && let Some(sym_id) = self.ctx.binder.get_node_symbol(element_data.name)
-            {
-                // A bare `unique symbol` binding element widens to `symbol`, matching
-                // tsc's `widenTypeForVariableLikeDeclaration` (the `isBindingElement`
-                // branch always widens — a binding element's pattern annotation types
-                // the *source*, not the element binding, so `const [db]: [typeof cs] = t`
-                // still yields `db: symbol`). A binding element is never the unique
-                // symbol's mint site, so no ref guard is needed; `is_unique_symbol_type`
-                // is bare-only, so a `typeof a | typeof b` element is preserved. This
-                // widens the *element* only — nested patterns recurse below with the
-                // un-widened `element_type` and widen at their own leaf identifiers.
-                let element_type =
-                    if common_query::is_unique_symbol_type(self.ctx.types, element_type) {
-                        TypeId::SYMBOL
-                    } else {
-                        element_type
-                    };
-                // Route null/undefined widening through the flow observation boundary.
-                let final_type = flow_boundary::widen_null_undefined_to_any(
-                    self.ctx.types,
-                    element_type,
-                    self.ctx.strict_null_checks(),
-                );
-                self.cache_symbol_type(sym_id, final_type);
-            }
-
-            // Nested binding patterns: check iterability for array patterns, then recurse
-            if name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN {
-                // Check iterability for nested array destructuring
-                self.check_destructuring_iterability(
-                    element_data.name,
-                    element_type,
-                    NodeIndex::NONE,
-                );
-                let nested_request = if element_type != TypeId::ANY
-                    && element_type != TypeId::UNKNOWN
-                    && element_type != TypeId::ERROR
-                {
-                    request.read().contextual(element_type)
-                } else {
-                    request.read().contextual_opt(None)
-                };
-                self.assign_binding_pattern_symbol_types_with_request(
-                    element_data.name,
-                    element_type,
-                    &nested_request,
-                );
-            } else if name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN {
-                let nested_request = if element_type != TypeId::ANY
-                    && element_type != TypeId::UNKNOWN
-                    && element_type != TypeId::ERROR
-                {
-                    request.read().contextual(element_type)
-                } else {
-                    request.read().contextual_opt(None)
-                };
-                self.assign_binding_pattern_symbol_types_with_request(
-                    element_data.name,
-                    element_type,
-                    &nested_request,
-                );
-            }
-        }
     }
 
     /// Get the expected type for a binding element from its parent type.
