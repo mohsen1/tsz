@@ -984,11 +984,7 @@ impl<'a> CheckerState<'a> {
         let has_json_default_export =
             self.module_has_json_default_export(module_specifier, Some(self.ctx.current_file_idx));
 
-        if let Some(specifier_node) = named_default_specifier_node {
-            if has_json_default_export {
-                return;
-            }
-            self.emit_no_exported_member_error(module_specifier, "default", specifier_node);
+        if named_default_specifier_node.is_some() && has_json_default_export {
             return;
         }
 
@@ -1104,6 +1100,19 @@ impl<'a> CheckerState<'a> {
             if !self.module_is_esm(module_specifier) {
                 return;
             }
+        }
+
+        // `import { default as X } from "mod"` (a named specifier spelling
+        // "default") reaches the same synthetic-default question as a plain
+        // `import X from "mod"` default-import clause, so it must run through
+        // every suppression above before falling back to TS2305 — matching
+        // this shared symptom: emitting TS2305 before those checks meant a
+        // CommonJS-shaped `.js` module (`module.exports = Foo;`, no `export
+        // =`, no `.d.ts`) resolved a plain `import Foo from "mod"` but wrongly
+        // rejected the equivalent `import { default as Foo } from "mod"`.
+        if let Some(specifier_node) = named_default_specifier_node {
+            self.emit_no_exported_member_error(module_specifier, "default", specifier_node);
+            return;
         }
 
         // Get span from declaration node
