@@ -3,10 +3,44 @@
 use crate::def::resolver::TypeResolver;
 use crate::diagnostics::SubtypeFailureReason;
 use crate::relations::subtype::SubtypeChecker;
-use crate::types::{ObjectShape, PropertyInfo};
+use crate::types::{ObjectShape, PropertyInfo, TypeId};
 use crate::utils;
+use tsz_common::interner::Atom;
 
 impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
+    /// Build the `IndexSignatureMismatch` reason for a failing index-to-index or
+    /// property-to-index check, applying the `MissingProperty` priority rule:
+    /// when the nested failure is `MissingProperty` or `MissingProperties`,
+    /// bubble it up directly so the diagnostic reports the missing property
+    /// rather than wrapping it in an index-signature incompatibility.
+    /// `property_name` is `Some` for a property-vs-index check (tsc: TS2530),
+    /// `None` for index-vs-index (tsc: TS2634).
+    pub(in crate::relations::subtype) fn make_index_sig_reason(
+        &mut self,
+        index_kind: &'static str,
+        source_value_type: TypeId,
+        target_value_type: TypeId,
+        property_name: Option<Atom>,
+    ) -> Option<SubtypeFailureReason> {
+        let nested = self.explain_failure(source_value_type, target_value_type);
+        if matches!(
+            nested,
+            Some(
+                SubtypeFailureReason::MissingProperty { .. }
+                    | SubtypeFailureReason::MissingProperties { .. }
+            )
+        ) {
+            return nested;
+        }
+        Some(SubtypeFailureReason::IndexSignatureMismatch {
+            index_kind,
+            source_value_type,
+            target_value_type,
+            property_name,
+            nested_reason: nested.map(Box::new),
+        })
+    }
+
     pub(in crate::relations::subtype) fn explain_properties_against_index_signatures(
         &mut self,
         source: &[PropertyInfo],
@@ -50,6 +84,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                             "number",
                             prop_type,
                             number_idx.value_type,
+                            Some(prop.name),
                         );
                     }
                 }
@@ -71,7 +106,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     )
                     .is_true()
                 {
-                    return self.make_index_sig_reason("string", prop_type, string_idx.value_type);
+                    return self.make_index_sig_reason(
+                        "string",
+                        prop_type,
+                        string_idx.value_type,
+                        Some(prop.name),
+                    );
                 }
             }
 
@@ -85,7 +125,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     )
                     .is_true()
             {
-                return self.make_index_sig_reason("symbol", prop_type, symbol_idx.value_type);
+                return self.make_index_sig_reason(
+                    "symbol",
+                    prop_type,
+                    symbol_idx.value_type,
+                    Some(prop.name),
+                );
             }
         }
 

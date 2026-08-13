@@ -2256,6 +2256,9 @@ path = "tests/keyof_template_index_signature_tests.rs"
 name = "ts2411_pattern_index_signature_tests"
 path = "tests/ts2411_pattern_index_signature_tests.rs"
 [[test]]
+name = "ts2530_property_vs_index_signature_tests"
+path = "tests/ts2530_property_vs_index_signature_tests.rs"
+[[test]]
 name = "ts2411_tests"
 path = "tests/ts2411_tests.rs"
 [[test]]

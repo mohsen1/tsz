@@ -1676,22 +1676,43 @@ impl<'a> CheckerState<'a> {
 
     /// Render an `IndexSignatureMismatch` failure.
     ///
-    /// At `depth == 0` emits the TS2322 top-level message followed by
-    /// `"'{kind}' index signatures are incompatible."` and the value-type
-    /// nested chain. At deeper depths, emits the incompatibility message
-    /// directly and continues the chain.
+    /// `property_name` distinguishes the two shapes `tsc` reports differently:
+    /// a named source *property* failing against the target's index signature
+    /// is `"Property '{name}' is incompatible with index signature."` (TS2530);
+    /// an index-signature-to-index-signature failure is `"'{kind}' index
+    /// signatures are incompatible."` (TS2634).
+    ///
+    /// At `depth == 0` emits the TS2322 top-level message followed by the
+    /// elaboration line and the value-type nested chain. At deeper depths,
+    /// emits the elaboration message directly and continues the chain.
     pub(super) fn render_index_signature_mismatch(
         &mut self,
         ctx: &RenderContext,
         index_kind: &str,
         source_value_type: TypeId,
         target_value_type: TypeId,
+        property_name: Option<tsz_common::interner::Atom>,
         nested_reason: Option<&tsz_solver::SubtypeFailureReason>,
     ) -> Diagnostic {
-        let incompat_message = format_message(
-            diagnostic_messages::INDEX_SIGNATURES_ARE_INCOMPATIBLE,
-            &[index_kind],
-        );
+        let (incompat_message, incompat_code) = match property_name {
+            Some(name) => {
+                let prop_name = self.ctx.types.resolve_atom_ref(name);
+                (
+                    format_message(
+                        diagnostic_messages::PROPERTY_IS_INCOMPATIBLE_WITH_INDEX_SIGNATURE,
+                        &[&prop_name],
+                    ),
+                    diagnostic_codes::PROPERTY_IS_INCOMPATIBLE_WITH_INDEX_SIGNATURE,
+                )
+            }
+            None => (
+                format_message(
+                    diagnostic_messages::INDEX_SIGNATURES_ARE_INCOMPATIBLE,
+                    &[index_kind],
+                ),
+                diagnostic_codes::INDEX_SIGNATURES_ARE_INCOMPATIBLE,
+            ),
+        };
 
         let mut diag = if ctx.depth == 0 {
             let source_str = self.format_type_for_diagnostic_role(
@@ -1717,7 +1738,7 @@ impl<'a> CheckerState<'a> {
                 ctx.start,
                 ctx.length,
                 incompat_message,
-                diagnostic_codes::INDEX_SIGNATURES_ARE_INCOMPATIBLE,
+                incompat_code,
                 0,
             );
             diag
@@ -1727,7 +1748,7 @@ impl<'a> CheckerState<'a> {
                 ctx.start,
                 ctx.length,
                 incompat_message,
-                diagnostic_codes::INDEX_SIGNATURES_ARE_INCOMPATIBLE,
+                incompat_code,
             )
         };
 

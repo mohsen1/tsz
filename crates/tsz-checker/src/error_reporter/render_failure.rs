@@ -1365,12 +1365,14 @@ impl<'a> CheckerState<'a> {
                 index_kind,
                 source_value_type,
                 target_value_type,
+                property_name,
                 nested_reason,
             } => self.render_index_signature_mismatch(
                 &rctx,
                 index_kind,
                 *source_value_type,
                 *target_value_type,
+                *property_name,
                 nested_reason.as_deref(),
             ),
 
