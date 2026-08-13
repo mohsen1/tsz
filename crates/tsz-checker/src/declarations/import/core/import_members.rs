@@ -281,7 +281,13 @@ impl<'a> CheckerState<'a> {
         // Without also consulting it here, `import { default as X }` and
         // `export { default as X } from` fall through to the unconditional TS2305
         // arm in `emit_no_default_export_error` even though `import X from` on the
-        // same module resolves cleanly.
+        // same module resolves cleanly. The eligibility helper only judges the
+        // module's *shape* (CJS-like, not ESM); synthesis itself additionally
+        // requires `allowSyntheticDefaultImports`/`esModuleInterop` and never
+        // applies to a `.ts`/`.tsx` *source* target — tsc's
+        // `canHaveSyntheticDefault` gives a non-JS source file a default only
+        // through `export =` (covered by the `exports_table` arm above), even
+        // with interop on. Both extra gates stay here at the call site.
         let has_default_binding = has_json_default_export
             || has_module_exports_binding
             || self.module_has_default_binding_fast_path(module_name, resolution_mode)
@@ -291,6 +297,8 @@ impl<'a> CheckerState<'a> {
                     || (has_module_exports_binding && table.has("module.exports"))
             })
             || (resolution_mode.is_none()
+                && self.ctx.allow_synthetic_default_imports()
+                && !self.is_source_file_import(module_name)
                 && self.module_can_use_synthetic_default_import(module_name));
         let resolved_target_has_js_esm_syntax = resolved_target
             .is_some_and(|target_idx| self.source_file_idx_is_js_with_esm_syntax(target_idx));
