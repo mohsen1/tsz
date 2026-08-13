@@ -219,3 +219,53 @@ var e: string = av;
         )],
     );
 }
+
+/// An assignment expression (`x = y`) evaluates to its RHS value, so its
+/// freshness and widening provenance are the RHS's, not the assignment
+/// node's own (`check_assignment_expression` already returns `right_type`
+/// for the same reason). Reduced from `wideningTuples4.ts`: `b`'s initializer
+/// is the assignment `a = [undefined, null]`, not a direct array literal —
+/// `is_fresh_literal_expression_inner` and the nullish-widening provenance
+/// walks must unwrap it the same way they unwrap a parenthesized expression,
+/// or `b` keeps the unwidened `[undefined, null]` tuple instead of widening
+/// to `[any, any]`. tsc: `b: [any, any]`, so `b = ["", ""]` is clean.
+#[test]
+fn assignment_expression_initializer_widens_through_rhs() {
+    let source = "\
+var a: [any];
+var b = a = [undefined, null];
+b = [\"\", \"\"];
+";
+    let messages = nonstrict_messages(source);
+    assert_eq!(
+        messages,
+        vec![(
+            2322,
+            "Type '[undefined, null]' is not assignable to type '[any]'.".to_string()
+        )],
+        "b must widen to [any, any] through the assignment RHS, matching tsc: {messages:?}"
+    );
+}
+
+/// Control: a *declared* (non-widening) value flowing through the same
+/// assignment-expression shape must NOT widen — mirrors
+/// `declared_undefined_element_keeps_array_unwidened` but through an
+/// assignment initializer instead of a direct array literal.
+#[test]
+fn assignment_expression_initializer_with_declared_value_stays_unwidened() {
+    let source = "\
+declare var q: undefined;
+var a: [any];
+var b = a = [q];
+var e: string = b;
+";
+    let messages = nonstrict_messages(source);
+    assert_eq!(
+        messages,
+        vec![(
+            2322,
+            "Type '[undefined]' is not assignable to type 'string'.".to_string()
+        )],
+        "a declared `undefined` reaching through an assignment RHS must not widen: {messages:?}"
+    );
+}

@@ -105,6 +105,22 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
+        // A plain assignment expression (`x = <value>`) evaluates to its RHS
+        // value — tsc types (and widening-flavours) `x = y` as `y`'s own type,
+        // not `x`'s declared type (`check_assignment_expression` already
+        // returns `right_type` for exactly this reason). The provenance walk
+        // must follow the same unwrap, or a widening literal reached only
+        // through an assignment (`var b = a = [undefined, null]`) fails closed
+        // and `b` keeps its unwidened tuple instead of `[any, any]`. Compound
+        // assignments (`+=` and friends) are excluded: their value type is not
+        // simply the RHS's.
+        if node.kind == syntax_kind_ext::BINARY_EXPRESSION
+            && let Some(binary) = self.ctx.arena.get_binary_expr(node)
+            && binary.operator_token == SyntaxKind::EqualsToken as u16
+        {
+            return self.initializer_nullish_leaves_are_widening_inner(binary.right, depth + 1);
+        }
+
         if node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION {
             let Some(array) = self.ctx.arena.get_literal_expr(node) else {
                 return false;

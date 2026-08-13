@@ -490,6 +490,22 @@ impl<'a> CheckerState<'a> {
             return self.is_fresh_literal_expression_inner(paren.expression, depth + 1);
         }
 
+        // A plain assignment expression (`x = y`) evaluates to its RHS value,
+        // so its freshness (and the widening that follows from it) is the
+        // RHS's, not the assignment node's own — `check_assignment_expression`
+        // already returns `right_type` for the same reason. Without this,
+        // `var b = a = [undefined, null]` never widens `b`'s inferred tuple at
+        // all, since the initializer node itself (the assignment) never
+        // reaches the direct object/array-literal or parenthesized-unwrap
+        // cases below. Compound assignments (`+=` and friends) are excluded:
+        // their value type is not simply the RHS's.
+        if kind == syntax_kind_ext::BINARY_EXPRESSION
+            && let Some(binary) = self.ctx.arena.get_binary_expr(node)
+            && binary.operator_token == SyntaxKind::EqualsToken as u16
+        {
+            return self.is_fresh_literal_expression_inner(binary.right, depth + 1);
+        }
+
         // Prefix unary (+/-) on numeric/bigint literals are fresh
         if kind == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
             && let Some(prefix) = self.ctx.arena.get_unary_expr(node)
