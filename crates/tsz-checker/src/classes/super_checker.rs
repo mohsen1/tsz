@@ -785,6 +785,35 @@ impl<'a> CheckerState<'a> {
         None
     }
 
+    /// Whether a `super.member` PROPERTY access is a semantically valid super
+    /// reference — the precondition for reporting a nonexistent member on it
+    /// through the ordinary path (TS2576/TS2339).
+    ///
+    /// When `super` itself is invalid — a parse error on the keyword (TS1034),
+    /// no enclosing derived class (TS2335), or a regular-function boundary
+    /// between `super` and its class member (TS2660) — `tsc` reports only that
+    /// super-validity diagnostic and suppresses the member lookup, so the
+    /// nonexistent-property diagnostic must be suppressed too. Mirrors the gates
+    /// [`Self::check_super_expression`] applies before it reaches member checks.
+    pub(crate) fn super_property_reference_is_valid(&self, super_idx: NodeIndex) -> bool {
+        if self.has_syntax_parse_errors() {
+            return false;
+        }
+        let Some(class_idx) = self.find_enclosing_class(super_idx) else {
+            return false;
+        };
+        let class_data = self
+            .ctx
+            .arena
+            .get(class_idx)
+            .and_then(|node| self.ctx.arena.get_class(node))
+            .cloned();
+        let has_base = class_data
+            .as_ref()
+            .is_some_and(|class| self.class_has_base(class));
+        has_base && self.is_super_in_valid_member_context(super_idx)
+    }
+
     /// Check a super expression for proper usage.
     ///
     /// Validates that super expressions are used correctly:

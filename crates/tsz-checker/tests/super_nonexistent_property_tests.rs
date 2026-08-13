@@ -191,3 +191,56 @@ class Child extends Parent {
         "grammar-erroneous super must suppress the dependent nonexistent-property diagnostics; got {cs:?}",
     );
 }
+
+/// A `super.member` whose `super` crosses a regular-function boundary is an
+/// invalid reference (TS2660), so the dependent nonexistent-property
+/// diagnostics are suppressed even though `member` exists on the base static
+/// side. Regression for the #17370 fix's parse-error-only guard, which did not
+/// cover the no-parse-error function-boundary case
+/// (`typeOfThisInStaticMembers9.ts`: `static f = 1` in the base,
+/// `function () { return super.f }` in the derived static field).
+#[test]
+fn function_boundary_super_static_member_suppresses_ts2576() {
+    let source = r#"
+class Root {
+    static tag: number = 1;
+}
+class Leaf extends Root {
+    static viaFunctionExpr = function () { return super.tag };
+}
+"#;
+    let cs = check_source_codes(source);
+    assert!(
+        cs.contains(&2660),
+        "a regular-function boundary breaks the super binding (TS2660); got {cs:?}",
+    );
+    assert!(
+        !cs.contains(&2576),
+        "an invalid (function-boundary) super must not gain the TS2576 static suggestion; got {cs:?}",
+    );
+}
+
+/// A `super.member` inside a nested class expression with no base of its own is
+/// an invalid reference (TS2335); the dependent nonexistent-property
+/// diagnostics are suppressed even though `member` exists on the outer base's
+/// static side.
+#[test]
+fn nested_nonderived_class_super_static_member_suppresses_ts2576() {
+    let source = r#"
+class Root {
+    static tag: number = 1;
+}
+class Leaf extends Root {
+    static viaNestedClass = class { field = super.tag };
+}
+"#;
+    let cs = check_source_codes(source);
+    assert!(
+        cs.contains(&2335),
+        "a nested non-derived class makes super invalid (TS2335); got {cs:?}",
+    );
+    assert!(
+        !cs.contains(&2576),
+        "an invalid (nested-non-derived) super must not gain the TS2576 static suggestion; got {cs:?}",
+    );
+}
