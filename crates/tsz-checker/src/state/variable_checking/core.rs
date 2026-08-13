@@ -1574,13 +1574,24 @@ impl<'a> CheckerState<'a> {
                         && let Some(ref name_str) = var_name
                     {
                         // Clone entries to avoid holding borrow on self during mutation.
-                        let cross_file_entries: Vec<(usize, tsz_binder::SymbolId)> = self
+                        // Sorted by file index descending: tsc's binder rebinds a merged
+                        // global var's `valueDeclaration` on every same-named redeclaration
+                        // it processes, so the LAST file in program order ends up canonical
+                        // (oracle-verified: `jsContainerMergeTsDeclaration.ts` reports
+                        // `TS2403` at the earlier-declaring file's decl, checked against the
+                        // later file's type, regardless of which file is JS/TS or which is
+                        // passed first on the command line — only file order matters).
+                        // Trying highest-index candidates first mirrors "last valid
+                        // declaration wins" when an intermediate candidate is skipped below
+                        // (bare/block-scoped/etc).
+                        let mut cross_file_entries: Vec<(usize, tsz_binder::SymbolId)> = self
                             .ctx
                             .global_file_locals_index
                             .as_ref()
                             .and_then(|idx| idx.get(name_str.as_str()))
                             .cloned()
                             .unwrap_or_default();
+                        cross_file_entries.sort_by(|a, b| b.0.cmp(&a.0));
                         let all_arenas_opt = self.ctx.all_arenas.clone();
                         let all_binders_opt = self.ctx.all_binders.clone();
                         if let Some(all_arenas) = all_arenas_opt
@@ -1597,11 +1608,13 @@ impl<'a> CheckerState<'a> {
                                 if found_cross_file_type {
                                     break;
                                 }
-                                // Only check against files with lower indices (earlier in
-                                // the program). The first file to declare the variable
-                                // establishes its type; subsequent files are checked against
-                                // that established type. This matches tsc behavior.
-                                if file_idx >= current_file_idx {
+                                // Only check against files with higher indices (later in the
+                                // program): the LAST file to declare the variable establishes
+                                // its type, and earlier-declaring files are checked against
+                                // it (oracle-verified; see the sort comment above — this is
+                                // the reverse of what a naive "first declaration wins" model
+                                // would predict).
+                                if file_idx <= current_file_idx {
                                     continue;
                                 }
                                 let Some(other_binder) = all_binders.get(file_idx) else {
