@@ -1,21 +1,23 @@
-//! Coverage for `super.<member>` accessibility checks (TS2340 and TS2855).
+//! Coverage for `super.<member>` accessibility checks (TS2340/TS2341/TS2855).
 //!
-//! Structural rules (match `tsc`):
+//! Structural rules (each shape byte-verified against `tsc` 6.0.2; the
+//! diagnostics come from `checkPropertyAccessibilityAtLocation`, whose
+//! `isSuper` gates run BEFORE the visibility check):
 //!
-//! **Visibility-driven rule (all targets):** When the receiver of a property access
-//! is the `super` keyword:
-//! > - If the base-class member is **public** or **protected** (method, accessor,
-//! >   or static), the access is valid — no TS2340.
-//! > - If the base-class member is **private** (method, accessor, or static),
-//! >   emit TS2340: "Only public and protected methods of the base class are
-//! >   accessible via the 'super' keyword."  (NOT TS2341, which is the error for
-//! >   ordinary `instance.privateMember` accesses.)
+//! **ES5 target:** a super member backed by any non-*method* declaration —
+//! plain field, get/set accessor, auto-accessor field; instance or static;
+//! ANY visibility (public, protected, private) — emits TS2340: "Only public
+//! and protected methods of the base class are accessible via the 'super'
+//! keyword." Private *methods* are the only private members that reach the
+//! visibility check, and they emit TS2341 exactly like an ordinary
+//! `instance.x` access.
 //!
-//! Note: tsc does NOT emit TS2340 for public/protected super accessor access in
-//! any ES target. TS2340 is exclusively a private-member visibility diagnostic.
-//!
-//! `super.<field>` reads are a separate target-sensitive path: ES5 emits
-//! TS2340, while ES2015+ emits TS2855. Those cases are exercised below.
+//! **ES2015 and later:** TS2340 never fires. A parent **instance** field via
+//! super emits TS2855 (any visibility; statics and static contexts are
+//! exempt — `super` there is the parent constructor object). A private
+//! member that passes that gate (method, accessor, or static) emits TS2341.
+//! Public/protected methods, accessors, statics, and auto-accessor fields
+//! are allowed.
 
 use tsz_binder::BinderState;
 use tsz_checker::state::CheckerState;
@@ -90,18 +92,32 @@ fn check_es2015(source: &str) -> Vec<(u32, String)> {
     ))
 }
 
-fn assert_ts2340(source: &str) {
-    let d = check_source_code_messages(source);
+/// Private member via super at a modern target: TS2341, never TS2340.
+fn assert_ts2341_not_ts2340(d: &[(u32, String)]) {
     assert!(
-        has_diagnostic_code(&d, TS2340),
+        has_diagnostic_code(d, TS2341),
+        "expected TS2341 but got: {d:?}"
+    );
+    assert!(
+        !has_diagnostic_code(d, TS2340),
+        "TS2340 must not fire for a private member at ES2015+, got: {d:?}"
+    );
+}
+
+/// ES5 non-method member via super: TS2340 alone — the visibility check is
+/// never reached, so TS2341 must not stack on top.
+fn assert_ts2340_not_ts2341(d: &[(u32, String)]) {
+    assert!(
+        has_diagnostic_code(d, TS2340),
         "expected TS2340 but got: {d:?}"
     );
-    // TS2340 and TS2341 must not both fire for the same `super.x` access.
     assert!(
-        !has_diagnostic_code(&d, TS2341),
+        !has_diagnostic_code(d, TS2341),
         "TS2341 must not fire alongside TS2340, got: {d:?}"
     );
 }
+
+// --- Public/protected accessor access via super is legal at modern targets ---
 
 #[test]
 fn super_public_get_accessor_read_no_ts2340() {
@@ -239,13 +255,10 @@ class Derived extends Base {
 }
 
 #[test]
-fn super_public_members_in_nested_arrows_no_ts2340() {
+fn super_public_methods_in_nested_arrows_no_ts2340() {
     let source = r#"
 class User {
     sayHello(): void {}
-    get label(): string {
-        return "user";
-    }
 }
 
 class RegisteredUser extends User {
@@ -253,12 +266,10 @@ class RegisteredUser extends User {
         super();
         var direct = () => super.sayHello();
         var nested = () => () => () => super.sayHello();
-        var superLabel = () => () => () => super.label;
     }
     sayHello(): void {
         var direct = () => super.sayHello();
         var nested = () => () => () => super.sayHello();
-        var superLabel = () => () => () => super.label;
     }
 }
 "#;
@@ -266,13 +277,41 @@ class RegisteredUser extends User {
     for diagnostics in [check_es5(source), check_es2015(source)] {
         assert!(
             !has_diagnostic_code(&diagnostics, TS2340),
-            "public super method/accessor access in nested arrows must not emit TS2340, got: {diagnostics:?}",
+            "public super method access in nested arrows must not emit TS2340, got: {diagnostics:?}",
         );
         assert!(
             !has_diagnostic_code(&diagnostics, TS2855),
-            "public super method/accessor access in nested arrows must not emit TS2855, got: {diagnostics:?}",
+            "public super method access in nested arrows must not emit TS2855, got: {diagnostics:?}",
         );
     }
+}
+
+#[test]
+fn super_public_accessor_in_nested_arrows_target_split() {
+    // `super.label` (a public get accessor) through nested arrows: legal at
+    // ES2015+, TS2340 at ES5 — the arrow nesting must not change the answer.
+    let source = r#"
+class User {
+    get label(): string {
+        return "user";
+    }
+}
+
+class RegisteredUser extends User {
+    describe(): string {
+        var superLabel = () => () => super.label;
+        return superLabel()();
+    }
+}
+"#;
+
+    let es5 = check_es5(source);
+    assert_ts2340_not_ts2341(&es5);
+    let es2015 = check_es2015(source);
+    assert!(
+        !has_diagnostic_code(&es2015, TS2340) && !has_diagnostic_code(&es2015, TS2855),
+        "ES2015 public super accessor in nested arrows must be legal, got: {es2015:?}",
+    );
 }
 
 #[test]
@@ -414,6 +453,30 @@ class Derived extends Base {
 }
 
 #[test]
+fn super_auto_accessor_read_allowed_at_modern_target() {
+    // `accessor` fields are prototype accessors, not instance fields:
+    // tsc's `isClassInstanceProperty` excludes them from TS2855, and they
+    // are public here, so `super.a` is legal.
+    let source = r#"
+class Base {
+  accessor a = 1;
+}
+class Derived extends Base {
+  read(): number {
+    return super.a;
+  }
+}
+"#;
+    let d = check_source_code_messages(source);
+    for code in [TS2340, TS2341, TS2855] {
+        assert!(
+            !has_diagnostic_code(&d, code),
+            "super.<auto-accessor> must be legal at ES2022, got: {d:?}",
+        );
+    }
+}
+
+#[test]
 fn super_field_read_still_emits_ts2855_when_es2022() {
     let source = r#"
 class Base {
@@ -436,9 +499,7 @@ class Derived extends Base {
     );
 }
 
-// --- ES5 target tests ---
-// tsc never emits TS2340 for public/protected super accessor or field access,
-// regardless of ES target. Only private member access via super causes TS2340.
+// --- ES5 target: TS2340 for every non-method member via super ---
 
 #[test]
 fn es5_super_method_call_no_ts2340() {
@@ -464,7 +525,9 @@ class Derived extends Base {
 }
 
 #[test]
-fn es5_super_accessor_read_no_ts2340() {
+fn es5_super_public_accessor_read_emits_ts2340() {
+    // Unlike ES2015+, ES5 rejects accessors via super regardless of
+    // visibility: only *methods* can be dispatched through ES5 super emit.
     let d = check_es5(
         r#"
 class Base {
@@ -480,10 +543,55 @@ class Derived extends Base {
 }
 "#,
     );
+    assert_ts2340_not_ts2341(&d);
     assert!(
-        !has_diagnostic_code(&d, TS2340),
-        "ES5 public super accessor read must not emit TS2340, got: {d:?}",
+        !has_diagnostic_code(&d, TS2855),
+        "ES5 super accessor access must not emit TS2855, got: {d:?}",
     );
+}
+
+#[test]
+fn es5_super_private_accessor_read_emits_ts2340_not_ts2341() {
+    // The ES5 non-method gate fires before the visibility check, so a
+    // private accessor gets TS2340, not TS2341.
+    let d = check_es5(
+        r#"
+class Base {
+  private get value(): number {
+    return 0;
+  }
+}
+
+class Derived extends Base {
+  read(): number {
+    return super.value + 1;
+  }
+}
+"#,
+    );
+    assert_ts2340_not_ts2341(&d);
+}
+
+#[test]
+fn es5_super_private_method_call_emits_ts2341_not_ts2340() {
+    // Methods pass the ES5 non-method gate even when private; the ordinary
+    // visibility check then reports TS2341.
+    let d = check_es5(
+        r#"
+class Base {
+  private greet(): string {
+    return "hello";
+  }
+}
+
+class Derived extends Base {
+  call(): string {
+    return super.greet();
+  }
+}
+"#,
+    );
+    assert_ts2341_not_ts2340(&d);
 }
 
 #[test]
@@ -511,6 +619,37 @@ class Derived extends Base {
 }
 
 #[test]
+fn es5_super_static_field_in_static_method_emits_ts2340() {
+    // In a static member, `super` is the parent constructor object; a static
+    // *field* reached through it is still a non-method declaration, so the
+    // ES5 gate rejects it. (ES2015+ allows it — see the es2015 test below.)
+    let source = r#"
+class Base {
+  static sf = 1;
+}
+class Derived extends Base {
+  static m(): number {
+    return super.sf;
+  }
+}
+"#;
+    let es5 = check_es5(source);
+    assert_ts2340_not_ts2341(&es5);
+    assert!(
+        !has_diagnostic_code(&es5, TS2855),
+        "static super field access must not emit TS2855, got: {es5:?}",
+    );
+
+    let es2015 = check_es2015(source);
+    for code in [TS2340, TS2341, TS2855] {
+        assert!(
+            !has_diagnostic_code(&es2015, code),
+            "ES2015 public static super field access must be legal, got: {es2015:?}",
+        );
+    }
+}
+
+#[test]
 fn es2015_super_accessor_read_no_ts2340() {
     let d = check_es2015(
         r#"
@@ -533,11 +672,11 @@ class Derived extends Base {
     );
 }
 
-// --- Visibility-driven tests (private members via super emit TS2340) ---
+// --- Private members via super at modern targets: TS2341 (or TS2855 for fields) ---
 
 #[test]
-fn super_private_method_emits_ts2340() {
-    assert_ts2340(
+fn super_private_method_emits_ts2341() {
+    let d = check_source_code_messages(
         r#"
 class Base {
   private greet(): string {
@@ -552,11 +691,12 @@ class Derived extends Base {
 }
 "#,
     );
+    assert_ts2341_not_ts2340(&d);
 }
 
 #[test]
-fn super_private_method_renamed_emits_ts2340() {
-    assert_ts2340(
+fn super_private_method_renamed_emits_ts2341() {
+    let d = check_source_code_messages(
         r#"
 class Animal {
   private speak(): string {
@@ -571,11 +711,12 @@ class Dog extends Animal {
 }
 "#,
     );
+    assert_ts2341_not_ts2340(&d);
 }
 
 #[test]
-fn super_private_get_accessor_emits_ts2340() {
-    assert_ts2340(
+fn super_private_get_accessor_emits_ts2341() {
+    let d = check_source_code_messages(
         r#"
 class Base {
   private get value(): number {
@@ -590,11 +731,12 @@ class Derived extends Base {
 }
 "#,
     );
+    assert_ts2341_not_ts2340(&d);
 }
 
 #[test]
-fn super_private_set_accessor_emits_ts2340() {
-    assert_ts2340(
+fn super_private_set_accessor_emits_ts2341() {
+    let d = check_source_code_messages(
         r#"
 class Base {
   private set count(_v: number) {}
@@ -607,11 +749,12 @@ class Derived extends Base {
 }
 "#,
     );
+    assert_ts2341_not_ts2340(&d);
 }
 
 #[test]
-fn super_private_static_method_emits_ts2340() {
-    assert_ts2340(
+fn super_private_static_method_emits_ts2341() {
+    let d = check_source_code_messages(
         r#"
 class Base {
   private static factory(): Base {
@@ -626,6 +769,57 @@ class Derived extends Base {
   }
 }
 "#,
+    );
+    assert_ts2341_not_ts2340(&d);
+}
+
+#[test]
+fn super_private_static_field_emits_ts2341() {
+    // A private *static* field via super is exempt from TS2855 (not an
+    // instance field), so the visibility check reports TS2341.
+    let d = check_es2015(
+        r#"
+class Base {
+  private static sf = 1;
+}
+class Derived extends Base {
+  static m(): number {
+    return super.sf;
+  }
+}
+"#,
+    );
+    assert_ts2341_not_ts2340(&d);
+    assert!(
+        !has_diagnostic_code(&d, TS2855),
+        "static super field access must not emit TS2855, got: {d:?}",
+    );
+}
+
+#[test]
+fn super_private_instance_field_emits_ts2855_not_ts2341() {
+    // The instance-field-via-super gate runs before the visibility check, so
+    // a private parent field gets TS2855 — never TS2341, never TS2340 — at
+    // ES2015+.
+    let d = check_es2015(
+        r#"
+class Base {
+  private secret: number = 42;
+}
+class Derived extends Base {
+  read(): number {
+    return super.secret;
+  }
+}
+"#,
+    );
+    assert!(
+        has_diagnostic_code(&d, TS2855),
+        "private super instance field should emit TS2855, got: {d:?}",
+    );
+    assert!(
+        !has_diagnostic_code(&d, TS2341) && !has_diagnostic_code(&d, TS2340),
+        "TS2341/TS2340 must not fire for a private instance field via super at ES2015+, got: {d:?}",
     );
 }
 

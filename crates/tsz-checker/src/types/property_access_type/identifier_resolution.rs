@@ -637,14 +637,21 @@ impl<'a> CheckerState<'a> {
             );
         }
 
+        // Private fields take this `any` fallback too (`skip_private: false`):
+        // the accessibility path reports TS2855/TS2340 for every parent
+        // instance field reached via super regardless of visibility, and
+        // typing the private ones differently from the public ones makes
+        // repeated `var x = super.publicField; var x = super.privateField;`
+        // declarations diverge (`any` vs the field type) and cascade a
+        // spurious TS2403.
         if self.is_super_expression(access.expression)
             && let Some((class_idx, is_static_access)) =
                 self.resolve_class_for_access(access.expression, object_type_for_access)
             && !is_static_access
             && matches!(
-                self.class_chain_member_kind_name_only(class_idx, property_name, false, true)
+                self.class_chain_member_kind_name_only(class_idx, property_name, false, false)
                     .map(|(kind, _)| kind),
-                Some(ClassMemberKind::FieldLike)
+                Some(ClassMemberKind::Field)
             )
         {
             return TypeId::ANY;
@@ -755,9 +762,10 @@ impl<'a> CheckerState<'a> {
                     && let Some(class_idx) = self.nearest_enclosing_class(access.expression)
                 {
                     let summary = self.summarize_class_chain(class_idx);
-                    if summary.member_kind(property_name, false, true)
-                        == Some(ClassMemberKind::MethodLike)
-                        && let Some(member_info) = summary.member_info(property_name, false, true)
+                    if matches!(
+                        summary.member_kind(property_name, false, true),
+                        Some(ClassMemberKind::Method | ClassMemberKind::Accessor)
+                    ) && let Some(member_info) = summary.member_info(property_name, false, true)
                     {
                         prop_type = member_info.type_id;
                         used_class_chain_method_type = true;
@@ -1589,7 +1597,7 @@ impl<'a> CheckerState<'a> {
                             true,
                         )
                         .map(|(kind, _)| kind),
-                        Some(ClassMemberKind::FieldLike)
+                        Some(ClassMemberKind::Field)
                     )
                 {
                     return TypeId::ANY;

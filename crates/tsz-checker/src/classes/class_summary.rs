@@ -272,8 +272,14 @@ struct ClassOwnMemberSummary {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ClassMemberKind {
-    MethodLike,
-    FieldLike,
+    Method,
+    /// A get/set accessor or an `accessor`-modifier field. Distinguished from
+    /// `Method` because tsc's ES5 `super.<member>` legality gate (TS2340)
+    /// rejects every member with a non-*method* declaration — accessors
+    /// included — while the field-via-super gate (TS2855) applies only to
+    /// plain instance fields.
+    Accessor,
+    Field,
 }
 
 #[derive(Clone, Default)]
@@ -1172,9 +1178,9 @@ impl<'a> CheckerState<'a> {
                         continue;
                     };
                     let kind = if self.has_accessor_modifier(&prop.modifiers) {
-                        ClassMemberKind::MethodLike
+                        ClassMemberKind::Accessor
                     } else {
-                        ClassMemberKind::FieldLike
+                        ClassMemberKind::Field
                     };
                     return Some(ClassMemberKindLookup {
                         kind,
@@ -1195,7 +1201,7 @@ impl<'a> CheckerState<'a> {
                         continue;
                     };
                     return Some(ClassMemberKindLookup {
-                        kind: ClassMemberKind::MethodLike,
+                        kind: ClassMemberKind::Method,
                         display_name,
                         is_visible: !self.has_private_modifier(&method.modifiers),
                     });
@@ -1213,7 +1219,7 @@ impl<'a> CheckerState<'a> {
                         continue;
                     };
                     return Some(ClassMemberKindLookup {
-                        kind: ClassMemberKind::MethodLike,
+                        kind: ClassMemberKind::Accessor,
                         display_name,
                         is_visible: !self.has_private_modifier(&accessor.modifiers),
                     });
@@ -1238,7 +1244,7 @@ impl<'a> CheckerState<'a> {
                             continue;
                         };
                         return Some(ClassMemberKindLookup {
-                            kind: ClassMemberKind::FieldLike,
+                            kind: ClassMemberKind::Field,
                             display_name,
                             is_visible: !self.has_private_modifier(&param.modifiers),
                         });
@@ -1511,10 +1517,12 @@ impl<'a> CheckerState<'a> {
     }
 
     const fn member_kind_from_info(info: &ClassMemberInfo) -> ClassMemberKind {
-        if info.is_method || info.is_accessor {
-            ClassMemberKind::MethodLike
+        if info.is_method {
+            ClassMemberKind::Method
+        } else if info.is_accessor {
+            ClassMemberKind::Accessor
         } else {
-            ClassMemberKind::FieldLike
+            ClassMemberKind::Field
         }
     }
 
@@ -1601,7 +1609,7 @@ impl<'a> CheckerState<'a> {
                 name.clone(),
                 name,
                 true,
-                ClassMemberKind::FieldLike,
+                ClassMemberKind::Field,
                 summary,
             );
         }
@@ -1646,7 +1654,7 @@ impl<'a> CheckerState<'a> {
                 name.lookup_name,
                 name.display_name,
                 is_static,
-                ClassMemberKind::FieldLike,
+                ClassMemberKind::Field,
                 summary,
             );
         }
