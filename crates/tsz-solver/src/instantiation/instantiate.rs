@@ -61,8 +61,19 @@ enum InstantiationMemoEntry {
 }
 
 /// State restored after leaving a generic shadowing scope.
-struct ShadowingScopeSnapshot {
-    visiting: FxHashMap<TypeId, InstantiationMemoEntry>,
+///
+/// Instead of snapshotting the whole `visiting` memo (an O(|visiting|) clone on
+/// every generic-signature scope entry — the `enter_shadowing_scope` memcpy
+/// hotspot on deeply/recursively instantiated graphs), we record a mark into a
+/// transactional undo log. Every `visiting` mutation performed while a scope is
+/// active appends its `(key, prior_value)` to the log; leaving the scope
+/// reverse-replays the log back to this mark, restoring the exact pre-entry
+/// state. The restored state is byte-for-byte what the historical full-map
+/// clone produced (inner entries discarded, shadowed parameters and any
+/// overwritten outer entries restored), so this is a pure allocation/throughput
+/// change with no effect on which type any walk produces.
+struct ShadowingScopeMark {
+    undo_mark: usize,
     environment_epoch: u64,
 }
 
@@ -142,6 +153,16 @@ pub struct TypeInstantiator<'a> {
     substitution: &'a TypeSubstitution,
     /// Track visited types to handle cycles
     visiting: FxHashMap<TypeId, InstantiationMemoEntry>,
+    /// Transactional undo log for `visiting`, enabling O(mutations) shadowing
+    /// scope entry/exit instead of an O(|visiting|) full-map clone. Each entry
+    /// is a `(key, prior_value)` pair captured just before a mutation performed
+    /// while at least one shadowing scope is active; leaving a scope
+    /// reverse-replays back to that scope's mark. See [`ShadowingScopeMark`].
+    visiting_undo_log: Vec<(TypeId, Option<InstantiationMemoEntry>)>,
+    /// Number of shadowing scopes currently on the stack. `visiting` mutations
+    /// are logged only while this is non-zero (top-level, scope-free
+    /// instantiation pays no logging cost).
+    undo_recording: u32,
     /// Type parameter binders that are shadowed in the current scope.
     shadowed: Vec<TypeParamInfo>,
     /// Freshly-instantiated local type parameters for the current nested generic scope.
@@ -213,6 +234,8 @@ impl<'a> TypeInstantiator<'a> {
             query_db: None,
             substitution,
             visiting: FxHashMap::default(),
+            visiting_undo_log: Vec::new(),
+            undo_recording: 0,
             shadowed: Vec::new(),
             local_type_params: Vec::new(),
             memo_environment_epoch: 0,
@@ -663,58 +686,82 @@ impl<'a> TypeInstantiator<'a> {
         instantiated
     }
 
+    /// Insert into the `visiting` memo, logging the prior value for undo when a
+    /// shadowing scope is active.
+    fn visiting_insert(&mut self, type_id: TypeId, entry: InstantiationMemoEntry) {
+        let prior = self.visiting.insert(type_id, entry);
+        if self.undo_recording > 0 {
+            self.visiting_undo_log.push((type_id, prior));
+        }
+    }
+
+    /// Remove from the `visiting` memo, logging the prior value for undo when a
+    /// shadowing scope is active.
+    fn visiting_remove(&mut self, type_id: TypeId) {
+        let prior = self.visiting.remove(&type_id);
+        if self.undo_recording > 0 {
+            self.visiting_undo_log.push((type_id, prior));
+        }
+    }
+
     /// Enter a shadowing scope for type parameters.
     ///
     /// Returns `(saved_shadowed_len, saved_scope)` for restoring via
-    /// [`exit_shadowing_scope`].
+    /// [`exit_shadowing_scope`]. `Some(mark)` is returned exactly when
+    /// `type_params` is non-empty (an empty parameter list establishes no
+    /// scope); the mark records where in the undo log this scope began so exit
+    /// can reverse-replay only this scope's mutations.
     fn enter_shadowing_scope(
         &mut self,
         type_params: &[TypeParamInfo],
-    ) -> (usize, Option<ShadowingScopeSnapshot>) {
+    ) -> (usize, Option<ShadowingScopeMark>) {
         let shadowed_len = self.shadowed.len();
-        let saved_visiting = if type_params.is_empty() {
-            None
-        } else if self.visiting.is_empty() {
-            // PERF: When visiting map is empty (common for top-level generic
-            // instantiation), no clone needed — just remove the type params
-            // (which are no-ops on an empty map) and return an empty map
-            // as the "saved" state.
-            Some(ShadowingScopeSnapshot {
-                visiting: FxHashMap::default(),
-                environment_epoch: self.memo_environment_epoch,
-            })
-        } else {
-            let saved = self.visiting.clone();
-            for tp in type_params {
-                let tp_id = self.interner.type_param(*tp);
-                self.visiting.remove(&tp_id);
-            }
-            Some(ShadowingScopeSnapshot {
-                visiting: saved,
-                environment_epoch: self.memo_environment_epoch,
-            })
-        };
-        if !type_params.is_empty() {
-            // Completed composite entries can contain a type parameter whose
-            // binder becomes shadowed here. Advance the environment version so
-            // those entries miss lazily; removing only the direct parameter
-            // entry would leave composites rewritten by an outer binding.
-            self.advance_memo_environment();
+        if type_params.is_empty() {
+            return (shadowed_len, None);
         }
+        let mark = ShadowingScopeMark {
+            undo_mark: self.visiting_undo_log.len(),
+            environment_epoch: self.memo_environment_epoch,
+        };
+        // Begin recording before mutating so the shadowed-parameter removals
+        // below (and every nested walk mutation) are captured for undo.
+        self.undo_recording += 1;
+        for tp in type_params {
+            let tp_id = self.interner.type_param(*tp);
+            self.visiting_remove(tp_id);
+        }
+        // Completed composite entries can contain a type parameter whose binder
+        // becomes shadowed here. Advance the environment version so those
+        // entries miss lazily; removing only the direct parameter entry would
+        // leave composites rewritten by an outer binding.
+        self.advance_memo_environment();
         self.shadowed.extend_from_slice(type_params);
-        (shadowed_len, saved_visiting)
+        (shadowed_len, Some(mark))
     }
 
-    /// Exit a shadowing scope, restoring the previous state.
-    fn exit_shadowing_scope(
-        &mut self,
-        shadowed_len: usize,
-        saved_visiting: Option<ShadowingScopeSnapshot>,
-    ) {
+    /// Exit a shadowing scope, restoring the previous state by reverse-replaying
+    /// the undo log back to the scope's mark. Popping newest-first means the
+    /// earliest recorded value for any key is applied last, so the key is
+    /// restored to its exact pre-entry value (or removed if it was absent).
+    fn exit_shadowing_scope(&mut self, shadowed_len: usize, saved: Option<ShadowingScopeMark>) {
         self.shadowed.truncate(shadowed_len);
-        if let Some(saved) = saved_visiting {
-            self.visiting = saved.visiting;
-            self.memo_environment_epoch = saved.environment_epoch;
+        if let Some(mark) = saved {
+            while self.visiting_undo_log.len() > mark.undo_mark {
+                let (type_id, prior) = self
+                    .visiting_undo_log
+                    .pop()
+                    .expect("undo log length is above the mark");
+                match prior {
+                    Some(entry) => {
+                        self.visiting.insert(type_id, entry);
+                    }
+                    None => {
+                        self.visiting.remove(&type_id);
+                    }
+                }
+            }
+            self.memo_environment_epoch = mark.environment_epoch;
+            self.undo_recording -= 1;
         }
     }
 
@@ -860,7 +907,7 @@ impl<'a> TypeInstantiator<'a> {
                 // The type graph is immutable, but its instantiated result can
                 // depend on a newly-installed nested-local binding. Overwrite
                 // stale completed state on the recomputation path below.
-                self.visiting.remove(&type_id);
+                self.visiting_remove(type_id);
             }
         }
 
@@ -876,13 +923,12 @@ impl<'a> TypeInstantiator<'a> {
 
         // Mark as active before descending so recursive references break their
         // cycle even if a nested generic advances the completed-entry epoch.
-        self.visiting
-            .insert(type_id, InstantiationMemoEntry::Active);
+        self.visiting_insert(type_id, InstantiationMemoEntry::Active);
 
         let result = self.instantiate_key(type_id, &key);
 
         // Update the cache with the actual result
-        self.visiting.insert(
+        self.visiting_insert(
             type_id,
             InstantiationMemoEntry::Completed {
                 result,

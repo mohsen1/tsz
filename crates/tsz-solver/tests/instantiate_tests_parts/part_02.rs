@@ -611,3 +611,107 @@ fn instantiated_merged_origin_preserves_nested_merged_provenance() {
         &[TypeId::NUMBER]
     );
 }
+
+/// Entering a shadowing scope no longer clones the whole `visiting` memo; it
+/// records a mark into a transactional undo log and reverse-replays on exit.
+/// This pins the invariant that matters for correctness: after a scope (and any
+/// nested scope) unwinds, `visiting` and the memo epoch are restored to their
+/// exact pre-entry state — byte-for-byte what the historical full-map clone
+/// produced — regardless of inserts, removals, and overwrites performed inside.
+#[test]
+fn shadowing_scope_undo_log_restores_visiting_and_epoch_exactly() {
+    use super::InstantiationMemoEntry;
+
+    let interner = TypeInterner::new();
+    let substitution = TypeSubstitution::new();
+    let mut instantiator = TypeInstantiator::new(&interner, &substitution);
+
+    let t_name = interner.intern_string("T");
+    let u_name = interner.intern_string("U");
+    let t_info = TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
+    };
+    let u_info = TypeParamInfo {
+        name: u_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
+    };
+    let t_id = interner.type_param(t_info);
+    let u_id = interner.type_param(u_info);
+
+    // Seed outer memo state (no scope active yet, so nothing is logged): an
+    // entry for the soon-to-be-shadowed `T`, plus two unrelated keys.
+    let base_epoch = instantiator.memo_environment_epoch;
+    instantiator
+        .visiting
+        .insert(t_id, InstantiationMemoEntry::Active);
+    instantiator.visiting.insert(
+        TypeId::STRING,
+        InstantiationMemoEntry::Completed {
+            result: TypeId::NUMBER,
+            environment_epoch: base_epoch,
+        },
+    );
+    instantiator
+        .visiting
+        .insert(TypeId::BOOLEAN, InstantiationMemoEntry::Active);
+    let baseline = instantiator.visiting.clone();
+
+    // Enter a scope shadowing `T`: `T`'s entry is removed and the epoch advances.
+    let (outer_len, outer_mark) = instantiator.enter_shadowing_scope(&[t_info]);
+    assert!(outer_mark.is_some(), "a non-empty parameter list opens a scope");
+    assert!(
+        !instantiator.visiting.contains_key(&t_id),
+        "the shadowed parameter's memo entry is removed inside the scope"
+    );
+    assert_ne!(
+        instantiator.memo_environment_epoch, base_epoch,
+        "entering a scope advances the memo epoch"
+    );
+
+    // Mutate inside the scope: overwrite an outer key, remove another, add new.
+    instantiator.visiting_insert(
+        TypeId::STRING,
+        InstantiationMemoEntry::Completed {
+            result: TypeId::BOOLEAN,
+            environment_epoch: instantiator.memo_environment_epoch,
+        },
+    );
+    instantiator.visiting_remove(TypeId::BOOLEAN);
+    instantiator.visiting_insert(u_id, InstantiationMemoEntry::Active);
+
+    // A nested scope shadowing `U` (whose entry exists here), then unwound.
+    let (inner_len, inner_mark) = instantiator.enter_shadowing_scope(&[u_info]);
+    assert!(!instantiator.visiting.contains_key(&u_id));
+    instantiator.visiting_insert(TypeId::NUMBER, InstantiationMemoEntry::Active);
+    instantiator.exit_shadowing_scope(inner_len, inner_mark);
+    assert!(
+        instantiator.visiting.contains_key(&u_id),
+        "leaving the nested scope restores its shadowed parameter"
+    );
+    assert!(
+        !instantiator.visiting.contains_key(&TypeId::NUMBER),
+        "leaving the nested scope discards entries added inside it"
+    );
+
+    // Unwind the outer scope: everything returns to the pre-entry state.
+    instantiator.exit_shadowing_scope(outer_len, outer_mark);
+    assert_eq!(
+        instantiator.visiting, baseline,
+        "the undo log restores `visiting` to its exact pre-scope contents"
+    );
+    assert_eq!(
+        instantiator.memo_environment_epoch, base_epoch,
+        "the undo log restores the memo epoch"
+    );
+    assert!(
+        instantiator.visiting_undo_log.is_empty(),
+        "a fully unwound walk leaves no undo-log residue"
+    );
+}
