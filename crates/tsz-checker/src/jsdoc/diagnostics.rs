@@ -12,7 +12,6 @@ use crate::state::CheckerState;
 use rustc_hash::{FxHashMap, FxHashSet};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
-use tsz_scanner::SyntaxKind;
 
 #[derive(Clone)]
 struct JsdocNamedDecl {
@@ -157,7 +156,6 @@ impl<'a> CheckerState<'a> {
             return Vec::new();
         };
 
-        let export_object_roots = Self::collect_commonjs_export_object_roots(arena);
         let mut decls = Vec::new();
 
         for &stmt_idx in &source_file.statements.nodes {
@@ -178,153 +176,9 @@ impl<'a> CheckerState<'a> {
                     is_global_script_decl: self.jsdoc_file_is_global_script(target_file_idx),
                 });
             }
-
-            if stmt_node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
-                continue;
-            }
-            let Some(stmt) = arena.get_expression_statement(stmt_node) else {
-                continue;
-            };
-            self.collect_commonjs_type_capable_exports_from_expression(
-                target_file_idx,
-                arena,
-                stmt.expression,
-                &export_object_roots,
-                &mut decls,
-            );
         }
 
         decls
-    }
-
-    fn collect_commonjs_export_object_roots(
-        arena: &tsz_parser::parser::NodeArena,
-    ) -> FxHashSet<String> {
-        let Some(source_file) = arena.source_files.first() else {
-            return FxHashSet::default();
-        };
-
-        let mut roots = FxHashSet::default();
-        for &stmt_idx in &source_file.statements.nodes {
-            let Some(stmt_node) = arena.get(stmt_idx) else {
-                continue;
-            };
-            if stmt_node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
-                continue;
-            }
-            let Some(stmt) = arena.get_expression_statement(stmt_node) else {
-                continue;
-            };
-            Self::collect_commonjs_export_object_roots_from_expression(
-                arena,
-                stmt.expression,
-                &mut roots,
-            );
-        }
-        roots
-    }
-
-    fn collect_commonjs_export_object_roots_from_expression(
-        arena: &tsz_parser::parser::NodeArena,
-        expr_idx: NodeIndex,
-        roots: &mut FxHashSet<String>,
-    ) {
-        let Some(expr_node) = arena.get(expr_idx) else {
-            return;
-        };
-        if expr_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
-            return;
-        }
-        let Some(binary) = arena.get_binary_expr(expr_node) else {
-            return;
-        };
-        if binary.operator_token != SyntaxKind::EqualsToken as u16 {
-            return;
-        }
-
-        if Self::is_module_exports_target_in_arena(arena, binary.left)
-            && let Some(rhs_node) = arena.get(binary.right)
-            && rhs_node.kind == SyntaxKind::Identifier as u16
-            && let Some(ident) = arena.get_identifier(rhs_node)
-        {
-            roots.insert(ident.escaped_text.to_string());
-        }
-
-        Self::collect_commonjs_export_object_roots_from_expression(arena, binary.right, roots);
-    }
-
-    fn collect_commonjs_type_capable_exports_from_expression(
-        &mut self,
-        target_file_idx: usize,
-        arena: &tsz_parser::parser::NodeArena,
-        expr_idx: NodeIndex,
-        export_object_roots: &FxHashSet<String>,
-        decls: &mut Vec<JsdocNamedDecl>,
-    ) {
-        let Some(expr_node) = arena.get(expr_idx) else {
-            return;
-        };
-        if expr_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
-            return;
-        }
-        let Some(binary) = arena.get_binary_expr(expr_node) else {
-            return;
-        };
-        if binary.operator_token != SyntaxKind::EqualsToken as u16 {
-            return;
-        }
-
-        if let Some((name, pos, len)) =
-            Self::commonjs_named_export_target_in_arena(arena, binary.left, export_object_roots)
-            && self.expression_introduces_type_name(target_file_idx, binary.right)
-        {
-            decls.push(JsdocNamedDecl {
-                name,
-                pos,
-                len,
-                file_idx: target_file_idx,
-                is_global_script_decl: self.jsdoc_file_is_global_script(target_file_idx),
-            });
-        }
-
-        // TS7: members of a `module.exports = { X }` object literal carry only
-        // value meaning. A bare/import-type reference to such a member is the
-        // TS2749 (require destructure) / TS2694 (import-type) value-used-as-type
-        // error, so they are not registered as type-capable exports. Direct
-        // `exports.X = class`/`module.exports = Class` forms still export types
-        // through the sibling collection paths.
-
-        self.collect_commonjs_type_capable_exports_from_expression(
-            target_file_idx,
-            arena,
-            binary.right,
-            export_object_roots,
-            decls,
-        );
-    }
-
-    fn commonjs_named_export_target_in_arena(
-        arena: &tsz_parser::parser::NodeArena,
-        left_idx: NodeIndex,
-        export_object_roots: &FxHashSet<String>,
-    ) -> Option<(String, u32, u32)> {
-        let left_node = arena.get(left_idx)?;
-        if left_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
-            return None;
-        }
-        let access = arena.get_access_expr(left_node)?;
-        let name_node = arena.get(access.name_or_argument)?;
-        let name_ident = arena.get_identifier_at(access.name_or_argument)?;
-        let base_is_export_root = arena
-            .get_identifier_at(access.expression)
-            .is_some_and(|ident| export_object_roots.contains(ident.escaped_text.as_str()));
-        base_is_export_root.then(|| {
-            (
-                name_ident.escaped_text.to_string(),
-                name_node.pos,
-                name_node.end.saturating_sub(name_node.pos),
-            )
-        })
     }
 
     pub(crate) fn is_module_exports_target_in_arena(
