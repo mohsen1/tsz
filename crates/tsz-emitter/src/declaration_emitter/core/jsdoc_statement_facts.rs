@@ -58,7 +58,7 @@ impl<'a> DeclarationEmitter<'a> {
             .any(|jsdoc| Self::jsdoc_has_function_signature_tags(jsdoc));
         let type_alias_decls = comments
             .iter()
-            .filter_map(|jsdoc| Self::parse_jsdoc_type_alias_decl(jsdoc))
+            .flat_map(|jsdoc| Self::parse_jsdoc_type_alias_decls(jsdoc))
             .collect();
 
         StatementJsdocDeclarationFacts {

@@ -704,3 +704,211 @@ fn inline_object_typedef_annotation_wins_over_property_tags() {
         .expect("expected rendered type alias");
     assert_eq!(rendered, "type Mix = {\n    a: number;\n};\n");
 }
+
+fn rendered_alias_decls(jsdoc: &str) -> Vec<String> {
+    DeclarationEmitter::parse_jsdoc_type_alias_decls(jsdoc)
+        .iter()
+        .map(|decl| {
+            DeclarationEmitter::render_jsdoc_type_alias_decl(decl, false)
+                .expect("expected rendered type alias")
+        })
+        .collect()
+}
+
+#[test]
+fn multi_typedef_block_emits_every_alias() {
+    // Each `@typedef` in one comment declares its own alias with its own
+    // property run (oracle: typescript@7.0.2).
+    let rendered = rendered_alias_decls(
+        "@typedef {Object} A\n@property {number} a\n@typedef {Object} B\n@property {string} b",
+    );
+    assert_eq!(
+        rendered,
+        vec![
+            "type A = {\n    a: number;\n};\n",
+            "type B = {\n    b: string;\n};\n",
+        ]
+    );
+}
+
+#[test]
+fn multi_typedef_block_keeps_annotation_and_property_aliases_in_source_order() {
+    let rendered =
+        rendered_alias_decls("@typedef {Object} A\n@property {number} a\n@typedef {string} S");
+    assert_eq!(
+        rendered,
+        vec!["type A = {\n    a: number;\n};\n", "type S = string;\n"]
+    );
+
+    let rendered =
+        rendered_alias_decls("@typedef {string} S\n@typedef {Object} B\n@property {number} b");
+    assert_eq!(
+        rendered,
+        vec!["type S = string;\n", "type B = {\n    b: number;\n};\n"]
+    );
+}
+
+#[test]
+fn multi_alias_block_mixes_callback_and_typedef_in_both_orders() {
+    let rendered = rendered_alias_decls(
+        "@callback Cb\n@param {number} x\n@returns {string}\n@typedef {Object} T\n@property {number} a",
+    );
+    assert_eq!(
+        rendered,
+        vec![
+            "type Cb = (x: number) => string;\n",
+            "type T = {\n    a: number;\n};\n",
+        ]
+    );
+
+    let rendered = rendered_alias_decls(
+        "@typedef {Object} T\n@property {number} a\n@callback Cb\n@param {number} x\n@returns {string}",
+    );
+    assert_eq!(
+        rendered,
+        vec![
+            "type T = {\n    a: number;\n};\n",
+            "type Cb = (x: number) => string;\n",
+        ]
+    );
+}
+
+#[test]
+fn multi_callback_block_emits_every_callback() {
+    let rendered = rendered_alias_decls(
+        "@callback Cb1\n@param {number} x\n@returns {string}\n@callback Cb2\n@param {string} y\n@returns {number}",
+    );
+    assert_eq!(
+        rendered,
+        vec![
+            "type Cb1 = (x: number) => string;\n",
+            "type Cb2 = (y: string) => number;\n",
+        ]
+    );
+}
+
+#[test]
+fn block_templates_bind_to_every_alias() {
+    // A `@template` between two annotated typedefs parameterizes both
+    // (oracle: `type Arr<T, U> = T[]` / `type Maybe<T, U> = U | null`).
+    let rendered = rendered_alias_decls(
+        "@template T\n@typedef {T[]} Arr\n@template U\n@typedef {U|null} Maybe",
+    );
+    assert_eq!(
+        rendered,
+        vec!["type Arr<T, U> = T[];\n", "type Maybe<T, U> = U | null;\n"]
+    );
+}
+
+#[test]
+fn template_after_plain_typedef_binds_block_wide() {
+    // A braced non-object typedef absorbs nothing, so a trailing
+    // `@template` still binds (oracle: `type Arr<T> = T[]`), whether the
+    // annotation references it or not.
+    let decl = DeclarationEmitter::parse_jsdoc_type_alias_decl("@typedef {T[]} Arr\n@template T")
+        .expect("expected typedef alias");
+    assert_eq!(decl.type_params, vec!["T"]);
+    assert_eq!(decl.type_text, "T[]");
+
+    let decl = DeclarationEmitter::parse_jsdoc_type_alias_decl("@typedef {number} N\n@template T")
+        .expect("expected typedef alias");
+    assert_eq!(decl.type_params, vec!["T"]);
+    assert_eq!(decl.type_text, "number");
+}
+
+#[test]
+fn template_swallowed_by_absorbing_typedef_degrades_later_alias() {
+    // A `@template` after an object typedef's property run binds to no
+    // alias in the block; tsc prints the unbound name verbatim (invalid
+    // `.d.ts`), so the referencing alias degrades to `any` instead.
+    let rendered = rendered_alias_decls(
+        "@typedef {Object} A\n@property {number} a\n@template T\n@typedef {T[]} Arr",
+    );
+    assert_eq!(
+        rendered,
+        vec!["type A = {\n    a: number;\n};\n", "type Arr = any;\n"]
+    );
+}
+
+#[test]
+fn second_property_list_keeps_prefix_before_terminating_tag() {
+    // The #17290 prefix rule applies per alias: a foreign tag inside the
+    // second typedef's run drops only that list's tail.
+    let rendered = rendered_alias_decls(
+        "@typedef {Object} A\n@property {number} a\n@typedef {Object} B\n@property {string} b\n@foo bar\n@property {boolean} c",
+    );
+    assert_eq!(
+        rendered,
+        vec![
+            "type A = {\n    a: number;\n};\n",
+            "type B = {\n    b: string;\n};\n",
+        ]
+    );
+}
+
+#[test]
+fn foreign_tag_between_typedefs_does_not_hide_the_second_alias() {
+    let rendered = rendered_alias_decls(
+        "@typedef {Object} A\n@property {number} a\n@foo bar\n@typedef {Object} B\n@property {string} b",
+    );
+    assert_eq!(
+        rendered,
+        vec![
+            "type A = {\n    a: number;\n};\n",
+            "type B = {\n    b: string;\n};\n",
+        ]
+    );
+}
+
+#[test]
+fn name_only_second_typedef_collects_its_own_properties() {
+    let rendered = rendered_alias_decls(
+        "@typedef {Object} A\n@property {number} a\n@typedef Bare\n@property {string} b",
+    );
+    assert_eq!(
+        rendered,
+        vec![
+            "type A = {\n    a: number;\n};\n",
+            "type Bare = {\n    b: string;\n};\n",
+        ]
+    );
+}
+
+#[test]
+fn same_line_second_typedef_starts_its_own_alias() {
+    // Segments, not lines, delimit alias blocks.
+    let rendered = rendered_alias_decls(
+        "@typedef {Object} A @property {number} a @typedef {Object} B @property {string} b",
+    );
+    assert_eq!(
+        rendered,
+        vec![
+            "type A = {\n    a: number;\n};\n",
+            "type B = {\n    b: string;\n};\n",
+        ]
+    );
+}
+
+#[test]
+fn duplicate_alias_names_parse_both_decls() {
+    // tsc emits both duplicate aliases verbatim (invalid `.d.ts`); parsing
+    // surfaces both and the emitter's per-name dedup keeps the first.
+    let decls = DeclarationEmitter::parse_jsdoc_type_alias_decls(
+        "@typedef {Object} A\n@property {number} a\n@typedef {Object} A\n@property {string} b",
+    );
+    assert_eq!(decls.len(), 2);
+    assert_eq!(decls[0].name, "A");
+    assert_eq!(decls[1].name, "A");
+}
+
+#[test]
+fn single_alias_block_parses_identically_through_both_entry_points() {
+    let jsdoc = "@typedef {Object} Pair\n@property {number} first\n@property {string} [second]";
+    let single = DeclarationEmitter::parse_jsdoc_type_alias_decl(jsdoc)
+        .expect("expected JSDoc property alias");
+    let decls = DeclarationEmitter::parse_jsdoc_type_alias_decls(jsdoc);
+    assert_eq!(decls.len(), 1);
+    assert_eq!(decls[0].name, single.name);
+    assert_eq!(decls[0].type_text, single.type_text);
+    assert_eq!(decls[0].type_params, single.type_params);
+}
