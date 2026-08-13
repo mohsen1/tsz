@@ -1602,12 +1602,14 @@ impl<'a> CheckerState<'a> {
                 {
                     return TypeId::ANY;
                 }
-                // TSC does not emit TS2576 for `super.member` access. When accessing a
-                // property through `super`, TypeScript suppresses "did you mean to access
-                // the static member?" errors entirely. The TS2576 check only applies to
-                // regular instance access (e.g., `instance.y` where `y` is static), not
-                // super access. See: superAccess2.ts — `super.y()` in instance method and
-                // `super.x()` in static method produce no TS2576 errors in tsc.
+                // A `super.member` access that misses on the receiver side reaches the
+                // ordinary nonexistent-property diagnostics, exactly like a plain access:
+                // TS2576 with the static-member suggestion when the receiver is the
+                // instance type and `member` is static-side, otherwise plain TS2339
+                // against the receiver (`typeof Base` in static contexts). This converges
+                // the property-access path with the already-correct element-access path in
+                // `computation/access.rs`. See: superAccess.ts (`super.S1`),
+                // superPropertyAccess2.ts (`super.y` / `super.x`).
 
                 if let Some((class_idx, is_static_access)) = resolved_class_access
                     && is_static_access
@@ -1628,11 +1630,12 @@ impl<'a> CheckerState<'a> {
                     }
                 }
 
-                // TS2576: instance.member where `member` exists on the class static side.
-                // This diagnostic only needs to know whether a static member
-                // exists, not its full type.
-                if !self.is_super_expression(access.expression)
-                    && let Some((class_idx, is_static_access)) = resolved_class_access
+                // TS2576: instance-receiver `.member` where `member` exists on the class
+                // static side. Applies equally to `instance.member` and `super.member`
+                // (a `super.` access whose receiver is the base *instance* type). This
+                // diagnostic only needs to know whether a static member exists, not its
+                // full type.
+                if let Some((class_idx, is_static_access)) = resolved_class_access
                     && !is_static_access
                     && self
                         .class_chain_member_kind_name_only(class_idx, property_name, true, true)
@@ -1661,9 +1664,11 @@ impl<'a> CheckerState<'a> {
                 // Don't emit TS2339 for private fields (starting with #) - they're handled elsewhere.
                 // Also suppress when accessibility check already emitted TS2341/TS2445
                 // (property exists but is private/protected — not truly "not found").
-                // A `super.member` miss is suppressed only when the name exists on
-                // the opposite side of the base class (static vs instance), as in
-                // superAccess2. A genuinely absent base member still reports TS2339.
+                // A `super.member` miss that reaches here (name absent on the receiver
+                // side, and not caught by the TS2576 static-member suggestion above) is a
+                // genuine nonexistent-property access and reports TS2339 against the
+                // receiver type — e.g. `super.x` in a static context where `x` is
+                // instance-side reports against `typeof Base`.
                 // Also suppress TS2339 when base expression is a property access on an unresolved import
                 // (TS2307 was already emitted for the missing module).
                 // Suppress TS2339 when evaluating a computed property name
@@ -1680,20 +1685,8 @@ impl<'a> CheckerState<'a> {
                     &mut class_chain_summary,
                     property_name,
                 );
-                let super_member_exists_on_opposite_side = self
-                    .is_super_expression(access.expression)
-                    && resolved_class_access.is_some_and(|(class_idx, is_static_access)| {
-                        self.class_chain_member_kind_name_only(
-                            class_idx,
-                            property_name,
-                            !is_static_access,
-                            true,
-                        )
-                        .is_some()
-                    });
                 if !property_name.starts_with('#')
                     && !accessibility_error_emitted
-                    && !super_member_exists_on_opposite_side
                     && !self.is_property_access_on_unresolved_import(access.expression)
                     && !in_circular_computed_property
                     && !in_current_class_construction

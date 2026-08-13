@@ -2136,6 +2136,9 @@ path = "tests/non_unique_symbol_late_bound_member_tests.rs"
 name = "ts2855_static_super_field_tests"
 path = "tests/ts2855_static_super_field_tests.rs"
 [[test]]
+name = "ts2576_ts2339_super_nonexistent_property_tests"
+path = "tests/ts2576_ts2339_super_nonexistent_property_tests.rs"
+[[test]]
 name = "ts2852_await_using_context_tests"
 path = "tests/ts2852_await_using_context_tests.rs"
 [[test]]
