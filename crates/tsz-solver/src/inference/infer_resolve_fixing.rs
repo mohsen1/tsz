@@ -400,6 +400,53 @@ impl<'a> InferenceContext<'a> {
         self.fix_current_variables_with(None::<fn(TypeId, TypeId) -> bool>)
     }
 
+    /// Record every currently-resolved inference variable into
+    /// [`InferenceContext::frozen_vars`].
+    ///
+    /// Called by the generic-call resolver right after Round 1 fixing. It does
+    /// not block later candidate collection — it snapshots which fixes were
+    /// authoritative so the final per-variable resolution can restore one that
+    /// Round 2 candidates only widened (the swapped-callback shape in issue
+    /// #17282). Approximates tsc's `isFixed`.
+    pub fn freeze_resolved_variables(&mut self) {
+        let type_params: Vec<_> = self.type_params.clone();
+        for (_name, var, _) in &type_params {
+            let root = self.table.find(*var);
+            if self.table.probe_value(root).resolved.is_some() {
+                self.frozen_vars.insert(root);
+            }
+        }
+    }
+
+    /// The Round-1 fixed value for `var`, or `None` if it was not frozen.
+    ///
+    /// Captured before the final per-variable constraint re-derivation so the
+    /// caller can restore it when re-derivation only widened the fix (tsc's
+    /// immutable `isFixed` inference; see [`Self::frozen_vars`] and issue
+    /// #17282).
+    pub(crate) fn frozen_fixed_value(&mut self, var: InferenceVar) -> Option<TypeId> {
+        let root = self.table.find(var);
+        if self.frozen_vars.contains(&root) {
+            self.probe(var)
+        } else {
+            None
+        }
+    }
+
+    /// Whether `var` accumulated any candidate contributed by an argument that
+    /// fills a function-typed parameter. Used to scope the Round-1-fix
+    /// restoration (#17282) to variables such an argument actually touched, so a
+    /// type parameter that legitimately unions several plain value arguments is
+    /// left untouched.
+    pub(crate) fn has_context_sensitive_candidate(&mut self, var: InferenceVar) -> bool {
+        let root = self.table.find(var);
+        let info = self.table.probe_value(root);
+        info.candidates
+            .iter()
+            .chain(info.contra_candidates.iter())
+            .any(|c| c.from_context_sensitive_arg)
+    }
+
     /// Get the current best substitution for all type parameters.
     ///
     /// This returns a `TypeSubstitution` mapping each type parameter to its
