@@ -1505,6 +1505,13 @@ impl<'a> CheckerState<'a> {
                     } else {
                         NodeIndex::NONE
                     };
+                    if computed_expr.is_none()
+                        && !defer_property_not_found
+                        && !suppress_missing_property_for_literal_default
+                        && self.require_ts2305(pattern_idx, prop_name_str, error_node)
+                    {
+                        return TypeId::ERROR;
+                    }
                     if !defer_property_not_found && !suppress_missing_property_for_literal_default {
                         // When the computed key is a unique symbol that doesn't exist
                         // on the parent type, emit TS2538 ("Type 'X' cannot be used as
@@ -1594,5 +1601,6 @@ impl<'a> CheckerState<'a> {
     }
 }
 
+mod commonjs_require;
 mod recording;
 mod tail;
