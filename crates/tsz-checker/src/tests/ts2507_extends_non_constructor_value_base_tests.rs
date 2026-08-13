@@ -77,6 +77,24 @@ fn renamed_binders_still_report_ts2507() {
 // --- Positive controls: these must stay clean -----------------------------
 
 #[test]
+fn parenthesized_null_base_is_clean() {
+    // `extends null` (and any depth of parenthesization around it) is a
+    // special case tsc accepts — a class with no prototype chain, not a
+    // TS2507. Regression case: `TypeScript/tests/cases/compiler/classExtendingNull.ts`.
+    for src in [
+        "class C extends null {}\n",
+        "class C extends (null) {}\n",
+        "class C extends ((null)) {}\n",
+    ] {
+        assert_eq!(
+            ts2507_count(src),
+            0,
+            "source={src}: `extends null` must stay clean"
+        );
+    }
+}
+
+#[test]
 fn parenthesized_class_expression_base_is_clean() {
     assert_eq!(
         ts2507_count("const C = class {};\nclass D extends (C) {}\n"),

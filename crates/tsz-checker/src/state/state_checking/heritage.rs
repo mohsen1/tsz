@@ -1246,7 +1246,16 @@ impl<'a> CheckerState<'a> {
                         if self.is_constructor_type(evaluated_type) {
                             true
                         } else {
-                            if evaluated_type != TypeId::ERROR && evaluated_type != TypeId::ANY {
+                            // `extends null` is a special case tsc accepts
+                            // regardless of parenthesization (`extends (null)`,
+                            // `extends ((null))`, …) — it produces a class with
+                            // no prototype chain rather than TS2507. Keyed on
+                            // the *type* rather than unwrapping parens
+                            // syntactically so any depth of nesting is covered.
+                            if evaluated_type != TypeId::ERROR
+                                && evaluated_type != TypeId::ANY
+                                && evaluated_type != TypeId::NULL
+                            {
                                 use crate::diagnostics::{
                                     diagnostic_codes, diagnostic_messages, format_message,
                                 };
