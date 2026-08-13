@@ -15,7 +15,10 @@ use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages, format_mess
 use tsz_scanner::SyntaxKind;
 use tsz_scanner::scanner_impl::TokenFlags;
 
+mod class_string_disjunction;
 mod range_order;
+
+use class_string_disjunction::scan_class_string_disjunction_body;
 
 /// Map a UTF-8 `start` byte offset and a (possibly surrogate-pair) `char`
 /// into the UTF-16 code-unit offsets used by regex range-order analysis.
@@ -797,49 +800,6 @@ impl ParserState {
                 }
             }
 
-            /// Scan a `\q{...}` body starting just after the opening `{`,
-            /// advancing `pos` to the terminating `}` (or the body end), and
-            /// return whether the `ClassStringDisjunction` may contain a string
-            /// — true as soon as any `|`-separated alternative is not exactly
-            /// one code point. A `\` escapes the next character (so `\}` does
-            /// not close the disjunction) and `\u{H+}` spans its own braces;
-            /// both contribute one code point, so `\q{a}` and `\q{\u{1F600}}`
-            /// are single characters and must not be judged by their source
-            /// bytes or truncated at a brace that belongs to an escape.
-            fn scan_class_string_disjunction(body: &[u8], pos: &mut usize) -> bool {
-                let mut code_points = 0usize;
-                let mut may_contain_strings = false;
-
-                while *pos < body.len() && body[*pos] != b'}' {
-                    match body[*pos] {
-                        b'|' => {
-                            may_contain_strings |= code_points != 1;
-                            code_points = 0;
-                            *pos += 1;
-                        }
-                        b'\\' => {
-                            code_points += 1;
-                            *pos += 1;
-                            if body.get(*pos) == Some(&b'u') && body.get(*pos + 1) == Some(&b'{') {
-                                *pos += 2;
-                                while *pos < body.len() && body[*pos] != b'}' {
-                                    *pos += 1;
-                                }
-                            }
-                            *pos += 1;
-                        }
-                        _ => {
-                            let advance = next_utf8_char(body, body.len(), *pos)
-                                .map_or(1, |(_ch, char_len)| char_len);
-                            code_points += 1;
-                            *pos += advance;
-                        }
-                    }
-                }
-
-                may_contain_strings || code_points != 1
-            }
-
             fn scan_character_class_escape(
                 parser: &mut ParserState,
                 emit: &impl Fn(&mut ParserState, usize, u32, &str, u32),
@@ -938,7 +898,13 @@ impl ParserState {
                             // any `|`-separated alternative is not one code point
                             // — including the empty alternative in `\q{}`.
                             *pos += 1;
-                            if scan_class_string_disjunction(body, pos) {
+                            // `\q{...}` denotes a set of string literals. It
+                            // can match other than exactly one character as
+                            // soon as any single `|`-separated alternative is
+                            // not exactly one code point long — including the
+                            // empty alternative in `\q{}`, which matches the
+                            // empty string.
+                            if scan_class_string_disjunction_body(parser, emit, body, pos) {
                                 *may_contain_strings = true;
                             }
                             if *pos < body.len() {
@@ -2080,14 +2046,29 @@ impl ParserState {
         // Under `v`, a nested `[` in a class opens ANOTHER class needing its own `]`.
         let unicode_sets_mode = bytes[body_end + 1..].contains(&b'v');
         let (mut paren_depth, mut class_depth) = (0i32, 0i32);
-        in_escape = false;
-        for &ch in &bytes[1..body_end] {
-            if in_escape {
-                in_escape = false;
-                continue;
-            }
+        let mut i = 1usize;
+        while i < body_end {
+            let ch = bytes[i];
             if ch == b'\\' {
-                in_escape = true;
+                // `\q{...}` denotes a `ClassStringDisjunction`, whose
+                // interior has no class-nesting grammar of its own — an
+                // unescaped `[` in there is reserved content (TS1508, see
+                // `scan_class_string_disjunction_body`), not a nested class
+                // open, and must not perturb this depth count. Mirrors the
+                // semantic walker's `b'q'` arm in
+                // `scan_character_class_escape`, which skips this same span.
+                if unicode_sets_mode
+                    && bytes.get(i + 1) == Some(&b'q')
+                    && bytes.get(i + 2) == Some(&b'{')
+                {
+                    i += 3;
+                    while i < body_end && bytes[i] != b'}' {
+                        i += 1;
+                    }
+                    i += 1;
+                    continue;
+                }
+                i += 2;
                 continue;
             }
             if class_depth > 0 {
@@ -2096,6 +2077,7 @@ impl ParserState {
                 } else if unicode_sets_mode && ch == b'[' {
                     class_depth += 1;
                 }
+                i += 1;
                 continue;
             }
             match ch {
@@ -2104,6 +2086,7 @@ impl ParserState {
                 b')' if paren_depth > 0 => paren_depth -= 1,
                 _ => {}
             }
+            i += 1;
         }
         if class_depth > 0 {
             Some(b']')
