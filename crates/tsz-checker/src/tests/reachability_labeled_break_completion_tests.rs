@@ -15,6 +15,14 @@
 //! resolving each break's real target (mirroring
 //! `jump_statement_has_legal_target`'s own structural walk) and comparing it
 //! — through any stack of labels — against the construct being asked about.
+//!
+//! `switch_falls_through`'s clause-completion check had the exact same bug
+//! (still calling the untargeted `contains_break_statement` after the fixes
+//! above landed): a labeled `break` reachable from a `case`/`default` clause
+//! but resolving to some *other* construct (a label on a block that merely
+//! wraps the switch, not the switch itself) was wrongly counted as "this
+//! clause completes the switch." It now shares `contains_break_targeting`
+//! with the loop and labeled-statement checks above.
 
 use crate::context::CheckerOptions;
 use crate::test_utils::check_source;
@@ -197,5 +205,63 @@ function f() {
         "expected TS7027 on the final `console.log`: the unlabeled `break` \
          only exits the inner loop, so the outer `while (true)` still has no \
          break targeting it and never completes, got {codes:?}"
+    );
+}
+
+/// `switch_falls_through` adjacent case: a `break` inside a `case` clause
+/// that targets an outer label wrapping the switch (not the switch itself)
+/// must not be mistaken for "this clause completes the switch normally."
+/// Oracle-verified against `typescript@7.0.2`: `return 1;` is unreachable
+/// (TS7027) because neither clause completes the switch — case 1's `break
+/// outer` exits the whole labeled block, skipping past `return 1;`, and the
+/// `default` clause always throws.
+#[test]
+fn break_to_label_wrapping_switch_does_not_complete_the_switch_clause() {
+    let codes = reachability_codes(
+        r#"
+function f(x: number) {
+    outer: {
+        switch (x) {
+            case 1:
+                break outer;
+            default:
+                throw new Error();
+        }
+        return 1;
+    }
+    return 2;
+}
+"#,
+    );
+    assert!(
+        codes.contains(&7027),
+        "expected TS7027 on `return 1;`: neither switch clause completes the \
+         switch itself, so it is unreachable, got {codes:?}"
+    );
+}
+
+/// Positive control: an unlabeled `break` that targets the switch itself
+/// must keep completing it normally — this is the existing, common case the
+/// fix above must not regress.
+#[test]
+fn unlabeled_break_still_completes_its_own_switch_clause() {
+    let codes = reachability_codes(
+        r#"
+function f(x: number) {
+    switch (x) {
+        case 1:
+            break;
+        default:
+            throw new Error();
+    }
+    console.log("reachable");
+}
+"#,
+    );
+    assert!(
+        !codes.contains(&7027),
+        "did not expect TS7027: an unlabeled `break` in `case 1` completes \
+         the switch normally, so `console.log` after it stays reachable, \
+         got {codes:?}"
     );
 }
