@@ -1608,7 +1608,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn collect_return_expressions_in_function_body(
+    pub(crate) fn collect_return_expressions_in_function_body(
         &self,
         body_idx: NodeIndex,
         return_exprs: &mut Vec<NodeIndex>,

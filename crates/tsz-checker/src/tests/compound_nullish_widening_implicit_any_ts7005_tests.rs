@@ -178,6 +178,21 @@ fn empty_array_literal_is_not_handled_by_the_compound_path() {
     assert_eq!(messages(source), Vec::<(u32, String)>::new());
 }
 
+/// Negative control (regression, oracle-verified): an element whose type is
+/// already `any` through its own declaration — not through nullish widening —
+/// must not report TS7005. `array_element_type(final_type) == ANY` is true
+/// here exactly as it is for `[undefined, null]`, so the gate additionally
+/// requires `array_literal_has_direct_nullish_leaf` (a genuine `null`/
+/// `undefined`/elided-hole element), which this literal has none of.
+#[test]
+fn array_of_already_any_element_reports_nothing() {
+    let source = "\
+declare var y: any;
+var b = [y];
+";
+    assert_eq!(messages(source), Vec::<(u32, String)>::new());
+}
+
 /// Negative control: a destructuring pattern binding never gets TS7005 from
 /// this path — mirrors the existing bare-scalar and empty-array guards'
 /// identical exclusion. (tsc instead reports per-element `TS7031` here —

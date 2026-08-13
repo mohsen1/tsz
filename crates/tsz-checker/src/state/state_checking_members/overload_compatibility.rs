@@ -352,6 +352,7 @@ impl<'a> CheckerState<'a> {
         }
         // TypeScript does not report TS7010/TS7011 when all value-return paths use
         // an explicit `as any`/`<any>` assertion.
+        let mut array_nullish_widening_implicit_any = false;
         if let Some(node) = self.ctx.arena.get(fallback_node) {
             let body = if let Some(func) = self.ctx.arena.get_function(node) {
                 Some(func.body)
@@ -383,9 +384,32 @@ impl<'a> CheckerState<'a> {
                 {
                     return;
                 }
+                // The array twin of the same rule: `function f() { return
+                // [undefined, null]; }` widens its return contribution to
+                // `any[]` (`widen_nullish_return_contribution`), which
+                // `should_report_implicit_any_return` below doesn't recognize
+                // (it only accepts a return type of exactly `any`, deliberately
+                // so a deeply-nested `any` inside e.g. `Promise<any>` doesn't
+                // false-positive). Recover that case here, gated on genuine
+                // nullish-leaf provenance so `declare var y: any; function f()
+                // { return [y]; }` — element type `any` from `y`'s own
+                // declaration, not widening — stays silent (oracle-verified,
+                // typescript@7.0.2).
+                if return_type != TypeId::ANY
+                    && !self.ctx.strict_null_checks()
+                    && crate::query_boundaries::common::array_element_type(
+                        self.ctx.types,
+                        return_type,
+                    ) == Some(TypeId::ANY)
+                    && self.any_return_is_array_literal_with_nullish_leaf(body_idx)
+                {
+                    array_nullish_widening_implicit_any = true;
+                }
             }
         }
-        if !self.should_report_implicit_any_return(return_type) {
+        if !self.should_report_implicit_any_return(return_type)
+            && !array_nullish_widening_implicit_any
+        {
             return;
         }
 
