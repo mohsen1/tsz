@@ -1869,6 +1869,23 @@ impl<'a> CheckerState<'a> {
                 );
             }
         }
+        // TS7030 also fires once per independently-reachable bare `return;`,
+        // not just at the fall-off-the-end point handled above — the two are
+        // not mutually exclusive (a function can report both in one pass).
+        if self.ctx.no_implicit_returns() {
+            let ts7030_check_type = self.return_type_for_implicit_return_check(
+                annotated_return_type.unwrap_or(return_type),
+                is_async,
+                function_is_generator,
+            );
+            if !self.should_skip_no_implicit_return_check(
+                ts7030_check_type,
+                has_type_annotation,
+                function_is_generator,
+            ) {
+                self.report_ts7030_for_bare_returns(body);
+            }
+        }
     }
 
     /// Check if a return context type is or references a const type parameter.

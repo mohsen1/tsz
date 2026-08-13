@@ -1043,6 +1043,8 @@ mod ts2591_node_global_type_position_tests;
 mod ts2693_signature_binding_shadowed_primitive_tests;
 #[path = "tests/ts2739_alias_unfold_display_tests.rs"]
 mod ts2739_alias_unfold_display_tests;
+#[path = "tests/ts7030_reachable_bare_return_tests.rs"]
+mod ts7030_reachable_bare_return_tests;
 #[path = "tests/ts7053_apparent_receiver_display_tests.rs"]
 mod ts7053_apparent_receiver_display_tests;
 #[path = "tests/ts7053_index_reason_chain_tests.rs"]

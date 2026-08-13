@@ -1176,4 +1176,158 @@ impl<'a> CheckerState<'a> {
         }
         true
     }
+
+    // =========================================================================
+    // Bare-Return Collection (TS7030)
+    // =========================================================================
+
+    /// Collect every bare `return;` (no expression) syntactically inside a
+    /// function body, for the `noImplicitReturns` (TS7030) check.
+    ///
+    /// `tsc` reports TS7030 from two independent sources: fall-off-the-end
+    /// (already covered by [`Self::function_body_falls_through`] and its
+    /// callers) and each bare `return;` in the function's own scope. The
+    /// bare-return half is **not** gated by flow reachability — oracle-verified
+    /// (`typescript` 6.0.2) against `if (false) { return; }`, a bare return
+    /// after an unconditional `return`/`throw`, and one after
+    /// `while (true) { return 1; }`: `tsc` reports TS7030 at the bare return
+    /// in every one of these dead-code cases, alongside TS7027 when
+    /// `allowUnreachableCode` is off. So this only needs a plain structural
+    /// descent through every statement kind that can contain a nested
+    /// statement (block, if/else, switch, try/catch/finally, loop, labeled
+    /// statement) — no `statement_falls_through`/`is_true_condition` pruning —
+    /// and must not descend into nested function-like bodies (a class
+    /// method, function, or arrow declared inside this one has its own
+    /// independent return-type context); no arm below matches their syntax
+    /// kinds, so recursion stops there on its own.
+    pub(crate) fn collect_bare_returns(&mut self, body_idx: NodeIndex) -> Vec<NodeIndex> {
+        let mut out = Vec::new();
+        let Some(body_node) = self.ctx.arena.get(body_idx) else {
+            return out;
+        };
+        if body_node.kind == syntax_kind_ext::BLOCK
+            && let Some(block) = self.ctx.arena.get_block(body_node)
+        {
+            self.collect_block_bare_returns(&block.statements.nodes, &mut out);
+        }
+        out
+    }
+
+    fn collect_block_bare_returns(&mut self, statements: &[NodeIndex], out: &mut Vec<NodeIndex>) {
+        for &stmt_idx in statements {
+            self.collect_statement_bare_returns(stmt_idx, out);
+        }
+    }
+
+    fn collect_statement_bare_returns(&mut self, stmt_idx: NodeIndex, out: &mut Vec<NodeIndex>) {
+        let Some(node) = self.ctx.arena.get(stmt_idx) else {
+            return;
+        };
+        match node.kind {
+            syntax_kind_ext::RETURN_STATEMENT => {
+                if self
+                    .ctx
+                    .arena
+                    .get_return_statement(node)
+                    .is_some_and(|ret| ret.expression.is_none())
+                {
+                    out.push(stmt_idx);
+                }
+            }
+            syntax_kind_ext::BLOCK => {
+                if let Some(block) = self.ctx.arena.get_block(node) {
+                    self.collect_block_bare_returns(&block.statements.nodes, out);
+                }
+            }
+            syntax_kind_ext::IF_STATEMENT => {
+                let Some(if_data) = self.ctx.arena.get_if_statement(node) else {
+                    return;
+                };
+                self.collect_statement_bare_returns(if_data.then_statement, out);
+                if if_data.else_statement.is_some() {
+                    self.collect_statement_bare_returns(if_data.else_statement, out);
+                }
+            }
+            syntax_kind_ext::SWITCH_STATEMENT => {
+                let Some(switch_data) = self.ctx.arena.get_switch(node) else {
+                    return;
+                };
+                let Some(case_block_node) = self.ctx.arena.get(switch_data.case_block) else {
+                    return;
+                };
+                let Some(case_block) = self.ctx.arena.get_block(case_block_node) else {
+                    return;
+                };
+                for &clause_idx in &case_block.statements.nodes {
+                    let Some(clause_node) = self.ctx.arena.get(clause_idx) else {
+                        continue;
+                    };
+                    let Some(clause) = self.ctx.arena.get_case_clause(clause_node) else {
+                        continue;
+                    };
+                    self.collect_block_bare_returns(&clause.statements.nodes, out);
+                }
+            }
+            syntax_kind_ext::TRY_STATEMENT => {
+                let Some(try_data) = self.ctx.arena.get_try(node) else {
+                    return;
+                };
+                self.collect_statement_bare_returns(try_data.try_block, out);
+                if try_data.catch_clause.is_some() {
+                    self.collect_statement_bare_returns(try_data.catch_clause, out);
+                }
+                if try_data.finally_block.is_some() {
+                    self.collect_statement_bare_returns(try_data.finally_block, out);
+                }
+            }
+            syntax_kind_ext::CATCH_CLAUSE => {
+                if let Some(catch_data) = self.ctx.arena.get_catch_clause(node) {
+                    self.collect_statement_bare_returns(catch_data.block, out);
+                }
+            }
+            syntax_kind_ext::WHILE_STATEMENT
+            | syntax_kind_ext::DO_STATEMENT
+            | syntax_kind_ext::FOR_STATEMENT => {
+                if let Some(loop_data) = self.ctx.arena.get_loop(node) {
+                    self.collect_statement_bare_returns(loop_data.statement, out);
+                }
+            }
+            syntax_kind_ext::FOR_IN_STATEMENT | syntax_kind_ext::FOR_OF_STATEMENT => {
+                if let Some(for_in_of) = self.ctx.arena.get_for_in_of(node) {
+                    self.collect_statement_bare_returns(for_in_of.statement, out);
+                }
+            }
+            syntax_kind_ext::LABELED_STATEMENT => {
+                if let Some(labeled) = self.ctx.arena.get_labeled_statement(node) {
+                    self.collect_statement_bare_returns(labeled.statement, out);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Emit TS7030 for every bare `return;` in `body_idx`.
+    ///
+    /// `tsc` anchors this at the `return` keyword itself (a fixed 6-column
+    /// span), not the statement's full range — which in tsz's parser
+    /// (`parse_return_statement`) extends through the trailing semicolon.
+    /// `node.pos` is exactly where the `ReturnKeyword` token starts (recorded
+    /// before `parse_expected(SyntaxKind::ReturnKeyword)` consumes it), so a
+    /// raw 6-length span from there reproduces tsc's anchor without going
+    /// through `error_at_node`'s full-node span.
+    pub(crate) fn report_ts7030_for_bare_returns(&mut self, body_idx: NodeIndex) {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+        let bare_returns = self.collect_bare_returns(body_idx);
+        for ret_idx in bare_returns {
+            let Some(node) = self.ctx.arena.get(ret_idx) else {
+                continue;
+            };
+            self.error_at_position(
+                node.pos,
+                "return".len() as u32,
+                diagnostic_messages::NOT_ALL_CODE_PATHS_RETURN_A_VALUE,
+                diagnostic_codes::NOT_ALL_CODE_PATHS_RETURN_A_VALUE,
+            );
+        }
+    }
 }

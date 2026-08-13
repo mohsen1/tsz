@@ -1363,6 +1363,19 @@ impl<'a> CheckerState<'a> {
                 diagnostic_codes::NOT_ALL_CODE_PATHS_RETURN_A_VALUE,
             );
         }
+        // TS7030 also fires once per independently-reachable bare `return;`,
+        // not just at the fall-off-the-end point handled above — the two are
+        // not mutually exclusive (a function can report both in one pass).
+        if check_no_implicit_returns
+            && (!is_generator || has_generator_return_type_for_completeness || !has_declared_return)
+            && !self.should_skip_no_implicit_return_check(
+                check_return_type,
+                has_declared_return,
+                is_generator,
+            )
+        {
+            self.report_ts7030_for_bare_returns(func.body);
+        }
     }
 
     fn top_level_terminal_return_flow(&self, body: NodeIndex) -> Option<(bool, bool)> {
