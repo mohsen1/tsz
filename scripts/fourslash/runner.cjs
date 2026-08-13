@@ -634,7 +634,24 @@ function patchTestState(FourSlash, TszAdapter) {
     const TestState = FourSlash.TestState;
     if (!TestState) throw new Error("Could not find TestState in FourSlash module");
     TestState.prototype.getLanguageServiceAdapter = function(testType, cancellationToken, compilationOptions) {
-        return new TszAdapter(cancellationToken, compilationOptions);
+        const adapter = new TszAdapter(cancellationToken, compilationOptions);
+        // See the matching comment in test-worker-patch-test-state.cjs: this
+        // runner hardcodes testType=Server for every fixture (tsz-server only
+        // talks over stdio), so testType itself can't distinguish them here —
+        // use the file path the same way upstream's own FourSlashRunner does
+        // (non-recursive enumeration split by `tests/cases/fourslash` vs
+        // `tests/cases/fourslash/server`). A real tsserver Session defaults
+        // its project format options to `getDefaultFormatCodeSettings(this.host.newLine)`,
+        // and the harness's fake server host hardcodes that newLine to "\r\n"
+        // (harnessNewLine) regardless of OS — testType=Native gets "\n"
+        // directly via `ts.testFormatSettings` instead, which the wire
+        // protocol has no field to carry for testType=Server. Reproduce that
+        // one default only for `fourslash/server/` fixtures.
+        const currentTestFile = String(globalThis.__tszCurrentFourslashTestFile || "");
+        if (currentTestFile.split(path.sep).join("/").includes("/fourslash/server/")) {
+            adapter.getLanguageService().setFormattingOptions({ newLineCharacter: "\r\n" });
+        }
+        return adapter;
     };
 
     // --- Patches for SourceFile/Program access ---

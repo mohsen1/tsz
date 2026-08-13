@@ -4,7 +4,34 @@ module.exports = function patchTestState(FourSlash, TszAdapter) {
     const TestState = FourSlash.TestState;
     if (!TestState) throw new Error("Could not find TestState in FourSlash module");
     TestState.prototype.getLanguageServiceAdapter = function(testType, cancellationToken, compilationOptions) {
-        return new TszAdapter(cancellationToken, compilationOptions);
+        const adapter = new TszAdapter(cancellationToken, compilationOptions);
+        // tsz-server always talks over stdio (test-worker.cjs hardcodes
+        // `testType = FourSlashTestType.Server` for every fixture — there is
+        // no in-process "Native" adapter to select), so `testType` itself
+        // can't be used to tell these apart here. The upstream split still
+        // matters for what a fixture's *expected* text was recorded against:
+        // TypeScript's own `FourSlashRunner` (testRunner/fourslashRunner.ts)
+        // assigns testType purely by directory — non-recursive enumeration
+        // of `tests/cases/fourslash` for Native vs `tests/cases/fourslash/server`
+        // for Server — so the file path is the faithful proxy.
+        //
+        // A genuine testType=Server run's project format options default to
+        // `getDefaultFormatCodeSettings(this.host.newLine)` (services/session.ts)
+        // whenever a test never calls `verify.setFormatOptions`, and the
+        // harness's fake server host hardcodes that newLine to "\r\n"
+        // (`harnessNewLine`, harnessIO.ts) regardless of OS. testType=Native
+        // fixtures instead get "\n" directly from `ts.testFormatSettings`,
+        // passed straight into the in-process codefix call — never through
+        // `host.getNewLine()` at all, and the wire protocol's
+        // `CodeFixRequestArgs` has no format-options field to carry it even
+        // if it wanted to. Reproduce the one default a `fourslash/server/`
+        // fixture actually expects; leave tsz-server's own default (LF,
+        // matching a real Linux host) alone for everything else.
+        const currentTestFile = String(globalThis.__tszCurrentFourslashTestFile || "");
+        if (currentTestFile.split(path.sep).join("/").includes("/fourslash/server/")) {
+            adapter.getLanguageService().setFormattingOptions({ newLineCharacter: "\r\n" });
+        }
+        return adapter;
     };
 
     // --- Patches for SourceFile/Program access ---
