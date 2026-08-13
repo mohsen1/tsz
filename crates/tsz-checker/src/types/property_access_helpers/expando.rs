@@ -186,12 +186,16 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
-        if symbol.has_any_flags(
-            symbol_flags::FUNCTION
-                | symbol_flags::CLASS
-                | symbol_flags::VALUE_MODULE
-                | symbol_flags::NAMESPACE_MODULE,
-        ) {
+        // A namespace/module root grants expando access only when it is also
+        // bound as a FUNCTION or CLASS (the `function f() {} namespace f {}`
+        // merge pattern) — tsc's own `getExpandoInitializer` restricts the
+        // assignment-declared-member pattern to callable/constructible
+        // hosts. A pure module (VALUE_MODULE/NAMESPACE_MODULE with no
+        // function/class merge) never grants it: `declare namespace C { ... }`
+        // followed by `C.prototype = {}` or any other undeclared `C.x = ...`
+        // in a JS file is an ordinary property write against `typeof C`
+        // (`TS2339` when the member is undeclared), oracle-verified.
+        if symbol.has_any_flags(symbol_flags::FUNCTION | symbol_flags::CLASS) {
             return true;
         }
 
@@ -255,12 +259,12 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
-        if symbol.has_any_flags(
-            symbol_flags::FUNCTION
-                | symbol_flags::CLASS
-                | symbol_flags::VALUE_MODULE
-                | symbol_flags::NAMESPACE_MODULE,
-        ) {
+        // Same restriction as `root_symbol_supports_js_expando_read`: a pure
+        // namespace/module root (no FUNCTION/CLASS merge) does not grant
+        // direct expando writes either — oracle-verified via
+        // `declare namespace C { ... }` rejecting both `C.prototype = {}`
+        // and any other undeclared `C.x = ...` in a JS file.
+        if symbol.has_any_flags(symbol_flags::FUNCTION | symbol_flags::CLASS) {
             return true;
         }
 
@@ -306,6 +310,58 @@ impl<'a> CheckerState<'a> {
         init_node.is_function_expression_or_arrow()
             || init_node.kind == syntax_kind_ext::CLASS_EXPRESSION
             || arena.is_empty_object_literal(var_decl.initializer)
+    }
+
+    /// Whether `root_expr_idx.prototype = ...` (a JS direct-write target) is a
+    /// legitimate class-shape declaration on `root_expr_idx`: the JS
+    /// constructor-function idiom (`function C() {}` / `class C {}` / a
+    /// function-or-class-expression-initialized variable). Every function
+    /// value carries an intrinsic `.prototype`, and — oracle-verified — this
+    /// holds even when the constructor is declared in a different file
+    /// (unlike ordinary expando member additions, which tsc restricts to the
+    /// host's own declaring file). A pure namespace/module root (no
+    /// FUNCTION/CLASS merge) never qualifies: `declare namespace C { ... }`
+    /// followed by `C.prototype = {}` in a JS file is an ordinary write
+    /// against `typeof C`, which has no `prototype` member (`TS2339`).
+    pub(in crate::types_domain) fn js_prototype_write_root_is_callable_or_constructible(
+        &self,
+        root_expr_idx: NodeIndex,
+    ) -> bool {
+        let Some(sym_id) = self.root_symbol_for_expando_read(root_expr_idx) else {
+            return false;
+        };
+        let Some(symbol) = self
+            .get_cross_file_symbol(sym_id)
+            .or_else(|| self.ctx.binder.get_symbol(sym_id))
+        else {
+            return false;
+        };
+
+        if symbol.has_any_flags(symbol_flags::FUNCTION | symbol_flags::CLASS) {
+            return true;
+        }
+        if !symbol.has_any_flags(symbol_flags::VARIABLE) {
+            return false;
+        }
+
+        let decl_idx = symbol.value_declaration;
+        let file_idx = self
+            .ctx
+            .resolve_symbol_file_index(sym_id)
+            .unwrap_or(self.ctx.current_file_idx);
+        let arena = self.ctx.get_arena_for_file(file_idx as u32);
+        let Some(decl_node) = arena.get(decl_idx) else {
+            return false;
+        };
+        let Some(var_decl) = arena.get_variable_declaration(decl_node) else {
+            return false;
+        };
+        let Some(init_node) = arena.get(var_decl.initializer) else {
+            return false;
+        };
+
+        init_node.is_function_expression_or_arrow()
+            || init_node.kind == syntax_kind_ext::CLASS_EXPRESSION
     }
 
     fn variable_declaration_has_jsdoc_type_annotation(&self, decl_idx: NodeIndex) -> bool {

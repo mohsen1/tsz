@@ -131,3 +131,80 @@ fn js_var_bound_class_expression_still_accepts_expando_write() {
     let source = "var C = class {\n  n = 1;\n};\nC.prop = 3;\nC.prop;\n";
     assert!(!js_codes(source).contains(&2339));
 }
+
+// --- JS (checkJs) files: namespace/module hosts (oracle-verified via
+// typescript@7.0.2). A pure namespace or value-module root grants JS
+// expando write/read eligibility only when it is ALSO bound as a
+// FUNCTION or CLASS (the `function f() {} namespace f {}` merge
+// pattern) — `VALUE_MODULE`/`NAMESPACE_MODULE` alone never qualify,
+// mirroring the class/non-const-function rejections above.
+
+fn cross_file_js_codes(files: &[(&str, &str)]) -> Vec<u32> {
+    let options = CheckerOptions {
+        allow_js: true,
+        check_js: true,
+        ..CheckerOptions::default()
+    };
+    crate::test_utils::check_multi_file_with_global_index(files, "b.js", options)
+        .into_iter()
+        .map(|d| d.code)
+        .collect()
+}
+
+/// A plain ambient namespace (no function merge) does not grant expando
+/// write eligibility: `C.prototype = {}` in JS has no declared `prototype`
+/// member on `typeof C` and is `TS2339`, matching an undeclared-member
+/// write like `C.baz` (the pair below).
+#[test]
+fn js_namespace_only_host_rejects_expando_prototype_write() {
+    let codes = cross_file_js_codes(&[
+        (
+            "a.d.ts",
+            "declare namespace C {\n  function bar(): void\n}\n",
+        ),
+        ("b.js", "C.prototype = {};\n"),
+    ]);
+    assert!(codes.contains(&2339));
+}
+
+/// Same rule, an ordinary undeclared member name instead of `prototype`,
+/// to show the rejection is structural (no callable/constructible host)
+/// rather than tied to the `prototype` spelling specifically.
+#[test]
+fn js_namespace_only_host_rejects_expando_undeclared_member_write() {
+    let codes = cross_file_js_codes(&[
+        (
+            "a.d.ts",
+            "declare namespace C {\n  function bar(): void\n}\n",
+        ),
+        ("b.js", "C.baz = 5;\n"),
+    ]);
+    assert!(codes.contains(&2339));
+}
+
+/// A value-only namespace (no callable member at all) is rejected the
+/// same way — the exclusion is not specific to namespaces that happen to
+/// declare a function member.
+#[test]
+fn js_value_only_namespace_host_rejects_expando_prototype_write() {
+    let codes = cross_file_js_codes(&[
+        ("a.d.ts", "declare namespace C {\n  let bar: number;\n}\n"),
+        ("b.js", "C.prototype = {};\n"),
+    ]);
+    assert!(codes.contains(&2339));
+}
+
+/// Regression control: a namespace merged with a function declaration
+/// still grants expando write eligibility, since the FUNCTION flag alone
+/// is sufficient — unaffected by removing the module flags.
+#[test]
+fn js_function_namespace_merge_still_accepts_expando_prototype_write() {
+    let codes = cross_file_js_codes(&[
+        (
+            "a.d.ts",
+            "declare function C(): void;\ndeclare namespace C {\n  function bar(): void\n}\n",
+        ),
+        ("b.js", "C.prototype = {};\n"),
+    ]);
+    assert!(!codes.contains(&2339));
+}
