@@ -288,6 +288,89 @@ fn accessor_abstract_wrong_order_still_ts1029() {
 }
 
 // =========================================================================
+// TS1029: Modifier ordering — accessibility (public/protected) vs abstract
+//
+// Unlike `private`, which is a hard TS1243 conflict with `abstract` in
+// EITHER order (see `abstract_static_illegal_pair_does_not_emit_ts1029`'s
+// sibling checker-side check), `public`/`protected` have a valid order with
+// `abstract` — before it — so writing either one after `abstract` is the
+// same ordering mistake as `readonly override`/`async override` above, not
+// a hard conflict. Oracle (typescript@7.0.2),
+// `classAbstractMixedWithModifiers.ts`.
+// =========================================================================
+
+#[test]
+fn public_abstract_correct_order_no_ts1029() {
+    let source = "abstract class C { public abstract m(): void; }\n";
+    assert!(
+        !has_error(source, 1029),
+        "`public abstract` is the correct order and must not produce TS1029: {:?}",
+        parse_diagnostics(source)
+    );
+}
+
+#[test]
+fn abstract_public_wrong_order_ts1029() {
+    let source = "abstract class C { abstract public m(): void; }\n";
+    let diagnostics = parse_diagnostics(source);
+    assert!(
+        diagnostics.iter().any(|(code, message)| *code == 1029
+            && message.contains("'public' modifier must precede 'abstract' modifier")),
+        "`abstract public` (wrong order) must produce TS1029: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn protected_abstract_correct_order_no_ts1029() {
+    let source = "abstract class C { protected abstract m(): void; }\n";
+    assert!(
+        !has_error(source, 1029),
+        "`protected abstract` is the correct order and must not produce TS1029: {:?}",
+        parse_diagnostics(source)
+    );
+}
+
+#[test]
+fn abstract_protected_wrong_order_ts1029() {
+    let source = "abstract class C { abstract protected m(): void; }\n";
+    let diagnostics = parse_diagnostics(source);
+    assert!(
+        diagnostics.iter().any(|(code, message)| *code == 1029
+            && message.contains("'protected' modifier must precede 'abstract' modifier")),
+        "`abstract protected` (wrong order) must produce TS1029: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn abstract_private_wrong_order_no_ts1029_ts1243_owns_it() {
+    // `private` stays exclusively on the checker's TS1243 "cannot be used
+    // with" path in either order — it never gets the TS1029 ordering
+    // diagnostic `public`/`protected` get, because no order of `private` +
+    // `abstract` is ever legal.
+    let source = "abstract class C { abstract private m(): void; }\n";
+    assert!(
+        !has_error(source, 1029),
+        "`abstract private` must not produce TS1029 — TS1243 (checker) owns this pair: {:?}",
+        parse_diagnostics(source)
+    );
+}
+
+#[test]
+fn abstract_static_public_wrong_order_ts1029_names_static_not_abstract() {
+    // Priority chain regression: when `static` AND `abstract` both precede
+    // the accessibility modifier, `static` outranks `abstract` in tsc's
+    // walk — the diagnostic must name `static`, not fall through to the new
+    // lowest-priority `abstract` arm.
+    let source = "abstract class C { abstract static public m(): void; }\n";
+    let diagnostics = parse_diagnostics(source);
+    assert!(
+        diagnostics.iter().any(|(code, message)| *code == 1029
+            && message.contains("'public' modifier must precede 'static' modifier")),
+        "`abstract static public` must report TS1029 against 'static', not 'abstract': {diagnostics:?}"
+    );
+}
+
+// =========================================================================
 // TS1040: override in ambient context (declare)
 // =========================================================================
 
