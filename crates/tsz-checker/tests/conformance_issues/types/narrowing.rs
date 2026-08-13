@@ -555,6 +555,136 @@ C.bar = 2;
 }
 
 #[test]
+fn test_js_prototype_write_on_bare_namespace_reports_ts2339() {
+    let diagnostics = compile_named_files_get_diagnostics_with_options(
+        &[
+            (
+                "a.d.ts",
+                r"
+declare namespace C {
+    function bar(): void;
+}
+                ",
+            ),
+            (
+                "b.js",
+                r"
+C.prototype = {};
+C.bar = 2;
+                ",
+            ),
+        ],
+        "b.js",
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            allow_js: true,
+            check_js: true,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        has_error(&diagnostics, 2339),
+        "A bare namespace's `typeof` type has no implicit `prototype` member; expected TS2339. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 2708),
+        "TS2339 on the prototype write must not regress the TS2708 fix above. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_js_prototype_write_on_bare_namespace_reports_ts2339_renamed_binders() {
+    let diagnostics = compile_named_files_get_diagnostics_with_options(
+        &[
+            (
+                "ns.d.ts",
+                r"
+declare namespace Utils {
+    function helper(): void;
+}
+                ",
+            ),
+            (
+                "impl.js",
+                r"
+Utils.prototype = {};
+Utils.helper = 2;
+                ",
+            ),
+        ],
+        "impl.js",
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            allow_js: true,
+            check_js: true,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        has_error(&diagnostics, 2339),
+        "Renaming the namespace/member must not change the TS2339 outcome. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_js_prototype_write_on_function_merged_namespace_stays_clean() {
+    // Negative control: when the root symbol is ALSO a function (the
+    // constructor-plus-namespace idiom), `.prototype` stays an implicit
+    // `any`-typed member — only a bare namespace loses the exemption.
+    let diagnostics = compile_named_files_get_diagnostics_with_options(
+        &[(
+            "ctor.js",
+            r"
+function C() {}
+C.bar = function () {};
+C.prototype = {};
+C.prototype.method = function () {};
+                ",
+        )],
+        "ctor.js",
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            allow_js: true,
+            check_js: true,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        !has_error(&diagnostics, 2339),
+        "A function's own `.prototype` write must stay exempt. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_js_prototype_write_on_class_stays_clean() {
+    // Negative control: a JS class root is callable too.
+    let diagnostics = compile_named_files_get_diagnostics_with_options(
+        &[(
+            "cls.js",
+            r"
+class C {}
+C.prototype = {};
+                ",
+        )],
+        "cls.js",
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            allow_js: true,
+            check_js: true,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        !has_error(&diagnostics, 2339),
+        "A JS class's own `.prototype` write must stay exempt. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_class_extends_user_defined_generic_without_type_args_reports_ts2314() {
     let diagnostics = compile_and_get_diagnostics(
         r"
