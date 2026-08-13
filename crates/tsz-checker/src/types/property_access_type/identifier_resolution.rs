@@ -1620,13 +1620,15 @@ impl<'a> CheckerState<'a> {
                 {
                     return TypeId::ANY;
                 }
-                // TSC does not emit TS2576 for `super.member` access. When accessing a
-                // property through `super`, TypeScript suppresses "did you mean to access
-                // the static member?" errors entirely. The TS2576 check only applies to
-                // regular instance access (e.g., `instance.y` where `y` is static), not
-                // super access. See: superAccess2.ts — `super.y()` in instance method and
-                // `super.x()` in static method produce no TS2576 errors in tsc.
-
+                // A `super.member` access that does not resolve on the receiver
+                // side reaches the nonexistent-property diagnostics exactly like
+                // an ordinary access. `resolved_class_access` already carries the
+                // receiver's static-ness for super: an instance-context `super.`
+                // reads the base *instance* type (`is_static_access == false`), a
+                // static-context `super.` reads the base *constructor* type
+                // (`is_static_access == true`). So the shared TS2576/TS2339 rule
+                // below applies to super with no super-specific gate — matching
+                // the element-access path in `computation/access.rs`.
                 if let Some((class_idx, is_static_access)) = resolved_class_access
                     && is_static_access
                 {
@@ -1646,12 +1648,28 @@ impl<'a> CheckerState<'a> {
                     }
                 }
 
-                // TS2576: instance.member where `member` exists on the class static side.
-                // This diagnostic only needs to know whether a static member
-                // exists, not its full type.
-                if !self.is_super_expression(access.expression)
-                    && let Some((class_idx, is_static_access)) = resolved_class_access
+                // A grammar-erroneous `super` (e.g. `super` in a parameter
+                // default) makes tsc drop the dependent super property-access
+                // semantics for the whole file, reporting only the parse errors
+                // (`superAccess2.ts` → TS1034 only). The sibling super
+                // accessibility gate (`check_super_member_kind_gates`) already
+                // short-circuits on `has_syntax_parse_errors()`; the
+                // nonexistent-property path converges on the same rule so the two
+                // super diagnostic families stay consistent.
+                let super_diag_suppressed_by_parse_errors =
+                    self.is_super_expression(access.expression) && self.has_syntax_parse_errors();
+
+                // TS2576: an instance receiver (`instance.member` or an
+                // instance-context `super.member`) where `member` exists on the
+                // class static side. This diagnostic only needs to know whether a
+                // static member exists, not its full type. `super` is included:
+                // its instance-context receiver is the base instance type, so a
+                // static-only base member is genuinely absent from the receiver
+                // and tsc suggests the static member here too (`superAccess.ts`
+                // `super.S1`, `superPropertyAccess2.ts` `super.bar` in the ctor).
+                if let Some((class_idx, is_static_access)) = resolved_class_access
                     && !is_static_access
+                    && !super_diag_suppressed_by_parse_errors
                     && self
                         .class_chain_member_kind_name_only(class_idx, property_name, true, true)
                         .is_some()
@@ -1679,9 +1697,14 @@ impl<'a> CheckerState<'a> {
                 // Don't emit TS2339 for private fields (starting with #) - they're handled elsewhere.
                 // Also suppress when accessibility check already emitted TS2341/TS2445
                 // (property exists but is private/protected — not truly "not found").
-                // A `super.member` miss is suppressed only when the name exists on
-                // the opposite side of the base class (static vs instance), as in
-                // superAccess2. A genuinely absent base member still reports TS2339.
+                // A `super.member` miss that exists on the opposite static/instance
+                // side is NOT suppressed: tsc reports it through the same
+                // nonexistent-property path. The TS2576 branch above already
+                // claims the instance-receiver + static-side case; what remains
+                // here is the static-receiver + instance-side case, which tsc
+                // reports as plain TS2339 against the receiver (`typeof C` in a
+                // static context, e.g. `superPropertyAccess2.ts` `super.x` in a
+                // static method).
                 // Also suppress TS2339 when base expression is a property access on an unresolved import
                 // (TS2307 was already emitted for the missing module).
                 // Suppress TS2339 when evaluating a computed property name
@@ -1698,20 +1721,9 @@ impl<'a> CheckerState<'a> {
                     &mut class_chain_summary,
                     property_name,
                 );
-                let super_member_exists_on_opposite_side = self
-                    .is_super_expression(access.expression)
-                    && resolved_class_access.is_some_and(|(class_idx, is_static_access)| {
-                        self.class_chain_member_kind_name_only(
-                            class_idx,
-                            property_name,
-                            !is_static_access,
-                            true,
-                        )
-                        .is_some()
-                    });
                 if !property_name.starts_with('#')
                     && !accessibility_error_emitted
-                    && !super_member_exists_on_opposite_side
+                    && !super_diag_suppressed_by_parse_errors
                     && !self.is_property_access_on_unresolved_import(access.expression)
                     && !in_circular_computed_property
                     && !in_current_class_construction
