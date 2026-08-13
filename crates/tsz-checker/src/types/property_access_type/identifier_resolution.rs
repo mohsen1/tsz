@@ -480,14 +480,22 @@ impl<'a> CheckerState<'a> {
                     false,
                 );
             }
+            // A bare namespace's `typeof` type has no implicit `prototype` member
+            // (`declare namespace C { function bar(): void }` — `C.prototype = {}`
+            // is a real `TS2339`, oracle-verified). The exemption only applies
+            // when the root symbol is ALSO callable (function/class merged with
+            // the namespace, the constructor-plus-namespace idiom), matching
+            // tsc's `getPropertyOfType` treating `prototype` as implicit only on
+            // a function/class value's apparent type.
             if self.is_js_file()
                 && property_name == "prototype"
                 && self.property_access_is_direct_write_target(idx)
-                && !self
+                && self
                     .resolve_identifier_symbol(access.expression)
                     .and_then(|sym_id| self.ctx.binder.get_symbol(sym_id))
                     .is_some_and(|sym| {
-                        sym.has_any_flags(symbol_flags::ALIAS) && sym.import_module().is_some()
+                        !(sym.has_any_flags(symbol_flags::ALIAS) && sym.import_module().is_some())
+                            && sym.has_any_flags(symbol_flags::FUNCTION | symbol_flags::CLASS)
                     })
             {
                 return TypeId::ANY;
@@ -1573,14 +1581,22 @@ impl<'a> CheckerState<'a> {
                         return TypeId::ANY;
                     }
                 }
+                // Same structural rule as the `is_namespace_value_type` branch
+                // above: a bare namespace's `typeof` type has no implicit
+                // `prototype` member (`declare namespace C { ... } C.prototype = {}`
+                // is a real `TS2339`, oracle-verified). The exemption only
+                // applies when the root symbol is ALSO callable (function/class),
+                // the constructor-plus-namespace idiom.
                 if self.is_js_file()
                     && property_name == "prototype"
                     && self.property_access_is_direct_write_target(idx)
-                    && !self
+                    && self
                         .resolve_identifier_symbol(access.expression)
                         .and_then(|sym_id| self.ctx.binder.get_symbol(sym_id))
                         .is_some_and(|sym| {
-                            sym.has_any_flags(symbol_flags::ALIAS) && sym.import_module().is_some()
+                            !(sym.has_any_flags(symbol_flags::ALIAS)
+                                && sym.import_module().is_some())
+                                && sym.has_any_flags(symbol_flags::FUNCTION | symbol_flags::CLASS)
                         })
                 {
                     return TypeId::ANY;
