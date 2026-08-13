@@ -1648,16 +1648,21 @@ impl<'a> CheckerState<'a> {
                     }
                 }
 
-                // A grammar-erroneous `super` (e.g. `super` in a parameter
-                // default) makes tsc drop the dependent super property-access
-                // semantics for the whole file, reporting only the parse errors
-                // (`superAccess2.ts` → TS1034 only). The sibling super
-                // accessibility gate (`check_super_member_kind_gates`) already
-                // short-circuits on `has_syntax_parse_errors()`; the
-                // nonexistent-property path converges on the same rule so the two
-                // super diagnostic families stay consistent.
-                let super_diag_suppressed_by_parse_errors =
-                    self.is_super_expression(access.expression) && self.has_syntax_parse_errors();
+                // A `super.member` miss reaches the nonexistent-property
+                // diagnostics only when `super` is itself a valid reference. When
+                // `super` is invalid — a grammar error on the keyword (TS1034, e.g.
+                // `super` in a parameter default → `superAccess2.ts` reports TS1034
+                // only), no enclosing derived class (TS2335), or a regular-function
+                // boundary between `super` and its class member (TS2660, e.g.
+                // `typeOfThisInStaticMembers9.ts` `function () { return super.f }`)
+                // — tsc reports only that super-validity diagnostic and suppresses
+                // the member lookup, so the dependent TS2576/TS2339 must be
+                // suppressed too. `super_property_reference_is_valid` mirrors the
+                // gates `check_super_expression` applies (parse-error short-circuit
+                // + derived-class + valid-member-context), keeping the two super
+                // diagnostic families consistent.
+                let super_reference_invalid = self.is_super_expression(access.expression)
+                    && !self.super_property_reference_is_valid(access.expression);
 
                 // TS2576: an instance receiver (`instance.member` or an
                 // instance-context `super.member`) where `member` exists on the
@@ -1669,7 +1674,7 @@ impl<'a> CheckerState<'a> {
                 // `super.S1`, `superPropertyAccess2.ts` `super.bar` in the ctor).
                 if let Some((class_idx, is_static_access)) = resolved_class_access
                     && !is_static_access
-                    && !super_diag_suppressed_by_parse_errors
+                    && !super_reference_invalid
                     && self
                         .class_chain_member_kind_name_only(class_idx, property_name, true, true)
                         .is_some()
@@ -1723,7 +1728,7 @@ impl<'a> CheckerState<'a> {
                 );
                 if !property_name.starts_with('#')
                     && !accessibility_error_emitted
-                    && !super_diag_suppressed_by_parse_errors
+                    && !super_reference_invalid
                     && !self.is_property_access_on_unresolved_import(access.expression)
                     && !in_circular_computed_property
                     && !in_current_class_construction
