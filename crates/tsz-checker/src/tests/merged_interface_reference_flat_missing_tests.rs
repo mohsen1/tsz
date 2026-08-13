@@ -33,13 +33,18 @@
 //! renderer's intersection-target downgrade
 //! (`resolve_intersection_target_for_display_kind`).
 //!
-//! Known residual (NOT pinned here): the order of names *within* the flat
-//! list still differs from tsc for generic multi-declaration lib interfaces —
-//! tsc lists declarations in lib load order (`clear, delete, forEach, get`
-//! first for `Map`) while tsz currently interleaves by per-declaration
-//! member rank. These tests pin the invariants the fix established (code,
-//! count, named-reference display, full-surface membership) without freezing
-//! the known-divergent order.
+//! List order (fixed by #17351): tsc lists declarations in lib load order
+//! (`clear, delete, forEach, get` first for `Map`, `es2015.collection` before
+//! `es2015.iterable` before `es2015.symbol.wellknown`), members in declaration
+//! order. The generic multi-declaration lib merge
+//! (`resolve_lib_type_with_params`) previously flattened to a single ordered
+//! object only under `--declaration`; a plain check took an `intersection2`
+//! fallback that restarted each declaration's `declaration_order` from 1, so
+//! the missing-list sort interleaved per-declaration ranks. Merging through
+//! `merge_interface_types` unconditionally (matching the sibling
+//! `resolve_lib_type_by_name`) rebases each declaration's members after the
+//! previous, reproducing tsc's order. These tests now pin the exact tsc string
+//! (order included) for the whole family.
 
 use crate::context::CheckerOptions;
 use crate::test_utils::{check_source_diagnostics, check_source_with_libs, load_default_lib_files};
@@ -76,16 +81,12 @@ fn empty_object_to_map_reports_flat_ts2740_over_all_declarations() {
     );
     let diag = &diags[0];
     assert_eq!(diag.code, 2740, "message: {}", diag.message_text);
-    assert!(
-        diag.message_text
-            .contains("from type 'Map<string, number>'"),
-        "target must render as the named reference, got: {}",
-        diag.message_text
-    );
-    assert!(
-        diag.message_text.contains("and 8 more"),
-        "count must span all three declarations (12 members), got: {}",
-        diag.message_text
+    // Exact tsc 6.0.2 string: named reference, lib-load-order list
+    // (es2015.collection members first), and the "and 8 more" tail.
+    assert_eq!(
+        diag.message_text,
+        "Type '{}' is missing the following properties from type \
+         'Map<string, number>': clear, delete, forEach, get, and 8 more.",
     );
     assert!(
         diag.related_information.is_empty(),
@@ -107,24 +108,45 @@ fn empty_object_to_weakmap_lists_both_declarations_members() {
     assert_eq!(diags.len(), 1);
     let diag = &diags[0];
     assert_eq!(diag.code, 2739, "message: {}", diag.message_text);
-    assert!(
-        diag.message_text
-            .contains("from type 'WeakMap<object, number>'"),
-        "got: {}",
-        diag.message_text
+    // Exact tsc order: es2015.collection (delete, get, has, set) before
+    // es2015.symbol.wellknown ([Symbol.toStringTag]).
+    assert_eq!(
+        diag.message_text,
+        "Type '{}' is missing the following properties from type \
+         'WeakMap<object, number>': delete, get, has, set, [Symbol.toStringTag]",
     );
-    for member in ["delete", "get", "has", "set", "[Symbol.toStringTag]"] {
-        assert!(
-            diag.message_text.contains(member),
-            "missing list must span both declarations; `{member}` absent \
-             from: {}",
-            diag.message_text
-        );
-    }
-    assert!(
-        !diag.message_text.contains("more"),
-        "exactly five missing members list in full, got: {}",
-        diag.message_text
+}
+
+/// `Set<T>` merges three declarations (`es2015.collection` +
+/// `es2015.iterable` + `es2015.symbol.wellknown`); the listed prefix is the
+/// collection declaration's members in declaration order, matching tsc.
+#[test]
+fn empty_object_to_set_lists_collection_members_first() {
+    let diags = check_with_libs("const s: Set<number> = {};");
+    assert_eq!(diags.len(), 1);
+    let diag = &diags[0];
+    assert_eq!(diag.code, 2740, "message: {}", diag.message_text);
+    assert_eq!(
+        diag.message_text,
+        "Type '{}' is missing the following properties from type \
+         'Set<number>': add, clear, delete, forEach, and 7 more.",
+    );
+}
+
+/// `Promise<T>` merges `es2015.promise` (`then`, `catch`), `es2018.promise`
+/// (`finally`), and `es2015.symbol.wellknown` (`[Symbol.toStringTag]`) — the
+/// list preserves that cross-declaration order (`then, catch` before
+/// `finally`), not a per-declaration-rank interleave.
+#[test]
+fn empty_object_to_promise_preserves_cross_declaration_order() {
+    let diags = check_with_libs("const p: Promise<number> = {};");
+    assert_eq!(diags.len(), 1);
+    let diag = &diags[0];
+    assert_eq!(diag.code, 2739, "message: {}", diag.message_text);
+    assert_eq!(
+        diag.message_text,
+        "Type '{}' is missing the following properties from type \
+         'Promise<number>': then, catch, finally, [Symbol.toStringTag]",
     );
 }
 

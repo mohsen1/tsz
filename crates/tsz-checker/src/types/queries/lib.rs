@@ -401,7 +401,7 @@ impl<'a> CheckerState<'a> {
             n if n > 1 => {
                 let mut merged = lib_types[0];
                 for &ty in &lib_types[1..] {
-                    merged = if symbol_has_interface && self.ctx.emit_declarations() {
+                    merged = if symbol_has_interface {
                         self.merge_interface_types(merged, ty)
                     } else {
                         factory.intersection2(merged, ty)
