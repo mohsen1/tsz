@@ -839,6 +839,8 @@ mod recursive_path_default_type_param_tests;
 mod recursive_tuple_alias_diagnostic_display_tests;
 #[path = "tests/recursive_tuple_rest_cycle_tests.rs"]
 mod recursive_tuple_rest_cycle_tests;
+#[path = "tests/reexport_default_esmoduleinterop_commonjs_tests.rs"]
+mod reexport_default_esmoduleinterop_commonjs_tests;
 #[path = "tests/reexport_resolution_cache_tests.rs"]
 mod reexport_resolution_cache_tests;
 #[path = "tests/reexported_generic_interface_property_tests.rs"]
