@@ -1,322 +1,143 @@
-//! Tests for Void Return Exception (Lawyer Layer).
+//! Void return exception (Lawyer layer, `AnyPropagationRules`): a function
+//! returning any type `T` is assignable to a function type expecting
+//! `void` — `tsc` treats the return value as intentionally discarded rather
+//! than checking it structurally.
 //!
-//! These tests verify the "callback ergonomics" feature where
-//! a function returning any type T can be assigned to a
-//! function type expecting void.
-//!
-//! Rule: () => T is assignable to () => void for callback ergonomics
+//! All diagnostics oracle-verified against `typescript@7.0.2` (`--strict`).
+//! Uses the real bundled `lib.d.ts` (via [`check_source_with_libs`] +
+//! [`load_default_lib_files`]) rather than hand-rolled interface mocks, so
+//! `Promise<void>` assignability is checked for real instead of only
+//! reaching the "used as a value" placeholder diagnostic a mock `Promise`
+//! interface would produce.
 
-use crate::checker::context::CheckerOptions;
-use crate::checker::state::CheckerState;
-use crate::test_fixtures::TestContext;
-use std::sync::Arc;
-use tsz_binder::BinderState;
-use tsz_parser::parser::ParserState;
-use tsz_solver::construction::TypeInterner;
+use tsz_checker::test_utils::{
+    check_source_with_libs, diagnostic_codes, load_default_lib_files, strict_checker_options,
+};
 
-/// Workaround for TS2318 (Cannot find global type) errors in test infrastructure.
-const GLOBAL_TYPE_MOCKS: &str = r#"
-interface Array<T> {}
-interface String {}
-interface Boolean {}
-interface Number {}
-interface Object {}
-interface Function {}
-interface CallableFunction extends Function {}
-interface NewableFunction extends Function {}
-interface RegExp {}
-interface IArguments {}
-interface Promise<T> {}
-"#;
+fn strict_codes_with_libs(source: &str) -> Vec<u32> {
+    let libs = load_default_lib_files();
+    diagnostic_codes(&check_source_with_libs(
+        source,
+        "test.ts",
+        strict_checker_options(),
+        &libs,
+    ))
+}
 
-fn test_no_errors(source: &str) {
-    let source = format!("// @strictFunctionTypes: true\n{GLOBAL_TYPE_MOCKS}\n{source}");
-
-    let ctx = TestContext::new();
-
-    let mut parser = ParserState::new("test.ts".to_string(), source);
-    let root = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file_with_libs(parser.get_arena(), root, &ctx.lib_files);
-
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.ts".to_string(),
-        CheckerOptions::default(),
+/// `() => T` is assignable to `() => void` for any concrete return type.
+#[test]
+fn callback_returning_value_assignable_to_void_return() {
+    let codes = strict_codes_with_libs(
+        r#"
+function takesCallback(cb: () => void) {
+    cb();
+}
+takesCallback(() => "hello");
+takesCallback(() => 42);
+takesCallback(() => ({ x: 1 }));
+takesCallback(function () {
+    return "ignored";
+});
+takesCallback(() => {
+    return "ignored";
+});
+"#,
     );
-
-    // Set lib contexts for global symbol resolution
-    if !ctx.lib_files.is_empty() {
-        let lib_contexts: Vec<crate::checker::context::LibContext> = ctx
-            .lib_files
-            .iter()
-            .map(|lib| crate::checker::context::LibContext {
-                arena: Arc::clone(&lib.arena),
-                binder: Arc::clone(&lib.binder),
-            })
-            .collect();
-        checker.ctx.set_lib_contexts(lib_contexts);
-    }
-
-    checker.check_source_file(root);
-
-    let errors: Vec<_> = checker
-        .ctx
-        .diagnostics
-        .iter()
-        .filter(|d| {
-            d.category == crate::checker::diagnostics::DiagnosticCategory::Error && d.code != 2318
-        })
-        .collect();
-
     assert!(
-        errors.is_empty(),
-        "Expected no errors, got {}: {:?}",
-        errors.len(),
-        errors
+        codes.is_empty(),
+        "a callback returning any value is assignable to a `void`-returning \
+         parameter type; got: {codes:?}"
     );
 }
 
-fn test_expect_error(source: &str, expected_error_code: u32) {
-    let source = format!("// @strictFunctionTypes: true\n{GLOBAL_TYPE_MOCKS}\n{source}");
-
-    let ctx = TestContext::new();
-
-    let mut parser = ParserState::new("test.ts".to_string(), source);
-    let root = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file_with_libs(parser.get_arena(), root, &ctx.lib_files);
-
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.ts".to_string(),
-        CheckerOptions::default(),
+/// The void return exception is specific to `void`: it does not extend to
+/// `undefined`, a concrete value type that still requires structural
+/// assignability.
+#[test]
+fn callback_returning_string_not_assignable_to_undefined_return() {
+    let codes = strict_codes_with_libs(
+        r#"
+type Callback = () => undefined;
+const f: Callback = () => "hello";
+"#,
     );
-
-    // Set lib contexts for global symbol resolution
-    if !ctx.lib_files.is_empty() {
-        let lib_contexts: Vec<crate::checker::context::LibContext> = ctx
-            .lib_files
-            .iter()
-            .map(|lib| crate::checker::context::LibContext {
-                arena: Arc::clone(&lib.arena),
-                binder: Arc::clone(&lib.binder),
-            })
-            .collect();
-        checker.ctx.set_lib_contexts(lib_contexts);
-    }
-
-    checker.check_source_file(root);
-
-    let error_count = checker
-        .ctx
-        .diagnostics
-        .iter()
-        .filter(|d| d.code == expected_error_code)
-        .count();
-
     assert!(
-        error_count >= 1,
-        "Expected at least 1 TS{} error, got {}: {:?}",
-        expected_error_code,
-        error_count,
-        checker.ctx.diagnostics
+        codes.contains(&2322),
+        "`() => string` must not be assignable to `() => undefined` — the \
+         void return exception only applies to `void`, not `undefined`; \
+         got: {codes:?}"
     );
 }
 
-/// Test basic void return exception - function returning value can be assigned to void callback
+/// The exception does not distribute into `Promise<void>`: an async
+/// callback's resolved value is still checked structurally against
+/// `Promise<void>`'s resolved type.
 #[test]
-fn test_void_return_basic() {
-    // Should pass - () => string is assignable to () => void
-    test_no_errors(
+fn async_callback_returning_promise_string_not_assignable_to_promise_void_return() {
+    let codes = strict_codes_with_libs(
         r#"
-        function takesCallback(cb: () => void) {
-            cb();
-        }
-        takesCallback(() => "hello");
-        "#,
+type AsyncCallback = () => Promise<void>;
+const f: AsyncCallback = () => Promise.resolve("hello");
+"#,
     );
-}
-
-/// Test void return exception with number return type
-#[test]
-fn test_void_return_number() {
-    // Should pass - () => number is assignable to () => void
-    test_no_errors(
-        r#"
-        function takesCallback(cb: () => void) {
-            cb();
-        }
-        takesCallback(() => 42);
-        "#,
-    );
-}
-
-/// Test void return exception with object return type
-#[test]
-fn test_void_return_object() {
-    // Should pass - () => object is assignable to () => void
-    test_no_errors(
-        r#"
-        function takesCallback(cb: () => void) {
-            cb();
-        }
-        takesCallback(() => ({ x: 1 }));
-        "#,
-    );
-}
-
-/// Test that undefined return is NOT assignable to void in strict mode
-#[test]
-fn test_undefined_return_not_assignable_to_void() {
-    // Should fail - () => string is NOT assignable to () => undefined
-    // (undefined is a specific value, not the "ignore result" marker)
-    test_expect_error(
-        r#"
-        type Callback = () => undefined;
-        const f: Callback = () => "hello";
-        "#,
-        2322, // Type 'string' is not assignable to 'undefined'
-    );
-}
-
-/// Test that Promise<void> is strict - Promise<string> not assignable to Promise<void>
-///
-/// TODO: Currently emits TS2585 ("'Promise' only refers to a type, but is being used as a value here")
-/// instead of TS2322 because Promise.resolve is used as a value but only a type mock is available.
-/// When Promise is properly available as a value in test infrastructure, update to expect TS2322.
-#[test]
-fn test_promise_void_strictness() {
-    let source = format!(
-        "// @strictFunctionTypes: true\n{GLOBAL_TYPE_MOCKS}\n{}",
-        r#"
-        type AsyncCallback = () => Promise<void>;
-        const f: AsyncCallback = () => Promise.resolve("hello");
-        "#
-    );
-
-    let ctx = TestContext::new();
-
-    let mut parser = ParserState::new("test.ts".to_string(), source);
-    let root = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file_with_libs(parser.get_arena(), root, &ctx.lib_files);
-
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.ts".to_string(),
-        CheckerOptions::default(),
-    );
-
-    if !ctx.lib_files.is_empty() {
-        let lib_contexts: Vec<crate::checker::context::LibContext> = ctx
-            .lib_files
-            .iter()
-            .map(|lib| crate::checker::context::LibContext {
-                arena: Arc::clone(&lib.arena),
-                binder: Arc::clone(&lib.binder),
-            })
-            .collect();
-        checker.ctx.set_lib_contexts(lib_contexts);
-    }
-
-    checker.check_source_file(root);
-
-    // TODO: Should emit TS2322 once Promise is available as a value in test infrastructure.
-    // Currently emits TS2585 because Promise.resolve is used as a value but only a type mock exists.
-    let ts2585_count = checker
-        .ctx
-        .diagnostics
-        .iter()
-        .filter(|d| d.code == 2585)
-        .count();
     assert!(
-        ts2585_count >= 1,
-        "Expected at least 1 TS2585 error (Promise used as value), got: {:?}",
-        checker.ctx.diagnostics
+        codes.contains(&2322),
+        "`() => Promise<string>` must not be assignable to \
+         `() => Promise<void>` — the void return exception does not apply \
+         inside a `Promise`'s resolved type; got: {codes:?}"
     );
 }
 
-/// Test void return exception in interface assignments
+/// The exception is directional: a `void`-returning function is NOT
+/// assignable to a signature expecting a concrete return type.
 #[test]
-fn test_void_return_interface_assignment() {
-    // Should pass - interface with method returning string assignable to void method
-    test_no_errors(
+fn void_returning_callback_not_assignable_to_string_return() {
+    let codes = strict_codes_with_libs(
         r#"
-        interface VoidCallback {
-            method(): void;
-        }
-        const impl: VoidCallback = {
-            method: () => "returns value but ignored"
-        };
-        "#,
+type StringCallback = () => string;
+const f: StringCallback = () => {};
+"#,
+    );
+    assert!(
+        codes.contains(&2322),
+        "`() => void` must not be assignable to `() => string` — the void \
+         return exception is one-directional; got: {codes:?}"
     );
 }
 
-/// Test void return exception with function expressions
+/// The exception applies to a method-shaped signature in an object type,
+/// not just bare function types.
 #[test]
-fn test_void_return_function_expression() {
-    // Should pass - function expression returning value assignable to void
-    test_no_errors(
+fn interface_method_returning_value_assignable_to_void_method() {
+    let codes = strict_codes_with_libs(
         r#"
-        function takesCallback(cb: () => void) {
-            cb();
-        }
-        takesCallback(function() { return "ignored"; });
-        "#,
+interface VoidCallback {
+    method(): void;
+}
+const impl_: VoidCallback = {
+    method: () => "returns value but ignored",
+};
+"#,
+    );
+    assert!(
+        codes.is_empty(),
+        "an object literal's method returning a value is assignable to an \
+         interface method typed `void`; got: {codes:?}"
     );
 }
 
-/// Test void return exception with arrow functions
+/// The exception applies element-wise inside an array of callbacks, each
+/// independently returning a different (or no) value.
 #[test]
-fn test_void_return_arrow_function() {
-    // Should pass - arrow function returning value assignable to void
-    test_no_errors(
+fn array_of_mixed_return_callbacks_assignable_to_void_callback_array() {
+    let codes = strict_codes_with_libs(
         r#"
-        function takesCallback(cb: () => void) {
-            cb();
-        }
-        takesCallback(() => { return "ignored"; });
-        "#,
+const callbacks: Array<() => void> = [() => 1, () => "hello", () => ({ x: 1 })];
+"#,
     );
-}
-
-/// Test that void return is NOT covariant (void not assignable to string)
-#[test]
-fn test_void_not_assignable_to_string() {
-    // Should fail - () => void is NOT assignable to () => string
-    test_expect_error(
-        r#"
-        type StringCallback = () => string;
-        const f: StringCallback = () => {};
-        "#,
-        2322, // Type 'void' is not assignable to 'string'
-    );
-}
-
-/// Test void return exception in array of callbacks
-#[test]
-fn test_void_return_array_callbacks() {
-    // Should pass - array of functions returning values assignable to void callbacks
-    test_no_errors(
-        r#"
-        const callbacks: Array<() => void> = [
-            () => 1,
-            () => "hello",
-            () => ({ x: 1 })
-        ];
-        "#,
+    assert!(
+        codes.is_empty(),
+        "an array literal of callbacks with differing concrete return types \
+         is assignable to `Array<() => void>`; got: {codes:?}"
     );
 }

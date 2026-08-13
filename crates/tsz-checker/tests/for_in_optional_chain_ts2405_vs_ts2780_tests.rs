@@ -32,7 +32,7 @@
 //! (`--strict --target es2022`). Binder names vary across cases per the repo's
 //! anti-hardcoding discipline.
 
-use crate::test_utils::check_source_strict_codes;
+use tsz_checker::test_utils::check_source_strict_codes;
 
 // =========================================================================
 // TS2405 wins: the optional-chain head's real type is not string/any.

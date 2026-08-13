@@ -2946,3 +2946,9 @@ path = "tests/js_nested_expando_member_host_tests.rs"
 [[test]]
 name = "decorator_inline_closure_scope_tests"
 path = "tests/decorator_inline_closure_scope_tests.rs"
+[[test]]
+name = "for_in_optional_chain_ts2405_vs_ts2780_tests"
+path = "tests/for_in_optional_chain_ts2405_vs_ts2780_tests.rs"
+[[test]]
+name = "void_return_exception"
+path = "tests/void_return_exception.rs"
