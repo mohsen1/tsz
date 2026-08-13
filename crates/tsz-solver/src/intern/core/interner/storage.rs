@@ -67,6 +67,16 @@ pub(in crate::intern::core) struct CachedUnionMember {
     /// `Application` members without any interner lookups. Boxed so that the
     /// far more common non-`Application` members keep `CachedUnionMember` small.
     pub(in crate::intern::core) app_components: Option<Box<[AppComponentKey]>>,
+    /// For `Tuple`/`Array` members: pre-fetched element ordering keys, one per
+    /// tuple element (or the single array element). Each key is computed from
+    /// the element's *widened* type so that tuple/array unions sort like tsc's
+    /// `stableTypeOrdering` over widened element types — e.g. `[string, number]`
+    /// orders before `[string, boolean]` because `number` precedes `boolean`.
+    /// Without this the comparator falls back to allocation (source) order,
+    /// which diverges from tsc whenever the members were created in a different
+    /// order than their canonical ordering. Boxed to keep the common
+    /// non-element-bearing members small.
+    pub(in crate::intern::core) elem_components: Option<Box<[AppComponentKey]>>,
     /// Monotonic allocation counter for source-order sorting
     pub(in crate::intern::core) alloc_order: Option<u32>,
 }

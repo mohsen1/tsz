@@ -5,7 +5,7 @@
 //! still resolves `normalize.rs`'s module-private items.
 
 use super::*;
-use crate::types::TemplateSpan;
+use crate::types::{TemplateSpan, TupleElement};
 
 #[test]
 fn shallow_subtype_skips_literal_to_template_literal_matching() {
@@ -1041,6 +1041,98 @@ fn union2_result_is_invariant_under_interning_order() {
         "union member order must be content-canonical, independent of interning order"
     );
     assert_eq!(render(&fi, f_union), vec!["x", "y", "z"]);
+}
+
+#[test]
+fn tuple_union_members_order_by_widened_element_not_alloc_order() {
+    // A union of tuple members must sort by their widened element types (tsc's
+    // `stableTypeOrdering`), not by the order the tuples were interned. Intern
+    // the boolean-tuple first so allocation order alone would keep it first;
+    // the canonical order must instead place the number-tuple first because
+    // `number` precedes `boolean`. This is the ordering that drives covariant
+    // inference for `new Map([["", true], ["", 0]])` (issue #17364): the first
+    // element-union candidate wins, so `V` must resolve to `number`.
+    let elem_index = |i: &TypeInterner, u: TypeId| -> Vec<u8> {
+        // Map each tuple member to a small tag for its second element's base:
+        // 0 = number-ish, 1 = boolean-ish, 2 = other.
+        match i.lookup(u) {
+            Some(TypeData::Union(l)) => i
+                .type_list(l)
+                .iter()
+                .map(|&m| match i.lookup(m) {
+                    Some(TypeData::Tuple(list)) => {
+                        let elems = i.tuple_list(list);
+                        match elems.last().map(|e| e.type_id) {
+                            Some(TypeId::NUMBER) => 0,
+                            Some(id)
+                                if matches!(
+                                    i.lookup(id),
+                                    Some(TypeData::Literal(LiteralValue::Number(_)))
+                                ) =>
+                            {
+                                0
+                            }
+                            Some(
+                                TypeId::BOOLEAN | TypeId::BOOLEAN_TRUE | TypeId::BOOLEAN_FALSE,
+                            ) => 1,
+                            _ => 2,
+                        }
+                    }
+                    _ => 2,
+                })
+                .collect(),
+            _ => vec![],
+        }
+    };
+
+    let build = |i: &TypeInterner, bool_first: bool| -> TypeId {
+        let s = TypeId::STRING;
+        let make = |elem: TypeId| i.tuple(vec![TupleElement::fixed(s), TupleElement::fixed(elem)]);
+        if bool_first {
+            let t_bool = make(TypeId::BOOLEAN);
+            let t_num = make(TypeId::NUMBER);
+            i.union(vec![t_bool, t_num])
+        } else {
+            let t_num = make(TypeId::NUMBER);
+            let t_bool = make(TypeId::BOOLEAN);
+            i.union(vec![t_num, t_bool])
+        }
+    };
+
+    // Boolean-tuple interned first (allocation order = boolean, number).
+    let a = TypeInterner::new();
+    let ua = build(&a, true);
+    assert_eq!(
+        elem_index(&a, ua),
+        vec![0, 1],
+        "number-element tuple must sort before boolean-element tuple regardless of alloc order"
+    );
+
+    // Number-tuple interned first: same canonical order.
+    let b = TypeInterner::new();
+    let ub = build(&b, false);
+    assert_eq!(
+        elem_index(&b, ub),
+        vec![0, 1],
+        "tuple union order must be content-canonical, independent of interning order"
+    );
+
+    // Fresh literal tuples (`["", true]` / `["", 0]`) order the same way once
+    // their scalar elements are widened for the ordering key.
+    let c = TypeInterner::new();
+    let s = c.literal_string("");
+    let t_true = c.tuple(vec![
+        TupleElement::fixed(s),
+        TupleElement::fixed(TypeId::BOOLEAN_TRUE),
+    ]);
+    let zero = c.literal_number(0.0);
+    let t_zero = c.tuple(vec![TupleElement::fixed(s), TupleElement::fixed(zero)]);
+    let u_lit = c.union(vec![t_true, t_zero]);
+    assert_eq!(
+        elem_index(&c, u_lit),
+        vec![0, 1],
+        "`[\"\", 0]` must sort before `[\"\", true]` via widened element ordering"
+    );
 }
 
 #[test]
