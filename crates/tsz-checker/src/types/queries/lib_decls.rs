@@ -4,6 +4,141 @@ use std::sync::Arc;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::{NodeArena, NodeIndex};
 
+/// Canonical TypeScript lib load order (the `<reference lib=...>` dependency
+/// linearization tsc uses). `es5` is the base and loads first; each later
+/// standard-library file follows in reference order. Kept in the same order as
+/// `tsz_core::config`'s `VALID_LIB_VALUES` — the checker cannot depend on
+/// `tsz-core` (it is a lower crate), so the order is mirrored here; keep the two
+/// in sync.
+///
+/// A multi-declaration (merged) lib interface such as `Map` is declared across
+/// several files (`es2015.collection` + `es2015.iterable` +
+/// `es2015.symbol.wellknown`). tsc merges those declarations in lib load order,
+/// so the flat missing-property list lists `es2015.collection`'s members
+/// (`clear`, `delete`, …) before `es2015.iterable`'s. `lib_contexts` are NOT
+/// stored in load order (their order is resolution-incidental), so the merge
+/// path imposes this order explicitly via [`lib_file_load_rank`] rather than
+/// relying on context iteration order (issue #17344 follow-up).
+const LIB_LOAD_ORDER: &[&str] = &[
+    "es5",
+    "es2015.core",
+    "es2015.collection",
+    "es2015.generator",
+    "es2015.iterable",
+    "es2015.promise",
+    "es2015.proxy",
+    "es2015.reflect",
+    "es2015.symbol",
+    "es2015.symbol.wellknown",
+    "es2016.array.include",
+    "es2016.intl",
+    "es2017.arraybuffer",
+    "es2017.date",
+    "es2017.object",
+    "es2017.sharedmemory",
+    "es2017.string",
+    "es2017.intl",
+    "es2017.typedarrays",
+    "es2018.asyncgenerator",
+    "es2018.asynciterable",
+    "es2018.intl",
+    "es2018.promise",
+    "es2018.regexp",
+    "es2019.array",
+    "es2019.object",
+    "es2019.string",
+    "es2019.symbol",
+    "es2019.intl",
+    "es2020.bigint",
+    "es2020.date",
+    "es2020.promise",
+    "es2020.sharedmemory",
+    "es2020.string",
+    "es2020.symbol.wellknown",
+    "es2020.intl",
+    "es2020.number",
+    "es2021.promise",
+    "es2021.string",
+    "es2021.weakref",
+    "es2021.intl",
+    "es2022.array",
+    "es2022.error",
+    "es2022.intl",
+    "es2022.object",
+    "es2022.string",
+    "es2022.regexp",
+    "es2023.array",
+    "es2023.collection",
+    "es2023.intl",
+    "es2024.arraybuffer",
+    "es2024.collection",
+    "es2024.object",
+    "es2024.promise",
+    "es2024.regexp",
+    "es2024.sharedmemory",
+    "es2024.string",
+    "es2025.collection",
+    "es2025.float16",
+    "es2025.intl",
+    "es2025.iterator",
+    "es2025.promise",
+    "es2025.regexp",
+    "esnext.array",
+    "esnext.collection",
+    "esnext.symbol",
+    "esnext.asynciterable",
+    "esnext.intl",
+    "esnext.disposable",
+    "esnext.bigint",
+    "esnext.string",
+    "esnext.promise",
+    "esnext.weakref",
+    "esnext.decorators",
+    "esnext.object",
+    "esnext.regexp",
+    "esnext.iterator",
+    "esnext.float16",
+    "esnext.error",
+    "esnext.sharedmemory",
+    "esnext.date",
+    "esnext.temporal",
+    "esnext.typedarrays",
+    "dom",
+    "dom.iterable",
+    "dom.asynciterable",
+    "webworker",
+    "webworker.importscripts",
+    "webworker.iterable",
+    "webworker.asynciterable",
+    "scripthost",
+    "decorators",
+    "decorators.legacy",
+];
+
+/// Load-order rank of a lib `.d.ts` file (lower = loaded earlier). A
+/// `lib.es2015.collection.d.ts` basename is normalized to `es2015.collection`
+/// and looked up in [`LIB_LOAD_ORDER`]. Non-lib files and unknown lib names
+/// rank last (`usize::MAX`), so a stable sort leaves them after all recognized
+/// lib files without reordering them among themselves.
+pub(crate) fn lib_file_load_rank(arena: &NodeArena) -> usize {
+    let Some(source) = arena.source_files.first() else {
+        return usize::MAX;
+    };
+    let base = std::path::Path::new(&source.file_name)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(source.file_name.as_str());
+    let lib_name = base
+        .strip_prefix("lib.")
+        .unwrap_or(base)
+        .strip_suffix(".d.ts")
+        .unwrap_or(base);
+    LIB_LOAD_ORDER
+        .iter()
+        .position(|&known| known == lib_name)
+        .unwrap_or(usize::MAX)
+}
+
 /// Resolve fallback arena for a lib symbol from merged binders/lib contexts.
 pub(crate) fn resolve_lib_fallback_arena<'a>(
     binder: &'a tsz_binder::BinderState,

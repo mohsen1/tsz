@@ -33,13 +33,12 @@
 //! renderer's intersection-target downgrade
 //! (`resolve_intersection_target_for_display_kind`).
 //!
-//! Known residual (NOT pinned here): the order of names *within* the flat
-//! list still differs from tsc for generic multi-declaration lib interfaces —
-//! tsc lists declarations in lib load order (`clear, delete, forEach, get`
-//! first for `Map`) while tsz currently interleaves by per-declaration
-//! member rank. These tests pin the invariants the fix established (code,
-//! count, named-reference display, full-surface membership) without freezing
-//! the known-divergent order.
+//! Name order *within* the flat list now matches tsc: the merged declarations
+//! are lowered in canonical lib load order, so the list groups a declaration's
+//! members together in declaration order (`clear, delete, forEach, get` first
+//! for `Map`, then the es2015.iterable members, then the well-known symbol) —
+//! see `resolve_lib_type_with_params`'s `lib_file_load_rank` sort (issue
+//! #17344 follow-up). The order is pinned below.
 
 use crate::context::CheckerOptions;
 use crate::test_utils::{check_source_diagnostics, check_source_with_libs, load_default_lib_files};
@@ -87,6 +86,17 @@ fn empty_object_to_map_reports_flat_ts2740_over_all_declarations() {
         "count must span all three declarations (12 members), got: {}",
         diag.message_text
     );
+    // Order parity: tsc lists es2015.collection's members first, in
+    // declaration order, then truncates. The canonical lib-load-order merge
+    // reproduces `clear, delete, forEach, get` — NOT the es2015.iterable
+    // members (`[Symbol.iterator]`, `entries`, …) that the resolution-incidental
+    // context order surfaced first before the #17344 follow-up.
+    assert!(
+        diag.message_text
+            .ends_with("'Map<string, number>': clear, delete, forEach, get, and 8 more."),
+        "missing list must be in tsc lib-load order, got: {}",
+        diag.message_text
+    );
     assert!(
         diag.related_information.is_empty(),
         "tsc emits no per-constituent elaboration for a merged interface \
@@ -124,6 +134,14 @@ fn empty_object_to_weakmap_lists_both_declarations_members() {
     assert!(
         !diag.message_text.contains("more"),
         "exactly five missing members list in full, got: {}",
+        diag.message_text
+    );
+    // Order parity: es2015.collection's members (declaration order) precede the
+    // es2015.symbol.wellknown member — the canonical lib-load-order merge.
+    assert!(
+        diag.message_text
+            .ends_with("'WeakMap<object, number>': delete, get, has, set, [Symbol.toStringTag]"),
+        "missing list must be in tsc lib-load order, got: {}",
         diag.message_text
     );
 }
