@@ -185,12 +185,14 @@ impl<'a> CheckerState<'a> {
         let alias_pos = node.pos;
         let alias_end = node.end;
 
-        // TS1277: 'const' modifier not allowed on type alias type parameters
-        self.check_const_type_parameter_on_non_function(alias.type_parameters.as_ref());
-
-        // TS1274: Check for modifiers that can never appear on type parameters
-        // (public, private, static, etc.)
-        self.check_never_valid_type_parameter_modifiers(alias.type_parameters.as_ref());
+        // TS1273/TS1277: type-alias type parameters allow variance (`in`/`out`)
+        // but not `const`; all other modifiers are never valid. First grammar
+        // error wins per parameter.
+        self.check_type_parameter_modifier_grammar(
+            alias.type_parameters.as_ref(),
+            /* const_allowed */ false,
+            /* variance_allowed */ true,
+        );
 
         // Check type parameter defaults for ordering (TS2706), forward references (TS2744),
         // and circular defaults (TS2716)

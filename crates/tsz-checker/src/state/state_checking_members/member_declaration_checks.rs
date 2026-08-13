@@ -99,10 +99,32 @@ impl<'a> CheckerState<'a> {
             .any(|&pos| pos >= start && pos < end)
     }
 
-    /// TS1277: `const` modifier can only appear on function, method, or class type parameters.
-    pub(crate) fn check_const_type_parameter_on_non_function(
+    /// Type-parameter modifier grammar (TS1273 / TS1274 / TS1277), matching
+    /// `tsc`'s `checkGrammarModifiers`: it walks a node's modifiers in source
+    /// order and reports the FIRST grammar error, then returns. So each type
+    /// parameter yields at most one modifier diagnostic, at its first offending
+    /// modifier — never one-per-token and never one-per-error-kind.
+    ///
+    /// Validity depends only on the owning declaration:
+    /// - `const_allowed` is true for function/method/class type parameters;
+    ///   otherwise a `const` modifier is TS1277.
+    /// - `variance_allowed` is true for class/interface/type-alias type
+    ///   parameters; otherwise an `in`/`out` modifier is TS1274.
+    /// - Accessibility, `static`, `readonly`, `async`, `declare`, `abstract`,
+    ///   `override`, and `accessor` are never valid on a type parameter and are
+    ///   always TS1273, regardless of the owner. (`export`/`default` are not
+    ///   listed: `tsc` rejects them earlier, in the parser, as TS1139 "type
+    ///   parameter declaration expected", so the checker must not claim them as
+    ///   TS1273.)
+    ///
+    /// Duplicate/ordering variance diagnostics (TS1030 `'in'/'out' already
+    /// seen`, TS1029 `'in' must precede 'out'`) stay owned by the parser and
+    /// are not re-derived here.
+    pub(crate) fn check_type_parameter_modifier_grammar(
         &mut self,
         type_params: Option<&tsz_parser::parser::NodeList>,
+        const_allowed: bool,
+        variance_allowed: bool,
     ) {
         let Some(type_params) = type_params else {
             return;
@@ -114,126 +136,74 @@ impl<'a> CheckerState<'a> {
             let Some(tp) = self.ctx.arena.get_type_parameter(param_node) else {
                 continue;
             };
-            if let Some(ref modifiers) = tp.modifiers {
-                for &mod_idx in &modifiers.nodes {
-                    let Some(mod_node) = self.ctx.arena.get(mod_idx) else {
-                        continue;
-                    };
-                    if mod_node.kind == tsz_scanner::SyntaxKind::ConstKeyword as u16 {
-                        self.error_at_node_msg(
-                            mod_idx,
-                            crate::diagnostics::diagnostic_codes::MODIFIER_CAN_ONLY_APPEAR_ON_A_TYPE_PARAMETER_OF_A_FUNCTION_METHOD_OR_CLASS,
-                            &["const"],
-                        );
-                    }
+            let Some(ref modifiers) = tp.modifiers else {
+                continue;
+            };
+            for &mod_idx in &modifiers.nodes {
+                let Some(mod_node) = self.ctx.arena.get(mod_idx) else {
+                    continue;
+                };
+                if let Some((code, text)) = Self::type_parameter_modifier_grammar_error(
+                    mod_node.kind,
+                    const_allowed,
+                    variance_allowed,
+                ) {
+                    self.error_at_node_msg(mod_idx, code, &[text]);
+                    // First grammar error wins for this type parameter: `tsc`
+                    // returns from `checkGrammarModifiers` after the first hit.
+                    break;
                 }
             }
         }
     }
 
-    /// TS1273: modifiers categorically invalid on a type parameter (`public`,
-    /// `private`, `protected`, `static`, `readonly`, `async`, `declare`,
-    /// `abstract`, `override`, `export`, `default`, `accessor`). TS1274 is
-    /// reserved for `in`/`out` in the wrong context.
-    pub(crate) fn check_never_valid_type_parameter_modifiers(
-        &mut self,
-        type_params: Option<&tsz_parser::parser::NodeList>,
-    ) {
-        let Some(type_params) = type_params else {
-            return;
-        };
-        for &param_idx in &type_params.nodes {
-            let Some(param_node) = self.ctx.arena.get(param_idx) else {
-                continue;
-            };
-            let Some(tp) = self.ctx.arena.get_type_parameter(param_node) else {
-                continue;
-            };
-            if let Some(ref modifiers) = tp.modifiers {
-                for &mod_idx in &modifiers.nodes {
-                    let Some(mod_node) = self.ctx.arena.get(mod_idx) else {
-                        continue;
-                    };
-                    let kind = mod_node.kind;
-                    let is_invalid = matches!(
-                        kind,
-                        x if x == SyntaxKind::PublicKeyword as u16
-                            || x == SyntaxKind::PrivateKeyword as u16
-                            || x == SyntaxKind::ProtectedKeyword as u16
-                            || x == SyntaxKind::StaticKeyword as u16
-                            || x == SyntaxKind::ReadonlyKeyword as u16
-                            || x == SyntaxKind::AsyncKeyword as u16
-                            || x == SyntaxKind::DeclareKeyword as u16
-                            || x == SyntaxKind::AbstractKeyword as u16
-                            || x == SyntaxKind::OverrideKeyword as u16
-                            || x == SyntaxKind::AccessorKeyword as u16
-                            || x == SyntaxKind::ExportKeyword as u16
-                            || x == SyntaxKind::DefaultKeyword as u16
-                    );
-                    if is_invalid {
-                        let modifier_text = match kind {
-                            x if x == SyntaxKind::PublicKeyword as u16 => "public",
-                            x if x == SyntaxKind::PrivateKeyword as u16 => "private",
-                            x if x == SyntaxKind::ProtectedKeyword as u16 => "protected",
-                            x if x == SyntaxKind::StaticKeyword as u16 => "static",
-                            x if x == SyntaxKind::ReadonlyKeyword as u16 => "readonly",
-                            x if x == SyntaxKind::AsyncKeyword as u16 => "async",
-                            x if x == SyntaxKind::DeclareKeyword as u16 => "declare",
-                            x if x == SyntaxKind::AbstractKeyword as u16 => "abstract",
-                            x if x == SyntaxKind::OverrideKeyword as u16 => "override",
-                            x if x == SyntaxKind::AccessorKeyword as u16 => "accessor",
-                            x if x == SyntaxKind::ExportKeyword as u16 => "export",
-                            x if x == SyntaxKind::DefaultKeyword as u16 => "default",
-                            _ => continue,
-                        };
-                        self.error_at_node_msg(
-                            mod_idx,
-                            crate::diagnostics::diagnostic_codes::MODIFIER_CANNOT_APPEAR_ON_A_TYPE_PARAMETER,
-                            &[modifier_text],
-                        );
-                    }
-                }
-            }
-        }
-    }
+    /// Classify a single type-parameter modifier under the owner's validity
+    /// rules, returning the `(diagnostic_code, modifier_text)` to report, or
+    /// `None` when the modifier is valid in this position. Shared by every
+    /// declaration kind so the modifier→diagnostic mapping lives in one place.
+    fn type_parameter_modifier_grammar_error(
+        kind: u16,
+        const_allowed: bool,
+        variance_allowed: bool,
+    ) -> Option<(u32, &'static str)> {
+        use crate::diagnostics::diagnostic_codes;
 
-    /// TS1274: variance modifiers (`in`, `out`) are invalid on function/method type parameters.
-    pub(crate) fn check_variance_on_function_type_parameters(
-        &mut self,
-        type_params: Option<&tsz_parser::parser::NodeList>,
-    ) {
-        let Some(type_params) = type_params else {
-            return;
-        };
-        for &param_idx in &type_params.nodes {
-            let Some(param_node) = self.ctx.arena.get(param_idx) else {
-                continue;
-            };
-            let Some(tp) = self.ctx.arena.get_type_parameter(param_node) else {
-                continue;
-            };
-            if let Some(ref modifiers) = tp.modifiers {
-                for &mod_idx in &modifiers.nodes {
-                    let Some(mod_node) = self.ctx.arena.get(mod_idx) else {
-                        continue;
-                    };
-                    let kind = mod_node.kind;
-                    if kind == SyntaxKind::InKeyword as u16 || kind == SyntaxKind::OutKeyword as u16
-                    {
-                        let modifier_text = if kind == SyntaxKind::InKeyword as u16 {
-                            "in"
-                        } else {
-                            "out"
-                        };
-                        self.error_at_node_msg(
-                            mod_idx,
-                            crate::diagnostics::diagnostic_codes::MODIFIER_CAN_ONLY_APPEAR_ON_A_TYPE_PARAMETER_OF_A_CLASS_INTERFACE_OR_TYPE_ALIAS,
-                            &[modifier_text],
-                        );
-                    }
-                }
+        // Every modifier's diagnostic argument is just its keyword text, so
+        // reuse the scanner's canonical map rather than re-listing the strings.
+        // A non-keyword kind (never present in a modifier list) short-circuits.
+        let text = SyntaxKind::try_from_u16(kind).and_then(tsz_scanner::keyword_to_text_static)?;
+
+        let code = match kind {
+            // Never valid on a type parameter → TS1273. (`export`/`default` are
+            // absent: `tsc` rejects those in the parser as TS1139, so the
+            // checker must not claim them here.)
+            x if x == SyntaxKind::PublicKeyword as u16
+                || x == SyntaxKind::PrivateKeyword as u16
+                || x == SyntaxKind::ProtectedKeyword as u16
+                || x == SyntaxKind::StaticKeyword as u16
+                || x == SyntaxKind::ReadonlyKeyword as u16
+                || x == SyntaxKind::AsyncKeyword as u16
+                || x == SyntaxKind::DeclareKeyword as u16
+                || x == SyntaxKind::AbstractKeyword as u16
+                || x == SyntaxKind::OverrideKeyword as u16
+                || x == SyntaxKind::AccessorKeyword as u16 =>
+            {
+                diagnostic_codes::MODIFIER_CANNOT_APPEAR_ON_A_TYPE_PARAMETER
             }
-        }
+            // `const` is valid only on function/method/class type parameters.
+            x if x == SyntaxKind::ConstKeyword as u16 && !const_allowed => {
+                diagnostic_codes::MODIFIER_CAN_ONLY_APPEAR_ON_A_TYPE_PARAMETER_OF_A_FUNCTION_METHOD_OR_CLASS
+            }
+            // `in`/`out` variance is valid only on class/interface/type-alias
+            // type parameters.
+            x if (x == SyntaxKind::InKeyword as u16 || x == SyntaxKind::OutKeyword as u16)
+                && !variance_allowed =>
+            {
+                diagnostic_codes::MODIFIER_CAN_ONLY_APPEAR_ON_A_TYPE_PARAMETER_OF_A_CLASS_INTERFACE_OR_TYPE_ALIAS
+            }
+            _ => return None,
+        };
+        Some((code, text))
     }
 
     pub(crate) fn lookup_member_access_in_class(
@@ -522,6 +492,13 @@ impl<'a> CheckerState<'a> {
                         self.push_missing_name_type_parameters(&func_type.type_parameters);
                     self.check_type_parameters_for_missing_names(&func_type.type_parameters);
                     self.check_duplicate_type_parameters(&func_type.type_parameters);
+                    // Function/constructor type parameters are function-like:
+                    // `const` allowed, variance (`in`/`out`) not.
+                    self.check_type_parameter_modifier_grammar(
+                        func_type.type_parameters.as_ref(),
+                        /* const_allowed */ true,
+                        /* variance_allowed */ false,
+                    );
                     self.check_duplicate_parameters(&func_type.parameters, false);
                     for (pi, &param_idx) in func_type.parameters.nodes.iter().enumerate() {
                         self.check_parameter_type_for_missing_names(param_idx);
@@ -890,6 +867,13 @@ impl<'a> CheckerState<'a> {
             let updates = self.push_missing_name_type_parameters(&sig.type_parameters);
             self.check_type_parameters_for_missing_names(&sig.type_parameters);
             self.check_duplicate_type_parameters(&sig.type_parameters);
+            // Call/construct/method signatures are function-like: `const`
+            // allowed, variance (`in`/`out`) not.
+            self.check_type_parameter_modifier_grammar(
+                sig.type_parameters.as_ref(),
+                /* const_allowed */ true,
+                /* variance_allowed */ false,
+            );
             if let Some(ref params) = sig.parameters {
                 self.check_duplicate_parameters(params, false);
                 for &param_idx in &params.nodes {

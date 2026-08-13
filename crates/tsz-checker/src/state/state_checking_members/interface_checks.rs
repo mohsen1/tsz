@@ -182,12 +182,14 @@ impl<'a> CheckerState<'a> {
         // TS1042: async modifier cannot be used on interface declarations
         self.check_async_modifier_on_declaration(&iface.modifiers);
 
-        // TS1277: 'const' modifier not allowed on interface type parameters
-        self.check_const_type_parameter_on_non_function(iface.type_parameters.as_ref());
-
-        // TS1274: Check for modifiers that can never appear on type parameters
-        // (public, private, static, etc.)
-        self.check_never_valid_type_parameter_modifiers(iface.type_parameters.as_ref());
+        // TS1273/TS1277: interface type parameters allow variance (`in`/`out`)
+        // but not `const`; all other modifiers are never valid. First grammar
+        // error wins per parameter.
+        self.check_type_parameter_modifier_grammar(
+            iface.type_parameters.as_ref(),
+            /* const_allowed */ false,
+            /* variance_allowed */ true,
+        );
 
         // Check for reserved interface names (TS2427). The checker owns the soft
         // predefined-type names (`string`, `number`, ...); the hard-keyword
