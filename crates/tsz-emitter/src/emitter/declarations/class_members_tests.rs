@@ -468,3 +468,86 @@ fn normal_constructor_emits_without_spurious_modifiers() {
         "Normal constructor should not gain a `static` modifier.\nOutput: {output}"
     );
 }
+
+fn emit_es2015(source: &str) -> String {
+    emit_ts_with_options(
+        source,
+        PrinterOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    )
+}
+
+/// An async method with a single-line source body keeps the lowered
+/// `__awaiter(..., function* () { ... })` body on one line, exactly as tsc does
+/// (and as the async-function/arrow lowering already did). Regression: the class
+/// method path used to force the generator body multi-line.
+#[test]
+fn async_method_single_line_body_stays_single_line() {
+    let output = emit_es2015("class C { async m() { const x = 1; return x + 1; } }");
+    assert!(
+        output.contains(
+            "return __awaiter(this, void 0, void 0, function* () { const x = 1; return x + 1; });"
+        ),
+        "Single-line async method body should lower inline.\nOutput:\n{output}"
+    );
+}
+
+/// The method name must not drive the layout decision (anti-hardcoding).
+#[test]
+fn async_method_single_line_body_independent_of_name() {
+    let output = emit_es2015("class Widget { async refreshNow() { return 42; } }");
+    assert!(
+        output.contains("return __awaiter(this, void 0, void 0, function* () { return 42; });"),
+        "Renamed async method should still lower inline.\nOutput:\n{output}"
+    );
+}
+
+/// Object-literal method form takes the same inline layout.
+#[test]
+fn async_object_method_single_line_body_stays_single_line() {
+    let output = emit_es2015("const o = { async m() { return 1; } };");
+    assert!(
+        output.contains("return __awaiter(this, void 0, void 0, function* () { return 1; });"),
+        "Single-line async object method body should lower inline.\nOutput:\n{output}"
+    );
+}
+
+/// A body written across multiple source lines keeps the multi-line generator
+/// body (matches tsc, which preserves the source line layout).
+#[test]
+fn async_method_multi_line_body_stays_multi_line() {
+    let output = emit_es2015(
+        "class C {\n    async m() {\n        const x = 1;\n        return x + 1;\n    }\n}",
+    );
+    assert!(
+        output.contains("function* () {\n"),
+        "Multi-line async method body should keep the multi-line generator body.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("function* () { const x = 1;"),
+        "Multi-line async method body must not be collapsed to one line.\nOutput:\n{output}"
+    );
+}
+
+/// A comment in the body forces the multi-line layout so comment placement is
+/// preserved (mirrors the async-generator method lowering).
+#[test]
+fn async_method_single_line_body_with_comment_stays_multi_line() {
+    let output = emit_es2015("class C { async m() { /* keep */ return 1; } }");
+    assert!(
+        !output.contains("function* () { /* keep */"),
+        "A body comment should force the multi-line generator body.\nOutput:\n{output}"
+    );
+}
+
+/// An empty single-line body keeps its established `function* () { }` form.
+#[test]
+fn async_method_empty_body_unchanged() {
+    let output = emit_es2015("class C { async m() {} }");
+    assert!(
+        output.contains("return __awaiter(this, void 0, void 0, function* () { });"),
+        "Empty async method body should keep its inline empty form.\nOutput:\n{output}"
+    );
+}
