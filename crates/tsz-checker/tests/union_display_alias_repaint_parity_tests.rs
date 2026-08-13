@@ -290,9 +290,10 @@ fn non_collapsing_intersection_alias_renders_the_alias() {
 }
 
 /// `string[] & Array<string>` are the same type, so the intersection collapses
-/// to the pre-existing `string[]` and tsc loses the alias. tsz renders `Coll`.
+/// to the pre-existing `string[]` and tsc loses the alias. Fixed: the
+/// `INTERSECTION_TYPE` body arm of `alias_declaration_body_is_computed` now marks
+/// an intersection that collapses to a single array/tuple as a computed body.
 #[test]
-#[ignore = "known divergence: an alias whose RHS collapses to a pre-existing type keeps its name"]
 fn collapsing_intersection_alias_renders_the_collapsed_type() {
     let source = "type Coll = string[] & Array<string>;\n\
                   declare const value: Coll;\n\
@@ -303,8 +304,15 @@ fn collapsing_intersection_alias_renders_the_collapsed_type() {
 /// Same mechanism reached through a homomorphic mapped type over an array: the
 /// mapped type reduces to the array itself, so the alias is dropped by tsc.
 /// Renamed binders relative to the row above, and no intersection involved.
+///
+/// The display collapse is now fixed (the `TYPE_REFERENCE` application arm drops
+/// the `Mapped` name and renders structurally); this row stays `#[ignore]`d for a
+/// *separate*, still-open divergence: tsz widens the element of the homomorphic
+/// mapped result `Copy<1[]>` from the literal `1` to `number`, so it renders
+/// `number[]` where tsc keeps `1[]`. That is a literal-widening bug in the mapped
+/// evaluator, not a display-alias attribution one.
 #[test]
-#[ignore = "known divergence: an alias whose RHS collapses to a pre-existing type keeps its name"]
+#[ignore = "separate open divergence: homomorphic mapped over `1[]` widens the element to `number` (renders `number[]`, not `1[]`); the alias-name collapse itself is fixed"]
 fn mapped_over_array_alias_renders_the_collapsed_array() {
     let source = "type Copy<T> = { [K in keyof T]: T[K] };\n\
                   type Mapped = Copy<1[]>;\n\
@@ -315,13 +323,33 @@ fn mapped_over_array_alias_renders_the_collapsed_array() {
 
 /// And through a conditional with a variadic `infer` tail, whose result is an
 /// ordinary tuple that already exists. Three different evaluation routes to one
-/// collapse, so a fix cannot be keyed on any single type constructor.
+/// collapse, so a fix cannot be keyed on any single type constructor. Fixed by
+/// the `TYPE_REFERENCE` application arm: the alias body `Tail<[1, 2, 3]>` is a
+/// bare generic application whose evaluated result is the pre-existing tuple
+/// `[2, 3]`, so the `Rest` name is dropped.
 #[test]
-#[ignore = "known divergence: an alias whose RHS collapses to a pre-existing type keeps its name"]
 fn variadic_infer_tail_alias_renders_the_collapsed_tuple() {
     let source = "type Tail<T> = T extends [infer _H, ...infer R] ? R : never;\n\
                   type Rest = Tail<[1, 2, 3]>;\n\
                   declare const value: Rest;\n\
                   const target: boolean = value;\n";
     assert_eq!(rendered_source_type(source), "[2, 3]");
+}
+
+// ---------------------------------------------------------------------------
+// Adjacent cases: the collapse rule is structural, not name-keyed. Renamed
+// binders and different element types must not change the outcome — the fix
+// reads no identifier, alias, or type-parameter string.
+// ---------------------------------------------------------------------------
+
+/// Renamed binders and a different tuple for the variadic-`infer`-tail row: a
+/// bare generic application collapsing to a pre-existing tuple drops its name
+/// regardless of the `Tail`/`Rest` spelling or the concrete elements.
+#[test]
+fn renamed_binders_variadic_infer_tail_renders_the_collapsed_tuple() {
+    let source = "type DropHead<L> = L extends [infer _First, ...infer Remainder] ? Remainder : never;\n\
+                  type Leftover = DropHead<[9, 8, 7]>;\n\
+                  declare const held: Leftover;\n\
+                  const dest: boolean = held;\n";
+    assert_eq!(rendered_source_type(source), "[8, 7]");
 }
