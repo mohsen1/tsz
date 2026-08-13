@@ -583,3 +583,115 @@ interface LibBase {
             "TS1155 must be suppressed alongside a real parse error (Direction B), got: {codes:?}"
         );
     }
+
+    // #16279's own round-8/9 comments flagged TS18016 ("Private identifiers are
+    // not allowed outside class bodies") as a deferred double-emission risk:
+    // tsc reports it from one checker function
+    // (`checkGrammarPrivateIdentifierExpression`), but tsz has five PARSER
+    // sites (an interface/type-literal member name in `state_declarations.rs`,
+    // and four object-literal member-name shapes in
+    // `state_expressions_literals/object_members.rs`) plus four CHECKER sites
+    // (a standalone-expression position and the `in`-operator LHS, both in
+    // `types/type_checking/core.rs`; a private member-access receiver in
+    // `state/type_analysis/computed_helpers_private.rs`; and a JS
+    // `X.prototype.#y = …` assignment target in
+    // `assignability/assignment_checker/assignment_ops.rs`). 18016 was later
+    // added to `is_parser_grammar_code` (audit round 8), which closes the
+    // Direction-B suppression gap for the parser copies; these tests close
+    // the still-open other half — whether any of those nine sites can ever
+    // fire twice for the same source position. They cannot: each owns a
+    // syntactically disjoint node shape (a plain declaration name is never
+    // also dispatched as a standalone expression), so this suite pins that
+    // invariant with a witness at every position rather than leaving it as
+    // an unverified risk note.
+    //
+    // Oracle-verified against `typescript@7.0.2`: each position below reports
+    // TS18016 exactly once (Direction A), and an unrelated real syntax error
+    // elsewhere in the file suppresses every one of them, leaving only the
+    // real error (Direction B) — the checker copies are already suppressed by
+    // the generic `code < 2000` rule in
+    // `keep_checker_diagnostic_when_program_has_real_syntax_errors` (18016
+    // fails it), independent of `is_parser_grammar_code`, which only screens
+    // parser diagnostics.
+    fn ts18016_all_positions_source() -> &'static str {
+        "const o = { #x: 1 };\n\
+         interface I { #y: string }\n\
+         #z;\n\
+         const inCheck = #w in {};\n\
+         declare const obj: any;\n\
+         obj.#v;\n"
+    }
+
+    fn ts18016_count(diagnostics: &[Diagnostic], file: &str) -> usize {
+        diagnostics
+            .iter()
+            .filter(|diag| diag.file == file && diag.code == 18016)
+            .count()
+    }
+
+    #[test]
+    fn private_identifier_outside_class_reports_ts18016_once_per_position() {
+        // Five distinct positions (object-literal key, interface/type-literal
+        // key, standalone expression, `in`-LHS, member-access receiver) in one
+        // file: five separate TS18016s, never zero and never doubled at any
+        // one of them.
+        let diagnostics =
+            collect_test_diagnostics(&[("/a.ts", ts18016_all_positions_source())]);
+        assert_eq!(
+            ts18016_count(&diagnostics, "/a.ts"),
+            5,
+            "expected exactly one TS18016 per position (object-literal key, \
+             interface key, standalone expression, `in`-LHS, member access), \
+             not a parser+checker double-report at any of them: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn private_identifier_outside_class_all_positions_suppressed_by_real_parse_error() {
+        let mut source = ts18016_all_positions_source().to_string();
+        source.push_str("let zzz: = 1;\n");
+        let diagnostics = collect_test_diagnostics(&[("/a.ts", source.as_str())]);
+        let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
+        assert_eq!(
+            ts18016_count(&diagnostics, "/a.ts"),
+            0,
+            "every TS18016 (parser- and checker-emitted alike) must be \
+             suppressed alongside a real syntax error (Direction B), got: {diagnostics:?}"
+        );
+        assert!(
+            codes.contains(&1110),
+            "the real parse error TS1110 (type expected) must survive, got: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn private_identifier_object_literal_accessor_and_method_shapes_each_report_once() {
+        // The remaining two of the four object-literal member-name parser
+        // sites not covered by the plain-property witness above: `get`/`set`
+        // accessors and a method name.
+        let diagnostics = collect_test_diagnostics(&[(
+            "/a.ts",
+            "const o = { get #x() { return 1; }, set #y(v: number) {}, #z() {} };\n",
+        )]);
+        assert_eq!(
+            ts18016_count(&diagnostics, "/a.ts"),
+            3,
+            "expected exactly one TS18016 per member (get accessor, set \
+             accessor, method), not merged or duplicated: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn private_identifier_renamed_receiver_does_not_change_ts18016_count() {
+        // Anti-hardcoding: a differently-named receiver/binder must not
+        // change the single-emission outcome.
+        let diagnostics = collect_test_diagnostics(&[(
+            "/a.ts",
+            "declare const receiver: any;\nreceiver.#field;\n",
+        )]);
+        assert_eq!(
+            ts18016_count(&diagnostics, "/a.ts"),
+            1,
+            "expected exactly one TS18016: {diagnostics:?}"
+        );
+    }
