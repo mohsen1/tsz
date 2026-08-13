@@ -146,6 +146,62 @@ fn empty_object_to_weakmap_lists_both_declarations_members() {
     );
 }
 
+/// `Set<T>` has the same three-declaration shape as `Map` (es2015.collection +
+/// es2015.iterable + es2015.symbol.wellknown). The flat list leads with the
+/// collection declaration's members in declaration order — the same lib-load
+/// ordering, exercised on a different member set so the guard isn't `Map`-only.
+#[test]
+fn empty_object_to_set_leads_with_collection_declaration_in_load_order() {
+    let diags = check_with_libs("const s: Set<number> = {};");
+    assert_eq!(diags.len(), 1);
+    let diag = &diags[0];
+    assert_eq!(diag.code, 2740, "message: {}", diag.message_text);
+    assert!(
+        diag.message_text
+            .ends_with("'Set<number>': add, clear, delete, forEach, and 7 more."),
+        "missing list must be in tsc lib-load order, got: {}",
+        diag.message_text
+    );
+}
+
+/// `Promise<T>` is the cross-*major-version* merge in the family: `then`/`catch`
+/// come from `es2015.promise`, `finally` from `es2018.promise`, and
+/// `[Symbol.toStringTag]` from `es2015.symbol.wellknown`. The canonical
+/// lib-load-order sort must place `finally` (es2018) after `then`/`catch`
+/// (es2015) and before/after the well-known member exactly as tsc does — a
+/// case the same-version Map/Set/WeakMap rows do not cover.
+#[test]
+fn empty_object_to_promise_lists_all_declarations_in_load_order() {
+    let diags = check_with_libs("const p: Promise<number> = {};");
+    assert_eq!(diags.len(), 1);
+    let diag = &diags[0];
+    assert_eq!(diag.code, 2739, "message: {}", diag.message_text);
+    assert!(
+        diag.message_text
+            .ends_with("'Promise<number>': then, catch, finally, [Symbol.toStringTag]"),
+        "missing list must span every declaration in tsc lib-load order, got: {}",
+        diag.message_text
+    );
+}
+
+/// `ReadonlyMap<K, V>` is the read-side variant: `es2015.collection`
+/// (`forEach, get, has, size`) + `es2015.iterable` (`entries, keys, values,
+/// [Symbol.iterator]`), and — unlike `Map` — no `es2015.symbol.wellknown`
+/// member. The collection declaration still leads in declaration order.
+#[test]
+fn empty_object_to_readonlymap_leads_with_collection_declaration_in_load_order() {
+    let diags = check_with_libs("const rm: ReadonlyMap<string, number> = {};");
+    assert_eq!(diags.len(), 1);
+    let diag = &diags[0];
+    assert_eq!(diag.code, 2740, "message: {}", diag.message_text);
+    assert!(
+        diag.message_text
+            .ends_with("'ReadonlyMap<string, number>': forEach, get, has, size, and 4 more."),
+        "missing list must be in tsc lib-load order, got: {}",
+        diag.message_text
+    );
+}
+
 /// A source already satisfying the iterable + well-known declarations still
 /// gets the collection declaration's members reported — previously those were
 /// only reachable through the constituent elaboration, never the flat list.
