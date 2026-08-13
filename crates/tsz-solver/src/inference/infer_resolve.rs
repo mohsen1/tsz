@@ -847,9 +847,18 @@ impl<'a> InferenceContext<'a> {
             // conflicting naked argument is reported (issue #9667).
             let has_array_element_candidate =
                 filtered_no_never.iter().any(|c| c.from_array_element);
+            // Distinguish the *all-from-array-element* case (e.g. both `V`
+            // candidates of `new Map([["", true], ["", 0]])`, one per tuple leg)
+            // from the mixed array+naked case (#9667). tsc id-sorts the former
+            // (lowest intrinsic wins, order-independent) but keeps the leftmost
+            // array candidate for the latter, so only the all-from-array case
+            // takes the ranked-winner path (#17364).
+            let all_from_array_element = !filtered_no_never.is_empty()
+                && filtered_no_never.iter().all(|c| c.from_array_element);
             self.get_common_supertype_for_inference(
                 &widened_candidates,
                 has_array_element_candidate,
+                all_from_array_element,
             )
         };
         // When candidates come from index signature inference (e.g., inferring T from

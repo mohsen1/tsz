@@ -23,6 +23,24 @@ use tsz_common::interner::Atom;
 use super::InferenceContext;
 use super::infer_bct_guard_state as guard_state;
 
+/// Rank for tsc's primitive common-supertype tie-break, matching the intrinsic
+/// creation order in the TypeScript checker: `string < number < bigint < symbol
+/// < boolean` (`boolean` is the `false | true` union, interned after the simple
+/// intrinsics, so it sorts last). `getCommonSupertype`'s reduceLeft over a
+/// type-id-sorted union keeps the lowest-ranked disjoint primitive; tsz's own
+/// `TypeId` ordering differs, so this rank reproduces tsc's order-independent
+/// winner. Non-primitive types rank last and are never selected through here.
+const fn tsc_primitive_supertype_rank(ty: TypeId) -> u8 {
+    match ty {
+        TypeId::STRING => 0,
+        TypeId::NUMBER => 1,
+        TypeId::BIGINT => 2,
+        TypeId::SYMBOL => 3,
+        TypeId::BOOLEAN => 4,
+        _ => u8::MAX,
+    }
+}
+
 impl<'a> InferenceContext<'a> {
     // =========================================================================
     // Best Common Type
@@ -134,13 +152,20 @@ impl<'a> InferenceContext<'a> {
     /// 4. Add stripped nullable types back to the result
     ///
     /// `array_element_first_wins` requests tsc's strict leftmost-wins behaviour
-    /// for the incompatible-candidate fallback when one of the candidates was
-    /// inferred from an array-literal element (see the step-5 comment for why
-    /// this is gated).
+    /// for the incompatible-candidate fallback when *any* candidate was
+    /// inferred from an array-literal element (the mixed array+naked #9667
+    /// case; see the step-5 comment for why this is gated).
+    ///
+    /// `all_from_array_element` is the stricter condition that *every* candidate
+    /// came from an array-literal element. In that case tsc id-sorts the
+    /// candidate union before its leftmost-wins tournament, so the disjoint
+    /// bare-primitive winner is order-independent (`string < number < bigint <
+    /// symbol < boolean`) rather than source-first (#17364).
     pub fn get_common_supertype_for_inference(
         &self,
         types: &[TypeId],
         array_element_first_wins: bool,
+        all_from_array_element: bool,
     ) -> TypeId {
         if types.is_empty() {
             return TypeId::UNKNOWN;
@@ -329,6 +354,30 @@ impl<'a> InferenceContext<'a> {
                 TypeId::STRING | TypeId::NUMBER | TypeId::BOOLEAN | TypeId::BIGINT | TypeId::SYMBOL
             )
         });
+        // When *every* disjoint bare-primitive candidate came from an
+        // array-literal element position, tsc's `getCommonSupertype` runs its
+        // reduceLeft tournament over `getUnionType(candidates)`, so the
+        // candidates are visited in ascending intrinsic type-id order rather
+        // than argument-source order and, since none is a subtype of another,
+        // the lowest-id member wins — an *order-independent* winner. tsc's
+        // intrinsic creation order is `string < number < bigint < symbol <
+        // boolean` (`boolean` is the `false | true` union, minted after the
+        // simple intrinsics), which is not tsz's `TypeId` order, so we
+        // reproduce it with an explicit rank. Without this, inferring `V` for
+        // `new Map([["", true], ["", 0]])` picked the source-first `boolean`
+        // candidate; tsc pins `V = number` and anchors the TS2769 last-overload
+        // chain at the `boolean` element (#17364). This is gated on
+        // *all*-from-array-element so the mixed array+naked case (#9667), where
+        // tsc keeps the leftmost array candidate, still flows through the
+        // source-order first-wins below.
+        if all_from_array_element
+            && all_bare_primitive_intrinsic
+            && let Some(&winner) = primary_types
+                .iter()
+                .min_by_key(|&&ty| tsc_primitive_supertype_rank(ty))
+        {
+            return self.add_nullable_to_result(winner, has_undefined, has_null);
+        }
         let all_signature_bearing = primary_types
             .iter()
             .all(|&ty| visitor::is_function_type(self.interner, ty));

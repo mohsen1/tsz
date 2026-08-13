@@ -2961,3 +2961,7 @@ path = "tests/for_in_optional_chain_ts2405_vs_ts2780_tests.rs"
 [[test]]
 name = "void_return_exception"
 path = "tests/void_return_exception.rs"
+
+[[test]]
+name = "map_constructor_tuple_element_supertype_order_tests"
+path = "tests/map_constructor_tuple_element_supertype_order_tests.rs"
