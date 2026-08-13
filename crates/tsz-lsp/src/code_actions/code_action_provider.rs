@@ -80,6 +80,14 @@ pub struct ImportCandidate {
     pub local_name: String,
     pub kind: ImportCandidateKind,
     pub is_type_only: bool,
+    /// The candidate is an unexported JSDoc `@typedef`/`@callback`/`@import`
+    /// name (tsc still lets a JS file reach it via an inline
+    /// `import("./mod").Name` type query — TS18042's own message names this
+    /// exact rewrite). The fix for this candidate inserts that inline
+    /// qualifier at the usage site instead of adding an import declaration,
+    /// since a real import statement for a pure type in a JS file either
+    /// does nothing at runtime or (per TS18042) is rejected outright.
+    pub jsdoc_typedef: bool,
 }
 
 impl ImportCandidate {
@@ -89,6 +97,7 @@ impl ImportCandidate {
             local_name,
             kind: ImportCandidateKind::Named { export_name },
             is_type_only: false,
+            jsdoc_typedef: false,
         }
     }
 
@@ -98,6 +107,7 @@ impl ImportCandidate {
             local_name,
             kind: ImportCandidateKind::Default,
             is_type_only: false,
+            jsdoc_typedef: false,
         }
     }
 
@@ -107,6 +117,7 @@ impl ImportCandidate {
             local_name,
             kind: ImportCandidateKind::Namespace,
             is_type_only: false,
+            jsdoc_typedef: false,
         }
     }
 }

@@ -1684,23 +1684,42 @@ impl<'a> CodeActionProvider<'a> {
                 continue;
             }
 
-            let mut resolved = candidate.clone();
-            // Use `import type` when the identifier is only used in a type position
-            // (type annotations, implements clauses, etc.). For value usage, use a
-            // regular import so the symbol is available at runtime.
-            resolved.is_type_only = usage == ImportUsage::Type;
+            let (edits, title) = if candidate.jsdoc_typedef {
+                // Not formally exported, but tsc still resolves an unexported
+                // JSDoc typedef/callback/import name through an inline
+                // `import("./mod").Name` type query — insert that qualifier
+                // right before the usage instead of adding an import
+                // declaration (TS18042: a real import of a pure type is
+                // rejected in a JS file). See `ImportCandidate::jsdoc_typedef`.
+                let insert_range = Range {
+                    start: diag.range.start,
+                    end: diag.range.start,
+                };
+                let prefix = format!("import(\"{}\").", candidate.module_specifier);
+                let title = format!(
+                    "Import '{}' via 'import(\"{}\").{}'",
+                    candidate.local_name, candidate.module_specifier, candidate.local_name
+                );
+                (vec![TextEdit::new(insert_range, prefix)], title)
+            } else {
+                let mut resolved = candidate.clone();
+                // Use `import type` when the identifier is only used in a type position
+                // (type annotations, implements clauses, etc.). For value usage, use a
+                // regular import so the symbol is available at runtime.
+                resolved.is_type_only = usage == ImportUsage::Type;
 
-            let Some(edits) = self.build_import_edit(root, &resolved) else {
-                continue;
+                let Some(edits) = self.build_import_edit(root, &resolved) else {
+                    continue;
+                };
+                let title = format!(
+                    "Import '{}' from '{}'",
+                    candidate.local_name, candidate.module_specifier
+                );
+                (edits, title)
             };
 
             let mut changes = FxHashMap::default();
             changes.insert(self.file_name.clone(), edits);
-
-            let title = format!(
-                "Import '{}' from '{}'",
-                candidate.local_name, candidate.module_specifier
-            );
             actions.push(CodeAction {
                 title,
                 kind: CodeActionKind::QuickFix,

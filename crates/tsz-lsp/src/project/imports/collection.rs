@@ -60,7 +60,10 @@ impl Project {
 
             let mut visited = FxHashSet::default();
             let matches = self.matching_exports_in_file(&file_name, symbol_name, &mut visited);
-            if matches.is_empty() && !mode.include_namespace_default {
+            let jsdoc_typedef_match = matches.is_empty()
+                && Self::is_js_like_file(context.request_file_name())
+                && self.file_declares_jsdoc_typedef(&file_name, symbol_name);
+            if matches.is_empty() && !jsdoc_typedef_match && !mode.include_namespace_default {
                 continue;
             }
 
@@ -68,6 +71,27 @@ impl Project {
             else {
                 continue;
             };
+
+            if jsdoc_typedef_match {
+                // Not formally exported, but tsc still lets a JS file reach a
+                // JSDoc typedef/callback/import name through an inline
+                // `import("./mod").Name` type query (TS18042's own message
+                // names this exact rewrite) — never a real import
+                // declaration, which either does nothing at runtime for a
+                // pure type or is rejected outright. See `jsdoc_typedef` on
+                // `ImportCandidate`.
+                sink.push(ImportCandidate {
+                    module_specifier,
+                    local_name: symbol_name.to_string(),
+                    kind: ImportCandidateKind::Named {
+                        export_name: symbol_name.to_string(),
+                    },
+                    is_type_only: true,
+                    jsdoc_typedef: true,
+                });
+                continue;
+            }
+
             let relative_fallback =
                 context.ambiguous_relative_fallback_specifier(self, &file_name, &module_specifier);
 
@@ -77,6 +101,7 @@ impl Project {
                     local_name: symbol_name.to_string(),
                     kind: export_match.kind.clone(),
                     is_type_only: export_match.is_type_only,
+                    jsdoc_typedef: false,
                 });
                 // Only the file that first claims the (shared) primary
                 // specifier contributes the relative fallback. A later file
@@ -90,6 +115,7 @@ impl Project {
                         local_name: symbol_name.to_string(),
                         kind: export_match.kind.clone(),
                         is_type_only: export_match.is_type_only,
+                        jsdoc_typedef: false,
                     });
                 }
             }
@@ -102,6 +128,7 @@ impl Project {
                     local_name: symbol_name.to_string(),
                     kind: ImportCandidateKind::Default,
                     is_type_only,
+                    jsdoc_typedef: false,
                 });
             }
         }
@@ -128,6 +155,7 @@ impl Project {
                 local_name: symbol_name.to_string(),
                 kind: export_match.kind.clone(),
                 is_type_only: export_match.is_type_only,
+                jsdoc_typedef: false,
             });
         }
     }
@@ -261,6 +289,23 @@ impl Project {
         let mut out: Vec<String> = names.into_iter().collect();
         out.sort();
         out
+    }
+
+    /// Whether `file_name`'s source declares a JSDoc `@typedef`/`@callback`/
+    /// `@import` tag named `symbol_name`, independent of whether that name
+    /// is otherwise exported (see `ImportCandidate::jsdoc_typedef`).
+    fn file_declares_jsdoc_typedef(&self, file_name: &str, symbol_name: &str) -> bool {
+        let Some(file) = self.files.get(file_name) else {
+            return false;
+        };
+        let arena = file.arena();
+        let Some(source_file) = arena.get_source_file_at(file.root()) else {
+            return false;
+        };
+        tsz_checker::state::CheckerState::source_file_has_jsdoc_typedef_named(
+            source_file,
+            symbol_name,
+        )
     }
 
     /// Walk `file_name`'s AST and collect all exports matching `export_name`,

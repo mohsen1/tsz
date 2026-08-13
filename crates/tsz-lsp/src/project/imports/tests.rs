@@ -1468,3 +1468,67 @@ fn file_exclude_patterns_applied_once_per_request_not_per_symbol() {
         );
     }
 }
+
+#[test]
+fn diagnostics_import_candidates_include_unexported_jsdoc_typedef_as_inline_import() {
+    let mut project = Project::new();
+    project.set_file(
+        "/a.js".to_string(),
+        "export {};\n/** @typedef {number} T */\n".to_string(),
+    );
+    project.set_file(
+        "/b.js".to_string(),
+        "/** @type {T} */\nconst x = 0;\n".to_string(),
+    );
+
+    let diagnostics = vec![LspDiagnostic {
+        range: Range::new(Position::new(0, 11), Position::new(0, 12)),
+        message: "Cannot find name 'T'.".to_string(),
+        code: Some(tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME),
+        severity: None,
+        source: None,
+        related_information: None,
+        reports_unnecessary: None,
+        reports_deprecated: None,
+    }];
+
+    let candidates = project.get_import_candidates_for_diagnostics("/b.js", &diagnostics);
+    let t_candidate = candidates
+        .iter()
+        .find(|c| c.local_name == "T")
+        .unwrap_or_else(|| panic!("expected a 'T' candidate, got {candidates:?}"));
+
+    assert_eq!(t_candidate.module_specifier, "./a.js");
+    assert!(t_candidate.is_type_only);
+    assert!(t_candidate.jsdoc_typedef);
+}
+
+#[test]
+fn diagnostics_import_candidates_prefer_exported_value_over_jsdoc_typedef_path_in_js_file() {
+    let mut project = Project::new();
+    project.set_file(
+        "/a.js".to_string(),
+        "export function foo() {}\n".to_string(),
+    );
+    project.set_file("/b.js".to_string(), "foo();\n".to_string());
+
+    let diagnostics = vec![LspDiagnostic {
+        range: Range::new(Position::new(0, 0), Position::new(0, 3)),
+        message: "Cannot find name 'foo'.".to_string(),
+        code: Some(tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME),
+        severity: None,
+        source: None,
+        related_information: None,
+        reports_unnecessary: None,
+        reports_deprecated: None,
+    }];
+
+    let candidates = project.get_import_candidates_for_diagnostics("/b.js", &diagnostics);
+    let foo_candidate = candidates
+        .iter()
+        .find(|c| c.local_name == "foo")
+        .unwrap_or_else(|| panic!("expected a 'foo' candidate, got {candidates:?}"));
+
+    assert!(!foo_candidate.is_type_only);
+    assert!(!foo_candidate.jsdoc_typedef);
+}
