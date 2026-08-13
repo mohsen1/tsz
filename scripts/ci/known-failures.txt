@@ -126,6 +126,18 @@
 # re-resolved through the checker's canonical import path instead of keeping the
 # `TypeLowering` cross-arena re-mint, so it shares identity with a plain `X`
 # reference and the conditional branch selects correctly.
+# 2026-08-13 shrink (no generation bump — removals are always allowed): the two
+# jsdoc_constructor_typeof_source_display rows now pass and were rewritten to
+# match the pinned typescript@7.0.2 oracle. Root cause: a Closure `function(...)`
+# JSDoc type was rejected with TS1005 (correct) but then dropped to `any` instead
+# of resolving to the global `Function` type the way tsc does after that
+# recovery. `resolve_jsdoc_reference` now maps any Closure `function(...)` head to
+# `Function`, so `@param`/`@type`/`@return` positions participate in downstream
+# assignability (a non-function argument is a TS2345/TS2322 against `Function`);
+# the arrow form `(...) => T` still parses structurally and is unaffected. The
+# two rows' original TS2345 expectation was never reachable under TS7 (a function
+# value is assignable to `Function`, so there is no TS2345), so they were renamed
+# and re-pinned to the oracle-confirmed TS1005 + `Function` behavior.
 tsz-checker::commonjs_module_export_alias_tests::test_module_exports_forward_read_reports_ts2565
 tsz-checker::conditional_application_display_tests::deferred_generic_conditional_keeps_branch_union
 tsz-checker::conformance_issues_features::features::namespace_construct_signature::part_00::test_js_void_zero_expando_reports_named_receiver_type
@@ -145,8 +157,6 @@ tsz-checker::issue_14123_repro_tests::issue_14123_alias_array_infer_reports_mism
 tsz-checker::js_export_surface_tests::part_01::test_current_file_exports_reads_use_prior_assignment_types
 tsz-checker::js_export_surface_tests::part_01::test_current_file_module_exports_reads_use_prior_assignment_types
 tsz-checker::js_jsdoc_diagnostics_tests::checked_js_async_jsdoc_expression_body_ts2322_anchors_on_return_expr
-tsz-checker::jsdoc_constructor_typeof_source_display_tests::ts2345_jsdoc_constructor_function_decl_displays_plain_function_source
-tsz-checker::jsdoc_constructor_typeof_source_display_tests::ts2345_jsdoc_constructor_var_displays_plain_function_source
 tsz-checker::nonnull_contextual_type_arg_inference_tests::contextual_return_can_refine_transparent_wrapper_inference
 tsz-checker::raw_builder_return_context_inference_tests::different_base_and_ambiguous_union_do_not_pin_the_tag
 tsz-checker::simple_local_interface_fastpath_tests::missing_interface_lib_rows_keep_lib_shapes

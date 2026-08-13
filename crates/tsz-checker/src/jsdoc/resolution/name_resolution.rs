@@ -594,15 +594,23 @@ impl<'a> CheckerState<'a> {
                 }
                 // TypeScript 7 does not accept the Closure `function(...)` form.
                 // The syntax error is TS1005, reported in
-                // `jsdoc/closure_function_type.rs`; the type itself must not
-                // resolve, so the annotated symbol gains no contextual signature.
-                // Its parameters then fall to implicit `any` (TS7006) and the
-                // assignability errors a reconstructed signature used to produce
-                // disappear, which is what the oracle expects.
-                if let Some(rest) = type_expr.strip_prefix("function")
-                    && rest.trim_start().starts_with('(')
-                {
-                    return None;
+                // `jsdoc/closure_function_type.rs`; tsc reads the head keyword
+                // `function` as a reference to the global `Function` type and
+                // discards the trailing call-/construct-signature syntax it
+                // cannot consume. The annotated symbol is therefore typed
+                // `Function` — a plain value type — and still participates in
+                // downstream assignability (a non-function argument is a
+                // TS2345/TS2322 against `Function`). Resolving it here, in the
+                // structural parser that every JSDoc-type entry point routes
+                // through (bare `@param`/`@type`/`@return` via
+                // `resolve_jsdoc_reference`, and object-literal members,
+                // constraints, and heritage clauses that call this directly),
+                // keeps one owner for the construct. Detect it with the same
+                // `jsdoc_closure_function_type_offset` that drives the TS1005
+                // emission — including its Closure `!`/`?` nullable prefixes —
+                // so the reject-site and the resolve-site can never disagree.
+                if Self::jsdoc_closure_function_type_offset(type_expr).is_some() {
+                    return self.resolve_jsdoc_global_implicit_any_type("Function");
                 }
                 if let Some(rest) = type_expr.strip_prefix("keyof") {
                     let rest = rest.trim_start();
