@@ -288,6 +288,15 @@ impl<'a> CheckerState<'a> {
             //   /** @type {Foo} */ export const x = ...
             //   var res = x()
             // would inherit Foo through SourceFile's leading-comment position.
+            //
+            // Also stop at an object/array literal boundary: `current` is a
+            // *member* of that literal (a property, method, or element), not
+            // the literal's own declared value, so a JSDoc tag several hops
+            // further up (on the literal's enclosing declaration) describes
+            // the literal's overall shape, not this member. E.g.
+            //   /** @type {{ a(): void }} */ const o = { a() {} };
+            // must not attribute `@type {{ a(): void }}` to `a()` itself —
+            // only a JSDoc comment directly above `a()` would.
             if let Some(parent_node) = self.ctx.arena.get(parent) {
                 use tsz_parser::parser::syntax_kind_ext as sk;
                 if matches!(
@@ -297,6 +306,8 @@ impl<'a> CheckerState<'a> {
                         | sk::MODULE_BLOCK
                         | sk::CASE_CLAUSE
                         | sk::DEFAULT_CLAUSE
+                        | sk::OBJECT_LITERAL_EXPRESSION
+                        | sk::ARRAY_LITERAL_EXPRESSION
                 ) {
                     break;
                 }
@@ -348,6 +359,8 @@ impl<'a> CheckerState<'a> {
                         | sk::MODULE_BLOCK
                         | sk::CASE_CLAUSE
                         | sk::DEFAULT_CLAUSE
+                        | sk::OBJECT_LITERAL_EXPRESSION
+                        | sk::ARRAY_LITERAL_EXPRESSION
                 ) {
                     break;
                 }
