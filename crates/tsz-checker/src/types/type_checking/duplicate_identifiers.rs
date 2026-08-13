@@ -1184,84 +1184,6 @@ impl<'a> CheckerState<'a> {
                         continue;
                     }
 
-                    // In checked JS, a value declaration can intentionally pick up
-                    // a cross-file class shape from a TS/.d.ts declaration. Treating
-                    // that as a duplicate blocks the real semantic check and produces
-                    // TS2451 where tsc reports a constructor-side assignability error
-                    // (for example salsa/jsContainerMergeTsDeclaration3.ts).
-                    //
-                    // The merge applies symmetrically: when the JS file's `const A = {}`
-                    // and the .d.ts file's `declare class A {}` share a name, neither
-                    // side should report TS2451. Checking only `is_js_file()` (the
-                    // current file) misses the .d.ts side of the pair, so we also
-                    // probe `declaration_arenas` for a remote arena whose source file
-                    // is a JS file. (`arena_for_declaration_or` returns only the
-                    // *first* arena recorded for a decl_idx, so it can't distinguish
-                    // the local-vs-remote arena when both files share the index.)
-                    // Two lookup strategies: first the precise per-decl mapping
-                    // in `declaration_arenas`, then a fallback that scans the
-                    // project's arenas for any non-current JS file. The fallback
-                    // matters when cross-file declarations are surfaced via
-                    // `top_level_script_declarations_in_arena` rather than via
-                    // a merged-symbol entry — those tuples carry the remote
-                    // decl_idx but not its arena.
-                    let remote_decl_in_js = |idx: NodeIndex, this_is_local: bool| -> bool {
-                        if this_is_local {
-                            return false;
-                        }
-                        // Precise lookup: when `declaration_arenas` has an
-                        // entry for this declaration, its arenas are the
-                        // authoritative source — return whether any of them
-                        // is a JS file. The fallback below MUST NOT run in
-                        // that case: previously, a present-but-non-JS entry
-                        // would fall through to a project-wide JS-file scan
-                        // that returned `true` for any unrelated `*.js`,
-                        // suppressing TS2451 between two unrelated `.d.ts`
-                        // declarations whenever any JS file existed in the
-                        // project.
-                        if let Some(arenas) = self.ctx.binder.declaration_arenas.get(&(sym_id, idx))
-                        {
-                            return arenas
-                                .iter()
-                                .filter(|a| !std::ptr::eq(&***a, self.ctx.arena))
-                                .any(|a| {
-                                    a.source_files.first().is_some_and(|sf| {
-                                        crate::context::is_js_file_name(&sf.file_name)
-                                    })
-                                });
-                        }
-                        // Fallback only when `declaration_arenas` has no
-                        // entry at all (cross-file decls surfaced via
-                        // `top_level_script_declarations_in_arena` carry the
-                        // remote decl_idx but not its arena).
-                        self.ctx.all_arenas.as_ref().is_some_and(|arenas| {
-                            arenas.iter().any(|a| {
-                                !std::ptr::eq(a.as_ref(), self.ctx.arena)
-                                    && a.source_files.first().is_some_and(|sf| {
-                                        crate::context::is_js_file_name(&sf.file_name)
-                                    })
-                            })
-                        })
-                    };
-                    let any_side_is_checked_js = self.ctx.compiler_options.check_js
-                        && (crate::context::is_js_file_name(&self.ctx.file_name)
-                            || remote_decl_in_js(decl_idx, decl_is_local)
-                            || remote_decl_in_js(other_idx, other_is_local));
-                    let class_side_in_js = if (decl_flags & symbol_flags::CLASS) != 0 {
-                        if decl_is_local {
-                            crate::context::is_js_file_name(&self.ctx.file_name)
-                        } else {
-                            remote_decl_in_js(decl_idx, false)
-                        }
-                    } else if (other_flags & symbol_flags::CLASS) != 0 {
-                        if other_is_local {
-                            crate::context::is_js_file_name(&self.ctx.file_name)
-                        } else {
-                            remote_decl_in_js(other_idx, false)
-                        }
-                    } else {
-                        false
-                    };
                     let value_side_is_block_scoped = if (decl_flags & symbol_flags::VARIABLE) != 0 {
                         (decl_flags & symbol_flags::BLOCK_SCOPED_VARIABLE) != 0
                     } else if (other_flags & symbol_flags::VARIABLE) != 0 {
@@ -1269,14 +1191,27 @@ impl<'a> CheckerState<'a> {
                     } else {
                         false
                     };
-                    let checked_js_value_merges_remote_class = any_side_is_checked_js
-                        && (!class_side_in_js || !value_side_is_block_scoped)
+                    // A JS-file `var X = ...` (function/global scoped, so it
+                    // never collides with a class's block-scoped binding) can
+                    // legitimately merge with a same-named remote `declare
+                    // class X`: tsc treats it as a container/expando merge,
+                    // not a duplicate declaration, and instead checks the
+                    // `var` initializer against the merged static type
+                    // (TS2739 when it doesn't match — see
+                    // `checked_js_remote_class_declared_type_for_variable`).
+                    // `const`/`let` share the class's block-scoped binding,
+                    // so tsc reports a genuine redeclaration there instead
+                    // (verified against jsContainerMergeTsDeclaration3.ts's
+                    // pinned tsc oracle: `var` gets TS2739 only, `const` gets
+                    // TS2451 on both sides and no synthesized merged type).
+                    let var_class_container_merge = self.ctx.compiler_options.check_js
+                        && !value_side_is_block_scoped
                         && (decl_is_local != other_is_local)
                         && (((decl_flags & symbol_flags::VARIABLE) != 0
                             && (other_flags & symbol_flags::CLASS) != 0)
                             || ((other_flags & symbol_flags::VARIABLE) != 0
                                 && (decl_flags & symbol_flags::CLASS) != 0));
-                    if checked_js_value_merges_remote_class {
+                    if var_class_container_merge {
                         continue;
                     }
 

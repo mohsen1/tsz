@@ -66,6 +66,19 @@ impl<'a> CheckerState<'a> {
         if var_decl.initializer.is_none() {
             return None;
         }
+        // `const`/`let` share a block-scoped binding with a same-named remote
+        // `declare class`: that is a genuine redeclaration (TS2451 on both
+        // sides, handled by duplicate-identifier checking), not a JS
+        // container merge — tsc does not synthesize a merged declared type
+        // or check the initializer against it. Only `var` (function/global
+        // scoped, so it never collides with the class's block-scoped
+        // binding) gets the expando-merge treatment tsc actually performs.
+        if let Some(sym_id) = self.ctx.binder.get_node_symbol(decl_idx)
+            && let Some(sym) = self.ctx.binder.get_symbol(sym_id)
+            && sym.has_any_flags(tsz_binder::symbol_flags::BLOCK_SCOPED_VARIABLE)
+        {
+            return None;
+        }
         let name = self
             .ctx
             .arena

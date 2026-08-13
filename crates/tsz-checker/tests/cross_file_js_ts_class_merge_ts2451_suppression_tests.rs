@@ -1,11 +1,25 @@
-//! When a `.d.ts` `declare class A {}` and a `.js` `const A = {}` share a
-//! name across files (with `allowJs` + `checkJs`), neither file should emit
-//! TS2451 ("Cannot redeclare block-scoped variable"). The structural rule:
-//! "if any side of the variable/class pair lives in a JS file with `check_js`,
-//! it's a CommonJS-style namespace augmentation, not a redeclaration."
+//! Cross-file JS/TS declaration-merge behavior for a `.js` value declaration
+//! sharing a name with a `.d.ts` `declare class` (with `allowJs` +
+//! `checkJs`).
 //!
-//! Mirrors the .d.ts-side false positive observed in
-//! `TypeScript/tests/cases/conformance/salsa/jsContainerMergeTsDeclaration3.ts`.
+//! Structural rule, verified against the pinned tsc oracle for
+//! `TypeScript/tests/cases/conformance/salsa/jsContainerMergeTsDeclaration3.ts`
+//! (`var A = {}` shape) and its `const` variant:
+//! - `var X = <init>` is function/global scoped, so it never collides with
+//!   the class's block-scoped binding — tsc treats it as a container/expando
+//!   merge: `X.prop = ...` assignments augment the merged static type, and
+//!   the initializer is checked against that merged type (TS2739 when it is
+//!   missing required members, never TS2741).
+//! - `const`/`let X = <init>` share the class's block-scoped binding, so tsc
+//!   reports a genuine redeclaration (TS2451 on *both* the `.d.ts` and `.js`
+//!   declarations) instead. No merged type is synthesized, so the
+//!   initializer is not checked against the class shape (no TS2739).
+//!
+//! Originally this file asserted the opposite for the `const` case (no
+//! TS2451, only TS2739) based on a misreading of
+//! `jsContainerMergeTsDeclaration3.ts` — the pinned `typescript@7.0.2`
+//! oracle (`scripts/conformance/tsc-cache-full.json`) actually reports
+//! `TS2339`/`TS2451` for that exact fixture, not `TS2739`.
 
 use tsz_checker::context::CheckerOptions;
 use tsz_common::common::ModuleKind;
@@ -32,10 +46,10 @@ fn count_code(diags: &[(u32, String)], code: u32) -> usize {
     diags.iter().filter(|(c, _)| *c == code).count()
 }
 
-/// `.d.ts`-side check: no TS2451 should fire on `declare class A {}` when
-/// a JS file declares `const A = {}`.
+/// `.d.ts`-side check: TS2451 fires on `declare class A {}` when a JS file
+/// declares the block-scoped `const A = {}` (genuine redeclaration).
 #[test]
-fn no_ts2451_in_dts_when_js_const_merges_with_class() {
+fn ts2451_in_dts_when_js_const_conflicts_with_class() {
     let diags = compile_files(
         &[
             ("a.d.ts", "declare class A {}"),
@@ -45,15 +59,15 @@ fn no_ts2451_in_dts_when_js_const_merges_with_class() {
     );
     assert_eq!(
         count_code(&diags, 2451),
-        0,
-        ".d.ts must not emit TS2451 for JS+TS class merge; got: {diags:?}"
+        1,
+        ".d.ts must emit TS2451 for a block-scoped JS/TS class conflict; got: {diags:?}"
     );
 }
 
-/// `.js`-side check: no TS2451 should fire on `const A = {}` when the
-/// merging .d.ts file declares `class A`.
+/// `.js`-side check: TS2451 fires on `const A = {}` when the conflicting
+/// `.d.ts` file declares `class A`.
 #[test]
-fn no_ts2451_in_js_when_dts_class_merges_with_const() {
+fn ts2451_in_js_when_dts_class_conflicts_with_const() {
     let diags = compile_files(
         &[
             ("a.d.ts", "declare class A {}"),
@@ -63,17 +77,16 @@ fn no_ts2451_in_js_when_dts_class_merges_with_const() {
     );
     assert_eq!(
         count_code(&diags, 2451),
-        0,
-        ".js must not emit TS2451 for JS+TS class merge; got: {diags:?}"
+        1,
+        ".js must emit TS2451 for a block-scoped JS/TS class conflict; got: {diags:?}"
     );
 }
 
-/// Anti-hardcoding (§25): the rule is structural ("variable + class across
-/// files where any side is JS with `check_js`"), not specific to the name `A`.
-/// Re-run with a different identifier choice; both files must still suppress
-/// TS2451.
+/// Anti-hardcoding (§25): the rule is structural ("block-scoped variable +
+/// class across files"), not specific to the name `A`. Re-run with a
+/// different identifier choice; both files must still report TS2451.
 #[test]
-fn no_ts2451_with_different_class_name_two_choices() {
+fn ts2451_with_different_class_name_two_choices() {
     for class_name in ["Widget", "MyType"] {
         let dts_src = format!("declare class {class_name} {{}}");
         let js_src = format!("const {class_name} = {{ }};\n{class_name}.d = {{ }};");
@@ -84,27 +97,18 @@ fn no_ts2451_with_different_class_name_two_choices() {
             );
             assert_eq!(
                 count_code(&diags, 2451),
-                0,
-                "TS2451 must not fire for class '{class_name}' (entry={entry}); got: {diags:?}"
+                1,
+                "TS2451 must fire for class '{class_name}' (entry={entry}); got: {diags:?}"
             );
         }
     }
 }
 
-/// Mirrors `conformance/salsa/jsContainerMergeTsDeclaration3.ts`.
-///
-/// Structural rule: when a JS-file `const X = <init>` merges with a TS-file
-/// `declare class X`, JS-side expando assignments to `X.prop` augment the
-/// merged static side. The initializer's assignability check therefore sees
-/// `prop` as a required member of the declared `typeof X`, and tsc emits
-/// TS2739 (multiple missing properties) — not TS2741 — when the initializer
-/// shape is missing both `prototype` and the JS-augmented members.
-///
-/// The TS2739 message must list missing properties in symbol-table insertion
-/// order (synthesized `prototype` first, JS-side expandos last). tsc emits
-/// `prototype, d` in this order.
+/// The block-scoped `const`/class conflict does not synthesize a merged
+/// declared type: the initializer is never checked against `typeof A`, so
+/// TS2739/TS2741 must not fire alongside the TS2451 redeclaration.
 #[test]
-fn js_const_merging_with_dts_class_lists_prototype_before_expando() {
+fn const_class_conflict_does_not_emit_ts2739_or_ts2741() {
     let diags = compile_files(
         &[
             ("a.d.ts", "declare class A {}"),
@@ -112,30 +116,38 @@ fn js_const_merging_with_dts_class_lists_prototype_before_expando() {
         ],
         1,
     );
-    let ts2739_msg = diags
-        .iter()
-        .find(|(c, _)| *c == 2739)
-        .map(|(_, m)| m.clone())
-        .unwrap_or_else(|| panic!("expected TS2739; got: {diags:?}"));
-    let proto_pos = ts2739_msg.find("prototype").unwrap_or(usize::MAX);
-    let d_pos = ts2739_msg
-        .find(", d")
-        .or_else(|| ts2739_msg.find(": d"))
-        .unwrap_or(usize::MAX);
-    assert!(
-        proto_pos < d_pos,
-        "TS2739 must list `prototype` before the JS-augmented `d`; got: {ts2739_msg}"
+    assert_eq!(
+        count_code(&diags, 2739),
+        0,
+        "block-scoped conflict must not check the initializer against the class shape; got: {diags:?}"
+    );
+    assert_eq!(
+        count_code(&diags, 2741),
+        0,
+        "block-scoped conflict must not check the initializer against the class shape; got: {diags:?}"
     );
 }
 
+/// `var` (function/global scoped) does NOT conflict with the class's
+/// block-scoped binding: no TS2451, and the `var` initializer is checked
+/// against the merged static type instead (TS2739, not TS2741, when both
+/// `prototype` and a JS-augmented member are missing).
+///
+/// Mirrors `conformance/salsa/jsContainerMergeTsDeclaration3.ts`'s `var`
+/// shape (verified against the pinned tsc oracle).
 #[test]
-fn js_const_merging_with_dts_class_emits_ts2739_not_ts2741() {
+fn var_class_container_merge_emits_ts2739_not_ts2451_or_ts2741() {
     let diags = compile_files(
         &[
             ("a.d.ts", "declare class A {}"),
-            ("b.js", "const A = { };\nA.d = { };"),
+            ("b.js", "var A = { };\nA.d = { };"),
         ],
         1,
+    );
+    assert_eq!(
+        count_code(&diags, 2451),
+        0,
+        "`var` must not conflict with the class's block-scoped binding; got: {diags:?}"
     );
     assert_eq!(
         count_code(&diags, 2741),
@@ -149,19 +161,23 @@ fn js_const_merging_with_dts_class_emits_ts2739_not_ts2741() {
     );
 }
 
-/// Anti-hardcoding (§25): the rule is structural over names. Repeat the
-/// salsa container-merge case with two different class names AND two
-/// different expando property names. The TS2739 outcome must hold in every
-/// combination.
+/// Anti-hardcoding (§25): the `var` container-merge rule is structural over
+/// names. Repeat with two different class names AND two different expando
+/// property names.
 #[test]
-fn js_class_merge_ts2739_independent_of_identifier_choices() {
+fn var_class_container_merge_ts2739_independent_of_identifier_choices() {
     for class_name in ["Widget", "Foo"] {
         for expando in ["d", "extra"] {
             let dts_src = format!("declare class {class_name} {{}}");
-            let js_src = format!("const {class_name} = {{ }};\n{class_name}.{expando} = {{ }};");
+            let js_src = format!("var {class_name} = {{ }};\n{class_name}.{expando} = {{ }};");
             let diags = compile_files(
                 &[("a.d.ts", dts_src.as_str()), ("b.js", js_src.as_str())],
                 1,
+            );
+            assert_eq!(
+                count_code(&diags, 2451),
+                0,
+                "TS2451 must not fire for `var` + class '{class_name}' (expando='{expando}'); got: {diags:?}"
             );
             assert_eq!(
                 count_code(&diags, 2741),
