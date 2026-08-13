@@ -1535,7 +1535,14 @@ impl<'a> CheckerState<'a> {
                         } else {
                             false
                         };
-                        if !emitted_ts2538 {
+                        if !emitted_ts2538
+                            && (computed_expr.is_some()
+                                || !self.report_require_destructure_missing_export(
+                                    pattern_idx,
+                                    error_node,
+                                    prop_name_str,
+                                ))
+                        {
                             // In tsc, destructuring uses the *apparent* type in the
                             // error message: `object` → `{}`, and primitives widen
                             // to their wrapper class (`string` → `String`,

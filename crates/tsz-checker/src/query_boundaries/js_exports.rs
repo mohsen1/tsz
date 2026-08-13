@@ -715,13 +715,21 @@ impl JsExportSurface {
     /// Returns the `TypeId` if found. This is the canonical way to check
     /// whether a specific named export exists in a CommonJS module's surface
     /// without re-scanning the AST.
+    ///
+    /// When [`Self::suppresses_expando_merge`] holds, `to_type_id` drops
+    /// `named_exports` from the module's type entirely (TS7: the illegal
+    /// `module.exports = X` + sibling-property mix keeps the module type
+    /// exactly `X`) — a lookup must agree, or a consumer like a `require()`
+    /// destructure sees a name that the type it actually got never had.
     pub fn lookup_named_export(
         &self,
         name: &str,
         types: &dyn tsz_solver::construction::TypeDatabase,
     ) -> Option<TypeId> {
         let name_atom = types.intern_string(name);
-        if let Some(prop) = self.named_exports.iter().find(|p| p.name == name_atom) {
+        if !self.suppresses_expando_merge()
+            && let Some(prop) = self.named_exports.iter().find(|p| p.name == name_atom)
+        {
             return Some(prop.type_id);
         }
         if let Some(prop) = self.prototype_members.iter().find(|p| p.name == name_atom) {
