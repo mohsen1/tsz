@@ -168,45 +168,102 @@ impl<'a> DeclarationEmitter<'a> {
         params
     }
 
-    fn parse_jsdoc_template_params_before_tag(jsdoc: &str, tag: &str) -> Vec<String> {
-        let mut params = Vec::new();
-        for raw_line in jsdoc.lines() {
-            let line = raw_line.trim_start_matches('*').trim();
-            if Self::jsdoc_tag_rest(line, tag).is_some() {
-                break;
-            }
-            if let Some(rest) = Self::jsdoc_tag_rest(line, "template") {
-                Self::push_jsdoc_type_params_unique(
-                    &mut params,
-                    &Self::parse_jsdoc_template_params(&format!("@template {rest}")),
-                );
-            }
-        }
-        params
+    /// Whether a normalized tag segment starts a new alias declaration
+    /// (`@typedef` / `@callback`).
+    fn jsdoc_alias_tag_segment(segment: &str) -> bool {
+        Self::jsdoc_tag_rest(segment, "typedef").is_some()
+            || Self::jsdoc_tag_rest(segment, "callback").is_some()
     }
 
-    fn jsdoc_template_param_names_after_tag(jsdoc: &str, tag: &str) -> Vec<String> {
-        let mut names = Vec::new();
-        let mut seen = FxHashSet::default();
-        let mut after_tag = false;
-        for raw_line in jsdoc.lines() {
-            let line = raw_line.trim_start_matches('*').trim();
-            if !after_tag {
-                if Self::jsdoc_tag_rest(line, tag).is_some() {
-                    after_tag = true;
-                }
-                continue;
-            }
-            if let Some(rest) = Self::jsdoc_tag_rest(line, "template") {
-                for param in Self::parse_jsdoc_template_params(&format!("@template {rest}")) {
-                    let name = Self::jsdoc_template_param_name_key(&param).to_string();
-                    if seen.insert(name.clone()) {
-                        names.push(name);
+    /// Whether an alias tag absorbs the tag run that follows it into its own
+    /// declaration body. A `@callback` absorbs its `@param`/`@returns` run,
+    /// and an object-shaped `@typedef` (name-only or `Object`-annotated)
+    /// absorbs its `@property` run; a `@typedef` with any other braced
+    /// annotation absorbs nothing.
+    fn jsdoc_alias_tag_absorbs_following_tags(segment: &str) -> bool {
+        if Self::jsdoc_tag_rest(segment, "callback").is_some() {
+            return true;
+        }
+        let Some(rest) = Self::jsdoc_tag_rest(segment, "typedef") else {
+            return false;
+        };
+        match Self::parse_jsdoc_braced_type_and_name(rest) {
+            Some((ty, _)) => matches!(ty, "Object" | "object"),
+            None => true,
+        }
+    }
+
+    /// Block-wide `@template` scoping. A `@template` binds to every alias
+    /// the comment declares — `@template U` between two annotated typedefs
+    /// parameterizes both — unless it appears after an absorbing alias tag:
+    /// the absorption swallows it and it binds to no alias at all. tsc then
+    /// prints references to a swallowed name verbatim, which is invalid
+    /// `.d.ts`; degrading the referencing alias to `any` is this family's
+    /// established valid recovery. Returns `(bound_params, swallowed_names)`.
+    fn jsdoc_block_template_scoping(jsdoc: &str) -> (Vec<String>, Vec<String>) {
+        let mut bound = Vec::new();
+        let mut swallowed = Vec::new();
+        let mut absorbing_seen = false;
+        for segment in jsdoc
+            .lines()
+            .map(|raw_line| raw_line.trim_start_matches('*').trim())
+            .flat_map(Self::split_jsdoc_tag_segments)
+        {
+            if let Some(rest) = Self::jsdoc_tag_rest(segment, "template") {
+                let params = Self::parse_jsdoc_template_params(&format!("@template {rest}"));
+                if absorbing_seen {
+                    for param in &params {
+                        let name = Self::jsdoc_template_param_name_key(param).to_string();
+                        if !swallowed.contains(&name) {
+                            swallowed.push(name);
+                        }
                     }
+                } else {
+                    Self::push_jsdoc_type_params_unique(&mut bound, &params);
                 }
+            } else if Self::jsdoc_alias_tag_segment(segment)
+                && Self::jsdoc_alias_tag_absorbs_following_tags(segment)
+            {
+                absorbing_seen = true;
             }
         }
-        names
+        (bound, swallowed)
+    }
+
+    /// Split a JSDoc block into per-alias sub-blocks: every `@typedef` /
+    /// `@callback` tag starts a new sub-block, and everything before the
+    /// first alias tag stays attached to the first sub-block, so a
+    /// single-alias block round-trips through this split unchanged.
+    fn split_jsdoc_alias_blocks(jsdoc: &str) -> Vec<String> {
+        let mut blocks = Vec::new();
+        let mut current = String::new();
+        let mut seen_alias_tag = false;
+        for raw_line in jsdoc.lines() {
+            let line = raw_line.trim_start_matches('*').trim();
+            let segments = Self::split_jsdoc_tag_segments(line);
+            if !segments
+                .iter()
+                .any(|segment| Self::jsdoc_alias_tag_segment(segment))
+            {
+                current.push_str(raw_line);
+                current.push('\n');
+                continue;
+            }
+            for segment in segments {
+                if Self::jsdoc_alias_tag_segment(segment) {
+                    if seen_alias_tag {
+                        blocks.push(std::mem::take(&mut current));
+                    }
+                    seen_alias_tag = true;
+                }
+                current.push_str(segment);
+                current.push('\n');
+            }
+        }
+        if !current.is_empty() {
+            blocks.push(current);
+        }
+        blocks
     }
 
     pub(in crate::declaration_emitter) fn jsdoc_type_text_references_any_template_param(
@@ -807,8 +864,34 @@ impl<'a> DeclarationEmitter<'a> {
         name.ends_with(quote) && name.len() > quote.len_utf8()
     }
 
+    #[cfg(test)]
     pub(in crate::declaration_emitter) fn parse_jsdoc_type_alias_decl(
         jsdoc: &str,
+    ) -> Option<JsdocTypeAliasDecl> {
+        let (bound, swallowed) = Self::jsdoc_block_template_scoping(jsdoc);
+        Self::parse_jsdoc_type_alias_decl_with_scope(jsdoc, &bound, &swallowed)
+    }
+
+    /// Every alias declaration in a JSDoc comment, in source order: each
+    /// `@typedef`/`@callback` tag declares its own alias with its own
+    /// property/param run, all sharing the comment's block-wide `@template`
+    /// scope.
+    pub(in crate::declaration_emitter) fn parse_jsdoc_type_alias_decls(
+        jsdoc: &str,
+    ) -> Vec<JsdocTypeAliasDecl> {
+        let (bound, swallowed) = Self::jsdoc_block_template_scoping(jsdoc);
+        Self::split_jsdoc_alias_blocks(jsdoc)
+            .iter()
+            .filter_map(|block| {
+                Self::parse_jsdoc_type_alias_decl_with_scope(block, &bound, &swallowed)
+            })
+            .collect()
+    }
+
+    fn parse_jsdoc_type_alias_decl_with_scope(
+        jsdoc: &str,
+        type_params: &[String],
+        swallowed_template_names: &[String],
     ) -> Option<JsdocTypeAliasDecl> {
         let mut description_lines = Self::jsdoc_description_lines(jsdoc);
         description_lines.extend(Self::jsdoc_typedef_trailing_description_lines(jsdoc));
@@ -818,16 +901,13 @@ impl<'a> DeclarationEmitter<'a> {
         if Self::jsdoc_has_property_tags(jsdoc)
             && let Some((name, type_text)) = Self::parse_jsdoc_property_type_alias(jsdoc)
         {
-            let type_params = Self::parse_jsdoc_template_params_before_tag(jsdoc, "typedef");
-            let invalid_type_param_names =
-                Self::jsdoc_template_param_names_after_tag(jsdoc, "typedef");
             if name == "default" {
                 return None;
             }
             let (type_text, render_verbatim) =
                 if Self::jsdoc_type_text_references_any_template_param(
                     &type_text,
-                    &invalid_type_param_names,
+                    swallowed_template_names,
                 ) {
                     ("any".to_string(), false)
                 } else {
@@ -835,7 +915,7 @@ impl<'a> DeclarationEmitter<'a> {
                 };
             return Some(JsdocTypeAliasDecl {
                 name,
-                type_params,
+                type_params: type_params.to_vec(),
                 type_text,
                 description_lines,
                 render_verbatim,
@@ -843,15 +923,12 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         if let Some((name, type_text)) = Self::parse_jsdoc_typedef_alias(jsdoc) {
-            let type_params = Self::parse_jsdoc_template_params_before_tag(jsdoc, "typedef");
-            let invalid_type_param_names =
-                Self::jsdoc_template_param_names_after_tag(jsdoc, "typedef");
             if name == "default" {
                 return None;
             }
             let type_text = if Self::jsdoc_type_text_references_any_template_param(
                 &type_text,
-                &invalid_type_param_names,
+                swallowed_template_names,
             ) {
                 "any".to_string()
             } else {
@@ -859,7 +936,7 @@ impl<'a> DeclarationEmitter<'a> {
             };
             return Some(JsdocTypeAliasDecl {
                 name,
-                type_params,
+                type_params: type_params.to_vec(),
                 type_text,
                 description_lines,
                 render_verbatim: false,
@@ -869,12 +946,9 @@ impl<'a> DeclarationEmitter<'a> {
         if let Some((name, type_text, description_lines)) =
             Self::parse_jsdoc_callback_alias_parts(jsdoc)
         {
-            let type_params = Self::parse_jsdoc_template_params_before_tag(jsdoc, "callback");
-            let invalid_type_param_names =
-                Self::jsdoc_template_param_names_after_tag(jsdoc, "callback");
             let type_text = if Self::jsdoc_type_text_references_any_template_param(
                 &type_text,
-                &invalid_type_param_names,
+                swallowed_template_names,
             ) {
                 "() => any".to_string()
             } else {
@@ -882,7 +956,7 @@ impl<'a> DeclarationEmitter<'a> {
             };
             return Some(JsdocTypeAliasDecl {
                 name,
-                type_params,
+                type_params: type_params.to_vec(),
                 type_text,
                 description_lines,
                 render_verbatim: false,
@@ -896,8 +970,22 @@ impl<'a> DeclarationEmitter<'a> {
         jsdoc: &str,
         alias_name: &str,
     ) -> Option<JsdocTypeAliasDecl> {
-        let type_params = Self::parse_jsdoc_template_params_before_tag(jsdoc, "typedef");
-        let invalid_type_param_names = Self::jsdoc_template_param_names_after_tag(jsdoc, "typedef");
+        let (bound, swallowed) = Self::jsdoc_block_template_scoping(jsdoc);
+        Self::split_jsdoc_alias_blocks(jsdoc)
+            .iter()
+            .find_map(|block| {
+                Self::parse_jsdoc_default_typedef_alias_decl_in_block(
+                    block, alias_name, &bound, &swallowed,
+                )
+            })
+    }
+
+    fn parse_jsdoc_default_typedef_alias_decl_in_block(
+        jsdoc: &str,
+        alias_name: &str,
+        type_params: &[String],
+        swallowed_template_names: &[String],
+    ) -> Option<JsdocTypeAliasDecl> {
         let property_alias = if Self::jsdoc_has_property_tags(jsdoc) {
             Self::parse_jsdoc_property_type_alias(jsdoc)
         } else {
@@ -915,12 +1003,12 @@ impl<'a> DeclarationEmitter<'a> {
         }
         let uses_invalid_template_param = Self::jsdoc_type_text_references_any_template_param(
             &type_text,
-            &invalid_type_param_names,
+            swallowed_template_names,
         );
 
         Some(JsdocTypeAliasDecl {
             name: alias_name.to_string(),
-            type_params,
+            type_params: type_params.to_vec(),
             type_text: if uses_invalid_template_param {
                 "any".to_string()
             } else {
@@ -1136,7 +1224,7 @@ impl<'a> DeclarationEmitter<'a> {
             return;
         }
         for jsdoc in self.leading_jsdoc_comment_chain_for_pos(pos) {
-            if let Some(decl) = Self::parse_jsdoc_type_alias_decl(&jsdoc) {
+            for decl in Self::parse_jsdoc_type_alias_decls(&jsdoc) {
                 self.emit_rendered_jsdoc_type_alias(decl, exported);
             }
         }
@@ -1195,7 +1283,7 @@ impl<'a> DeclarationEmitter<'a> {
             .filter(|comment| comment.end <= pos)
             .filter(|comment| is_jsdoc_comment(comment, text))
             .map(|comment| get_jsdoc_content(comment, text))
-            .filter_map(|jsdoc| Self::parse_jsdoc_type_alias_decl(&jsdoc))
+            .flat_map(|jsdoc| Self::parse_jsdoc_type_alias_decls(&jsdoc))
             .collect()
     }
 
@@ -1382,7 +1470,7 @@ impl<'a> DeclarationEmitter<'a> {
         };
 
         for jsdoc in self.leading_jsdoc_comment_chain_for_pos(eof_pos) {
-            if let Some(decl) = Self::parse_jsdoc_type_alias_decl(&jsdoc) {
+            for decl in Self::parse_jsdoc_type_alias_decls(&jsdoc) {
                 self.emit_rendered_jsdoc_type_alias(decl, self.js_export_equals_names.is_empty());
             }
         }
@@ -1405,7 +1493,7 @@ impl<'a> DeclarationEmitter<'a> {
                 continue;
             };
             for jsdoc in self.leading_jsdoc_comment_chain_for_pos(stmt_node.pos) {
-                if let Some(decl) = Self::parse_jsdoc_type_alias_decl(&jsdoc) {
+                for decl in Self::parse_jsdoc_type_alias_decls(&jsdoc) {
                     if stmt_node.kind == syntax_kind_ext::VARIABLE_STATEMENT {
                         variable_decls.push(decl);
                     } else {
@@ -1419,9 +1507,7 @@ impl<'a> DeclarationEmitter<'a> {
             return;
         };
         for jsdoc in self.leading_jsdoc_comment_chain_for_pos(eof_pos) {
-            if let Some(decl) = Self::parse_jsdoc_type_alias_decl(&jsdoc) {
-                decls.push(decl);
-            }
+            decls.extend(Self::parse_jsdoc_type_alias_decls(&jsdoc));
         }
         decls.extend(variable_decls);
 
@@ -1461,9 +1547,7 @@ impl<'a> DeclarationEmitter<'a> {
                 continue;
             };
             for jsdoc in self.leading_jsdoc_comment_chain_for_pos(stmt_node.pos) {
-                if let Some(decl) = Self::parse_jsdoc_type_alias_decl(&jsdoc) {
-                    decls.push(decl);
-                }
+                decls.extend(Self::parse_jsdoc_type_alias_decls(&jsdoc));
             }
         }
 
@@ -1471,9 +1555,7 @@ impl<'a> DeclarationEmitter<'a> {
             return;
         };
         for jsdoc in self.leading_jsdoc_comment_chain_for_pos(eof_pos) {
-            if let Some(decl) = Self::parse_jsdoc_type_alias_decl(&jsdoc) {
-                decls.push(decl);
-            }
+            decls.extend(Self::parse_jsdoc_type_alias_decls(&jsdoc));
         }
 
         for decl in decls {
