@@ -1714,17 +1714,19 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         for prop in source {
-            // If target declares this property explicitly, its compatibility is
-            // checked via named-property rules. Don't also force it through the
-            // index signature value type (tsc behavior for intersections like
-            // `{ a: X } & { [k: string]: Y }` where `a` is validated against `X`).
-            if target
-                .properties
-                .binary_search_by_key(&prop.name, |p| p.name)
-                .is_ok()
-            {
-                continue;
-            }
+            // Every source property is measured against the target index
+            // signature, even when the target also declares a same-named member
+            // (`tsc`'s `membersRelatedToIndexInfo` checks all source properties).
+            // Skipping named-matched properties silently accepted assignments
+            // that violate a target whose own property conflicts with its index
+            // (the `TS2411` shape): given `{ [k: string]: number; flag: boolean }`,
+            // a source `{ flag: boolean }` must still be rejected because `flag`
+            // is not assignable to the `number` index. When the target is
+            // well-formed (`target.namedProp <: index`), the named-property rule
+            // has already validated `source.prop <: target.namedProp`, so the
+            // index check passes by transitivity and nothing changes — this only
+            // adds the failure `tsc` reports on the ill-formed `TS2411` target.
+            // This mirrors the never-skipping `explain_properties_against_index_signatures`.
 
             // For NUMBER index signatures, optional properties carry an implicit
             // `| undefined` that must flow into the check (e.g. `{ 1?: string }`

@@ -701,6 +701,7 @@ impl<'a> CheckerState<'a> {
                 index_kind,
                 source_value_type,
                 target_value_type,
+                property_name,
                 nested_reason: _,
             } => {
                 let source_str = self.format_type_for_diagnostic_role(
@@ -717,16 +718,34 @@ impl<'a> CheckerState<'a> {
                     source_str,
                     target_str,
                 );
+                // #17322: a source *property* vs the target index renders `TS2530`
+                // ("Property '{name}' is incompatible with index signature."); a
+                // source *index signature* vs the target index keeps the combined
+                // `TS2322` chain-link form. The nested value-mismatch line below is
+                // shared by both.
+                let (head_message, head_code) = match property_name {
+                    Some(name) => (
+                        format_message(
+                            diagnostic_messages::PROPERTY_IS_INCOMPATIBLE_WITH_INDEX_SIGNATURE,
+                            &[&self.ctx.types.resolve_atom_ref(*name)],
+                        ),
+                        diagnostic_codes::PROPERTY_IS_INCOMPATIBLE_WITH_INDEX_SIGNATURE,
+                    ),
+                    None => (
+                        format!(
+                            "{index_kind} index signature is incompatible: '{source_str}' is not assignable to '{target_str}'."
+                        ),
+                        reason.diagnostic_code(),
+                    ),
+                };
                 vec![
                     DiagnosticRelatedInformation {
                         category: DiagnosticCategory::Error,
-                        code: reason.diagnostic_code(),
+                        code: head_code,
                         file: self.ctx.file_name.clone(),
                         start,
                         length,
-                        message_text: format!(
-                            "{index_kind} index signature is incompatible: '{source_str}' is not assignable to '{target_str}'."
-                        ),
+                        message_text: head_message,
                         depth: 0,
                         kind: RelatedInformationKind::ChainLink,
                     },

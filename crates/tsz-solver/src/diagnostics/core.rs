@@ -276,6 +276,13 @@ pub enum SubtypeFailureReason {
         index_kind: &'static str, // "string", "number", or "symbol"
         source_value_type: TypeId,
         target_value_type: TypeId,
+        /// The name of the source *property* measured against the target index
+        /// signature, when this failure came from a property-vs-index check.
+        /// `None` when it came from a source *index signature* vs the target
+        /// index (index-vs-index). `tsc` renders `Some` as `TS2530` ("Property
+        /// '{name}' is incompatible with index signature.") and `None` as
+        /// `TS2634` ("'{kind}' index signatures are incompatible.").
+        property_name: Option<Atom>,
         /// Nested failure explaining why the value types are incompatible.
         nested_reason: Option<Box<Self>>,
     },
@@ -1285,6 +1292,7 @@ impl SubtypeFailureReason {
                 index_kind: _,
                 source_value_type,
                 target_value_type,
+                property_name: _,
                 nested_reason: _,
             } => PendingDiagnostic::error(
                 codes::TYPE_NOT_ASSIGNABLE,

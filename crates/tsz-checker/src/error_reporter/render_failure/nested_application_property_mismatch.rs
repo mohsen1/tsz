@@ -1686,12 +1686,30 @@ impl<'a> CheckerState<'a> {
         index_kind: &str,
         source_value_type: TypeId,
         target_value_type: TypeId,
+        // `Some(name)` for a source *property* vs the target index (`TS2530`);
+        // `None` for a source *index signature* vs the target index (`TS2634`).
+        property_name: Option<tsz_common::interner::Atom>,
         nested_reason: Option<&tsz_solver::SubtypeFailureReason>,
     ) -> Diagnostic {
-        let incompat_message = format_message(
-            diagnostic_messages::INDEX_SIGNATURES_ARE_INCOMPATIBLE,
-            &[index_kind],
-        );
+        let (incompat_message, incompat_code) = match property_name {
+            Some(name) => {
+                let prop_name = self.ctx.types.resolve_atom_ref(name);
+                (
+                    format_message(
+                        diagnostic_messages::PROPERTY_IS_INCOMPATIBLE_WITH_INDEX_SIGNATURE,
+                        &[&prop_name],
+                    ),
+                    diagnostic_codes::PROPERTY_IS_INCOMPATIBLE_WITH_INDEX_SIGNATURE,
+                )
+            }
+            None => (
+                format_message(
+                    diagnostic_messages::INDEX_SIGNATURES_ARE_INCOMPATIBLE,
+                    &[index_kind],
+                ),
+                diagnostic_codes::INDEX_SIGNATURES_ARE_INCOMPATIBLE,
+            ),
+        };
 
         let mut diag = if ctx.depth == 0 {
             let source_str = self.format_type_for_diagnostic_role(
@@ -1717,7 +1735,7 @@ impl<'a> CheckerState<'a> {
                 ctx.start,
                 ctx.length,
                 incompat_message,
-                diagnostic_codes::INDEX_SIGNATURES_ARE_INCOMPATIBLE,
+                incompat_code,
                 0,
             );
             diag
@@ -1727,7 +1745,7 @@ impl<'a> CheckerState<'a> {
                 ctx.start,
                 ctx.length,
                 incompat_message,
-                diagnostic_codes::INDEX_SIGNATURES_ARE_INCOMPATIBLE,
+                incompat_code,
             )
         };
 

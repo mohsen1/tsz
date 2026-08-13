@@ -1801,35 +1801,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         None
     }
 
-    /// Build the `IndexSignatureMismatch` reason for a failing index-to-index or
-    /// property-to-index check, applying the `MissingProperty` priority rule:
-    /// when the nested failure is `MissingProperty` or `MissingProperties`,
-    /// bubble it up directly so the diagnostic reports the missing property
-    /// rather than wrapping it in an index-signature incompatibility.
-    pub(in crate::relations::subtype) fn make_index_sig_reason(
-        &mut self,
-        index_kind: &'static str,
-        source_value_type: TypeId,
-        target_value_type: TypeId,
-    ) -> Option<SubtypeFailureReason> {
-        let nested = self.explain_failure(source_value_type, target_value_type);
-        if matches!(
-            nested,
-            Some(
-                SubtypeFailureReason::MissingProperty { .. }
-                    | SubtypeFailureReason::MissingProperties { .. }
-            )
-        ) {
-            return nested;
-        }
-        Some(SubtypeFailureReason::IndexSignatureMismatch {
-            index_kind,
-            source_value_type,
-            target_value_type,
-            nested_reason: nested.map(Box::new),
-        })
-    }
-
     /// Explain why an indexed object type assignment failed.
     fn explain_indexed_object_failure(
         &mut self,
@@ -1868,6 +1839,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                             "string",
                             s_string_idx.value_type,
                             t_string_idx.value_type,
+                            None,
                         );
                     }
                 }
@@ -1902,6 +1874,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                                 "string",
                                 prop_type,
                                 t_string_idx.value_type,
+                                Some(prop.name),
                             );
                         }
                     }
@@ -1926,6 +1899,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                         "number",
                         s_number_idx.value_type,
                         t_number_idx.value_type,
+                        None,
                     );
                 }
             } else if let Some(s_string_idx) = source_shape.string_index_signature() {
@@ -1943,6 +1917,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                         "number",
                         s_string_idx.value_type,
                         t_number_idx.value_type,
+                        None,
                     );
                 }
             } else if self.shape_or_type_requires_declared_index_signature(source_shape, source) {
@@ -1969,6 +1944,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                             "symbol",
                             s_symbol_idx.value_type,
                             t_symbol_idx.value_type,
+                            None,
                         );
                     }
                 }
