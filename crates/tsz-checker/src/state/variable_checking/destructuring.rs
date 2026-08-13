@@ -1436,143 +1436,16 @@ impl<'a> CheckerState<'a> {
                     );
                     type_id
                 }
-                PropertyAccessResult::PropertyNotFound { .. } => {
-                    // tsc's getTypeOfDestructuredProperty uses mapType for
-                    // unions where all non-empty members have the property.
-                    // When a union contains empty object members (`{}`), those
-                    // members naturally lack every property. In tsc, an empty
-                    // object member contributes `undefined` for any property
-                    // instead of failing the entire lookup. This commonly
-                    // arises from `x ?? {}` patterns where the right-hand
-                    // `{}` produces an empty member in the union.
-                    //
-                    // We only apply this per-member resolution when EVERY
-                    // member that lacks the property is an empty object. If a
-                    // non-empty member is missing the property, the standard
-                    // TS2339 error should still fire.
-                    if let Some(members) = query::union_members(self.ctx.types, parent_type) {
-                        let mut member_types = Vec::new();
-                        let mut any_found = false;
-                        let mut non_empty_missing = false;
-                        for &member in &members {
-                            let member_result =
-                                self.resolve_property_access_with_env(member, prop_name_str);
-                            match member_result {
-                                PropertyAccessResult::Success { type_id, .. } => {
-                                    member_types.push(type_id);
-                                    any_found = true;
-                                }
-                                PropertyAccessResult::PossiblyNullOrUndefined {
-                                    property_type,
-                                    ..
-                                } => {
-                                    member_types.push(property_type.unwrap_or(TypeId::UNDEFINED));
-                                    any_found = true;
-                                }
-                                PropertyAccessResult::PropertyNotFound { .. } => {
-                                    // Empty `{}` or fresh object-literal members lacking the
-                                    // property contribute implicit `undefined` (tsc
-                                    // getTypeOfDestructuredProperty); named, call-return, and
-                                    // freshness-widened const-bound members lack FRESH and error.
-                                    use crate::query_boundaries::common;
-                                    let db = self.ctx.types.as_type_database();
-                                    if common::is_empty_object_type(db, member)
-                                        || common::is_fresh_object_type(db, member)
-                                    {
-                                        member_types.push(TypeId::UNDEFINED);
-                                    } else {
-                                        non_empty_missing = true;
-                                        break;
-                                    }
-                                }
-                                PropertyAccessResult::IsUnknown => {
-                                    member_types.push(TypeId::UNDEFINED);
-                                }
-                            }
-                        }
-                        if any_found && !non_empty_missing {
-                            return binding_patterns::binding_pattern_member_union_type(
-                                self.ctx.types,
-                                member_types,
-                            );
-                        }
-                    }
-
-                    let error_node = if element_data.property_name.is_some() {
-                        element_data.property_name
-                    } else if element_data.name.is_some() {
-                        element_data.name
-                    } else {
-                        NodeIndex::NONE
-                    };
-                    if !defer_property_not_found && !suppress_missing_property_for_literal_default {
-                        // When the computed key is a unique symbol that doesn't exist
-                        // on the parent type, emit TS2538 ("Type 'X' cannot be used as
-                        // an index type") instead of TS2339 ("Property does not exist").
-                        // tsc treats unique symbol keys that don't match a declared
-                        // property as index-type errors, not property-not-found errors.
-                        let emitted_ts2538 = if let Some(ce) = computed_expr {
-                            let key_type = self.get_binding_element_computed_key_type_with_request(
-                                pattern_idx,
-                                ce,
-                                request,
-                            );
-                            if common_query::is_symbol_or_unique_symbol(self.ctx.types, key_type) {
-                                let key_type_str = self.format_type(key_type);
-                                let message = crate::diagnostics::format_message(
-                                    crate::diagnostics::diagnostic_messages::TYPE_CANNOT_BE_USED_AS_AN_INDEX_TYPE,
-                                    &[&key_type_str],
-                                );
-                                self.error_at_node(
-                                    ce,
-                                    &message,
-                                    crate::diagnostics::diagnostic_codes::TYPE_CANNOT_BE_USED_AS_AN_INDEX_TYPE,
-                                );
-                                true
-                            } else {
-                                false
-                            }
-                        } else {
-                            false
-                        };
-                        if !emitted_ts2538 {
-                            // In tsc, destructuring uses the *apparent* type in the
-                            // error message: `object` → `{}`, and primitives widen
-                            // to their wrapper class (`string` → `String`,
-                            // `number` → `Number`, etc.). Match that so binding
-                            // patterns like `var { a } = "s"` report `type 'String'`
-                            // rather than the raw `type 'string'`.
-                            let apparent_type_display =
-                                apparent_type_display_for_destructuring(parent_type);
-                            if let Some(ce) = computed_expr {
-                                let type_str = apparent_type_display.clone().unwrap_or_else(|| {
-                                    self.format_type_for_assignability_message(parent_type)
-                                });
-                                let message = format!(
-                                    "Property '{prop_name_str}' does not exist on type '{type_str}'."
-                                );
-                                self.error_at_node(
-                                    ce,
-                                    &message,
-                                    crate::diagnostics::diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
-                                );
-                            } else if let Some(type_str) = apparent_type_display {
-                                self.error_property_not_exist_with_apparent_type(
-                                    prop_name_str,
-                                    &type_str,
-                                    error_node,
-                                );
-                            } else {
-                                self.error_property_not_exist_at(
-                                    prop_name_str,
-                                    parent_type,
-                                    error_node,
-                                );
-                            }
-                        }
-                    }
-                    TypeId::ANY
-                }
+                PropertyAccessResult::PropertyNotFound { .. } => self
+                    .missing_binding_property_type(
+                        pattern_idx,
+                        parent_type,
+                        element_data,
+                        prop_name_str,
+                        computed_expr,
+                        request,
+                        !defer_property_not_found && !suppress_missing_property_for_literal_default,
+                    ),
                 PropertyAccessResult::PossiblyNullOrUndefined { property_type, .. } => {
                     if !defer_property_not_found && !suppress_missing_property_for_literal_default {
                         let error_node = if element_data.property_name.is_some() {
@@ -1595,4 +1468,5 @@ impl<'a> CheckerState<'a> {
 }
 
 mod recording;
+mod require_import;
 mod tail;
