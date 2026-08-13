@@ -27,14 +27,16 @@ impl<'a> TypeFormatter<'a> {
         }
 
         let mut display_props = self.visible_object_properties(shape.properties.as_slice());
-        let has_decl_order = display_props.iter().any(|p| p.declaration_order > 0);
         if use_array_to_locale_display {
             display_props.sort_by(|a, b| {
                 self.array_like_display_head_rank(a)
                     .cmp(&self.array_like_display_head_rank(b))
             });
-        } else if has_decl_order {
-            display_props.sort_by_key(|p| p.declaration_order);
+        } else {
+            // Deterministic display order shared with `format_object`: primary
+            // `declaration_order`, then a content-based tiebreak that does not
+            // depend on interning/allocation order (#16309, evidence #3).
+            display_props.sort_by(|a, b| self.compare_display_property_order(a, b));
         }
 
         if !use_array_to_locale_display && parts.len() + display_props.len() >= 22 {

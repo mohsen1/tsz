@@ -1938,3 +1938,39 @@ fn format_rest_array_alias_param_not_expanded() {
     );
 }
 
+
+/// Rendered object member order must not depend on string-interning order.
+///
+/// `#16309` (evidence #3): a synthesized object whose properties carry no
+/// `declaration_order` used to render its members in stored (Atom-id) order,
+/// which is string-interning order. Under the parallel checker the interner is
+/// shared across worker threads, so that order is thread-schedule dependent and
+/// the same type rendered its members differently run to run. The display
+/// tiebreak is now content-based, so two interners that assign the property
+/// names opposite Atom ids must render the object identically.
+#[test]
+fn object_member_display_order_is_interning_order_independent() {
+    fn render(intern_first: &str, intern_second: &str) -> String {
+        let db = TypeInterner::new();
+        // Fix the Atom-id assignment order for the two names up front; whichever
+        // is interned first gets the lower id and would sort first in storage.
+        db.intern_string(intern_first);
+        db.intern_string(intern_second);
+        // A synthesized `{ value; done }` object — neither property carries a
+        // declaration order (mirrors the `IteratorReturnResult` witness).
+        let done = PropertyInfo::new(db.intern_string("done"), TypeId::BOOLEAN);
+        let value = PropertyInfo::new(db.intern_string("value"), TypeId::NUMBER);
+        let obj = db.object(vec![done, value]);
+        let mut fmt = TypeFormatter::new(&db);
+        fmt.format(obj).into_owned()
+    }
+
+    let value_lower_id = render("value", "done");
+    let done_lower_id = render("done", "value");
+    assert_eq!(
+        value_lower_id, done_lower_id,
+        "object member display order leaked interning order into the diagnostic",
+    );
+    // The deterministic order is content-based (alphabetical): `done` < `value`.
+    assert_eq!(done_lower_id, "{ done: boolean; value: number; }");
+}
