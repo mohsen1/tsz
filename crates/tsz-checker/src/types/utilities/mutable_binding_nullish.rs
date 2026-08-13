@@ -223,25 +223,38 @@ impl<'a> CheckerState<'a> {
         let Some(array) = self.ctx.arena.get_literal_expr(node) else {
             return false;
         };
-        array.elements.nodes.iter().any(|&elem| {
-            if elem == NodeIndex::NONE {
-                return true;
-            }
-            let elem = self.ctx.arena.skip_parenthesized(elem);
-            let Some(elem_node) = self.ctx.arena.get(elem) else {
-                return false;
-            };
-            if elem_node.kind == SyntaxKind::NullKeyword as u16
-                || elem_node.kind == SyntaxKind::UndefinedKeyword as u16
-            {
-                return true;
-            }
-            elem_node.kind == SyntaxKind::Identifier as u16
-                && crate::control_flow::narrowing_helpers::is_global_undefined_identifier(
-                    self.ctx.arena,
-                    self.ctx.binder,
-                    elem,
-                )
-        })
+        array
+            .elements
+            .nodes
+            .iter()
+            .any(|&elem| self.expr_is_direct_nullish_widening_leaf(elem))
+    }
+
+    /// Whether `expr` is itself a genuine nullish-widening source: an elided
+    /// array-literal hole, the bare `null`/`undefined` keyword, or an
+    /// identifier resolving to the global `undefined`. Shared leaf-level
+    /// predicate behind both [`Self::array_literal_has_direct_nullish_leaf`]
+    /// (an `any`-of-leaves question over a whole literal) and per-slot tuple
+    /// widening in a destructuring initializer's tuple-context typing, where
+    /// each element widens independently rather than all-or-nothing.
+    pub(crate) fn expr_is_direct_nullish_widening_leaf(&self, expr: NodeIndex) -> bool {
+        if expr == NodeIndex::NONE {
+            return true;
+        }
+        let expr = self.ctx.arena.skip_parenthesized(expr);
+        let Some(node) = self.ctx.arena.get(expr) else {
+            return false;
+        };
+        if node.kind == SyntaxKind::NullKeyword as u16
+            || node.kind == SyntaxKind::UndefinedKeyword as u16
+        {
+            return true;
+        }
+        node.kind == SyntaxKind::Identifier as u16
+            && crate::control_flow::narrowing_helpers::is_global_undefined_identifier(
+                self.ctx.arena,
+                self.ctx.binder,
+                expr,
+            )
     }
 }

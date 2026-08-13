@@ -485,6 +485,29 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // TS7031: an array-destructuring declaration WITH an initializer
+        // still implicitly types a leaf whose corresponding literal slot is a
+        // genuine nullish-widening leaf (`var [a, b] = [undefined, null];`) —
+        // distinct from the no-initializer-at-all case above, which the
+        // `var_decl.initializer.is_none()` gate on that branch excludes.
+        if self.ctx.no_implicit_any()
+            && !self.ctx.has_real_syntax_errors
+            && !is_catch_variable
+            && var_decl.type_annotation.is_none()
+            && var_decl.initializer.is_some()
+            && !self.is_for_in_or_of_variable_declaration(decl_idx)
+            && self
+                .ctx
+                .arena
+                .get(var_decl.name)
+                .is_some_and(|name_node| name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN)
+        {
+            self.emit_implicit_any_for_var_destructuring_nullish_array_initializer(
+                var_decl.name,
+                var_decl.initializer,
+            );
+        }
+
         if let Some(sym_id) = self.ctx.binder.get_node_symbol(decl_idx) {
             self.push_symbol_dependency(sym_id, true);
 

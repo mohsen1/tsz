@@ -195,6 +195,8 @@ mod commonjs_require_destructure_ts2305_tests;
 mod compound_nullish_widening_implicit_any_ts7005_tests;
 #[path = "tests/compound_nullish_widening_implicit_any_ts7010_tests.rs"]
 mod compound_nullish_widening_implicit_any_ts7010_tests;
+#[path = "tests/compound_nullish_widening_implicit_any_ts7031_tests.rs"]
+mod compound_nullish_widening_implicit_any_ts7031_tests;
 #[path = "tests/computed_alias_source_display_tests.rs"]
 mod computed_alias_source_display_tests;
 #[path = "tests/computed_index_member_source_display_tests.rs"]

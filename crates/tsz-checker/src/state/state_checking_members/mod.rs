@@ -12,6 +12,7 @@ mod decorator_signature_checks;
 mod default_export_overload_group;
 mod function_declaration_checks;
 mod implicit_any_checks;
+mod implicit_any_destructuring_nullish_initializer;
 mod implicit_any_param_context;
 mod index_signature_checks;
 #[cfg(test)]

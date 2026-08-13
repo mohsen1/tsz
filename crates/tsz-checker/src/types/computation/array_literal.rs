@@ -1219,6 +1219,27 @@ impl<'a> CheckerState<'a> {
                 // following present element inherits the elision's optionality:
                 // `[, , true]` is `[never?, never?, true?]`, not
                 // `[never?, never?, true]` (see `saw_optional_elision`).
+                //
+                // Each slot widens INDEPENDENTLY here, unlike the array-to-array
+                // BCT path below (which widens the whole element union together):
+                // a tuple context comes from a destructuring binding pattern with
+                // no type annotation of its own, so a slot's `null`/`undefined`
+                // widens to `any` exactly when the general (non-strict,
+                // non-const-assertion) widening rule applies AND this specific
+                // slot's own source syntax is a genuine widening leaf — an
+                // already-`any`-typed element from a declared source (`declare
+                // var y: any`) must not be swept in by a sibling's widening the
+                // way the BCT path's deep composite widen is (there is no
+                // composite here to protect; each slot is judged on its own).
+                let elem_type = if !self.ctx.in_const_assertion
+                    && !self.ctx.strict_null_checks()
+                    && (elem_type == TypeId::NULL || elem_type == TypeId::UNDEFINED)
+                    && self.expr_is_direct_nullish_widening_leaf(elem_idx)
+                {
+                    TypeId::ANY
+                } else {
+                    elem_type
+                };
                 tuple_elements.push(array_surfaces::tuple_element(
                     elem_type,
                     saw_optional_elision,
