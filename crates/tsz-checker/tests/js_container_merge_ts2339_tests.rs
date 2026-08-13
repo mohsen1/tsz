@@ -296,3 +296,120 @@ declare class A {
         "Expected the checked-JS const initializer to be checked against the ambient class value shape. Actual diagnostics: {diagnostics:#?}"
     );
 }
+
+/// Mirrors `conformance/salsa/jsContainerMergeTsDeclaration2.ts`.
+///
+/// Structural rule: a plain namespace has no callable surface, so its
+/// apparent type never carries a `prototype` member the way a real
+/// function/constructor's does (`prototype` belongs to `Function`'s own
+/// shape, not to a namespace). `Ns.prototype = <expr>` is an ordinary
+/// property write against a type that lacks `prototype` — `TS2339` — not a
+/// new expando declaration, even though the namespace's members are all
+/// functions.
+#[test]
+fn namespace_prototype_write_reports_ts2339_not_expando() {
+    let diagnostics = check_entry_with_libs(
+        &[
+            (
+                "a.d.ts",
+                r#"
+declare namespace C {
+    function bar(): void
+}
+"#,
+            ),
+            (
+                "b.js",
+                r#"
+C.prototype = {};
+C.bar = 2;
+"#,
+            ),
+        ],
+        "b.js",
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            no_lib: true,
+            ..Default::default()
+        },
+    );
+
+    let ts2339: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2339)
+        .collect();
+    assert_eq!(
+        ts2339.len(),
+        1,
+        "Expected exactly one TS2339 for the namespace `.prototype` write. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        ts2339[0]
+            .1
+            .starts_with("Property 'prototype' does not exist on type"),
+        "Expected TS2339 to name the missing `prototype` member. Actual diagnostics: {diagnostics:#?}"
+    );
+
+    // The second statement (`C.bar = 2`) still assigns a number to a real
+    // declared function member — that stays a TS2322, untouched by this fix.
+    assert_eq!(
+        diagnostics.iter().filter(|(code, _)| *code == 2322).count(),
+        1,
+        "Expected the pre-existing TS2322 on `C.bar = 2` to be unaffected. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+/// Anti-hardcoding (§25): the rule is structural over names, not specific to
+/// `C`/`bar`. Re-run with different identifiers.
+#[test]
+fn namespace_prototype_write_ts2339_independent_of_identifier_choices() {
+    for (ns_name, member_name) in [("Widget", "render"), ("Utils", "helper")] {
+        let dts_src = format!("declare namespace {ns_name} {{ function {member_name}(): void }}");
+        let js_src = format!("{ns_name}.prototype = {{}};\n{ns_name}.{member_name}();");
+        let diagnostics = check_entry_with_libs(
+            &[("a.d.ts", dts_src.as_str()), ("b.js", js_src.as_str())],
+            "b.js",
+            CheckerOptions {
+                allow_js: true,
+                check_js: true,
+                no_lib: true,
+                ..Default::default()
+            },
+        );
+        assert_eq!(
+            diagnostics.iter().filter(|(code, _)| *code == 2339).count(),
+            1,
+            "Expected TS2339 for namespace '{ns_name}' `.prototype` write. Actual diagnostics: {diagnostics:#?}"
+        );
+    }
+}
+
+/// Negative control: a function-merged root (`function app(){}`, possibly
+/// also merging a namespace) IS callable, so its type already carries a real
+/// `prototype` member. Writing to it must stay the permissive expando path
+/// (no TS2339) — this fix must not regress the function-root case.
+#[test]
+fn function_merged_root_prototype_write_stays_permissive() {
+    let diagnostics = check_entry_with_libs(
+        &[(
+            "a.js",
+            r#"
+function app() {}
+app.prototype = {};
+"#,
+        )],
+        "a.js",
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            no_lib: true,
+            ..Default::default()
+        },
+    );
+    assert_eq!(
+        diagnostics.iter().filter(|(code, _)| *code == 2339).count(),
+        0,
+        "Did not expect TS2339 for a function root's `.prototype` write. Actual diagnostics: {diagnostics:#?}"
+    );
+}

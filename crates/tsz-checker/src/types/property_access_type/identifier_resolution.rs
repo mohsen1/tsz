@@ -483,11 +483,26 @@ impl<'a> CheckerState<'a> {
             if self.is_js_file()
                 && property_name == "prototype"
                 && self.property_access_is_direct_write_target(idx)
-                && !self
+                && self
                     .resolve_identifier_symbol(access.expression)
-                    .and_then(|sym_id| self.ctx.binder.get_symbol(sym_id))
+                    .and_then(|sym_id| {
+                        self.get_cross_file_symbol(sym_id)
+                            .or_else(|| self.ctx.binder.get_symbol(sym_id))
+                    })
                     .is_some_and(|sym| {
-                        sym.has_any_flags(symbol_flags::ALIAS) && sym.import_module().is_some()
+                        // Wholesale `Root.prototype = <expr>` is only the JS
+                        // classical-inheritance idiom when `Root` is itself
+                        // callable/constructible — a real function or class
+                        // whose apparent type already carries a `prototype`
+                        // member. A namespace (even one whose only members are
+                        // functions) has no such member, so this must not
+                        // short-circuit to `any` for it (oracle-verified:
+                        // `declare namespace C { function bar(): void }`
+                        // `C.prototype = {}` is `TS2339` on `typeof C`,
+                        // `jsContainerMergeTsDeclaration2.ts`).
+                        sym.has_any_flags(symbol_flags::FUNCTION | symbol_flags::CLASS)
+                            && !(sym.has_any_flags(symbol_flags::ALIAS)
+                                && sym.import_module().is_some())
                     })
             {
                 return TypeId::ANY;
@@ -1568,11 +1583,19 @@ impl<'a> CheckerState<'a> {
                 if self.is_js_file()
                     && property_name == "prototype"
                     && self.property_access_is_direct_write_target(idx)
-                    && !self
+                    && self
                         .resolve_identifier_symbol(access.expression)
-                        .and_then(|sym_id| self.ctx.binder.get_symbol(sym_id))
+                        .and_then(|sym_id| {
+                            self.get_cross_file_symbol(sym_id)
+                                .or_else(|| self.ctx.binder.get_symbol(sym_id))
+                        })
                         .is_some_and(|sym| {
-                            sym.has_any_flags(symbol_flags::ALIAS) && sym.import_module().is_some()
+                            // See the matching gate above: only a genuinely
+                            // callable/constructible root inherits a real
+                            // `prototype` member to replace wholesale.
+                            sym.has_any_flags(symbol_flags::FUNCTION | symbol_flags::CLASS)
+                                && !(sym.has_any_flags(symbol_flags::ALIAS)
+                                    && sym.import_module().is_some())
                         })
                 {
                     return TypeId::ANY;
