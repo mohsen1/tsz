@@ -19,7 +19,23 @@ use super::{
 mod constraint_helpers;
 mod duplicate_shape;
 mod finalize;
+mod finalize_callbacks;
 mod post_inference_helpers;
+
+/// How each type-parameter inference variable is reached through the
+/// context-sensitive callback parameters of a generic call, classified by the
+/// variance of its occurrence (see `callback_position_inference_vars`).
+struct CallbackPositionVars {
+    /// Vars reached *only* through a callback **parameter** (contravariant)
+    /// position, never a callback **return** position. Round-2 body inference
+    /// cannot recover these from the callback body, so a contextual return type
+    /// may pin them even when they also fill a direct-parameter slot.
+    param_only: FxHashSet<InferenceVar>,
+    /// Vars reached through any callback **return** (covariant) position. A
+    /// Round-1 fix of such a var must not be widened by Round-2 callback-body
+    /// inference — tsc's immutable `InferenceInfo.isFixed` (issue #17282).
+    return_position: FxHashSet<InferenceVar>,
+}
 
 pub(super) struct FinishGenericCallResolutionArgs<'a> {
     pub(super) func: &'a FunctionShape,
@@ -34,6 +50,11 @@ pub(super) struct FinishGenericCallResolutionArgs<'a> {
     /// Placeholder-only substitution (type-param name -> fresh placeholder) used
     /// to classify callback type-parameter positions during finalization.
     pub(super) callback_placeholder_subst: &'a TypeSubstitution,
+    /// Raw Round-1 fixes (variable -> inferred type), captured before any
+    /// contextual-return override. Finalization restores one when a callback
+    /// *return*-position variable was only widened by a concrete Round-2
+    /// callback-body candidate (tsc's immutable `isFixed`; issue #17282).
+    pub(super) round1_fixed: &'a FxHashMap<InferenceVar, TypeId>,
     pub(super) noinfer_param_vars: &'a FxHashSet<InferenceVar>,
     pub(super) rest_tuple_target_type: Option<TypeId>,
     /// Inference variables owned by the variadic element(s) of the aggregate
@@ -1608,6 +1629,17 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // intact so Round 2 can still infer them.
         let mut fixed_subst = TypeSubstitution::new();
         fixed_subst.protect_type_parameters(&func.type_params);
+        // #17282: snapshot the raw Round-1 fixes (before any contextual-return
+        // override below) so finalization can keep a callback *return*-position
+        // variable from being widened by Round-2 callback-body inference — tsc's
+        // immutable `InferenceInfo.isFixed`. Captured unconditionally: a generic
+        // call is re-resolved several times, and the pass whose result feeds the
+        // diagnostic can see the callback arguments already checked (so a
+        // `has_context_sensitive_args`/`saw_deferred_arg` gate is false there
+        // while the restore is still required). `FxHashMap::default` does not
+        // allocate until the first insert and the finalize reads short-circuit on
+        // an empty callback-return set, so the no-callback cost stays negligible.
+        let mut round1_fixed: FxHashMap<InferenceVar, TypeId> = FxHashMap::default();
         for (i, (tp, &var)) in func
             .type_params
             .iter()
@@ -1615,6 +1647,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             .enumerate()
         {
             let resolved = infer_ctx.probe(var);
+            if let Some(round1) = resolved {
+                round1_fixed.insert(var, round1);
+            }
             let contextual = structural_return_subst.get(tp.name);
             let resolved = match (resolved, contextual) {
                 (Some(inferred), Some(contextual))
@@ -1934,6 +1969,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             var_map: &var_map,
             direct_param_vars: &direct_param_vars,
             callback_placeholder_subst: &callback_placeholder_subst,
+            round1_fixed: &round1_fixed,
             noinfer_param_vars: &noinfer_param_vars,
             rest_tuple_target_type,
             aggregate_rest_inference_vars: &aggregate_rest_inference_vars,
