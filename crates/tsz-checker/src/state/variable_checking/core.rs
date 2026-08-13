@@ -1550,13 +1550,12 @@ impl<'a> CheckerState<'a> {
                                     .first()
                                     .map(|sf| sf.file_name.clone())
                                     .unwrap_or_else(|| format!("cross-file-{file_idx}"));
-                                // JavaScript declarations do not act as the source side of
-                                // cross-file TS2403 comparisons. They can still influence
-                                // later symbol/type resolution, but tsc does not issue
-                                // subsequent-variable-declaration errors against them here.
-                                if crate::context::is_js_file_name(&other_file_name) {
-                                    continue;
-                                }
+                                // A prior JavaScript declaration establishes the merged
+                                // global's type for TS2403 exactly like a TS one, whether or
+                                // not that JS file is checked: tsc widens the JS initializer
+                                // and reports the conflict at the subsequent declaration.
+                                // Checked-ness only gates errors reported *inside* a JS file
+                                // (the `is_non_checked_js` guard on the current side above).
                                 let Some(other_sym) = other_binder.get_symbol(other_sym_id) else {
                                     continue;
                                 };

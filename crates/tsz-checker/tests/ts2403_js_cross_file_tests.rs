@@ -17,24 +17,38 @@ fn check_ts_file_with_prior_js_global(js_source: &str, ts_source: &str) -> Vec<u
 }
 
 #[test]
-fn unchecked_js_global_does_not_trigger_cross_file_ts2403() {
+fn unchecked_js_global_establishes_cross_file_ts2403_type() {
     let codes = check_ts_file_with_prior_js_global(r#"var t = [1, "x"];"#, r#"var t: [any, any];"#);
 
     assert!(
-        !codes.contains(&2403),
-        "Unchecked JS globals should not participate in cross-file TS2403 comparisons. Actual codes: {codes:?}"
+        codes.contains(&2403),
+        "A prior JS global establishes the merged var's type for cross-file TS2403 even when \
+         the JS file is unchecked; the error is reported at the TS declaration. \
+         Actual codes: {codes:?}"
     );
 }
 
 #[test]
-fn checked_js_global_does_not_trigger_cross_file_ts2403() {
+fn checked_js_global_establishes_cross_file_ts2403_type() {
     let codes = check_ts_file_with_prior_js_global(
         "// @ts-check\nvar t = [1, \"x\"];",
         r#"var t: [any, any];"#,
     );
 
     assert!(
+        codes.contains(&2403),
+        "A prior checked-JS global establishes the merged var's type for cross-file TS2403; \
+         the error is reported at the TS declaration. Actual codes: {codes:?}"
+    );
+}
+
+#[test]
+fn matching_js_global_type_does_not_trigger_cross_file_ts2403() {
+    let codes = check_ts_file_with_prior_js_global(r#"var t = 1;"#, r#"var t: number;"#);
+
+    assert!(
         !codes.contains(&2403),
-        "Checked JS globals should not act as the source side of cross-file TS2403 comparisons. Actual codes: {codes:?}"
+        "Identical merged var types across a JS/TS pair must not report TS2403. \
+         Actual codes: {codes:?}"
     );
 }
