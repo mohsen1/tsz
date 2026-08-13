@@ -50,6 +50,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                             "number",
                             prop_type,
                             number_idx.value_type,
+                            Some(prop.name),
                         );
                     }
                 }
@@ -71,7 +72,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     )
                     .is_true()
                 {
-                    return self.make_index_sig_reason("string", prop_type, string_idx.value_type);
+                    return self.make_index_sig_reason(
+                        "string",
+                        prop_type,
+                        string_idx.value_type,
+                        Some(prop.name),
+                    );
                 }
             }
 
@@ -85,7 +91,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     )
                     .is_true()
             {
-                return self.make_index_sig_reason("symbol", prop_type, symbol_idx.value_type);
+                return self.make_index_sig_reason(
+                    "symbol",
+                    prop_type,
+                    symbol_idx.value_type,
+                    Some(prop.name),
+                );
             }
         }
 

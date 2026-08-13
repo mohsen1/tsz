@@ -1806,11 +1806,17 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// when the nested failure is `MissingProperty` or `MissingProperties`,
     /// bubble it up directly so the diagnostic reports the missing property
     /// rather than wrapping it in an index-signature incompatibility.
+    /// `property_name` distinguishes the two incompatibility shapes `tsc`
+    /// renders differently: `Some(name)` is a named source **property** measured
+    /// against the target index (TS2530 "Property '{name}' is incompatible with
+    /// index signature."), `None` is a source **index signature** vs the target
+    /// index (TS2634 "'{kind}' index signatures are incompatible.").
     pub(in crate::relations::subtype) fn make_index_sig_reason(
         &mut self,
         index_kind: &'static str,
         source_value_type: TypeId,
         target_value_type: TypeId,
+        property_name: Option<tsz_common::interner::Atom>,
     ) -> Option<SubtypeFailureReason> {
         let nested = self.explain_failure(source_value_type, target_value_type);
         if matches!(
@@ -1827,6 +1833,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             source_value_type,
             target_value_type,
             nested_reason: nested.map(Box::new),
+            property_name,
         })
     }
 
@@ -1868,6 +1875,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                             "string",
                             s_string_idx.value_type,
                             t_string_idx.value_type,
+                            None,
                         );
                     }
                 }
@@ -1882,29 +1890,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                             index_kind: "string",
                         });
                     }
-
-                    for prop in &source_shape.properties {
-                        if prop.is_symbol_named {
-                            continue;
-                        }
-                        // Strip `undefined` from optional property types when checking
-                        // against index signatures, matching tsc behavior.
-                        let prop_type = if prop.optional {
-                            crate::narrowing::utils::remove_undefined(self.interner, prop.type_id)
-                        } else {
-                            prop.type_id
-                        };
-                        if !self
-                            .check_subtype(prop_type, t_string_idx.value_type)
-                            .is_true()
-                        {
-                            return self.make_index_sig_reason(
-                                "string",
-                                prop_type,
-                                t_string_idx.value_type,
-                            );
-                        }
-                    }
+                    // Source properties measured against the target string index
+                    // are explained by the shared
+                    // `explain_properties_against_index_signatures` fallback at
+                    // the end of this function (it carries the property name so
+                    // the renderer selects TS2530). Duplicating that loop here
+                    // only risked the two paths drifting.
                 }
             }
         }
@@ -1926,6 +1917,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                         "number",
                         s_number_idx.value_type,
                         t_number_idx.value_type,
+                        None,
                     );
                 }
             } else if let Some(s_string_idx) = source_shape.string_index_signature() {
@@ -1943,6 +1935,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                         "number",
                         s_string_idx.value_type,
                         t_number_idx.value_type,
+                        None,
                     );
                 }
             } else if self.shape_or_type_requires_declared_index_signature(source_shape, source) {
@@ -1969,6 +1962,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                             "symbol",
                             s_symbol_idx.value_type,
                             t_symbol_idx.value_type,
+                            None,
                         );
                     }
                 }
