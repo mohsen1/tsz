@@ -514,6 +514,7 @@ pub(super) fn compare_module_specifier_candidates(a: &String, b: &String) -> Ord
         .then_with(|| a.cmp(b))
 }
 
+#[cfg(test)]
 pub(super) fn package_import_specifiers_for_target(
     package_json_text: &str,
     package_dir: &str,
@@ -521,6 +522,34 @@ pub(super) fn package_import_specifiers_for_target(
     allow_importing_ts_extensions: bool,
     additional_targets: &[String],
 ) -> Vec<String> {
+    package_import_specifiers_for_target_detailed(
+        package_json_text,
+        package_dir,
+        target_file,
+        allow_importing_ts_extensions,
+        additional_targets,
+    )
+    .into_iter()
+    .map(|(specifier, _ambiguous)| specifier)
+    .collect()
+}
+
+/// Same matching as [`package_import_specifiers_for_target`], but each
+/// returned specifier is paired with whether it came from a *conditionally
+/// ambiguous* `imports` entry: an object whose non-`types` condition
+/// branches (`browser`/`default`/custom conditions/…) resolve to more than
+/// one distinct physical file. A `#pattern` specifier drawn from such an
+/// entry does not, on its own, deterministically address the matched file —
+/// which condition set is active decides that — so callers use this flag to
+/// decide whether a plain relative specifier must also be offered alongside
+/// it (see `Project::auto_import_specifier_needs_relative_fallback`).
+pub(super) fn package_import_specifiers_for_target_detailed(
+    package_json_text: &str,
+    package_dir: &str,
+    target_file: &str,
+    allow_importing_ts_extensions: bool,
+    additional_targets: &[String],
+) -> Vec<(String, bool)> {
     let Some(package_json) = serde_json::from_str::<serde_json::Value>(package_json_text).ok()
     else {
         return Vec::new();
@@ -548,7 +577,17 @@ pub(super) fn package_import_specifiers_for_target(
             continue;
         }
 
-        let target_patterns = collect_import_targets(target_mapping);
+        let ambiguous = import_entry_is_conditionally_ambiguous(target_mapping);
+        // For an ambiguous (multi-branch) entry, only the first non-`types`
+        // condition — object key order, which `serde_json`'s
+        // `preserve_order` feature keeps as source order — is treated as
+        // reachable via the bare `#pattern` specifier. The sibling branches
+        // (e.g. `default`) exist to name what a *different* condition set
+        // would resolve to, not additional files this same specifier
+        // addresses; matching every branch would offer the same `#pattern`
+        // text for several unrelated files with no way for a reader to tell
+        // which one they'd actually get.
+        let target_patterns = primary_import_targets(target_mapping);
         for target_pattern in target_patterns {
             let target_pattern = target_pattern.replace('\\', "/");
             if !target_pattern.starts_with("./") {
@@ -619,13 +658,18 @@ pub(super) fn package_import_specifiers_for_target(
                 }
             }
 
-            specs.push(specifier);
+            specs.push((specifier, ambiguous));
         }
     }
 
-    dedup_in_place(&mut specs);
-    specs.sort_by(compare_module_specifier_candidates);
+    dedup_specifier_pairs_in_place(&mut specs);
+    specs.sort_by(|(a, _), (b, _)| compare_module_specifier_candidates(a, b));
     specs
+}
+
+fn dedup_specifier_pairs_in_place(v: &mut Vec<(String, bool)>) {
+    let mut seen = FxHashSet::default();
+    v.retain(|(specifier, _)| seen.insert(specifier.clone()));
 }
 
 pub(super) fn collect_import_targets(value: &serde_json::Value) -> Vec<String> {
@@ -635,6 +679,120 @@ pub(super) fn collect_import_targets(value: &serde_json::Value) -> Vec<String> {
         serde_json::Value::Object(map) => map.values().flat_map(collect_import_targets).collect(),
         _ => Vec::new(),
     }
+}
+
+/// The target(s) a bare `#pattern` specifier is treated as reaching for
+/// auto-import purposes: for a plain string/array target, every listed
+/// alternative (unchanged from [`collect_import_targets`]); for a
+/// conditions object, only the first non-`types` key's branch — object
+/// key order, preserved by `serde_json`'s `preserve_order` feature, mirrors
+/// source order in the `imports` map. See
+/// [`import_entry_is_conditionally_ambiguous`] for why the remaining
+/// branches are not additional reachable files.
+fn primary_import_targets(value: &serde_json::Value) -> Vec<String> {
+    match value {
+        serde_json::Value::Object(map) => map
+            .iter()
+            .find(|(key, _)| key.as_str() != "types")
+            .map_or_else(Vec::new, |(_, branch)| collect_import_targets(branch)),
+        other => collect_import_targets(other),
+    }
+}
+
+/// Whether an `imports` entry's target resolves to more than one distinct
+/// physical file depending on which condition is active (e.g. `browser` vs
+/// `default`). The `types` branch is excluded: it names a declaration-file
+/// counterpart of the *same* target, not a different reachable file, so its
+/// presence alongside a single `default`/unconditional branch must not read
+/// as ambiguous (`{"types": "./types/*", "default": "./dist/*"}` names one
+/// file, not two).
+fn import_entry_is_conditionally_ambiguous(value: &serde_json::Value) -> bool {
+    let serde_json::Value::Object(map) = value else {
+        return false;
+    };
+    let mut leaves: Vec<String> = map
+        .iter()
+        .filter(|(key, _)| key.as_str() != "types")
+        .flat_map(|(_, branch)| collect_import_targets(branch))
+        .collect();
+    leaves.sort();
+    leaves.dedup();
+    leaves.len() > 1
+}
+
+/// Whether `target_file` is reachable only through a *non-canonical* branch
+/// of a conditionally ambiguous `imports` entry — e.g. `node.ts` under
+/// `"#is-browser": {"browser": "./dist/env/browser.js", "default":
+/// "./dist/env/node.js"}`, where `browser.ts` (the first non-`types`
+/// condition) is [`primary_import_targets`]'s pick. Such a file already has
+/// a same-name, same-shape sibling declaration surfaced under the
+/// `#pattern` specifier (plus its own relative fallback, since that
+/// specifier doesn't reliably address it — see
+/// `Project::auto_import_specifier_needs_relative_fallback`); listing it
+/// again under its own plain relative specifier would offer three ways to
+/// import what reads, at the call site, as a single conceptual export.
+pub(super) fn is_ambiguous_import_shadow_target(
+    package_json_text: &str,
+    package_dir: &str,
+    target_file: &str,
+    additional_targets: &[String],
+) -> bool {
+    let Some(package_json) = serde_json::from_str::<serde_json::Value>(package_json_text).ok()
+    else {
+        return false;
+    };
+    let Some(imports) = package_json
+        .get("imports")
+        .and_then(serde_json::Value::as_object)
+    else {
+        return false;
+    };
+
+    let package_dir = normalize_path(Path::new(package_dir));
+    let target_path = strip_js_ts_extension(Path::new(target_file));
+    let target_normalized = path_to_string(&target_path).replace('\\', "/");
+
+    for target_mapping in imports.values() {
+        if !import_entry_is_conditionally_ambiguous(target_mapping) {
+            continue;
+        }
+        let serde_json::Value::Object(conditions) = target_mapping else {
+            continue;
+        };
+        let primary = primary_import_targets(target_mapping);
+
+        for (key, branch) in conditions {
+            if key == "types" {
+                continue;
+            }
+            let branch_leaves = collect_import_targets(branch);
+            if branch_leaves.iter().all(|leaf| primary.contains(leaf)) {
+                continue; // This is the primary branch itself.
+            }
+
+            for target_pattern in branch_leaves {
+                let target_pattern = target_pattern.replace('\\', "/");
+                if !target_pattern.starts_with("./") {
+                    continue;
+                }
+                let resolved = normalize_path(&package_dir.join(&target_pattern));
+                let resolved_stripped =
+                    path_to_string(&strip_js_ts_extension(&resolved)).replace('\\', "/");
+
+                let matches_direct =
+                    wildcard_capture_case_insensitive(&resolved_stripped, &target_normalized)
+                        .is_some();
+                let matches_additional = additional_targets.iter().any(|candidate| {
+                    wildcard_capture_case_insensitive(&resolved_stripped, candidate).is_some()
+                });
+                if matches_direct || matches_additional {
+                    return true;
+                }
+            }
+        }
+    }
+
+    false
 }
 
 pub(super) fn collect_exports_targets(

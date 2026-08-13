@@ -1084,6 +1084,21 @@ impl Project {
         from_file: &str,
         target_file: &str,
     ) -> Vec<String> {
+        self.package_import_specifiers_from_files_detailed(from_file, target_file)
+            .into_iter()
+            .map(|(specifier, _ambiguous)| specifier)
+            .collect()
+    }
+
+    /// Same matching as [`Project::package_import_specifiers_from_files`], but
+    /// each specifier is paired with whether it came from a conditionally
+    /// ambiguous `imports` entry (see
+    /// [`package_import_specifiers_for_target_detailed`]).
+    fn package_import_specifiers_from_files_detailed(
+        &self,
+        from_file: &str,
+        target_file: &str,
+    ) -> Vec<(String, bool)> {
         let additional_targets = self.package_import_target_alternatives(from_file, target_file);
         let mut current = Path::new(from_file).parent();
         while let Some(dir) = current {
@@ -1100,7 +1115,7 @@ impl Project {
             };
 
             let package_dir = path_to_string(dir).replace('\\', "/");
-            return package_import_specifiers_for_target(
+            return package_import_specifiers_for_target_detailed(
                 &package_json_text,
                 &package_dir,
                 target_file,
@@ -1110,6 +1125,70 @@ impl Project {
         }
 
         Vec::new()
+    }
+
+    /// When `target_file`'s only path back to `from_file` runs through a
+    /// conditionally ambiguous package-imports (`#pattern`) entry — one whose
+    /// condition branches resolve to more than one distinct file, e.g.
+    /// `{"browser": "./dist/env/browser.js", "default": "./dist/env/node.js"}`
+    /// — the `#pattern` specifier alone does not deterministically address
+    /// this file: which condition is active decides that. tsc's language
+    /// service offers the plain relative specifier alongside it in that case
+    /// so the fix isn't silently condition-dependent; tsz does this by
+    /// having the auto-import candidate collector call this to get the
+    /// fallback and offer it as a second candidate. Unconditional or
+    /// single-target entries (the common case) return `None`: the `#pattern`
+    /// specifier already addresses the file unambiguously, so tsc offers
+    /// only it (see `autoImportProvider_importsMap2`/`3`).
+    pub(crate) fn auto_import_specifier_needs_relative_fallback(
+        &self,
+        from_file: &str,
+        target_file: &str,
+    ) -> Option<String> {
+        let any_ambiguous = self
+            .package_import_specifiers_from_files_detailed(from_file, target_file)
+            .into_iter()
+            .any(|(_, ambiguous)| ambiguous);
+        if !any_ambiguous {
+            return None;
+        }
+        self.relative_module_specifier_from_files(from_file, target_file)
+    }
+
+    /// Whether `target_file` should be skipped as an auto-import candidate
+    /// because it is reachable only as a non-canonical branch of some other
+    /// file's conditionally ambiguous package-imports entry (see
+    /// [`is_ambiguous_import_shadow_target`]).
+    pub(crate) fn is_shadowed_by_ambiguous_package_import(
+        &self,
+        from_file: &str,
+        target_file: &str,
+    ) -> bool {
+        let additional_targets = self.package_import_target_alternatives(from_file, target_file);
+        let mut current = Path::new(from_file).parent();
+        while let Some(dir) = current {
+            let package_json_path = normalize_path(&dir.join("package.json"));
+            let package_json_key = path_to_string(&package_json_path).replace('\\', "/");
+            let Some(package_json_text) = self
+                .files
+                .get(&package_json_key)
+                .map(|f| f.source_text().to_string())
+                .or_else(|| std::fs::read_to_string(&package_json_key).ok())
+            else {
+                current = dir.parent();
+                continue;
+            };
+
+            let package_dir = path_to_string(dir).replace('\\', "/");
+            return is_ambiguous_import_shadow_target(
+                &package_json_text,
+                &package_dir,
+                target_file,
+                &additional_targets,
+            );
+        }
+
+        false
     }
 
     fn package_import_target_alternatives(
@@ -1277,9 +1356,46 @@ impl Project {
             RelativeImportStyle::Js
         } else if saw_ts {
             RelativeImportStyle::Ts
+        } else if self.module_resolution_requires_extensions(from_file) {
+            // Node16/NodeNext module resolution requires an explicit
+            // extension on every relative specifier (unlike classic/node10,
+            // which extension-probes, and unlike `bundler`, which lets the
+            // bundler resolve extensionless paths) — so with no existing
+            // import to sample a style from, tsc still cannot emit a bare
+            // extensionless specifier here; it defaults to the runtime `.js`
+            // extension a compiled `.ts` source would carry.
+            RelativeImportStyle::Js
         } else {
             RelativeImportStyle::Minimal
         }
+    }
+
+    /// Whether `from_file`'s module resolution mandates an explicit
+    /// extension on relative specifiers. True only for `node16`/`nodenext`
+    /// (Node's own ESM *and* CJS resolvers under those TS settings refuse to
+    /// extension-probe); `bundler` also permits `exports`/`imports` maps
+    /// (see `module_resolution_supports_package_exports`) but, unlike
+    /// node16/nodenext, does not require an extension — a bundler resolves
+    /// extensionless relative paths itself.
+    fn module_resolution_requires_extensions(&self, from_file: &str) -> bool {
+        let Some((_, compiler_options)) = self.nearest_compiler_options_for_file(from_file) else {
+            return false;
+        };
+
+        if let Some(module_resolution) = compiler_options
+            .get("moduleResolution")
+            .and_then(serde_json::Value::as_str)
+        {
+            return module_resolution.eq_ignore_ascii_case("node16")
+                || module_resolution.eq_ignore_ascii_case("nodenext");
+        }
+
+        compiler_options
+            .get("module")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|module| {
+                module.eq_ignore_ascii_case("node16") || module.eq_ignore_ascii_case("nodenext")
+            })
     }
 
     pub(crate) fn module_specifier_candidates(
