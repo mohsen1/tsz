@@ -1366,12 +1366,14 @@ impl<'a> CheckerState<'a> {
                 source_value_type,
                 target_value_type,
                 nested_reason,
+                property_name,
             } => self.render_index_signature_mismatch(
                 &rctx,
                 index_kind,
                 *source_value_type,
                 *target_value_type,
                 nested_reason.as_deref(),
+                *property_name,
             ),
 
             SubtypeFailureReason::MissingIndexSignature { index_kind } => {

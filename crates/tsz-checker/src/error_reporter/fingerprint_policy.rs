@@ -702,6 +702,7 @@ impl<'a> CheckerState<'a> {
                 source_value_type,
                 target_value_type,
                 nested_reason: _,
+                property_name,
             } => {
                 let source_str = self.format_type_for_diagnostic_role(
                     *source_value_type,
@@ -717,16 +718,32 @@ impl<'a> CheckerState<'a> {
                     source_str,
                     target_str,
                 );
+                // A named source property vs the target index renders as the
+                // TS2530 head "Property '{name}' is incompatible with index
+                // signature." (matching the assignment path); a source index
+                // signature vs the target index keeps the "'{kind}' index
+                // signature is incompatible" head.
+                let head_message = match property_name {
+                    Some(name) => format_message(
+                        diagnostic_messages::PROPERTY_IS_INCOMPATIBLE_WITH_INDEX_SIGNATURE,
+                        &[&self.ctx.types.resolve_atom_ref(*name)],
+                    ),
+                    None => format!(
+                        "{index_kind} index signature is incompatible: '{source_str}' is not assignable to '{target_str}'."
+                    ),
+                };
+                let head_code = match property_name {
+                    Some(_) => diagnostic_codes::PROPERTY_IS_INCOMPATIBLE_WITH_INDEX_SIGNATURE,
+                    None => reason.diagnostic_code(),
+                };
                 vec![
                     DiagnosticRelatedInformation {
                         category: DiagnosticCategory::Error,
-                        code: reason.diagnostic_code(),
+                        code: head_code,
                         file: self.ctx.file_name.clone(),
                         start,
                         length,
-                        message_text: format!(
-                            "{index_kind} index signature is incompatible: '{source_str}' is not assignable to '{target_str}'."
-                        ),
+                        message_text: head_message,
                         depth: 0,
                         kind: RelatedInformationKind::ChainLink,
                     },

@@ -796,10 +796,16 @@ impl<'a> CheckerState<'a> {
                 .statements
                 .nodes
                 .iter()
-                .any(|&stmt| self.contains_break_statement(stmt))
+                .any(|&stmt| self.contains_break_targeting(stmt, switch_idx))
             {
-                // A break can complete the switch normally, even if later clauses
-                // would not fall through.
+                // A break that specifically targets this switch can complete it
+                // normally, even if later clauses would not fall through. A
+                // labeled break reachable from this clause but resolving to some
+                // *other* construct (an outer loop, or a label on a statement
+                // that merely wraps this switch) does not complete the switch —
+                // it skips past it entirely, the same way `contains_break_targeting`
+                // already distinguishes targets for `loop_falls_through` and the
+                // `LABELED_STATEMENT` fall-through check above.
                 true
             } else if self.block_falls_through(&clause.statements.nodes) {
                 // Non-terminating clauses continue into the next clause.
@@ -925,49 +931,6 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    /// Check if a statement contains a break statement.
-    pub(crate) fn contains_break_statement(&self, stmt_idx: NodeIndex) -> bool {
-        let Some(node) = self.ctx.arena.get(stmt_idx) else {
-            return false;
-        };
-
-        match node.kind {
-            syntax_kind_ext::BREAK_STATEMENT => true,
-            syntax_kind_ext::BLOCK => self.ctx.arena.get_block(node).is_some_and(|block| {
-                block
-                    .statements
-                    .nodes
-                    .iter()
-                    .any(|&stmt| self.contains_break_statement(stmt))
-            }),
-            syntax_kind_ext::IF_STATEMENT => {
-                self.ctx
-                    .arena
-                    .get_if_statement(node)
-                    .is_some_and(|if_data| {
-                        self.contains_break_statement(if_data.then_statement)
-                            || (if_data.else_statement.is_some()
-                                && self.contains_break_statement(if_data.else_statement))
-                    })
-            }
-            syntax_kind_ext::TRY_STATEMENT => {
-                self.ctx.arena.get_try(node).is_some_and(|try_data| {
-                    self.contains_break_statement(try_data.try_block)
-                        || (try_data.catch_clause.is_some()
-                            && self.contains_break_statement(try_data.catch_clause))
-                        || (try_data.finally_block.is_some()
-                            && self.contains_break_statement(try_data.finally_block))
-                })
-            }
-            syntax_kind_ext::LABELED_STATEMENT => self
-                .ctx
-                .arena
-                .get_labeled_statement(node)
-                .is_some_and(|labeled| self.contains_break_statement(labeled.statement)),
-            _ => false,
-        }
-    }
-
     /// Whether `stmt_idx`'s subtree contains a `break` statement whose
     /// legal jump target — resolved the same structural way as
     /// [`Self::jump_statement_has_legal_target`] (nearest enclosing
@@ -976,9 +939,9 @@ impl<'a> CheckerState<'a> {
     /// stacked directly around/inside `target_idx` with nothing else
     /// between (so the two exit to the identical source position).
     ///
-    /// Unlike [`Self::contains_break_statement`], this recurses into nested
-    /// loops and switches too: a *labeled* break several loops deep can
-    /// still target an outer construct, and resolving each break's actual
+    /// Recurses into nested loops and switches too: a *labeled* break
+    /// several loops deep can still target an outer construct, and
+    /// resolving each break's actual
     /// target — rather than just noting a break exists — is what tells that
     /// apart from a break that targets the inner loop/switch itself.
     pub(crate) fn contains_break_targeting(
