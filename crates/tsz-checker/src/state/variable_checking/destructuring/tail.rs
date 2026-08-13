@@ -241,6 +241,30 @@ impl<'a> CheckerState<'a> {
         key_type
     }
 
+    /// Whether a computed destructuring key of dynamic (`any`) type is a valid
+    /// index into `source`, mirroring `tsc`'s `obj[anyKey]` element access. An
+    /// `any` key is permitted when `source` is `any`/`unknown`/`error`, is
+    /// generic (deferred to instantiation), or carries a string or number index
+    /// signature; it is TS2538 against a concrete object with no index signature
+    /// (`{}`, `{ a: T }`). Non-object and unresolved sources are treated as
+    /// permitting, keeping the added diagnostic to the unambiguous case.
+    pub(super) fn destructuring_source_permits_dynamic_key(&self, source: TypeId) -> bool {
+        if matches!(source, TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR) {
+            return true;
+        }
+        if common_query::contains_type_parameters(self.ctx.types.as_type_database(), source) {
+            return true;
+        }
+        let permits = |ty: TypeId| {
+            query::object_shape(self.ctx.types, ty)
+                .is_none_or(|shape| shape.string_index.is_some() || shape.number_index.is_some())
+        };
+        match query::union_members(self.ctx.types, source) {
+            Some(members) => members.into_iter().all(permits),
+            None => permits(source),
+        }
+    }
+
     pub(super) fn collect_enclosing_default_assignment_key_types(
         &mut self,
         pattern_idx: NodeIndex,

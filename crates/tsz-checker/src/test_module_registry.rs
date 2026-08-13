@@ -267,6 +267,8 @@ mod definite_assignment_logical_compound_tests;
 mod destructured_binding_narrowed_property_tests;
 #[path = "tests/destructured_discriminant_source_narrowing_tests.rs"]
 mod destructured_discriminant_source_narrowing_tests;
+#[path = "tests/destructuring_any_computed_key_index_type_tests.rs"]
+mod destructuring_any_computed_key_index_type_tests;
 #[path = "tests/destructuring_relation_routing_arch_tests.rs"]
 mod destructuring_relation_routing_arch_tests;
 #[path = "tests/diagnostic_sink_message_surgery_arch_tests.rs"]

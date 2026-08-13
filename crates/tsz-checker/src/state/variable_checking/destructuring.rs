@@ -1206,17 +1206,18 @@ impl<'a> CheckerState<'a> {
                     } else {
                         self.resolve_lazy_type(key_type)
                     };
-                    // A genuine `any` is a valid index type for a value-position
-                    // destructuring computed key: `{ [k]: v } = obj` desugars to
-                    // `v = obj[k]`, and element access permits an `any` index.
-                    // Only the strict type-level `isValidIndexType` (keyof/mapped/
-                    // `T[K]`) rejects `any`; that helper must not gate this
-                    // value-position check. But an ERROR key (e.g. `[foo()]` where
-                    // `foo` is not callable) is remapped to ANY above precisely so
-                    // it still reports TS2538 (tsc does too) — so exempt only when
-                    // the ORIGINAL key type is `any`, never the ERROR remap.
+                    // A genuine `any` computed key (`{ [k]: v } = obj` desugars to
+                    // `v = obj[k]`) is a valid index only when the source permits a
+                    // dynamic index — `tsc` reports TS2538 against a concrete object
+                    // with no index signature (`{}`, `{ a: T }`), exactly as the
+                    // element access would. (An ERROR key is remapped to `any` above
+                    // and handled by the `else` arm, which reports TS2538 for it.)
                     let is_invalid = if key_type == TypeId::ANY && check_key == TypeId::ANY {
-                        None
+                        if self.destructuring_source_permits_dynamic_key(parent_type) {
+                            None
+                        } else {
+                            Some(check_key)
+                        }
                     } else {
                         crate::query_boundaries::type_checking_utilities::get_invalid_index_type_member_strict(self.ctx.types, check_key)
                     };
