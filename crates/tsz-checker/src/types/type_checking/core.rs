@@ -353,6 +353,23 @@ impl<'a> CheckerState<'a> {
 
     // --- Private Identifier Validation ---
 
+    /// Report the grammar diagnostic for a `PrivateIdentifier` used in an invalid
+    /// position — TS18016 (`not allowed outside class bodies`) when `node` is
+    /// outside any class body, TS1451 (`only allowed in class bodies ...`) when it
+    /// is inside one. This is the TS18016/TS1451 split of tsc's
+    /// `checkGrammarPrivateIdentifierExpression`, shared by the expression
+    /// dispatcher (standalone positions) and `check_in_operator` (a parenthesized
+    /// `in` LHS), so the two owners cannot disagree on the code.
+    pub(crate) fn report_private_identifier_invalid_position(&mut self, node: NodeIndex) {
+        use crate::diagnostics::diagnostic_codes;
+        let code = if self.nearest_enclosing_class(node).is_some() {
+            diagnostic_codes::PRIVATE_IDENTIFIERS_ARE_ONLY_ALLOWED_IN_CLASS_BODIES_AND_MAY_ONLY_BE_USED_AS_PAR
+        } else {
+            diagnostic_codes::PRIVATE_IDENTIFIERS_ARE_NOT_ALLOWED_OUTSIDE_CLASS_BODIES
+        };
+        self.error_at_node_msg(node, code, &[]);
+    }
+
     /// Check that a private identifier used as the LHS of `in` is valid.
     ///
     /// For `#field in expr`, tsc validates that:

@@ -74,12 +74,20 @@ fn legal_break_in_loop_still_requires_return_path() {
 }
 
 #[test]
-fn legal_labeled_break_out_of_block_terminates_flow_same_as_before() {
-    // Unchanged from pre-fix behavior: a break with a resolved target still
-    // terminates flow, so this remains a pre-existing (unaffected) result.
+fn legal_labeled_break_out_of_block_still_requires_return_path() {
+    // Corrected expectation (was `Vec::<u32>::new()`, asserting NO
+    // diagnostic): verified against typescript@7.0.2, tsc reports TS2355
+    // here. `break foo;` resumes right after the labeled block — the end of
+    // `f`'s body — so the declared `number` return type still needs a
+    // return path. The old assertion predates
+    // `contains_break_targeting`/the `LABELED_STATEMENT` fall-through fix
+    // (reachabilityChecks5.ts/6.ts f11): `statement_falls_through`'s old
+    // `LABELED_STATEMENT` arm only ever delegated to the wrapped statement's
+    // own fall-through and had no way to notice an escaping break, so this
+    // exact shape silently swallowed TS2355 too.
     assert_eq!(
         codes("function f(): number { foo: { break foo; } }"),
-        Vec::<u32>::new()
+        vec![2355]
     );
 }
 

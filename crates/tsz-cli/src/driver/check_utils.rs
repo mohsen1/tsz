@@ -623,6 +623,18 @@ pub(super) const fn is_checker_routed_ts1xxx_grammar(code: u32) -> bool {
         // error (`let x: = 1;`) elsewhere in the file drops TS1274 entirely,
         // which tsz's checker-emitted copy did not.
         | 1274 // '{0}' modifier can only appear on a type parameter of a class, interface or type alias
+        // A private identifier in an invalid standalone position inside a class.
+        // tsc's `checkGrammarPrivateIdentifierExpression` reports this from the
+        // checker via `grammarErrorOnNode`; tsz emits it from the checker's
+        // expression dispatcher (and the paren-`in` branch of `check_in_operator`),
+        // so it needs the same `hasParseDiagnostics` gating. Oracle-confirmed
+        // against `typescript@7.0.2`/`6.0.2`: Direction A, `class C { #f=1;
+        // m(v:any){ v << #f in v; } }` alone reports TS1451; Direction B, the same
+        // body plus an unrelated real syntax error (`let bad: = 1;`) drops TS1451
+        // entirely (`privateNameInInExpressionTransform.ts`, whose only oracle
+        // diagnostics are the TS1005 parse errors). TS18016's sibling copy is
+        // already suppressed by the `code < 2000` arm of the keep-gate.
+        | 1451 // Private identifiers are only allowed in class bodies and may only be used as part of a class member declaration, property access, or on the left-hand-side of an 'in' expression
     )
 }
 

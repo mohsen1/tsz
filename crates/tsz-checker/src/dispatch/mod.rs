@@ -48,6 +48,61 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
         }
     }
 
+    /// Whether a `PrivateIdentifier` reaching expression dispatch is the
+    /// left-hand side of an `in` expression (`#field in obj`), including through
+    /// parenthesized/assertion wrappers (`(#field) in obj`).
+    ///
+    /// The `in`-operator checker owns the grammar/brand validation for that
+    /// position (`check_private_identifier_in_expression` for the direct shape,
+    /// the `check_in_operator` paren guard for the wrapped shape), so the
+    /// standalone-expression grammar check below must not also fire there or the
+    /// diagnostic would double.
+    fn private_identifier_is_in_operator_lhs(&self, idx: NodeIndex) -> bool {
+        let arena = &self.checker.ctx.arena;
+        let mut current = idx;
+        loop {
+            let Some(ext) = arena.get_extended(current) else {
+                return false;
+            };
+            let parent = ext.parent;
+            let Some(parent_node) = arena.get(parent) else {
+                return false;
+            };
+            match parent_node.kind {
+                // Exactly the wrappers `skip_parenthesized_and_assertions`
+                // collapses, so this ownership boundary can never drift from the
+                // stripped LHS the `in`-operator checker compares against.
+                syntax_kind_ext::PARENTHESIZED_EXPRESSION
+                | syntax_kind_ext::TYPE_ASSERTION
+                | syntax_kind_ext::AS_EXPRESSION
+                | syntax_kind_ext::SATISFIES_EXPRESSION
+                | syntax_kind_ext::NON_NULL_EXPRESSION => {
+                    current = parent;
+                }
+                syntax_kind_ext::BINARY_EXPRESSION => {
+                    return arena.get_binary_expr(parent_node).is_some_and(|binary| {
+                        binary.operator_token == SyntaxKind::InKeyword as u16
+                            && arena.skip_parenthesized_and_assertions(binary.left) == idx
+                    });
+                }
+                _ => return false,
+            }
+        }
+    }
+
+    /// Whether a `PrivateIdentifier` reaching expression dispatch is the binding
+    /// target of a `for (#field in obj)` head. tsc leaves that position to its own
+    /// TS2406 (`Invalid left-hand side in 'for...in' statement`), so the
+    /// standalone-expression TS1451 must not also fire there. (`for..of` is *not*
+    /// exempted — tsc still reports TS1451 alongside TS2487 there.)
+    fn private_identifier_is_for_in_binding(&self, idx: NodeIndex) -> bool {
+        let arena = &self.checker.ctx.arena;
+        arena
+            .parent_of(idx)
+            .and_then(|parent| arena.get(parent))
+            .is_some_and(|parent| parent.kind == syntax_kind_ext::FOR_IN_STATEMENT)
+    }
+
     /// Dispatch type computation based on node kind.
     pub fn dispatch_type_computation(&mut self, idx: NodeIndex) -> TypeId {
         self.dispatch_type_computation_with_request(idx, &TypingRequest::NONE)
@@ -1567,6 +1622,24 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
             // `import` keyword token in structural positions (import declarations,
             // `ExpressionWithTypeArguments`). Not a value-producing expression.
             k if k == SyntaxKind::ImportKeyword as u16 => TypeId::VOID,
+            // A `PrivateIdentifier` reaching expression dispatch is in an invalid
+            // standalone position. Private names are only legal as a member-access
+            // name (`obj.#field`), the direct left-hand side of an `in` expression
+            // (`#field in obj`), or a class-member declaration. This mirrors tsc's
+            // `checkGrammarPrivateIdentifierExpression`: a name outside any class
+            // body is TS18016 (checked first, so it wins even in a `for..in` head);
+            // inside a class the `for..in` binding position is left to its own
+            // TS2406, the direct `in` LHS is owned by the `in`-operator checker, and
+            // every other position is TS1451.
+            k if k == SyntaxKind::PrivateIdentifier as u16 => {
+                if self.checker.nearest_enclosing_class(idx).is_none()
+                    || !(self.private_identifier_is_for_in_binding(idx)
+                        || self.private_identifier_is_in_operator_lhs(idx))
+                {
+                    self.checker.report_private_identifier_invalid_position(idx);
+                }
+                TypeId::ERROR
+            }
             // Default case - unknown node kind is an error
             _ => {
                 tracing::warn!(
