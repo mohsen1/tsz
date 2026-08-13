@@ -98,8 +98,13 @@ fn binding_pattern_default_inference_uses_relation_outcomes() {
 
 #[test]
 fn state_destructuring_default_inference_uses_relation_outcome() {
-    let source = fs::read_to_string("src/state/variable_checking/destructuring.rs")
-        .expect("failed to read state/variable_checking/destructuring.rs");
+    // The default/element-type merge this guards lives in
+    // `assign_binding_pattern_symbol_types_with_request_reporting`, split out
+    // of `destructuring.rs` into its own file to stay under that file's arch
+    // size ratchet.
+    let source =
+        fs::read_to_string("src/state/variable_checking/destructuring_widened_any_report.rs")
+            .expect("failed to read state/variable_checking/destructuring_widened_any_report.rs");
     let compact_source: String = source.chars().filter(|c| !c.is_whitespace()).collect();
 
     assert!(
