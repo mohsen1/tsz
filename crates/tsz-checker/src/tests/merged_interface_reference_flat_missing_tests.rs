@@ -251,8 +251,7 @@ const w: Whole = given;
         elaboration
             .iter()
             .any(|line| line.contains("required in type 'SecondHalf'")),
-        "written intersections keep the per-constituent drill, got: {:?}",
-        elaboration
+        "written intersections keep the per-constituent drill, got: {elaboration:?}"
     );
 }
 
