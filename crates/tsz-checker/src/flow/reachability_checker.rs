@@ -637,12 +637,25 @@ impl<'a> CheckerState<'a> {
                 .is_none_or(|catch_data| self.statement_falls_through(catch_data.block)),
             syntax_kind_ext::WHILE_STATEMENT
             | syntax_kind_ext::DO_STATEMENT
-            | syntax_kind_ext::FOR_STATEMENT => self.loop_falls_through(node),
-            syntax_kind_ext::LABELED_STATEMENT => self
-                .ctx
-                .arena
-                .get_labeled_statement(node)
-                .is_none_or(|labeled| self.statement_falls_through(labeled.statement)),
+            | syntax_kind_ext::FOR_STATEMENT => self.loop_falls_through(stmt_idx, node),
+            syntax_kind_ext::LABELED_STATEMENT => {
+                let Some(labeled) = self.ctx.arena.get_labeled_statement(node) else {
+                    return true;
+                };
+                if self.statement_falls_through(labeled.statement) {
+                    return true;
+                }
+                // The labeled statement's own body never completes normally
+                // (e.g. it's a `try` whose every path returns/throws/loops
+                // forever), but a `break <label>` reachable anywhere inside —
+                // even several loops or switches deep — still exits the WHOLE
+                // labeled statement and resumes right after it: tsc's
+                // `bindBreakOrContinueFlow` attaches that break to the
+                // label's own break-target flow node no matter what
+                // non-iteration construct (`try`, `if`, a bare block, ...)
+                // the label wraps.
+                self.contains_break_targeting(labeled.statement, stmt_idx)
+            }
             _ => true,
         }
     }
@@ -834,7 +847,11 @@ impl<'a> CheckerState<'a> {
     /// Check if a loop statement falls through.
     ///
     /// Returns true if execution can continue after the loop.
-    pub(crate) fn loop_falls_through(&mut self, node: &tsz_parser::parser::node::Node) -> bool {
+    pub(crate) fn loop_falls_through(
+        &mut self,
+        stmt_idx: NodeIndex,
+        node: &tsz_parser::parser::node::Node,
+    ) -> bool {
         let Some(loop_data) = self.ctx.arena.get_loop(node) else {
             return true;
         };
@@ -845,7 +862,7 @@ impl<'a> CheckerState<'a> {
             self.is_true_condition(loop_data.condition)
         };
 
-        if condition_always_true && !self.contains_break_statement(loop_data.statement) {
+        if condition_always_true && !self.contains_break_targeting(loop_data.statement, stmt_idx) {
             return false;
         }
 
@@ -948,6 +965,203 @@ impl<'a> CheckerState<'a> {
                 .get_labeled_statement(node)
                 .is_some_and(|labeled| self.contains_break_statement(labeled.statement)),
             _ => false,
+        }
+    }
+
+    /// Whether `stmt_idx`'s subtree contains a `break` statement whose
+    /// legal jump target — resolved the same structural way as
+    /// [`Self::jump_statement_has_legal_target`] (nearest enclosing
+    /// loop/switch for an unlabeled break, nearest same-named
+    /// `LABELED_STATEMENT` for a labeled one) — is `target_idx`, or a label
+    /// stacked directly around/inside `target_idx` with nothing else
+    /// between (so the two exit to the identical source position).
+    ///
+    /// Unlike [`Self::contains_break_statement`], this recurses into nested
+    /// loops and switches too: a *labeled* break several loops deep can
+    /// still target an outer construct, and resolving each break's actual
+    /// target — rather than just noting a break exists — is what tells that
+    /// apart from a break that targets the inner loop/switch itself.
+    pub(crate) fn contains_break_targeting(
+        &self,
+        stmt_idx: NodeIndex,
+        target_idx: NodeIndex,
+    ) -> bool {
+        let Some(node) = self.ctx.arena.get(stmt_idx) else {
+            return false;
+        };
+
+        match node.kind {
+            syntax_kind_ext::BREAK_STATEMENT => self
+                .resolve_break_target(stmt_idx, node)
+                .is_some_and(|resolved| {
+                    self.innermost_labeled_target(resolved)
+                        == self.innermost_labeled_target(target_idx)
+                }),
+            syntax_kind_ext::BLOCK => self.ctx.arena.get_block(node).is_some_and(|block| {
+                block
+                    .statements
+                    .nodes
+                    .iter()
+                    .any(|&stmt| self.contains_break_targeting(stmt, target_idx))
+            }),
+            syntax_kind_ext::IF_STATEMENT => {
+                self.ctx
+                    .arena
+                    .get_if_statement(node)
+                    .is_some_and(|if_data| {
+                        self.contains_break_targeting(if_data.then_statement, target_idx)
+                            || (if_data.else_statement.is_some()
+                                && self
+                                    .contains_break_targeting(if_data.else_statement, target_idx))
+                    })
+            }
+            syntax_kind_ext::TRY_STATEMENT => {
+                self.ctx.arena.get_try(node).is_some_and(|try_data| {
+                    self.contains_break_targeting(try_data.try_block, target_idx)
+                        || (try_data.catch_clause.is_some()
+                            && self.contains_break_targeting(try_data.catch_clause, target_idx))
+                        || (try_data.finally_block.is_some()
+                            && self.contains_break_targeting(try_data.finally_block, target_idx))
+                })
+            }
+            syntax_kind_ext::CATCH_CLAUSE => {
+                self.ctx
+                    .arena
+                    .get_catch_clause(node)
+                    .is_some_and(|catch_data| {
+                        self.contains_break_targeting(catch_data.block, target_idx)
+                    })
+            }
+            syntax_kind_ext::WHILE_STATEMENT
+            | syntax_kind_ext::DO_STATEMENT
+            | syntax_kind_ext::FOR_STATEMENT => self
+                .ctx
+                .arena
+                .get_loop(node)
+                .is_some_and(|d| self.contains_break_targeting(d.statement, target_idx)),
+            syntax_kind_ext::FOR_IN_STATEMENT | syntax_kind_ext::FOR_OF_STATEMENT => self
+                .ctx
+                .arena
+                .get_for_in_of(node)
+                .is_some_and(|d| self.contains_break_targeting(d.statement, target_idx)),
+            syntax_kind_ext::SWITCH_STATEMENT => {
+                self.ctx.arena.get_switch(node).is_some_and(|switch_data| {
+                    self.ctx
+                        .arena
+                        .get(switch_data.case_block)
+                        .and_then(|case_block_node| self.ctx.arena.get_block(case_block_node))
+                        .is_some_and(|case_block| {
+                            case_block.statements.nodes.iter().any(|&clause_idx| {
+                                self.ctx
+                                    .arena
+                                    .get(clause_idx)
+                                    .and_then(|clause_node| {
+                                        self.ctx.arena.get_case_clause(clause_node)
+                                    })
+                                    .is_some_and(|clause| {
+                                        clause.statements.nodes.iter().any(|&stmt| {
+                                            self.contains_break_targeting(stmt, target_idx)
+                                        })
+                                    })
+                            })
+                        })
+                })
+            }
+            syntax_kind_ext::LABELED_STATEMENT => self
+                .ctx
+                .arena
+                .get_labeled_statement(node)
+                .is_some_and(|labeled| {
+                    self.contains_break_targeting(labeled.statement, target_idx)
+                }),
+            _ => false,
+        }
+    }
+
+    /// Resolve a `break` statement's legal jump target: the nearest
+    /// enclosing loop/switch for an unlabeled break, or the nearest
+    /// `LABELED_STATEMENT` whose label matches for a labeled one. Mirrors
+    /// [`Self::jump_statement_has_legal_target`]'s walk but returns the
+    /// target node instead of a bool; `None` means the break has no legal
+    /// target (illegal jump, already diagnosed elsewhere as TS1105/TS1116) —
+    /// callers only compare against a specific candidate, so an illegal
+    /// break simply never matches anything.
+    fn resolve_break_target(
+        &self,
+        stmt_idx: NodeIndex,
+        node: &tsz_parser::parser::node::Node,
+    ) -> Option<NodeIndex> {
+        let label_name = self.ctx.arena.get_jump_data(node).and_then(|jump_data| {
+            if jump_data.label.is_none() {
+                None
+            } else {
+                self.get_node_text(jump_data.label)
+            }
+        });
+
+        let mut current = stmt_idx;
+        let mut iterations = 0;
+        loop {
+            iterations += 1;
+            if iterations > MAX_TREE_WALK_ITERATIONS {
+                return None;
+            }
+            let ext = self.ctx.arena.get_extended(current)?;
+            if ext.parent.is_none() {
+                return None;
+            }
+            let parent_idx = ext.parent;
+            let parent_node = self.ctx.arena.get(parent_idx)?;
+
+            if parent_node.is_function_like()
+                || parent_node.kind == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION
+            {
+                return None;
+            }
+
+            match &label_name {
+                None => {
+                    let is_iteration = matches!(
+                        parent_node.kind,
+                        syntax_kind_ext::WHILE_STATEMENT
+                            | syntax_kind_ext::DO_STATEMENT
+                            | syntax_kind_ext::FOR_STATEMENT
+                            | syntax_kind_ext::FOR_IN_STATEMENT
+                            | syntax_kind_ext::FOR_OF_STATEMENT
+                    );
+                    if is_iteration || parent_node.kind == syntax_kind_ext::SWITCH_STATEMENT {
+                        return Some(parent_idx);
+                    }
+                }
+                Some(name) => {
+                    if parent_node.kind == syntax_kind_ext::LABELED_STATEMENT
+                        && let Some(labeled) = self.ctx.arena.get_labeled_statement(parent_node)
+                        && self.get_node_text(labeled.label).as_deref() == Some(name.as_str())
+                    {
+                        return Some(parent_idx);
+                    }
+                }
+            }
+            current = parent_idx;
+        }
+    }
+
+    /// Fully unwrap a chain of `LABELED_STATEMENT`s (`a: b: while (true) {}`)
+    /// down to the core statement they wrap, so two labels stacked around —
+    /// or a label directly around — the same loop/switch/try compare equal.
+    /// Non-labeled input is returned unchanged.
+    fn innermost_labeled_target(&self, mut idx: NodeIndex) -> NodeIndex {
+        loop {
+            let Some(node) = self.ctx.arena.get(idx) else {
+                return idx;
+            };
+            if node.kind != syntax_kind_ext::LABELED_STATEMENT {
+                return idx;
+            }
+            let Some(labeled) = self.ctx.arena.get_labeled_statement(node) else {
+                return idx;
+            };
+            idx = labeled.statement;
         }
     }
 
