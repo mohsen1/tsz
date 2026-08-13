@@ -1159,8 +1159,15 @@ impl<'a> CheckerState<'a> {
                     {
                         let base_type = self.get_type_of_node(expr_idx);
                         let evaluated = self.evaluate_type_for_assignability(base_type);
+                        // `extends null` is valid (it builds a class with a null
+                        // prototype) and the null-ness is a property of the base
+                        // *type*, not the `null` keyword: `extends (null)` is
+                        // equally accepted by tsc (`baseConstructorType !==
+                        // nullWideningType`). Exclude the null type here so a
+                        // parenthesized/aliased null base is not flagged.
                         if evaluated != TypeId::ERROR
                             && evaluated != TypeId::ANY
+                            && evaluated != TypeId::NULL
                             && !self.is_constructor_type(evaluated)
                         {
                             use crate::diagnostics::{

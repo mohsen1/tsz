@@ -168,6 +168,19 @@ fn extends_null_stays_clean() {
 }
 
 #[test]
+fn extends_parenthesized_null_stays_clean() {
+    // `extends null` is valid, and the null-ness is a property of the base
+    // *type*: `extends (null)` is equally accepted by tsc. The value-expression
+    // path must exclude the null type, not just the `null` keyword.
+    let diags = check_source("class Holder extends (null) {}\n", "test.ts", opts());
+    assert_eq!(
+        diagnostic_count(&diags, TS2507),
+        0,
+        "`extends (null)` must not report TS2507: {diags:?}"
+    );
+}
+
+#[test]
 fn this_in_class_body_is_unaffected() {
     // Regression guard for the `this`-scoping change: a `this` in a class body
     // still resolves to the class instance, not the enclosing scope.
