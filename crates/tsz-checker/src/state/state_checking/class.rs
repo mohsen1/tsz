@@ -403,6 +403,15 @@ impl<'a> CheckerState<'a> {
             self.check_type_parameters_for_missing_names(&class.type_parameters);
         }
 
+        // TS1273: class type parameters allow both `const` and variance
+        // (`in`/`out`); only the never-valid modifiers (accessibility, `static`,
+        // etc.) are rejected. First grammar error wins per parameter.
+        self.check_type_parameter_modifier_grammar(
+            class.type_parameters.as_ref(),
+            /* const_allowed */ true,
+            /* variance_allowed */ true,
+        );
+
         // Collect class type parameter names for TS2302 checking in static members
         let class_type_param_names: Vec<String> = type_param_updates
             .iter()
@@ -1075,6 +1084,15 @@ impl<'a> CheckerState<'a> {
         } else {
             self.check_type_parameters_for_missing_names(&class.type_parameters);
         }
+
+        // TS1273: class type parameters allow both `const` and variance
+        // (`in`/`out`); only the never-valid modifiers are rejected. First
+        // grammar error wins per parameter.
+        self.check_type_parameter_modifier_grammar(
+            class.type_parameters.as_ref(),
+            /* const_allowed */ true,
+            /* variance_allowed */ true,
+        );
 
         let class_type_param_names: Vec<String> = type_param_updates
             .iter()

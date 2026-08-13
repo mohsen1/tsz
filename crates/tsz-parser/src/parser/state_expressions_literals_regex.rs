@@ -893,23 +893,18 @@ impl ParserState {
                     b'q' if unicode_sets_mode => {
                         *pos += 1;
                         if *pos < body.len() && body[*pos] == b'{' {
+                            // `\q{...}` denotes a set of string literals; it can
+                            // match other than exactly one character as soon as
+                            // any `|`-separated alternative is not one code point
+                            // — including the empty alternative in `\q{}`.
                             *pos += 1;
-                            let alternatives_start = *pos;
-                            while *pos < body.len() && body[*pos] != b'}' {
-                                *pos += 1;
-                            }
                             // `\q{...}` denotes a set of string literals. It
                             // can match other than exactly one character as
                             // soon as any single `|`-separated alternative is
                             // not exactly one code point long — including the
                             // empty alternative in `\q{}`, which matches the
                             // empty string.
-                            if scan_class_string_disjunction_body(
-                                parser,
-                                emit,
-                                &body[alternatives_start..*pos],
-                                alternatives_start,
-                            ) {
+                            if scan_class_string_disjunction_body(parser, emit, body, pos) {
                                 *may_contain_strings = true;
                             }
                             if *pos < body.len() {
@@ -1087,6 +1082,33 @@ impl ParserState {
                         }
                     }
                     return;
+                }
+
+                // A bare `v`-mode `ClassSetSyntaxCharacter` the surrounding
+                // productions do not claim (`[`/`]`/`\` handled above, a
+                // range-separator `-` by the caller): tsc reports TS1508.
+                if ctx.unicode_sets_mode
+                    && let Some(symbol) = match ch {
+                        b'(' => Some("("),
+                        b')' => Some(")"),
+                        b'{' => Some("{"),
+                        b'}' => Some("}"),
+                        b'/' => Some("/"),
+                        b'|' => Some("|"),
+                        b'-' => Some("-"),
+                        _ => None,
+                    }
+                {
+                    (ctx.emit)(
+                        parser,
+                        *pos,
+                        1,
+                        &format_message(
+                            diagnostic_messages::UNEXPECTED_DID_YOU_MEAN_TO_ESCAPE_IT_WITH_BACKSLASH,
+                            &[symbol],
+                        ),
+                        diagnostic_codes::UNEXPECTED_DID_YOU_MEAN_TO_ESCAPE_IT_WITH_BACKSLASH,
+                    );
                 }
 
                 if let Some((_ch, char_len)) = next_utf8_char(ctx.body, ctx.body_end, *pos) {
@@ -1276,36 +1298,8 @@ impl ParserState {
                         continue;
                     }
 
-                    // A bare `-` is only a legal `ClassSetCharacter` when it
-                    // is consumed as a range separator immediately after the
-                    // atom it follows, in the same iteration (the `-` check
-                    // below, right after `scan_class_atom`). Any `-` that
-                    // instead reaches the *top* of this loop as a fresh atom
-                    // to scan — because it opens the class, or because the
-                    // previous iteration ended without chaining into it as a
-                    // range — is not a legal `ClassSetCharacter` in `v` mode
-                    // and reports TS1508: `/[-a]/v`, `/[-]/v`, and
-                    // `/[a-b-]/v`'s second `-` (which follows a *completed*
-                    // range, not a fresh atom) all take this path, while
-                    // `/[a-]/v` and `/[ab-]/v` never reach it because their
-                    // trailing `-` is consumed by the range-separator check
-                    // instead. Reported once per occurrence, not once per
-                    // class — `/[-a-b-c]/v` draws two, on the leading `-`
-                    // and the one after the completed `a-b` range.
-                    if ctx.unicode_sets_mode && ctx.body[*pos] == b'-' {
-                        let message = format_message(
-                            diagnostic_messages::UNEXPECTED_DID_YOU_MEAN_TO_ESCAPE_IT_WITH_BACKSLASH,
-                            &["-"],
-                        );
-                        (ctx.emit)(
-                            parser,
-                            *pos,
-                            1,
-                            &message,
-                            diagnostic_codes::UNEXPECTED_DID_YOU_MEAN_TO_ESCAPE_IT_WITH_BACKSLASH,
-                        );
-                    }
-
+                    // A fresh-atom `-` reaches `scan_class_atom` for its TS1508;
+                    // a range-separator `-` is consumed below and stays legal.
                     let mut atoms = Vec::new();
                     let min_start = *pos;
                     let mut atom_may_contain_strings = false;
