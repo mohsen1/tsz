@@ -1249,25 +1249,31 @@ fn store_union_origin_preserves_source_order_for_type_parameter_union() {
 fn store_union_origin_preserves_source_order_for_tuple_union() {
     let db = TypeInterner::new();
 
-    // Force allocation order away from source order: `[number, string]` gets
-    // the lower TypeId, but the source union is `[] | [number, string]`.
+    // Force the canonical display order away from source order. #17383 made the
+    // no-origin ordering follow the widened element rather than allocation
+    // order, so `[] | [number, string]` is what the formatter renders for this
+    // member set regardless of how the union was written. Declaring the source
+    // as `[number, string] | []` therefore keeps the two orders distinct, which
+    // is what makes the post-store assertion meaningful: if both renderings
+    // agreed, this test would pass whether or not `store_union_origin` did
+    // anything.
     let pair = db.tuple(vec![
         crate::types::TupleElement::fixed(TypeId::NUMBER),
         crate::types::TupleElement::fixed(TypeId::STRING),
     ]);
     let empty = db.tuple(vec![]);
-    let origin = vec![empty, pair];
+    let origin = vec![pair, empty];
     let union_id = db.union(origin.clone());
 
     {
         let mut fmt = TypeFormatter::new(&db);
-        assert_eq!(fmt.format(union_id), "[number, string] | []");
+        assert_eq!(fmt.format(union_id), "[] | [number, string]");
     }
 
     db.store_union_origin(union_id, origin);
 
     let mut fmt = TypeFormatter::new(&db);
-    assert_eq!(fmt.format(union_id), "[] | [number, string]");
+    assert_eq!(fmt.format(union_id), "[number, string] | []");
 }
 
 #[test]
