@@ -80,3 +80,92 @@ fn ts8030_is_not_reported_in_typescript_files() {
         "TS8030 is JS-only; got: {diags:?}"
     );
 }
+
+/// An object-literal method with no JSDoc of its own must not inherit the
+/// outer `@type` tag describing the object shape it lives in — that tag has
+/// nothing to say about whether the method itself is "callable" in the
+/// TS8030 sense (it always is). Reduced from `typeFromContextualThisType.ts`
+/// (conformance/salsa), whose oracle reports only TS7006, never TS8030.
+#[test]
+fn object_literal_method_without_own_jsdoc_does_not_inherit_outer_type_tag() {
+    let codes = js_diagnostics(concat!(
+        "/** @type {{ a(): void; b?(n: number): number; }} */\n",
+        "const o1 = {\n",
+        "    a() {\n",
+        "        this.b = n => n;\n",
+        "    }\n",
+        "};\n"
+    ))
+    .into_iter()
+    .map(|(code, _)| code)
+    .collect::<Vec<_>>();
+    assert!(!codes.contains(&8030), "got {codes:?}");
+}
+
+#[test]
+fn boundary_is_binder_name_independent() {
+    for (var_name, method_name, member_name) in [
+        ("o1", "a", "b"),
+        ("shape", "run", "on"),
+        ("_x0", "go", "cb"),
+    ] {
+        let source = format!(
+            "/** @type {{ {method_name}(): void; {member_name}?(n: number): number; }} */\nconst {var_name} = {{\n    {method_name}() {{\n        this.{member_name} = n => n;\n    }}\n}};\n"
+        );
+        let codes = js_diagnostics(&source)
+            .into_iter()
+            .map(|(code, _)| code)
+            .collect::<Vec<_>>();
+        assert!(!codes.contains(&8030), "source={source} got {codes:?}");
+    }
+}
+
+/// Same boundary, array-literal form: a method-shorthand element of an array
+/// literal must not inherit the array's own `@type` tag either.
+#[test]
+fn array_literal_method_without_own_jsdoc_does_not_inherit_outer_type_tag() {
+    let codes = js_diagnostics(concat!(
+        "/** @type {{ run(): void }[]} */\n",
+        "const list = [{\n",
+        "    run() {}\n",
+        "}];\n"
+    ))
+    .into_iter()
+    .map(|(code, _)| code)
+    .collect::<Vec<_>>();
+    assert!(!codes.contains(&8030), "got {codes:?}");
+}
+
+/// The same boundary applies when the object literal is the right-hand side
+/// of a property assignment rather than a variable initializer. Reduced from
+/// `contextualTypedSpecialAssignment.ts` (conformance/salsa).
+#[test]
+fn object_literal_method_in_property_assignment_does_not_inherit_outer_type_tag() {
+    let codes = js_diagnostics(concat!(
+        "/** @typedef {{ status: 'done', m(n: number): void }} DoneStatus */\n",
+        "var ns = {};\n",
+        "/** @type {DoneStatus} */\n",
+        "ns.x = {\n",
+        "    status: 'done',\n",
+        "    m(n) { }\n",
+        "};\n"
+    ))
+    .into_iter()
+    .map(|(code, _)| code)
+    .collect::<Vec<_>>();
+    assert!(!codes.contains(&8030), "got {codes:?}");
+}
+
+/// Positive control: JSDoc written directly above the method itself must
+/// still fire TS8030 through the object-literal boundary — the boundary
+/// guard only blocks inheriting an *ancestor's* tag, not the method's own.
+#[test]
+fn object_literal_method_with_its_own_type_tag_still_reports_ts8030() {
+    let codes = ts8030_messages(concat!(
+        "const obj = {\n",
+        "    /** @type {number} */\n",
+        "    m() { return 1; }\n",
+        "};\n"
+    ));
+    assert_eq!(codes, vec![EXPECTED.to_string()]);
+}

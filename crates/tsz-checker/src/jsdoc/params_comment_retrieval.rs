@@ -288,6 +288,13 @@ impl<'a> CheckerState<'a> {
             //   /** @type {Foo} */ export const x = ...
             //   var res = x()
             // would inherit Foo through SourceFile's leading-comment position.
+            //
+            // Also stop at an enclosing object/array literal: a member of a
+            // literal (not the literal's own declared value) must not inherit
+            // the literal's own JSDoc tag. E.g.
+            //   /** @type {{ a(): void }} */ const o = { a() {} };
+            // describes the shape of `o`, not the method `a`, which has no
+            // JSDoc of its own.
             if let Some(parent_node) = self.ctx.arena.get(parent) {
                 use tsz_parser::parser::syntax_kind_ext as sk;
                 if matches!(
@@ -297,6 +304,8 @@ impl<'a> CheckerState<'a> {
                         | sk::MODULE_BLOCK
                         | sk::CASE_CLAUSE
                         | sk::DEFAULT_CLAUSE
+                        | sk::OBJECT_LITERAL_EXPRESSION
+                        | sk::ARRAY_LITERAL_EXPRESSION
                 ) {
                     break;
                 }
@@ -348,6 +357,8 @@ impl<'a> CheckerState<'a> {
                         | sk::MODULE_BLOCK
                         | sk::CASE_CLAUSE
                         | sk::DEFAULT_CLAUSE
+                        | sk::OBJECT_LITERAL_EXPRESSION
+                        | sk::ARRAY_LITERAL_EXPRESSION
                 ) {
                     break;
                 }
