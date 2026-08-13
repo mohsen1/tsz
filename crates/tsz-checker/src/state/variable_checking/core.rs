@@ -683,7 +683,7 @@ impl<'a> CheckerState<'a> {
                             {
                                 final_type = self.ctx.types.factory().intersection2(
                                     final_type,
-                                    self.current_file_commonjs_module_exports_namespace_type(),
+                                    self.current_file_commonjs_namespace_type(),
                                 );
                             }
                         }

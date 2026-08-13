@@ -745,7 +745,7 @@ impl<'a> CheckerState<'a> {
                     && ident.escaped_text == "module"
                     && self.current_file_commonjs_module_identifier_is_unshadowed(access.expression)
                 {
-                    return self.current_file_commonjs_module_exports_namespace_type();
+                    return self.current_file_commonjs_namespace_type();
                 }
 
                 // Recover inherited methods from the class chain when early
@@ -1345,7 +1345,7 @@ impl<'a> CheckerState<'a> {
                     && ident.escaped_text == "module"
                     && self.current_file_commonjs_module_identifier_is_unshadowed(access.expression)
                 {
-                    return self.current_file_commonjs_module_exports_namespace_type();
+                    return self.current_file_commonjs_namespace_type();
                 }
                 if self.is_js_file()
                     && self.ctx.compiler_options.check_js
@@ -1693,8 +1693,7 @@ impl<'a> CheckerState<'a> {
                     if self.is_js_file()
                         && self.is_current_file_commonjs_export_base(access.expression)
                     {
-                        let export_namespace_type =
-                            self.current_file_commonjs_module_exports_namespace_type();
+                        let export_namespace_type = self.current_file_commonjs_namespace_type();
                         display_object_type = export_namespace_type;
                         if let PropertyAccessResult::Success {
                             type_id,

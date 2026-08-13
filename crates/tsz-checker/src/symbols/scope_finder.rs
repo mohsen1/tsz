@@ -446,7 +446,7 @@ impl<'a> CheckerState<'a> {
             // The bare `exports` identifier is handled above, so the only
             // remaining CommonJS export base here is the `module.exports` access.
             if self.is_current_file_commonjs_export_base_syntax(base_expr) {
-                let namespace = self.current_file_commonjs_module_exports_namespace_type();
+                let namespace = self.current_file_commonjs_namespace_type();
                 return (namespace != TypeId::ERROR).then_some(namespace);
             }
         }

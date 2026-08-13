@@ -828,7 +828,7 @@ impl<'a> CheckerState<'a> {
                 .current_file_commonjs_late_bound_named_export_type(&prop_name, target_node.pos)
                 .is_none()
         {
-            let namespace_type = self.current_file_commonjs_module_exports_namespace_type();
+            let namespace_type = self.current_file_commonjs_namespace_type();
             self.error_property_not_exist_at(&prop_name, namespace_type, access.name_or_argument);
             return true;
         }

@@ -822,7 +822,7 @@ impl<'a> CheckerState<'a> {
                 .get_identifier(name_node)
                 .is_some_and(|ident| ident.escaped_text == "exports")
         {
-            return self.current_file_commonjs_module_exports_namespace_type();
+            return self.current_file_commonjs_namespace_type();
         }
 
         if skip_flow_narrowing
