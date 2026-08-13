@@ -59,34 +59,25 @@ impl Project {
                 continue;
             }
 
-            let module_specifiers = if mode.emit_all_specifiers {
-                context.allowed_module_specifiers(self, &file_name)
-            } else {
-                context
-                    .first_allowed_module_specifier(self, &file_name)
-                    .into_iter()
-                    .collect()
-            };
-            if module_specifiers.is_empty() {
+            let Some(module_specifier) = context.first_allowed_module_specifier(self, &file_name)
+            else {
                 continue;
-            }
+            };
 
             for export_match in &matches {
-                for module_specifier in &module_specifiers {
-                    sink.push(ImportCandidate {
-                        module_specifier: module_specifier.clone(),
-                        local_name: symbol_name.to_string(),
-                        kind: export_match.kind.clone(),
-                        is_type_only: export_match.is_type_only,
-                    });
-                }
+                sink.push(ImportCandidate {
+                    module_specifier: module_specifier.clone(),
+                    local_name: symbol_name.to_string(),
+                    kind: export_match.kind.clone(),
+                    is_type_only: export_match.is_type_only,
+                });
             }
 
             if mode.include_namespace_default
                 && let Some(is_type_only) = self.export_star_as_default_is_type_only(&file_name)
             {
                 sink.push(ImportCandidate {
-                    module_specifier: module_specifiers[0].clone(),
+                    module_specifier,
                     local_name: symbol_name.to_string(),
                     kind: ImportCandidateKind::Default,
                     is_type_only,
