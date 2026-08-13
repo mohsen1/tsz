@@ -479,6 +479,57 @@ impl<'a> CheckerState<'a> {
         None
     }
 
+    /// Find the nearest enclosing class for a `this` binding, skipping a class
+    /// whose own heritage clause (`extends `/`implements `) contains `idx`.
+    ///
+    /// A class's heritage clause is evaluated in the scope that *contains* the
+    /// class being declared — tsc's `getThisContainer` never treats the class
+    /// itself as `this`'s container there, e.g. `class C extends this {}` sees
+    /// the *outer* `this` (`typeof globalThis` in a script, `undefined` in a
+    /// module), not `C`'s own instance. [`nearest_enclosing_class`] is a plain
+    /// syntactic walk that does not know this — a heritage clause is a child of
+    /// the class node in the AST, so it would incorrectly return the
+    /// mid-declaration class itself. This variant keeps walking past such a
+    /// class instead, to whatever (possibly `None`) class actually encloses it.
+    pub(crate) fn nearest_enclosing_class_for_this_binding(
+        &self,
+        idx: NodeIndex,
+    ) -> Option<NodeIndex> {
+        use tsz_parser::parser::syntax_kind_ext::{
+            CLASS_DECLARATION, CLASS_EXPRESSION, HERITAGE_CLAUSE,
+        };
+
+        let mut current = idx;
+        let mut prev: Option<NodeIndex> = None;
+        let mut iterations = 0;
+        while current.is_some() {
+            iterations += 1;
+            if iterations > MAX_TREE_WALK_ITERATIONS {
+                return None;
+            }
+            if let Some(node) = self.ctx.arena.get(current)
+                && (node.kind == CLASS_DECLARATION || node.kind == CLASS_EXPRESSION)
+            {
+                let arrived_via_own_heritage = prev.is_some_and(|prev_idx| {
+                    self.ctx
+                        .arena
+                        .get(prev_idx)
+                        .is_some_and(|prev_node| prev_node.kind == HERITAGE_CLAUSE)
+                });
+                if !arrived_via_own_heritage {
+                    return Some(current);
+                }
+            }
+            let ext = self.ctx.arena.get_extended(current)?;
+            if ext.parent.is_none() {
+                return None;
+            }
+            prev = Some(current);
+            current = ext.parent;
+        }
+        None
+    }
+
     /// Whether `idx` sits inside a `typeof T` **type** query, i.e. a type
     /// position rather than a value position.
     ///

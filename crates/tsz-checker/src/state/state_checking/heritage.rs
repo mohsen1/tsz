@@ -1219,6 +1219,50 @@ impl<'a> CheckerState<'a> {
                                 false
                             }
                         }
+                    } else if is_extends_clause
+                        && is_class_declaration
+                        && let Some(expr_node) = self.ctx.arena.get(expr_idx)
+                        && (expr_node.kind == SyntaxKind::ThisKeyword as u16
+                            || matches!(
+                                expr_node.kind,
+                                syntax_kind_ext::PARENTHESIZED_EXPRESSION
+                                    | syntax_kind_ext::NEW_EXPRESSION
+                                    | syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                                    | syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                            ))
+                    {
+                        // tsc types every extends-clause base expression through
+                        // `checkExpression` (`getBaseConstructorTypeOfClass`) and
+                        // reports TS2507 whenever the result is a concrete
+                        // (non-any/non-error) type with no construct signatures —
+                        // regardless of syntactic shape. Only identifiers reached
+                        // this check above; extend it to `this`, parenthesized,
+                        // `new`, and array/object-literal bases (#17391). Call
+                        // expressions keep their dedicated TS2508/TS2315 handling
+                        // earlier in this function and are intentionally not
+                        // covered here (mixin-return false positives).
+                        let expr_type = self.get_type_of_node(expr_idx);
+                        let evaluated_type = self.evaluate_type_for_assignability(expr_type);
+                        if self.is_constructor_type(evaluated_type) {
+                            true
+                        } else {
+                            if evaluated_type != TypeId::ERROR && evaluated_type != TypeId::ANY {
+                                use crate::diagnostics::{
+                                    diagnostic_codes, diagnostic_messages, format_message,
+                                };
+                                let type_name = self.format_type(evaluated_type);
+                                let message = format_message(
+                                    diagnostic_messages::TYPE_IS_NOT_A_CONSTRUCTOR_FUNCTION_TYPE,
+                                    &[&type_name],
+                                );
+                                self.error_at_node(
+                                    expr_idx,
+                                    &message,
+                                    diagnostic_codes::TYPE_IS_NOT_A_CONSTRUCTOR_FUNCTION_TYPE,
+                                );
+                            }
+                            false
+                        }
                     } else {
                         false
                     };

@@ -1003,6 +1003,8 @@ mod ts2383_overload_flag_agreement_tests;
 mod ts2391_default_export_overload_group_tests;
 #[path = "tests/ts2445_protected_access_via_subclass_this_tests.rs"]
 mod ts2445_protected_access_via_subclass_this_tests;
+#[path = "tests/ts2507_extends_non_constructor_value_base_tests.rs"]
+mod ts2507_extends_non_constructor_value_base_tests;
 #[path = "tests/ts2515_ambient_class_abstract_member_tests.rs"]
 mod ts2515_ambient_class_abstract_member_tests;
 #[path = "tests/ts2528_default_export_function_overload_tests.rs"]
