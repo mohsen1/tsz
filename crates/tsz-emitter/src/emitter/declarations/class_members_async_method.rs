@@ -22,6 +22,26 @@ impl<'a> Printer<'a> {
                 }
             })
             .unwrap_or(false);
+        // A non-empty body written on a single source line stays single-line when
+        // lowered to `__awaiter(..., function* () { ... })`, matching tsc (and the
+        // async-function/arrow lowering, which already preserves this). Comments in
+        // the body force the multi-line layout so their placement is preserved.
+        let body_is_single_line = self.arena.get(body).is_some_and(|n| self.is_single_line(n));
+        let body_has_source_comment = self.arena.get(body).is_some_and(|body_node| {
+            self.source_comment_ranges
+                .iter()
+                .any(|comment| comment.pos >= body_node.pos && comment.end <= body_node.end)
+        });
+        let body_text_has_comment = self
+            .source_text
+            .and_then(|text| {
+                let body_node = self.arena.get(body)?;
+                let start = (body_node.pos as usize).min(text.len());
+                let end = (body_node.end as usize).min(text.len());
+                (start < end).then(|| &text[start..end])
+            })
+            .is_some_and(|body_text| body_text.contains("//") || body_text.contains("/*"));
+        let body_has_comment = body_has_source_comment || body_text_has_comment;
 
         // Issue #3759: Emit `super` capture before entering the generator. tsc
         // pre-binds each referenced `super.<name>` via an `Object.create` block so
@@ -53,6 +73,17 @@ impl<'a> Printer<'a> {
         let super_index_alias = super_index_alias_text
             .as_deref()
             .map(std::sync::Arc::<str>::from);
+
+        // Emit a non-empty single-line source body inline inside the generator, as
+        // tsc does. Restricted to bodies without a captured `super` reference: a
+        // `super` capture needs a multi-line `const _super = ...` preamble, so those
+        // stay on the existing multi-line path.
+        let super_is_empty =
+            super_capture.property_names.is_empty() && !super_capture.needs_element_index;
+        let emit_single_line_body = body_is_single_line
+            && !body_is_empty_single_line
+            && !body_has_comment
+            && super_is_empty;
 
         self.write(" {");
         self.write_line();
@@ -123,6 +154,45 @@ impl<'a> Printer<'a> {
         }
 
         if body_is_empty_single_line {
+            self.write_line();
+            self.decrease_indent();
+            self.write("}");
+            return;
+        }
+
+        if emit_single_line_body {
+            // `function* () {` is already written (no trailing newline). Capture the
+            // splice point so the body's own hoisted temps land inline as
+            // `function* () { var _a; <stmts> }`, mirroring the async-arrow lowering.
+            let var_insert_pos = self.writer.len();
+            let outer_hoisted_assignment_temps = std::mem::take(&mut self.hoisted_assignment_temps);
+            let outer_hoisted_assignment_value_temps =
+                std::mem::take(&mut self.hoisted_assignment_value_temps);
+            let outer_hoisted_for_of_temps = std::mem::take(&mut self.hoisted_for_of_temps);
+
+            let saved_yield = self.ctx.emit_await_as_yield;
+            self.ctx.emit_await_as_yield = true;
+            let prev_function_scope_depth = self.function_scope_depth;
+            self.function_scope_depth += 1;
+            if let Some(body_node) = self.arena.get(body)
+                && let Some(block) = self.arena.get_block(body_node)
+            {
+                let statements = block.statements.clone();
+                if !self.emit_statement_list_with_using_scope(&statements) {
+                    for &stmt in &statements.nodes {
+                        self.write(" ");
+                        self.emit(stmt);
+                    }
+                }
+            }
+            self.function_scope_depth = prev_function_scope_depth;
+            self.ctx.emit_await_as_yield = saved_yield;
+            self.splice_single_line_async_generator_hoists(var_insert_pos);
+            self.hoisted_assignment_temps = outer_hoisted_assignment_temps;
+            self.hoisted_assignment_value_temps = outer_hoisted_assignment_value_temps;
+            self.hoisted_for_of_temps = outer_hoisted_for_of_temps;
+
+            self.write(" });");
             self.write_line();
             self.decrease_indent();
             self.write("}");
