@@ -166,9 +166,15 @@ impl<'a> CheckerState<'a> {
         // candidate's expected parameter type. Only accept a strictly inner
         // node: an outer-literal fallback (e.g. a missing-property failure on
         // an object literal) keeps the historical first-leaf drilling.
-        let drilled = last
+        let elaborated = last
             .type_pair()
-            .and_then(|(_, expected)| self.literal_argument_mismatch_anchor(arg_idx, expected))
+            .and_then(|(_, expected)| self.literal_argument_mismatch_anchor(arg_idx, expected));
+        tracing::debug!(
+            "last_overload_failure_anchor: type_pair={:?} elaborated={:?}",
+            last.type_pair(),
+            elaborated
+        );
+        let drilled = elaborated
             .filter(|&anchor| anchor != arg_idx)
             .unwrap_or_else(|| self.drill_overload_argument_node(arg_idx));
         self.resolve_diagnostic_anchor(drilled, DiagnosticAnchorKind::Exact)
