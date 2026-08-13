@@ -238,13 +238,34 @@ impl<'a> CheckerState<'a> {
 
                 // Build declaration -> arena pairs using the shared helper.
                 // No user_arena context here (per-lib-context iteration).
-                let decls_with_arenas = super::lib_resolution::collect_lib_decls_with_arenas(
+                let mut decls_with_arenas = super::lib_resolution::collect_lib_decls_with_arenas(
                     &lib_ctx.binder,
                     sym_id,
                     &symbol.declarations,
                     fallback_arena,
                     None,
                 );
+
+                // A single lib context owns only its own file's declarations for
+                // a cross-file-merged global (e.g. `Map`, declared across
+                // es2015.collection + es2015.iterable + es2015.symbol.wellknown).
+                // Union the sibling contexts' same-named declarations so this
+                // context lowers the COMPLETE merged surface — mirroring
+                // `resolve_lib_type_by_name` — then order the merged declarations
+                // by canonical lib load order so the resulting flat interface's
+                // `declaration_order` (and therefore the flat missing-property
+                // list tsc emits) follows tsc's declaration-merge order
+                // (`clear, delete, …` for `Map`, not the iterable members first).
+                // `lib_contexts` are not stored in load order, so the sort is
+                // load-bearing (issue #17344 follow-up). No-op for a single-file
+                // interface (nothing to union, a one-element sort).
+                super::lib_decls::extend_decls_with_lib_context_globals(
+                    name,
+                    &lib_contexts,
+                    &mut decls_with_arenas,
+                );
+                decls_with_arenas
+                    .sort_by_key(|&(_, arena)| super::lib_decls::lib_file_load_rank(arena));
 
                 // Resolver triplet: delegates to stable helpers. The `resolver`
                 // closure extracts the raw `u32` at the TypeLowering boundary;
