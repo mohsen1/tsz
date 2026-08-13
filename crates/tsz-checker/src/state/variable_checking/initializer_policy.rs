@@ -128,13 +128,6 @@ impl<'a> CheckerState<'a> {
             jsdoc_declared_type = Some(declared_type);
             has_type_annotation = true;
         }
-        if !has_type_annotation
-            && let Some(merged_type) =
-                self.checked_js_remote_class_declared_type_for_variable(facts.decl_idx)
-        {
-            declared_type = merged_type;
-            has_type_annotation = true;
-        }
         // If there's a type annotation, that determines the type (even for 'any')
         if has_type_annotation {
             if self.ctx.no_implicit_any()
