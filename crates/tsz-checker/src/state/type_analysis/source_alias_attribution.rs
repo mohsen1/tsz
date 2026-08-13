@@ -1,6 +1,9 @@
 //! Structural attribution helpers for source-file alias direct-lowering misses.
 
-use crate::query_boundaries::common::TypeDatabase;
+use crate::query_boundaries::common::{
+    TypeDatabase, is_array_type, is_conditional_type, is_index_access_type, is_intersection_type,
+    is_string_intrinsic_type, is_tuple_type, is_union_type, literal_value, union_members,
+};
 #[cfg(test)]
 use crate::state::CheckerState;
 use std::collections::HashSet;
@@ -115,11 +118,25 @@ pub(crate) fn record_source_alias_rejection_kinds(
 ///   directly-written union alias (`type Plain = "a" | "b"`) keeps its name —
 ///   its body node is a `UnionType`, not a template/intrinsic, so it never
 ///   reaches these arms.
+/// - A **generic alias application** (`type Rest = Tail<[1, 2, 3]>`) whose
+///   evaluated result collapses to a pre-existing array or tuple carries no
+///   `aliasSymbol`: tsc threads an alias symbol only through the
+///   union/intersection/object/mapped constructors, never through a bare
+///   `TypeReference` body, so the reduced array/tuple is shown structurally (or by
+///   the inner application's own alias). Object results are owned by the
+///   `reducing_object_application` gate at the call site.
+///
+/// `evaluated` is the reduced form of `result` (equal to `result` when the alias
+/// is not safely evaluable). The AST-body-kind arms that inspect a shape which is
+/// already present on the raw result read `result`; the application-collapse arm
+/// reads `evaluated`, since an unevaluated `Application` has not yet taken its
+/// collapsed array/tuple shape.
 pub(crate) fn alias_declaration_body_is_computed(
     arena: &NodeArena,
     db: &dyn TypeDatabase,
     decl_idx: NodeIndex,
     result: TypeId,
+    evaluated: TypeId,
 ) -> bool {
     let Some(decl_node) = arena.get(decl_idx) else {
         return false;
@@ -136,7 +153,7 @@ pub(crate) fn alias_declaration_body_is_computed(
     // handled before the AST-kind dispatch. A still-deferred intrinsic over a
     // non-literal arg (`Capitalize<string>`) already renders structurally, so
     // the mark is a harmless no-op there.
-    if crate::query_boundaries::common::is_string_intrinsic_type(db, result) {
+    if is_string_intrinsic_type(db, result) {
         return true;
     }
     match body_node.kind {
@@ -146,26 +163,42 @@ pub(crate) fn alias_declaration_body_is_computed(
         // A single-literal or still-deferred pattern result is not a union and
         // is rendered structurally elsewhere (not in the composite reverse
         // lookup), so it needs no mark.
-        syntax_kind_ext::TEMPLATE_LITERAL_TYPE => {
-            crate::query_boundaries::common::is_union_type(db, result)
+        syntax_kind_ext::TEMPLATE_LITERAL_TYPE => is_union_type(db, result),
+        syntax_kind_ext::INTERSECTION_TYPE => {
+            // tsc's `getIntersectionType` keeps the alias's `aliasSymbol` only
+            // when it constructs a fresh intersection (`{ a } & { b }` stays
+            // `Both`). When the set collapses it returns the reduced operand
+            // directly, carrying no alias: `T & ("a" | "b")` distributes to the
+            // primitive/literal union `"a" | "b"`, and `string[] & Array<string>`
+            // dedupes to the single pre-existing `string[]`. Both drop the name,
+            // so both are computed bodies rendered structurally. The
+            // still-an-intersection guard keeps an object/union distribution that
+            // stays a fresh intersection (which keeps its alias) out of the
+            // array/tuple collapse arm. The array/tuple collapse is judged on the
+            // *evaluated* result: `string[] & Array<string>` interns pre-collapsed,
+            // but `number[] & Array<number>` (or any aliased operand) only takes
+            // its reduced array/tuple shape after evaluation, so the raw `result`
+            // is still an unevaluated intersection there.
+            result_is_primitive_literal_union(db, result)
+                || (!is_intersection_type(db, evaluated)
+                    && (is_array_type(db, evaluated) || is_tuple_type(db, evaluated)))
         }
-        syntax_kind_ext::INTERSECTION_TYPE => result_is_primitive_literal_union(db, result),
         syntax_kind_ext::CONDITIONAL_TYPE => {
-            !crate::query_boundaries::common::is_conditional_type(db, result)
-                && !crate::query_boundaries::common::is_index_access_type(db, result)
+            !is_conditional_type(db, result)
+                && !is_index_access_type(db, result)
                 && !crate::query_boundaries::diagnostics::union_or_intersection_with_object(
                     db, result,
                 )
         }
         syntax_kind_ext::INDEXED_ACCESS_TYPE => {
-            !crate::query_boundaries::common::is_conditional_type(db, result)
-                && !crate::query_boundaries::common::is_index_access_type(db, result)
+            !is_conditional_type(db, result)
+                && !is_index_access_type(db, result)
                 // A union result is freshly constructed by `getUnionType(…,
                 // aliasSymbol)` and therefore carries the alias symbol — tsc
                 // keeps the alias name, so it is *not* a computed body. A
                 // single-key access yields one existing member type (no alias
                 // symbol) and is rendered structurally.
-                && !crate::query_boundaries::common::is_union_type(db, result)
+                && !is_union_type(db, result)
         }
         // `keyof { ... }` over an inline object *type literal* is a reducing
         // operator like indexed access: it resolves away into the operand's key
@@ -189,6 +222,21 @@ pub(crate) fn alias_declaration_body_is_computed(
             }) =>
         {
             true
+        }
+        // A non-generic alias whose body is a generic *application*
+        // (`type Rest = Tail<[1, 2, 3]>`, `type Mapped = Copy<1[]>`) never carries
+        // the *outer* alias's `aliasSymbol`: tsc threads an alias symbol only
+        // through the union/intersection/object/mapped constructors, never through
+        // a bare `TypeReference` body. When that application evaluates to an array
+        // or tuple, tsc renders it structurally (or by the inner application's own
+        // alias) — `Tail<[1, 2, 3]>` reduces to the existing tuple `[2, 3]`, a
+        // variadic `infer` tail with no fresh construction. The shape gate runs on
+        // the *evaluated* result, since the raw `result` is still an unevaluated
+        // `Application` that has not taken its array/tuple shape. Object results
+        // are owned by the `reducing_object_application` gate at the call site, so
+        // this arm stays array/tuple only.
+        syntax_kind_ext::TYPE_REFERENCE => {
+            is_array_type(db, evaluated) || is_tuple_type(db, evaluated)
         }
         _ => false,
     }
@@ -249,9 +297,9 @@ pub(crate) fn tuple_alias_declaration_body_has_top_level_spread(
 }
 
 fn result_is_primitive_literal_union(db: &dyn TypeDatabase, ty: TypeId) -> bool {
-    crate::query_boundaries::common::union_members(db, ty).is_some_and(|members| {
+    union_members(db, ty).is_some_and(|members| {
         members.iter().all(|&m| {
-            crate::query_boundaries::common::literal_value(db, m).is_some()
+            literal_value(db, m).is_some()
                 || m == TypeId::STRING
                 || m == TypeId::NUMBER
                 || m == TypeId::BOOLEAN
