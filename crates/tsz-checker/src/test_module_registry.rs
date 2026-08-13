@@ -305,6 +305,8 @@ mod error_reporter_assignability_display_boundary_arch_tests;
 mod excess_prop_object_union_display_tests;
 #[path = "tests/expando_annotated_receiver_tests.rs"]
 mod expando_annotated_receiver_tests;
+#[path = "tests/expando_binding_form_eligibility_tests.rs"]
+mod expando_binding_form_eligibility_tests;
 #[path = "tests/expected_type_from_property_tests.rs"]
 mod expected_type_from_property_tests;
 #[path = "tests/expected_type_from_return_tests.rs"]

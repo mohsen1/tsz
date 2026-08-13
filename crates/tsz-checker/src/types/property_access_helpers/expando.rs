@@ -639,20 +639,33 @@ impl<'a> CheckerState<'a> {
                 observed
             };
 
-            let is_declared_function_or_class =
-                (symbol_flags & (symbol_flags::FUNCTION | symbol_flags::CLASS)) != 0;
+            // A class declaration is an expando host only in a JS file. In a
+            // TS file classes already own their static namespace, so
+            // `class C {} C.x = 1` stays `TS2339` (oracle-verified,
+            // `typeFromPropertyAssignment29.ts`), matching the binder's own
+            // `is_js_class_root` recording gate in `expression_flow.rs`.
+            let is_declared_function_or_class = (symbol_flags & symbol_flags::FUNCTION) != 0
+                || (self.is_js_file() && (symbol_flags & symbol_flags::CLASS) != 0);
             let is_callable_variable = (symbol_flags
                 & (symbol_flags::FUNCTION_SCOPED_VARIABLE | symbol_flags::BLOCK_SCOPED_VARIABLE))
                 != 0
                 && symbol_value_declaration.is_some()
                 && {
                     let decl_idx = symbol_value_declaration;
-                    self.ctx
-                        .arena
-                        .get(decl_idx)
-                        .and_then(|decl_node| self.ctx.arena.get_variable_declaration(decl_node))
-                        .and_then(|decl| self.ctx.arena.get(decl.initializer))
-                        .is_some_and(|init_node| init_node.is_function_expression_or_arrow())
+                    // TS files require a `const`-bound (or `using`-bound)
+                    // initializer ("must be const" — a `var`/`let` function
+                    // expression is not an expando host); JS files keep the
+                    // permissive `var` idiom.
+                    (self.is_js_file() || self.ctx.arena.is_var_const_like_declaration(decl_idx))
+                        && self
+                            .ctx
+                            .arena
+                            .get(decl_idx)
+                            .and_then(|decl_node| {
+                                self.ctx.arena.get_variable_declaration(decl_node)
+                            })
+                            .and_then(|decl| self.ctx.arena.get(decl.initializer))
+                            .is_some_and(|init_node| init_node.is_function_expression_or_arrow())
                 };
             if !is_declared_function_or_class && !is_callable_variable {
                 return false;

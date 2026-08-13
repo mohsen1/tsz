@@ -915,12 +915,23 @@ impl BinderState {
             // and the checker's read/write predicates. A non-empty literal
             // (`var X = { a: 1 }`) is a closed shape, so `X.b = …` is a real
             // property write, not an expando declaration. Class/function
-            // expression initializers stay hosts regardless.
-            let is_expando_init = is_function_like
-                || (is_property_access_lhs
-                    && !has_type_annotation
-                    && (init_node.kind == syntax_kind_ext::CLASS_EXPRESSION
-                        || arena.is_empty_object_literal(var_decl.initializer)));
+            // expression initializers stay hosts regardless — in a JS file.
+            //
+            // TS files are stricter (oracle-verified,
+            // `typeFromPropertyAssignment29.ts`): only a `const`-bound
+            // function/arrow expression is an expando host. A `var`/`let`
+            // binding never qualifies ("must be const"), and a class
+            // expression never qualifies either ("classes already have
+            // statics") — unlike JS, where both are permitted.
+            let is_expando_init = if is_js_like_source {
+                is_function_like
+                    || (is_property_access_lhs
+                        && !has_type_annotation
+                        && (init_node.kind == syntax_kind_ext::CLASS_EXPRESSION
+                            || arena.is_empty_object_literal(var_decl.initializer)))
+            } else {
+                is_function_like && arena.is_var_const_like_declaration(decl_idx)
+            };
             if is_expando_init {
                 // Mirror the function-root branch: in a JS file a nested chain
                 // declares its member only when the immediate base link is an
