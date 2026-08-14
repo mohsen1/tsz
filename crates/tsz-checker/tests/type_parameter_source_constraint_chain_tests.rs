@@ -282,3 +282,85 @@ fn constrained_type_parameter_target_with_satisfied_constraint_reports_different
         related_messages(&diag)
     );
 }
+
+/// `T extends unknown` is an *explicit* constraint (unlike a bare, truly
+/// unconstrained `T`), and `null` is assignable to it — `tsc` reports the
+/// TS5075 different-subtype note naming the constraint `'unknown'`, not the
+/// TS5082 arbitrary-type fallback (#17445).
+#[test]
+fn explicit_extends_unknown_constraint_reports_different_subtype_not_fallback() {
+    let diag = ts2322(
+        "function g<T extends unknown>(a: T): T {\n\
+         return null;\n\
+         }\n",
+    );
+    assert!(
+        diag.message_text.contains("is not assignable to type 'T'"),
+        "headline is the bare parameter mismatch; got: {}",
+        diag.message_text
+    );
+    assert!(
+        has_related(
+            &diag,
+            "is assignable to the constraint of type 'T', but 'T' could be instantiated with a different subtype of constraint 'unknown'",
+        ),
+        "an explicit `extends unknown` constraint that the source satisfies reports tsc's different-subtype note; got: {:?}",
+        related_messages(&diag)
+    );
+    assert!(
+        !has_related(&diag, "could be instantiated with an arbitrary type"),
+        "the arbitrary-type caveat must not stack on the different-subtype note; got: {:?}",
+        related_messages(&diag)
+    );
+}
+
+/// `T extends any` behaves like `T extends unknown` for this elaboration:
+/// `tsc` normalizes the rendered constraint to `'unknown'` (never `'any'`) and
+/// still reports the TS5075 different-subtype note (#17445).
+#[test]
+fn explicit_extends_any_constraint_normalizes_display_to_unknown() {
+    let diag = ts2322(
+        "function h<T extends any>(a: T): T {\n\
+         return null;\n\
+         }\n",
+    );
+    assert!(
+        has_related(
+            &diag,
+            "is assignable to the constraint of type 'T', but 'T' could be instantiated with a different subtype of constraint 'unknown'",
+        ),
+        "an explicit `extends any` constraint renders the normalized 'unknown' name, not 'any'; got: {:?}",
+        related_messages(&diag)
+    );
+    assert!(
+        !has_related(&diag, "could be instantiated with an arbitrary type"),
+        "the arbitrary-type caveat must not stack on the different-subtype note; got: {:?}",
+        related_messages(&diag)
+    );
+}
+
+/// Negative control paired with the two cases above: when the source is
+/// *not* assignable to an explicit constraint (`string` does not accept
+/// `null`), the fallback TS5082 wording must still fire — the fix must not
+/// make every explicit constraint take the different-subtype branch (#17445).
+#[test]
+fn explicit_extends_string_constraint_keeps_arbitrary_type_fallback() {
+    let diag = ts2322(
+        "function k<T extends string>(a: T): T {\n\
+         return null;\n\
+         }\n",
+    );
+    assert!(
+        has_related(
+            &diag,
+            "'T' could be instantiated with an arbitrary type which could be unrelated to 'null'",
+        ),
+        "a constraint the source does not satisfy keeps tsc's arbitrary-type fallback; got: {:?}",
+        related_messages(&diag)
+    );
+    assert!(
+        !has_related(&diag, "is assignable to the constraint of type"),
+        "the different-subtype note must not fire when the source fails the constraint; got: {:?}",
+        related_messages(&diag)
+    );
+}
