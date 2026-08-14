@@ -1498,7 +1498,12 @@ fn diagnostics_import_candidates_include_unexported_jsdoc_typedef_as_inline_impo
         .find(|c| c.local_name == "T")
         .unwrap_or_else(|| panic!("expected a 'T' candidate, got {candidates:?}"));
 
-    assert_eq!(t_candidate.module_specifier, "./a.js");
+    // Bare, no `.js`: the inline `import("./mod").Name` type query tsc
+    // emits for this fix never runs the ending-preference sniffing a real
+    // added import statement does (oracle-verified via
+    // `importNameCodeFix_importType.ts`, which expects
+    // `import("./a").T` from this exact file pair).
+    assert_eq!(t_candidate.module_specifier, "./a");
     assert!(t_candidate.is_type_only);
     assert!(t_candidate.jsdoc_typedef);
 }
@@ -1531,4 +1536,54 @@ fn diagnostics_import_candidates_prefer_exported_value_over_jsdoc_typedef_path_i
 
     assert!(!foo_candidate.is_type_only);
     assert!(!foo_candidate.jsdoc_typedef);
+}
+
+/// End-to-end regression for `importNameCodeFix_importType.ts`: a real
+/// checker-produced `TS2304` on an unimported local JSDoc `@typedef`
+/// resolves to a code action rewriting `@type {T}` to
+/// `@type {import("./a").T}` — bare, no `.js` extension, even though a
+/// plain JS-to-JS *value* import of the same pair of files keeps `.js`
+/// (see `jsconfig_paths_mapping_outranks_relative_for_shortest_preference`
+/// in `module_specifiers/tests.rs`). The inline `import("./mod").Name` type
+/// query tsc emits for this fix never runs the ending-preference sniffing a
+/// real added import statement does — it always emits a bare specifier.
+#[test]
+fn jsdoc_typedef_inline_import_code_action_strips_js_extension() {
+    let mut project = Project::new();
+    project.set_file(
+        "/tsconfig.json".to_string(),
+        r#"{"compilerOptions":{"allowJs":true,"checkJs":true}}"#.to_string(),
+    );
+    project.set_file(
+        "/a.js".to_string(),
+        "export {};\n/** @typedef {number} T */\n".to_string(),
+    );
+    project.set_file(
+        "/b.js".to_string(),
+        "/** @type {T} */\nconst x = 0;\n".to_string(),
+    );
+
+    let diags = project.get_diagnostics("/b.js").unwrap_or_default();
+    let t_diag = diags
+        .iter()
+        .find(|d| d.code == Some(tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME))
+        .cloned()
+        .expect("expected a real TS2304 diagnostic for the unimported JSDoc typedef");
+
+    let actions = project
+        .get_code_actions("/b.js", t_diag.range, vec![t_diag], None)
+        .unwrap_or_default();
+    let import_action = actions
+        .iter()
+        .find(|a| a.title.starts_with("Import 'T'"))
+        .unwrap_or_else(|| panic!("expected an import quickfix for 'T', got {actions:?}"));
+
+    assert_eq!(import_action.title, "Import 'T' via 'import(\"./a\").T'");
+    let edits = &import_action
+        .edit
+        .as_ref()
+        .expect("import action should carry a workspace edit")
+        .changes["/b.js"];
+    assert_eq!(edits.len(), 1);
+    assert_eq!(edits[0].new_text, "import(\"./a\").");
 }
