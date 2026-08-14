@@ -507,36 +507,14 @@ tsz_project_fixture_sources() {
   esac
 }
 
-# Fetch `ref` into `dir` and detach HEAD onto it. Returns non-zero (with a
-# clear stderr message) instead of leaving `dir`'s HEAD on whatever it
-# happened to be before on failure — callers must check the result rather
-# than assume success, so a dead upstream ref can't be reported as a
-# successful pin against a stale or unrelated commit (#17469). Does not
-# itself decide fatal-vs-recoverable: `project-compile-guard.sh`'s
-# application-row caller treats this as a soft, advisory failure; other
-# callers should treat it as fatal.
-tsz_git_fetch_ref_or_fail() {
-  local name="$1"
-  local repo="$2"
-  local ref="$3"
-  local dir="$4"
-
-  if ! git -C "$dir" fetch --quiet --depth 1 origin "$ref"; then
-    echo "ERROR: failed to fetch ${name} at ${ref} from ${repo} (pinned commit may no longer exist upstream)" >&2
-    return 1
-  fi
-  if ! git -C "$dir" checkout --quiet --detach FETCH_HEAD; then
-    echo "ERROR: failed to check out ${name} FETCH_HEAD after fetching ${ref}" >&2
-    return 1
-  fi
-}
-
-# Whether $1 is the top level of its OWN git repository. A failed clone (or a
-# stale non-repo directory) leaves the fixture path without its own `.git`,
-# so a later `git -C "$dir" ...` silently resolves against an ENCLOSING
-# repository — tsz itself, when the fixture root lives under the checkout —
-# and `rev-parse HEAD` then reports tsz's own commit as if it were the
-# fixture's pin (the exact `ebedd0a052` aliasing reported in #17469).
+# Whether $1 is the top level of its OWN git repository.
+#
+# A failed clone (or a stale non-repo directory) leaves the fixture path without
+# its own `.git`, so `git -C "$dir" …` silently resolves against an ENCLOSING
+# repository — tsz itself, when the fixtures live under the checkout — and every
+# `rev-parse` then reports an unrelated SHA. That is exactly what made #17469's
+# broken pin print `✓ <fixture> pinned at <tsz sha>`. Requiring the resolved
+# top level to equal the fixture directory rejects that aliasing.
 tsz_git_fixture_is_standalone_repo() {
   local dir="$1" top dir_phys top_phys
   [[ -d "$dir/.git" ]] || return 1
@@ -546,6 +524,16 @@ tsz_git_fixture_is_standalone_repo() {
   [[ "$dir_phys" == "$top_phys" ]]
 }
 
+# Ensure $dir is a fresh checkout of $repo pinned at $ref.
+#
+# Returns non-zero (with a diagnostic on stderr) on ANY failure — a failed
+# clone, an unreachable pin (`git fetch` "not our ref" after an upstream history
+# rewrite), a failed checkout, or a HEAD that does not match the requested pin.
+# The benchmark drivers run each fixture group under `run_isolated`, whose
+# `"$@" || rc=$?` wrapper disables `set -e` for the whole call tree; the pin step
+# therefore MUST report failure through its return status rather than relying on
+# `set -e` to abort, so callers can record a real "fixture failed" row instead of
+# silently benchmarking an empty or wrong tree (#17469).
 tsz_ensure_git_fixture() {
   local name="$1"
   local repo="$2"
@@ -573,9 +561,8 @@ tsz_ensure_git_fixture() {
     fi
   fi
 
-  # Never let a directory that is not its own git checkout be treated as a
-  # pinned fixture — that aliasing is what let a broken clone report tsz's
-  # own SHA as the fixture's pin (#17469).
+  # Never treat a directory that is not its own git checkout as a pinned
+  # fixture: doing so is what let a broken clone report tsz's own SHA (#17469).
   if ! tsz_git_fixture_is_standalone_repo "$dir"; then
     echo "ERROR: ${name} fixture at ${dir} is not a standalone git checkout" >&2
     return 1
@@ -586,13 +573,21 @@ tsz_ensure_git_fixture() {
     current_ref="$(git -C "$dir" rev-parse HEAD 2>/dev/null || true)"
     if [[ "$current_ref" != "$ref" ]]; then
       echo "Pinning ${name} to ${ref:0:12}..."
-      tsz_git_fetch_ref_or_fail "$name" "$repo" "$ref" "$dir" || return 1
+      if ! git -C "$dir" fetch --quiet --depth 1 origin "$ref"; then
+        echo "ERROR: failed to fetch ${name} pin ${ref:0:12} from ${repo}" \
+          "— the upstream may have rewritten history; re-pin the fixture to a served commit" >&2
+        return 1
+      fi
+      if ! git -C "$dir" checkout --quiet --detach FETCH_HEAD; then
+        echo "ERROR: failed to check out fetched ${name} pin ${ref:0:12}" >&2
+        return 1
+      fi
     fi
 
-    # A full 40-hex SHA pin is verified by identity after checkout — a
-    # partial/skipped pin must fail loudly rather than silently benchmark
-    # the wrong tree. A branch/tag ref legitimately resolves to a different
-    # SHA than the literal `$ref` string, so this only applies to SHA pins.
+    # Confirm the checkout actually landed on the requested commit. Only a
+    # full 40-hex SHA pin is verified by identity (a branch/tag ref resolves to
+    # a distinct commit SHA); a mismatch means a partial or skipped pin, which
+    # must fail loudly rather than benchmark the wrong tree.
     if [[ "$ref" =~ ^[0-9a-f]{40}$ ]]; then
       current_ref="$(git -C "$dir" rev-parse HEAD 2>/dev/null || true)"
       if [[ "$current_ref" != "$ref" ]]; then

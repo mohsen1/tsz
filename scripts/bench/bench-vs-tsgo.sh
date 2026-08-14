@@ -306,7 +306,7 @@ ensure_vite_app_benchmark_fixture() {
 
 ensure_utility_types_fixture() {
     mkdir -p "$EXTERNAL_BENCH_DIR"
-    tsz_ensure_git_fixture "utility-types" "$UTILITY_TYPES_REPO" "$UTILITY_TYPES_REF" "$UTILITY_TYPES_DIR" 1 || return 1
+    tsz_ensure_git_fixture "utility-types" "$UTILITY_TYPES_REPO" "$UTILITY_TYPES_REF" "$UTILITY_TYPES_DIR" 1 || return $?
 
     # Rewrite the generated flat tsconfig every run. External fixture clones
     # are cached across benchmark jobs, and stale generated configs can keep
@@ -321,7 +321,7 @@ ensure_utility_types_fixture() {
 
 ensure_ts_toolbelt_fixture() {
     mkdir -p "$EXTERNAL_BENCH_DIR"
-    tsz_ensure_git_fixture "ts-toolbelt" "$TS_TOOLBELT_REPO" "$TS_TOOLBELT_REF" "$TS_TOOLBELT_DIR" 1 || return 1
+    tsz_ensure_git_fixture "ts-toolbelt" "$TS_TOOLBELT_REPO" "$TS_TOOLBELT_REF" "$TS_TOOLBELT_DIR" 1 || return $?
 
     # Rewrite the generated flat tsconfig every run; fixture clones are cached
     # across jobs and must pick up script-owned config changes.
@@ -335,7 +335,7 @@ ensure_ts_toolbelt_fixture() {
 
 ensure_ts_essentials_fixture() {
     mkdir -p "$EXTERNAL_BENCH_DIR"
-    tsz_ensure_git_fixture "ts-essentials" "$TS_ESSENTIALS_REPO" "$TS_ESSENTIALS_REF" "$TS_ESSENTIALS_DIR" 1 || return 1
+    tsz_ensure_git_fixture "ts-essentials" "$TS_ESSENTIALS_REPO" "$TS_ESSENTIALS_REF" "$TS_ESSENTIALS_DIR" 1 || return $?
 
     # Rewrite the generated flat tsconfig every run; fixture clones are cached
     # across jobs and must pick up script-owned config changes.
@@ -350,7 +350,7 @@ ensure_ts_essentials_fixture() {
 # ─── Real-world fixture: rxjs ───────────────────────────────────────────────
 ensure_rxjs_fixture() {
     mkdir -p "$EXTERNAL_BENCH_DIR"
-    tsz_ensure_git_fixture "rxjs" "$RXJS_REPO" "$RXJS_REF" "$RXJS_DIR" 1 || return 1
+    tsz_ensure_git_fixture "rxjs" "$RXJS_REPO" "$RXJS_REF" "$RXJS_DIR" 1 || return $?
     # rxjs has been a monorepo since the v8 work — `src/internal` moved to
     # `packages/rxjs/src/internal`. Detect both layouts.
     local rxjs_src_root
@@ -364,7 +364,7 @@ ensure_rxjs_fixture() {
 # ─── Real-world fixture: type-fest ──────────────────────────────────────────
 ensure_type_fest_fixture() {
     mkdir -p "$EXTERNAL_BENCH_DIR"
-    tsz_ensure_git_fixture "type-fest" "$TYPE_FEST_REPO" "$TYPE_FEST_REF" "$TYPE_FEST_DIR" 1 || return 1
+    tsz_ensure_git_fixture "type-fest" "$TYPE_FEST_REPO" "$TYPE_FEST_REF" "$TYPE_FEST_DIR" 1 || return $?
     # Rewrite the generated flat tsconfig every run; fixture clones are cached
     # across jobs and must pick up script-owned config changes.
     local flat_tsconfig="$TYPE_FEST_DIR/tsconfig.flat.json"
@@ -374,7 +374,7 @@ ensure_type_fest_fixture() {
 # ─── Real-world fixture: zod ────────────────────────────────────────────────
 ensure_zod_fixture() {
     mkdir -p "$EXTERNAL_BENCH_DIR"
-    tsz_ensure_git_fixture "zod" "$ZOD_REPO" "$ZOD_REF" "$ZOD_DIR" 1 || return 1
+    tsz_ensure_git_fixture "zod" "$ZOD_REPO" "$ZOD_REF" "$ZOD_DIR" 1 || return $?
     # Rewrite the generated flat tsconfig every run; fixture clones are cached
     # across jobs and must pick up script-owned config changes.
     local flat_tsconfig="$ZOD_DIR/tsconfig.flat.json"
@@ -384,7 +384,7 @@ ensure_zod_fixture() {
 # ─── Real-world fixture: kysely (extreme type-level SQL inference) ─────────
 ensure_kysely_fixture() {
     mkdir -p "$EXTERNAL_BENCH_DIR"
-    tsz_ensure_git_fixture "kysely" "$KYSELY_REPO" "$KYSELY_REF" "$KYSELY_DIR" 1 || return 1
+    tsz_ensure_git_fixture "kysely" "$KYSELY_REPO" "$KYSELY_REF" "$KYSELY_DIR" 1 || return $?
     local flat_tsconfig="$KYSELY_DIR/tsconfig.flat.json"
     local bench_globals="$KYSELY_DIR/tsz-bench-globals.d.ts"
     tsz_write_kysely_globals "$bench_globals"
@@ -418,7 +418,7 @@ run_utility_types_benchmarks() {
     fi
 
     print_header "Real-world External Library - utility-types"
-    ensure_utility_types_fixture || return 1
+    ensure_utility_types_fixture || return $?
     echo -e "${GREEN}✓${NC} utility-types pinned at $(git -C "$UTILITY_TYPES_DIR" rev-parse --short HEAD)"
 
     # Use project's tsconfig lib settings (dom, es2017) for fair comparison
@@ -469,7 +469,7 @@ run_ts_toolbelt_benchmarks() {
     fi
 
     print_header "Real-world External Library - ts-toolbelt"
-    ensure_ts_toolbelt_fixture || return 1
+    ensure_ts_toolbelt_fixture || return $?
     echo -e "${GREEN}✓${NC} ts-toolbelt pinned at $(git -C "$TS_TOOLBELT_DIR" rev-parse --short HEAD)"
 
     # ts-toolbelt needs esnext+dom libs (per its tsconfig), otherwise tsc can't
@@ -520,7 +520,7 @@ run_ts_essentials_benchmarks() {
     fi
 
     print_header "Real-world External Library - ts-essentials"
-    ensure_ts_essentials_fixture || return 1
+    ensure_ts_essentials_fixture || return $?
     echo -e "${GREEN}✓${NC} ts-essentials pinned at $(git -C "$TS_ESSENTIALS_DIR" rev-parse --short HEAD)"
 
     # ts-essentials needs es2018 libs (per its tsconfig) for Map, Symbol, etc.
@@ -556,7 +556,7 @@ run_utility_types_project_benchmarks() {
     fi
 
     print_header "Real-world External Project - utility-types (whole project)"
-    ensure_utility_types_fixture || return 1
+    ensure_utility_types_fixture || return $?
     echo -e "${GREEN}✓${NC} utility-types pinned at $(git -C "$UTILITY_TYPES_DIR" rev-parse --short HEAD)"
 
     local tsconfig="$UTILITY_TYPES_DIR/tsconfig.flat.json"
@@ -577,7 +577,7 @@ run_ts_toolbelt_project_benchmarks() {
     fi
 
     print_header "Real-world External Project - ts-toolbelt (whole project, 242 type-level files)"
-    ensure_ts_toolbelt_fixture || return 1
+    ensure_ts_toolbelt_fixture || return $?
     echo -e "${GREEN}✓${NC} ts-toolbelt pinned at $(git -C "$TS_TOOLBELT_DIR" rev-parse --short HEAD)"
 
     local tsconfig="$TS_TOOLBELT_DIR/tsconfig.flat.json"
@@ -598,7 +598,7 @@ run_ts_essentials_project_benchmarks() {
     fi
 
     print_header "Real-world External Project - ts-essentials (whole project, 95 type utility files)"
-    ensure_ts_essentials_fixture || return 1
+    ensure_ts_essentials_fixture || return $?
     echo -e "${GREEN}✓${NC} ts-essentials pinned at $(git -C "$TS_ESSENTIALS_DIR" rev-parse --short HEAD)"
 
     local tsconfig="$TS_ESSENTIALS_DIR/tsconfig.flat.json"
@@ -619,7 +619,7 @@ run_rxjs_project_benchmarks() {
     fi
 
     print_header "Real-world External Project - rxjs (source parse with noCheck)"
-    ensure_rxjs_fixture || return 1
+    ensure_rxjs_fixture || return $?
     echo -e "${GREEN}✓${NC} rxjs pinned at $(git -C "$RXJS_DIR" rev-parse --short HEAD)"
 
     local tsconfig="$RXJS_DIR/tsconfig.flat.json"
@@ -645,7 +645,7 @@ run_type_fest_project_benchmarks() {
     fi
 
     print_header "Real-world External Project - type-fest (broad utility-type surface)"
-    ensure_type_fest_fixture || return 1
+    ensure_type_fest_fixture || return $?
     echo -e "${GREEN}✓${NC} type-fest pinned at $(git -C "$TYPE_FEST_DIR" rev-parse --short HEAD)"
 
     local tsconfig="$TYPE_FEST_DIR/tsconfig.flat.json"
@@ -666,7 +666,7 @@ run_zod_project_benchmarks() {
     fi
 
     print_header "Real-world External Project - zod (deep z.infer<typeof> schema inference)"
-    ensure_zod_fixture || return 1
+    ensure_zod_fixture || return $?
     echo -e "${GREEN}✓${NC} zod pinned at $(git -C "$ZOD_DIR" rev-parse --short HEAD)"
 
     # zod v3 lives in src/, zod v4 monorepo lives in packages/zod/src/.
@@ -694,7 +694,7 @@ run_kysely_project_benchmarks() {
     fi
 
     print_header "Real-world External Project - kysely (extreme type-level SQL inference)"
-    ensure_kysely_fixture || return 1
+    ensure_kysely_fixture || return $?
     echo -e "${GREEN}✓${NC} kysely pinned at $(git -C "$KYSELY_DIR" rev-parse --short HEAD)"
 
     local tsconfig="$KYSELY_DIR/tsconfig.flat.json"
@@ -1275,7 +1275,7 @@ run_nextjs_benchmarks() {
     fi
 
     print_header "Real-world External Project - next.js (full project)"
-    ensure_nextjs_fixture || return 1
+    ensure_nextjs_fixture || return $?
     echo -e "${GREEN}✓${NC} next.js pinned at $(git -C "$NEXTJS_DIR" rev-parse --short HEAD)"
 
     local tsconfig="$NEXTJS_DIR/packages/next/tsconfig.tsz-bench.json"
@@ -1349,7 +1349,7 @@ run_large_ts_repo_benchmarks() {
     fi
 
     print_header "Real-world External Project - large-ts-repo (6000+ files, parallel stress test)"
-    ensure_large_ts_repo_fixture || return 1
+    ensure_large_ts_repo_fixture || return $?
     echo -e "${GREEN}✓${NC} large-ts-repo pinned at $(git -C "$LARGE_TS_DIR" rev-parse --short HEAD)"
 
     # Use the flat tsconfig so all source files are included in a single

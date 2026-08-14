@@ -381,49 +381,18 @@ impl<'a> CheckerState<'a> {
         let Some(anchor) = self.resolve_diagnostic_anchor(node_idx, request.anchor_kind) else {
             return false;
         };
-
-        let mut diag = Diagnostic::error(
-            self.ctx.file_name.clone(),
-            anchor.start,
-            anchor.length,
-            request.message,
-            request.code,
-        );
-
-        match request.related {
-            RelatedInfoStrategy::None => {}
-            RelatedInfoStrategy::FromFailureReason {
-                reason,
-                source,
-                target,
-            } => {
-                if let Some(related) =
-                    self.related_from_failure_reason(&reason, source, target, anchor.node_idx)
-                {
-                    diag.related_information = related;
-                }
-            }
-            RelatedInfoStrategy::Prebuilt(items) => {
-                diag.related_information = items;
-            }
-        }
-
-        if !diag.related_information.is_empty() {
-            diag.related_information = normalize_related_information_blocks(
-                std::mem::take(&mut diag.related_information),
-                request.related_policy,
-            );
-        }
-
-        self.ctx.push_diagnostic(diag);
+        self.emit_render_request_at_anchor(anchor, request);
         true
     }
 
     /// Emit a diagnostic at a pre-resolved anchor.
     ///
-    /// Use this when the caller has already resolved the anchor (e.g., to
-    /// compute related information that depends on the anchor span). This
-    /// avoids double-resolution while still centralizing the emission path.
+    /// This owns the shared emission body — related-info generation (from a
+    /// failure reason or prebuilt items), layering of any caller-supplied extra
+    /// elaboration, normalization, and the push. `emit_render_request` resolves
+    /// the anchor and delegates here, so the logic lives in one place. Call this
+    /// directly when the caller has already resolved the anchor (e.g. to compute
+    /// related information that depends on the anchor span).
     pub(crate) fn emit_render_request_at_anchor(
         &mut self,
         anchor: ResolvedDiagnosticAnchor,
@@ -454,6 +423,11 @@ impl<'a> CheckerState<'a> {
                 diag.related_information = items;
             }
         }
+
+        // Layer any caller-supplied extra elaboration on top of the
+        // strategy-produced related info (e.g. the bare-type-parameter-target
+        // note appended after a structural failure chain).
+        diag.related_information.extend(request.extra_related);
 
         if !diag.related_information.is_empty() {
             diag.related_information = normalize_related_information_blocks(

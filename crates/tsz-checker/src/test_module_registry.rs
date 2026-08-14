@@ -229,6 +229,8 @@ mod const_asserted_return_type_tests;
 mod constraint_position_nullable_access_tests;
 #[path = "tests/constraint_validation_relation_routing_arch_tests.rs"]
 mod constraint_validation_relation_routing_arch_tests;
+#[path = "tests/constructor_argument_type_parameter_target_elaboration_tests.rs"]
+mod constructor_argument_type_parameter_target_elaboration_tests;
 #[path = "tests/contextual_callback_shadowed_type_param_tests.rs"]
 mod contextual_callback_shadowed_type_param_tests;
 #[path = "tests/contextual_new_relation_routing_arch_tests.rs"]
