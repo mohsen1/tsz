@@ -701,6 +701,8 @@ mod never_indexed_access_reduction_tests;
 mod never_return_import_alias_tests;
 #[path = "tests/no_implicit_override_ambient_context_tests.rs"]
 mod no_implicit_override_ambient_context_tests;
+#[path = "tests/no_implicit_returns_bare_return_expression_tests.rs"]
+mod no_implicit_returns_bare_return_expression_tests;
 #[path = "tests/no_index_element_implicit_any_tests.rs"]
 mod no_index_element_implicit_any_tests;
 #[path = "tests/nolib_user_global_array_member_tests.rs"]

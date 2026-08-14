@@ -1195,6 +1195,16 @@ impl<'a> CheckerState<'a> {
                     diagnostic_codes::NOT_ALL_CODE_PATHS_RETURN_A_VALUE,
                 );
             }
+            // TS7030's second, independent source: a bare `return;` anchored at
+            // the return statement itself, fired even when the body does not
+            // fall off the end. Constructors are handled elsewhere and are
+            // excluded from this source entirely, matching tsc.
+            self.check_missing_return_expressions(
+                method.body,
+                check_return_type,
+                has_type_annotation,
+                is_generator,
+            );
 
             self.ctx.pop_yield_type();
             self.pop_return_type();
@@ -1735,6 +1745,16 @@ impl<'a> CheckerState<'a> {
                         diagnostic_codes::NOT_ALL_CODE_PATHS_RETURN_A_VALUE,
                     );
                 }
+                // TS7030's second, independent source: a bare `return;` anchored
+                // at the return statement itself. A getter must return a value,
+                // so an early bare `return;` under noImplicitReturns reports here
+                // (accessors are never generators).
+                self.check_missing_return_expressions(
+                    accessor.body,
+                    check_return_type,
+                    has_type_annotation,
+                    false,
+                );
             }
 
             self.pop_return_type();

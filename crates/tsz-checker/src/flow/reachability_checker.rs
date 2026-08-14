@@ -497,6 +497,172 @@ impl<'a> CheckerState<'a> {
     }
 
     // =========================================================================
+    // Missing-Return-Expression Analysis (TS7030, per bare `return;`)
+    // =========================================================================
+
+    /// Emit TS7030 at every bare `return;` whose enclosing function requires a
+    /// value under `noImplicitReturns`.
+    ///
+    /// `tsc` reports TS7030 from two independent sources
+    /// (`checker.ts` `checkAllCodePathsInNonVoidFunctionReturnOrThrow` and
+    /// `checkReturnStatement`). The first — a function that reaches its closing
+    /// brace without returning a value — is owned by the fall-off-the-end check
+    /// at each function-completeness site. This is the second: `tsc`'s
+    /// `checkReturnStatement` reports TS7030 **at the return statement itself**
+    /// for a bare `return;` (no expression) when
+    /// `!(strictNullChecks || node.expression || returnType.Never)` and the
+    /// container is neither a constructor nor has an unwrapped return type of
+    /// `void`/`any`/`undefined`. Under `strictNullChecks` a bare `return;`
+    /// instead flows through ordinary assignability (`undefined` vs the return
+    /// type), which already yields TS2322 where required, so this source is
+    /// gated off there. The two sources are not mutually exclusive: a function
+    /// with a bare `return;` in one branch and a fall-off-the-end elsewhere
+    /// reports both, at different nodes.
+    ///
+    /// `tsc` does not gate this on reachability — `checkReturnStatement` runs
+    /// for every return statement `checkSourceElement` visits, so a bare
+    /// `return;` after a `return`/`throw`, or inside an `if (false)` branch,
+    /// still reports. The collector therefore records every bare `return;`
+    /// lexically inside the body without descending into nested function-like
+    /// bodies, which carry their own independent return-type context.
+    ///
+    /// `check_return_type`, `has_type_annotation`, and `is_generator` must be
+    /// the same values the caller passes to
+    /// [`Self::should_skip_no_implicit_return_check`] for the fall-off-the-end
+    /// check, so the skip decision (`void`/`any`/`undefined` return types,
+    /// async `Promise<T>` and generator `TReturn` unwrapping) stays identical
+    /// between the two TS7030 sources.
+    pub(crate) fn check_missing_return_expressions(
+        &mut self,
+        body: NodeIndex,
+        check_return_type: TypeId,
+        has_type_annotation: bool,
+        is_generator: bool,
+    ) {
+        if body.is_none()
+            || !self.ctx.no_implicit_returns()
+            // Under strictNullChecks a bare `return;` is checked as `undefined`
+            // against the return type by ordinary assignability, so this source
+            // must not also fire (it would double-report or diverge from tsc).
+            || self.ctx.strict_null_checks()
+            || self.should_skip_no_implicit_return_check(
+                check_return_type,
+                has_type_annotation,
+                is_generator,
+            )
+        {
+            return;
+        }
+
+        let mut bare_returns = Vec::new();
+        self.collect_bare_return_statements(body, &mut bare_returns);
+        for return_idx in bare_returns {
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+            self.error_at_node(
+                return_idx,
+                diagnostic_messages::NOT_ALL_CODE_PATHS_RETURN_A_VALUE,
+                diagnostic_codes::NOT_ALL_CODE_PATHS_RETURN_A_VALUE,
+            );
+        }
+    }
+
+    /// Collect every bare `return;` (a `return` statement with no expression)
+    /// lexically within `node`, in source order, without descending into a
+    /// nested function-like body (function/arrow/method/accessor/constructor)
+    /// or a class — each of those owns its own return-type context and is
+    /// visited by its own completeness pass. Walks only statement structure
+    /// (blocks, `if`, loops, `switch`, `try`/`catch`/`finally`, labeled
+    /// statements); a `return` cannot appear anywhere else without crossing a
+    /// function boundary first.
+    fn collect_bare_return_statements(&self, node_idx: NodeIndex, out: &mut Vec<NodeIndex>) {
+        let Some(node) = self.ctx.arena.get(node_idx) else {
+            return;
+        };
+
+        match node.kind {
+            syntax_kind_ext::RETURN_STATEMENT => {
+                if self
+                    .ctx
+                    .arena
+                    .get_return_statement(node)
+                    .is_none_or(|return_data| return_data.expression.is_none())
+                {
+                    out.push(node_idx);
+                }
+            }
+            syntax_kind_ext::BLOCK => {
+                if let Some(block) = self.ctx.arena.get_block(node) {
+                    for &stmt_idx in &block.statements.nodes {
+                        self.collect_bare_return_statements(stmt_idx, out);
+                    }
+                }
+            }
+            syntax_kind_ext::IF_STATEMENT => {
+                if let Some(if_data) = self.ctx.arena.get_if_statement(node) {
+                    self.collect_bare_return_statements(if_data.then_statement, out);
+                    if if_data.else_statement.is_some() {
+                        self.collect_bare_return_statements(if_data.else_statement, out);
+                    }
+                }
+            }
+            syntax_kind_ext::WHILE_STATEMENT
+            | syntax_kind_ext::DO_STATEMENT
+            | syntax_kind_ext::FOR_STATEMENT => {
+                if let Some(loop_data) = self.ctx.arena.get_loop(node) {
+                    self.collect_bare_return_statements(loop_data.statement, out);
+                }
+            }
+            syntax_kind_ext::FOR_IN_STATEMENT | syntax_kind_ext::FOR_OF_STATEMENT => {
+                if let Some(for_in_of) = self.ctx.arena.get_for_in_of(node) {
+                    self.collect_bare_return_statements(for_in_of.statement, out);
+                }
+            }
+            syntax_kind_ext::SWITCH_STATEMENT => {
+                if let Some(switch_data) = self.ctx.arena.get_switch(node)
+                    && let Some(case_block_node) = self.ctx.arena.get(switch_data.case_block)
+                    && let Some(case_block) = self.ctx.arena.get_block(case_block_node)
+                {
+                    for &clause_idx in &case_block.statements.nodes {
+                        if let Some(clause_node) = self.ctx.arena.get(clause_idx)
+                            && let Some(clause) = self.ctx.arena.get_case_clause(clause_node)
+                        {
+                            for &stmt_idx in &clause.statements.nodes {
+                                self.collect_bare_return_statements(stmt_idx, out);
+                            }
+                        }
+                    }
+                }
+            }
+            syntax_kind_ext::TRY_STATEMENT => {
+                if let Some(try_data) = self.ctx.arena.get_try(node) {
+                    self.collect_bare_return_statements(try_data.try_block, out);
+                    if try_data.catch_clause.is_some() {
+                        self.collect_bare_return_statements(try_data.catch_clause, out);
+                    }
+                    if try_data.finally_block.is_some() {
+                        self.collect_bare_return_statements(try_data.finally_block, out);
+                    }
+                }
+            }
+            syntax_kind_ext::CATCH_CLAUSE => {
+                if let Some(catch_data) = self.ctx.arena.get_catch_clause(node) {
+                    self.collect_bare_return_statements(catch_data.block, out);
+                }
+            }
+            syntax_kind_ext::LABELED_STATEMENT => {
+                if let Some(labeled) = self.ctx.arena.get_labeled_statement(node) {
+                    self.collect_bare_return_statements(labeled.statement, out);
+                }
+            }
+            // Every other statement kind either cannot contain a `return` that
+            // belongs to this function (expression/variable statements, `break`,
+            // `continue`, `throw`, empty, debugger, declarations) or introduces
+            // a new function-like/class boundary whose returns are not ours.
+            _ => {}
+        }
+    }
+
+    // =========================================================================
     // Block Analysis
     // =========================================================================
 

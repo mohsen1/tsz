@@ -1363,6 +1363,16 @@ impl<'a> CheckerState<'a> {
                 diagnostic_codes::NOT_ALL_CODE_PATHS_RETURN_A_VALUE,
             );
         }
+        // TS7030's second, independent source: a bare `return;` anchored at the
+        // return statement itself, fired even when the body does not fall off
+        // the end. Uses the same skip inputs as the fall-off-the-end check
+        // above so the two sources agree on void/any/undefined return types.
+        self.check_missing_return_expressions(
+            func.body,
+            check_return_type,
+            has_declared_return,
+            is_generator,
+        );
     }
 
     fn top_level_terminal_return_flow(&self, body: NodeIndex) -> Option<(bool, bool)> {

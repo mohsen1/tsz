@@ -1869,6 +1869,21 @@ impl<'a> CheckerState<'a> {
                 );
             }
         }
+        // TS7030's second, independent source: a bare `return;` anchored at the
+        // return statement itself. Runs unconditionally (its own gating lives in
+        // the helper) because it fires even when the body does not fall off the
+        // end — e.g. a function whose only statement is `return;`.
+        let bare_return_check_type = self.return_type_for_implicit_return_check(
+            annotated_return_type.unwrap_or(return_type),
+            is_async,
+            function_is_generator,
+        );
+        self.check_missing_return_expressions(
+            body,
+            bare_return_check_type,
+            has_type_annotation,
+            function_is_generator,
+        );
     }
 
     /// Check if a return context type is or references a const type parameter.
