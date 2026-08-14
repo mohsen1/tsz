@@ -330,7 +330,12 @@ interface RpcGroup<in out R extends RpcAny> {
 }
 
 #[test]
-fn test_ts2304_not_emitted_for_js_prototype_assignment_root() {
+fn test_ts2304_emitted_for_undeclared_js_prototype_assignment_root() {
+    // Oracle (typescript@7.0.2, matching TypeScript's own
+    // nestedPrototypeAssignment.ts salsa fixture): an undeclared root of a
+    // JS `X.prototype[...] = value` write still reports TS2304 once per
+    // reference — the pattern is only exempt from an internal assertion
+    // crash (TS#24111), not from name resolution.
     let diagnostics = check_js_without_lib(
         r#"
 C.prototype = {};
@@ -339,9 +344,47 @@ C.prototype.bar.foo = {};
     );
 
     let ts2304_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2304).collect();
+    assert_eq!(
+        ts2304_errors.len(),
+        2,
+        "Expected TS2304 for each undeclared JS prototype assignment root, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_ts2304_not_emitted_for_declared_js_prototype_assignment_root() {
+    // Adjacent case: once the root is declared anywhere in the file, normal
+    // binder resolution finds it and this path is never reached.
+    let diagnostics = check_js_without_lib(
+        r#"
+function C() {}
+C.prototype = {};
+C.prototype.bar = {};
+"#,
+    );
+
+    let ts2304_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2304).collect();
     assert!(
         ts2304_errors.is_empty(),
-        "Expected no TS2304 for JS prototype assignment root, got: {diagnostics:?}"
+        "Expected no TS2304 for a declared JS prototype assignment root, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_ts2304_emitted_for_undeclared_js_prototype_element_access_root() {
+    // Adjacent case: the same suppression previously also covered an
+    // element-access chain off `.prototype` (`C.prototype["bar"] = ...`).
+    let diagnostics = check_js_without_lib(
+        r#"
+D.prototype["bar"] = {};
+"#,
+    );
+
+    let ts2304_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2304).collect();
+    assert_eq!(
+        ts2304_errors.len(),
+        1,
+        "Expected TS2304 for an undeclared JS prototype element-access root, got: {diagnostics:?}"
     );
 }
 
