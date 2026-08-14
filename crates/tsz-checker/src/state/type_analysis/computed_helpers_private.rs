@@ -9,6 +9,27 @@ use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    /// The symbol of the innermost class-like declaration lexically enclosing
+    /// `start`, or `None` when `start` is not inside a class. Walks parent links
+    /// from the node itself (a bounded climb) so it does not depend on the
+    /// transient `enclosing_class` context, which is not always established while
+    /// a class instance type is under construction.
+    fn enclosing_class_symbol_for_node(&self, start: NodeIndex) -> Option<tsz_binder::SymbolId> {
+        let mut current = start;
+        for _ in 0..64 {
+            let ext = self.ctx.arena.get_extended(current)?;
+            if ext.parent.is_none() {
+                return None;
+            }
+            current = ext.parent;
+            let node = self.ctx.arena.get(current)?;
+            if node.is_class_like() {
+                return self.ctx.binder.get_node_symbol(current);
+            }
+        }
+        None
+    }
+
     fn class_decl_from_callable_symbol(&self, type_id: TypeId) -> Option<NodeIndex> {
         callable_shape_for_type(self.ctx.types, type_id)
             .and_then(|shape| shape.symbol)
@@ -269,7 +290,21 @@ impl<'a> CheckerState<'a> {
                 self.class_property_relation_declared_type(decl_idx, prop)
             } else {
                 self.effective_class_property_declared_type(decl_idx, prop)
-            };
+            }
+            // An un-annotated private field (`#x = 1`) has no annotation type, so
+            // the paths above return `None`. Its type is nonetheless a property of
+            // its own *declaration* — the widened initializer / accessor /
+            // constructor-flow type that class instance-type construction already
+            // computed and cached on the declaration node
+            // (`class_instance_phase2` stores it via `node_types.insert(member_idx,
+            // ..)`). Reading that here makes `this.#x` resolve to the field type
+            // regardless of the enclosing instance shape's construction state:
+            // without it, the read falls through to a `declaring_type` lookup that
+            // re-enters `get_class_instance_type` and, on an in-progress/partial
+            // build, yields `any`/`error` — corrupting the method's inferred
+            // signature return type and its `.d.ts` (issue #17430). The declared
+            // annotation still takes precedence; this is a fallback only.
+            .or_else(|| self.ctx.node_types.get(&decl_idx.0).copied());
             if let Some(type_id) = declared_type {
                 let evaluated = self.evaluate_type_for_assignability(type_id);
                 let base = if evaluated != type_id
@@ -613,6 +648,52 @@ impl<'a> CheckerState<'a> {
                 }
             }
             return TypeId::ERROR;
+        }
+
+        // A bare `this.#field` read of an *instance* field declared on the very
+        // class that lexically encloses the access is a self-access: `#field` is
+        // nominally guaranteed to belong to the receiver, so its value is the
+        // field's own declared type. Resolving it the normal way, while that
+        // class's instance type is still being built, is not just imprecise — it
+        // is *re-entrant*: `private_member_declaring_type` below calls
+        // `get_class_instance_type` for the enclosing class, which — because this
+        // access is reached from that class's own method-body return-type
+        // inference — rebuilds the in-progress instance type. That nested build
+        // re-enters this very `this.#field` node while it sits on the resolution
+        // stack, trips the node-cache recursion guard (which hard-caches the node
+        // as `error`), and the cached `error` then wins the private-returning
+        // method's inferred signature and its `.d.ts` (#17430).
+        //
+        // Resolve the field straight from its declaration first, before touching
+        // `declaring_type`, so construction is never re-entered. The nominal
+        // brand-compatibility check further down only guards *cross-instance*
+        // access (`other.#x`); for a `this` self-access it is redundant. Guarded
+        // to a genuine self-access: the receiver is a bare `this`, the private
+        // symbol is declared on the innermost enclosing class of the access
+        // (`enclosing_class_symbol_for_node`, an AST walk that — unlike the
+        // transient `enclosing_class` context — is set even mid-construction), and
+        // the member is an instance member. Static members are excluded so a
+        // `this.#static` access from an instance context still takes the normal
+        // path and reports TS2339, and `C.#static`/static-`this` access keeps its
+        // constructor-side resolution.
+        let member_is_instance = self.ctx.binder.get_symbol(symbols[0]).is_some_and(|sym| {
+            !sym.declarations
+                .iter()
+                .any(|&decl_idx| self.class_member_is_static(decl_idx))
+        });
+        if member_is_instance
+            && self
+                .ctx
+                .arena
+                .get(access.expression)
+                .is_some_and(|node| node.kind == tsz_scanner::SyntaxKind::ThisKeyword as u16)
+            && let Some(declaring_class_sym) =
+                self.private_member_declaring_class_symbol(symbols[0])
+            && self.enclosing_class_symbol_for_node(idx) == Some(declaring_class_sym)
+            && let Some(field_type) =
+                self.private_property_declared_access_type(symbols[0], is_write_context)
+        {
+            return self.finalize_property_access_result(idx, field_type, is_write_context, false);
         }
 
         let declaring_type = match self.private_member_declaring_type(symbols[0]) {

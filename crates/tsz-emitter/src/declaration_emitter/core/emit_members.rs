@@ -405,6 +405,23 @@ impl<'a> DeclarationEmitter<'a> {
                         self.write(": ");
                         let type_text = self.wrap_async_method_return_type_text(method, type_text);
                         self.write(&type_text);
+                    } else if method_type_id != tsz_solver::types::TypeId::ANY
+                        && method_type_id != tsz_solver::types::TypeId::UNKNOWN
+                        && method_type_id != tsz_solver::types::TypeId::ERROR
+                    {
+                        // `get_return_type` was `None` and the body-text inference above
+                        // produced nothing, yet the checker did resolve a concrete return
+                        // type and stored it directly as the method's node type (a bare
+                        // non-callable type, e.g. a method whose body returns a private
+                        // field `return this.#x`, inferred as `number`). Use it rather than
+                        // dropping the return type to `any` (#17430). This stays below the
+                        // source-faithful `function_body_preferred_return_type_text` surface
+                        // (e.g. `this["parts"]`) so those are still preferred.
+                        self.write(": ");
+                        let type_text =
+                            self.inferred_method_return_type_text(method, method_type_id);
+                        let type_text = self.wrap_async_method_return_type_text(method, type_text);
+                        self.write(&type_text);
                     } else if !self.source_is_declaration_file {
                         self.write(": any");
                     }
