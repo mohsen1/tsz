@@ -1217,10 +1217,10 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
         let mut bare_returns = Vec::new();
         self.collect_bare_return_statements(body_idx, &mut bare_returns);
         for return_idx in bare_returns {
-            use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
             self.error_at_node(
                 return_idx,
                 diagnostic_messages::NOT_ALL_CODE_PATHS_RETURN_A_VALUE,
@@ -1267,10 +1267,10 @@ impl<'a> CheckerState<'a> {
             }
             syntax_kind_ext::IF_STATEMENT => {
                 if let Some(if_data) = self.ctx.arena.get_if_statement(node) {
+                    // A none `else_statement` is a no-op recursion (`arena.get`
+                    // returns `None`), so no `is_some` guard is needed.
                     self.collect_bare_return_statements(if_data.then_statement, out);
-                    if if_data.else_statement.is_some() {
-                        self.collect_bare_return_statements(if_data.else_statement, out);
-                    }
+                    self.collect_bare_return_statements(if_data.else_statement, out);
                 }
             }
             syntax_kind_ext::SWITCH_STATEMENT => {
@@ -1291,13 +1291,11 @@ impl<'a> CheckerState<'a> {
             }
             syntax_kind_ext::TRY_STATEMENT => {
                 if let Some(try_data) = self.ctx.arena.get_try(node) {
+                    // Absent catch/finally are none indices, so the recursion
+                    // no-ops without an `is_some` guard.
                     self.collect_bare_return_statements(try_data.try_block, out);
-                    if try_data.catch_clause.is_some() {
-                        self.collect_bare_return_statements(try_data.catch_clause, out);
-                    }
-                    if try_data.finally_block.is_some() {
-                        self.collect_bare_return_statements(try_data.finally_block, out);
-                    }
+                    self.collect_bare_return_statements(try_data.catch_clause, out);
+                    self.collect_bare_return_statements(try_data.finally_block, out);
                 }
             }
             syntax_kind_ext::CATCH_CLAUSE => {
