@@ -141,7 +141,18 @@ pub fn discover_ts_files(options: &FileDiscoveryOptions) -> Result<Vec<PathBuf>>
             list.push(path);
         }
     }
-    list.extend(files);
+    // tsc's include-glob discovery groups matches by supported-extension
+    // family and visits the TypeScript group (`.ts`/`.tsx`/`.mts`/`.cts`)
+    // before the JavaScript group (`.js`/`.jsx`/`.mjs`/`.cjs`), so a
+    // same-named `a.ts`/`a.js` pair across script files establishes the
+    // `.ts` declaration as the program's earlier root file regardless of
+    // which path sorts first alphabetically. A flat alphabetical merge
+    // silently reordered cross-file global merges relative to tsc whenever
+    // the `.js` path happened to sort first.
+    let (ts_files, js_files): (Vec<_>, Vec<_>) =
+        files.into_iter().partition(|path| is_ts_file(path));
+    list.extend(ts_files);
+    list.extend(js_files);
     Ok(list)
 }
 
@@ -1527,6 +1538,53 @@ mod tests {
             discover_names(&dir, true),
             vec!["zorbaflux.ts".to_string()],
             "shadowing must not depend on the specific stem name"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Oracle-verified against pinned `tsc` 7.0.2 (`--singleThreaded
+    /// --stableTypeOrdering true`, matching the conformance cache generator):
+    /// with distinct stems (no shadowing), wildcard-discovered `.ts` files
+    /// come before `.js` files in the program's root-file order regardless of
+    /// alphabetical path order. tsc's include discovery visits the
+    /// TypeScript supported-extension group ahead of the JavaScript group, so
+    /// a cross-file global merge (e.g. `var x` in both an early-alphabetical
+    /// `.js` file and a later-alphabetical `.ts` file) establishes the `.ts`
+    /// declaration as canonical. A flat alphabetical merge put `a.js` ahead
+    /// of `b.ts`, reversing which file tsc treats as the "first" declaration
+    /// for `TS2403` purposes (see `TypeScript/tests/cases/conformance/salsa/
+    /// jsContainerMergeTsDeclaration.ts`).
+    #[test]
+    fn test_discover_orders_ts_files_before_js_files_regardless_of_name() {
+        let dir = std::env::temp_dir().join("tsz_fs_test_ts_before_js_order");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        // "a" sorts before "b" alphabetically, but the .js file must still
+        // come after the .ts file in program order.
+        fs::write(dir.join("a.js"), "var x = 1;").unwrap();
+        fs::write(dir.join("b.ts"), "var y = 1;").unwrap();
+
+        let options = FileDiscoveryOptions {
+            base_dir: dir.clone(),
+            files: vec![],
+            files_explicitly_set: false,
+            include: None,
+            exclude: None,
+            out_dir: None,
+            follow_links: false,
+            allow_js: true,
+            resolve_json_module: false,
+        };
+        let names: Vec<String> = discover_ts_files(&options)
+            .unwrap()
+            .into_iter()
+            .map(|p| p.file_name().unwrap().to_string_lossy().to_string())
+            .collect();
+        assert_eq!(
+            names,
+            vec!["b.ts".to_string(), "a.js".to_string()],
+            "wildcard-discovered .ts files must precede .js files in program order, got: {names:?}"
         );
 
         let _ = fs::remove_dir_all(&dir);
