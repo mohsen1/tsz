@@ -549,6 +549,8 @@ mod js_cross_file_expando_declaration_tests;
 mod js_expando_nested_open_host_write_tests;
 #[path = "tests/js_expando_nested_prototype_write_callable_tests.rs"]
 mod js_expando_nested_prototype_write_callable_tests;
+#[path = "tests/js_expando_nested_write_absent_member_tests.rs"]
+mod js_expando_nested_write_absent_member_tests;
 #[path = "tests/js_expando_order_sensitivity_tests.rs"]
 mod js_expando_order_sensitivity_tests;
 #[path = "tests/js_file_function_parameters_as_optional_tests.rs"]
