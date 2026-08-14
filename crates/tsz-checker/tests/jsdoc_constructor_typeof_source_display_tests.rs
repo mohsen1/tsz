@@ -243,3 +243,54 @@ fn jsdoc_arrow_function_type_is_unaffected_by_closure_recovery() {
         "the arrow form must render its own type, not `Function`; got: {diags:?}"
     );
 }
+
+// --- Closure `function(...)` JSDoc type with no return-type annotation ---
+//
+// A Closure `function(...)` type is rejected with TS1005 and resolves to
+// `Function` regardless of whether it spells a return-type annotation — TS7's
+// parser never builds a function-type signature to report a missing return
+// type against. TS7014 ("Function type, which lacks return-type annotation")
+// presupposes a successfully-parsed function-type node, so it must never fire
+// alongside the Closure TS1005 rejection. Oracle (`typescript@7.0.2`,
+// `--allowJs --checkJs --noImplicitAny`): exactly TS1005 + the `Function`-typed
+// mismatch, never TS7014.
+
+/// `@type` position, no return-type annotation: exactly TS1005 + TS2322
+/// against `Function` — no TS7014.
+#[test]
+fn jsdoc_closure_function_type_tag_missing_return_is_not_ts7014() {
+    let diags = diagnostics_for_js_with_lib("/** @type {function (number)} */\nvar g;\ng = 5;\n");
+    assert_eq!(
+        codes(&diags),
+        vec![1005, 2322],
+        "a Closure function type missing its return annotation must not also report TS7014; got: {diags:?}"
+    );
+}
+
+/// `@param` position, no return-type annotation: exactly TS1005 + TS2345
+/// against `Function` — no TS7014.
+#[test]
+fn jsdoc_closure_function_param_missing_return_is_not_ts7014() {
+    let diags = diagnostics_for_js_with_lib(
+        "/**\n * @param {function(number)} c\n */\nfunction f(c) { return c; }\nf(0);\n",
+    );
+    assert_eq!(
+        codes(&diags),
+        vec![1005, 2345],
+        "a Closure function param type missing its return annotation must not also report TS7014; got: {diags:?}"
+    );
+}
+
+/// `@return` position, no return-type annotation: exactly TS1005 + TS2322
+/// against `Function` — no TS7014.
+#[test]
+fn jsdoc_closure_function_return_missing_return_is_not_ts7014() {
+    let diags = diagnostics_for_js_with_lib(
+        "/**\n * @return {function(number)}\n */\nfunction h() { return 5; }\n",
+    );
+    assert_eq!(
+        codes(&diags),
+        vec![1005, 2322],
+        "a Closure function return type missing its return annotation must not also report TS7014; got: {diags:?}"
+    );
+}
