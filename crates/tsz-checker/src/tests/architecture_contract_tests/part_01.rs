@@ -441,7 +441,12 @@ fn test_emitter_direct_solver_access_does_not_grow() {
     // asks the solver-owned `widen_bare_unique_symbol_value_for_dts`
     // (getWidenedUniqueESSymbolType) — a solver-backed boundary, not a raw
     // `TypeData` read, so emit and check agree on `const [db] = t` -> `symbol`.
-    const DIRECT_SOLVER_ACCESS_LINE_CEILING: usize = 675;
+    // 675→676 (#17453): +1 for `method_type_id != tsz_solver::types::TypeId::NEVER`
+    // in `declaration_emitter/core/emit_members.rs`. That is a sentinel-constant
+    // comparison, not a semantic read — there is no shape being interrogated for
+    // a boundary to own, and the scan matches it only because it is textually
+    // `tsz_solver::`. Counted as debt for consistency rather than routed.
+    const DIRECT_SOLVER_ACCESS_LINE_CEILING: usize = 676;
     assert!(
         direct_solver_lines.len() <= DIRECT_SOLVER_ACCESS_LINE_CEILING,
         "Emitter direct solver access grew to {} lines (ceiling: {}). \
