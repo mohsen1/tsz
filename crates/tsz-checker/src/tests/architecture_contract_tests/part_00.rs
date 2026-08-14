@@ -1082,10 +1082,22 @@ fn test_assignment_and_binding_default_assignability_use_central_gateway_helpers
         !state_property_checking_src.contains("tsz_solver::type_queries::"),
         "state_property_checking should route solver type-query access through query_boundaries::state::checking"
     );
-    let state_variable_checking_destructuring_src = fs::read_to_string(
-        "src/state/variable_checking/destructuring.rs",
-    )
-    .expect("failed to read src/state/variable_checking/destructuring.rs for architecture guard");
+    let state_variable_checking_destructuring_src = {
+        let destructuring = fs::read_to_string("src/state/variable_checking/destructuring.rs")
+            .expect(
+                "failed to read src/state/variable_checking/destructuring.rs for architecture guard",
+            );
+        // The TS7031-reporting variant of the destructuring assignment (and the
+        // null/undefined widening call it shares with the plain variant) lives in
+        // its own file, split out to stay under destructuring.rs's line ratchet.
+        let widened_any_report = fs::read_to_string(
+            "src/state/variable_checking/destructuring_widened_any_report.rs",
+        )
+        .expect(
+            "failed to read src/state/variable_checking/destructuring_widened_any_report.rs for architecture guard",
+        );
+        format!("{destructuring}\n{widened_any_report}")
+    };
     let state_variable_checking_src = fs::read_to_string("src/state/variable_checking/core.rs")
         .expect("failed to read src/state/variable_checking/core.rs for architecture guard");
     let state_class_checking_src = fs::read_to_string("src/state/state_checking/class.rs")

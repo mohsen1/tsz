@@ -499,8 +499,22 @@ impl<'a> CheckerState<'a> {
         let in_for_of_header_expression = !is_cross_file
             && is_var
             && self.is_in_for_of_header_expression_of_declaration(usage_idx, decl_idx);
+        // A block-scoped binding is in its temporal dead zone throughout its own
+        // initializer region — the declaration's initializer expression, or the
+        // iterated expression of a `for-in`/`for-of` header. For a binding
+        // pattern the declared name sits in a small binding element whose end
+        // precedes that region (`let [x1] = x1 + 1`, `for (let [v] of v)`), and
+        // the `for-in` header is not covered by the for-of-only path above, so
+        // the plain `usage.pos <= decl.end` test misses those self-references.
+        let in_own_declaration_initializer = !is_cross_file
+            && is_var
+            && self.is_usage_in_own_declaration_initializer(usage_idx, decl_idx);
         if !is_cross_file && usage_node.pos >= decl_node.pos {
-            if is_var && (usage_node.pos <= decl_node.end || in_for_of_header_expression) {
+            if is_var
+                && (usage_node.pos <= decl_node.end
+                    || in_for_of_header_expression
+                    || in_own_declaration_initializer)
+            {
                 // It might be in the initializer. We will confirm via AST walk.
                 could_be_in_initializer = true;
             } else if is_class
@@ -620,13 +634,126 @@ impl<'a> CheckerState<'a> {
             current = ext.parent;
         }
 
-        if could_be_in_initializer && !found_decl_in_path && !in_for_of_header_expression {
+        if could_be_in_initializer
+            && !found_decl_in_path
+            && !in_for_of_header_expression
+            && !in_own_declaration_initializer
+        {
             // It was >= pos, but wasn't actually inside the declaration's AST.
             // This means it's strictly AFTER the declaration.
             return false;
         }
 
         true
+    }
+
+    /// Whether `usage_idx` sits inside the *own initializer region* of the
+    /// block-scoped declaration named by `decl_idx` — the declaration's own
+    /// initializer expression, or the iterated expression of a `for-in`/`for-of`
+    /// header that declares it. A block-scoped binding is in its temporal dead
+    /// zone throughout that region, so a self-reference there is a TS2448.
+    ///
+    /// This generalizes the plain-identifier `usage.pos <= decl.end` test to the
+    /// binding-pattern case, where `decl_idx` is the small binding element and
+    /// the region lies past its end (`let [x1] = x1 + 1`,
+    /// `for (let [v] of v)`), and to `for-in` headers (`for (let v in v)`),
+    /// which the for-of-only path does not cover.
+    fn is_usage_in_own_declaration_initializer(
+        &self,
+        usage_idx: NodeIndex,
+        decl_idx: NodeIndex,
+    ) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        // Ascend from the declaration to its enclosing `VariableDeclaration`;
+        // a binding element sits under a binding pattern under the declaration.
+        let mut current = decl_idx;
+        let var_decl_idx = loop {
+            let Some(node) = self.ctx.arena.get(current) else {
+                return false;
+            };
+            if node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
+                break current;
+            }
+            // Only climb through binding patterns/elements. Anything else means
+            // this is not a variable binding and has no such region.
+            let climbable = matches!(
+                node.kind,
+                syntax_kind_ext::BINDING_ELEMENT
+                    | syntax_kind_ext::ARRAY_BINDING_PATTERN
+                    | syntax_kind_ext::OBJECT_BINDING_PATTERN
+            );
+            if !climbable && current != decl_idx {
+                return false;
+            }
+            let Some(info) = self.ctx.arena.get_extended(current) else {
+                return false;
+            };
+            if info.parent.is_none() || info.parent == current {
+                return false;
+            }
+            current = info.parent;
+        };
+
+        let Some(var_decl_node) = self.ctx.arena.get(var_decl_idx) else {
+            return false;
+        };
+        let Some(var_decl) = self.ctx.arena.get_variable_declaration(var_decl_node) else {
+            return false;
+        };
+
+        // 1. The declaration's own initializer, e.g. `let [x1] = x1 + 1`.
+        if var_decl.initializer.is_some()
+            && self.tdz_subtree_contains(var_decl.initializer, usage_idx)
+        {
+            return true;
+        }
+
+        // 2. A `for-in`/`for-of` header expression declaring this binding, e.g.
+        //    `for (let v in v)` / `for (let [v] of v)`.
+        let Some(list_info) = self.ctx.arena.get_extended(var_decl_idx) else {
+            return false;
+        };
+        let Some(list_node) = self.ctx.arena.get(list_info.parent) else {
+            return false;
+        };
+        if list_node.kind != syntax_kind_ext::VARIABLE_DECLARATION_LIST {
+            return false;
+        }
+        let Some(list_parent) = self.ctx.arena.get_extended(list_info.parent) else {
+            return false;
+        };
+        let Some(for_node) = self.ctx.arena.get(list_parent.parent) else {
+            return false;
+        };
+        if for_node.kind != syntax_kind_ext::FOR_IN_STATEMENT
+            && for_node.kind != syntax_kind_ext::FOR_OF_STATEMENT
+        {
+            return false;
+        }
+        let Some(for_data) = self.ctx.arena.get_for_in_of(for_node) else {
+            return false;
+        };
+        for_data.expression.is_some() && self.tdz_subtree_contains(for_data.expression, usage_idx)
+    }
+
+    /// Whether `usage_idx` is `container_idx` or lies within its subtree, by
+    /// walking parent links up from the usage.
+    fn tdz_subtree_contains(&self, container_idx: NodeIndex, usage_idx: NodeIndex) -> bool {
+        let mut current = usage_idx;
+        while current.is_some() {
+            if current == container_idx {
+                return true;
+            }
+            let Some(info) = self.ctx.arena.get_extended(current) else {
+                return false;
+            };
+            if info.parent.is_none() || info.parent == current {
+                return false;
+            }
+            current = info.parent;
+        }
+        false
     }
 
     /// Check if the usage node is inside a decorator expression that belongs to

@@ -1817,8 +1817,31 @@ impl<'a> CheckerState<'a> {
                 }
             } else if let Some(jsdoc_type) = jsdoc_declared_type {
                 jsdoc_type
-            } else if let Some(inferred) =
-                self.cached_inferred_variable_type(decl_idx, var_decl.name)
+            } else if let Some(inferred) = self
+                .cached_inferred_variable_type(decl_idx, var_decl.name)
+                .filter(|_| {
+                    // A `var` (function-scoped) destructuring declaration's own
+                    // `VariableDeclaration` node carries a hoisting symbol, so the
+                    // general (pattern-unaware) initializer evaluation earlier in
+                    // this function — which has no tuple/object contextual type to
+                    // offer the array/object literal — gets cached onto this same
+                    // decl/name node pair (`core.rs`'s "FIX: Update node_types
+                    // cache" sites). Reusing that flattened result here is correct
+                    // for a non-fresh-literal source (a call, identifier, etc. —
+                    // where contextual typing changes nothing), but wrong for a
+                    // fresh array/object literal: tsc positionally contextually
+                    // types a fresh literal against the binding pattern (tuple
+                    // element types, positional const-literal precision, and this
+                    // per-slot nullish-to-`any` widening below all depend on it),
+                    // and the general evaluation above discarded that per-slot
+                    // shape. `let`/`const` patterns never hit this staleness — no
+                    // symbol sits on their `decl_idx`, so the general block never
+                    // runs and never caches anything here.
+                    !self.initializer_supports_binding_pattern_context(
+                        var_decl.name,
+                        var_decl.initializer,
+                    )
+                })
             {
                 // Reuse the declaration's already-computed type so destructuring
                 // element checks see the same request-aware initializer result.
@@ -1869,6 +1892,21 @@ impl<'a> CheckerState<'a> {
                 );
             }
 
+            // TS7031: a destructuring leaf whose element type is exactly
+            // `null`/`undefined` and widens to `any` under non-strict null
+            // checks — the destructuring-binding twin of the TS7005/TS7010
+            // gates above. Same exclusions as the no-initializer TS7031 path
+            // just above (catch variables and for-in/for-of get their type
+            // from a different source, not literal-initializer widening) plus
+            // `initializer.is_some()`, since a bare `var [a, b];` is already
+            // covered by `emit_implicit_any_for_var_destructuring`.
+            let report_widened_binding_any = self.ctx.no_implicit_any()
+                && !self.ctx.has_real_syntax_errors
+                && !is_catch_variable
+                && var_decl.type_annotation.is_none()
+                && var_decl.initializer.is_some()
+                && !self.is_for_in_or_of_variable_declaration(decl_idx);
+
             // TS2488: Check array destructuring for iterability before assigning types
             if name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN {
                 let is_iterable = self.check_destructuring_iterability(
@@ -1884,10 +1922,11 @@ impl<'a> CheckerState<'a> {
 
                     // Ensure binding element identifiers get the correct inferred types.
                     let binding_request = typing_request.read().contextual_opt(None);
-                    self.assign_binding_pattern_symbol_types_with_request(
+                    self.assign_binding_pattern_symbol_types_with_request_reporting(
                         var_decl.name,
                         pattern_type,
                         &binding_request,
+                        report_widened_binding_any,
                     );
                     self.check_binding_pattern_with_request(
                         var_decl.name,
@@ -1899,10 +1938,11 @@ impl<'a> CheckerState<'a> {
             } else {
                 // Ensure binding element identifiers get the correct inferred types.
                 let binding_request = typing_request.read().contextual_opt(None);
-                self.assign_binding_pattern_symbol_types_with_request(
+                self.assign_binding_pattern_symbol_types_with_request_reporting(
                     var_decl.name,
                     pattern_type,
                     &binding_request,
+                    report_widened_binding_any,
                 );
                 self.check_binding_pattern_with_request(
                     var_decl.name,

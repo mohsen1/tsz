@@ -16,8 +16,9 @@ use crate::types::{
     TypeParamInfo, TypeParamOrigin, Visibility,
 };
 use crate::visitor::{
-    callable_shape_id, function_shape_id, index_access_parts, keyof_inner_type, literal_string,
-    mapped_type_id, object_shape_id, object_with_index_shape_id, type_param_info, union_list_id,
+    callable_shape_id, function_shape_id, index_access_parts, intersection_list_id,
+    keyof_inner_type, literal_string, mapped_type_id, object_shape_id, object_with_index_shape_id,
+    type_param_info, union_list_id,
 };
 use rustc_hash::FxHashMap;
 
@@ -25,6 +26,60 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     pub(crate) const fn allows_bivariant_param_count(&self, is_method_like: bool) -> bool {
         self.allow_bivariant_param_count
             && (!self.strict_function_types || (is_method_like && !self.disable_method_bivariance))
+    }
+
+    /// tsc's `someTypeRelatedToType` fast path: whether a source intersection —
+    /// interned directly, or recovered from a *merged*-intersection object — is
+    /// related to `target` because one constituent already is.
+    ///
+    /// A source object built by merging an intersection keeps a
+    /// `merged_intersection_origin` back to that intersection. The global
+    /// `window` value's type is a materialized `Window & typeof globalThis`
+    /// surface whose own `window`/`self`/`frames` members are again
+    /// `Window & typeof globalThis`, so a structural walk against `Window`
+    /// re-mints `this`-bound `Window` instantiations without converging and
+    /// exhausts the relation budget — TS2859 for a direct assignment, or a
+    /// spurious TS2322 when a property/argument context turns the depth-exceeded
+    /// verdict into `False` (issue #17390). Recovering the origin intersection
+    /// and short-circuiting on the `Window` constituent matches tsc and
+    /// sidesteps the walk. The caller runs this early, before the target is
+    /// resolved through its `Lazy` reference: the origin's `Window` constituent
+    /// and a `Lazy(Window)` target both carry the lib def, whereas the merged
+    /// surface's own materialized `Window` members and a resolved-to-body target
+    /// carry no def/symbol, so a later check could not match them.
+    ///
+    /// A constituent qualifies when it literally IS the target (`A & T <: T`,
+    /// sound for any target) or when its verified nominal heritage reaches the
+    /// target's def, so this only ever returns `true` for a genuine subtype.
+    pub(crate) fn intersection_or_merged_source_satisfies_target(
+        &self,
+        source: TypeId,
+        target: TypeId,
+    ) -> bool {
+        if source == target || source.is_intrinsic() {
+            return false;
+        }
+        let members = intersection_list_id(self.interner, source).or_else(|| {
+            self.interner
+                .get_merged_intersection_origin(source)
+                .filter(|&origin| origin != source)
+                .and_then(|origin| intersection_list_id(self.interner, origin))
+        });
+        let Some(members) = members else {
+            return false;
+        };
+        let member_list = self.interner.type_list(members);
+        let target_shape = object_shape_id(self.interner, target)
+            .or_else(|| object_with_index_shape_id(self.interner, target))
+            .map(|id| self.interner.object_shape(id));
+        member_list.iter().any(|&member| {
+            member == target
+                || self.intersection_member_nominally_extends_target(
+                    member,
+                    target,
+                    target_shape.as_deref(),
+                )
+        })
     }
 
     /// Build a name-keyed substitution that erases authoritative declaration

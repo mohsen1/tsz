@@ -48,6 +48,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return SubtypeResult::True;
         }
 
+        // tsc's `someTypeRelatedToType` fast path (issue #17390); see helper.
+        if self.intersection_or_merged_source_satisfies_target(source, target) {
+            return SubtypeResult::True;
+        }
         // Note: Canonicalization-based structural identity (Task #36) was previously
         // called here as a "fast path", but it was actually SLOWER than the normal path
         // because it allocated a fresh Canonicalizer per call (FxHashMap + Vecs) and
