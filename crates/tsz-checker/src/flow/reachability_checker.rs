@@ -1176,4 +1176,156 @@ impl<'a> CheckerState<'a> {
         }
         true
     }
+
+    // =========================================================================
+    // Bare-`return;` completeness (TS7030)
+    // =========================================================================
+
+    /// TS7030 for a bare `return;` (no expression) under `noImplicitReturns`.
+    ///
+    /// `tsc`'s `checkReturnStatement` reports TS7030 at a bare `return;`
+    /// whenever `noImplicitReturns` is on, `strictNullChecks` is off, the
+    /// container is not a constructor, and the effective (unwrapped) return type
+    /// is not `void`/`undefined`/`any`/`never`. Under `strictNullChecks` a bare
+    /// return instead flows through the ordinary assignability path (`undefined`
+    /// is not assignable, giving TS2322), so this stays silent there; a `never`
+    /// return type likewise routes through that path (TS2322), not TS7030.
+    ///
+    /// This is a distinct diagnostic source from the fall-off-the-end TS7030 the
+    /// four call sites already emit: `tsc` reports it *per bare return statement*
+    /// at that statement's own position, and both kinds can fire in one
+    /// function. It is intentionally *not* reachability-gated — `tsc` checks
+    /// every return statement in `checkReturnStatement` regardless of
+    /// reachability, so an unreachable bare `return;` (after a `return`/`throw`)
+    /// still reports.
+    pub(crate) fn report_no_implicit_return_bare_returns(
+        &mut self,
+        body_idx: NodeIndex,
+        check_return_type: TypeId,
+        has_type_annotation: bool,
+        is_generator: bool,
+    ) {
+        if self.ctx.strict_null_checks()
+            || !self.ctx.no_implicit_returns()
+            || check_return_type == TypeId::NEVER
+            || self.should_skip_no_implicit_return_check(
+                check_return_type,
+                has_type_annotation,
+                is_generator,
+            )
+        {
+            return;
+        }
+
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+        let mut bare_returns = Vec::new();
+        self.collect_bare_return_statements(body_idx, &mut bare_returns);
+        for return_idx in bare_returns {
+            self.error_at_node(
+                return_idx,
+                diagnostic_messages::NOT_ALL_CODE_PATHS_RETURN_A_VALUE,
+                diagnostic_codes::NOT_ALL_CODE_PATHS_RETURN_A_VALUE,
+            );
+        }
+    }
+
+    /// Collect every bare `return;` (no expression) statement lexically inside a
+    /// function body, in source order, WITHOUT descending into a nested
+    /// function-like body or class static block — each of those answers to its
+    /// own return-type context. Recurses through exactly the statement shapes
+    /// `tsc`'s `checkSourceElement` visits (blocks, `if`, `switch`, `try`,
+    /// loops, labeled and `with` statements), so an unreachable bare return is
+    /// collected too, matching `tsc`'s per-statement TS7030 check.
+    fn collect_bare_return_statements(&self, stmt_idx: NodeIndex, out: &mut Vec<NodeIndex>) {
+        let Some(node) = self.ctx.arena.get(stmt_idx) else {
+            return;
+        };
+
+        // A nested function-like body (or class static block) has its own
+        // return-type context; its returns are checked when it is checked.
+        if node.is_function_like() || node.kind == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION {
+            return;
+        }
+
+        match node.kind {
+            syntax_kind_ext::RETURN_STATEMENT => {
+                if self
+                    .ctx
+                    .arena
+                    .get_return_statement(node)
+                    .is_some_and(|ret| ret.expression.is_none())
+                {
+                    out.push(stmt_idx);
+                }
+            }
+            syntax_kind_ext::BLOCK => {
+                if let Some(block) = self.ctx.arena.get_block(node) {
+                    for &child in &block.statements.nodes {
+                        self.collect_bare_return_statements(child, out);
+                    }
+                }
+            }
+            syntax_kind_ext::IF_STATEMENT => {
+                if let Some(if_data) = self.ctx.arena.get_if_statement(node) {
+                    // A none `else_statement` is a no-op recursion (`arena.get`
+                    // returns `None`), so no `is_some` guard is needed.
+                    self.collect_bare_return_statements(if_data.then_statement, out);
+                    self.collect_bare_return_statements(if_data.else_statement, out);
+                }
+            }
+            syntax_kind_ext::SWITCH_STATEMENT => {
+                if let Some(switch_data) = self.ctx.arena.get_switch(node)
+                    && let Some(case_block_node) = self.ctx.arena.get(switch_data.case_block)
+                    && let Some(case_block) = self.ctx.arena.get_block(case_block_node)
+                {
+                    for &clause_idx in &case_block.statements.nodes {
+                        if let Some(clause_node) = self.ctx.arena.get(clause_idx)
+                            && let Some(clause) = self.ctx.arena.get_case_clause(clause_node)
+                        {
+                            for &stmt in &clause.statements.nodes {
+                                self.collect_bare_return_statements(stmt, out);
+                            }
+                        }
+                    }
+                }
+            }
+            syntax_kind_ext::TRY_STATEMENT => {
+                if let Some(try_data) = self.ctx.arena.get_try(node) {
+                    // Absent catch/finally are none indices, so the recursion
+                    // no-ops without an `is_some` guard.
+                    self.collect_bare_return_statements(try_data.try_block, out);
+                    self.collect_bare_return_statements(try_data.catch_clause, out);
+                    self.collect_bare_return_statements(try_data.finally_block, out);
+                }
+            }
+            syntax_kind_ext::CATCH_CLAUSE => {
+                if let Some(catch_data) = self.ctx.arena.get_catch_clause(node) {
+                    self.collect_bare_return_statements(catch_data.block, out);
+                }
+            }
+            syntax_kind_ext::WHILE_STATEMENT
+            | syntax_kind_ext::DO_STATEMENT
+            | syntax_kind_ext::FOR_STATEMENT => {
+                if let Some(loop_data) = self.ctx.arena.get_loop(node) {
+                    self.collect_bare_return_statements(loop_data.statement, out);
+                }
+            }
+            syntax_kind_ext::FOR_IN_STATEMENT | syntax_kind_ext::FOR_OF_STATEMENT => {
+                if let Some(for_data) = self.ctx.arena.get_for_in_of(node) {
+                    self.collect_bare_return_statements(for_data.statement, out);
+                }
+            }
+            syntax_kind_ext::LABELED_STATEMENT => {
+                if let Some(labeled) = self.ctx.arena.get_labeled_statement(node) {
+                    self.collect_bare_return_statements(labeled.statement, out);
+                }
+            }
+            syntax_kind_ext::WITH_STATEMENT => {
+                if let Some(with_data) = self.ctx.arena.get_with_statement(node) {
+                    self.collect_bare_return_statements(with_data.then_statement, out);
+                }
+            }
+            _ => {}
+        }
+    }
 }

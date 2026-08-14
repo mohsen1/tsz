@@ -1815,6 +1815,20 @@ impl<'a> CheckerState<'a> {
         let requires_return = self.requires_return_value(check_return_type);
         let has_return = self.body_has_return_with_value(body);
         let falls_through = self.function_body_falls_through(body);
+        // Return type used by both TS7030 sources below (fall-off-the-end and
+        // per-bare-return). Computed once, and only when `noImplicitReturns` is
+        // on, since both consumers are gated on it. Uses `function_is_generator`
+        // (the ctx-sourced flag the TS7030 path has always used), distinct from
+        // the arena-sourced `is_generator` behind `check_return_type` above.
+        let ts7030_check_type = if self.ctx.no_implicit_returns() {
+            self.return_type_for_implicit_return_check(
+                annotated_return_type.unwrap_or(return_type),
+                is_async,
+                function_is_generator,
+            )
+        } else {
+            check_return_type
+        };
         if has_type_annotation
             && requires_return
             && falls_through
@@ -1844,11 +1858,6 @@ impl<'a> CheckerState<'a> {
         } else if self.ctx.no_implicit_returns() && has_return && falls_through {
             // TS7030: noImplicitReturns - not all code paths return a value
             // TSC skips TS7030 for functions returning void, any, or unions containing void/any
-            let ts7030_check_type = self.return_type_for_implicit_return_check(
-                annotated_return_type.unwrap_or(return_type),
-                is_async,
-                function_is_generator,
-            );
             if !self.should_skip_no_implicit_return_check(
                 ts7030_check_type,
                 has_type_annotation,
@@ -1869,6 +1878,15 @@ impl<'a> CheckerState<'a> {
                 );
             }
         }
+
+        // TS7030 for each bare `return;`, independent of the fall-off-the-end
+        // check above (both can fire in one function).
+        self.report_no_implicit_return_bare_returns(
+            body,
+            ts7030_check_type,
+            has_type_annotation,
+            function_is_generator,
+        );
     }
 
     /// Check if a return context type is or references a const type parameter.
