@@ -130,30 +130,32 @@ impl<'a> CheckerState<'a> {
             member_name,
             resolution_mode,
         ) {
-            // `import(...).Member` (without a leading `typeof`) first tries
+            // `import(...).Member` (without a leading `typeof`) tries
             // `Member` as a type-eligible export (interface/class/enum/
             // type-alias/namespace/typedef) via `BareTypeReference` mode, the
             // same way a local bare name reference resolves.
+            //
+            // Under TypeScript 7, a value-only `Member` (a plain const/let/
+            // function/`@enum`-tagged export) is TS2694 here, identical to
+            // the TS-syntax `type T = import("./m").Member` walk
+            // (`import_type.rs`) and to a local bare identifier (TS2749) —
+            // there is no fallback to the exported value's own type. An
+            // earlier version of this resolver fell back to the value type
+            // (comment cited "oracle-verified tsc 6.0.2"); TS7 dropped that
+            // leniency (oracle: typescript@7.0.2, both a plain
+            // `export const FOO = "foo"` and an `@enum`-tagged export report
+            // TS2694 through `import("./m").Member`, matching the corpus
+            // fixtures `jsdocImportTypeReferenceToStringLiteral.ts` and
+            // `enumTagImported.ts` once their own stale pre-TS7 `.types`
+            // baselines are set aside). `sym_id` resolving is therefore not
+            // itself sufficient — only a type-eligible `Member` avoids
+            // TS2694, so a failed `BareTypeReference` here falls straight
+            // through to the `@typedef`/CommonJS-expando checks below and,
+            // failing those too, to the TS2694 terminal.
             let resolved =
                 self.resolve_jsdoc_symbol_type_with_mode(sym_id, JsdocNameMode::BareTypeReference);
             if resolved != TypeId::ERROR && resolved != TypeId::UNKNOWN {
                 return Some(Ok(resolved));
-            }
-            // Unlike a local bare identifier (which stays a TS2749
-            // value-used-as-type error) and unlike the TS-syntax `type T =
-            // import("./m").Member` walk (`import_type.rs`, which keeps
-            // TS2694 for a plain value), tsc's JSDoc `import("./m").Member`
-            // type-position query falls back to the exported value's own
-            // type when `Member` has no type meaning — oracle-verified
-            // (tsc 6.0.2): `@type {import("./dep").value}` resolves to
-            // `number` for `export declare const value: number`, and to a
-            // function export's call-signature type. `Member` is already
-            // confirmed to exist (`sym_id` resolved above), so tsc never
-            // reports TS2694 here; only the type-vs-value fallback differs.
-            let value_resolved =
-                self.resolve_jsdoc_symbol_type_with_mode(sym_id, JsdocNameMode::ValuePosition);
-            if value_resolved != TypeId::ERROR && value_resolved != TypeId::UNKNOWN {
-                return Some(Ok(value_resolved));
             }
         }
         if let Some(typedef_type) =
