@@ -14,9 +14,13 @@
 //! (`expected:[TS2339,TS2451]`). tsc additionally resolves `A`'s type for
 //! *later* references (e.g. an `A.d` property access after the conflicting
 //! declaration) to the class's static side, reporting `TS2339` there — that
-//! half of tsc's "merge symbol despite the conflict, still flag it" recovery
-//! is a separate, deeper `get_type_of_symbol` flag-priority question and is
-//! not covered by this fix; not asserted here.
+//! half is covered by
+//! `crates/tsz-cli/tests/js_container_merge_class_variable_conflict_expando_cli_tests.rs`
+//! (the real project-mode driver, not the entry-only harness used here,
+//! is required: the fix depends on the production `global_symbol_file_index`
+//! cross-arena merge that unifies `A`'s `.d.ts`/`.js` declarations under one
+//! `SymbolId`, which none of the lightweight multi-file test harnesses in
+//! this crate reproduce).
 
 use tsz_checker::context::CheckerOptions;
 use tsz_common::common::ModuleKind;
@@ -190,5 +194,25 @@ fn ts2300_not_ts2451_when_var_conflicts_with_dts_class() {
         count_code(&diags, 2300),
         1,
         "var vs class must report TS2300 (duplicate identifier); got: {diags:?}"
+    );
+}
+
+/// Negative control: without the conflicting `.d.ts` class, the same
+/// empty-object-literal expando write on a plain JS `const` stays clean —
+/// proving the companion CLI-level fix (see the module doc comment) is
+/// scoped to the CLASS+VARIABLE conflict shape and does not disable
+/// ordinary JS expando writes.
+#[test]
+fn ts2339_does_not_fire_for_plain_js_expando_without_class_conflict() {
+    let diags = compile_files(&[("b.js", "const A = { };\nA.d = { };")], 0);
+    assert_eq!(
+        count_code(&diags, 2339),
+        0,
+        "plain JS expando write must stay clean without a conflicting class; got: {diags:?}"
+    );
+    assert_eq!(
+        count_code(&diags, 2451),
+        0,
+        "no conflict expected; got: {diags:?}"
     );
 }

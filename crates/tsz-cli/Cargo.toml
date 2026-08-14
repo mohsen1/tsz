@@ -245,6 +245,9 @@ path = "tests/export_string_local_name_cross_file_suppression_cli_tests.rs"
 name = "cross_module_ambient_class_method_constraint_cli_tests"
 path = "tests/cross_module_ambient_class_method_constraint_cli_tests.rs"
 [[test]]
+name = "js_container_merge_class_variable_conflict_expando_cli_tests"
+path = "tests/js_container_merge_class_variable_conflict_expando_cli_tests.rs"
+[[test]]
 name = "cross_module_conditional_constraint_union_param_cli_tests"
 path = "tests/cross_module_conditional_constraint_union_param_cli_tests.rs"
 
