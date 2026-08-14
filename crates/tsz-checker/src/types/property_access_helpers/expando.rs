@@ -192,13 +192,19 @@ impl<'a> CheckerState<'a> {
         // genuine redeclaration conflict (already reported as TS2451/TS2300
         // elsewhere), never a valid merge like `function f(){} class f {}`'s
         // FUNCTION+CLASS. tsc's value resolution for a conflicting symbol
-        // always prefers the class (mirrors `compute_type_of_symbol`'s
-        // CLASS-first branch order), so the variable's own object-literal
-        // expando-host shape is never authoritative once CLASS is also
-        // present — reject before it can fall through to the variable check
-        // below. Oracle-verified: `declare class A {}` (`.d.ts`) conflicting
-        // with `const A = {}` (`.js`) still reports `TS2339` on `A.d = {}`.
-        if symbol.has_any_flags(symbol_flags::CLASS) && symbol.has_any_flags(symbol_flags::VARIABLE)
+        // prefers whichever declaration's file was processed FIRST (mirrors
+        // `compute_type_of_symbol`'s cross-file merge rule, see
+        // `cross_file_variable_class_merge.rs`) — the variable's own
+        // object-literal expando-host shape is authoritative only when its
+        // own file precedes the conflicting class's; reject only when the
+        // class shadows it. Oracle-verified (`typescript@7.0.2`, both file
+        // orders): `declare class A {}` (`.d.ts`) conflicting with
+        // `const A = {}` (`.js`) reports `TS2339` on `A.d = {}` when the
+        // `.d.ts` is processed first, but stays a legitimate expando write
+        // when the `.js` is processed first.
+        if symbol.has_any_flags(symbol_flags::CLASS)
+            && symbol.has_any_flags(symbol_flags::VARIABLE)
+            && self.variable_is_shadowed_by_earlier_class(sym_id)
         {
             return false;
         }
@@ -278,9 +284,13 @@ impl<'a> CheckerState<'a> {
 
         // Same restriction as `root_symbol_supports_js_expando_read`: a
         // CLASS+VARIABLE symbol is always a redeclaration conflict, never a
-        // valid merge, and tsc's value resolution prefers the class — the
-        // variable's own expando-host shape must not grant a direct write.
-        if symbol.has_any_flags(symbol_flags::CLASS) && symbol.has_any_flags(symbol_flags::VARIABLE)
+        // valid merge, and tsc's value resolution prefers whichever file
+        // bound first — the variable's own expando-host shape must not grant
+        // a direct write only when an earlier-processed file's class shadows
+        // it (order-dependent, see `cross_file_variable_class_merge.rs`).
+        if symbol.has_any_flags(symbol_flags::CLASS)
+            && symbol.has_any_flags(symbol_flags::VARIABLE)
+            && self.variable_is_shadowed_by_earlier_class(sym_id)
         {
             return false;
         }
