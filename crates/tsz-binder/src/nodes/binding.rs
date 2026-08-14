@@ -413,14 +413,20 @@ impl BinderState {
             // Variable declarations
             k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
                 if let Some(var_stmt) = arena.get_variable(node) {
-                    // Track using/await-using features for TS2318 diagnostics
+                    // Arm the TS2318 missing-global gate only for a `using` list
+                    // `tsc` resolves `Disposable` for (see the helper).
                     if let Some(&decl_list_idx) = var_stmt.declarations.nodes.first() {
                         if let Some(list_node) = arena.get(decl_list_idx) {
                             let flags = u32::from(list_node.flags);
-                            if node_flags::is_await_using(flags) {
-                                self.file_features.set(FileFeatures::AWAIT_USING);
-                            } else if (flags & node_flags::USING) != 0 {
-                                self.file_features.set(FileFeatures::USING);
+                            let is_await = node_flags::is_await_using(flags);
+                            if (is_await || (flags & node_flags::USING) != 0)
+                                && Self::using_list_resolves_disposable_global(arena, list_node)
+                            {
+                                self.file_features.set(if is_await {
+                                    FileFeatures::AWAIT_USING
+                                } else {
+                                    FileFeatures::USING
+                                });
                             }
                         }
                         self.bind_node(arena, decl_list_idx);

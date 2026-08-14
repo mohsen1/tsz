@@ -428,6 +428,37 @@ impl BinderState {
         }
     }
 
+    /// Whether a `using` / `await using` declaration list contains a declarator
+    /// that `tsc`'s `checkTypeAssignableTo(initializer, Disposable)` would
+    /// reach: one binding a plain identifier (not an object/array binding
+    /// pattern) *and* carrying an initializer.
+    ///
+    /// `tsc` resolves the global `Disposable`/`AsyncDisposable` interface only
+    /// for such declarators, so only they can produce TS2318 when the global is
+    /// missing. An initializer-less declarator is a TS1155 grammar error that is
+    /// never checked against `Disposable`, and a binding-pattern declarator is
+    /// likewise skipped; neither must arm the missing-global feature gate. This
+    /// is the binder-side complement of the guard in
+    /// `check_using_declaration_disposable`.
+    pub(crate) fn using_list_resolves_disposable_global(
+        arena: &NodeArena,
+        list_node: &Node,
+    ) -> bool {
+        let Some(list) = arena.get_variable(list_node) else {
+            return false;
+        };
+        list.declarations.nodes.iter().any(|&decl_idx| {
+            arena
+                .get_variable_declaration_at(decl_idx)
+                .is_some_and(|decl| {
+                    decl.initializer.is_some()
+                        && arena
+                            .get(decl.name)
+                            .is_none_or(|name| !name.is_binding_pattern())
+                })
+        })
+    }
+
     pub(crate) fn collect_import_names(
         arena: &NodeArena,
         node: &Node,

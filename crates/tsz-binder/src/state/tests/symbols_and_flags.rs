@@ -757,6 +757,54 @@ fn await_using_declaration_sets_feature_flag() {
     );
 }
 
+// `tsc` resolves the global `Disposable`/`AsyncDisposable` interface — and so
+// can report TS2318 for it — only for a `using` declarator it actually type
+// checks: a plain identifier with an initializer. An initializer-less
+// declarator (a TS1155 error) or a binding-pattern declarator is skipped, so
+// the feature flag that gates the missing-global check must not be set for
+// them. These mirror the checker guard in `check_using_declaration_disposable`.
+
+#[test]
+fn initializer_less_using_does_not_set_feature_flag() {
+    let (binder, _parser) = parse_and_bind("using d;");
+    assert!(
+        !binder.file_features.has(crate::state::FileFeatures::USING),
+        "initializer-less `using` must not arm the missing-global gate"
+    );
+}
+
+#[test]
+fn initializer_less_await_using_does_not_set_feature_flag() {
+    let (binder, _parser) = parse_and_bind("async function f() { await using d; }");
+    assert!(
+        !binder
+            .file_features
+            .has(crate::state::FileFeatures::AWAIT_USING),
+        "initializer-less `await using` must not arm the missing-global gate"
+    );
+}
+
+#[test]
+fn binding_pattern_using_does_not_set_feature_flag() {
+    let (binder, _parser) = parse_and_bind("using { a } = { a: 1 };");
+    assert!(
+        !binder.file_features.has(crate::state::FileFeatures::USING),
+        "binding-pattern `using` must not arm the missing-global gate"
+    );
+}
+
+#[test]
+fn using_list_with_one_initialized_name_sets_feature_flag() {
+    // `using a = 1, b;`: the first declarator qualifies (plain name +
+    // initializer), so the gate is armed even though the second (`b`) is a
+    // TS1155 error — matching `tsc`, which reports TS2318 for this list.
+    let (binder, _parser) = parse_and_bind("using a = 1, b;");
+    assert!(
+        binder.file_features.has(crate::state::FileFeatures::USING),
+        "a `using` list with any initialized plain-name declarator arms the gate"
+    );
+}
+
 // =============================================================================
 // 13. RESET AND REUSE
 // =============================================================================

@@ -154,9 +154,16 @@ impl FileFeatures {
     pub const ASYNC_GENERATORS: Self = Self(1 << 1);
     /// Source file contains decorator syntax (`@decorator`)
     pub const DECORATORS: Self = Self(1 << 2);
-    /// Source file contains `using` declarations
+    /// Source file contains a `using` declaration that resolves the global
+    /// `Disposable` type — a plain-identifier binding with an initializer, the
+    /// only shape `tsc` type-checks against `Disposable`. Gates TS2318; set by
+    /// the binder only for qualifying declarators (see
+    /// `using_list_resolves_disposable_global`).
     pub const USING: Self = Self(1 << 3);
-    /// Source file contains `await using` declarations
+    /// Source file contains an `await using` declaration that resolves the
+    /// global `AsyncDisposable`/`Disposable` types — a plain-identifier binding
+    /// with an initializer, the only shape `tsc` type-checks. Gates TS2318; set
+    /// by the binder only for qualifying declarators.
     pub const AWAIT_USING: Self = Self(1 << 4);
 
     #[inline]
