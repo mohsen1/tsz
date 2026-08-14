@@ -323,10 +323,7 @@ impl<'a> CheckerState<'a> {
         // TS7017 for missing `typeof globalThis` member access under noImplicitAny.
         let access_targets_global_this =
             is_this_global || self.is_global_this_expression(expression);
-        if access_targets_global_this
-            && property_type == TypeId::ANY
-            && self.ctx.no_implicit_any()
-            && !self.is_js_file()
+        if access_targets_global_this && property_type == TypeId::ANY && self.ctx.no_implicit_any()
         {
             use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
             self.error_at_node(
