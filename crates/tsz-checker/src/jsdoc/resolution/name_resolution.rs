@@ -957,7 +957,7 @@ impl<'a> CheckerState<'a> {
         if root_name.is_empty() || root_name == "globalThis" {
             return false;
         }
-        let sym_id = if let Some(sym_id) = self.ctx.binder.file_locals.get(root_name) {
+        let mut sym_id = if let Some(sym_id) = self.ctx.binder.file_locals.get(root_name) {
             sym_id
         } else if let Some(sym_id) = self
             .ctx
@@ -974,33 +974,114 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
-        let lib_binders = self.get_lib_binders();
-        let (flags, has_import_module, declarations) = match self
-            .get_cross_file_symbol(sym_id)
-            .or_else(|| self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders))
-        {
-            Some(symbol) => (
-                symbol.flags,
-                symbol.import_module().is_some(),
-                symbol.declarations.clone(),
-            ),
-            None => return false,
-        };
-
-        // A real namespace/type anchor (or import alias) is a legitimate
-        // qualifier; only pure runtime values are rejected. `VALUE_MODULE` /
-        // `NAMESPACE_MODULE` cover declaration-merged namespaces and enums.
+        // A real namespace/type anchor is a legitimate qualifier; only pure
+        // runtime values are rejected. `VALUE_MODULE` / `NAMESPACE_MODULE`
+        // cover declaration-merged namespaces and enums.
         let member_holder_flags = symbol_flags::MODULE
             | symbol_flags::NAMESPACE_MODULE
             | symbol_flags::VALUE_MODULE
             | symbol_flags::TYPE_ALIAS
             | symbol_flags::INTERFACE
             | symbol_flags::CLASS
-            | symbol_flags::ENUM
-            | symbol_flags::ALIAS;
-        if flags & member_holder_flags != 0 {
-            return false;
-        }
+            | symbol_flags::ENUM;
+
+        // An import alias (`import X from "./m"`) is only a legitimate
+        // type-space qualifier when the value it ultimately names is one —
+        // follow the chain to its target before judging plainness instead of
+        // exempting every alias root outright. A bounded hop count guards
+        // against reference cycles.
+        const MAX_ALIAS_HOPS: usize = 8;
+        let mut hops = 0;
+        let (flags, has_import_module, declarations) = loop {
+            let lib_binders = self.get_lib_binders();
+            let symbol = match self
+                .get_cross_file_symbol(sym_id)
+                .or_else(|| self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders))
+            {
+                Some(symbol) => symbol,
+                None => return false,
+            };
+            let flags = symbol.flags;
+            if flags & member_holder_flags != 0 {
+                return false;
+            }
+            if flags & symbol_flags::ALIAS != 0 {
+                hops += 1;
+                if hops > MAX_ALIAS_HOPS {
+                    return false;
+                }
+                if let Some(next_sym_id) = self.ctx.resolve_import_alias(sym_id)
+                    && next_sym_id != sym_id
+                {
+                    sym_id = next_sym_id;
+                    continue;
+                }
+                // `resolve_import_alias` only follows genuine import-side
+                // aliases (it needs an `import_module` specifier). A
+                // synthesized `export default <decl>` placeholder symbol is
+                // also flagged `ALIAS` but carries no such specifier — its
+                // own declaration list already names the real exported node
+                // (the `default_sym.add_declaration` call reuses the
+                // `export default` clause's node index), so classify that
+                // declaration directly instead of giving up. The declaration
+                // lives in whichever file owns this symbol, not necessarily
+                // the file currently being checked, so look it up in that
+                // file's own arena rather than `self.ctx.arena`.
+                let decl_arena = self
+                    .ctx
+                    .resolve_symbol_file_index(sym_id)
+                    .map(|file_idx| self.ctx.get_arena_for_file(file_idx as u32))
+                    .unwrap_or(self.ctx.arena);
+                let is_member_holder_decl = symbol.declarations.iter().any(|&decl_idx| {
+                    decl_arena.get(decl_idx).is_some_and(|n| {
+                        matches!(
+                            n.kind,
+                            syntax_kind_ext::CLASS_DECLARATION
+                                | syntax_kind_ext::CLASS_EXPRESSION
+                                | syntax_kind_ext::INTERFACE_DECLARATION
+                                | syntax_kind_ext::TYPE_ALIAS_DECLARATION
+                                | syntax_kind_ext::ENUM_DECLARATION
+                                | syntax_kind_ext::MODULE_DECLARATION
+                        )
+                    })
+                });
+                if is_member_holder_decl {
+                    return false;
+                }
+                let is_plain_value_decl = symbol.declarations.iter().any(|&decl_idx| {
+                    decl_arena.get(decl_idx).is_some_and(|n| {
+                        matches!(
+                            n.kind,
+                            syntax_kind_ext::FUNCTION_DECLARATION
+                                | syntax_kind_ext::FUNCTION_EXPRESSION
+                                | syntax_kind_ext::ARROW_FUNCTION
+                                | syntax_kind_ext::VARIABLE_DECLARATION
+                        )
+                    })
+                });
+                if !is_plain_value_decl {
+                    // Ambiguous shape (e.g. `export default someExpr` with a
+                    // non-declaration expression) — stay conservative rather
+                    // than risk a false TS2503.
+                    return false;
+                }
+                // Downstream only gates on `VALUE`/`import_module`/require
+                // patterns; this synthetic placeholder's own bindable flags
+                // (`ALIAS | EXPORT_VALUE`) say nothing about those, so swap
+                // in `VALUE` to match the plain-value declaration we found.
+                break (
+                    (flags & !symbol_flags::ALIAS) | symbol_flags::VALUE,
+                    false,
+                    symbol.declarations.clone(),
+                );
+            }
+            break (
+                flags,
+                symbol.import_module().is_some(),
+                symbol.declarations.clone(),
+            );
+        };
+
         if flags & symbol_flags::VALUE == 0 {
             return false;
         }

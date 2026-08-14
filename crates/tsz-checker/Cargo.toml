@@ -1828,6 +1828,9 @@ path = "tests/jsdoc_type_spelling_suggestion_meaning_tests.rs"
 name = "jsdoc_cross_file_typedef_tests"
 path = "tests/jsdoc_cross_file_typedef_tests.rs"
 [[test]]
+name = "jsdoc_default_import_expando_qualifier_ts2503_tests"
+path = "tests/jsdoc_default_import_expando_qualifier_ts2503_tests.rs"
+[[test]]
 name = "override_intersection_display_tests"
 path = "tests/override_intersection_display_tests.rs"
 [[test]]
