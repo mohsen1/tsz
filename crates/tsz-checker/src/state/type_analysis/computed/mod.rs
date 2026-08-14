@@ -2,6 +2,7 @@
 //! and private property access checking.
 
 mod builtin_iterator_return_alias;
+mod cross_file_variable_class_merge;
 mod jsx_runtime_bridge;
 mod simple_local_interface;
 mod type_alias_merged_value;
@@ -1017,6 +1018,18 @@ impl<'a> CheckerState<'a> {
         // Also compute and cache instance type for TYPE position resolution
         if flags & symbol_flags::CLASS != 0 {
             return self.compute_class_symbol_type(sym_id, flags, value_decl, &declarations);
+        }
+
+        // A block/function-scoped variable whose name collides with a class
+        // declared in an earlier-processed file never declaration-merges with
+        // it (TS2451/TS2300 already fires elsewhere), but tsc still resolves
+        // every value-position reference to the name from whichever
+        // declaration bound first into the shared script-global symbol table.
+        // See `cross_file_variable_class_merge.rs` for the full rule.
+        if let Some(remote_class_type) =
+            self.cross_file_class_type_for_conflicting_variable(sym_id, flags)
+        {
+            return (remote_class_type, Vec::new());
         }
 
         // Enum - return TypeData::Enum with DefId for nominal identity checking.
