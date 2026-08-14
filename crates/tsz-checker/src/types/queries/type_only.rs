@@ -1215,15 +1215,25 @@ impl<'a> CheckerState<'a> {
         let ident = self.ctx.arena.get_identifier(node)?;
         let name = &ident.escaped_text;
 
-        let sym_id = self
+        // Must resolve cross-file (not just via the current file's binder):
+        // an ambient `declare namespace` is routinely declared in one file
+        // (a `.d.ts`) and referenced from another (a `.js`/`.ts` consumer).
+        // `binder.resolve_identifier` only walks the current file's own
+        // scopes/file-locals/lib-binders, so it silently misses a namespace
+        // declared elsewhere and this query always returned `None` for that
+        // shape — the actual gap behind the missing TS2708 in
+        // conformance/salsa/prototypePropertyAssignmentMergeWithInterfaceMethod.ts.
+        let sym_id = self.resolve_identifier_symbol_without_tracking(expr_idx)?;
+        let symbol = self
             .ctx
             .binder
-            .resolve_identifier(self.ctx.arena, expr_idx)?;
-        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+            .get_symbol(sym_id)
+            .or_else(|| self.get_cross_file_symbol(sym_id))?;
 
         let is_namespace = symbol.has_any_flags(symbol_flags::NAMESPACE_MODULE);
         let value_flags_except_module = symbol_flags::VALUE & !symbol_flags::VALUE_MODULE;
         let has_other_value = symbol.has_any_flags(value_flags_except_module);
+        let declarations = symbol.declarations.clone();
 
         if !is_namespace || has_other_value {
             return None;
@@ -1241,8 +1251,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // Check whether any declaration is instantiated (has runtime code).
-        let is_instantiated = symbol
-            .declarations
+        let is_instantiated = declarations
             .iter()
             .any(|&decl_idx| self.is_namespace_declaration_instantiated(decl_idx));
 

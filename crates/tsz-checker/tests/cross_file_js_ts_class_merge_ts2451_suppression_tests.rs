@@ -13,14 +13,31 @@
 //! Mirrors `TypeScript/tests/cases/conformance/salsa/jsContainerMergeTsDeclaration3.ts`
 //! (`expected:[TS2339,TS2451]`). tsc additionally resolves `A`'s type for
 //! *later* references (e.g. an `A.d` property access after the conflicting
-//! declaration) to the class's static side, reporting `TS2339` there — that
-//! half is covered by
+//! declaration) to the class's static side, reporting `TS2339` there — a
+//! `mergeSymbol` artifact (`checker.ts`): on a flag conflict the pre-existing
+//! target symbol is left untouched and the conflicting source's declarations
+//! feed only the diagnostic, so *which* declaration wins is decided by file
+//! processing order, not by declaration order within a file.
+//!
+//! `cross_file_variable_class_merge.rs` implements this for ordinary
+//! (non-`checkJs`) property-type resolution — see the `ts2339_*` tests
+//! below, which cover the rule in pure TS. The `.js` + `checkJs` variant of
+//! the same fixture (`ts2451_in_js_when_dts_class_conflicts_with_const`
+//! below) is covered separately: a `checkJs` direct-write target runs
+//! assignment-target expando-write machinery
+//! (`property_access_helpers/expando.rs`) ahead of the generic property-type
+//! path, and that machinery used to grant the write unconditionally whenever
+//! the merged symbol carried `CLASS` — fixed in
+//! `root_symbol_supports_js_expando_read` / `root_symbol_supports_js_direct_expando_write`
+//! (reject outright when a symbol carries both `CLASS` and `VARIABLE`, since
+//! that combination only ever arises from this exact redeclaration
+//! conflict). Verified by
 //! `crates/tsz-cli/tests/js_container_merge_class_variable_conflict_expando_cli_tests.rs`
-//! (the real project-mode driver, not the entry-only harness used here,
-//! is required: the fix depends on the production `global_symbol_file_index`
+//! — the real project-mode driver, not the entry-only harness used here, is
+//! required: the fix depends on the production `global_symbol_file_index`
 //! cross-arena merge that unifies `A`'s `.d.ts`/`.js` declarations under one
 //! `SymbolId`, which none of the lightweight multi-file test harnesses in
-//! this crate reproduce).
+//! this crate reproduce.
 
 use tsz_checker::context::CheckerOptions;
 use tsz_common::common::ModuleKind;
@@ -69,7 +86,12 @@ fn ts2451_in_dts_when_js_const_conflicts_with_class() {
 /// `.d.ts` file declares `class A`, and the expando assignment `A.d = {}`
 /// is otherwise treated as an ordinary JS expando on the `const`'s own
 /// object-literal type (no `TS2739`/`TS2741` from checking it against the
-/// unrelated class shape).
+/// unrelated class shape). Per the module doc comment, the `TS2339` half of
+/// `jsContainerMergeTsDeclaration3.ts`'s expectation for this `.js` +
+/// `checkJs` shape is covered by the real-project-mode CLI test named in the
+/// module doc comment, not by `compile_files` here (see
+/// `ts2339_fires_for_pure_ts_cross_file_conflict_no_js_involved` below for
+/// the pure-TS shape of the same rule, which `compile_files` does cover).
 #[test]
 fn ts2451_in_js_when_dts_class_conflicts_with_const() {
     let diags = compile_files(
@@ -214,5 +236,62 @@ fn ts2339_does_not_fire_for_plain_js_expando_without_class_conflict() {
         count_code(&diags, 2451),
         0,
         "no conflict expected; got: {diags:?}"
+    );
+}
+
+/// Anti-hardcoding (§25) + generality: the earlier-processed-class rule is
+/// not JS-specific — it is a plain cross-file symbol-merge artifact that
+/// applies identically between two ordinary `.ts` files with no `allowJs`/
+/// `checkJs` involved at all. Oracle-verified (`typescript@7.0.2`). This is
+/// the shape `cross_file_variable_class_merge.rs` fixes.
+#[test]
+fn ts2339_fires_for_pure_ts_cross_file_conflict_no_js_involved() {
+    let diags = compile_files(
+        &[
+            ("a.ts", "declare class Widget {}"),
+            ("b.ts", "const Widget = { };\nWidget.extra = { };"),
+        ],
+        1,
+    );
+    assert_eq!(
+        count_code(&diags, 2451),
+        1,
+        "b.ts must emit TS2451 for the cross-file class/const conflict; got: {diags:?}"
+    );
+    assert_eq!(
+        count_code(&diags, 2339),
+        1,
+        "Widget.extra must resolve `Widget` to the earlier-processed class; got: {diags:?}"
+    );
+}
+
+/// Reversing file processing order flips which declaration wins the shared
+/// script-global symbol: when the variable's own file is processed *before*
+/// the conflicting class's file, `Widget`'s value type stays the variable's
+/// own plain `{}` — `Widget.extra = {}` still reports `TS2339` (a strict-TS
+/// object literal never grants expando writes, merge or no merge), but
+/// against `{}`, not `typeof Widget` — oracle-verified (`typescript@7.0.2`)
+/// as the mirror image of the test above. `TS2451` still fires on both
+/// sides regardless of order; only the resolved value type — visible in the
+/// diagnostic's type name — is order-dependent.
+#[test]
+fn variable_ts_file_processed_before_conflicting_class_file_keeps_own_type() {
+    let diags = compile_files(
+        &[
+            ("a.ts", "const Widget = { };\nWidget.extra = { };"),
+            ("b.ts", "declare class Widget {}"),
+        ],
+        0,
+    );
+    assert_eq!(
+        count_code(&diags, 2451),
+        1,
+        "a.ts must still emit TS2451 even though its own variable wins the merge; got: {diags:?}"
+    );
+    assert!(
+        diags
+            .iter()
+            .any(|(code, msg)| *code == 2339 && msg.contains("'{}'")),
+        "an earlier-processed variable must resolve TS2339 against its own `{{}}` type, not `typeof Widget`; got: {diags:?}"
     );
 }

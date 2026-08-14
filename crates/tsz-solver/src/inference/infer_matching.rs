@@ -111,8 +111,17 @@ impl<'a> InferenceContext<'a> {
         if let Some(TypeData::TypeParameter(ref param_info)) = target_key
             && let Some(var) = self.find_type_param(param_info.name)
         {
-            // Add source as a lower bound candidate for this type parameter
+            // Add source as a lower bound candidate for this type parameter.
+            // Flag the candidate as a top-level naked-argument match when this is
+            // the outermost inference (depth 1): the parameter type IS the bare
+            // type parameter, so the source is a whole argument expression, not a
+            // constituent of a structural walk. Only in that position does tsz's
+            // candidate order match tsc's source order, making the primitive
+            // leftmost-wins fallback safe (#17484).
+            let prev = self.candidate_from_top_level_naked;
+            self.candidate_from_top_level_naked = self.infer_depth == 1;
             self.add_candidate(var, source, priority);
+            self.candidate_from_top_level_naked = prev;
             return Ok(());
         }
 

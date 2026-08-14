@@ -374,6 +374,61 @@ declare var window: Window & typeof globalThis;
     );
 }
 
+/// `checkJs` files get the same `typeof globalThis` implicit-any rule as
+/// `.ts` files: dot access on global `this`/`globalThis` for a missing
+/// member reports TS7017, whether the access is a write (`this.x = ...`,
+/// the salsa `nestedPrototypeAssignment`-adjacent shape) or a bare read.
+#[test]
+fn checkjs_global_this_dot_write_emits_ts7017() {
+    let source = r#"
+this.someUnknownProperty = 1;
+"#;
+    let diags = check_with_no_implicit_any_js(source);
+    assert!(
+        count(&diags, 7017) >= 1,
+        "TS7017 must fire for this.x = ... in a checkJs file; got: {diags:#?}"
+    );
+    assert_eq!(
+        count(&diags, 2339),
+        0,
+        "must not fall back to TS2339 in a checkJs file; got: {diags:#?}"
+    );
+}
+
+#[test]
+fn checkjs_global_this_dot_read_emits_ts7017() {
+    let source = r#"
+this.someUnknownProperty;
+"#;
+    let diags = check_with_no_implicit_any_js(source);
+    assert!(
+        count(&diags, 7017) >= 1,
+        "TS7017 must fire for this.x in a checkJs file; got: {diags:#?}"
+    );
+}
+
+/// Negative control: an `allowJs` file WITHOUT `checkJs` is not
+/// type-checked at all, so it must stay silent — same as tsc.
+#[test]
+fn js_without_checkjs_stays_silent() {
+    let source = r#"
+this.someUnknownProperty = 1;
+"#;
+    let diags = tsz_checker::test_utils::check_source(
+        source,
+        "test.js",
+        tsz_checker::context::CheckerOptions {
+            no_implicit_any: true,
+            ..Default::default()
+        },
+    );
+    assert_eq!(
+        count(&diags, 7017),
+        0,
+        "an allowJs-only file (no checkJs) must not be type-checked; got: {diags:#?}"
+    );
+}
+
 fn check_with_no_implicit_any(source: &str) -> Vec<tsz_checker::diagnostics::Diagnostic> {
     use tsz_checker::context::CheckerOptions;
     tsz_checker::test_utils::check_source(
@@ -381,6 +436,19 @@ fn check_with_no_implicit_any(source: &str) -> Vec<tsz_checker::diagnostics::Dia
         "test.ts",
         CheckerOptions {
             no_implicit_any: true,
+            ..Default::default()
+        },
+    )
+}
+
+fn check_with_no_implicit_any_js(source: &str) -> Vec<tsz_checker::diagnostics::Diagnostic> {
+    use tsz_checker::context::CheckerOptions;
+    tsz_checker::test_utils::check_source(
+        source,
+        "test.js",
+        CheckerOptions {
+            no_implicit_any: true,
+            check_js: true,
             ..Default::default()
         },
     )
