@@ -279,6 +279,17 @@ impl<'a> CheckerState<'a> {
         if ctx_type == literal_type {
             return true;
         }
+        // `NoInfer<T>` is a transparent wrapper for the literal-domain decision:
+        // it only suppresses inference, never assignability, so a fresh literal
+        // source stays a literal whenever the *wrapped* target admits its domain
+        // (`{ x: 'bar' }` against `{ x: NoInfer<'foo'> }` keeps `'bar'`, matching
+        // tsc, which reads through the substitution's base type in
+        // `isLiteralOfContextualType`). Without stripping it, a `NoInfer<'foo'>`
+        // target is neither identity- nor same-base-kind-equal to `'bar'` and the
+        // source is spuriously widened to `string`.
+        if let Some(inner) = common::no_infer_inner_type(self.ctx.types, ctx_type) {
+            return self.contextual_type_allows_literal_inner(inner, literal_type, visited);
+        }
         // tsc: literal contextual type allows ALL literals of the same base type.
         if are_same_base_literal_kind(self.ctx.types, ctx_type, literal_type) {
             return true;
