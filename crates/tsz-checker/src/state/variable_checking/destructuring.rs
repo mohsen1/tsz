@@ -1039,24 +1039,26 @@ impl<'a> CheckerState<'a> {
 
                 // A destructuring computed key desugars to element access, so
                 // the index-type-validity decision must consult the *source*
-                // shape exactly like `obj[k]` does, not just the key:
-                //
-                // * An ERROR (or `any`) source cascades — `tsc` runs no
-                //   `isValidIndexType` check against the key, so no TS2538 piles
-                //   onto the errors it already reports (#17529). `any` is
-                //   short-circuited by the caller, but a source that *normalizes*
-                //   to ERROR still reaches here. `unknown` is intentionally
-                //   excluded: `tsc` keeps TS2538 for an invalid key over
-                //   `unknown`.
-                // * A `symbol`/`unique symbol` key over a `symbol` index
-                //   signature (`{ [k: symbol]: V }`, `Record<symbol, V>`,
-                //   `Record<PropertyKey, V>`) is a valid index and resolves to
-                //   the signature's value type `V` (#17528). Distribution over
-                //   unions/intersections is owned by the shared resolver.
-                let parent_suppresses_index_diag =
-                    parent_type == TypeId::ERROR || parent_type == TypeId::ANY;
+                // shape exactly like `obj[k]` does, not just the key. A
+                // `symbol`/`unique symbol` key over a `symbol` index signature
+                // (`{ [k: symbol]: V }`, `Record<symbol, V>`,
+                // `Record<PropertyKey, V>`) is a valid index and resolves to the
+                // signature's value type `V` — distribution over
+                // unions/intersections is owned by the shared resolver. See #17528.
                 computed_symbol_index_value =
                     self.destructuring_symbol_index_value(parent_type, key_type);
+
+                // tsc treats an `any` or error-typed destructuring source like
+                // `any` for the computed-key index check: an unresolved source
+                // must not cascade a TS2538 "cannot be used as an index type" onto
+                // the key. `any` sources are already short-circuited by the caller
+                // (`check_binding_element` skips the lookup when `parent_type ==
+                // any`); an error source was not, so `const { [k]: v } = unresolved`
+                // reported a false TS2538. `unknown` is deliberately excluded — tsc
+                // still reports TS2538 over an `unknown` source. Mirrors the
+                // parent-type guard the matching-index-signature check below applies.
+                let source_is_index_checkable =
+                    parent_type != TypeId::ANY && parent_type != TypeId::ERROR;
 
                 // TS2538: Reject invalid index types (any/void/boolean/etc.) and
                 // symbol/unique-symbol types (can't match string/number index sigs;
@@ -1066,11 +1068,11 @@ impl<'a> CheckerState<'a> {
                     self.ctx.types,
                     key_type,
                 );
-                if !key_is_string
+                if source_is_index_checkable
+                    && !key_is_string
                     && !key_is_number
                     && !key_is_type_param
                     && key_type != TypeId::NEVER
-                    && !parent_suppresses_index_diag
                 {
                     let check_key = if key_type == TypeId::ERROR {
                         TypeId::ANY
@@ -1137,11 +1139,11 @@ impl<'a> CheckerState<'a> {
                     self.ctx.types.as_type_database(),
                     parent_type,
                 );
-                if !key_is_string
+                if source_is_index_checkable
+                    && !key_is_string
                     && !key_is_number
                     && !key_is_type_param
                     && !parent_has_type_params
-                    && !parent_suppresses_index_diag
                     && computed_symbol_index_value.is_none()
                     && key_type != TypeId::NEVER
                     && key_type != TypeId::ERROR
