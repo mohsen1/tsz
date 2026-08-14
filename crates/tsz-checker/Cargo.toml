@@ -2990,3 +2990,7 @@ path = "tests/map_constructor_tuple_element_supertype_order_tests.rs"
 [[test]]
 name = "object_literal_property_source_domain_widening_tests"
 path = "tests/object_literal_property_source_domain_widening_tests.rs"
+
+[[test]]
+name = "no_infer_property_source_literal_display_tests"
+path = "tests/no_infer_property_source_literal_display_tests.rs"

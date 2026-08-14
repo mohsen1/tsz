@@ -287,6 +287,23 @@ impl<'a> CheckerState<'a> {
         if is_boolean_context_for_boolean_literal(ctx_type, literal_type) {
             return true;
         }
+        // `NoInfer<C>` is a transparent wrapper for contextual literal typing:
+        // tsc's `isLiteralOfContextualType` sees through it (`NoInfer<>` is
+        // erased for primitives), so a literal is admitted by `NoInfer<C>`
+        // exactly when it is admitted by `C`. Without unwrapping, a target such
+        // as `NoInfer<"foo">` reaches `classify_for_contextual_literal` as an
+        // unhandled `TypeData::NoInfer`, classifies as `NotAllowed`, and a
+        // same-domain source literal (`"bar"`) is wrongly reported widened to
+        // its primitive (`Type 'string'` instead of `Type '"bar"'`) in the
+        // TS2322/TS2345 failure display (#17491). tsz's own `evaluate` already
+        // strips the wrapper; mirror that here so this query agrees for every
+        // caller rather than only the assignment-source display. Placed after
+        // the cheap identity/same-domain checks so the common non-`NoInfer`
+        // literal path never pays the wrapper lookup; a `NoInfer<C>` id is never
+        // equal to a bare literal, so the reorder cannot change the result.
+        if let Some(inner) = common::no_infer_inner_type(self.ctx.types, ctx_type) {
+            return self.contextual_type_allows_literal_inner(inner, literal_type, visited);
+        }
         if !visited.insert(ctx_type) {
             return false;
         }
