@@ -86,10 +86,17 @@ impl<'a> CheckerState<'a> {
     /// (tsc's `getExpandoInitializer` shapes). A single closed-shape write
     /// closes the member in either order (oracle-verified), so the verdict
     /// requires EVERY declaring write to be host-shaped.
+    ///
+    /// `callable_only` narrows the RHS test to function/arrow/class
+    /// expressions alone, dropping the empty-object-literal shape — an empty
+    /// object is an open expando container but is not itself callable, so it
+    /// must not satisfy a `.prototype`-write callable-ness verdict the way it
+    /// satisfies a general nested-member-openness verdict.
     fn accumulate_expando_assignment_rhs_host_verdict(
         arena: &NodeArena,
         idx: NodeIndex,
         expected_key: &str,
+        callable_only: bool,
         found: &mut bool,
         all_host: &mut bool,
     ) {
@@ -108,7 +115,7 @@ impl<'a> CheckerState<'a> {
             let rhs_is_host = arena.get(binary.right).is_some_and(|rhs| {
                 rhs.is_function_expression_or_arrow()
                     || rhs.kind == syntax_kind_ext::CLASS_EXPRESSION
-            }) || arena.is_empty_object_literal(binary.right);
+            }) || (!callable_only && arena.is_empty_object_literal(binary.right));
             *all_host &= rhs_is_host;
         }
 
@@ -117,6 +124,7 @@ impl<'a> CheckerState<'a> {
                 arena,
                 child_idx,
                 expected_key,
+                callable_only,
                 found,
                 all_host,
             );
@@ -139,6 +147,44 @@ impl<'a> CheckerState<'a> {
         base_expr_idx: NodeIndex,
         member_name: &str,
     ) -> bool {
+        let (found, all_host) =
+            self.expando_base_link_rhs_verdict(base_expr_idx, member_name, false);
+        !found || all_host
+    }
+
+    /// Whether `base_expr_idx.member_name` (e.g. `a.d` in `a.d.prototype = e`)
+    /// is itself CALLABLE: every syntactically visible declaring write
+    /// `base.member = rhs` across the base's declaring file and the current
+    /// file has a function-or-class-expression RHS. Unlike
+    /// [`Self::nested_expando_base_link_rhs_is_host`], an empty-object-literal
+    /// RHS does NOT qualify — `a.d = {}` opens `a.d` to further expando
+    /// members but does not give it an intrinsic `.prototype`, so it must not
+    /// grant a `.prototype`-write. Requires at least one declaring write to be
+    /// visible; with none visible this returns `false` (no positive callable
+    /// evidence), the mirror image of the permissive default the open-host
+    /// check uses.
+    pub(super) fn nested_expando_base_link_rhs_is_callable(
+        &self,
+        base_expr_idx: NodeIndex,
+        member_name: &str,
+    ) -> bool {
+        let (found, all_callable) =
+            self.expando_base_link_rhs_verdict(base_expr_idx, member_name, true);
+        found && all_callable
+    }
+
+    /// Shared file-scanning core for [`Self::nested_expando_base_link_rhs_is_host`]
+    /// and [`Self::nested_expando_base_link_rhs_is_callable`]. Returns
+    /// `(found, all_match)`: `found` is true when at least one declaring
+    /// `base.member = rhs` assignment is visible; `all_match` is the
+    /// AND-accumulated per-assignment verdict (see
+    /// [`Self::accumulate_expando_assignment_rhs_host_verdict`]).
+    fn expando_base_link_rhs_verdict(
+        &self,
+        base_expr_idx: NodeIndex,
+        member_name: &str,
+        callable_only: bool,
+    ) -> (bool, bool) {
         let mut file_indices: Vec<usize> = Vec::new();
         if let Some(file_idx) = self.expando_root_js_file_idx(base_expr_idx) {
             file_indices.push(file_idx);
@@ -156,7 +202,7 @@ impl<'a> CheckerState<'a> {
         // permissive no-visible-write path.
         let Some(base_key) = Self::property_access_chain_in_arena(self.ctx.arena, base_expr_idx)
         else {
-            return true;
+            return (false, true);
         };
         let root_keys = [base_key];
         let mut found = false;
@@ -173,16 +219,17 @@ impl<'a> CheckerState<'a> {
                         arena,
                         stmt_idx,
                         &expected_key,
+                        callable_only,
                         &mut found,
                         &mut all_host,
                     );
                     if found && !all_host {
-                        return false;
+                        return (found, all_host);
                     }
                 }
             }
         }
-        !found || all_host
+        (found, all_host)
     }
 
     pub(super) fn js_file_has_expando_assignment_for_keys(

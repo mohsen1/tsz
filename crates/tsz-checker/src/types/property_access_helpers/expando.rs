@@ -328,7 +328,18 @@ impl<'a> CheckerState<'a> {
         root_expr_idx: NodeIndex,
     ) -> bool {
         let Some(sym_id) = self.root_symbol_for_expando_read(root_expr_idx) else {
-            return false;
+            // No name-resolvable symbol at the root — this is the shape of a
+            // nested expando property (`a.d` in `a.d.prototype = e`, where
+            // `d` is a binder-tracked chain-key entry on `a`, not a real
+            // declaration `resolve_identifier_symbol`/`resolve_qualified_symbol`
+            // can find). Fall back to the base link's own declaring-write
+            // shape: `a.d` is callable exactly when every visible `a.d = rhs`
+            // assignment is a function-or-class expression.
+            return self.split_expando_access_link(root_expr_idx).is_some_and(
+                |(base_expr, member_name)| {
+                    self.nested_expando_base_link_rhs_is_callable(base_expr, &member_name)
+                },
+            );
         };
         let Some(symbol) = self
             .get_cross_file_symbol(sym_id)
@@ -455,6 +466,28 @@ impl<'a> CheckerState<'a> {
         let sym_id = self
             .resolve_identifier_symbol(symbol_target_expr)
             .or_else(|| self.resolve_qualified_symbol(symbol_target_expr));
+
+        // A direct `a.d.prototype = e` write has no name-resolvable symbol at
+        // `a.d`: it is a binder-tracked expando chain-key entry (`a`'s "d"
+        // member), not a declaration `resolve_identifier_symbol`/
+        // `resolve_qualified_symbol` can find. Fall back to the base link's
+        // own declaring-write shape — `a.d` carries an intrinsic `.prototype`
+        // exactly when every visible `a.d = rhs` assignment is a
+        // function-or-class expression (the only shapes with one).
+        if sym_id.is_none()
+            && prototype_root_expr.is_none()
+            && self
+                .ctx
+                .arena
+                .get(property_access_idx)
+                .and_then(|n| self.ctx.arena.get_access_expr(n))
+                .and_then(|a| self.ctx.arena.get_identifier_at(a.name_or_argument))
+                .is_some_and(|ident| ident.escaped_text == "prototype")
+            && let Some((base_expr, member_name)) = self.split_expando_access_link(object_expr_idx)
+            && self.nested_expando_base_link_rhs_is_callable(base_expr, &member_name)
+        {
+            return true;
+        }
 
         // An explicit type annotation makes the declared type authoritative, so
         // the write is an ordinary property assignment and must report TS2339
@@ -1197,44 +1230,42 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    /// Split a property/element access into its (base expression, member
+    /// name) pair — e.g. `a.b` in `a.b.c` splits to `(a, "b")`. Returns
+    /// `None` for a single-identifier base (no intermediate link) or when the
+    /// member name cannot be read statically (a computed non-literal key).
+    fn split_expando_access_link(&self, idx: NodeIndex) -> Option<(NodeIndex, String)> {
+        let node = self.ctx.arena.get(idx)?;
+        match node.kind {
+            syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
+                let access = self.ctx.arena.get_access_expr(node)?;
+                let member = self
+                    .ctx
+                    .arena
+                    .get_identifier_at(access.name_or_argument)
+                    .map(|ident| ident.escaped_text.to_string())?;
+                Some((access.expression, member))
+            }
+            syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION => {
+                let access = self.ctx.arena.get_access_expr(node)?;
+                let member = static_element_access_key_text_in_arena(
+                    self.ctx.arena,
+                    access.name_or_argument,
+                )?;
+                Some((access.expression, member))
+            }
+            _ => None,
+        }
+    }
+
     /// Whether a nested expando base chain (`a.b` in `a.b.c = e`) is itself a
     /// declared expando member. A single-identifier base has no intermediate
     /// link and is vacuously valid. `prototype` links are exempt — `prototype`
     /// is a built-in member carried by the prototype-expando paths, not by
     /// assignment records.
     fn nested_expando_base_link_is_declared(&self, object_expr_idx: NodeIndex) -> bool {
-        let Some(object_node) = self.ctx.arena.get(object_expr_idx) else {
+        let Some((base_expr, member_name)) = self.split_expando_access_link(object_expr_idx) else {
             return true;
-        };
-        let (base_expr, member_name) = match object_node.kind {
-            syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
-                let Some(access) = self.ctx.arena.get_access_expr(object_node) else {
-                    return true;
-                };
-                let Some(member) = self
-                    .ctx
-                    .arena
-                    .get_identifier_at(access.name_or_argument)
-                    .map(|ident| ident.escaped_text.to_string())
-                else {
-                    return true;
-                };
-                (access.expression, member)
-            }
-            syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION => {
-                let Some(access) = self.ctx.arena.get_access_expr(object_node) else {
-                    return true;
-                };
-                let Some(member) = static_element_access_key_text_in_arena(
-                    self.ctx.arena,
-                    access.name_or_argument,
-                ) else {
-                    return true;
-                };
-                (access.expression, member)
-            }
-            // Single-identifier base: no intermediate link to validate.
-            _ => return true,
         };
 
         if member_name == "prototype" {

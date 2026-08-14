@@ -545,6 +545,8 @@ mod iterator_override_widened_value_tests;
 mod js_commonjs_default_reexport_ts2305_tests;
 #[path = "tests/js_cross_file_expando_declaration_tests.rs"]
 mod js_cross_file_expando_declaration_tests;
+#[path = "tests/js_expando_nested_prototype_write_callable_tests.rs"]
+mod js_expando_nested_prototype_write_callable_tests;
 #[path = "tests/js_expando_order_sensitivity_tests.rs"]
 mod js_expando_order_sensitivity_tests;
 #[path = "tests/js_file_function_parameters_as_optional_tests.rs"]
