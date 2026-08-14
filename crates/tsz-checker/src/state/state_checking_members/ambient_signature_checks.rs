@@ -1196,6 +1196,15 @@ impl<'a> CheckerState<'a> {
                 );
             }
 
+            // TS7030 for each bare `return;`, independent of the fall-off-the-end
+            // check above (both can fire in one method).
+            self.report_no_implicit_return_bare_returns(
+                method.body,
+                check_return_type,
+                has_type_annotation,
+                is_generator,
+            );
+
             self.ctx.pop_yield_type();
             self.pop_return_type();
         } else {
@@ -1735,6 +1744,15 @@ impl<'a> CheckerState<'a> {
                         diagnostic_codes::NOT_ALL_CODE_PATHS_RETURN_A_VALUE,
                     );
                 }
+
+                // TS7030 for each bare `return;`, independent of the
+                // fall-off-the-end check above (both can fire in one getter).
+                self.report_no_implicit_return_bare_returns(
+                    accessor.body,
+                    check_return_type,
+                    has_type_annotation,
+                    false, // accessors cannot be generators
+                );
             }
 
             self.pop_return_type();

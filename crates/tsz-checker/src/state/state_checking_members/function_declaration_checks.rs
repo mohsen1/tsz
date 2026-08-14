@@ -1363,6 +1363,15 @@ impl<'a> CheckerState<'a> {
                 diagnostic_codes::NOT_ALL_CODE_PATHS_RETURN_A_VALUE,
             );
         }
+
+        // TS7030 for each bare `return;`, independent of the fall-off-the-end
+        // check above (both can fire in one function).
+        self.report_no_implicit_return_bare_returns(
+            func.body,
+            check_return_type,
+            has_declared_return,
+            is_generator,
+        );
     }
 
     fn top_level_terminal_return_flow(&self, body: NodeIndex) -> Option<(bool, bool)> {

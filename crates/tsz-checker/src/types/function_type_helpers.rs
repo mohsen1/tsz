@@ -1869,6 +1869,20 @@ impl<'a> CheckerState<'a> {
                 );
             }
         }
+
+        // TS7030 for each bare `return;`, independent of the fall-off-the-end
+        // check above (both can fire in one function).
+        let bare_return_check_type = self.return_type_for_implicit_return_check(
+            annotated_return_type.unwrap_or(return_type),
+            is_async,
+            function_is_generator,
+        );
+        self.report_no_implicit_return_bare_returns(
+            body,
+            bare_return_check_type,
+            has_type_annotation,
+            function_is_generator,
+        );
     }
 
     /// Check if a return context type is or references a const type parameter.
