@@ -387,18 +387,19 @@ type Use = import('./types.js').FOO;
 }
 
 #[test]
-fn jsdoc_type_comment_member_of_a_value_only_const_export_resolves_to_its_value_type() {
-    // Unlike the TS `type X = import(...).Y` alias-declaration path above,
-    // the JSDoc `@type` comment path's `import(...).Member` query falls back
-    // to the exported value's own type when `Member` has no type meaning,
-    // instead of reporting TS2694 — this is the literal upstream conformance
-    // case `jsdocImportTypeReferenceToStringLiteral.ts`
-    // (`TypeScript/tests/cases/conformance/jsdoc/`), whose `.types` baseline
-    // records `x : "foo"` and has no `.errors.txt` baseline (zero
-    // diagnostics). Oracle-verified against `tsc` 6.0.2 too, including with
-    // a forced consumption (`x = 5` reports `TS2322: Type '5' is not
-    // assignable to type '"foo"'.`, proving the query resolves to `FOO`'s
-    // literal type rather than silently falling back to `any`).
+fn jsdoc_type_comment_member_of_a_value_only_const_export_reports_ts2694() {
+    // Same rule as the TS `type X = import(...).Y` alias-declaration path
+    // above: under TypeScript 7, `import(...).Member` requires `Member` to
+    // be type-eligible, through the JSDoc `@type` comment path too — no
+    // fallback to the exported value's own type. This is the literal
+    // upstream conformance case `jsdocImportTypeReferenceToStringLiteral.ts`
+    // (`TypeScript/tests/cases/conformance/jsdoc/`); its committed `.types`
+    // baseline (`x : "foo"`, no `.errors.txt`) predates the corpus's repin
+    // to `tsgo-port` and is stale. Oracle-verified against the pinned
+    // corpus oracle (`scripts/node_modules/@typescript/typescript-linux-x64`,
+    // typescript@7.0.2 native, matching `scripts/conformance/typescript-versions.json`'s
+    // `current` pin) on a hand-copied repro of the exact fixture:
+    // `a.js(1,26): error TS2694: Namespace '"…/b"' has no exported member 'FOO'.`
     let diagnostics = check_consumer_with_js_typedef_source(
         r#"
 export const FOO = "foo";
@@ -410,8 +411,40 @@ let x;
 "#,
     );
     assert!(
-        ts2694_diagnostics(&diagnostics, "FOO").is_empty(),
-        "Expected no TS2694 for a value-only const export referenced via JSDoc @type import('./js').Member (tsc resolves it to the value's own type), got: {diagnostics:?}"
+        !ts2694_diagnostics(&diagnostics, "FOO").is_empty(),
+        "Expected TS2694 for a value-only const export referenced via JSDoc @type import('./js').Member (TS7 dropped the value-type fallback), got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn jsdoc_type_comment_member_of_an_enum_tagged_export_reports_ts2694() {
+    // Adjacent case: a `@enum {T}` export is likewise value-only under TS7
+    // (`jsdoc_enum_member_assignability_tests.rs`'s
+    // `bare_enum_name_in_type_position_is_ts2749` locks the same rule for a
+    // *local* bare reference). Reached across a module boundary via
+    // `import(...).Member`, tsc reports TS2694 rather than TS2749 (still no
+    // value-type fallback) — this is the literal upstream conformance case
+    // `enumTagImported.ts` (`TypeScript/tests/cases/conformance/jsdoc/`),
+    // oracle-verified against the pinned corpus oracle (typescript@7.0.2
+    // native) on a hand-copied repro of the fixture's `type.js`/`mod1.js`
+    // pair: two `TS2694`s, one per `import("./mod1").TestEnum` reference.
+    let diagnostics = check_consumer_with_js_typedef_source(
+        r#"
+/** @enum {string} */
+export const TestEnum = {
+    ADD: 'add',
+    REMOVE: 'remove'
+};
+"#,
+        "consumer.js",
+        r#"
+/** @type {import('./types.js').TestEnum} */
+let x;
+"#,
+    );
+    assert!(
+        !ts2694_diagnostics(&diagnostics, "TestEnum").is_empty(),
+        "Expected TS2694 for an @enum-tagged export referenced via JSDoc @type import('./js').Member, got: {diagnostics:?}"
     );
 }
 
