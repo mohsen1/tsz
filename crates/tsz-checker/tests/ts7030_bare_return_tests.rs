@@ -281,3 +281,96 @@ fn ts7030_silent_for_setter_bare_return() {
     let diags = check(source, no_implicit_returns_nonstrict());
     assert_eq!(diagnostic_count(&diags, 7030), 0);
 }
+
+/// A bare `return;` under an `unknown` return type is silent: `tsc`'s
+/// per-return gate is `isUnwrappedReturnTypeVoidOrAny` (`TypeFlags.Void |
+/// TypeFlags.AnyOrUnknown`), and `AnyOrUnknown` covers `unknown`. Here every
+/// path returns, so there is no fall-off diagnostic either (#17444).
+#[test]
+fn ts7030_silent_for_unknown_return_bare() {
+    let source = "function u(x: boolean): unknown {\n    if (x) {\n        return 1;\n    }\n    return;\n}\n";
+    let diags = check(source, no_implicit_returns_nonstrict());
+    assert_eq!(
+        diagnostic_count(&diags, 7030),
+        0,
+        "a bare return under unknown must suppress TS7030; diags: {:?}",
+        diags.iter().map(|d| (d.code, d.start)).collect::<Vec<_>>()
+    );
+}
+
+/// The two-gate distinction: the *fall-off-the-end* gate is NOT
+/// `isUnwrappedReturnTypeVoidOrAny` — it excludes only any/void/undefined, so a
+/// non-generator `unknown` return that falls off the end still reports TS7030
+/// (`tsc`'s `noImplicitReturnsExclusions.ts` f6/f13). This is the case an
+/// over-broad "unknown always suppresses" rule wrongly silenced.
+#[test]
+fn ts7030_fires_for_unknown_return_fall_off() {
+    // `return 1;` has an expression (not a bare return) and the else path
+    // falls off, so this exercises only the fall-off-the-end source.
+    let source = "function u(x: boolean): unknown {\n    if (x) {\n        return 1;\n    }\n}\n";
+    let diags = check(source, no_implicit_returns_nonstrict());
+    assert_eq!(
+        diagnostic_count(&diags, 7030),
+        1,
+        "a non-generator unknown return that falls off must report TS7030; diags: {:?}",
+        diags.iter().map(|d| (d.code, d.start)).collect::<Vec<_>>()
+    );
+}
+
+// -------------------------------------------------------------------------
+// Generator negative controls (#17444) — a bare `return;` in a generator whose
+// unwrapped `TReturn` is void/unknown must NOT report TS7030. `tsc` unwraps the
+// generator return type to `TReturn` and applies the same
+// `isUnwrappedReturnTypeVoidOrAny` gate; an inferred generator that cannot yield
+// a concrete `TReturn` collapses to `unknown`, which suppresses like `void`.
+//
+// The default checker lib does not ship the `Generator`/`IterableIterator`
+// interfaces, so these inject a minimal stub matching the pinned lib's shape
+// (`TReturn = any`), mirroring generator_union_return_type_tests.rs.
+// -------------------------------------------------------------------------
+
+/// A minimal generator lib stub (`TReturn` defaulted, like the real lib).
+const GENERATOR_STUB: &str = "interface IteratorResult<T, TReturn = any> { done?: boolean; value: T; }\ninterface Generator<T = unknown, TReturn = void, TNext = unknown> {\n    next(value: TNext): IteratorResult<T, TReturn>;\n    return(value: TReturn): IteratorResult<T, TReturn>;\n    throw(e: any): IteratorResult<T, TReturn>;\n    [Symbol.iterator](): Generator<T, TReturn, TNext>;\n}\ninterface AsyncGenerator<T = unknown, TReturn = void, TNext = unknown> {\n    next(value: TNext): Promise<IteratorResult<T, TReturn>>;\n    [Symbol.asyncIterator](): AsyncGenerator<T, TReturn, TNext>;\n}\ninterface IterableIterator<T> {}\ninterface Promise<T> {}\ninterface SymbolConstructor { readonly iterator: symbol; readonly asyncIterator: symbol; }\ndeclare var Symbol: SymbolConstructor;\n";
+
+fn ts7030_count_with_generator_stub(body: &str) -> usize {
+    let source = format!("{GENERATOR_STUB}\n{body}");
+    let diags = check(&source, no_implicit_returns_nonstrict());
+    diagnostic_count(&diags, 7030)
+}
+
+/// The `generatorNoImplicitReturns.ts` witness: an inferred generator with a
+/// bare `return;` on one branch and a `yield` on another. `tsc` is clean.
+#[test]
+fn ts7030_silent_for_inferred_generator_bare_return() {
+    let count = ts7030_count_with_generator_stub(
+        "function* testGenerator() {\n    if (1 > 0.5) {\n        return;\n    }\n    yield 'hello';\n}\n",
+    );
+    assert_eq!(
+        count, 0,
+        "an inferred generator's bare return must not report TS7030"
+    );
+}
+
+/// The `generatorReturnTypeInferenceNonStrict.ts` `g302` witness: `yield` then a
+/// bare `return;`. Inferred `TReturn` is void; `tsc` is clean.
+#[test]
+fn ts7030_silent_for_inferred_generator_yield_then_bare_return() {
+    let count =
+        ts7030_count_with_generator_stub("function* g302() {\n    yield 1;\n    return;\n}\n");
+    assert_eq!(
+        count, 0,
+        "yield-then-bare-return generator must not report TS7030"
+    );
+}
+
+/// An `async function*` with a bare `return;` is exempt on the same rule.
+#[test]
+fn ts7030_silent_for_inferred_async_generator_bare_return() {
+    let count = ts7030_count_with_generator_stub(
+        "async function* ag() {\n    if (1 > 0.5) {\n        return;\n    }\n    yield 1;\n}\n",
+    );
+    assert_eq!(
+        count, 0,
+        "an inferred async generator's bare return must not report TS7030"
+    );
+}

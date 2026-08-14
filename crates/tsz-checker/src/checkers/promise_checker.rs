@@ -1199,22 +1199,27 @@ impl<'a> CheckerState<'a> {
         true
     }
 
-    /// Check if TS7030 (noImplicitReturns) should be skipped for this return type.
+    /// Whether the *fall-off-the-end* TS7030 should be skipped for this return
+    /// type. This is `tsc`'s `checkAllCodePaths…` gate: excluded only for `void`,
+    /// `any`, top-level `undefined`, or a union containing `void`/`any` — a
+    /// genuine `unknown` return (e.g. `f(): unknown`) still reports.
     ///
-    /// TSC skips TS7030 for functions whose return type is or contains `void` or `any`.
-    /// Top-level `undefined` also causes a skip. A union containing `undefined` does not
-    /// suppress TS7030 unless it also contains `void` or `any`.
-    /// For unannotated functions, we only check top-level types because our inferred
-    /// return types use `void` for implicit fall-through (TSC uses `undefined`).
+    /// The one exception is a generator: `return_type` is the unwrapped
+    /// `TReturn`, and an inferred generator whose completion type could not be
+    /// resolved to a concrete `R` (lib/target lacks the iteration types) arrives
+    /// as the `TypeId::UNKNOWN` sentinel standing in for `void`. Suppressing that
+    /// avoids a spurious TS7030 on a generator body `tsc` leaves clean (#17444),
+    /// without silencing non-generator `unknown` returns.
     pub fn should_skip_no_implicit_return_check(
         &self,
         return_type: TypeId,
         has_type_annotation: bool,
-        _is_generator: bool,
+        is_generator: bool,
     ) -> bool {
         if return_type == TypeId::VOID
             || return_type == TypeId::ANY
             || return_type == TypeId::UNDEFINED
+            || (is_generator && return_type == TypeId::UNKNOWN)
         {
             return true;
         }

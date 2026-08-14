@@ -1186,7 +1186,10 @@ impl<'a> CheckerState<'a> {
     /// `tsc`'s `checkReturnStatement` reports TS7030 at a bare `return;`
     /// whenever `noImplicitReturns` is on, `strictNullChecks` is off, the
     /// container is not a constructor, and the effective (unwrapped) return type
-    /// is not `void`/`undefined`/`any`/`never`. Under `strictNullChecks` a bare
+    /// is not `void`/`undefined`/`any`/`unknown`/`never`. The `unknown` exclusion
+    /// mirrors `tsc`'s `isUnwrappedReturnTypeVoidOrAny` gate for this per-return
+    /// check (`TypeFlags.Void | TypeFlags.AnyOrUnknown`), which — unlike the
+    /// fall-off-the-end gate — treats `unknown` like `void`. Under `strictNullChecks` a bare
     /// return instead flows through the ordinary assignability path (`undefined`
     /// is not assignable, giving TS2322), so this stays silent there; a `never`
     /// return type likewise routes through that path (TS2322), not TS7030.
@@ -1208,6 +1211,10 @@ impl<'a> CheckerState<'a> {
         if self.ctx.strict_null_checks()
             || !self.ctx.no_implicit_returns()
             || check_return_type == TypeId::NEVER
+            // The per-return gate is `isUnwrappedReturnTypeVoidOrAny`
+            // (`Void | AnyOrUnknown`), so `unknown` suppresses here for every
+            // function — not only generators as in the fall-off-the-end gate.
+            || check_return_type == TypeId::UNKNOWN
             || self.should_skip_no_implicit_return_check(
                 check_return_type,
                 has_type_annotation,
