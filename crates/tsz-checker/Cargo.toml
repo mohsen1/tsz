@@ -1281,6 +1281,9 @@ path = "tests/contextual_return_literal_refinement_tests.rs"
 name = "contextual_return_value_arg_pinned_tests"
 path = "tests/contextual_return_value_arg_pinned_tests.rs"
 [[test]]
+name = "contextual_return_unknown_arg_not_clamped_tests"
+path = "tests/contextual_return_unknown_arg_not_clamped_tests.rs"
+[[test]]
 name = "ts2322_pinned_callback_return_14823_tests"
 path = "tests/ts2322_pinned_callback_return_14823_tests.rs"
 [[test]]
