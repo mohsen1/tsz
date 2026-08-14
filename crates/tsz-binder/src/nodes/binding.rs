@@ -391,6 +391,34 @@ impl BinderState {
         });
     }
 
+    /// Whether a `using`/`await using` declaration list has a declarator that
+    /// makes `tsc` resolve the global `Disposable`/`AsyncDisposable` interface —
+    /// the only thing that reports `TS2318 Cannot find global type` for these
+    /// declarations when the active lib omits it. `tsc` resolves it through
+    /// `checkTypeAssignableTo(initializerType, Disposable)`, run once per
+    /// declarator that binds a plain identifier *and* has an initializer; a
+    /// no-initializer declarator (a `TS1155` error) or a binding-pattern `using`
+    /// is never checked against `Disposable`. The checker's own disposable
+    /// relation (`type_checking::using_disposable`) short-circuits on those same
+    /// two shapes, so this gate must agree with it rather than fire on the bare
+    /// `using` keyword.
+    fn using_list_resolves_disposable_type(arena: &NodeArena, decl_list_idx: NodeIndex) -> bool {
+        let Some(list) = arena.get_variable_at(decl_list_idx) else {
+            return false;
+        };
+        list.declarations.nodes.iter().any(|&decl_idx| {
+            let Some(decl) = arena.get_variable_declaration_at(decl_idx) else {
+                return false;
+            };
+            if decl.initializer.is_none() {
+                return false;
+            }
+            // A binding-pattern `using` (`using {a} = ...`) never triggers the
+            // disposable-type resolution; only a plain identifier binding does.
+            !arena.get(decl.name).is_some_and(Node::is_binding_pattern)
+        })
+    }
+
     #[inline]
     fn bind_node_by_node_kind(&mut self, arena: &NodeArena, node: &Node, idx: NodeIndex) {
         match node.kind {
@@ -413,14 +441,22 @@ impl BinderState {
             // Variable declarations
             k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
                 if let Some(var_stmt) = arena.get_variable(node) {
-                    // Track using/await-using features for TS2318 diagnostics
+                    // Arm the using/await-using TS2318 feature gate only for a
+                    // declarator that makes `tsc` resolve the global disposable
+                    // interface (see `using_list_resolves_disposable_type`).
                     if let Some(&decl_list_idx) = var_stmt.declarations.nodes.first() {
                         if let Some(list_node) = arena.get(decl_list_idx) {
                             let flags = u32::from(list_node.flags);
-                            if node_flags::is_await_using(flags) {
-                                self.file_features.set(FileFeatures::AWAIT_USING);
-                            } else if (flags & node_flags::USING) != 0 {
-                                self.file_features.set(FileFeatures::USING);
+                            let is_await_using = node_flags::is_await_using(flags);
+                            let is_using = is_await_using || (flags & node_flags::USING) != 0;
+                            if is_using
+                                && Self::using_list_resolves_disposable_type(arena, decl_list_idx)
+                            {
+                                self.file_features.set(if is_await_using {
+                                    FileFeatures::AWAIT_USING
+                                } else {
+                                    FileFeatures::USING
+                                });
                             }
                         }
                         self.bind_node(arena, decl_list_idx);

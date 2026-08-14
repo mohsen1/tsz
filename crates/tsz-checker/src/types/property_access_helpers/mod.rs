@@ -10,7 +10,7 @@ mod expando;
 mod expando_commonjs_exports;
 mod expando_implicit_any;
 mod expando_prototype_writes;
-mod expando_this_property_tracking;
+mod expando_this_and_walk;
 mod iterator_methods;
 
 #[cfg(test)]

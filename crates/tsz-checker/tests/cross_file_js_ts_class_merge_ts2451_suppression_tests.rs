@@ -23,15 +23,21 @@
 //! (non-`checkJs`) property-type resolution — see the `ts2339_*` tests
 //! below, which cover the rule in pure TS. The `.js` + `checkJs` variant of
 //! the same fixture (`ts2451_in_js_when_dts_class_conflicts_with_const`
-//! below) still does not report `TS2339`: a `checkJs` direct-write target
-//! runs assignment-target expando-write machinery
-//! (`property_access_helpers/expando.rs`,
-//! `types/property_access_type/resolve.rs`) ahead of the generic
-//! property-type path, and that machinery grants the write before
-//! `cross_file_variable_class_merge.rs`'s resolution is ever consulted —
-//! traced to at least `is_expando_function_assignment` short-circuiting
-//! before the generic property-access-type path is reached, but the exact
-//! grant site was not pinned down. Not fixed here; left for a follow-up.
+//! below) is covered separately: a `checkJs` direct-write target runs
+//! assignment-target expando-write machinery
+//! (`property_access_helpers/expando.rs`) ahead of the generic property-type
+//! path, and that machinery used to grant the write unconditionally whenever
+//! the merged symbol carried `CLASS` — fixed in
+//! `root_symbol_supports_js_expando_read` / `root_symbol_supports_js_direct_expando_write`
+//! (reject outright when a symbol carries both `CLASS` and `VARIABLE`, since
+//! that combination only ever arises from this exact redeclaration
+//! conflict). Verified by
+//! `crates/tsz-cli/tests/js_container_merge_class_variable_conflict_expando_cli_tests.rs`
+//! — the real project-mode driver, not the entry-only harness used here, is
+//! required: the fix depends on the production `global_symbol_file_index`
+//! cross-arena merge that unifies `A`'s `.d.ts`/`.js` declarations under one
+//! `SymbolId`, which none of the lightweight multi-file test harnesses in
+//! this crate reproduce.
 
 use tsz_checker::context::CheckerOptions;
 use tsz_common::common::ModuleKind;
@@ -81,9 +87,11 @@ fn ts2451_in_dts_when_js_const_conflicts_with_class() {
 /// is otherwise treated as an ordinary JS expando on the `const`'s own
 /// object-literal type (no `TS2739`/`TS2741` from checking it against the
 /// unrelated class shape). Per the module doc comment, the `TS2339` half of
-/// `jsContainerMergeTsDeclaration3.ts`'s expectation is not yet covered for
-/// this `.js` + `checkJs` shape (see `ts2339_fires_for_pure_ts_cross_file_conflict_no_js_involved`
-/// below for the covered pure-TS shape of the same rule).
+/// `jsContainerMergeTsDeclaration3.ts`'s expectation for this `.js` +
+/// `checkJs` shape is covered by the real-project-mode CLI test named in the
+/// module doc comment, not by `compile_files` here (see
+/// `ts2339_fires_for_pure_ts_cross_file_conflict_no_js_involved` below for
+/// the pure-TS shape of the same rule, which `compile_files` does cover).
 #[test]
 fn ts2451_in_js_when_dts_class_conflicts_with_const() {
     let diags = compile_files(
@@ -208,6 +216,26 @@ fn ts2300_not_ts2451_when_var_conflicts_with_dts_class() {
         count_code(&diags, 2300),
         1,
         "var vs class must report TS2300 (duplicate identifier); got: {diags:?}"
+    );
+}
+
+/// Negative control: without the conflicting `.d.ts` class, the same
+/// empty-object-literal expando write on a plain JS `const` stays clean —
+/// proving the companion CLI-level fix (see the module doc comment) is
+/// scoped to the CLASS+VARIABLE conflict shape and does not disable
+/// ordinary JS expando writes.
+#[test]
+fn ts2339_does_not_fire_for_plain_js_expando_without_class_conflict() {
+    let diags = compile_files(&[("b.js", "const A = { };\nA.d = { };")], 0);
+    assert_eq!(
+        count_code(&diags, 2339),
+        0,
+        "plain JS expando write must stay clean without a conflicting class; got: {diags:?}"
+    );
+    assert_eq!(
+        count_code(&diags, 2451),
+        0,
+        "no conflict expected; got: {diags:?}"
     );
 }
 

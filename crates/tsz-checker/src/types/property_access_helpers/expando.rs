@@ -186,6 +186,23 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
+        // A `var`/`let`/`const` never legitimately declaration-merges with a
+        // class — `class`'s exclude set always conflicts a variable, so
+        // CLASS+VARIABLE co-occurring on one symbol only ever arises from a
+        // genuine redeclaration conflict (already reported as TS2451/TS2300
+        // elsewhere), never a valid merge like `function f(){} class f {}`'s
+        // FUNCTION+CLASS. tsc's value resolution for a conflicting symbol
+        // always prefers the class (mirrors `compute_type_of_symbol`'s
+        // CLASS-first branch order), so the variable's own object-literal
+        // expando-host shape is never authoritative once CLASS is also
+        // present — reject before it can fall through to the variable check
+        // below. Oracle-verified: `declare class A {}` (`.d.ts`) conflicting
+        // with `const A = {}` (`.js`) still reports `TS2339` on `A.d = {}`.
+        if symbol.has_any_flags(symbol_flags::CLASS) && symbol.has_any_flags(symbol_flags::VARIABLE)
+        {
+            return false;
+        }
+
         // A namespace/module root grants expando access only when it is also
         // bound as a FUNCTION or CLASS (the `function f() {} namespace f {}`
         // merge pattern) — tsc's own `getExpandoInitializer` restricts the
@@ -258,6 +275,15 @@ impl<'a> CheckerState<'a> {
         else {
             return false;
         };
+
+        // Same restriction as `root_symbol_supports_js_expando_read`: a
+        // CLASS+VARIABLE symbol is always a redeclaration conflict, never a
+        // valid merge, and tsc's value resolution prefers the class — the
+        // variable's own expando-host shape must not grant a direct write.
+        if symbol.has_any_flags(symbol_flags::CLASS) && symbol.has_any_flags(symbol_flags::VARIABLE)
+        {
+            return false;
+        }
 
         // Same restriction as `root_symbol_supports_js_expando_read`: a pure
         // namespace/module root (no FUNCTION/CLASS merge) does not grant
@@ -1567,306 +1593,5 @@ impl<'a> CheckerState<'a> {
         for child_idx in self.ctx.arena.get_children(idx) {
             self.collect_expando_property_positions(child_idx, prefix, positions);
         }
-    }
-
-    /// Whether the expando root symbol's value declaration carries an explicit
-    /// type annotation (`const c: SFC<P> = ...`). Annotated roots get member
-    /// types from the annotation, so the assignment-scan walk must not run.
-    fn expando_root_symbol_has_type_annotation(&self, sym_id: tsz_binder::SymbolId) -> bool {
-        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
-            return false;
-        };
-        let decl_idx = symbol.value_declaration;
-        let Some(node) = self.ctx.arena.get(decl_idx) else {
-            return false;
-        };
-        self.ctx
-            .arena
-            .get_variable_declaration(node)
-            .is_some_and(|decl| decl.type_annotation.is_some())
-    }
-
-    /// Whether `block_idx` (a `BLOCK`) lexically re-declares `root_name`
-    /// (`let`/`const`/`function`/`class`), shadowing the outer expando root.
-    /// Assignments inside such a block target the SHADOWING binding and must
-    /// not contribute to the outer root's property types (witness:
-    /// expandoFunctionBlockShadowing — a block-local `const Y = function...;
-    /// Y.test = 42` leaking `number` onto the top-level `Y.test: string`).
-    fn block_shadows_expando_root(&self, block_idx: NodeIndex, root_name: &str) -> bool {
-        for stmt_idx in self.ctx.arena.get_children(block_idx) {
-            let Some(stmt) = self.ctx.arena.get(stmt_idx) else {
-                continue;
-            };
-            match stmt.kind {
-                syntax_kind_ext::VARIABLE_STATEMENT => {
-                    let mut stack = vec![stmt_idx];
-                    while let Some(idx) = stack.pop() {
-                        let Some(node) = self.ctx.arena.get(idx) else {
-                            continue;
-                        };
-                        if node.kind == syntax_kind_ext::VARIABLE_DECLARATION
-                            && let Some(decl) = self.ctx.arena.get_variable_declaration(node)
-                            && self
-                                .ctx
-                                .arena
-                                .get_identifier_at(decl.name)
-                                .is_some_and(|ident| ident.escaped_text == root_name)
-                        {
-                            return true;
-                        }
-                        stack.extend(self.ctx.arena.get_children(idx));
-                    }
-                }
-                syntax_kind_ext::FUNCTION_DECLARATION | syntax_kind_ext::CLASS_DECLARATION => {
-                    let named = self
-                        .ctx
-                        .arena
-                        .get_function(stmt)
-                        .map(|function| function.name)
-                        .or_else(|| self.ctx.arena.get_class(stmt).map(|class| class.name));
-                    if named.is_some_and(|name_idx| {
-                        self.ctx
-                            .arena
-                            .get_identifier_at(name_idx)
-                            .is_some_and(|ident| ident.escaped_text == root_name)
-                    }) {
-                        return true;
-                    }
-                }
-                _ => {}
-            }
-        }
-        false
-    }
-
-    /// The nearest enclosing `BLOCK` of the symbol's value declaration, or
-    /// `NodeIndex::NONE` for a top-level (source-file-scoped) root.
-    fn expando_assignment_walk_root(&self, sym_id: tsz_binder::SymbolId) -> NodeIndex {
-        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
-            return NodeIndex::NONE;
-        };
-        let mut current = symbol.value_declaration;
-        for _ in 0..64 {
-            let Some(ext) = self.ctx.arena.get_extended(current) else {
-                return NodeIndex::NONE;
-            };
-            if !ext.parent.is_some() {
-                return NodeIndex::NONE;
-            }
-            let parent = ext.parent;
-            if self
-                .ctx
-                .arena
-                .get(parent)
-                .is_some_and(|node| node.kind == syntax_kind_ext::BLOCK)
-            {
-                return parent;
-            }
-            current = parent;
-        }
-        NodeIndex::NONE
-    }
-
-    /// The statement children to scan for `walk_root`: the block's children
-    /// when scoped, otherwise the current source file's top-level statements.
-    fn expando_walk_statements(&self, walk_root: NodeIndex) -> Vec<NodeIndex> {
-        if walk_root.is_some() {
-            return self.ctx.arena.get_children(walk_root);
-        }
-        self.ctx
-            .arena
-            .source_files
-            .get(self.ctx.current_file_idx)
-            .or_else(|| self.ctx.arena.source_files.first())
-            .map(|source_file| source_file.statements.nodes.clone())
-            .unwrap_or_default()
-    }
-
-    pub(super) fn collect_expando_property_assignment_type(
-        &mut self,
-        idx: NodeIndex,
-        expected_key: &str,
-        read_pos: u32,
-        collected: &mut Vec<(u32, TypeId)>,
-    ) {
-        let Some(node) = self.ctx.arena.get(idx) else {
-            return;
-        };
-
-        if self.is_scope_owner_kind(node.kind) || node.kind == syntax_kind_ext::CLASS_DECLARATION {
-            return;
-        }
-        // A block that lexically re-declares the root name shadows the outer
-        // expando root for its whole subtree.
-        if node.kind == syntax_kind_ext::BLOCK
-            && let Some(root_name) = expected_key.split('.').next()
-            && self.block_shadows_expando_root(idx, root_name)
-        {
-            return;
-        }
-
-        if node.kind == syntax_kind_ext::BINARY_EXPRESSION
-            && let Some(binary) = self.ctx.arena.get_binary_expr(node)
-            && binary.operator_token == SyntaxKind::EqualsToken as u16
-            && node.pos < read_pos
-            && self
-                .expando_assignment_access_key(binary.left)
-                .is_some_and(|key| key == expected_key)
-            && !Self::is_void_zero_or_undefined_rhs_in_arena(self.ctx.arena, binary.right)
-        {
-            // In JS/Salsa files, `x.y = void 0` is a property declaration placeholder,
-            // not a meaningful type assignment. Skip it so the property type doesn't
-            // become `undefined`, which would cause spurious TS18048 diagnostics.
-            if !self.js_assignment_rhs_is_void_zero(binary.right) {
-                let rhs_idx = Self::checked_js_constructor_initializer_expression(
-                    self.ctx.arena,
-                    binary.left,
-                )
-                .unwrap_or_else(|| self.terminal_expando_assignment_rhs(binary.right));
-                let rhs_type = self.get_type_of_node(rhs_idx);
-                if rhs_type != TypeId::ANY
-                    && rhs_type != TypeId::ERROR
-                    && rhs_type != TypeId::UNDEFINED
-                {
-                    collected.push((node.pos, rhs_type));
-                }
-            }
-        }
-
-        for child_idx in self.ctx.arena.get_children(idx) {
-            self.collect_expando_property_assignment_type(
-                child_idx,
-                expected_key,
-                read_pos,
-                collected,
-            );
-        }
-    }
-
-    fn terminal_expando_assignment_rhs(&self, idx: NodeIndex) -> NodeIndex {
-        let idx = self.ctx.arena.skip_parenthesized(idx);
-        if let Some(node) = self.ctx.arena.get(idx)
-            && node.kind == syntax_kind_ext::BINARY_EXPRESSION
-            && let Some(binary) = self.ctx.arena.get_binary_expr(node)
-            && binary.operator_token == SyntaxKind::EqualsToken as u16
-        {
-            return self.terminal_expando_assignment_rhs(binary.right);
-        }
-        idx
-    }
-
-    fn expando_assignment_access_key(&mut self, idx: NodeIndex) -> Option<String> {
-        let node = self.ctx.arena.get(idx)?;
-        match node.kind {
-            k if k == SyntaxKind::Identifier as u16 => self
-                .ctx
-                .arena
-                .get_identifier(node)
-                .map(|ident| ident.escaped_text.to_string()),
-            syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
-                let access = self.ctx.arena.get_access_expr(node)?;
-                // An optional-chain hop (`obj?.a = 1`) is never a valid
-                // assignment target (TS2779) and tsc's expando/special-property
-                // detection requires a "bindable static name expression" — a
-                // chain of plain property accesses, which an optional hop is
-                // not. Such a write must not be read back as an expando
-                // property declaration on a later access of the same name.
-                if access.question_dot_token {
-                    return None;
-                }
-                let left = self.expando_assignment_access_key(access.expression)?;
-                let right = self.ctx.arena.get_identifier_at(access.name_or_argument)?;
-                Some(format!("{left}.{}", right.escaped_text))
-            }
-            syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION => {
-                let access = self.ctx.arena.get_access_expr(node)?;
-                if access.question_dot_token {
-                    return None;
-                }
-                let left = self.expando_assignment_access_key(access.expression)?;
-                let right = self.expando_element_key_name(access.name_or_argument)?;
-                Some(format!("{left}.{right}"))
-            }
-            _ => None,
-        }
-    }
-
-    pub(in crate::types_domain) fn expando_property_read_before_assignment(
-        &self,
-        property_access_idx: NodeIndex,
-        object_expr_idx: NodeIndex,
-        property_name: &str,
-    ) -> bool {
-        if self.property_access_is_write_target_or_base(property_access_idx) {
-            return false;
-        }
-        if self.expando_read_is_self_default_initializer(property_access_idx) {
-            return false;
-        }
-        if self.is_current_file_commonjs_export_base_for_expando(object_expr_idx) {
-            if !self.is_js_file() || !self.ctx.compiler_options.check_js {
-                return false;
-            }
-            return self.commonjs_export_read_before_assignment(property_access_idx, property_name);
-        }
-        if !self.expando_read_is_within_initializing_scope(property_access_idx, object_expr_idx) {
-            return false;
-        }
-        if !self.is_expando_capable_read_root(object_expr_idx, property_name) {
-            return false;
-        }
-
-        if let Some(file_idx) = self.expando_root_js_file_idx(object_expr_idx)
-            && file_idx != self.ctx.current_file_idx
-        {
-            return false;
-        }
-
-        let Some(flow_node) = self.flow_node_for_reference_usage(property_access_idx) else {
-            return false;
-        };
-
-        !self
-            .flow_analyzer_for_property_reads()
-            .is_definitely_assigned(property_access_idx, flow_node)
-    }
-
-    fn is_expando_capable_read_root(
-        &self,
-        object_expr_idx: NodeIndex,
-        property_name: &str,
-    ) -> bool {
-        self.is_expando_property_read(object_expr_idx, property_name)
-            || ((self.is_js_file() && self.ctx.compiler_options.check_js)
-                && self.is_js_prototype_read_root(object_expr_idx, property_name))
-    }
-
-    /// Whether an unknown property on `type_id` is an implicit `any` rather than
-    /// a `TS2339`, because the receiver is an *open* JS object container.
-    ///
-    /// In a JS file a value whose type is an anonymous object shape is open: JS
-    /// code routinely builds such containers up by property assignment, often
-    /// across files (`var N = {}` in one file, `N.commands.a = 1` in another), so
-    /// `tsc` types the access as an implicit `any` and reports it only under
-    /// `noImplicitAny`.
-    ///
-    /// The shape's nominal `symbol` separates an open container from a declared
-    /// shape: class instance types carry it so distinct classes do not intern
-    /// structurally, and interfaces carry their declaration's symbol. So
-    /// `Event.prototype.removeChildren = ...` and `new C().q` keep reporting
-    /// TS2339. Arrays and primitives have no object shape at all and are
-    /// excluded before the `symbol` test is reached.
-    ///
-    /// A receiver produced by an object spread (`{ ...base }`) is excluded even
-    /// though it is anonymous and symbol-less: `tsc`'s `getSpreadType` never
-    /// marks its result `ObjectFlags.JSLiteral` the way a hand-written object
-    /// literal is marked, so a spread-derived container stays a strict TS2339
-    /// target rather than joining the open-container leniency.
-    pub(crate) fn js_open_object_receiver_under_implicit_any(&self, type_id: TypeId) -> bool {
-        self.is_js_file()
-            && self.ctx.compiler_options.check_js
-            && !self.ctx.no_implicit_any()
-            && crate::query_boundaries::common::object_shape_for_type(self.ctx.types, type_id)
-                .is_some_and(|shape| shape.symbol.is_none() && !shape.is_spread_literal())
     }
 }

@@ -757,6 +757,51 @@ fn await_using_declaration_sets_feature_flag() {
     );
 }
 
+#[test]
+fn using_declaration_without_initializer_does_not_set_feature_flag() {
+    // A `using` with no initializer is a `TS1155` error; `tsc` never resolves
+    // the global `Disposable` interface for it, so the TS2318 feature gate must
+    // stay disarmed. Only a declarator with an initializer arms it.
+    let (binder, _parser) = parse_and_bind("using d;");
+    assert!(
+        !binder.file_features.has(crate::state::FileFeatures::USING),
+        "initializer-less using declaration should not set USING feature flag"
+    );
+}
+
+#[test]
+fn await_using_declaration_without_initializer_does_not_set_feature_flag() {
+    let (binder, _parser) = parse_and_bind("await using e;");
+    assert!(
+        !binder
+            .file_features
+            .has(crate::state::FileFeatures::AWAIT_USING),
+        "initializer-less await using declaration should not set AWAIT_USING feature flag"
+    );
+}
+
+#[test]
+fn using_declaration_binding_pattern_does_not_set_feature_flag() {
+    // A binding-pattern `using` never reaches `tsc`'s disposable-type
+    // resolution, so it must not arm the TS2318 gate even with an initializer.
+    let (binder, _parser) = parse_and_bind("using { a } = { a: 1 };");
+    assert!(
+        !binder.file_features.has(crate::state::FileFeatures::USING),
+        "binding-pattern using declaration should not set USING feature flag"
+    );
+}
+
+#[test]
+fn using_declaration_second_declarator_initializer_sets_feature_flag() {
+    // At least one initialized declarator anywhere in the list arms the gate,
+    // matching `tsc` resolving `Disposable` once for the whole declaration.
+    let (binder, _parser) = parse_and_bind("using a, b = undefined;");
+    assert!(
+        binder.file_features.has(crate::state::FileFeatures::USING),
+        "using list with an initialized declarator should set USING feature flag"
+    );
+}
+
 // =============================================================================
 // 13. RESET AND REUSE
 // =============================================================================
