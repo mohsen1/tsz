@@ -1,18 +1,23 @@
-//! Order-independence regression test for the UMD-global cross-file JS fact
-//! that is decided by scanning the *current file's* source AST.
+//! Order-independence regression tests for cross-file JS facts that are decided
+//! by scanning the *current file's* source AST.
 //!
-//! Root cause (refs <https://github.com/tsz-org/tsz/issues/17410>):
-//! `current_file_is_module_for_umd_global_access` read the current file's
-//! single-source-file arena with
-//! `self.ctx.arena.source_files.get(self.ctx.current_file_idx)`. The per-file
+//! Root cause (refs <https://github.com/tsz-org/tsz/issues/17410>): two checker
+//! sites read the current file's single-source-file arena with
+//! `self.ctx.arena.source_files.get(self.ctx.current_file_idx)`. Each per-file
 //! arena holds exactly one source file at local position 0, so indexing it by
 //! the *program-global* `current_file_idx` only succeeds when that file happens
 //! to sit at program index 0. For any host file at a non-zero index the lookup
-//! returned `None` and the scan silently bailed, suppressing `TS2686` for a bare
-//! UMD-global reference in a `checkJs` file — the first predicate of the TS2686
-//! guard.
+//! returned `None` and the scan silently bailed:
 //!
-//! This was unmasked — not caused — by the tsc-accurate `discover_ts_files`
+//! - `current_file_is_module_for_umd_global_access` (UMD-global detection)
+//!   returned `false`, suppressing `TS2686` for a bare UMD-global reference in a
+//!   `checkJs` file — the first predicate of the TS2686 guard.
+//! - `augment_object_type_with_define_properties` returned the bare `{}` type,
+//!   dropping every `Object.defineProperty(x, ...)` expando member, so a
+//!   cross-file consumer saw `{}` instead of the declared shape (spurious
+//!   `TS2339`, and the real `TS2540`/`TS2322` writes went unreported).
+//!
+//! Both were unmasked — not caused — by the tsc-accurate `discover_ts_files`
 //! root ordering (`.ts` family before `.js` family), which moves a `.js` host
 //! file off program index 0. The fix reads `source_files.first()` (the file's
 //! own single source, like the 98 sibling sites), so the decision depends on the
@@ -20,27 +25,25 @@
 //!
 //! Structural rule under test:
 //!
-//! > When a per-file AST fact (is-this-file-a-module) is decided by scanning
-//! > the current file's source, tsc's answer is a pure function of that file's
-//! > AST and is identical regardless of where the file lands in program order;
-//! > tsz now matches by selecting the arena's own single source file.
+//! > When a per-file AST fact (is-this-file-a-module, this-file's
+//! > `Object.defineProperty` members) is decided by scanning the current file's
+//! > source, tsc's answer is a pure function of that file's AST and is identical
+//! > regardless of where the file lands in program order; tsz now matches by
+//! > selecting the arena's own single source file.
 //!
 //! Each test checks the same logical program under every file permutation and
 //! asserts byte-identical diagnostics. The rule is name-agnostic: the UMD
 //! namespace, module, member, and file names are varied across the two cases so
 //! neither is keyed on any spelling.
 //!
-//! A sibling defect in `augment_object_type_with_define_properties` (same
-//! `get(current_file_idx)` pattern, `Object.defineProperty` expando members)
-//! looked like the same bug but is NOT fixed here: switching it to `.first()`
-//! passed this file's own permutation tests but introduced a real false-positive
-//! regression on `ensureNoCrashExportAssignmentDefineProperrtyPotentialMerge.ts`
-//! (conformance `compare-to-parent` gate) — the whole-file defineProperty scan
-//! doesn't respect statement order relative to the property access being
-//! checked, so a later `Object.defineProperty` call's type leaks backward into
-//! an earlier assignment's assignability check. That needs a position-aware
-//! fix, not a same-shape `.first()` swap; left as an unclaimed follow-up on
-//! #17410.
+//! `augment_object_type_with_define_properties`'s `.first()` switch also
+//! unmasked (not caused) a false positive on the *same-file* sibling pattern
+//! `ensureNoCrashExportAssignmentDefineProperrtyPotentialMerge.ts` — fixed at
+//! the assignability-checker boundary (#17429): a same-file expando write and a
+//! `defineProperty` call for the identical property are sibling declarations
+//! tsc unions rather than cross-checks, not a position-aware ordering rule (an
+//! earlier "later `defineProperty` leaks backward" theory was oracle-refuted —
+//! swapping `defineProperty` before the expando write still reports nothing).
 
 use tsz_checker::context::{CheckerOptions, ScriptTarget};
 use tsz_checker::diagnostics::Diagnostic;
@@ -178,5 +181,72 @@ fn umd_global_reference_renamed_reports_ts2686_in_every_order() {
     assert!(
         sig.iter().any(|s| s.starts_with("TS2686@")),
         "expected TS2686 for the renamed UMD global in every order; got {sig:?}",
+    );
+}
+
+/// `Object.defineProperty` witness: a `const x = {}` object augmented by
+/// `Object.defineProperty` calls and re-exported via `module.exports = x` must
+/// expose those members to a cross-file TS consumer in every order — a write to
+/// a `writable: false` member is `TS2540`, and the members must exist (no
+/// `TS2339`). The host `.js` file must be scanned for its defineProperty calls
+/// regardless of its program index.
+#[test]
+fn define_property_expando_members_visible_cross_file_in_every_order() {
+    let files = [
+        (
+            "shape.js",
+            "const x = {};\n\
+             Object.defineProperty(x, \"name\", { value: \"Charles\", writable: true });\n\
+             Object.defineProperty(x, \"lastName\", { value: \"Smith\", writable: false });\n\
+             module.exports = x;\n",
+        ),
+        (
+            "consumer.ts",
+            "import x = require(\"./shape\");\n\
+             x.name = \"Another\";\n\
+             x.lastName = \"should fail\";\n",
+        ),
+    ];
+
+    let sig = assert_order_independent(&files, "consumer.ts", commonjs_checkjs_opts());
+    assert!(
+        sig.iter().any(|s| s.starts_with("TS2540@")),
+        "expected TS2540 (assign to read-only defineProperty member) in every order; got {sig:?}",
+    );
+    assert!(
+        !sig.iter().any(|s| s.starts_with("TS2339@")),
+        "the defineProperty members must exist on the imported shape (no TS2339) in every order; got {sig:?}",
+    );
+}
+
+/// Name-varied `Object.defineProperty` witness: different root variable, member
+/// names, module and file spellings. Still `TS2540` with no `TS2339` in every
+/// order.
+#[test]
+fn define_property_expando_members_renamed_visible_cross_file_in_every_order() {
+    let files = [
+        (
+            "record.js",
+            "const record = {};\n\
+             Object.defineProperty(record, \"title\", { value: \"Doc\", writable: true });\n\
+             Object.defineProperty(record, \"revision\", { value: \"v1\", writable: false });\n\
+             module.exports = record;\n",
+        ),
+        (
+            "checker.ts",
+            "import record = require(\"./record\");\n\
+             record.title = \"Another\";\n\
+             record.revision = \"nope\";\n",
+        ),
+    ];
+
+    let sig = assert_order_independent(&files, "checker.ts", commonjs_checkjs_opts());
+    assert!(
+        sig.iter().any(|s| s.starts_with("TS2540@")),
+        "expected TS2540 for the renamed read-only member in every order; got {sig:?}",
+    );
+    assert!(
+        !sig.iter().any(|s| s.starts_with("TS2339@")),
+        "renamed defineProperty members must exist on the imported shape (no TS2339); got {sig:?}",
     );
 }

@@ -981,7 +981,9 @@ impl<'a> CheckerState<'a> {
             // skip the whole-object assignability check. tsc processes each
             // property/element individually, which correctly handles private
             // members and other access-controlled properties.
-            let mut check_assignability = !is_destructuring && !suppress_for_readonly;
+            let mut check_assignability = !is_destructuring
+                && !suppress_for_readonly
+                && !self.suppress_sibling_write_check(left_idx, has_explicit_jsdoc_left_type);
 
             if is_destructuring && !is_not_iterable {
                 self.check_object_destructuring_assignment_from_source_type(
