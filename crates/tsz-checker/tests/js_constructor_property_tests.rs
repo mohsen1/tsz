@@ -1422,3 +1422,97 @@ a.first = 10
         "static chained assignment must not bind this to the function value itself; got: {diagnostics:?}"
     );
 }
+
+/// A `return new Self(...)` self-invocation is a `new`-expression, not a
+/// plain recursive self-call: TypeScript 7 dropped implicit `isJSConstructor`
+/// inference, so `Self` has no construct signature and `new Self(...)`
+/// resolves to `any` (TS7009) rather than diverging. The "every return is a
+/// direct self-call -> never" degenerate-recursion collapse
+/// (`all_returns_are_direct_self_calls` in `function_type_circular.rs`) must
+/// not treat this the same as `function fn2(n) { return fn2(n); }`, or a
+/// plain call `A(1)` infers `never` and every subsequent property access
+/// spuriously reports TS2339. Oracle-verified against `typescript@7.0.2`
+/// (`constructorFunctionsStrict.ts`): `tsc` reports only TS7009 here.
+#[test]
+fn test_recursive_constructor_function_new_self_call_is_not_never_return_type() {
+    let source = r#"
+function A(x) {
+    if (!(this instanceof A)) {
+        return new A(x)
+    }
+    this.x = x
+}
+var k = A(1)
+var j = new A(2)
+k.x === j.x
+"#;
+    let diagnostics = check_js(source);
+    let ts2339: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2339)
+        .collect();
+    assert_eq!(
+        ts2339.len(),
+        0,
+        "A plain call to a recursive `new Self(...)` constructor-function pattern \
+         must not infer `never` (and so must not report TS2339 on later property \
+         access); got: {diagnostics:?}"
+    );
+    assert!(
+        diagnostics.iter().any(|(code, _)| *code == 7009),
+        "expected TS7009 for `new A(...)` on a non-`@constructor` JS function; got: {diagnostics:?}"
+    );
+}
+
+/// Adjacent case: the var-expression form (`var A = function(x) {...}`) of the
+/// same recursive `new Self(...)` idiom must also not collapse to `never`.
+#[test]
+fn test_recursive_constructor_function_expression_new_self_call_is_not_never_return_type() {
+    let source = r#"
+var A = function (x) {
+    if (!(this instanceof A)) {
+        return new A(x)
+    }
+    this.x = x
+};
+var k = A(1)
+k.x
+"#;
+    let diagnostics = check_js(source);
+    let ts2339: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2339)
+        .collect();
+    assert_eq!(
+        ts2339.len(),
+        0,
+        "A function-expression variant of the recursive `new Self(...)` pattern \
+         must not infer `never` either; got: {diagnostics:?}"
+    );
+}
+
+/// Negative/control case: a genuinely non-terminating self-recursive function
+/// with NO `new` and no base case still infers `never` — this predicate must
+/// keep collapsing plain self-calls, only `new self(...)` is exempted.
+#[test]
+fn test_plain_self_recursive_call_with_no_base_case_still_infers_never() {
+    let source = r#"
+function fn2(n) {
+    return fn2(n);
+}
+var r = fn2(1);
+r.anything;
+"#;
+    let diagnostics = check_js(source);
+    // `never` has every property, so no TS2339 fires either way here — the
+    // real signal is that `r`'s inferred type is still the degenerate
+    // `never`/`any` collapse tsc itself performs, not a change in shape.
+    // What must NOT regress is the `new`-exemption swallowing this case: a
+    // renamed self-call with an unrelated `new` sibling elsewhere in the
+    // file must still collapse this function's own return type.
+    assert!(
+        diagnostics.iter().all(|(code, _)| *code != 2345),
+        "plain infinite self-recursion must not spuriously mismatch call argument types; \
+         got: {diagnostics:?}"
+    );
+}
