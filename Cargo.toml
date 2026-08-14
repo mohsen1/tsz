@@ -4,7 +4,7 @@ exclude = ["crates/.target"]
 resolver = "3"
 
 [workspace.package]
-version = "0.1.69"
+version = "0.1.70"
 edition = "2024"
 repository = "https://github.com/tsz-org/tsz"
 homepage = "https://github.com/tsz-org/tsz"
@@ -16,16 +16,16 @@ readme = "README.md"
 
 [workspace.dependencies]
 # Internal workspace crates
-tsz = { path = "crates/tsz-core", version = "0.1.69", package = "tsz-core" }
-tsz-common = { path = "crates/tsz-common", version = "0.1.69" }
-tsz-scanner = { path = "crates/tsz-scanner", version = "0.1.69" }
-tsz-parser = { path = "crates/tsz-parser", version = "0.1.69" }
-tsz-binder = { path = "crates/tsz-binder", version = "0.1.69" }
-tsz-solver = { path = "crates/tsz-solver", version = "0.1.69" }
-tsz-lowering = { path = "crates/tsz-lowering", version = "0.1.69" }
-tsz-checker = { path = "crates/tsz-checker", version = "0.1.69" }
-tsz-emitter = { path = "crates/tsz-emitter", version = "0.1.69", default-features = false }
-tsz-lsp = { path = "crates/tsz-lsp", version = "0.1.69" }
+tsz = { path = "crates/tsz-core", version = "0.1.70", package = "tsz-core" }
+tsz-common = { path = "crates/tsz-common", version = "0.1.70" }
+tsz-scanner = { path = "crates/tsz-scanner", version = "0.1.70" }
+tsz-parser = { path = "crates/tsz-parser", version = "0.1.70" }
+tsz-binder = { path = "crates/tsz-binder", version = "0.1.70" }
+tsz-solver = { path = "crates/tsz-solver", version = "0.1.70" }
+tsz-lowering = { path = "crates/tsz-lowering", version = "0.1.70" }
+tsz-checker = { path = "crates/tsz-checker", version = "0.1.70" }
+tsz-emitter = { path = "crates/tsz-emitter", version = "0.1.70", default-features = false }
+tsz-lsp = { path = "crates/tsz-lsp", version = "0.1.70" }
 
 # External dependencies (shared versions)
 anyhow = "1.0"
