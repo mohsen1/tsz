@@ -142,3 +142,24 @@ fn nested_closed_host_prototype_write_stays_ts2339() {
         "a closed-shape nested host must keep TS2339 on `.prototype`; got {codes:?}"
     );
 }
+
+/// Regression control (`salsa/typeFromPropertyAssignment23.ts`): a write on
+/// a REAL class's `.prototype` for a member the class never declares must
+/// stay `TS2339`. `Module.prototype` is a nested chain whose base link's
+/// own member name happens to be `prototype`, which
+/// `nested_expando_base_link_is_declared` treats as a vacuous pass for its
+/// own narrower question (validating a chain base before a further recorded-
+/// assignment lookup) — a fix that reused that carve-out to grant this write
+/// outright would wrongly silence every undeclared member on any class's
+/// prototype.
+#[test]
+fn nested_open_host_write_does_not_bypass_real_class_prototype_member_check() {
+    let codes = same_file_codes(
+        "class Module {}\nModule.prototype.identifier = undefined;\nModule.prototype.size = null;\n",
+    );
+    assert_eq!(
+        codes,
+        vec![2339, 2339],
+        "an undeclared member write on a real class's `.prototype` must still be TS2339; got {codes:?}"
+    );
+}
