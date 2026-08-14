@@ -103,6 +103,35 @@ abstract class Shape {
 }
 
 // ---------------------------------------------------------------------------
+// Anchor: TS1318 is anchored at the accessor NAME, not the leading `abstract`
+// modifier. tsc's `checkGrammarAccessor` reports through
+// `grammarErrorOnNode(node.name, …)`, so `classAbstractAccessor.ts` expects the
+// error at the `aa`/`bb` column, not the member's start.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn abstract_accessor_with_body_anchors_at_name_not_abstract_keyword() {
+    // Single line so the byte offset is the column. The accessor name `gg`
+    // sits well after the leading `abstract` keyword; the TS1318 span must
+    // start at `gg`.
+    let source = "abstract class A { abstract get gg(): number { return 1; } }";
+    let diag = check_source_diagnostics(source)
+        .into_iter()
+        .find(|d| d.code == 1318)
+        .expect("expected a TS1318");
+    let name_offset = source
+        .find("gg")
+        .expect("source contains the accessor name") as u32;
+    let abstract_offset = source.find("abstract get").expect("has member") as u32;
+    assert_eq!(
+        diag.start, name_offset,
+        "TS1318 must anchor at the accessor name `gg` (offset {name_offset}), not the \
+         `abstract` modifier (offset {abstract_offset}); got start {}",
+        diag.start
+    );
+}
+
+// ---------------------------------------------------------------------------
 // Sibling control: an abstract *method* with a body still reports TS1245 —
 // this fix must not blur the two codes together.
 // ---------------------------------------------------------------------------
