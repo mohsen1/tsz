@@ -38,6 +38,7 @@ pub(crate) mod call_helpers;
 pub(crate) mod call_inference;
 pub(crate) mod call_quick_type_nullish;
 pub(crate) mod call_result;
+mod call_result_generic_display;
 mod call_result_signatures;
 pub(crate) mod class_member_annotation_circularity;
 pub(crate) mod class_member_circularity;

@@ -10,6 +10,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 const CALL_RESULT: &str = "src/types/computation/call_result.rs";
+const CALL_RESULT_GENERIC_DISPLAY: &str = "src/types/computation/call_result_generic_display.rs";
 const ARGUMENT_COLLECTION: &str = "src/types/computation/call/inner/argument_collection.rs";
 const CALL_BOUNDARY: &str = "src/query_boundaries/checkers/call.rs";
 const SIGNATURE_BOUNDARY: &str = "src/query_boundaries/construct_signatures.rs";
@@ -50,21 +51,23 @@ fn defines_fn(source: &str, name: &str) -> bool {
 fn call_diagnostic_surfaces_route_solver_construction_through_boundaries() {
     let mut violations = Vec::new();
 
+    let raw_construction_patterns = [
+        "std::sync::Arc::new(tsz_solver::FunctionShape {",
+        "tsz_solver::FunctionShape {",
+        "FunctionShape {",
+        "tsz_solver::PropertyInfo::new(",
+        "PropertyInfo::new(",
+        "ParamInfo {",
+        "TupleElement {",
+        ".factory().object(",
+        ".factory().tuple(",
+        ".factory().function(",
+        "self.ctx.types.tuple(",
+    ];
+    scan_for_patterns(CALL_RESULT, &raw_construction_patterns, &mut violations);
     scan_for_patterns(
-        CALL_RESULT,
-        &[
-            "std::sync::Arc::new(tsz_solver::FunctionShape {",
-            "tsz_solver::FunctionShape {",
-            "FunctionShape {",
-            "tsz_solver::PropertyInfo::new(",
-            "PropertyInfo::new(",
-            "ParamInfo {",
-            "TupleElement {",
-            ".factory().object(",
-            ".factory().tuple(",
-            ".factory().function(",
-            "self.ctx.types.tuple(",
-        ],
+        CALL_RESULT_GENERIC_DISPLAY,
+        &raw_construction_patterns,
         &mut violations,
     );
     scan_for_patterns(
@@ -91,13 +94,24 @@ fn call_diagnostic_surface_callers_use_boundary_helpers() {
         "call_checker::call_result_literalized_tuple_actual",
         "call_checker::call_result_tuple_tail",
         "call_checker::call_result_spread_rest_tuple_display_target",
-        "call_checker::call_result_generic_callable_display_target",
     ] {
         assert!(
             call_result.contains(helper),
             "call_result.rs must route call diagnostic display construction through `{helper}`"
         );
     }
+
+    // `generic_callable_mismatch_display_target` (the caller of this one
+    // helper) was split out into its own file to stay under the file-size
+    // guard (#17449); the routing itself did not move.
+    let call_result_generic_display = fs::read_to_string(checker_path(CALL_RESULT_GENERIC_DISPLAY))
+        .expect("failed to read types/computation/call_result_generic_display.rs");
+    assert!(
+        call_result_generic_display
+            .contains("call_checker::call_result_generic_callable_display_target"),
+        "call_result_generic_display.rs must route call diagnostic display construction through \
+         `call_checker::call_result_generic_callable_display_target`"
+    );
 
     let argument_collection = fs::read_to_string(checker_path(ARGUMENT_COLLECTION))
         .expect("failed to read call/inner/argument_collection.rs");

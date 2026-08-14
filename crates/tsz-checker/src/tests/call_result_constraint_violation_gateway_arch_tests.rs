@@ -46,6 +46,7 @@ fn no_type_parameter_constraint_violation_callresult_variant() {
 fn call_dispatch_has_no_constraint_violation_bypass_arm() {
     for path in [
         "src/types/computation/call_result.rs",
+        "src/types/computation/call_result_generic_display.rs",
         "src/types/computation/complex.rs",
     ] {
         let src = fs::read_to_string(path)

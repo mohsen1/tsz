@@ -118,8 +118,11 @@ fn nominal_lib_object_callback_returns_use_env_relation_outcome_boundary() {
 
 #[test]
 fn call_result_spread_rest_recovery_uses_env_relation_outcome_boundary() {
-    let source = fs::read_to_string("src/types/computation/call_result.rs")
-        .expect("failed to read call_result.rs");
+    // Lives in `call_result_generic_display.rs`, split out of `call_result.rs`
+    // to stay under the file-size guard (#17449) — the block itself, and the
+    // routing it asserts, did not move.
+    let source = fs::read_to_string("src/types/computation/call_result_generic_display.rs")
+        .expect("failed to read call_result_generic_display.rs");
     let helper_start = source
         .find("let mismatch_is_spread_arg =")
         .expect("missing spread mismatch recovery block");
