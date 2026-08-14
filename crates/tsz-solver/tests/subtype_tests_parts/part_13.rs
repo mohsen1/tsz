@@ -1804,3 +1804,63 @@ fn test_explain_failure_intrinsic_mismatch() {
         other => panic!("Expected IntrinsicTypeMismatch, got {other:?}"),
     }
 }
+
+// =============================================================================
+// `typeof globalThis` surface identity (issue #17436)
+// =============================================================================
+
+#[test]
+fn test_global_this_surface_mints_are_mutually_assignable() {
+    // Two distinct `typeof globalThis` surface mints — the global `window`
+    // value's re-minted `Window & typeof globalThis` surface vs. a directly
+    // written `typeof globalThis` annotation — denote the same per-compilation
+    // type. They can differ structurally (e.g. a merged constructor global
+    // materialized as its instance type in one mint and its constructor type in
+    // the other), yet must relate by their `GLOBAL_THIS_SURFACE` identity rather
+    // than a structural walk that would fail on the incompatible member.
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+
+    let name = interner.intern_string("ArrayBuffer");
+    let instance_member = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("byteLength"),
+        TypeId::NUMBER,
+    )]);
+    let ctor_member = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("prototype"),
+        TypeId::OBJECT,
+    )]);
+
+    let surface_a = interner
+        .factory()
+        .global_this_surface_object(vec![PropertyInfo::new(name, instance_member)]);
+    let surface_b = interner
+        .factory()
+        .global_this_surface_object(vec![PropertyInfo::new(name, ctor_member)]);
+
+    assert_ne!(
+        surface_a, surface_b,
+        "the two surface mints must be distinct TypeIds for this test to be meaningful"
+    );
+    // A plain structural walk would reject at least one direction (the members
+    // are mutually non-assignable objects); the flag identity relates both.
+    assert!(checker.is_subtype_of(surface_a, surface_b));
+    assert!(checker.is_subtype_of(surface_b, surface_a));
+}
+
+#[test]
+fn test_global_this_surface_identity_requires_both_sides() {
+    // Control: the short-circuit is keyed on the `GLOBAL_THIS_SURFACE` flag, not
+    // on structure. A surface vs. a plain object with an incompatible member
+    // still goes through the normal structural relation and is rejected.
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+
+    let name = interner.intern_string("ArrayBuffer");
+    let surface = interner
+        .factory()
+        .global_this_surface_object(vec![PropertyInfo::new(name, TypeId::NUMBER)]);
+    let plain = interner.object(vec![PropertyInfo::new(name, TypeId::STRING)]);
+
+    assert!(!checker.is_subtype_of(surface, plain));
+}
