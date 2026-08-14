@@ -126,7 +126,14 @@ pub fn discover_ts_files(options: &FileDiscoveryOptions) -> Result<Vec<PathBuf>>
     // tsc excludes `.d.ts` files from the program when a corresponding `.ts`
     // (or `.tsx`) source file exists in the same directory.  This prevents the
     // declaration file from shadowing the source file's exports.
-    let mut files = exclude_shadowed_declaration_files(files);
+    let files = exclude_shadowed_declaration_files(files);
+
+    // tsc also excludes a wildcard-matched `.js`/`.jsx` (or `.mjs`/`.cjs`)
+    // file when a same-stem, higher-priority source file is present in the
+    // same directory — a same-named `a.ts`/`a.js` pair resolves to one
+    // module, not two. Explicitly listed files (CLI positional args or a
+    // tsconfig `files` array) are never shadowed.
+    let mut files = exclude_shadowed_js_files(files, &explicit_files);
 
     let mut list = Vec::with_capacity(files.len());
     for path in explicit_files {
@@ -475,6 +482,76 @@ fn exclude_shadowed_declaration_files(files: BTreeSet<PathBuf>) -> BTreeSet<Path
                 true
             }
         })
+        .collect()
+}
+
+/// Extension families used by [`exclude_shadowed_js_files`], each ordered
+/// from highest to lowest priority. Oracle-verified (pinned `tsc` 7.0.2):
+/// `.ts`/`.tsx` shadow a same-stem `.js`/`.jsx` (and `.js` alone shadows a
+/// same-stem `.jsx`); `.mts` shadows only a same-stem `.mjs`; `.cts` shadows
+/// only a same-stem `.cjs`. The three families are independent — an `.mts`
+/// file never shadows, or is shadowed by, a `.js`/`.cjs` file.
+const JS_SHADOW_FAMILIES: &[&[&str]] = &[
+    &[".ts", ".tsx", ".js", ".jsx"],
+    &[".mts", ".mjs"],
+    &[".cts", ".cjs"],
+];
+
+/// tsc excludes a wildcard-discovered `.js`-family file when a higher-priority
+/// source file with the same stem is present (see [`JS_SHADOW_FAMILIES`]).
+/// This mirrors that for `include`-glob-matched files. Explicitly listed
+/// files (CLI positional args or a tsconfig `files` array) are never removed,
+/// even when a higher-priority sibling shadows them — only what a lower-
+/// priority *wildcard* candidate loses to a higher-priority one changes.
+fn exclude_shadowed_js_files(
+    files: BTreeSet<PathBuf>,
+    explicit_files: &[PathBuf],
+) -> BTreeSet<PathBuf> {
+    if files.len() <= 1 {
+        return files;
+    }
+    let explicit: std::collections::HashSet<&PathBuf> = explicit_files.iter().collect();
+
+    let mut to_remove: BTreeSet<PathBuf> = BTreeSet::new();
+    for family in JS_SHADOW_FAMILIES {
+        // stem -> best (lowest-index, i.e. highest priority) extension seen for that stem.
+        let mut best_priority: std::collections::HashMap<PathBuf, usize> =
+            std::collections::HashMap::new();
+        let mut members: Vec<(PathBuf, usize, &PathBuf)> = Vec::new();
+        for path in &files {
+            let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+                continue;
+            };
+            let Some((priority, ext)) = family
+                .iter()
+                .enumerate()
+                .find(|(_, ext)| name.ends_with(*ext))
+            else {
+                continue;
+            };
+            let stem = path.with_file_name(&name[..name.len() - ext.len()]);
+            best_priority
+                .entry(stem.clone())
+                .and_modify(|p| *p = (*p).min(priority))
+                .or_insert(priority);
+            members.push((stem, priority, path));
+        }
+        for (stem, priority, path) in members {
+            if explicit.contains(path) {
+                continue;
+            }
+            if best_priority
+                .get(&stem)
+                .is_some_and(|&best| best < priority)
+            {
+                to_remove.insert(path.clone());
+            }
+        }
+    }
+
+    files
+        .into_iter()
+        .filter(|p| !to_remove.contains(p))
         .collect()
 }
 
@@ -1209,13 +1286,16 @@ mod tests {
 
     #[test]
     fn test_default_discovery_includes_mts_cts_and_module_js_variants() {
+        // Distinct stems so none of these shadow each other (a same-stem
+        // `.mts`/`.mjs` or `.cts`/`.cjs` pair is covered by the dedicated
+        // `exclude_shadowed_js_files` shadowing tests below).
         let dir = std::env::temp_dir().join("tsz_fs_test_default_include_extensions");
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
-        fs::write(dir.join("index.mts"), "export const x = 1;").unwrap();
-        fs::write(dir.join("index.cts"), "export = 1;").unwrap();
-        fs::write(dir.join("index.mjs"), "export const x = 1;").unwrap();
-        fs::write(dir.join("index.cjs"), "module.exports = 1;").unwrap();
+        fs::write(dir.join("mfile.mts"), "export const x = 1;").unwrap();
+        fs::write(dir.join("cfile.cts"), "export = 1;").unwrap();
+        fs::write(dir.join("mjsfile.mjs"), "export const x = 1;").unwrap();
+        fs::write(dir.join("cjsfile.cjs"), "module.exports = 1;").unwrap();
 
         // With allow_js: true, all module extensions should be discovered
         let options = FileDiscoveryOptions {
@@ -1255,6 +1335,198 @@ mod tests {
             result_no_js.len(),
             2,
             "default include without allowJs should find .mts/.cts but not .mjs/.cjs, got: {result_no_js:?}"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Oracle-verified against pinned `tsc` 7.0.2: a wildcard-discovered
+    /// `.js`-family file is dropped from the program when a higher-priority
+    /// same-stem source file is also discovered, so a same-named `a.ts` +
+    /// `a.js` pair resolves to a single module (`a.ts`), matching how tsc's
+    /// own project-mode file discovery treats it. Regression coverage for
+    /// the `salsa/inferingFromAny.ts` conformance false-positive: the
+    /// conformance harness compiles multi-`@fileName` fixtures via a
+    /// synthetic tsconfig `include` glob, so this same shadowing must apply
+    /// there too, not just to hand-authored real projects.
+    fn discover_names(dir: &Path, allow_js: bool) -> Vec<String> {
+        let options = FileDiscoveryOptions {
+            base_dir: dir.to_path_buf(),
+            files: vec![],
+            files_explicitly_set: false,
+            include: None,
+            exclude: None,
+            out_dir: None,
+            follow_links: false,
+            allow_js,
+            resolve_json_module: false,
+        };
+        let mut names: Vec<String> = discover_ts_files(&options)
+            .unwrap()
+            .into_iter()
+            .map(|p| p.file_name().unwrap().to_string_lossy().to_string())
+            .collect();
+        names.sort();
+        names
+    }
+
+    #[test]
+    fn test_discover_ts_shadows_same_stem_js_wildcard_match() {
+        let dir = std::env::temp_dir().join("tsz_fs_test_ts_shadows_js");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("a.ts"), "export const x = 1;").unwrap();
+        fs::write(dir.join("a.js"), "module.exports.x = 1;").unwrap();
+
+        assert_eq!(
+            discover_names(&dir, true),
+            vec!["a.ts".to_string()],
+            "a same-stem wildcard-matched .js should be shadowed by .ts"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_discover_tsx_shadows_same_stem_jsx_cross_extension() {
+        // Renamed-binder / cross-extension adjacent case: .tsx shadows a
+        // same-stem .jsx even though the pair isn't the "matching" tsx/jsx
+        // pair by naming convention — tsc's rule is family-wide priority,
+        // not paired-extension matching (oracle-verified).
+        let dir = std::env::temp_dir().join("tsz_fs_test_tsx_shadows_jsx");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("widget.tsx"), "export const x = 1;").unwrap();
+        fs::write(dir.join("widget.jsx"), "module.exports.x = 1;").unwrap();
+
+        assert_eq!(
+            discover_names(&dir, true),
+            vec!["widget.tsx".to_string()],
+            ".tsx should shadow a same-stem .jsx"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_discover_js_shadows_same_stem_jsx_without_ts() {
+        // Within the js-only tier, .js outranks .jsx for the same stem even
+        // when no ts-family file is present at all (oracle-verified).
+        let dir = std::env::temp_dir().join("tsz_fs_test_js_shadows_jsx");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("widget.js"), "module.exports.x = 1;").unwrap();
+        fs::write(dir.join("widget.jsx"), "module.exports.x = 1;").unwrap();
+
+        assert_eq!(
+            discover_names(&dir, true),
+            vec!["widget.js".to_string()],
+            ".js should shadow a same-stem .jsx even without a ts sibling"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_discover_mts_shadows_only_same_stem_mjs_not_cross_family() {
+        // .mts/.mjs is an independent family from .ts/.js: a same-stem .ts
+        // does NOT shadow .mjs, and .mts does NOT shadow a same-stem .js
+        // (oracle-verified — cross-family pairs coexist).
+        let dir = std::env::temp_dir().join("tsz_fs_test_mts_family_independent");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("a.mts"), "export const x = 1;").unwrap();
+        fs::write(dir.join("a.mjs"), "module.exports.x = 1;").unwrap();
+        fs::write(dir.join("b.ts"), "export const y = 1;").unwrap();
+        fs::write(dir.join("b.mjs"), "module.exports.y = 1;").unwrap();
+        fs::write(dir.join("c.mts"), "export const z = 1;").unwrap();
+        fs::write(dir.join("c.js"), "module.exports.z = 1;").unwrap();
+
+        assert_eq!(
+            discover_names(&dir, true),
+            vec![
+                "a.mts".to_string(),
+                "b.mjs".to_string(),
+                "b.ts".to_string(),
+                "c.js".to_string(),
+                "c.mts".to_string(),
+            ],
+            "only same-stem .mts/.mjs pairs shadow; cross-family pairs coexist"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_discover_cts_shadows_same_stem_cjs() {
+        let dir = std::env::temp_dir().join("tsz_fs_test_cts_shadows_cjs");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("a.cts"), "export = 1;").unwrap();
+        fs::write(dir.join("a.cjs"), "module.exports = 1;").unwrap();
+
+        assert_eq!(
+            discover_names(&dir, true),
+            vec!["a.cts".to_string()],
+            "a same-stem .cjs should be shadowed by .cts"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_discover_explicit_js_file_not_shadowed_by_same_stem_ts() {
+        // Explicitly listed files (CLI positional args / tsconfig `files`)
+        // are never shadowed, even when a same-stem higher-priority file
+        // also exists (oracle-verified: `tsc --project` with an explicit
+        // `files: ["a.ts", "a.js"]` keeps both).
+        let dir = std::env::temp_dir().join("tsz_fs_test_explicit_js_not_shadowed");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("a.ts"), "export const x = 1;").unwrap();
+        fs::write(dir.join("a.js"), "module.exports.x = 1;").unwrap();
+
+        let options = FileDiscoveryOptions {
+            base_dir: dir.clone(),
+            files: vec![PathBuf::from("a.ts"), PathBuf::from("a.js")],
+            files_explicitly_set: true,
+            include: None,
+            exclude: None,
+            out_dir: None,
+            follow_links: false,
+            allow_js: false,
+            resolve_json_module: false,
+        };
+
+        let mut names: Vec<String> = discover_ts_files(&options)
+            .unwrap()
+            .into_iter()
+            .map(|p| p.file_name().unwrap().to_string_lossy().to_string())
+            .collect();
+        names.sort();
+        assert_eq!(
+            names,
+            vec!["a.js".to_string(), "a.ts".to_string()],
+            "explicitly listed files must not be shadowed"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_discover_ts_shadows_js_with_renamed_binder() {
+        // Same rule, different stem name — proves this is structural
+        // (extension-priority), not keyed off a specific file/identifier name.
+        let dir = std::env::temp_dir().join("tsz_fs_test_ts_shadows_js_renamed");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("zorbaflux.ts"), "export const q = 1;").unwrap();
+        fs::write(dir.join("zorbaflux.js"), "module.exports.q = 1;").unwrap();
+
+        assert_eq!(
+            discover_names(&dir, true),
+            vec!["zorbaflux.ts".to_string()],
+            "shadowing must not depend on the specific stem name"
         );
 
         let _ = fs::remove_dir_all(&dir);
