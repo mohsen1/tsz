@@ -1003,43 +1003,54 @@ impl<'a> CheckerState<'a> {
                 let key_is_string = key_type == TypeId::STRING;
                 let key_is_number = key_type == TypeId::NUMBER;
 
-                // TS2538: Reject invalid index types (any/void/boolean/etc.) and
-                // symbol/unique-symbol types (can't match string/number index sigs;
-                // matching symbol properties resolved earlier).
-                // ERROR types from failed expressions are treated as `any`.
-                let key_is_type_param = crate::query_boundaries::common::is_type_parameter_like(
-                    self.ctx.types,
-                    key_type,
-                );
-                if !key_is_string
-                    && !key_is_number
-                    && !key_is_type_param
-                    && key_type != TypeId::NEVER
-                {
-                    let check_key = if key_type == TypeId::ERROR {
-                        TypeId::ANY
-                    } else {
-                        self.resolve_lazy_type(key_type)
-                    };
-                    // A genuine `any` is a valid index type for a value-position
-                    // destructuring computed key: `{ [k]: v } = obj` desugars to
-                    // `v = obj[k]`, and element access permits an `any` index.
-                    // Only the strict type-level `isValidIndexType` (keyof/mapped/
-                    // `T[K]`) rejects `any`; that helper must not gate this
-                    // value-position check. But an ERROR key (e.g. `[foo()]` where
-                    // `foo` is not callable) is remapped to ANY above precisely so
-                    // it still reports TS2538 (tsc does too) — so exempt only when
-                    // the ORIGINAL key type is `any`, never the ERROR remap.
-                    let is_invalid = if key_type == TypeId::ANY && check_key == TypeId::ANY {
-                        None
-                    } else {
-                        crate::query_boundaries::type_checking_utilities::get_invalid_index_type_member_strict(self.ctx.types, check_key)
-                    };
-                    // Symbol types pass the general validity check but can't
-                    // index into objects through string/number index signatures,
-                    // UNLESS the parent type (or its constraint for generics)
-                    // has the specific unique symbol as a declared property.
-                    let is_symbol = key_type != TypeId::ERROR
+                // An error-typed source (unresolved reference, e.g. `{ [k]: v } =
+                // o` where `o` doesn't resolve) is treated like `any`: tsc never
+                // runs `isValidIndexType`/symbol-index-signature validation
+                // against it, so no TS2538 cascades on top of the source's own
+                // TS2304. The caller (`check_binding_element_with_request`)
+                // already skips this whole function for an `any` parent; ERROR
+                // reaches here (it isn't `TypeId::ANY`) and must get the same
+                // treatment for the index-type-validity checks specifically.
+                // The sibling matching-index-signature check below (`Type '…'
+                // has no matching index signature`) already excludes ERROR.
+                if parent_type != TypeId::ERROR {
+                    // TS2538: Reject invalid index types (any/void/boolean/etc.) and
+                    // symbol/unique-symbol types (can't match string/number index sigs;
+                    // matching symbol properties resolved earlier).
+                    // ERROR types from failed expressions are treated as `any`.
+                    let key_is_type_param = crate::query_boundaries::common::is_type_parameter_like(
+                        self.ctx.types,
+                        key_type,
+                    );
+                    if !key_is_string
+                        && !key_is_number
+                        && !key_is_type_param
+                        && key_type != TypeId::NEVER
+                    {
+                        let check_key = if key_type == TypeId::ERROR {
+                            TypeId::ANY
+                        } else {
+                            self.resolve_lazy_type(key_type)
+                        };
+                        // A genuine `any` is a valid index type for a value-position
+                        // destructuring computed key: `{ [k]: v } = obj` desugars to
+                        // `v = obj[k]`, and element access permits an `any` index.
+                        // Only the strict type-level `isValidIndexType` (keyof/mapped/
+                        // `T[K]`) rejects `any`; that helper must not gate this
+                        // value-position check. But an ERROR key (e.g. `[foo()]` where
+                        // `foo` is not callable) is remapped to ANY above precisely so
+                        // it still reports TS2538 (tsc does too) — so exempt only when
+                        // the ORIGINAL key type is `any`, never the ERROR remap.
+                        let is_invalid = if key_type == TypeId::ANY && check_key == TypeId::ANY {
+                            None
+                        } else {
+                            crate::query_boundaries::type_checking_utilities::get_invalid_index_type_member_strict(self.ctx.types, check_key)
+                        };
+                        // Symbol types pass the general validity check but can't
+                        // index into objects through string/number index signatures,
+                        // UNLESS the parent type (or its constraint for generics)
+                        // has the specific unique symbol as a declared property.
+                        let is_symbol = key_type != TypeId::ERROR
                         && common_query::is_symbol_or_unique_symbol(self.ctx.types, key_type)
                         && !common_query::contains_type_parameters(
                             self.ctx.types.as_type_database(),
@@ -1056,39 +1067,40 @@ impl<'a> CheckerState<'a> {
                                 atom,
                             )
                         });
-                    let ts2538_type = is_invalid.or(if is_symbol { Some(key_type) } else { None });
-                    if let Some(err_type) = ts2538_type {
-                        let key_type_str = self.format_type(err_type);
-                        let message = crate::diagnostics::format_message(
+                        let ts2538_type =
+                            is_invalid.or(if is_symbol { Some(key_type) } else { None });
+                        if let Some(err_type) = ts2538_type {
+                            let key_type_str = self.format_type(err_type);
+                            let message = crate::diagnostics::format_message(
                             crate::diagnostics::diagnostic_messages::TYPE_CANNOT_BE_USED_AS_AN_INDEX_TYPE,
                             &[&key_type_str],
                         );
-                        let error_node = computed_expr.unwrap_or(element_data.property_name);
-                        self.error_at_node(
+                            let error_node = computed_expr.unwrap_or(element_data.property_name);
+                            self.error_at_node(
                             error_node,
                             &message,
                             crate::diagnostics::diagnostic_codes::TYPE_CANNOT_BE_USED_AS_AN_INDEX_TYPE,
                         );
+                        }
                     }
-                }
 
-                // TS2538 (secondary): symbol/unique symbol types that reach here
-                // can't index via string/number index signatures. Suppress when
-                // parent type contains type parameters (deferred to instantiation)
-                // or when the parent type has a matching unique symbol property.
-                let parent_has_type_params = common_query::contains_type_parameters(
-                    self.ctx.types.as_type_database(),
-                    parent_type,
-                );
-                if !key_is_string
-                    && !key_is_number
-                    && !key_is_type_param
-                    && !parent_has_type_params
-                    && key_type != TypeId::NEVER
-                    && key_type != TypeId::ERROR
-                    && common_query::is_symbol_or_unique_symbol(self.ctx.types, key_type)
-                {
-                    let parent_has_symbol_prop =
+                    // TS2538 (secondary): symbol/unique symbol types that reach here
+                    // can't index via string/number index signatures. Suppress when
+                    // parent type contains type parameters (deferred to instantiation)
+                    // or when the parent type has a matching unique symbol property.
+                    let parent_has_type_params = common_query::contains_type_parameters(
+                        self.ctx.types.as_type_database(),
+                        parent_type,
+                    );
+                    if !key_is_string
+                        && !key_is_number
+                        && !key_is_type_param
+                        && !parent_has_type_params
+                        && key_type != TypeId::NEVER
+                        && key_type != TypeId::ERROR
+                        && common_query::is_symbol_or_unique_symbol(self.ctx.types, key_type)
+                    {
+                        let parent_has_symbol_prop =
                         crate::query_boundaries::type_computation::access::literal_property_name(
                             self.ctx.types,
                             key_type,
@@ -1100,20 +1112,21 @@ impl<'a> CheckerState<'a> {
                                 atom,
                             )
                         });
-                    if !parent_has_symbol_prop {
-                        let key_type_str = self.format_type(key_type);
-                        let message = crate::diagnostics::format_message(
+                        if !parent_has_symbol_prop {
+                            let key_type_str = self.format_type(key_type);
+                            let message = crate::diagnostics::format_message(
                             crate::diagnostics::diagnostic_messages::TYPE_CANNOT_BE_USED_AS_AN_INDEX_TYPE,
                             &[&key_type_str],
                         );
-                        let error_node = computed_expr.unwrap_or(element_data.property_name);
-                        self.error_at_node(
+                            let error_node = computed_expr.unwrap_or(element_data.property_name);
+                            self.error_at_node(
                             error_node,
                             &message,
                             crate::diagnostics::diagnostic_codes::TYPE_CANNOT_BE_USED_AS_AN_INDEX_TYPE,
                         );
+                        }
                     }
-                }
+                } // parent_type != TypeId::ERROR
 
                 if key_is_string || key_is_number {
                     let has_matching_index = |ty: TypeId| {
