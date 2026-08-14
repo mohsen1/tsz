@@ -1,6 +1,6 @@
-//! Detection of a JS "expando container" variable — a `var`/`let`/`const`
-//! initialized with a function/arrow/class expression whose name later
-//! picks up a JS expando member assignment (`x.prop = ...`).
+//! Declaration-kind check shared by the `TS2403` cross-file merge sites in
+//! the parent module, plus JS expando-container detection used by the
+//! cross-file-global value-type preference sites (#17443).
 //!
 //! Split out of the parent module to satisfy the source-file line cap.
 
@@ -8,18 +8,37 @@ use super::*;
 use tsz_binder::SymbolId;
 
 impl<'a> CheckerState<'a> {
+    /// Whether `kind` is one of the declaration kinds that merge instead of
+    /// conflicting for `TS2403` purposes: namespace/module, enum, class,
+    /// interface, function. A `var`/`let`/`const` initialized with a
+    /// function/arrow/class expression does **not** get this exemption even
+    /// once its name picks up a JS expando member assignment (`x.prop =
+    /// ...`) — verified against `typescript@7.0.2`:
+    /// `TypeScript/tests/cases/conformance/salsa/jsContainerMergeTsDeclaration.ts`
+    /// (`a.js`'s `var x = function foo() {}; x.a = function bar() {}` vs
+    /// `b.ts`'s `var x = function () { return 1; }();`) still reports
+    /// `TS2403` alongside `TS2339`.
+    pub(in crate::state_domain::variable_checking) const fn is_mergeable_decl_kind(
+        &self,
+        kind: u16,
+    ) -> bool {
+        matches!(
+            kind,
+            syntax_kind_ext::MODULE_DECLARATION
+                | syntax_kind_ext::ENUM_DECLARATION
+                | syntax_kind_ext::CLASS_DECLARATION
+                | syntax_kind_ext::INTERFACE_DECLARATION
+                | syntax_kind_ext::FUNCTION_DECLARATION
+        )
+    }
+
     /// Whether `decl_idx` is a `var`/`let`/`const` initialized with a
     /// function/arrow/class expression whose name has picked up JS expando
-    /// member assignments (`x.prop = ...`) anywhere in the project. tsc
-    /// treats such a variable as a function-like container for
-    /// declaration-merge purposes — the same exemption a bare
-    /// `FUNCTION_DECLARATION` already gets from TS2403 — even though
-    /// syntactically it is an ordinary `VariableDeclaration`. Verified
-    /// against `typescript@7.0.2`: a bare `var x = function(){}` with no
-    /// expando still conflicts by TS2403 with an incompatible cross-file
-    /// `var x`; only once an `x.prop = ...` expando assignment exists does
-    /// the redeclaration check stop comparing types
-    /// (`TypeScript/tests/cases/conformance/salsa/jsContainerMergeTsDeclaration.ts`).
+    /// member assignments (`x.prop = ...`) anywhere in the project. Used to
+    /// keep a JS file's own expando container authoritative for that file's
+    /// writes against a conflicting cross-file global (#17443) — this is
+    /// unrelated to (and does NOT exempt) the `TS2403` cross-file
+    /// redeclaration-type-identity check above.
     pub(crate) fn is_expando_container_var_decl(&self, decl_idx: NodeIndex, name: &str) -> bool {
         self.is_expando_container_var_decl_in_arena(self.ctx.arena, decl_idx, name)
     }
@@ -56,8 +75,7 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Arena-parameterized core of [`is_expando_container_var_decl`], usable
-    /// for a declaration that lives in a *different* file's arena (the
-    /// cross-arena delegation path further down this function). The
+    /// for a declaration that lives in a *different* file's arena. The
     /// project-wide expando-property index is looked up on `self` — it is
     /// not arena-scoped — while the declaration's own syntax is read from
     /// the caller-supplied `arena`.
@@ -91,29 +109,5 @@ impl<'a> CheckerState<'a> {
             return false;
         }
         !self.collect_expando_properties_for_root(name).is_empty()
-    }
-
-    /// Whether `decl_idx`'s node kind is one of the declaration kinds that
-    /// merge instead of conflicting for `TS2403` purposes (namespace/module,
-    /// enum, class, interface, function), OR `decl_idx` is an expando
-    /// container var (see [`is_expando_container_var_decl`]). `name` is the
-    /// declaration's own name, used only for the expando-container check.
-    pub(in crate::state_domain::variable_checking) fn is_mergeable_or_expando_container_decl(
-        &self,
-        decl_idx: NodeIndex,
-        name: Option<&str>,
-    ) -> bool {
-        let kind_is_mergeable = self.ctx.arena.get(decl_idx).is_some_and(|decl_node| {
-            matches!(
-                decl_node.kind,
-                syntax_kind_ext::MODULE_DECLARATION
-                    | syntax_kind_ext::ENUM_DECLARATION
-                    | syntax_kind_ext::CLASS_DECLARATION
-                    | syntax_kind_ext::INTERFACE_DECLARATION
-                    | syntax_kind_ext::FUNCTION_DECLARATION
-            )
-        });
-        kind_is_mergeable
-            || name.is_some_and(|name| self.is_expando_container_var_decl(decl_idx, name))
     }
 }
