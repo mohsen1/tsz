@@ -64,4 +64,28 @@ impl<'a> CheckerState<'a> {
         }
         !self.collect_expando_properties_for_root(name).is_empty()
     }
+
+    /// Whether `decl_idx`'s node kind is one of the declaration kinds that
+    /// merge instead of conflicting for `TS2403` purposes (namespace/module,
+    /// enum, class, interface, function), OR `decl_idx` is an expando
+    /// container var (see [`is_expando_container_var_decl`]). `name` is the
+    /// declaration's own name, used only for the expando-container check.
+    pub(in crate::state_domain::variable_checking) fn is_mergeable_or_expando_container_decl(
+        &self,
+        decl_idx: NodeIndex,
+        name: Option<&str>,
+    ) -> bool {
+        let kind_is_mergeable = self.ctx.arena.get(decl_idx).is_some_and(|decl_node| {
+            matches!(
+                decl_node.kind,
+                syntax_kind_ext::MODULE_DECLARATION
+                    | syntax_kind_ext::ENUM_DECLARATION
+                    | syntax_kind_ext::CLASS_DECLARATION
+                    | syntax_kind_ext::INTERFACE_DECLARATION
+                    | syntax_kind_ext::FUNCTION_DECLARATION
+            )
+        });
+        kind_is_mergeable
+            || name.is_some_and(|name| self.is_expando_container_var_decl(decl_idx, name))
+    }
 }
