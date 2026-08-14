@@ -330,7 +330,24 @@ impl<'a> CheckerState<'a> {
         let (code, msg_template) =
             self.argument_not_assignable_code_and_template(arg_type, param_type);
         let message = format_message(msg_template, &[&actual_display, &target_display]);
-        self.error_at_node(arg_idx, &message, code);
+        let Some((start, end)) = self.get_node_span(arg_idx) else {
+            return;
+        };
+        let (start, length) =
+            self.normalized_anchor_span(arg_idx, start, end.saturating_sub(start));
+        let related = self
+            .unrelated_type_parameter_target_related_info(
+                arg_type,
+                param_type,
+                &actual_display,
+                &target_display,
+                start,
+                length,
+                0,
+            )
+            .into_iter()
+            .collect();
+        self.error_at_node_with_related(arg_idx, &message, code, related);
     }
 
     fn finite_mapped_parameter_display_type(&mut self, param_type: TypeId) -> Option<TypeId> {
@@ -1973,26 +1990,5 @@ impl<'a> CheckerState<'a> {
             expanded.push(arg_idx);
         }
         expanded
-    }
-
-    /// Suppress TS2769 (no overload matches) when the failure originates inside a
-    /// callback argument's body. The callback's own diagnostics already explain the
-    /// mismatch, so the outer overload error would be a redundant cascade.
-    fn should_suppress_no_overload_due_to_callback_body_errors(&self, args: &[NodeIndex]) -> bool {
-        const CALLBACK_BODY_DIAGNOSTIC_CODES: &[u32] = &[2322, 2339, 2345, 2347, 7006, 7019, 7031];
-
-        args.iter().copied().any(|arg_idx| {
-            self.is_callback_like_argument(arg_idx)
-                && self
-                    .callback_body_spans(arg_idx)
-                    .iter()
-                    .any(|(start, end)| {
-                        self.ctx.diagnostics.iter().any(|diag| {
-                            diag.start >= *start
-                                && diag.start < *end
-                                && CALLBACK_BODY_DIAGNOSTIC_CODES.contains(&diag.code)
-                        })
-                    })
-        })
     }
 }
