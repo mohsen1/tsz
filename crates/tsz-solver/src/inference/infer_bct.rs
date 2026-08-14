@@ -133,20 +133,22 @@ impl<'a> InferenceContext<'a> {
     ///    (matching tsc's `getSingleCommonSupertype` reduceLeft fallback)
     /// 4. Add stripped nullable types back to the result
     ///
-    /// `array_element_first_wins` requests tsc's strict leftmost-wins behaviour
-    /// for the incompatible-candidate fallback when *any* candidate was
-    /// inferred from an array-literal element (the mixed array+naked #9667
-    /// case; see the step-5 comment for why this is gated).
+    /// The incompatible-candidate fallback keeps tsc's strict leftmost-wins for
+    /// every candidate set where the BCT `is_subtype` is exact (nullable-stripped
+    /// contexts, all-signature-bearing candidates, and all primitive-like
+    /// candidates — the `f<T>(a: T, b: T)` naked-argument #17484 case and the
+    /// mixed array+naked #9667 case both reduce to this); it unions only for
+    /// structural candidates where `is_subtype` is unreliable (see the step-5
+    /// comment).
     ///
-    /// `all_from_array_element` is the stricter condition that *every* candidate
-    /// came from an array-literal element. In that case tsc id-sorts the
-    /// candidate union before its leftmost-wins tournament, so the disjoint
-    /// bare-primitive winner is order-independent (`string < number < bigint <
-    /// symbol < boolean`) rather than source-first (#17364).
+    /// `all_from_array_element` is the condition that *every* candidate came
+    /// from an array-literal element. In that case tsc id-sorts the candidate
+    /// union before its leftmost-wins tournament, so the disjoint bare-primitive
+    /// winner is order-independent (`string < number < bigint < symbol <
+    /// boolean`) rather than source-first (#17364).
     pub fn get_common_supertype_for_inference(
         &self,
         types: &[TypeId],
-        array_element_first_wins: bool,
         all_from_array_element: bool,
     ) -> TypeId {
         if types.is_empty() {
@@ -298,34 +300,37 @@ impl<'a> InferenceContext<'a> {
         // Step 5: tsc's getSingleCommonSupertype fallback.
         // tsc: `reduceLeft(types, (s, t) => isTypeSubtypeOf(s, t) ? t : s)`
         // When neither type is a subtype of the other, tsc keeps the FIRST type
-        // (leftmost wins). It does NOT create a union.
+        // (leftmost wins). `getCommonSupertype` NEVER unions its non-nullable
+        // candidates. The routing that *does* union — tsc's
+        // `getCovariantInference` `PriorityImpliesCombination` branch
+        // (`ReturnType | MappedTypeConstraint | LiteralKeyof`) — lives in the
+        // caller (`infer_resolve.rs`); by the time control reaches here the
+        // inference priority is non-combination and tsc first-wins.
         //
-        // However, our BCT `is_subtype` is simplified and may miss subtype
-        // relationships that tsc's full `isTypeSubtypeOf` catches. We use
-        // first-wins when nullable types were stripped from the candidates,
-        // indicating a "loose" inference context (like `new Array(...)` with
-        // mixed types). In tsc, without strictNullChecks, null/undefined are
-        // subtypes of everything and don't affect the first-wins result.
+        // tsz keeps a union fallback here for ONE reason: its BCT `is_subtype`
+        // is simplified and can miss a real subtype relation on *structural*
+        // candidates (objects, tuples, generic instantiations), where a blind
+        // leftmost-wins could pick a too-narrow winner. So the fallback is
+        // scoped to exactly those types. For candidates where `is_subtype` is
+        // exact we first-win, matching tsc:
         //
-        // We also use first-wins when one of the candidates was inferred from an
-        // array-literal element AND every candidate is a *bare primitive
-        // intrinsic* (`string`, `number`, `boolean`, `bigint`, `symbol`) — i.e.
-        // genuinely disjoint base primitives. For those the simplified
-        // `is_subtype` above is exact, so there is no risk of missing a real
-        // subtype relationship, and matching tsc's leftmost-wins is required.
-        // Without this, inferring `T` from a `T[]` parameter that yields
-        // `string` (from an array literal) competing with a naked `T` argument
-        // that yields `number` — as in `f<T>(a: T[], b: T)` called
-        // `f(["a","b"], 1)` — wrongly produced the union `string | number`
-        // instead of fixing `T = string` and reporting the conflicting argument
-        // (TS2345). tsc's `getCommonSupertype` never unions incompatible
-        // primitives here; it keeps the leftmost candidate.
-        //
-        // Function-typed structural candidates are another tsc first-wins
-        // case: when `T` receives incompatible function candidates, tsc fixes
-        // the inferred type from the first signature-bearing candidate and the
-        // checker reports later argument incompatibilities instead of inferring
-        // a function union that accepts both.
+        //   * nullable-stripped contexts (loose inference, e.g. `new Array(...)`
+        //     with mixed types): without strictNullChecks null/undefined are
+        //     subtypes of everything and don't affect the first-wins result;
+        //   * all-signature-bearing candidates (incompatible function types):
+        //     tsc fixes the inferred type from the first signature and the
+        //     checker reports later argument incompatibilities instead of
+        //     inferring a function union that accepts both;
+        //   * all primitive-like candidates (intrinsic primitives + literal /
+        //     unit types). These are genuinely disjoint base primitives with no
+        //     common supertype; `is_subtype` is exact on them and tsc keeps the
+        //     leftmost candidate. This holds regardless of whether a candidate
+        //     came from an array-literal element position (`f<T>(a: T[], b: T)`
+        //     called `f(["a","b"], 1)` fixes `T = string`, #9667) or from a
+        //     naked argument (`f<T>(a: T, b: T)` called `f(1, "a")` fixes
+        //     `T = number` and reports TS2345 on `"a"`, issue #17484). The
+        //     earlier array-element-only gate was too narrow and let the naked
+        //     case silently union to `number | string`, a false negative.
         //
         // Other structural candidates (objects, tuples) keep the union fallback
         // where `is_subtype` is unreliable. The wholesale union→supertype
@@ -336,13 +341,14 @@ impl<'a> InferenceContext<'a> {
                 TypeId::STRING | TypeId::NUMBER | TypeId::BOOLEAN | TypeId::BIGINT | TypeId::SYMBOL
             )
         });
+        let all_primitive_like = primary_types
+            .iter()
+            .all(|&ty| visitor::is_primitive_type(self.interner, ty));
         let all_signature_bearing = primary_types
             .iter()
             .all(|&ty| visitor::is_function_type(self.interner, ty));
-        let first_wins_for_incompatible = has_undefined
-            || has_null
-            || all_signature_bearing
-            || (array_element_first_wins && all_bare_primitive_intrinsic);
+        let first_wins_for_incompatible =
+            has_undefined || has_null || all_signature_bearing || all_primitive_like;
         // When *every* disjoint bare-primitive candidate came from an
         // array-literal element position, tsc does not keep the
         // source-order-leftmost candidate: it orders the candidates by their

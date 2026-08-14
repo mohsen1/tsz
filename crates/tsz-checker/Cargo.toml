@@ -327,6 +327,9 @@ path = "tests/array_element_naked_inference_tests.rs"
 name = "naked_type_param_union_literal_base_infer_tests"
 path = "tests/naked_type_param_union_literal_base_infer_tests.rs"
 [[test]]
+name = "naked_type_param_disjoint_primitive_first_wins_tests"
+path = "tests/naked_type_param_disjoint_primitive_first_wins_tests.rs"
+[[test]]
 name = "return_only_defaulted_intersection_contextual_inference_tests"
 path = "tests/return_only_defaulted_intersection_contextual_inference_tests.rs"
 [[test]]
