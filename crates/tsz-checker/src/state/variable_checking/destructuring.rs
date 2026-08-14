@@ -1003,6 +1003,18 @@ impl<'a> CheckerState<'a> {
                 let key_is_string = key_type == TypeId::STRING;
                 let key_is_number = key_type == TypeId::NUMBER;
 
+                // tsc treats an `any` or error-typed destructuring source like
+                // `any` for the computed-key index check: an unresolved source
+                // must not cascade a TS2538 "cannot be used as an index type" onto
+                // the key. `any` sources are already short-circuited by the caller
+                // (`check_binding_element` skips the lookup when `parent_type ==
+                // any`); an error source was not, so `const { [k]: v } = unresolved`
+                // reported a false TS2538. `unknown` is deliberately excluded — tsc
+                // still reports TS2538 over an `unknown` source. Mirrors the
+                // parent-type guard the matching-index-signature check below applies.
+                let source_is_index_checkable =
+                    parent_type != TypeId::ANY && parent_type != TypeId::ERROR;
+
                 // TS2538: Reject invalid index types (any/void/boolean/etc.) and
                 // symbol/unique-symbol types (can't match string/number index sigs;
                 // matching symbol properties resolved earlier).
@@ -1011,7 +1023,8 @@ impl<'a> CheckerState<'a> {
                     self.ctx.types,
                     key_type,
                 );
-                if !key_is_string
+                if source_is_index_checkable
+                    && !key_is_string
                     && !key_is_number
                     && !key_is_type_param
                     && key_type != TypeId::NEVER
@@ -1080,7 +1093,8 @@ impl<'a> CheckerState<'a> {
                     self.ctx.types.as_type_database(),
                     parent_type,
                 );
-                if !key_is_string
+                if source_is_index_checkable
+                    && !key_is_string
                     && !key_is_number
                     && !key_is_type_param
                     && !parent_has_type_params
