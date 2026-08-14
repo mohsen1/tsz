@@ -29,6 +29,9 @@ impl<'a> CheckerState<'a> {
                 param_type,
             );
         // Suppress when types are identical or either is a special escape-hatch type.
+        // `unknown` as the ARGUMENT is deliberately excluded: unlike `any`/`error`,
+        // `unknown` is not an escape hatch — it's assignable only to `any`/`unknown`,
+        // so a mismatch against a concrete or type-parameter target is a real TS2345.
         if arg_type == param_type
             || arg_type == TypeId::ERROR
             || param_type == TypeId::ERROR
@@ -36,7 +39,6 @@ impl<'a> CheckerState<'a> {
             // reports TS2345 for the bottom-type case `any -> never`.
             || (arg_type == TypeId::ANY && param_type != TypeId::NEVER)
             || param_type == TypeId::ANY
-            || arg_type == TypeId::UNKNOWN
             || param_type == TypeId::UNKNOWN
         {
             return true;
