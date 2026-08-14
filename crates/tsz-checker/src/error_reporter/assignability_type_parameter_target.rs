@@ -29,7 +29,7 @@ impl<'a> CheckerState<'a> {
     ///     instantiated with something entirely unrelated, so `tsc` reports
     ///     `TS5082` ("`'{T}'` could be instantiated with an arbitrary type which
     ///     could be unrelated to `'{src}'`.").
-    pub(in crate::error_reporter) fn unrelated_type_parameter_target_related_info(
+    pub(crate) fn unrelated_type_parameter_target_related_info(
         &mut self,
         source: TypeId,
         target: TypeId,

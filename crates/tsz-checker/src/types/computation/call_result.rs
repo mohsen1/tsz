@@ -9,7 +9,7 @@ use crate::query_boundaries::diagnostics;
 use crate::query_boundaries::type_computation::core as expr_ops;
 use crate::state::CheckerState;
 use rustc_hash::FxHashSet;
-use tsz_common::diagnostics::{diagnostic_codes, format_message};
+use tsz_common::diagnostics::diagnostic_codes;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
@@ -275,97 +275,6 @@ impl<'a> CheckerState<'a> {
         }
         self.error_argument_not_assignable_preserving_param_display(arg_types[2], target, args[2]);
         true
-    }
-
-    fn error_argument_not_assignable_preserving_param_display(
-        &mut self,
-        arg_type: TypeId,
-        param_type: TypeId,
-        arg_idx: NodeIndex,
-    ) {
-        if self.should_suppress_argument_not_assignable_diagnostic(arg_type, param_type) {
-            return;
-        }
-        if self.should_suppress_self_referential_mapped_constraint_arg_mismatch(
-            arg_type, param_type, arg_idx,
-        ) {
-            return;
-        }
-
-        // Preserving the parameter display governs only the fallback TS2345
-        // rendering — a missing-property failure still promotes to TS2741/2739/
-        // 2740, even when the target merely contains a free type parameter (a
-        // class merged with a generic-base interface leaks the base's `T`; #17145).
-        let analysis = self.analyze_assignability_failure(arg_type, param_type);
-        if self.try_promote_missing_property_argument(&analysis, arg_type, param_type, arg_idx) {
-            return;
-        }
-
-        let display_arg_type =
-            diagnostics::widen_argument_type_for_display(self.ctx.types, arg_type);
-        // Widen a fresh boolean-literal array element to `boolean` structurally
-        // (`true[]`/`false[]` -> `boolean[]`) instead of patching the rendered text.
-        let display_arg_type =
-            diagnostics::boolean_literal_array_display_type(self.ctx.types, display_arg_type)
-                .unwrap_or(display_arg_type);
-        let mut actual_display = self.format_type_diagnostic(display_arg_type);
-        let mut target_display = self
-            .constrained_variadic_tuple_parameter_display(param_type, arg_type)
-            .or_else(|| {
-                self.underfilled_generic_variadic_tuple_parameter_display(param_type, arg_type)
-            })
-            .or_else(|| {
-                self.finite_mapped_parameter_display_type(param_type)
-                    .map(|display_type| self.format_type_for_assignability_message(display_type))
-            })
-            .or_else(|| self.noinfer_call_parameter_mismatch_display(param_type, arg_type))
-            .unwrap_or_else(|| self.format_type_diagnostic(param_type));
-        target_display = Self::normalize_array_generic_to_shorthand(&target_display);
-        if let Some((generic_actual_display, generic_target_display)) =
-            self.generic_direct_primitive_mismatch_display(arg_type, param_type, arg_idx)
-        {
-            actual_display = generic_actual_display;
-            target_display = generic_target_display;
-        }
-        let (code, msg_template) =
-            self.argument_not_assignable_code_and_template(arg_type, param_type);
-        let message = format_message(msg_template, &[&actual_display, &target_display]);
-        self.error_at_node(arg_idx, &message, code);
-    }
-
-    fn finite_mapped_parameter_display_type(&mut self, param_type: TypeId) -> Option<TypeId> {
-        let mapped_id = common::mapped_type_id(self.ctx.types, param_type)?;
-        let mapped = self.ctx.types.mapped_type(mapped_id);
-        let names = crate::query_boundaries::state::checking::collect_finite_mapped_property_names(
-            self.ctx.types,
-            mapped_id,
-        )?;
-        let mut names: Vec<_> = names.into_iter().collect();
-        names.sort_by(|a, b| {
-            self.ctx
-                .types
-                .resolve_atom_ref(*a)
-                .cmp(&self.ctx.types.resolve_atom_ref(*b))
-        });
-
-        let mut properties = Vec::with_capacity(names.len());
-        for name in names {
-            let property_name = self.ctx.types.resolve_atom_ref(name).to_string();
-            let type_id =
-                crate::query_boundaries::state::checking::get_finite_mapped_property_display_type(
-                    self.ctx.types,
-                    mapped_id,
-                    &property_name,
-                )?;
-            properties.push((name, type_id));
-        }
-
-        Some(call_checker::call_result_finite_mapped_display_object(
-            self.ctx.types,
-            properties,
-            mapped.optional_modifier == Some(tsz_solver::MappedModifier::Add),
-            mapped.readonly_modifier == Some(tsz_solver::MappedModifier::Add),
-        ))
     }
 
     fn stable_call_recovery_return_type(&self, callee_type: TypeId) -> Option<TypeId> {
