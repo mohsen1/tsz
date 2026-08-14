@@ -281,6 +281,8 @@ mod destructured_binding_narrowed_property_tests;
 mod destructured_discriminant_source_narrowing_tests;
 #[path = "tests/destructuring_computed_key_error_source_ts2538_tests.rs"]
 mod destructuring_computed_key_error_source_ts2538_tests;
+#[path = "tests/destructuring_computed_key_index_type_ts2538_tests.rs"]
+mod destructuring_computed_key_index_type_ts2538_tests;
 #[path = "tests/destructuring_relation_routing_arch_tests.rs"]
 mod destructuring_relation_routing_arch_tests;
 #[path = "tests/diagnostic_sink_message_surgery_arch_tests.rs"]

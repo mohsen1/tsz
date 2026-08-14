@@ -601,6 +601,34 @@ impl<'a> CheckerState<'a> {
         )
     }
 
+    /// Resolve a destructuring computed **symbol** key (`{ [s]: v } = obj`)
+    /// through the source's `symbol` index signature to that signature's value
+    /// type — the destructuring analogue of `v = obj[s]`. Returns `None` when
+    /// the key is not a concrete symbol, the source is generic (deferred to
+    /// instantiation), or the source exposes no `symbol`-accepting index.
+    /// Distribution over unions/intersections is owned by the resolver. An
+    /// ERROR/`any` source has no index signature, so it resolves to `None` here
+    /// and its diagnostic cascade is owned by the callers' source guards.
+    fn destructuring_symbol_index_value(
+        &self,
+        parent_type: TypeId,
+        key_type: TypeId,
+    ) -> Option<TypeId> {
+        if key_type == TypeId::ERROR
+            || !common_query::is_symbol_or_unique_symbol(self.ctx.types, key_type)
+            || common_query::contains_type_parameters(
+                self.ctx.types.as_type_database(),
+                parent_type,
+            )
+        {
+            return None;
+        }
+        crate::query_boundaries::index_signature::resolve_symbol_index(
+            self.ctx.types.as_type_database(),
+            parent_type,
+        )
+    }
+
     /// Get the expected type for a binding element from its parent type.
     pub(crate) fn get_binding_element_type_with_request(
         &mut self,
@@ -985,6 +1013,12 @@ impl<'a> CheckerState<'a> {
         // caused false TS2538 errors when the parent type actually had a matching
         // symbol property (e.g. `T extends { [sa]: string }`).
 
+        // A computed symbol key that resolves through the source's `symbol`
+        // index signature (`{ [s]: v } = obj` ≡ `v = obj[s]`) binds that
+        // signature's value type. Captured here and returned in place of the
+        // dynamic-key `any` fallthrough further down. See #17528.
+        let mut computed_symbol_index_value: Option<TypeId> = None;
+
         // For computed keys in object binding patterns (e.g. `{ [k]: v }`),
         // check index signatures when the key resolves to a dynamic type
         // (string or number, not a literal matching a known property).
@@ -1002,6 +1036,17 @@ impl<'a> CheckerState<'a> {
                 });
                 let key_is_string = key_type == TypeId::STRING;
                 let key_is_number = key_type == TypeId::NUMBER;
+
+                // A destructuring computed key desugars to element access, so
+                // the index-type-validity decision must consult the *source*
+                // shape exactly like `obj[k]` does, not just the key. A
+                // `symbol`/`unique symbol` key over a `symbol` index signature
+                // (`{ [k: symbol]: V }`, `Record<symbol, V>`,
+                // `Record<PropertyKey, V>`) is a valid index and resolves to the
+                // signature's value type `V` — distribution over
+                // unions/intersections is owned by the shared resolver. See #17528.
+                computed_symbol_index_value =
+                    self.destructuring_symbol_index_value(parent_type, key_type);
 
                 // tsc treats an `any` or error-typed destructuring source like
                 // `any` for the computed-key index check: an unresolved source
@@ -1053,6 +1098,7 @@ impl<'a> CheckerState<'a> {
                     // UNLESS the parent type (or its constraint for generics)
                     // has the specific unique symbol as a declared property.
                     let is_symbol = key_type != TypeId::ERROR
+                        && computed_symbol_index_value.is_none()
                         && common_query::is_symbol_or_unique_symbol(self.ctx.types, key_type)
                         && !common_query::contains_type_parameters(
                             self.ctx.types.as_type_database(),
@@ -1098,6 +1144,7 @@ impl<'a> CheckerState<'a> {
                     && !key_is_number
                     && !key_is_type_param
                     && !parent_has_type_params
+                    && computed_symbol_index_value.is_none()
                     && key_type != TypeId::NEVER
                     && key_type != TypeId::ERROR
                     && common_query::is_symbol_or_unique_symbol(self.ctx.types, key_type)
@@ -1173,6 +1220,14 @@ impl<'a> CheckerState<'a> {
                     }
                 }
             }
+        }
+
+        // A computed symbol key that resolved through the source's `symbol`
+        // index signature binds that signature's value type — the destructuring
+        // analogue of `v = obj[s]` — instead of the dynamic-key `any`
+        // fallthrough below. See #17528.
+        if let Some(value_type) = computed_symbol_index_value {
+            return value_type;
         }
 
         if element_data.dot_dot_dot_token {
@@ -1354,6 +1409,25 @@ impl<'a> CheckerState<'a> {
                                 request,
                             );
                             if common_query::is_symbol_or_unique_symbol(self.ctx.types, key_type) {
+                                // A `unique symbol` key reaches the property-not-found
+                                // path (its resolved `__unique_N` name matches no
+                                // declared property), but a `symbol` index signature
+                                // (`{ [k: symbol]: V }`, `Record<symbol, V>`,
+                                // `Record<PropertyKey, V>`) still indexes it — like
+                                // `obj[s]`. Resolve to the signature's value type and
+                                // suppress TS2538. See #17528.
+                                if let Some(value_type) =
+                                    self.destructuring_symbol_index_value(parent_type, key_type)
+                                {
+                                    return value_type;
+                                }
+                                // An error-typed (or `any`) source cascades like
+                                // element access — no index-type check runs, so a
+                                // symbol key over such a source adds no TS2538 (or
+                                // property-not-found). See #17529.
+                                if parent_type == TypeId::ERROR || parent_type == TypeId::ANY {
+                                    return TypeId::ANY;
+                                }
                                 let key_type_str = self.format_type(key_type);
                                 let message = crate::diagnostics::format_message(
                                     crate::diagnostics::diagnostic_messages::TYPE_CANNOT_BE_USED_AS_AN_INDEX_TYPE,
