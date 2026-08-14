@@ -59,6 +59,9 @@ path = "tests/base_class_construct_signature_arity_filter_tests.rs"
 name = "class_interface_merge_member_type_tests"
 path = "tests/class_interface_merge_member_type_tests.rs"
 [[test]]
+name = "class_self_relate_ctor_partial"
+path = "tests/class_self_relate_ctor_partial.rs"
+[[test]]
 name = "extends_value_min_type_arg_base_union_tests"
 path = "tests/extends_value_min_type_arg_base_union_tests.rs"
 [[test]]

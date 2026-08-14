@@ -1206,6 +1206,21 @@ impl<'a> CheckerState<'a> {
         let instance_type = {
             let prev_sym_cached = current_sym.and_then(|s| self.ctx.symbol_types.get(&s));
             let prev_inst_cached = current_sym.and_then(|s| self.ctx.symbol_instance_types.get(&s));
+            // A COMPLETE instance already registered for this class must never be
+            // overwritten by the fields-only provisional shape below. The
+            // provisional carries only declared instance properties — no methods,
+            // no inference — and `symbol_instance_types` is the store that
+            // consumers read as the authoritative instance type: the re-entrant
+            // self-reference guard in `class_type::entry` and the `new C()`
+            // construct-signature return among them. Overwriting a complete
+            // instance with the provisional makes a self-referencing `new C()`
+            // inside `C`'s own members resolve to a member-less `C`, which then
+            // fails to relate to `C` itself (false `TS2740`, #17456). The
+            // provisional is only ever a stand-in for the window before any
+            // instance exists.
+            let prev_complete_instance = prev_inst_cached.filter(|t| !t.is_any_unknown_or_error());
+            let has_complete_instance = prev_complete_instance.is_some();
+            let mut installed_partial_instance: Option<TypeId> = None;
             if let Some(sym_id) = current_sym {
                 // ── Partial CONSTRUCTOR type (for VALUE references) ──
                 // Build from already-processed static members + inherited base statics.
@@ -1279,48 +1294,16 @@ impl<'a> CheckerState<'a> {
                 self.ctx.symbol_types.insert(sym_id, partial_ctor);
 
                 // ── Partial INSTANCE type (for TYPE references like `Bar<any>`) ──
-                // Build from declared instance properties (those with type annotations).
-                // This allows type references to the class being constructed to resolve
-                // correctly, preventing false TS2339 on property access (e.g.,
-                // `(this as Bar<any>).num` where `num!: number` is declared).
-                let mut inst_props: Vec<PropertyInfo> = Vec::with_capacity(member_count);
-                for &member_idx in &class.members.nodes {
-                    let Some(member_node) = self.ctx.arena.get(member_idx) else {
-                        continue;
-                    };
-                    if member_node.kind != syntax_kind_ext::PROPERTY_DECLARATION {
-                        continue;
-                    }
-                    let Some(prop) = self.ctx.arena.get_property_decl(member_node) else {
-                        continue;
-                    };
-                    // Only NON-static properties with semantic declared types.
-                    if self.has_static_modifier(&prop.modifiers) {
-                        continue;
-                    }
-                    let Some(type_id) =
-                        self.effective_class_property_declared_type(member_idx, prop)
-                    else {
-                        continue;
-                    };
-                    let Some(name) = self.get_property_name_resolved(prop.name) else {
-                        continue;
-                    };
-                    let name_atom = self.ctx.types.intern_string(&name);
-                    inst_props.push(class_type::class_member_property(
-                        class_type::ClassMemberProperty::new(name_atom, type_id)
-                            .optional(prop.question_token)
-                            .readonly(self.has_readonly_modifier(&prop.modifiers))
-                            .visibility(self.get_member_visibility(&prop.modifiers, prop.name))
-                            .parent(current_sym),
-                    ));
-                }
-                if !inst_props.is_empty() {
-                    let partial_instance =
-                        class_type::class_member_object_type(self.ctx.types, inst_props);
-                    self.ctx
-                        .symbol_instance_types
-                        .insert(sym_id, partial_instance);
+                // Build from declared instance properties so a type reference to
+                // the class under construction resolves correctly (e.g. no false
+                // TS2339 on `(this as Bar<any>).num` where `num!: number` is
+                // declared). Skipped when a complete instance already exists: the
+                // provisional is a stand-in for the no-instance-yet window only,
+                // and overwriting the real instance with it corrupts a
+                // self-referencing `new C()` (see `has_complete_instance` above).
+                if !has_complete_instance {
+                    installed_partial_instance =
+                        self.install_ctor_provisional_instance(class, member_count, sym_id);
                 }
             }
             let result = if apply_module_augmentations {
@@ -1334,20 +1317,21 @@ impl<'a> CheckerState<'a> {
                 if let Some(prev) = prev_sym_cached {
                     self.ctx.symbol_types.insert(sym_id, prev);
                 }
-                if let Some(prev) = prev_inst_cached {
-                    self.ctx.symbol_instance_types.insert(sym_id, prev);
-                } else {
-                    // Only remove if the current value is a partial/provisional type
-                    // from this block's inst_props insertion. Don't remove a fully
-                    // computed instance type that was populated by
-                    // get_class_instance_type during this block's execution.
-                    // A valid instance type (non-ERROR) should be preserved.
-                    if self
-                        .ctx
-                        .symbol_instance_types
-                        .get(&sym_id)
-                        .is_some_and(|t| t == TypeId::ERROR)
-                    {
+                // Restore the instance cache, but never clobber a real instance
+                // that `get_class_instance_type` computed during this block. The
+                // current value is worth keeping when it is a valid instance and
+                // is NOT the fields-only provisional we installed above; in every
+                // other case (still the provisional, or ERROR) fall back to the
+                // pre-block value, and to removal when there was none. Restoring
+                // an incomplete/`ERROR` prior over a freshly built instance is the
+                // clobber behind #17456's self-relate false positive.
+                let current_inst = self.ctx.symbol_instance_types.get(&sym_id);
+                let keep_current = current_inst.is_some_and(|t| !t.is_any_unknown_or_error())
+                    && current_inst != installed_partial_instance;
+                if !keep_current {
+                    if let Some(prev) = prev_complete_instance {
+                        self.ctx.symbol_instance_types.insert(sym_id, prev);
+                    } else {
                         self.ctx.symbol_instance_types.remove(&sym_id);
                     }
                 }
