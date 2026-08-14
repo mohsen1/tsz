@@ -48,18 +48,18 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return SubtypeResult::True;
         }
 
-        // tsc's `someTypeRelatedToType` fast path (issue #17390); see helper.
+        // Fast paths: tsc's `someTypeRelatedToType` (issue #17390) and the
+        // `typeof globalThis` surface self-relation (issue #17436); see helpers.
         if self.intersection_or_merged_source_satisfies_target(source, target) {
             return SubtypeResult::True;
         }
-        // Note: Canonicalization-based structural identity (Task #36) was previously
-        // called here as a "fast path", but it was actually SLOWER than the normal path
-        // because it allocated a fresh Canonicalizer per call (FxHashMap + Vecs) and
-        // triggered O(n²) union reduction via interner.union(). The existing QueryCache
-        // already provides O(1) memoization for repeated subtype checks.
-        // The Canonicalizer remains available for its intended purpose: detecting
-        // structural identity of recursive type aliases (graph isomorphism).
-        // See: are_types_structurally_identical() and isomorphism_tests.rs
+        if let Some(result) = self.global_this_surface_relation(source, target) {
+            return result;
+        }
+        // Canonicalization-based structural identity (Task #36) is intentionally
+        // NOT a fast path here: it was slower than the QueryCache's O(1)
+        // memoization. It stays for recursive-alias isomorphism detection
+        // (`are_types_structurally_identical()` / isomorphism_tests.rs).
 
         // Note: Weak type checking is handled by CompatChecker (compat.rs:167-170).
         // Removed redundant check here to avoid double-checking which caused false positives.

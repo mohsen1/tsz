@@ -165,3 +165,50 @@ const bad: Window = bareGlobal;
         "assigning `typeof globalThis` to `Window` must not blow the relation budget:\n{out}"
     );
 }
+
+#[test]
+fn global_window_assignable_to_window_and_globalthis_positions() {
+    // The global `window` value's type is `Window & typeof globalThis`. Assigning
+    // it into a `Window & typeof globalThis` *annotation* (or argument/union
+    // target) must be clean: it is the same type on both sides. The bug (#17436)
+    // was that the `window` value's own re-minted `typeof globalThis` surface and
+    // a directly written `typeof globalThis` annotation are distinct `TypeId`s, so
+    // the target intersection was property-merged and the two surfaces compared
+    // structurally rather than by identity — and `typeof globalThis` is not even a
+    // structural subtype of itself (a merged constructor global like `ArrayBuffer`
+    // materializes as its instance type on one side and its `typeof`/constructor
+    // type on the other; `NaN`/`Infinity` are numeric-literal names checked
+    // against the numeric index signature). `tsc` never hits this because it
+    // short-circuits identical types. The fix relates two `typeof globalThis`
+    // surface mints by their `GLOBAL_THIS_SURFACE` identity.
+    let source = r#"
+const w: Window & typeof globalThis = window;
+
+declare function take(x: Window & typeof globalThis): void;
+take(window);
+
+declare function pick<T>(a: T, b: T, c: T): T;
+var r = pick(undefined, { x: 6, z: window }, { x: 6, y: '' });
+"#;
+
+    let Some(out) = run_tsz("window_and_globalthis", source) else {
+        println!("tsz binary not found; skipping");
+        return;
+    };
+    if dom_unavailable(&out) {
+        println!("DOM lib unavailable; skipping");
+        return;
+    }
+    assert!(
+        !out.contains("TS2322"),
+        "spurious TS2322 relating `Window & typeof globalThis` to itself:\n{out}"
+    );
+    assert!(
+        !out.contains("TS2345"),
+        "spurious TS2345 relating `Window & typeof globalThis` to itself:\n{out}"
+    );
+    assert!(
+        !out.contains("TS2859"),
+        "excessive-complexity TS2859 relating `Window & typeof globalThis` to itself:\n{out}"
+    );
+}

@@ -69,17 +69,110 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return false;
         };
         let member_list = self.interner.type_list(members);
+        // A `typeof globalThis` target is satisfied by a `typeof globalThis`
+        // constituent regardless of which mint each is (issue #17436); see
+        // [`Self::is_global_this_surface`].
+        let target_is_global_this_surface = self.is_global_this_surface(target);
         let target_shape = object_shape_id(self.interner, target)
             .or_else(|| object_with_index_shape_id(self.interner, target))
             .map(|id| self.interner.object_shape(id));
         member_list.iter().any(|&member| {
             member == target
+                || (target_is_global_this_surface && self.is_global_this_surface(member))
                 || self.intersection_member_nominally_extends_target(
                     member,
                     target,
                     target_shape.as_deref(),
                 )
         })
+    }
+
+    /// The `typeof globalThis` surface self-relation short-circuit (issue #17436).
+    ///
+    /// `typeof globalThis` denotes a single per-compilation type, but the global
+    /// `window` value's re-minted `Window & typeof globalThis` surface and a
+    /// directly written `Window & typeof globalThis` annotation are distinct
+    /// `TypeId`s. Comparing the two surfaces structurally fails: `typeof
+    /// globalThis` is not even a structural subtype of itself (a merged
+    /// constructor global such as `ArrayBuffer` materializes as its instance type
+    /// on one side and its `typeof`/constructor type on the other; `NaN`/
+    /// `Infinity` are numeric-literal names checked against the numeric index
+    /// signature). `tsc` never reaches this because it short-circuits identical
+    /// types. Every surface materialization carries `GLOBAL_THIS_SURFACE`, so:
+    ///
+    /// * two surfaces relate by that identity; and
+    /// * a target that is `X & typeof globalThis` — interned as an intersection or
+    ///   already merged to an object with a `merged_intersection_origin` — is
+    ///   related per constituent (`A <: T1 & T2` iff `A <: T1` and `A <: T2`), so
+    ///   the surface member relates by identity instead of being property-merged
+    ///   and walked.
+    ///
+    /// Returns `Some(True)` only on success; a genuine failure yields `None` so
+    /// the caller falls through to the normal path for elaboration/reasons (e.g.
+    /// `typeof globalThis <: Window` keeps its `TS2741`).
+    pub(crate) fn global_this_surface_relation(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> Option<SubtypeResult> {
+        if self.is_global_this_surface(source) && self.is_global_this_surface(target) {
+            return Some(SubtypeResult::True);
+        }
+        let members_id = self.intersection_or_merged_origin_member_list(target)?;
+        if !self
+            .interner
+            .type_list(members_id)
+            .iter()
+            .any(|&m| self.is_global_this_surface(m))
+        {
+            return None;
+        }
+        let members = self.interner.type_list(members_id).to_vec();
+        members
+            .iter()
+            .all(|&m| self.check_subtype(source, m).is_true())
+            .then_some(SubtypeResult::True)
+    }
+
+    /// The intersection constituent members of `type_id` — whether it is
+    /// interned directly as an `Intersection`, or as a *merged* object surface
+    /// that still carries a `merged_intersection_origin` back to that
+    /// intersection (the form the global `window` value's type and an evaluated
+    /// `Window & typeof globalThis` annotation both take). Returns `None` when
+    /// `type_id` is neither.
+    pub(crate) fn intersection_or_merged_origin_member_list(
+        &self,
+        type_id: TypeId,
+    ) -> Option<crate::types::TypeListId> {
+        intersection_list_id(self.interner, type_id).or_else(|| {
+            self.interner
+                .get_merged_intersection_origin(type_id)
+                .filter(|&origin| origin != type_id)
+                .and_then(|origin| intersection_list_id(self.interner, origin))
+        })
+    }
+
+    /// Whether `type_id` is a synthetic `typeof globalThis` surface object.
+    ///
+    /// `typeof globalThis` denotes a single per-compilation type — the ambient
+    /// global scope. Every materialization of it carries the
+    /// `ObjectFlags::GLOBAL_THIS_SURFACE` marker, so two such objects are the
+    /// same type even when they are distinct mints: the global `window` value's
+    /// own re-minted `Window & typeof globalThis` surface vs. a directly written
+    /// `typeof globalThis` annotation. Relating them by this identity avoids a
+    /// structural walk over the surface, which would otherwise surface its own
+    /// numeric-index-vs-named-property quirks (`NaN`/`Infinity` are numeric
+    /// literal names) that `tsc` never reaches because it short-circuits identical
+    /// types (issue #17436).
+    pub(crate) fn is_global_this_surface(&self, type_id: TypeId) -> bool {
+        object_shape_id(self.interner, type_id)
+            .or_else(|| object_with_index_shape_id(self.interner, type_id))
+            .is_some_and(|id| {
+                self.interner
+                    .object_shape(id)
+                    .flags
+                    .contains(ObjectFlags::GLOBAL_THIS_SURFACE)
+            })
     }
 
     /// Build a name-keyed substitution that erases authoritative declaration
