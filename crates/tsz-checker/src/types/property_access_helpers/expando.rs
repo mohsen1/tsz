@@ -916,9 +916,40 @@ impl<'a> CheckerState<'a> {
             if let Some(obj_key) =
                 Self::property_access_chain_in_arena(self.ctx.arena, object_expr_idx)
                 && !self.class_has_instance_member(&obj_key, property_name)
-                && let Some(sym_id) = self.root_symbol_for_expando_read(object_expr_idx)
             {
-                return self.root_symbol_supports_js_direct_expando_write(sym_id);
+                if let Some(sym_id) = self.root_symbol_for_expando_read(object_expr_idx) {
+                    return self.root_symbol_supports_js_direct_expando_write(sym_id);
+                }
+
+                // `object_expr_idx` has no name-resolvable symbol — the base
+                // of a NESTED expando chain (`a.d` in `a.d.newMember = e`,
+                // where `d` is a binder-tracked chain-key member on `a`, not
+                // a real declaration). A new member write onto that base is
+                // legitimate exactly when the base link is itself a
+                // declared, OPEN expando host (oracle-verified: `const a =
+                // {}; a.d = {};` cross-file, then `a.d.newMember = 5` is
+                // clean, matching an ordinary `a.newMember = 5` on `a`
+                // itself). `is_expando_function_assignment`'s
+                // callable-only gate already covers the narrower case where
+                // `d` carries an intrinsic `.prototype` (function/class
+                // RHS); this covers the general open-container member write.
+                //
+                // Deliberately NOT `expando_base_link_host_verdict` here: its
+                // `member_name == "prototype"` carve-out exists for
+                // `nested_expando_base_link_is_declared`'s narrower question
+                // ("is `X.prototype` a legitimate carrier for a FURTHER
+                // recorded assignment lookup"), not "grant this write
+                // outright" — reusing it here vacuously passed EVERY member
+                // write on ANY `X.prototype` base, including a real class's
+                // (`Module.prototype.identifier = e` must stay TS2339 when
+                // `Module` declares no such member; oracle-verified,
+                // `salsa/typeFromPropertyAssignment23.ts`).
+                if let Some((base_expr, member_name)) =
+                    self.split_expando_access_link(object_expr_idx)
+                {
+                    return self.is_expando_property_read(base_expr, &member_name)
+                        && self.nested_expando_base_link_rhs_is_host(base_expr, &member_name);
+                }
             }
         }
 
@@ -1267,19 +1298,29 @@ impl<'a> CheckerState<'a> {
         let Some((base_expr, member_name)) = self.split_expando_access_link(object_expr_idx) else {
             return true;
         };
+        self.expando_base_link_host_verdict(base_expr, &member_name)
+    }
 
+    /// Whether `base_expr.member_name` (e.g. `a.d` in `a.d.c = e`) is itself
+    /// a declared, OPEN expando host: a real declared member whose every
+    /// visible declaring write is host-shaped (empty literal, function, or
+    /// class expression). `prototype` links are exempt — `prototype` is a
+    /// built-in member carried by the dedicated prototype-expando paths, not
+    /// by assignment records.
+    ///
+    /// Being a declared member is necessary but not sufficient: the base
+    /// link must itself be an expando HOST — its declaring write's RHS an
+    /// empty literal, function, or class expression. `a.b = { k: 1 }`
+    /// declares `b` as a closed shape, so a nested `a.b.c` member is
+    /// TS2339 under `noImplicitAny`, mirroring tsc's
+    /// `getExpandoInitializer` emptiness rule (#17226 gap 1).
+    fn expando_base_link_host_verdict(&self, base_expr: NodeIndex, member_name: &str) -> bool {
         if member_name == "prototype" {
             return true;
         }
 
-        // Being a declared member is necessary but not sufficient: the base
-        // link must itself be an expando HOST — its declaring write's RHS an
-        // empty literal, function, or class expression. `a.b = { k: 1 }`
-        // declares `b` as a closed shape, so a nested `a.b.c` member is
-        // TS2339 under `noImplicitAny`, mirroring tsc's
-        // `getExpandoInitializer` emptiness rule (#17226 gap 1).
-        self.is_expando_property_read(base_expr, &member_name)
-            && self.nested_expando_base_link_rhs_is_host(base_expr, &member_name)
+        self.is_expando_property_read(base_expr, member_name)
+            && self.nested_expando_base_link_rhs_is_host(base_expr, member_name)
     }
 
     pub(in crate::types_domain) fn expando_property_read_type(

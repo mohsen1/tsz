@@ -329,8 +329,15 @@ interface RpcGroup<in out R extends RpcAny> {
     );
 }
 
+/// tsc does not manufacture a binding for a `.prototype` assignment target:
+/// `getAssignmentDeclarationKind`'s `Prototype`/`Property` cases only extend
+/// an ALREADY-EXISTING symbol, so an undeclared root is the plain "Cannot
+/// find name" error, same as any other unresolved identifier — oracle-verified
+/// (typescript@7.0.2 via `oracle.sh`, which disagrees with the bundled 6.0.2
+/// legacy checker here) against
+/// `TypeScript/tests/cases/conformance/salsa/nestedPrototypeAssignment.ts`.
 #[test]
-fn test_ts2304_not_emitted_for_js_prototype_assignment_root() {
+fn test_ts2304_emitted_for_undeclared_js_prototype_assignment_root() {
     let diagnostics = check_js_without_lib(
         r#"
 C.prototype = {};
@@ -339,9 +346,49 @@ C.prototype.bar.foo = {};
     );
 
     let ts2304_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2304).collect();
+    assert_eq!(
+        ts2304_errors.len(),
+        2,
+        "Expected TS2304 for both undeclared-root prototype-assignment statements, got: {diagnostics:?}"
+    );
+}
+
+/// Renamed-binder variant of the case above — the rule is structural, not
+/// keyed on the identifier's spelling.
+#[test]
+fn test_ts2304_emitted_for_undeclared_js_prototype_assignment_root_renamed_binder() {
+    let diagnostics = check_js_without_lib(
+        r#"
+Widget.prototype = {};
+Widget.prototype.gadget.thing = {};
+"#,
+    );
+
+    let ts2304_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2304).collect();
+    assert_eq!(
+        ts2304_errors.len(),
+        2,
+        "Expected TS2304 for both undeclared-root prototype-assignment statements, got: {diagnostics:?}"
+    );
+}
+
+/// Negative control: a genuinely DECLARED constructor function's `.prototype`
+/// assignment must not report TS2304 — the fix only tightens the fallback for
+/// an identifier that never resolves, it must not regress the ordinary
+/// constructor-function idiom.
+#[test]
+fn test_ts2304_not_emitted_for_declared_js_prototype_assignment_root() {
+    let diagnostics = check_js_without_lib(
+        r#"
+function C() {}
+C.prototype = {};
+"#,
+    );
+
+    let ts2304_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2304).collect();
     assert!(
         ts2304_errors.is_empty(),
-        "Expected no TS2304 for JS prototype assignment root, got: {diagnostics:?}"
+        "Expected no TS2304 for a declared constructor's prototype assignment, got: {diagnostics:?}"
     );
 }
 

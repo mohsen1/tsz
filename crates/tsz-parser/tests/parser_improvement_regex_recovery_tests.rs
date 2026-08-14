@@ -1131,13 +1131,23 @@ fn test_realistic_class_set_expression_does_not_falsely_report_unclosed_class() 
     // A real-world `unicodeSets` class-set expression (from the
     // `regularExpressionScanning` conformance fixture) with heavy nesting and
     // subtraction/intersection operators. It has its own set of dedicated
-    // class-set diagnostics (`--`/`&&` operand errors), but the OUTER class
-    // balance itself is correct and must not additionally trigger the
-    // generic `']' expected` fallback.
+    // class-set diagnostics (`--`/`&&` operand errors, including the
+    // `'&&'/'--' expected.` stray-operand report that a committed set-op class
+    // draws — TS1005, same code as `']' expected.`), but the OUTER class
+    // balance itself is correct and must not additionally trigger the generic
+    // `']' expected` unterminated-class fallback. Assert on the message so the
+    // legitimate `'--' expected.` reports (which `tsc` 7.0.2 also emits here)
+    // are not conflated with the false-positive this test guards against.
     let source = r"const r = /[a--b[--][\d++[]]&&[[&0-9--]&&[\p{L}]--\P{L}-_-]]&&&\q{foo}[0---9][&&q&&&\q{bar}&&]/v;";
+    let (parser, _root) = crate::parser::test_fixture::parse_source_with_language_version(
+        source,
+        tsz_common::ScriptTarget::ES2024,
+    );
     assert!(
-        !regex_codes(source, tsz_common::ScriptTarget::ES2024)
-            .contains(&diagnostic_codes::EXPECTED),
+        !parser
+            .get_diagnostics()
+            .iter()
+            .any(|d| d.code == diagnostic_codes::EXPECTED && d.message == "']' expected."),
         "balanced outer class in a heavily-nested class-set expression must not report ']' expected"
     );
 }

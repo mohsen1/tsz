@@ -980,6 +980,11 @@ impl ParserState {
                 pos: &mut usize,
                 range: &mut Vec<ClassAtomKind>,
                 may_contain_strings: &mut bool,
+                // When false, the caller has already reported this operand's
+                // position (it is a stray in a committed set-op class, drawing
+                // TS1005) so the bare `ClassSetSyntaxCharacter`/reserved-double
+                // reports are suppressed while consumption stays identical.
+                report_bare_char_errors: bool,
             ) where
                 F: Fn(&mut ParserState, usize, u32, &str, u32),
             {
@@ -1032,13 +1037,15 @@ impl ParserState {
                     && *pos + 1 < ctx.body_end
                     && ctx.body[*pos + 1] == ch
                 {
-                    (ctx.emit)(
-                        parser,
-                        *pos,
-                        2,
-                        diagnostic_messages::A_CHARACTER_CLASS_MUST_NOT_CONTAIN_A_RESERVED_DOUBLE_PUNCTUATOR_DID_YOU_MEAN_TO,
-                        diagnostic_codes::A_CHARACTER_CLASS_MUST_NOT_CONTAIN_A_RESERVED_DOUBLE_PUNCTUATOR_DID_YOU_MEAN_TO,
-                    );
+                    if report_bare_char_errors {
+                        (ctx.emit)(
+                            parser,
+                            *pos,
+                            2,
+                            diagnostic_messages::A_CHARACTER_CLASS_MUST_NOT_CONTAIN_A_RESERVED_DOUBLE_PUNCTUATOR_DID_YOU_MEAN_TO,
+                            diagnostic_codes::A_CHARACTER_CLASS_MUST_NOT_CONTAIN_A_RESERVED_DOUBLE_PUNCTUATOR_DID_YOU_MEAN_TO,
+                        );
+                    }
                     range.push(ClassAtomKind::Character);
                     *pos += 2;
                     return;
@@ -1088,6 +1095,7 @@ impl ParserState {
                 // productions do not claim (`[`/`]`/`\` handled above, a
                 // range-separator `-` by the caller): tsc reports TS1508.
                 if ctx.unicode_sets_mode
+                    && report_bare_char_errors
                     && let Some(symbol) = match ch {
                         b'(' => Some("("),
                         b')' => Some(")"),
@@ -1214,6 +1222,98 @@ impl ParserState {
                     }
                 }
 
+                /// Drain a class already committed to `&&`/`--` once the caller
+                /// has met content that is neither that operator nor `]`.
+                ///
+                /// A `ClassIntersection`/`ClassSubtraction` admits, after each
+                /// operand, only more of its own operator or the closing `]`.
+                /// tsc reports `TS1005 '&&'/'--' expected.` for each stray
+                /// union operand until `]`, re-syncing to a later valid operator
+                /// (so `/[a&&b c&&d]/v` reports only the two strays). A lone `&`
+                /// is consumed as a malformed `&&` and draws `TS1508` instead; a
+                /// bare `-` or the *other* operator is mixing and draws `TS1519`
+                /// through the shared `note_class_set_kind`. Stray operands are
+                /// consumed with `report_bare_char_errors = false` so a bare
+                /// syntax character or reserved double punctuator does not add
+                /// its own report on top of the `TS1005`.
+                fn drain_committed_set_op_tail<F>(
+                    parser: &mut ParserState,
+                    ctx: &RegexScanContext<'_, F>,
+                    committed: &mut Option<ClassSetKind>,
+                    mixed_reported: &mut bool,
+                    pos: &mut usize,
+                ) where
+                    F: Fn(&mut ParserState, usize, u32, &str, u32),
+                {
+                    let expected = if *committed == Some(ClassSetKind::Subtraction) {
+                        "--"
+                    } else {
+                        "&&"
+                    };
+                    // Reused scratch for the operands the drain consumes but does
+                    // not inspect; `clear()` keeps the one allocation across the
+                    // recovery instead of re-minting it per stray operand, and the
+                    // strings flag is write-only garbage here.
+                    let mut sink = Vec::new();
+                    let mut sink_strings = false;
+                    while *pos < ctx.body_end && ctx.body[*pos] != b']' {
+                        sink.clear();
+                        if is_class_set_operator_at(ctx.body, *pos, ctx.body_end) {
+                            note_class_set_kind(
+                                parser,
+                                ctx,
+                                committed,
+                                mixed_reported,
+                                class_set_operator_kind(ctx.body, *pos),
+                                *pos,
+                                2,
+                            );
+                            scan_class_set_operator(parser, ctx.emit, ctx.body, ctx.body_end, pos);
+                        } else if ctx.body[*pos] == b'&' {
+                            (ctx.emit)(
+                                parser,
+                                *pos,
+                                1,
+                                &format_message(
+                                    diagnostic_messages::UNEXPECTED_DID_YOU_MEAN_TO_ESCAPE_IT_WITH_BACKSLASH,
+                                    &["&"],
+                                ),
+                                diagnostic_codes::UNEXPECTED_DID_YOU_MEAN_TO_ESCAPE_IT_WITH_BACKSLASH,
+                            );
+                            *pos += 1;
+                        } else if ctx.body[*pos] == b'-' {
+                            note_class_set_kind(
+                                parser,
+                                ctx,
+                                committed,
+                                mixed_reported,
+                                ClassSetKind::Union,
+                                *pos,
+                                1,
+                            );
+                            *pos += 1;
+                        } else {
+                            (ctx.emit)(
+                                parser,
+                                *pos,
+                                1,
+                                &format_message(diagnostic_messages::EXPECTED, &[expected]),
+                                diagnostic_codes::EXPECTED,
+                            );
+                            scan_class_atom(parser, ctx, pos, &mut sink, &mut sink_strings, false);
+                            continue;
+                        }
+                        // After an operator (or the malformed `&`/mixing `-`)
+                        // a right operand is expected; consume one when present.
+                        if *pos < ctx.body_end && ctx.body[*pos] != b']' {
+                            scan_class_atom(parser, ctx, pos, &mut sink, &mut sink_strings, true);
+                        }
+                    }
+                    if *pos < ctx.body_end {
+                        *pos += 1; // consume the closing `]`
+                    }
+                }
+
                 // Consume optional leading ^
                 let negated = *pos < ctx.body_end && ctx.body[*pos] == b'^';
                 if negated {
@@ -1303,7 +1403,14 @@ impl ParserState {
                     let mut atoms = Vec::new();
                     let min_start = *pos;
                     let mut atom_may_contain_strings = false;
-                    scan_class_atom(parser, ctx, pos, &mut atoms, &mut atom_may_contain_strings);
+                    scan_class_atom(
+                        parser,
+                        ctx,
+                        pos,
+                        &mut atoms,
+                        &mut atom_may_contain_strings,
+                        true,
+                    );
                     if operand_index == 0 {
                         class_may_contain_strings = atom_may_contain_strings;
                         first_operand_start = Some(min_start);
@@ -1327,6 +1434,29 @@ impl ParserState {
                         continue;
                     }
                     if *pos >= ctx.body_end || ctx.body[*pos] != b'-' {
+                        // A class committed to `&&`/`--` admits only more of that
+                        // operator (handled above) or `]` after each operand;
+                        // any other content is stray union material that tsc
+                        // rejects with `TS1005 '&&'/'--' expected.`, so hand the
+                        // rest of the class to the set-op tail drainer instead of
+                        // looping back to scan it as a fresh union member.
+                        if ctx.unicode_sets_mode
+                            && matches!(
+                                committed,
+                                Some(ClassSetKind::Subtraction | ClassSetKind::Intersection)
+                            )
+                            && *pos < ctx.body_end
+                            && ctx.body[*pos] != b']'
+                        {
+                            drain_committed_set_op_tail(
+                                parser,
+                                ctx,
+                                &mut committed,
+                                &mut mixed_reported,
+                                pos,
+                            );
+                            break;
+                        }
                         continue;
                     }
                     // A class already committed to `--`/`&&` admits no ranges,
@@ -1369,6 +1499,7 @@ impl ParserState {
                         pos,
                         &mut max_atoms,
                         &mut max_atom_may_contain_strings,
+                        true,
                     );
 
                     let min_atom = atoms.first().copied();
@@ -2009,150 +2140,9 @@ impl ParserState {
             },
         )
     }
-
-    fn missing_regex_closing_token(&self, text: &str) -> Option<u8> {
-        let bytes = text.as_bytes();
-        if bytes.len() < 2 || bytes[0] != b'/' {
-            return None;
-        }
-
-        // Mirror the regex scan state for body extraction.
-        let mut in_escape = false;
-        let mut in_character_class = false;
-        let mut body_end = bytes.len();
-
-        for (i, ch) in bytes.iter().enumerate().skip(1) {
-            let ch = *ch;
-            if in_escape {
-                in_escape = false;
-                continue;
-            }
-            if ch == b'\\' {
-                in_escape = true;
-            } else if ch == b'[' && !in_character_class {
-                in_character_class = true;
-            } else if ch == b']' && in_character_class {
-                in_character_class = false;
-            } else if ch == b'/' && !in_character_class {
-                body_end = i;
-                break;
-            }
-        }
-
-        if body_end <= 1 {
-            return None;
-        }
-
-        // Under `v`, a nested `[` in a class opens ANOTHER class needing its own `]`.
-        let unicode_sets_mode = bytes[body_end + 1..].contains(&b'v');
-        let (mut paren_depth, mut class_depth) = (0i32, 0i32);
-        let mut i = 1usize;
-        while i < body_end {
-            let ch = bytes[i];
-            if ch == b'\\' {
-                // `\q{...}` denotes a `ClassStringDisjunction`, whose
-                // interior has no class-nesting grammar of its own — an
-                // unescaped `[` in there is reserved content (TS1508, see
-                // `scan_class_string_disjunction_body`), not a nested class
-                // open, and must not perturb this depth count. Mirrors the
-                // semantic walker's `b'q'` arm in
-                // `scan_character_class_escape`, which skips this same span.
-                if unicode_sets_mode
-                    && bytes.get(i + 1) == Some(&b'q')
-                    && bytes.get(i + 2) == Some(&b'{')
-                {
-                    i += 3;
-                    while i < body_end && bytes[i] != b'}' {
-                        i += 1;
-                    }
-                    i += 1;
-                    continue;
-                }
-                i += 2;
-                continue;
-            }
-            if class_depth > 0 {
-                if ch == b']' {
-                    class_depth -= 1;
-                } else if unicode_sets_mode && ch == b'[' {
-                    class_depth += 1;
-                }
-                i += 1;
-                continue;
-            }
-            match ch {
-                b'[' => class_depth = 1,
-                b'(' => paren_depth += 1,
-                b')' if paren_depth > 0 => paren_depth -= 1,
-                _ => {}
-            }
-            i += 1;
-        }
-        if class_depth > 0 {
-            Some(b']')
-        } else if paren_depth > 0 {
-            Some(b')')
-        } else {
-            None
-        }
-    }
 }
+
+mod closing_token;
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    // Regression for issue #4787: the regex range-order helper used
-    // `u32::try_from(start).expect(...)` for absolute UTF-8 offsets, so a
-    // sufficiently large absolute offset (in pathological / crafted input)
-    // would panic the parser instead of degrading gracefully. After the
-    // fix, oversized offsets simply produce an empty offset vector — the
-    // range-order pass loses precision for those atoms but the parser
-    // does not crash.
-    #[test]
-    fn split_non_unicode_atom_offsets_returns_empty_vec_when_offset_overflows_u32() {
-        // start near usize::MAX guarantees `start + ...` cannot fit in u32
-        // on 64-bit platforms.
-        let offsets = split_non_unicode_atom_offsets(usize::MAX, 'a');
-        assert!(
-            offsets.is_empty(),
-            "expected empty offset vec on u32 overflow, got {offsets:?}",
-        );
-    }
-
-    #[test]
-    fn split_non_unicode_atom_offsets_returns_offsets_for_bmp_chars() {
-        // BMP char: one UTF-16 code unit, one UTF-8 byte. Offsets should
-        // round-trip the start position unchanged.
-        let offsets = split_non_unicode_atom_offsets(7, 'a');
-        assert_eq!(offsets, vec![7]);
-    }
-
-    #[test]
-    fn split_non_unicode_atom_offsets_returns_two_offsets_for_surrogate_pair() {
-        // U+1F600 (😀) encodes to two UTF-16 code units and four UTF-8
-        // bytes; the helper should yield two distinct offsets that both
-        // fit in u32 for normal inputs.
-        let offsets = split_non_unicode_atom_offsets(0, '\u{1F600}');
-        assert_eq!(offsets.len(), 2);
-        assert_eq!(offsets[0], 0);
-        // Second surrogate's offset = (1 * 4) / 2 = 2.
-        assert_eq!(offsets[1], 2);
-    }
-
-    #[test]
-    fn split_non_unicode_atom_offsets_drops_only_overflowing_entries() {
-        // Pick a `start` such that the FIRST surrogate fits in u32 but the
-        // SECOND does not. With a surrogate-pair char the second offset is
-        // `start + 2`, so a start of `u32::MAX as usize - 1` makes the
-        // first offset = u32::MAX - 1 (fits) and the second = u32::MAX + 1
-        // (overflows). filter_map drops only the overflowing entry.
-        let start = u32::MAX as usize - 1;
-        let offsets = split_non_unicode_atom_offsets(start, '\u{1F600}');
-        assert_eq!(
-            offsets,
-            vec![u32::MAX - 1],
-            "first surrogate kept, second dropped",
-        );
-    }
-}
+mod tests;

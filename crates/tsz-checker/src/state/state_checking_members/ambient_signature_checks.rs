@@ -1415,11 +1415,14 @@ impl<'a> CheckerState<'a> {
             );
         }
 
-        // Error 1318: An abstract accessor cannot have an implementation
-        // Abstract accessors must not have a body
+        // Error 1318: An abstract accessor cannot have an implementation.
+        // Abstract accessors must not have a body. tsc's `checkGrammarAccessor`
+        // reports this through `grammarErrorOnNode(node.name, …)`, so it anchors
+        // at the accessor name (`get aa`'s `aa`), not the whole member node's
+        // leading `abstract` modifier.
         if accessor.body.is_some() && self.has_abstract_modifier(&accessor.modifiers) {
             self.error_at_node(
-                member_idx,
+                accessor.name,
                 "An abstract accessor cannot have an implementation.",
                 diagnostic_codes::AN_ABSTRACT_ACCESSOR_CANNOT_HAVE_AN_IMPLEMENTATION,
             );
