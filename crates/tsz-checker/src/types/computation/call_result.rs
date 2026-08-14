@@ -1091,7 +1091,6 @@ impl<'a> CheckerState<'a> {
                 fallback_return,
             } => {
                 if actual == TypeId::ERROR
-                    || actual == TypeId::UNKNOWN
                     || expected == TypeId::ERROR
                     || expected == TypeId::UNKNOWN
                 {

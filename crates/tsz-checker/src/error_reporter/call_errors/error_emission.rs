@@ -29,6 +29,11 @@ impl<'a> CheckerState<'a> {
                 param_type,
             );
         // Suppress when types are identical or either is a special escape-hatch type.
+        // `unknown` is only an escape hatch as the *target* (any argument is
+        // assignable to an `unknown` parameter); as the *argument* type it is an
+        // ordinary (maximal) type that fails to relate to anything but
+        // `unknown`/`any`/`never`-adjacent targets, exactly like any other
+        // concrete-but-mismatched type — tsc reports TS2345 for it.
         if arg_type == param_type
             || arg_type == TypeId::ERROR
             || param_type == TypeId::ERROR
@@ -36,7 +41,6 @@ impl<'a> CheckerState<'a> {
             // reports TS2345 for the bottom-type case `any -> never`.
             || (arg_type == TypeId::ANY && param_type != TypeId::NEVER)
             || param_type == TypeId::ANY
-            || arg_type == TypeId::UNKNOWN
             || param_type == TypeId::UNKNOWN
         {
             return true;
