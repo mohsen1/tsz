@@ -759,12 +759,6 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        let is_namespace_enum_rebind =
-            !is_const && self.is_js_namespace_enum_rebind_assignment_target(left_idx);
-        if is_namespace_enum_rebind {
-            return self.get_type_of_node(right_idx);
-        }
-
         if !is_const && self.is_js_namespace_enum_expando_member_assignment(left_idx) {
             return self.get_type_of_node(right_idx);
         }
