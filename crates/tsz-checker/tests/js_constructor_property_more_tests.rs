@@ -91,9 +91,21 @@ A.prototype = {
 
     let diagnostics = check_js(source);
 
+    // Oracle-verified (typescript@7.0.2): each private-identifier object-
+    // literal key reports its own TS18016 ("Private identifiers are not
+    // allowed outside class bodies"), matching the general rule pinned by
+    // `js_object_literal_private_identifier_ts18016_tests`. The original
+    // `is_empty()` assertion only meant to guard against a recursive crash
+    // (per the doc comment above) and over-constrained the result; tsz
+    // already emits the correct diagnostics without crashing.
+    assert_eq!(
+        diagnostics.len(),
+        3,
+        "Expected one TS18016 per private-identifier key (no crash), got: {diagnostics:?}"
+    );
     assert!(
-        diagnostics.is_empty(),
-        "Expected checker-only pass to avoid recursive crashes on illegal private prototype members, got: {diagnostics:?}"
+        diagnostics.iter().all(|(code, _)| *code == 18016),
+        "Expected only TS18016 diagnostics, got: {diagnostics:?}"
     );
 }
 
