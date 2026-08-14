@@ -492,9 +492,11 @@ fn test_emitter_source_text_recovery_surface_does_not_grow() {
     // Bumped 828→852 for emitter helpers growth in helpers.rs; 852→865 for
     // additional emit fixes (pre-existing on main); 865→968 for the TS7-pin
     // emit/DTS campaign growth, +1 for the generator-wrapper source-layout
-    // gate (#15738). Track a follow-up to route new recovery through
-    // parser/lowering facts.
-    const SOURCE_TEXT_RECOVERY_LINE_CEILING: usize = 969;
+    // gate (#15738), +1 for the async-method single-line body gate (#17432),
+    // same category: both read the body's source range to decide emitted
+    // layout, which no parser/lowering fact currently carries. Track a
+    // follow-up to route new recovery through parser/lowering facts.
+    const SOURCE_TEXT_RECOVERY_LINE_CEILING: usize = 970;
     assert!(
         source_text_lines.len() <= SOURCE_TEXT_RECOVERY_LINE_CEILING,
         "Emitter source-text recovery surface grew to {} lines (ceiling: {}). \
