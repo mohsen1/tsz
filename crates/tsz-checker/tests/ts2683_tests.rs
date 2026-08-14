@@ -867,3 +867,123 @@ fn commonjs_module_exports_property_assigned_function_this_is_receiver() {
         "a `module.exports` receiver `this` must not report implicit-any TS2683, got: {diags:?}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// salsa/thisPropertyAssignment.ts family (#17314 board): a JSDoc `@constructor`
+// tag is the developer's own receiver annotation. tsc never warns TS2683 for
+// `this.prop = ...` inside such a function's own body, unlike TypeScript 7's
+// removed *implicit* this.prop=-only heuristic (which still warns for a plain,
+// untagged function). oracle-verified via the checked-in conformance fingerprint
+// cache for `conformance/salsa/thisPropertyAssignment.ts`.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn jsdoc_constructor_tagged_function_this_property_write_no_ts2683() {
+    let src = r#"
+/** @constructor */
+function F() {
+    this.a = {};
+    this.a.b = {};
+}
+"#;
+    let diags = get_js_diagnostics(src);
+    assert!(
+        !diags.iter().any(|d| d.0 == 2683),
+        "a JSDoc `@constructor`-tagged function's own `this.prop = ...` writes must not report implicit-any TS2683, got: {diags:?}"
+    );
+}
+
+#[test]
+fn jsdoc_constructor_tagged_function_this_property_write_no_ts2683_renamed_binder() {
+    // Same shape as above with a differently-named function — confirms the fix
+    // keys off the JSDoc tag, not the identifier text.
+    let src = r#"
+/** @constructor */
+function Widget() {
+    this.color = "red";
+    this.color.length;
+}
+"#;
+    let diags = get_js_diagnostics(src);
+    assert!(
+        !diags.iter().any(|d| d.0 == 2683),
+        "a renamed JSDoc `@constructor`-tagged function must not report implicit-any TS2683, got: {diags:?}"
+    );
+}
+
+#[test]
+fn jsdoc_constructor_tagged_function_expression_this_property_write_still_ts2683() {
+    // Unlike a named FUNCTION DECLARATION, a `var X = /** @constructor */
+    // function () {...}` expression does NOT get the same exemption even
+    // with the identical tag+write shape (mirrors the pre-existing
+    // `test_variable_assigned_js_constructor_is_not_constructable_under_ts7`).
+    let src = r#"
+/** @constructor */
+var F = function () {
+    this.a = {};
+};
+"#;
+    let diags = get_js_diagnostics(src);
+    assert!(
+        diags.iter().any(|d| d.0 == 2683),
+        "a JSDoc `@constructor`-tagged function EXPRESSION should still report implicit-any TS2683, got: {diags:?}"
+    );
+}
+
+#[test]
+fn jsdoc_constructor_tagged_function_without_this_assignments_still_ts2683() {
+    // The `@constructor` tag alone, with no `this.prop = value` write anywhere
+    // in the function's own body, does not suppress TS2683 — only the tag AND
+    // an established own-body write together do.
+    let src = r#"
+/** @constructor */
+function Actual() {
+    return this.missing;
+}
+"#;
+    let diags = get_js_diagnostics(src);
+    assert!(
+        diags.iter().any(|d| d.0 == 2683),
+        "a JSDoc `@constructor`-tagged function with no this.prop= writes should still report TS2683, got: {diags:?}"
+    );
+}
+
+#[test]
+fn plain_untagged_function_this_property_write_still_ts2683() {
+    // Negative control: without the `@constructor` tag, a plain JS function's
+    // `this.prop = ...` still reports TS2683 — TypeScript 7 removed the old
+    // implicit this.prop=-only heuristic (see dispatch/this.rs), so only the
+    // explicit tag suppresses the warning.
+    let src = r#"
+function F() {
+    this.a = {};
+}
+"#;
+    let diags = get_js_diagnostics(src);
+    assert!(
+        diags.iter().any(|d| d.0 == 2683),
+        "a plain untagged JS function's `this.prop = ...` write should still report implicit-any TS2683, got: {diags:?}"
+    );
+}
+
+#[test]
+fn nested_plain_function_inside_jsdoc_constructor_still_ts2683() {
+    // The `@constructor` tag suppresses TS2683 only for `this` owned by the
+    // TAGGED function itself — a nested untagged function creates its own
+    // `this` binding and still gets the implicit-any warning.
+    let src = r#"
+/** @constructor */
+function F() {
+    this.a = {};
+    function inner() {
+        this.b = {};
+    }
+}
+"#;
+    let diags = get_js_diagnostics(src);
+    assert_eq!(
+        diags.iter().filter(|d| d.0 == 2683).count(),
+        1,
+        "only the nested untagged `inner` function's `this` should report TS2683, got: {diags:?}"
+    );
+}

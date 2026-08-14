@@ -894,6 +894,52 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    /// Check if the enclosing non-arrow function is a named FUNCTION
+    /// DECLARATION (not a `var x = function () {}` expression — see below)
+    /// that carries an explicit JSDoc `@constructor` tag AND whose own body
+    /// directly assigns at least one `this.prop = value` member.
+    ///
+    /// TypeScript 7 dropped the old *implicit* heuristic that seeded `this`
+    /// from ANY function containing `this.prop =` assignments (a bare
+    /// untagged `function Instance() { this.i = 1 }` still reports TS2683 —
+    /// see `js_constructor_function_with_this_assignments_emits_ts2683`), and
+    /// the tag ALONE does not synthesize a receiver for a body with no
+    /// assignments either (`test_jsdoc_constructor_without_assignments_is_constructable_and_checks_this_reads`
+    /// still wants TS2683 for a `@constructor`-tagged function that only
+    /// reads `this.missing`). For a FUNCTION DECLARATION, both together — an
+    /// explicit `@constructor` tag AND at least one own-body
+    /// `this.prop = value` write — is what tsc treats as an established
+    /// receiver, silently permitting further member reads/writes with no
+    /// TS2683 (oracle-verified via the checked-in conformance fingerprint
+    /// cache for `conformance/salsa/thisPropertyAssignment.ts`). A
+    /// `var X = /** @constructor */ function () {...}` expression does NOT
+    /// get the same exemption even with the identical tag+write shape — see
+    /// `test_variable_assigned_js_constructor_is_not_constructable_under_ts7`,
+    /// which mirrors the existing FUNCTION_DECLARATION-only split already
+    /// made by `is_this_in_nested_function_without_own_this_binding` above.
+    pub(crate) fn enclosing_function_is_jsdoc_constructor_with_own_this_assignments(
+        &self,
+        idx: NodeIndex,
+    ) -> bool {
+        use tsz_parser::parser::syntax_kind_ext::FUNCTION_DECLARATION;
+
+        let Some(enclosing_fn) = self.find_enclosing_non_arrow_function(idx) else {
+            return false;
+        };
+        if self
+            .ctx
+            .arena
+            .get(enclosing_fn)
+            .is_none_or(|node| node.kind != FUNCTION_DECLARATION)
+        {
+            return false;
+        }
+        let has_tag = self
+            .get_jsdoc_for_function(enclosing_fn)
+            .is_some_and(|jsdoc| Self::jsdoc_contains_tag(&jsdoc, "constructor"));
+        has_tag && self.function_body_has_this_property_assignments(enclosing_fn)
+    }
+
     /// Check if the enclosing function expression has a contextual `this` type
     /// from its parent variable declaration's type annotation.
     ///
