@@ -179,3 +179,47 @@ fn plain_boolean_annotation_still_widens_string_literal() {
         "Type 'string' is not assignable to type 'boolean'",
     );
 }
+
+// --- `NoInfer<T>` targets are transparent for the literal-domain decision ----
+// `NoInfer<>` only suppresses inference, never assignability, so a same-domain
+// literal source must be preserved when the wrapped target admits its domain
+// (#17491: `noInfer.ts` regressed by #17488, which widened `"bar"` to `string`
+// against a `NoInfer<"foo">` property target). Binder names are varied.
+
+#[test]
+fn string_literal_against_noinfer_string_literal_property_is_preserved() {
+    // `{ x: NoInfer<T> }` with `T` fixed to `"foo"` — the wrapped target is the
+    // string literal `"foo"`, same domain as the source, so `"bar"` survives.
+    assert_source_display(
+        r#"declare function pick<T extends string>(a: T, b: { x: NoInfer<T> }): void;
+           pick("foo", { x: "bar" });"#,
+        "Type '\"bar\"' is not assignable to type '\"foo\"'",
+    );
+    assert_no_source_display(
+        r#"declare function pick<T extends string>(a: T, b: { x: NoInfer<T> }): void;
+           pick("foo", { x: "bar" });"#,
+        "Type 'string' is not assignable",
+    );
+}
+
+#[test]
+fn number_literal_against_noinfer_number_literal_property_is_preserved() {
+    // Renamed binders + numeric domain: same-domain preservation through NoInfer.
+    assert_source_display(
+        r#"declare function choose<K extends number>(lead: K, rest: { slot: NoInfer<K> }): void;
+           choose(1, { slot: 2 });"#,
+        "Type '2' is not assignable to type '1'",
+    );
+}
+
+#[test]
+fn string_literal_against_noinfer_boolean_property_still_widens() {
+    // The wrapped target admits only the boolean domain, so a string source is a
+    // genuine domain rejection and still widens — stripping NoInfer must not
+    // over-preserve.
+    assert_source_display(
+        r#"declare function gate<F extends boolean>(seed: unknown, opts: { on: NoInfer<F> }): void;
+           gate(0, { on: "yes" });"#,
+        "Type 'string' is not assignable to type 'boolean'",
+    );
+}
