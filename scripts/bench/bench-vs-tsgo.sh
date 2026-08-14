@@ -306,7 +306,7 @@ ensure_vite_app_benchmark_fixture() {
 
 ensure_utility_types_fixture() {
     mkdir -p "$EXTERNAL_BENCH_DIR"
-    tsz_ensure_git_fixture "utility-types" "$UTILITY_TYPES_REPO" "$UTILITY_TYPES_REF" "$UTILITY_TYPES_DIR" 1 || exit 1
+    tsz_ensure_git_fixture "utility-types" "$UTILITY_TYPES_REPO" "$UTILITY_TYPES_REF" "$UTILITY_TYPES_DIR" 1 || return 1
 
     # Rewrite the generated flat tsconfig every run. External fixture clones
     # are cached across benchmark jobs, and stale generated configs can keep
@@ -321,7 +321,7 @@ ensure_utility_types_fixture() {
 
 ensure_ts_toolbelt_fixture() {
     mkdir -p "$EXTERNAL_BENCH_DIR"
-    tsz_ensure_git_fixture "ts-toolbelt" "$TS_TOOLBELT_REPO" "$TS_TOOLBELT_REF" "$TS_TOOLBELT_DIR" 1 || exit 1
+    tsz_ensure_git_fixture "ts-toolbelt" "$TS_TOOLBELT_REPO" "$TS_TOOLBELT_REF" "$TS_TOOLBELT_DIR" 1 || return 1
 
     # Rewrite the generated flat tsconfig every run; fixture clones are cached
     # across jobs and must pick up script-owned config changes.
@@ -335,7 +335,7 @@ ensure_ts_toolbelt_fixture() {
 
 ensure_ts_essentials_fixture() {
     mkdir -p "$EXTERNAL_BENCH_DIR"
-    tsz_ensure_git_fixture "ts-essentials" "$TS_ESSENTIALS_REPO" "$TS_ESSENTIALS_REF" "$TS_ESSENTIALS_DIR" 1 || exit 1
+    tsz_ensure_git_fixture "ts-essentials" "$TS_ESSENTIALS_REPO" "$TS_ESSENTIALS_REF" "$TS_ESSENTIALS_DIR" 1 || return 1
 
     # Rewrite the generated flat tsconfig every run; fixture clones are cached
     # across jobs and must pick up script-owned config changes.
@@ -350,7 +350,7 @@ ensure_ts_essentials_fixture() {
 # ─── Real-world fixture: rxjs ───────────────────────────────────────────────
 ensure_rxjs_fixture() {
     mkdir -p "$EXTERNAL_BENCH_DIR"
-    tsz_ensure_git_fixture "rxjs" "$RXJS_REPO" "$RXJS_REF" "$RXJS_DIR" 1 || exit 1
+    tsz_ensure_git_fixture "rxjs" "$RXJS_REPO" "$RXJS_REF" "$RXJS_DIR" 1 || return 1
     # rxjs has been a monorepo since the v8 work — `src/internal` moved to
     # `packages/rxjs/src/internal`. Detect both layouts.
     local rxjs_src_root
@@ -364,7 +364,7 @@ ensure_rxjs_fixture() {
 # ─── Real-world fixture: type-fest ──────────────────────────────────────────
 ensure_type_fest_fixture() {
     mkdir -p "$EXTERNAL_BENCH_DIR"
-    tsz_ensure_git_fixture "type-fest" "$TYPE_FEST_REPO" "$TYPE_FEST_REF" "$TYPE_FEST_DIR" 1 || exit 1
+    tsz_ensure_git_fixture "type-fest" "$TYPE_FEST_REPO" "$TYPE_FEST_REF" "$TYPE_FEST_DIR" 1 || return 1
     # Rewrite the generated flat tsconfig every run; fixture clones are cached
     # across jobs and must pick up script-owned config changes.
     local flat_tsconfig="$TYPE_FEST_DIR/tsconfig.flat.json"
@@ -374,7 +374,7 @@ ensure_type_fest_fixture() {
 # ─── Real-world fixture: zod ────────────────────────────────────────────────
 ensure_zod_fixture() {
     mkdir -p "$EXTERNAL_BENCH_DIR"
-    tsz_ensure_git_fixture "zod" "$ZOD_REPO" "$ZOD_REF" "$ZOD_DIR" 1 || exit 1
+    tsz_ensure_git_fixture "zod" "$ZOD_REPO" "$ZOD_REF" "$ZOD_DIR" 1 || return 1
     # Rewrite the generated flat tsconfig every run; fixture clones are cached
     # across jobs and must pick up script-owned config changes.
     local flat_tsconfig="$ZOD_DIR/tsconfig.flat.json"
@@ -384,7 +384,7 @@ ensure_zod_fixture() {
 # ─── Real-world fixture: kysely (extreme type-level SQL inference) ─────────
 ensure_kysely_fixture() {
     mkdir -p "$EXTERNAL_BENCH_DIR"
-    tsz_ensure_git_fixture "kysely" "$KYSELY_REPO" "$KYSELY_REF" "$KYSELY_DIR" 1 || exit 1
+    tsz_ensure_git_fixture "kysely" "$KYSELY_REPO" "$KYSELY_REF" "$KYSELY_DIR" 1 || return 1
     local flat_tsconfig="$KYSELY_DIR/tsconfig.flat.json"
     local bench_globals="$KYSELY_DIR/tsz-bench-globals.d.ts"
     tsz_write_kysely_globals "$bench_globals"
@@ -418,7 +418,7 @@ run_utility_types_benchmarks() {
     fi
 
     print_header "Real-world External Library - utility-types"
-    ensure_utility_types_fixture
+    ensure_utility_types_fixture || return 1
     echo -e "${GREEN}✓${NC} utility-types pinned at $(git -C "$UTILITY_TYPES_DIR" rev-parse --short HEAD)"
 
     # Use project's tsconfig lib settings (dom, es2017) for fair comparison
@@ -469,7 +469,7 @@ run_ts_toolbelt_benchmarks() {
     fi
 
     print_header "Real-world External Library - ts-toolbelt"
-    ensure_ts_toolbelt_fixture
+    ensure_ts_toolbelt_fixture || return 1
     echo -e "${GREEN}✓${NC} ts-toolbelt pinned at $(git -C "$TS_TOOLBELT_DIR" rev-parse --short HEAD)"
 
     # ts-toolbelt needs esnext+dom libs (per its tsconfig), otherwise tsc can't
@@ -520,7 +520,7 @@ run_ts_essentials_benchmarks() {
     fi
 
     print_header "Real-world External Library - ts-essentials"
-    ensure_ts_essentials_fixture
+    ensure_ts_essentials_fixture || return 1
     echo -e "${GREEN}✓${NC} ts-essentials pinned at $(git -C "$TS_ESSENTIALS_DIR" rev-parse --short HEAD)"
 
     # ts-essentials needs es2018 libs (per its tsconfig) for Map, Symbol, etc.
@@ -556,7 +556,7 @@ run_utility_types_project_benchmarks() {
     fi
 
     print_header "Real-world External Project - utility-types (whole project)"
-    ensure_utility_types_fixture
+    ensure_utility_types_fixture || return 1
     echo -e "${GREEN}✓${NC} utility-types pinned at $(git -C "$UTILITY_TYPES_DIR" rev-parse --short HEAD)"
 
     local tsconfig="$UTILITY_TYPES_DIR/tsconfig.flat.json"
@@ -577,7 +577,7 @@ run_ts_toolbelt_project_benchmarks() {
     fi
 
     print_header "Real-world External Project - ts-toolbelt (whole project, 242 type-level files)"
-    ensure_ts_toolbelt_fixture
+    ensure_ts_toolbelt_fixture || return 1
     echo -e "${GREEN}✓${NC} ts-toolbelt pinned at $(git -C "$TS_TOOLBELT_DIR" rev-parse --short HEAD)"
 
     local tsconfig="$TS_TOOLBELT_DIR/tsconfig.flat.json"
@@ -598,7 +598,7 @@ run_ts_essentials_project_benchmarks() {
     fi
 
     print_header "Real-world External Project - ts-essentials (whole project, 95 type utility files)"
-    ensure_ts_essentials_fixture
+    ensure_ts_essentials_fixture || return 1
     echo -e "${GREEN}✓${NC} ts-essentials pinned at $(git -C "$TS_ESSENTIALS_DIR" rev-parse --short HEAD)"
 
     local tsconfig="$TS_ESSENTIALS_DIR/tsconfig.flat.json"
@@ -619,7 +619,7 @@ run_rxjs_project_benchmarks() {
     fi
 
     print_header "Real-world External Project - rxjs (source parse with noCheck)"
-    ensure_rxjs_fixture
+    ensure_rxjs_fixture || return 1
     echo -e "${GREEN}✓${NC} rxjs pinned at $(git -C "$RXJS_DIR" rev-parse --short HEAD)"
 
     local tsconfig="$RXJS_DIR/tsconfig.flat.json"
@@ -645,7 +645,7 @@ run_type_fest_project_benchmarks() {
     fi
 
     print_header "Real-world External Project - type-fest (broad utility-type surface)"
-    ensure_type_fest_fixture
+    ensure_type_fest_fixture || return 1
     echo -e "${GREEN}✓${NC} type-fest pinned at $(git -C "$TYPE_FEST_DIR" rev-parse --short HEAD)"
 
     local tsconfig="$TYPE_FEST_DIR/tsconfig.flat.json"
@@ -666,7 +666,7 @@ run_zod_project_benchmarks() {
     fi
 
     print_header "Real-world External Project - zod (deep z.infer<typeof> schema inference)"
-    ensure_zod_fixture
+    ensure_zod_fixture || return 1
     echo -e "${GREEN}✓${NC} zod pinned at $(git -C "$ZOD_DIR" rev-parse --short HEAD)"
 
     # zod v3 lives in src/, zod v4 monorepo lives in packages/zod/src/.
@@ -694,7 +694,7 @@ run_kysely_project_benchmarks() {
     fi
 
     print_header "Real-world External Project - kysely (extreme type-level SQL inference)"
-    ensure_kysely_fixture
+    ensure_kysely_fixture || return 1
     echo -e "${GREEN}✓${NC} kysely pinned at $(git -C "$KYSELY_DIR" rev-parse --short HEAD)"
 
     local tsconfig="$KYSELY_DIR/tsconfig.flat.json"
@@ -716,7 +716,7 @@ run_valibot_project_benchmarks() {
     fi
 
     print_header "Real-world External Project - Valibot"
-    ensure_valibot_fixture
+    ensure_valibot_fixture || return 1
     local tsconfig="$VALIBOT_DIR/tsconfig.tsz-bench.json"
     local src_dir="$VALIBOT_DIR/library/src"
     tsz_write_valibot_config "$tsconfig"
@@ -731,7 +731,7 @@ run_msw_project_benchmarks() {
     fi
 
     print_header "Real-world External Project - MSW"
-    ensure_msw_fixture
+    ensure_msw_fixture || return 1
     local tsconfig="$MSW_DIR/tsconfig.tsz-bench.json"
     local src_dir="$MSW_DIR/src"
     tsz_write_msw_config "$tsconfig"
@@ -745,7 +745,7 @@ run_comlink_project_benchmarks() {
     fi
 
     print_header "Real-world External Project - Comlink"
-    ensure_comlink_fixture
+    ensure_comlink_fixture || return 1
     local tsconfig="$COMLINK_DIR/tsconfig.tsz-bench.json"
     local src_dir="$COMLINK_DIR/src"
     tsz_write_comlink_config "$tsconfig"
@@ -760,7 +760,7 @@ run_effect_project_benchmarks() {
     fi
 
     print_header "Real-world External Project - Effect"
-    ensure_effect_fixture
+    ensure_effect_fixture || return 1
     local tsconfig="$EFFECT_DIR/tsconfig.tsz-bench.json"
     local src_dir="$EFFECT_DIR/packages/effect/src"
     tsz_write_effect_config "$tsconfig"
@@ -775,7 +775,7 @@ run_drizzle_orm_project_benchmarks() {
     fi
 
     print_header "Real-world External Project - Drizzle ORM"
-    ensure_drizzle_orm_fixture
+    ensure_drizzle_orm_fixture || return 1
     local tsconfig="$DRIZZLE_ORM_DIR/tsconfig.tsz-bench.json"
     local src_dir="$DRIZZLE_ORM_DIR/drizzle-orm/src"
     tsz_write_drizzle_orm_config "$tsconfig"
@@ -790,7 +790,7 @@ run_ts_rest_project_benchmarks() {
     fi
 
     print_header "Real-world External Project - ts-rest"
-    ensure_ts_rest_fixture
+    ensure_ts_rest_fixture || return 1
     local tsconfig="$TS_REST_DIR/tsconfig.tsz-bench.json"
     local src_dir="$TS_REST_DIR/libs/ts-rest/core/src"
     tsz_write_ts_rest_config "$tsconfig"
@@ -805,7 +805,7 @@ run_ofetch_project_benchmarks() {
     fi
 
     print_header "Real-world External Project - ofetch"
-    ensure_ofetch_fixture
+    ensure_ofetch_fixture || return 1
     local tsconfig="$OFETCH_DIR/tsconfig.tsz-bench.json"
     local src_dir="$OFETCH_DIR/src"
     tsz_write_ofetch_config "$tsconfig"
@@ -820,7 +820,7 @@ run_ts_pattern_project_benchmarks() {
     fi
 
     print_header "Real-world External Project - ts-pattern"
-    ensure_ts_pattern_fixture
+    ensure_ts_pattern_fixture || return 1
     local tsconfig="$TS_PATTERN_DIR/tsconfig.tsz-bench.json"
     local src_dir="$TS_PATTERN_DIR/src"
     tsz_write_ts_pattern_config "$tsconfig"
@@ -835,7 +835,7 @@ run_radash_project_benchmarks() {
     fi
 
     print_header "Real-world External Project - radash"
-    ensure_radash_fixture
+    ensure_radash_fixture || return 1
     local tsconfig="$RADASH_DIR/tsconfig.tsz-bench.json"
     local src_dir="$RADASH_DIR/src"
     tsz_write_radash_config "$tsconfig"
@@ -850,7 +850,7 @@ run_valtio_project_benchmarks() {
     fi
 
     print_header "Real-world External Project - valtio"
-    ensure_valtio_fixture
+    ensure_valtio_fixture || return 1
     local tsconfig="$VALTIO_DIR/tsconfig.tsz-bench.json"
     local src_dir="$VALTIO_DIR/src"
     tsz_write_valtio_config "$tsconfig"
@@ -865,7 +865,7 @@ run_scule_project_benchmarks() {
     fi
 
     print_header "Real-world External Project - scule"
-    ensure_scule_fixture
+    ensure_scule_fixture || return 1
     local tsconfig="$SCULE_DIR/tsconfig.tsz-bench.json"
     local src_dir="$SCULE_DIR/src"
     tsz_write_scule_config "$tsconfig"
@@ -880,7 +880,7 @@ run_mitt_project_benchmarks() {
     fi
 
     print_header "Real-world External Project - mitt"
-    ensure_mitt_fixture
+    ensure_mitt_fixture || return 1
     local tsconfig="$MITT_DIR/tsconfig.tsz-bench.json"
     local src_dir="$MITT_DIR/src"
     tsz_write_mitt_config "$tsconfig"
@@ -895,7 +895,7 @@ run_change_case_project_benchmarks() {
     fi
 
     print_header "Real-world External Project - change-case"
-    ensure_change_case_fixture
+    ensure_change_case_fixture || return 1
     local tsconfig="$CHANGE_CASE_DIR/tsconfig.tsz-bench.json"
     local src_dir="$CHANGE_CASE_DIR/packages/change-case/src"
     tsz_write_change_case_config "$tsconfig"
@@ -910,7 +910,7 @@ run_tiny_invariant_project_benchmarks() {
     fi
 
     print_header "Real-world External Project - tiny-invariant"
-    ensure_tiny_invariant_fixture
+    ensure_tiny_invariant_fixture || return 1
     local tsconfig="$TINY_INVARIANT_DIR/tsconfig.tsz-bench.json"
     local src_dir="$TINY_INVARIANT_DIR/src"
     tsz_write_tiny_invariant_config "$tsconfig"
@@ -925,7 +925,7 @@ run_ts_belt_project_benchmarks() {
     fi
 
     print_header "Real-world External Project - ts-belt"
-    ensure_ts_belt_fixture
+    ensure_ts_belt_fixture || return 1
     local tsconfig="$TS_BELT_DIR/tsconfig.tsz-bench.json"
     local src_dir="$TS_BELT_DIR/src"
     tsz_write_ts_belt_config "$tsconfig"
@@ -940,7 +940,7 @@ run_ts_extras_project_benchmarks() {
     fi
 
     print_header "Real-world External Project - ts-extras"
-    ensure_ts_extras_fixture
+    ensure_ts_extras_fixture || return 1
     local tsconfig="$TS_EXTRAS_DIR/tsconfig.tsz-bench.json"
     local src_dir="$TS_EXTRAS_DIR/source"
     tsz_write_ts_extras_config "$tsconfig"
@@ -955,7 +955,7 @@ run_superjson_project_benchmarks() {
     fi
 
     print_header "Real-world External Project - superjson"
-    ensure_superjson_fixture
+    ensure_superjson_fixture || return 1
     local tsconfig="$SUPERJSON_DIR/tsconfig.tsz-bench.json"
     local src_dir="$SUPERJSON_DIR/src"
     tsz_write_superjson_config "$tsconfig"
@@ -970,7 +970,7 @@ run_trpc_project_benchmarks() {
     fi
 
     print_header "Real-world External Project - trpc"
-    ensure_trpc_fixture
+    ensure_trpc_fixture || return 1
     local tsconfig="$TRPC_DIR/tsconfig.tsz-bench.json"
     local src_dir="$TRPC_DIR/packages/server/src"
     tsz_write_trpc_config "$tsconfig"
@@ -985,7 +985,7 @@ run_tanstack_query_project_benchmarks() {
     fi
 
     print_header "Real-world External Project - tanstack-query"
-    ensure_tanstack_query_fixture
+    ensure_tanstack_query_fixture || return 1
     local tsconfig="$TANSTACK_QUERY_DIR/tsconfig.tsz-bench.json"
     local src_dir="$TANSTACK_QUERY_DIR/packages/query-core/src"
     tsz_write_tanstack_query_config "$tsconfig"
@@ -1000,7 +1000,7 @@ run_tanstack_router_project_benchmarks() {
     fi
 
     print_header "Real-world External Project - tanstack-router"
-    ensure_tanstack_router_fixture
+    ensure_tanstack_router_fixture || return 1
     local tsconfig="$TANSTACK_ROUTER_DIR/tsconfig.tsz-bench.json"
     local src_dir="$TANSTACK_ROUTER_DIR/packages/router-core/src"
     tsz_write_tanstack_router_config "$tsconfig"
@@ -1015,7 +1015,7 @@ run_zustand_project_benchmarks() {
     fi
 
     print_header "Real-world External Project - zustand"
-    ensure_zustand_fixture
+    ensure_zustand_fixture || return 1
     local tsconfig="$ZUSTAND_DIR/tsconfig.tsz-bench.json"
     local src_dir="$ZUSTAND_DIR/src"
     tsz_write_zustand_config "$tsconfig"
@@ -1030,7 +1030,7 @@ run_jotai_project_benchmarks() {
     fi
 
     print_header "Real-world External Project - jotai"
-    ensure_jotai_fixture
+    ensure_jotai_fixture || return 1
     local tsconfig="$JOTAI_DIR/tsconfig.tsz-bench.json"
     local src_dir="$JOTAI_DIR/src"
     tsz_write_jotai_config "$tsconfig"
@@ -1045,7 +1045,7 @@ run_fp_ts_project_benchmarks() {
     fi
 
     print_header "Real-world External Project - fp-ts"
-    ensure_fp_ts_fixture
+    ensure_fp_ts_fixture || return 1
     local tsconfig="$FP_TS_DIR/tsconfig.tsz-bench.json"
     local src_dir="$FP_TS_DIR/src"
     tsz_write_fp_ts_config "$tsconfig"
@@ -1060,7 +1060,7 @@ run_io_ts_project_benchmarks() {
     fi
 
     print_header "Real-world External Project - io-ts"
-    ensure_io_ts_fixture
+    ensure_io_ts_fixture || return 1
     local tsconfig="$IO_TS_DIR/tsconfig.tsz-bench.json"
     local src_dir="$IO_TS_DIR/src"
     tsz_write_io_ts_config "$tsconfig"
@@ -1075,7 +1075,7 @@ run_immer_project_benchmarks() {
     fi
 
     print_header "Real-world External Project - immer"
-    ensure_immer_fixture
+    ensure_immer_fixture || return 1
     local tsconfig="$IMMER_DIR/tsconfig.tsz-bench.json"
     local src_dir="$IMMER_DIR/src"
     tsz_write_immer_config "$tsconfig"
@@ -1090,7 +1090,7 @@ run_remeda_project_benchmarks() {
     fi
 
     print_header "Real-world External Project - remeda"
-    ensure_remeda_fixture
+    ensure_remeda_fixture || return 1
     local tsconfig="$REMEDA_DIR/tsconfig.tsz-bench.json"
     local src_dir="$REMEDA_DIR/packages/remeda/src"
     tsz_write_remeda_config "$tsconfig"
@@ -1105,7 +1105,7 @@ run_ts_morph_project_benchmarks() {
     fi
 
     print_header "Real-world External Project - ts-morph"
-    ensure_ts_morph_fixture
+    ensure_ts_morph_fixture || return 1
     local tsconfig="$TS_MORPH_DIR/tsconfig.tsz-bench.json"
     local src_dir="$TS_MORPH_DIR/packages/ts-morph/src"
     tsz_write_ts_morph_config "$tsconfig"
@@ -1120,7 +1120,7 @@ run_arktype_project_benchmarks() {
     fi
 
     print_header "Real-world External Project - arktype"
-    ensure_arktype_fixture
+    ensure_arktype_fixture || return 1
     local tsconfig="$ARKTYPE_DIR/tsconfig.tsz-bench.json"
     local src_dir="$ARKTYPE_DIR/ark/type"
     tsz_write_arktype_config "$tsconfig"
@@ -1135,7 +1135,7 @@ run_superstruct_project_benchmarks() {
     fi
 
     print_header "Real-world External Project - superstruct"
-    ensure_superstruct_fixture
+    ensure_superstruct_fixture || return 1
     local tsconfig="$SUPERSTRUCT_DIR/tsconfig.tsz-bench.json"
     local src_dir="$SUPERSTRUCT_DIR/src"
     tsz_write_superstruct_config "$tsconfig"
@@ -1150,7 +1150,7 @@ run_runtypes_project_benchmarks() {
     fi
 
     print_header "Real-world External Project - runtypes"
-    ensure_runtypes_fixture
+    ensure_runtypes_fixture || return 1
     local tsconfig="$RUNTYPES_DIR/tsconfig.tsz-bench.json"
     local src_dir="$RUNTYPES_DIR/src"
     tsz_write_runtypes_config "$tsconfig"
@@ -1165,7 +1165,7 @@ run_hotscript_project_benchmarks() {
     fi
 
     print_header "Real-world External Project - hotscript"
-    ensure_hotscript_fixture
+    ensure_hotscript_fixture || return 1
     local tsconfig="$HOTSCRIPT_DIR/tsconfig.tsz-bench.json"
     local src_dir="$HOTSCRIPT_DIR/src"
     tsz_write_hotscript_config "$tsconfig"
@@ -1180,7 +1180,7 @@ run_typebox_project_benchmarks() {
     fi
 
     print_header "Real-world External Project - typebox"
-    ensure_typebox_fixture
+    ensure_typebox_fixture || return 1
     local tsconfig="$TYPEBOX_DIR/tsconfig.tsz-bench.json"
     local src_dir="$TYPEBOX_DIR/src"
     tsz_write_typebox_config "$tsconfig"
@@ -1195,7 +1195,7 @@ run_class_transformer_project_benchmarks() {
     fi
 
     print_header "Real-world External Project - class-transformer"
-    ensure_class_transformer_fixture
+    ensure_class_transformer_fixture || return 1
     local tsconfig="$CLASS_TRANSFORMER_DIR/tsconfig.tsz-bench.json"
     local src_dir="$CLASS_TRANSFORMER_DIR/src"
     tsz_write_class_transformer_config "$tsconfig"
@@ -1210,7 +1210,7 @@ run_type_graphql_project_benchmarks() {
     fi
 
     print_header "Real-world External Project - type-graphql"
-    ensure_type_graphql_fixture
+    ensure_type_graphql_fixture || return 1
     local tsconfig="$TYPE_GRAPHQL_DIR/tsconfig.tsz-bench.json"
     local src_dir="$TYPE_GRAPHQL_DIR/src"
     tsz_write_type_graphql_config "$tsconfig"
@@ -1225,7 +1225,7 @@ run_neverthrow_project_benchmarks() {
     fi
 
     print_header "Real-world External Project - neverthrow"
-    ensure_neverthrow_fixture
+    ensure_neverthrow_fixture || return 1
     local tsconfig="$NEVERTHROW_DIR/tsconfig.tsz-bench.json"
     local src_dir="$NEVERTHROW_DIR/src"
     tsz_write_neverthrow_config "$tsconfig"
@@ -1240,7 +1240,7 @@ run_xstate_project_benchmarks() {
     fi
 
     print_header "Real-world External Project - xstate"
-    ensure_xstate_fixture
+    ensure_xstate_fixture || return 1
     local tsconfig="$XSTATE_DIR/tsconfig.tsz-bench.json"
     local src_dir="$XSTATE_DIR/packages/core/src"
     tsz_write_xstate_config "$tsconfig"
@@ -1255,7 +1255,7 @@ run_mobx_project_benchmarks() {
     fi
 
     print_header "Real-world External Project - mobx"
-    ensure_mobx_fixture
+    ensure_mobx_fixture || return 1
     local tsconfig="$MOBX_DIR/tsconfig.tsz-bench.json"
     local src_dir="$MOBX_DIR/packages/mobx/src"
     tsz_write_mobx_config "$tsconfig"
@@ -1275,7 +1275,7 @@ run_nextjs_benchmarks() {
     fi
 
     print_header "Real-world External Project - next.js (full project)"
-    ensure_nextjs_fixture
+    ensure_nextjs_fixture || return 1
     echo -e "${GREEN}✓${NC} next.js pinned at $(git -C "$NEXTJS_DIR" rev-parse --short HEAD)"
 
     local tsconfig="$NEXTJS_DIR/packages/next/tsconfig.tsz-bench.json"
@@ -1296,7 +1296,7 @@ run_next_app_project_benchmarks() {
     fi
 
     print_header "Generated Project - fresh Next.js app"
-    ensure_next_app_benchmark_fixture
+    ensure_next_app_benchmark_fixture || return 1
 
     local tsconfig="$NEXT_APP_BENCH_DIR/tsconfig.json"
     local src_dir="$NEXT_APP_BENCH_DIR"
@@ -1316,7 +1316,7 @@ run_vite_app_project_benchmarks() {
     fi
 
     print_header "Generated Project - fresh Vite vanilla TypeScript app"
-    ensure_vite_app_benchmark_fixture
+    ensure_vite_app_benchmark_fixture || return 1
 
     local tsconfig="$VITE_APP_BENCH_DIR/tsconfig.json"
     local src_dir="$VITE_APP_BENCH_DIR"
@@ -1340,7 +1340,7 @@ ensure_large_ts_repo_fixture() {
     # extends tsconfig.base.json which contains the 200+ `paths` mappings
     # for cross-package @scope/pkg imports. Without those paths, tsc itself
     # emits resolution errors and the benchmark is skipped.
-    tsz_ensure_large_ts_repo_fixture "$LARGE_TS_DIR" "$LARGE_TS_REPO" "$LARGE_TS_REF" || exit 1
+    tsz_ensure_large_ts_repo_fixture "$LARGE_TS_DIR" "$LARGE_TS_REPO" "$LARGE_TS_REF" || return 1
 }
 
 run_large_ts_repo_benchmarks() {
@@ -1349,7 +1349,7 @@ run_large_ts_repo_benchmarks() {
     fi
 
     print_header "Real-world External Project - large-ts-repo (6000+ files, parallel stress test)"
-    ensure_large_ts_repo_fixture
+    ensure_large_ts_repo_fixture || return 1
     echo -e "${GREEN}✓${NC} large-ts-repo pinned at $(git -C "$LARGE_TS_DIR" rev-parse --short HEAD)"
 
     # Use the flat tsconfig so all source files are included in a single

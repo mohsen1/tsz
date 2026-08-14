@@ -71,7 +71,18 @@ tsz_ensure_large_ts_repo_fixture() {
 
     if [ ! -d "$fixture_dir/.git" ]; then
         echo "Cloning large-ts-repo fixture..."
-        git clone --quiet --no-tags --depth 1 "$repo" "$fixture_dir"
+        if ! git clone --quiet --no-tags --depth 1 "$repo" "$fixture_dir"; then
+            echo "ERROR: failed to clone large-ts-repo fixture from ${repo}" >&2
+            return 1
+        fi
+    fi
+
+    # Never let a directory that is not its own git checkout be treated as a
+    # pinned fixture (see tsz_git_fixture_is_standalone_repo in
+    # project-fixtures.sh — same #17469 aliasing hazard applies here).
+    if ! tsz_git_fixture_is_standalone_repo "$fixture_dir"; then
+        echo "ERROR: large-ts-repo fixture at ${fixture_dir} is not a standalone git checkout" >&2
+        return 1
     fi
 
     if [ -n "$ref" ]; then
@@ -80,6 +91,14 @@ tsz_ensure_large_ts_repo_fixture() {
         if [ "$current_ref" != "$ref" ]; then
             echo "Pinning large-ts-repo to ${ref:0:12}..."
             tsz_git_fetch_ref_or_fail "large-ts-repo" "$repo" "$ref" "$fixture_dir" || return 1
+        fi
+
+        if [[ "$ref" =~ ^[0-9a-f]{40}$ ]]; then
+            current_ref="$(git -C "$fixture_dir" rev-parse HEAD 2>/dev/null || echo "")"
+            if [ "$current_ref" != "$ref" ]; then
+                echo "ERROR: large-ts-repo fixture HEAD is ${current_ref:0:12}, expected pin ${ref:0:12}" >&2
+                return 1
+            fi
         fi
     fi
 

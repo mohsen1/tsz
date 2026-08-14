@@ -531,6 +531,21 @@ tsz_git_fetch_ref_or_fail() {
   fi
 }
 
+# Whether $1 is the top level of its OWN git repository. A failed clone (or a
+# stale non-repo directory) leaves the fixture path without its own `.git`,
+# so a later `git -C "$dir" ...` silently resolves against an ENCLOSING
+# repository — tsz itself, when the fixture root lives under the checkout —
+# and `rev-parse HEAD` then reports tsz's own commit as if it were the
+# fixture's pin (the exact `ebedd0a052` aliasing reported in #17469).
+tsz_git_fixture_is_standalone_repo() {
+  local dir="$1" top dir_phys top_phys
+  [[ -d "$dir/.git" ]] || return 1
+  top="$(git -C "$dir" rev-parse --show-toplevel 2>/dev/null)" || return 1
+  dir_phys="$(cd "$dir" 2>/dev/null && pwd -P)" || return 1
+  top_phys="$(cd "$top" 2>/dev/null && pwd -P)" || return 1
+  [[ "$dir_phys" == "$top_phys" ]]
+}
+
 tsz_ensure_git_fixture() {
   local name="$1"
   local repo="$2"
@@ -542,14 +557,28 @@ tsz_ensure_git_fixture() {
   if [[ ! -d "$dir/.git" ]]; then
     echo "Cloning ${name} fixture..."
     tsz_remove_fixture_dir "$name" "$dir"
-    git clone --quiet --no-tags --depth 1 "$repo" "$dir"
+    if ! git clone --quiet --no-tags --depth 1 "$repo" "$dir"; then
+      echo "ERROR: failed to clone ${name} fixture from ${repo}" >&2
+      return 1
+    fi
   fi
 
   if [[ "$reclone_dirty" == "1" ]] \
     && [[ -n "$(git -C "$dir" status --porcelain 2>/dev/null)" ]]; then
     echo "${name} fixture is dirty; recloning for reproducibility..."
     tsz_remove_fixture_dir "$name" "$dir"
-    git clone --quiet --no-tags --depth 1 "$repo" "$dir"
+    if ! git clone --quiet --no-tags --depth 1 "$repo" "$dir"; then
+      echo "ERROR: failed to re-clone ${name} fixture from ${repo}" >&2
+      return 1
+    fi
+  fi
+
+  # Never let a directory that is not its own git checkout be treated as a
+  # pinned fixture — that aliasing is what let a broken clone report tsz's
+  # own SHA as the fixture's pin (#17469).
+  if ! tsz_git_fixture_is_standalone_repo "$dir"; then
+    echo "ERROR: ${name} fixture at ${dir} is not a standalone git checkout" >&2
+    return 1
   fi
 
   if [[ -n "$ref" ]]; then
@@ -557,7 +586,19 @@ tsz_ensure_git_fixture() {
     current_ref="$(git -C "$dir" rev-parse HEAD 2>/dev/null || true)"
     if [[ "$current_ref" != "$ref" ]]; then
       echo "Pinning ${name} to ${ref:0:12}..."
-      tsz_git_fetch_ref_or_fail "$name" "$repo" "$ref" "$dir"
+      tsz_git_fetch_ref_or_fail "$name" "$repo" "$ref" "$dir" || return 1
+    fi
+
+    # A full 40-hex SHA pin is verified by identity after checkout — a
+    # partial/skipped pin must fail loudly rather than silently benchmark
+    # the wrong tree. A branch/tag ref legitimately resolves to a different
+    # SHA than the literal `$ref` string, so this only applies to SHA pins.
+    if [[ "$ref" =~ ^[0-9a-f]{40}$ ]]; then
+      current_ref="$(git -C "$dir" rev-parse HEAD 2>/dev/null || true)"
+      if [[ "$current_ref" != "$ref" ]]; then
+        echo "ERROR: ${name} fixture HEAD is ${current_ref:0:12}, expected pin ${ref:0:12}" >&2
+        return 1
+      fi
     fi
   fi
 }
