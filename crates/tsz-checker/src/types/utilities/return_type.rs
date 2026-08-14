@@ -479,11 +479,14 @@ impl<'a> CheckerState<'a> {
         type_id: TypeId,
         return_context: Option<TypeId>,
     ) -> bool {
-        if let Some(ctx_type) = return_context
-            && (!self.ctx.in_satisfies_operand
-                || self.contextual_type_allows_literal(ctx_type, type_id))
-        {
-            return false;
+        if let Some(ctx_type) = return_context {
+            // #17501: record `NoInfer<free-param>` bodies; decision below unchanged.
+            self.mark_noinfer_generic_return_body_if_applicable(expr_idx, ctx_type);
+            if !self.ctx.in_satisfies_operand
+                || self.contextual_type_allows_literal(ctx_type, type_id)
+            {
+                return false;
+            }
         }
         if self.ctx.preserve_literal_types {
             return false;
@@ -525,7 +528,7 @@ impl<'a> CheckerState<'a> {
     /// so this AST-driven walk recurses through object-literal initializers and
     /// preserves the const-asserted subtrees, mirroring the const-assertion
     /// carve-out already applied to whole-expression `return x as const`.
-    fn widen_return_contribution_preserving_const(
+    pub(crate) fn widen_return_contribution_preserving_const(
         &mut self,
         expr_idx: NodeIndex,
         type_id: TypeId,
@@ -686,7 +689,7 @@ impl<'a> CheckerState<'a> {
     /// (`expr as const` or `<const>expr`), skipping any wrapping parentheses.
     /// Mirrors the detection in `dispatch.rs` that toggles `in_const_assertion`
     /// for type-assertion nodes.
-    fn return_expression_is_const_assertion(&self, expr_idx: NodeIndex) -> bool {
+    pub(crate) fn return_expression_is_const_assertion(&self, expr_idx: NodeIndex) -> bool {
         let mut current = expr_idx;
         while let Some(node) = self.ctx.arena.get(current) {
             if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION

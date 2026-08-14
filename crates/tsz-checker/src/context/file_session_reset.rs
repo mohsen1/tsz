@@ -163,6 +163,7 @@ impl<'a> CheckerContext<'a> {
         self.flow_narrowed_nodes.clear();
         self.daa_error_nodes.clear();
         self.optional_chain_marker_only_nodes.clear();
+        self.noinfer_generic_return_bodies.clear();
         self.deferred_ts2454_errors.clear();
         self.type_only_nodes.clear();
         self.closures_with_contextual_this_type.clear();

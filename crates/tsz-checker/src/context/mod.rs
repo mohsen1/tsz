@@ -910,6 +910,20 @@ pub struct CheckerContext<'a> {
     /// self-correct.
     pub optional_chain_marker_only_nodes: FxHashSet<u32>,
 
+    /// Callback-body expression nodes whose contextual return type was, at some
+    /// point during generic call inference, a `NoInfer<X>` wrapping a still-free
+    /// type parameter (the deferred-inference phase). tsc computes such a
+    /// callback's return type once, while the parameter is unfixed, and widens
+    /// its fresh return literal (`isLiteralOfContextualType` is false for a bare
+    /// type variable), then caches and reuses the widened type. tsz re-derives
+    /// the return type after the parameter is fixed — when the contextual return
+    /// has collapsed to `NoInfer<concrete>` and would spuriously preserve the
+    /// literal. Recording the body here lets the post-fix widening decision keep
+    /// the widen, matching tsc. An *explicit* type argument never produces the
+    /// unfixed phase, so an explicit `NoInfer<"foo">` callback is never recorded
+    /// and keeps its literal (#17501).
+    pub noinfer_generic_return_bodies: FxHashSet<NodeIndex>,
+
     /// Deferred TS2454 diagnostics that survive speculative rollback.
     /// `check_flow_usage` can run inside speculative call-checker contexts
     /// (generic inference, overload probing) that truncate diagnostics on

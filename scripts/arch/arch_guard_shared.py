@@ -541,7 +541,11 @@ STRUCT_FIELD_COUNT_CHECKS = [
         # `withinUnreachableCode` — TS7027 stays silent beneath a statement
         # already covered by a reported unreachable range (namespace bodies,
         # class member bodies) while normal checking continues.
-        257,
+        # 257 -> 258: `noinfer_generic_return_bodies` records callback bodies
+        # whose contextual return was a `NoInfer<T>` over an inferred `T` (the
+        # deferred-inference phase tsc widens the fresh return literal in), so the
+        # return-mismatch elaboration can display the widened source type (#17501).
+        258,
     ),
 ]
 
