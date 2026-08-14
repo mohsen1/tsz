@@ -214,10 +214,10 @@ impl<'a> CheckerState<'a> {
         };
 
         if body_node.kind == syntax_kind_ext::BLOCK {
-            return self.statement_has_wrapped_self_call_in_return(body_idx, sym_id, true);
+            return self.statement_has_wrapped_self_call_in_return(body_idx, sym_id, true, true);
         }
 
-        self.expression_has_wrapped_self_call_in_return(body_idx, sym_id, true)
+        self.expression_has_wrapped_self_call_in_return(body_idx, sym_id, true, true)
     }
 
     /// Whether a `const`/`let`/`var` initializer that is a function /
@@ -260,9 +260,11 @@ impl<'a> CheckerState<'a> {
 
         let has_circular_return_in_all_paths = |sym_id: tsz_binder::SymbolId| -> bool {
             if body_node.kind == syntax_kind_ext::BLOCK {
-                self.function_body_has_wrapped_self_call_in_every_return(body_idx, sym_id, false)
+                self.function_body_has_wrapped_self_call_in_every_return(
+                    body_idx, sym_id, false, true,
+                )
             } else {
-                self.expression_has_wrapped_self_call_in_return(body_idx, sym_id, false)
+                self.expression_has_wrapped_self_call_in_return(body_idx, sym_id, false, true)
             }
         };
 
@@ -283,14 +285,30 @@ impl<'a> CheckerState<'a> {
     /// Returns `false` if any return is NOT a direct self-call (has a base case),
     /// or if any self-call is wrapped (goes through array/property access etc.),
     /// or if the body has no return statements.
+    ///
+    /// A self-reference in the callee position of a `new` expression
+    /// (`return new Self(...)`) never counts here, even though it is otherwise
+    /// syntactically a "direct self-call": `tsc` does not treat this as
+    /// non-terminating recursion. A JS "constructor function" without an
+    /// explicit `@constructor`/`@class` JSDoc tag has no construct signature
+    /// (TS7009), so `new Self(...)` still *produces a value* (implicitly `any`)
+    /// rather than diverging — the `never` collapse this predicate feeds must
+    /// not apply. See `constructorFunctionsStrict.ts`: `function A(x) { if
+    /// (!(this instanceof A)) { return new A(x) } this.x = x }` must infer
+    /// `A`'s return type as `any` (so `A(1)` is usable), not `never`.
     pub(crate) fn all_returns_are_direct_self_calls(
         &self,
         body_idx: NodeIndex,
         function_sym: tsz_binder::SymbolId,
     ) -> bool {
-        // Every return must have a self-call (direct or wrapped)
-        if !self.function_body_has_wrapped_self_call_in_every_return(body_idx, function_sym, false)
-        {
+        // Every return must have a self-call (direct or wrapped), and `new
+        // Self(...)` must not count as one (see doc comment above).
+        if !self.function_body_has_wrapped_self_call_in_every_return(
+            body_idx,
+            function_sym,
+            false,
+            false,
+        ) {
             return false;
         }
         // None of the returns should be wrapped (they must all be direct)
@@ -298,7 +316,9 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Check if any return expression in a function body has a WRAPPED self-call
-    /// (goes through array access, property access, etc.).
+    /// (goes through array access, property access, etc.). Used only by
+    /// [`Self::all_returns_are_direct_self_calls`], so `new Self(...)` is
+    /// excluded from counting as a self-call here too.
     fn function_has_wrapped_self_call_in_return_expression_for_sym(
         &self,
         body_idx: NodeIndex,
@@ -309,10 +329,15 @@ impl<'a> CheckerState<'a> {
         };
 
         if body_node.kind == syntax_kind_ext::BLOCK {
-            return self.statement_has_wrapped_self_call_in_return(body_idx, function_sym, true);
+            return self.statement_has_wrapped_self_call_in_return(
+                body_idx,
+                function_sym,
+                true,
+                false,
+            );
         }
 
-        self.expression_has_wrapped_self_call_in_return(body_idx, function_sym, true)
+        self.expression_has_wrapped_self_call_in_return(body_idx, function_sym, true, false)
     }
 
     fn function_body_has_wrapped_self_call_in_every_return(
@@ -320,6 +345,7 @@ impl<'a> CheckerState<'a> {
         body_idx: NodeIndex,
         function_sym: tsz_binder::SymbolId,
         require_wrapped_call: bool,
+        count_new: bool,
     ) -> bool {
         let mut return_exprs = Vec::new();
         self.collect_initializer_return_expressions_in_function_body(body_idx, &mut return_exprs);
@@ -333,6 +359,7 @@ impl<'a> CheckerState<'a> {
                 expr_idx,
                 function_sym,
                 require_wrapped_call,
+                count_new,
             )
         })
     }
@@ -618,6 +645,7 @@ impl<'a> CheckerState<'a> {
         stmt_idx: NodeIndex,
         function_sym: tsz_binder::SymbolId,
         require_wrapped_call: bool,
+        count_new: bool,
     ) -> bool {
         let Some(node) = self.ctx.arena.get(stmt_idx) else {
             return false;
@@ -634,6 +662,7 @@ impl<'a> CheckerState<'a> {
                             ret.expression,
                             function_sym,
                             require_wrapped_call,
+                            count_new,
                         )
                 }),
             syntax_kind_ext::BLOCK => self.ctx.arena.get_block(node).is_some_and(|block| {
@@ -642,6 +671,7 @@ impl<'a> CheckerState<'a> {
                         stmt,
                         function_sym,
                         require_wrapped_call,
+                        count_new,
                     )
                 })
             }),
@@ -654,11 +684,13 @@ impl<'a> CheckerState<'a> {
                             if_data.then_statement,
                             function_sym,
                             require_wrapped_call,
+                            count_new,
                         ) || (if_data.else_statement.is_some()
                             && self.statement_has_wrapped_self_call_in_return(
                                 if_data.else_statement,
                                 function_sym,
                                 require_wrapped_call,
+                                count_new,
                             ))
                     })
             }
@@ -685,6 +717,7 @@ impl<'a> CheckerState<'a> {
                                             stmt,
                                             function_sym,
                                             require_wrapped_call,
+                                            count_new,
                                         )
                                     })
                                 })
@@ -696,17 +729,20 @@ impl<'a> CheckerState<'a> {
                         try_data.try_block,
                         function_sym,
                         require_wrapped_call,
+                        count_new,
                     ) || (try_data.catch_clause.is_some()
                         && self.statement_has_wrapped_self_call_in_return(
                             try_data.catch_clause,
                             function_sym,
                             require_wrapped_call,
+                            count_new,
                         ))
                         || (try_data.finally_block.is_some()
                             && self.statement_has_wrapped_self_call_in_return(
                                 try_data.finally_block,
                                 function_sym,
                                 require_wrapped_call,
+                                count_new,
                             ))
                 })
             }
@@ -719,6 +755,7 @@ impl<'a> CheckerState<'a> {
                             catch_data.block,
                             function_sym,
                             require_wrapped_call,
+                            count_new,
                         )
                     })
             }
@@ -730,6 +767,7 @@ impl<'a> CheckerState<'a> {
                         loop_data.statement,
                         function_sym,
                         require_wrapped_call,
+                        count_new,
                     )
                 })
             }
@@ -739,6 +777,7 @@ impl<'a> CheckerState<'a> {
                         loop_data.statement,
                         function_sym,
                         require_wrapped_call,
+                        count_new,
                     )
                 })
             }
@@ -751,6 +790,7 @@ impl<'a> CheckerState<'a> {
                         labeled.statement,
                         function_sym,
                         require_wrapped_call,
+                        count_new,
                     )
                 }),
             _ => false,
@@ -762,6 +802,7 @@ impl<'a> CheckerState<'a> {
         expr_idx: NodeIndex,
         function_sym: tsz_binder::SymbolId,
         require_wrapped_call: bool,
+        count_new: bool,
     ) -> bool {
         if self.expression_is_void_prefix_unary(expr_idx) {
             return false;
@@ -776,7 +817,11 @@ impl<'a> CheckerState<'a> {
             && let Some(sym_id) = self.resolve_identifier_symbol(expr_idx)
             && sym_id == function_sym
         {
-            return self.identifier_flows_through_wrapped_call(expr_idx, require_wrapped_call);
+            return self.identifier_flows_through_wrapped_call(
+                expr_idx,
+                require_wrapped_call,
+                count_new,
+            );
         }
 
         if matches!(
@@ -802,6 +847,7 @@ impl<'a> CheckerState<'a> {
                     child_idx,
                     function_sym,
                     require_wrapped_call,
+                    count_new,
                 )
             })
     }
@@ -810,6 +856,7 @@ impl<'a> CheckerState<'a> {
         &self,
         ident_idx: NodeIndex,
         require_wrapped_call: bool,
+        count_new: bool,
     ) -> bool {
         let mut current = ident_idx;
         let mut saw_wrapper = false;
@@ -844,6 +891,9 @@ impl<'a> CheckerState<'a> {
                         });
                 }
                 syntax_kind_ext::NEW_EXPRESSION => {
+                    if !count_new {
+                        return false;
+                    }
                     return self
                         .ctx
                         .arena
