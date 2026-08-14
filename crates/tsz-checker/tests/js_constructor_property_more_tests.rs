@@ -933,7 +933,7 @@ class MyClass {
 }
 
 #[test]
-fn test_js_top_level_this_property_assignment_declares_single_hop_properties() {
+fn test_js_top_level_this_property_assignment_does_not_declare_single_hop_properties() {
     let source = r#"
 this.x = {};
 this.x.y = {};
@@ -950,10 +950,34 @@ f.a;
 
     let diagnostics = check_js(source);
 
+    // Neither top-level script `this` (`typeof globalThis`) nor a post-TS7
+    // `@constructor` function's implicit-`any` `this` is a legitimate expando
+    // host, oracle-verified (`typescript@7.0.2`): `this.x = {}` does not
+    // declare `x` for the following `this.x.y` read to inherit, so both
+    // top-level lines report TS7017 (element access with no index signature)
+    // and neither `this.a`/`this.a.b` inside `F` reports TS2339 on top of the
+    // `this` itself being implicit `any` (TS2683). Previously tsz mistakenly
+    // typed the second statement's `this.x`/`this.a` from the first
+    // statement's RHS, producing TS2339 instead.
     assert_eq!(
         count_code(&diagnostics, 2339),
+        0,
+        "Expected no TS2339 — neither receiver legitimately carries an inferred shape from a prior write, got: {diagnostics:?}"
+    );
+    assert_eq!(
+        count_code(&diagnostics, 7017),
         2,
-        "Expected only chained `this.prop.prop` writes to emit TS2339, got: {diagnostics:?}"
+        "Expected TS7017 for both top-level `this.x`/`this.x.y` element accesses, got: {diagnostics:?}"
+    );
+    assert_eq!(
+        count_code(&diagnostics, 2683),
+        2,
+        "Expected TS2683 for each `this` reference in the `@constructor` function, got: {diagnostics:?}"
+    );
+    assert_eq!(
+        count_code(&diagnostics, 7009),
+        1,
+        "Expected TS7009 for `new F()` under TypeScript 7, got: {diagnostics:?}"
     );
 }
 
@@ -1133,11 +1157,29 @@ function F() {
 
     let diagnostics = check_js(source);
 
+    // TypeScript 7 dropped JS constructor-function inference, so `this`
+    // inside `F` stays implicitly `any` (TS2683) rather than an inferred
+    // `{ b: {} }` shape; chaining `this["b"]["c"]` off it therefore reports
+    // no further TS7053, oracle-verified (`typescript@7.0.2`). Previously
+    // tsz reported two spurious TS7053s here (one per chain) by mistakenly
+    // typing `this["b"]`/`this["y"]` from an earlier same-scope assignment
+    // even though neither `typeof globalThis` nor a post-TS7 implicit-`any`
+    // `this` is a legitimate expando host.
     assert_eq!(
         count_code(&diagnostics, 7053),
-        2,
-        "Expected chained `this[...]...[...]` writes to emit TS7053, got: {diagnostics:?}"
+        0,
+        "Expected no TS7053 once `this` is implicit `any` inside the `@constructor` function, got: {diagnostics:?}"
     );
+    assert_eq!(
+        count_code(&diagnostics, 2683),
+        2,
+        "Expected TS2683 for each `this` reference in the `@constructor` function, got: {diagnostics:?}"
+    );
+    // Known pre-existing gap, unrelated to this fix: tsc also reports TS7053
+    // on both top-level `this["y"] = {}` / `this["y"]["z"] = {}` writes
+    // (`this` = `typeof globalThis`, no index signature) — tsz's element-write
+    // diagnostic (`try_global_this_literal_key_access`) unconditionally skips
+    // JS files (`!self.is_js_file()`), so it currently emits nothing there.
 }
 
 #[test]
