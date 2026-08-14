@@ -3,6 +3,7 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::type_queries;
+use tsz_solver::types::TypeId;
 
 use super::DeclarationEmitter;
 
@@ -142,7 +143,7 @@ impl<'a> DeclarationEmitter<'a> {
             .and_then(|node| self.arena.get_computed_property(node))
             .and_then(|cp| self.get_node_type_or_names(&[cp.expression, method.name]));
         let computed_key_requires_property_syntax = computed_key_type.is_none_or(|t| {
-            t == tsz_solver::types::TypeId::ANY
+            t == TypeId::ANY
                 || self.type_interner.is_some_and(|interner| {
                     !tsz_solver::type_queries::is_type_usable_as_property_name(interner, t)
                 })
@@ -275,7 +276,7 @@ impl<'a> DeclarationEmitter<'a> {
                 .node_types
                 .get(&method_idx.0)
                 .copied()
-                .filter(|type_id| *type_id != tsz_solver::types::TypeId::ANY)
+                .filter(|type_id| *type_id != TypeId::ANY)
                 .or_else(|| self.get_node_type_or_names(&[method_name]))
                 .or_else(|| self.get_type_via_symbol_for_func(method_idx, method_name))
                 .or_else(|| cache.node_types.get(&method_idx.0).copied());
@@ -312,8 +313,7 @@ impl<'a> DeclarationEmitter<'a> {
                     {
                         self.write(": ");
                         self.write(&type_text);
-                    } else if (return_type_id == tsz_solver::types::TypeId::ANY
-                        || return_type_id == tsz_solver::types::TypeId::NEVER)
+                    } else if (return_type_id == TypeId::ANY || return_type_id == TypeId::NEVER)
                         && method_body.is_some()
                     {
                         if self.body_returns_void(method_body) {
@@ -355,7 +355,7 @@ impl<'a> DeclarationEmitter<'a> {
                         self.write(": ");
                         let type_text = self.wrap_async_method_return_type_text(method, type_text);
                         self.write(&type_text);
-                    } else if return_type_id == tsz_solver::types::TypeId::UNKNOWN
+                    } else if return_type_id == TypeId::UNKNOWN
                         && method.type_annotation.is_none()
                         && method_body.is_none()
                     {
@@ -375,8 +375,8 @@ impl<'a> DeclarationEmitter<'a> {
                     self.write(&type_text);
                 } else if self
                     .type_mentions_scoped_type_param_nodes(method_type_id, &all_param_nodes)
-                    && method_type_id != tsz_solver::types::TypeId::ANY
-                    && method_type_id != tsz_solver::types::TypeId::UNKNOWN
+                    && method_type_id != TypeId::ANY
+                    && method_type_id != TypeId::UNKNOWN
                 {
                     // `get_return_type` returned None: the checker stored the inferred return
                     // type (e.g. IndexAccess, Conditional) directly as the method's node type
@@ -405,6 +405,17 @@ impl<'a> DeclarationEmitter<'a> {
                         self.write(": ");
                         let type_text = self.wrap_async_method_return_type_text(method, type_text);
                         self.write(&type_text);
+                    } else if method_type_id != TypeId::ANY && method_type_id != TypeId::UNKNOWN {
+                        // `get_return_type` returned None (the checker stored the
+                        // inferred return type directly as the method's node type,
+                        // not wrapped in a function type) and the body-text
+                        // re-derivation above produced nothing — the shape of a
+                        // method whose body returns a private field
+                        // (`return this.#x`), which that AST walk cannot resolve.
+                        // `method_type_id` IS the resolved return type, so emit it
+                        // rather than the `any` fallback below.
+                        self.write(": ");
+                        self.write(&self.inferred_method_return_type_text(method, method_type_id));
                     } else if !self.source_is_declaration_file {
                         self.write(": any");
                     }
@@ -457,7 +468,7 @@ impl<'a> DeclarationEmitter<'a> {
 
     fn type_mentions_scoped_type_param_nodes(
         &self,
-        type_id: tsz_solver::types::TypeId,
+        type_id: TypeId,
         param_nodes: &[NodeIndex],
     ) -> bool {
         if param_nodes.is_empty() {
@@ -535,7 +546,7 @@ impl<'a> DeclarationEmitter<'a> {
                 .node_types
                 .get(&method_idx.0)
                 .copied()
-                .filter(|type_id| *type_id != tsz_solver::types::TypeId::ANY)
+                .filter(|type_id| *type_id != TypeId::ANY)
                 .or_else(|| self.get_node_type_or_names(&[method_name]))
                 .or_else(|| self.get_type_via_symbol_for_func(method_idx, method_name))
                 .or_else(|| cache.node_types.get(&method_idx.0).copied());
@@ -556,7 +567,7 @@ impl<'a> DeclarationEmitter<'a> {
                         )
                     {
                         self.write_type_text_with_current_indent(&type_text);
-                    } else if return_type_id == tsz_solver::types::TypeId::ANY
+                    } else if return_type_id == TypeId::ANY
                         && method_body.is_some()
                         && self.body_returns_void(method_body)
                     {
@@ -655,7 +666,7 @@ impl<'a> DeclarationEmitter<'a> {
                 .node_types
                 .get(&method_idx.0)
                 .copied()
-                .filter(|type_id| *type_id != tsz_solver::types::TypeId::ANY),
+                .filter(|type_id| *type_id != TypeId::ANY),
             self.get_node_type_or_names(&[method.name]),
             self.get_type_via_symbol_for_func(method_idx, method.name),
             cache.node_types.get(&method_idx.0).copied(),
@@ -836,7 +847,7 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         if let Some(type_id) = self.get_node_type_or_names(&[expr_idx, name_idx])
-            && type_id != tsz_solver::types::TypeId::ANY
+            && type_id != TypeId::ANY
             && self.type_interner.is_some_and(|interner| {
                 type_queries::is_type_usable_as_property_name(interner, type_id)
             })
@@ -1357,15 +1368,15 @@ impl<'a> DeclarationEmitter<'a> {
                 // when checker recovery reports `void`.
                 if accessor_body.is_none()
                     && !self.source_is_declaration_file
-                    && type_id == tsz_solver::types::TypeId::VOID
+                    && type_id == TypeId::VOID
                 {
                     self.write(": any");
-                } else if type_id == tsz_solver::types::TypeId::ANY
+                } else if type_id == TypeId::ANY
                     && accessor_body.is_some()
                     && self.body_returns_void(accessor_body)
                 {
                     self.write(": void");
-                } else if type_id == tsz_solver::types::TypeId::ANY
+                } else if type_id == TypeId::ANY
                     && accessor_body.is_some()
                     && let Some(return_text) =
                         self.function_body_preferred_return_type_text(accessor_body)

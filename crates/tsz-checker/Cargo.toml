@@ -732,6 +732,9 @@ path = "tests/unused_parameter_tests.rs"
 name = "private_brands"
 path = "tests/private_brands.rs"
 [[test]]
+name = "private_field_return_inference_tests"
+path = "tests/private_field_return_inference_tests.rs"
+[[test]]
 name = "private_identifier_expression_grammar_tests"
 path = "tests/private_identifier_expression_grammar_tests.rs"
 [[test]]

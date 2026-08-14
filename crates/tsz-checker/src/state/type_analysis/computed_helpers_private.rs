@@ -324,6 +324,54 @@ impl<'a> CheckerState<'a> {
         self.ctx.types.factory().union2(type_id, TypeId::UNDEFINED)
     }
 
+    /// The declaring instance type for a private *self*-access, taken directly
+    /// from the receiver — avoiding a fresh (re-entrant) `get_class_instance_type`
+    /// build of the declaring class.
+    ///
+    /// Returns `Some(receiver)` when `member_sym` is an instance member and the
+    /// receiver structurally carries the private member (not via an index
+    /// signature). Private identifiers are nominal and lexically scoped, so a
+    /// receiver that carries `#name` *is* an instance of the declaring class;
+    /// its own type therefore serves as the declaring type. Returns `None` for
+    /// static members and for receivers that do not carry the member (external /
+    /// cross-class access), where the declaring class must still be resolved via
+    /// [`Self::private_member_declaring_type`].
+    ///
+    /// This breaks the construction-time cycle in which resolving `this.#x`
+    /// inside a method-return inference forced the declaring class's instance
+    /// type to be (re)built, re-entering the deferred-method loop and baking a
+    /// provisional `error` return type into a sibling method's cached signature.
+    fn private_member_self_access_declaring_type(
+        &mut self,
+        receiver: TypeId,
+        member_sym: tsz_binder::SymbolId,
+        property_name: &str,
+    ) -> Option<TypeId> {
+        use crate::query_boundaries::common::PropertyAccessResult;
+
+        let member_is_static = self.ctx.binder.get_symbol(member_sym).is_some_and(|sym| {
+            sym.declarations
+                .iter()
+                .any(|&decl_idx| self.class_member_is_static(decl_idx))
+        });
+        if member_is_static {
+            return None;
+        }
+        let prop_atom = self.ctx.types.intern_string(property_name);
+        matches!(
+            crate::query_boundaries::property_access::resolve_private_identifier_property_access(
+                self.ctx.types,
+                receiver,
+                prop_atom,
+            ),
+            PropertyAccessResult::Success {
+                from_index_signature: false,
+                ..
+            }
+        )
+        .then_some(receiver)
+    }
+
     pub(crate) fn get_type_of_private_property_access(
         &mut self,
         idx: NodeIndex,
@@ -615,7 +663,40 @@ impl<'a> CheckerState<'a> {
             return TypeId::ERROR;
         }
 
-        let declaring_type = match self.private_member_declaring_type(symbols[0]) {
+        // Resolve the private member's declaring instance type. For an INSTANCE
+        // self-access the receiver already IS an instance of the declaring class
+        // (private identifiers are nominal and lexically scoped) and structurally
+        // carries the member, so the receiver's own type is the declaring type.
+        // Using it directly avoids `private_member_declaring_type`, which calls
+        // `get_class_instance_type` and — while the declaring class's instance
+        // type is still under construction — triggers a *fresh* re-entrant
+        // instance build. That build's deferred-method loop re-infers a sibling
+        // method whose return-type inference is already on the stack; the
+        // re-entrant inference reads the outer evaluation's provisional `error`
+        // and bakes it as the method's cached return type, so `return this.#x`
+        // resolves to `any` in both the checker signature and the declaration
+        // emit. A receiver that does not structurally carry the member (an
+        // external or cross-class access) still resolves the declaring class the
+        // original way, so those access/error paths are unchanged.
+        //
+        // Restricted to a single lexically-scoped private symbol. When the name
+        // is shadowed (`symbols.len() > 1`), the closest symbol's *own* declaring
+        // class is required so the access-compat check can detect the shadow and
+        // report `TS18014`; short-circuiting the declaring type to the receiver
+        // there would make the receiver trivially compatible with itself and
+        // suppress the shadowing diagnostic.
+        let self_access_declaring = (symbols.len() == 1)
+            .then(|| {
+                self.private_member_self_access_declaring_type(
+                    object_type_for_check,
+                    symbols[0],
+                    &property_name,
+                )
+            })
+            .flatten();
+        let declaring_type =
+            self_access_declaring.or_else(|| self.private_member_declaring_type(symbols[0]));
+        let declaring_type = match declaring_type {
             Some(ty) => ty,
             None => {
                 if saw_class_scope {
@@ -713,13 +794,19 @@ impl<'a> CheckerState<'a> {
                 declaring_type,
                 &property_name,
             )
-        } else if self.types_have_same_private_brand(object_type_for_check, declaring_type)
-            || self
-                .private_member_access_relation_outcome(object_type_for_check, declaring_type)
-                .related
-        {
+        } else if self.types_have_same_private_brand(object_type_for_check, declaring_type) {
             true
-        } else {
+        } else if symbols.len() == 1
+            && self.get_private_brand(object_type_for_check).is_none()
+            && matches!(
+                crate::query_boundaries::property_access::resolve_private_identifier_property_access(
+                    self.ctx.types,
+                    object_type_for_check,
+                    self.ctx.types.intern_string(&property_name),
+                ),
+                PropertyAccessResult::Success { .. }
+            )
+        {
             // Fallback for partial/intermediate instance types: during class instance
             // type building, resolve_self_referencing_constructor may return a partial
             // type from symbol_instance_types that lacks the private brand but contains
@@ -731,16 +818,28 @@ impl<'a> CheckerState<'a> {
             // The single-symbol guard ensures this does not suppress legitimate
             // TS18014 shadowing errors when multiple private identifiers with the
             // same name exist in nested class scopes.
-            symbols.len() == 1
-                && self.get_private_brand(object_type_for_check).is_none()
-                && matches!(
-                    crate::query_boundaries::property_access::resolve_private_identifier_property_access(
-                        self.ctx.types,
-                        object_type_for_check,
-                        self.ctx.types.intern_string(&property_name),
-                    ),
-                    PropertyAccessResult::Success { .. }
-                )
+            //
+            // This brandless-receiver fast path is evaluated BEFORE the structural
+            // `private_member_access_relation_outcome` relation below. A brandless
+            // receiver is a partial instance type of the class currently under
+            // construction — i.e. a private *self*-access (`this.#x`) whose access
+            // is guaranteed valid by lexical scoping. Running the structural
+            // relation here instead would relate the receiver against the
+            // (also in-progress) declaring instance type, materializing every
+            // member of both — including a sibling method whose return-type
+            // inference is still on the stack. That re-entrant inference bottoms
+            // out at the node-resolution cycle guard and yields a provisional
+            // `error`, which the re-entrant instance build then bakes as the
+            // method's cached return type (so `return this.#x` infers `any` in
+            // both the checker signature and declaration emit). Deciding the
+            // brandless self-access structurally-locally keeps the relation off
+            // the construction-time hot path without changing any external- or
+            // cross-class-access decision (those receivers carry a brand and fall
+            // through to the relation).
+            true
+        } else {
+            self.private_member_access_relation_outcome(object_type_for_check, declaring_type)
+                .related
         };
 
         if !types_compatible {
