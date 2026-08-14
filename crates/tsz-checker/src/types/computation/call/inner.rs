@@ -1438,6 +1438,51 @@ impl<'a> CheckerState<'a> {
                     !common::contains_type_parameters(self.ctx.types, ctx_type)
                         && !common::contains_infer_types(self.ctx.types, ctx_type)
                         && !common::contains_type_by_id(self.ctx.types, ctx_type, TypeId::UNKNOWN);
+                // Whether every argument's actual type is compatible with the
+                // parameter type implied by the contextual-return substitution.
+                // Shared by every override below: a type parameter that a
+                // concrete (non-any/unknown/error) argument directly pins is
+                // owned by argument inference (mirrors the solver's #14262
+                // `value_arg_seeded_bare_return_param` rule), so the contextual
+                // return type must stay a low-priority hint that cannot clamp a
+                // return type the arguments already resolved — including when
+                // that resolution is `unknown` because the argument itself was
+                // `unknown` (`generic(w)` with `declare const w: unknown` must
+                // keep reporting TS2322 against a `string`-typed target, not
+                // silently adopt the contextual type).
+                let contextual_params_fit_args = args.iter().enumerate().all(|(i, _)| {
+                    let Some(param) = shape.params.get(i).or_else(|| {
+                        let last = shape.params.last()?;
+                        last.rest.then_some(last)
+                    }) else {
+                        return true;
+                    };
+                    let instantiated_param = crate::query_boundaries::common::instantiate_type(
+                        self.ctx.types,
+                        param.type_id,
+                        &return_context_substitution,
+                    );
+                    let expected = if param.rest {
+                        self.rest_argument_element_type_with_env(instantiated_param)
+                    } else {
+                        instantiated_param
+                    };
+                    let actual = generic_inference_arg_types
+                        .get(i)
+                        .copied()
+                        .or_else(|| {
+                            retried_arg_types
+                                .as_ref()
+                                .and_then(|types| types.get(i).copied())
+                        })
+                        .or_else(|| arg_types.get(i).copied())
+                        .unwrap_or(TypeId::UNKNOWN);
+                    if matches!(actual, TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR) {
+                        return false;
+                    }
+                    self.call_arg_relation_outcome_with_env(actual, expected)
+                        .related
+                });
                 if !has_callback_like_arg && contextual_return_is_concrete {
                     let instantiated_shape_return =
                         crate::query_boundaries::common::instantiate_type(
@@ -1445,39 +1490,6 @@ impl<'a> CheckerState<'a> {
                             shape.return_type,
                             &return_context_substitution,
                         );
-                    let contextual_params_fit_args = args.iter().enumerate().all(|(i, _)| {
-                        let Some(param) = shape.params.get(i).or_else(|| {
-                            let last = shape.params.last()?;
-                            last.rest.then_some(last)
-                        }) else {
-                            return true;
-                        };
-                        let instantiated_param = crate::query_boundaries::common::instantiate_type(
-                            self.ctx.types,
-                            param.type_id,
-                            &return_context_substitution,
-                        );
-                        let expected = if param.rest {
-                            self.rest_argument_element_type_with_env(instantiated_param)
-                        } else {
-                            instantiated_param
-                        };
-                        let actual = generic_inference_arg_types
-                            .get(i)
-                            .copied()
-                            .or_else(|| {
-                                retried_arg_types
-                                    .as_ref()
-                                    .and_then(|types| types.get(i).copied())
-                            })
-                            .or_else(|| arg_types.get(i).copied())
-                            .unwrap_or(TypeId::UNKNOWN);
-                        if matches!(actual, TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR) {
-                            return false;
-                        }
-                        self.call_arg_relation_outcome_with_env(actual, expected)
-                            .related
-                    });
                     // Skip the contextual-return override when the arguments pin a
                     // returned bare rest-tuple parameter: `contextual_params_fit_args`
                     // is unreliable there because it compares against the rest
@@ -1516,6 +1528,7 @@ impl<'a> CheckerState<'a> {
                 if let CallResult::Success(current_return) = result
                     && current_return != shape.return_type
                     && common::contains_type_by_id(self.ctx.types, current_return, TypeId::UNKNOWN)
+                    && contextual_params_fit_args
                 {
                     let instantiated_return = crate::query_boundaries::common::instantiate_type(
                         self.ctx.types,
