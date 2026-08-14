@@ -24,6 +24,10 @@
 //! prior fix here incorrectly exempted expando-container vars from
 //! `TS2403` based on a misread of the oracle; this file replaces those
 //! (backwards) assertions.
+//!
+//! The file also covers the unrelated `TS2339` half (#17443): a JS file's
+//! own expando-container writes must stay clean against the container's own
+//! type, not a conflicting cross-file sibling's.
 
 use tsz_checker::context::CheckerOptions;
 
@@ -143,4 +147,121 @@ fn let_and_const_expando_containers_report_ts2451_not_ts2403() {
             "TS2403 requires both sides non-block-scoped; `{keyword}` must not trigger it; got: {diags:?}"
         );
     }
+}
+
+/// The `.js` side's own `x.a = ...` expando assignment must not draw a
+/// `TS2339` when a `.ts` sibling declares a conflicting non-callable `x`.
+/// tsc (verified against 6.0.2) is clean when the expando container is the
+/// program's first / value declaration of the merged global `x`: `x`'s type
+/// is that container's augmented function type, so `.a` resolves. tsz used
+/// to degrade the merged symbol to the `.ts` sibling's `number` regardless
+/// of order and report `TS2339`. This is the residual noted in this file's
+/// header, tracked by #17443.
+#[test]
+fn expando_container_own_property_access_not_ts2339_when_container_is_first() {
+    let diags = compile_files(
+        &[
+            ("a.js", "var x = function foo() {}\nx.a = function bar() {}"),
+            ("b.ts", "var x = function () { return 1; }();"),
+        ],
+        0,
+    );
+    assert_eq!(
+        count_code(&diags, 2339),
+        0,
+        "a.js's own x.a expando write must not be TS2339 when the container is the first declaration; got: {diags:?}"
+    );
+}
+
+/// Anti-hardcoding (§25): the container-wins rule is structural, not keyed on
+/// `x`/`a`/`foo`. Repeat with varied binder and expando-property names.
+#[test]
+fn expando_container_own_property_access_not_ts2339_independent_of_names() {
+    for var_name in ["widget", "handler"] {
+        for expando in ["extra", "hook"] {
+            let a_src = format!(
+                "var {var_name} = function foo() {{}}\n{var_name}.{expando} = function bar() {{}}"
+            );
+            let b_src = format!("var {var_name} = function () {{ return 1; }}();");
+            let diags = compile_files(&[("a.js", a_src.as_str()), ("b.ts", b_src.as_str())], 0);
+            assert_eq!(
+                count_code(&diags, 2339),
+                0,
+                "TS2339 must not fire for container '{var_name}'.'{expando}'; got: {diags:?}"
+            );
+        }
+    }
+}
+
+/// `let`/`const`/arrow/class-expression containers get the same
+/// container-wins treatment for their own property access.
+#[test]
+fn expando_container_own_property_access_not_ts2339_across_container_shapes() {
+    let containers = [
+        "var x = function foo() {}",
+        "let x = function foo() {}",
+        "const x = function foo() {}",
+        "var x = () => {}",
+        "var x = class {}",
+    ];
+    for container in containers {
+        let a_src = format!("{container}\nx.a = function bar() {{}}");
+        let diags = compile_files(
+            &[
+                ("a.js", a_src.as_str()),
+                ("b.ts", "var x = function () { return 1; }();"),
+            ],
+            0,
+        );
+        assert_eq!(
+            count_code(&diags, 2339),
+            0,
+            "TS2339 must not fire for container shape `{container}`; got: {diags:?}"
+        );
+    }
+}
+
+/// Characterization: with the `.ts` sibling listed first, tsz resolves the JS
+/// file's own expando container the same way — clean. tsc 6.0.2 is order-
+/// dependent here and reports `TS2339` when the non-callable `var x` is the
+/// first declaration; tsz deliberately resolves a file's own expando container
+/// independent of cross-file declaration order (the reproducibility direction
+/// of #16309, and the same order-independent treatment #17437 already gives the
+/// `TS2403` half). No conformance fixture exercises the sibling-first order
+/// (fixtures pin `@filename` order), so this divergence is inert there.
+#[test]
+fn expando_container_own_property_access_clean_regardless_of_sibling_order() {
+    let diags = compile_files(
+        &[
+            ("b.ts", "var x = function () { return 1; }();"),
+            ("a.js", "var x = function foo() {}\nx.a = function bar() {}"),
+        ],
+        1,
+    );
+    assert_eq!(
+        count_code(&diags, 2339),
+        0,
+        "a.js's own container property access stays clean regardless of sibling order; got: {diags:?}"
+    );
+}
+
+/// Control: a genuinely-absent member on the container still reports TS2339 —
+/// the fix must not blanket-suppress property errors on the container.
+#[test]
+fn missing_member_on_expando_container_still_reports_ts2339() {
+    let diags = compile_files(
+        &[
+            (
+                "a.js",
+                "var x = function foo() {}\nx.a = function bar() {}\nx.b();",
+            ),
+            ("b.ts", "var x = function () { return 1; }();"),
+        ],
+        0,
+    );
+    assert_eq!(
+        count_code(&diags, 2339),
+        1,
+        "a genuinely-absent member (x.b) must still be TS2339; got: {diags:?}"
+    );
 }

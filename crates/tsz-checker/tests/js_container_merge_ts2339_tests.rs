@@ -141,7 +141,14 @@ fn check_entry_with_libs(
 }
 
 #[test]
-fn merged_checked_js_global_uses_non_js_type_for_ts2339() {
+fn merged_checked_js_global_expando_container_wins_no_ts2339() {
+    // A JS expando container (`var x = function(){}; x.a = …`) is the value
+    // (first-program-order) declaration of the merged global `x`; a `.ts`
+    // sibling's conflicting `var x = <number>` does not demote it. tsc 6.0.2 is
+    // clean here (`x`'s type is the container's augmented function type, so
+    // `x.a` resolves). This previously asserted the spurious TS2339 that #17443
+    // fixed — the merged symbol must keep its own container type, not adopt the
+    // sibling's `number`.
     let diagnostics = check_entry_with_libs(
         &[
             (
@@ -178,14 +185,8 @@ var x = function () {
 
     assert_eq!(
         ts2339.len(),
-        1,
-        "Expected exactly one TS2339 for the merged JS/TS global. Actual diagnostics: {diagnostics:#?}"
-    );
-    assert!(
-        ts2339[0]
-            .1
-            .contains("Property 'a' does not exist on type 'number'."),
-        "Expected the checked-JS write error to use the merged TS declaration type. Actual diagnostics: {diagnostics:#?}"
+        0,
+        "The JS expando container's own property access must be clean (container wins over the .ts sibling's number). Actual diagnostics: {diagnostics:#?}"
     );
 }
 

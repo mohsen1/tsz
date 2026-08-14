@@ -74,7 +74,7 @@ for numeric in "$ITERATIONS" "$TOP" "$TIMEOUT" "$RUNS"; do
 done
 
 if [[ "$PREPARE" == true ]]; then
-    tsz_ensure_large_ts_repo_fixture "$LARGE_TS_DIR" "$LARGE_TS_REPO" "$LARGE_TS_REF"
+    tsz_ensure_large_ts_repo_fixture "$LARGE_TS_DIR" "$LARGE_TS_REPO" "$LARGE_TS_REF" || exit 1
 fi
 
 TSCONFIG="$TSCONFIG_OVERRIDE"

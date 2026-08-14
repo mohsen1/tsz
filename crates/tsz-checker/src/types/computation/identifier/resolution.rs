@@ -814,6 +814,20 @@ impl<'a> CheckerState<'a> {
     ) -> Option<TypeId> {
         let all_arenas = self.ctx.all_arenas.clone()?;
         let all_binders = self.ctx.all_binders.clone()?;
+        // A checked-JS file that owns its own expando container variable `name`
+        // resolves `name` to that container, not to a conflicting cross-file
+        // sibling's global declaration. Without this, a `.ts` sibling's
+        // `var name = <non-callable>` was preferred over the local
+        // function/arrow/class-expression container, degrading `name` to that
+        // sibling's type and mis-reporting `TS2339` on the container's own
+        // `name.prop = …` expando write (#17443). JS-gated (like the sibling
+        // delegation guard) so pure-TS resolution skips the ownership walk.
+        if self.is_js_file()
+            && self.ctx.compiler_options.check_js
+            && self.current_file_declares_expando_container_variable(name)
+        {
+            return None;
+        }
         let entries = if let Some(entries) = self
             .ctx
             .global_file_locals_index
@@ -947,6 +961,14 @@ impl<'a> CheckerState<'a> {
         name: &str,
         local_sym_id: SymbolId,
     ) -> Option<TypeId> {
+        // See `cross_file_global_value_type_by_name`: the current file's own
+        // expando container wins over a cross-file `.ts` global (#17443).
+        if self.is_js_file()
+            && self.ctx.compiler_options.check_js
+            && self.current_file_declares_expando_container_variable(name)
+        {
+            return None;
+        }
         if self.ctx.binder.file_locals.get(name) != Some(local_sym_id) {
             return self.non_js_cross_file_global_value_type_by_name(name);
         }
