@@ -112,19 +112,7 @@ impl<'a> CheckerState<'a> {
             && !is_in_resolution_set
             && self.class_build_reenters_in_flight_member(sym_id)
         {
-            // Skip the `symbol_instance_types` snapshot while this class's own
-            // constructor is on `class_constructor_resolution_set`: that entry is
-            // a declared-properties-only partial (methods missing) published for
-            // `C<any>`-style type references, and — since #17453 widened
-            // `class_build_reenters_in_flight_member` to un-annotated method
-            // bodies — snapshotting it as the construct-signature return cached a
-            // member-less `new C()`, breaking self-relation (false `TS2740`,
-            // #17456). Fall through to a lazy self-reference, which resolves to the
-            // completed instance once the build finishes.
-            let building_own_constructor =
-                self.ctx.class_constructor_resolution_set.contains(&sym_id);
-            if !building_own_constructor
-                && let Some(existing) = self.ctx.symbol_instance_types.get(&sym_id)
+            if let Some(existing) = self.ctx.symbol_instance_types.get(&sym_id)
                 && !existing.is_any_unknown_or_error()
             {
                 return existing;
