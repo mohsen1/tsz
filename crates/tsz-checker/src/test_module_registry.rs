@@ -405,6 +405,8 @@ mod generic_call_const_asserted_property_widening_tests;
 mod generic_call_enclosing_type_param_return_tests;
 #[path = "tests/generic_call_non_fresh_object_widening_tests.rs"]
 mod generic_call_non_fresh_object_widening_tests;
+#[path = "tests/generic_call_unknown_return_contextual_assignment_tests.rs"]
+mod generic_call_unknown_return_contextual_assignment_tests;
 #[path = "tests/generic_callable_outer_type_param_mismatch_tests.rs"]
 mod generic_callable_outer_type_param_mismatch_tests;
 #[path = "tests/generic_callback_outer_context_tests.rs"]
