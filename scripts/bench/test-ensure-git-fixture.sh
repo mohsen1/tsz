@@ -63,22 +63,16 @@ FIXDIR1="$WORK/fixture-unreachable"
 err1="$(tsz_ensure_git_fixture "demo" "$UPSTREAM" "$UNREACHABLE_SHA" "$FIXDIR1" 0 2>&1 1>/dev/null)"
 rc1=$?
 check "unreachable pin returns non-zero" "1" "$rc1"
-if echo "$err1" | grep -q "ERROR:"; then
-  check "unreachable pin prints a diagnostic" "yes" "yes"
-else
-  check "unreachable pin prints a diagnostic" "yes" "no ($err1)"
-fi
+grep -q "ERROR:" <<<"$err1" && diag1=yes || diag1="no ($err1)"
+check "unreachable pin prints a diagnostic" "yes" "$diag1"
 # HEAD must not be resolvable to this repo's commit as if it were the fixture.
-if tsz_git_fixture_is_standalone_repo "$FIXDIR1"; then
-  landed="$(git -C "$FIXDIR1" rev-parse HEAD 2>/dev/null || echo none)"
-  if [ "$landed" = "$UNREACHABLE_SHA" ]; then
-    check "unreachable pin did not fabricate a HEAD" "clean" "FABRICATED"
-  else
-    check "unreachable pin did not fabricate a HEAD" "clean" "clean"
-  fi
+landed="$(git -C "$FIXDIR1" rev-parse HEAD 2>/dev/null || echo none)"
+if tsz_git_fixture_is_standalone_repo "$FIXDIR1" && [ "$landed" = "$UNREACHABLE_SHA" ]; then
+  fab1=FABRICATED
 else
-  check "unreachable pin did not fabricate a HEAD" "clean" "clean"
+  fab1=clean
 fi
+check "unreachable pin did not fabricate a HEAD" "clean" "$fab1"
 
 # --- Case 2: a non-repo directory is rejected as not standalone ---
 NONREPO="$WORK/not-a-repo"
@@ -95,26 +89,17 @@ fi
 # tsz's own SHA as the fixture's pin. Runs with CWD inside the tsz repo.
 FIXDIR2B="$SCRIPT_DIR/.ensure-git-fixture-test-clonefail"
 rm -rf "$FIXDIR2B"
-if tsz_ensure_git_fixture "demo" "$WORK/does-not-exist.git" "$SERVED_SHA" "$FIXDIR2B" 0 >/dev/null 2>&1; then
-  rc2b=0
-else
-  rc2b=1
-fi
+tsz_ensure_git_fixture "demo" "$WORK/does-not-exist.git" "$SERVED_SHA" "$FIXDIR2B" 0 >/dev/null 2>&1
+rc2b=$?
 check "failed clone returns non-zero" "1" "$rc2b"
-if tsz_git_fixture_is_standalone_repo "$FIXDIR2B"; then
-  check "failed clone did not alias the tsz repo" "clean" "ALIASED"
-else
-  check "failed clone did not alias the tsz repo" "clean" "clean"
-fi
+tsz_git_fixture_is_standalone_repo "$FIXDIR2B" && alias2b=ALIASED || alias2b=clean
+check "failed clone did not alias the tsz repo" "clean" "$alias2b"
 rm -rf "$FIXDIR2B"
 
 # --- Case 3: happy path pins the served SHA and returns success ---
 FIXDIR3="$WORK/fixture-ok"
-if tsz_ensure_git_fixture "demo" "$UPSTREAM" "$SERVED_SHA" "$FIXDIR3" 0 >/dev/null 2>&1; then
-  rc3=0
-else
-  rc3=1
-fi
+tsz_ensure_git_fixture "demo" "$UPSTREAM" "$SERVED_SHA" "$FIXDIR3" 0 >/dev/null 2>&1
+rc3=$?
 check "served pin returns success" "0" "$rc3"
 head3="$(git -C "$FIXDIR3" rev-parse HEAD 2>/dev/null || echo none)"
 check "served pin lands on the requested SHA" "$SERVED_SHA" "$head3"

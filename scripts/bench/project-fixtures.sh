@@ -524,6 +524,17 @@ tsz_git_fixture_is_standalone_repo() {
   [[ "$dir_phys" == "$top_phys" ]]
 }
 
+# Fresh shallow clone of $repo into $dir; fails loudly on a clone error so the
+# caller never proceeds to pin/benchmark a directory that has no checkout.
+tsz_clone_git_fixture() {
+  local name="$1" repo="$2" dir="$3"
+  tsz_remove_fixture_dir "$name" "$dir"
+  if ! git clone --quiet --no-tags --depth 1 "$repo" "$dir"; then
+    echo "ERROR: failed to clone ${name} fixture from ${repo}" >&2
+    return 1
+  fi
+}
+
 # Ensure $dir is a fresh checkout of $repo pinned at $ref.
 #
 # Returns non-zero (with a diagnostic on stderr) on ANY failure — a failed
@@ -544,21 +555,13 @@ tsz_ensure_git_fixture() {
   mkdir -p "$(dirname "$dir")"
   if [[ ! -d "$dir/.git" ]]; then
     echo "Cloning ${name} fixture..."
-    tsz_remove_fixture_dir "$name" "$dir"
-    if ! git clone --quiet --no-tags --depth 1 "$repo" "$dir"; then
-      echo "ERROR: failed to clone ${name} fixture from ${repo}" >&2
-      return 1
-    fi
+    tsz_clone_git_fixture "$name" "$repo" "$dir" || return 1
   fi
 
   if [[ "$reclone_dirty" == "1" ]] \
     && [[ -n "$(git -C "$dir" status --porcelain 2>/dev/null)" ]]; then
     echo "${name} fixture is dirty; recloning for reproducibility..."
-    tsz_remove_fixture_dir "$name" "$dir"
-    if ! git clone --quiet --no-tags --depth 1 "$repo" "$dir"; then
-      echo "ERROR: failed to re-clone ${name} fixture from ${repo}" >&2
-      return 1
-    fi
+    tsz_clone_git_fixture "$name" "$repo" "$dir" || return 1
   fi
 
   # Never treat a directory that is not its own git checkout as a pinned
@@ -582,17 +585,18 @@ tsz_ensure_git_fixture() {
         echo "ERROR: failed to check out fetched ${name} pin ${ref:0:12}" >&2
         return 1
       fi
-    fi
 
-    # Confirm the checkout actually landed on the requested commit. Only a
-    # full 40-hex SHA pin is verified by identity (a branch/tag ref resolves to
-    # a distinct commit SHA); a mismatch means a partial or skipped pin, which
-    # must fail loudly rather than benchmark the wrong tree.
-    if [[ "$ref" =~ ^[0-9a-f]{40}$ ]]; then
-      current_ref="$(git -C "$dir" rev-parse HEAD 2>/dev/null || true)"
-      if [[ "$current_ref" != "$ref" ]]; then
-        echo "ERROR: ${name} fixture HEAD is ${current_ref:0:12}, expected pin ${ref:0:12}" >&2
-        return 1
+      # Confirm the checkout actually landed on the requested commit. Only a
+      # full 40-hex SHA pin is verified by identity (a branch/tag ref resolves
+      # to a distinct commit SHA); a mismatch means a partial pin, which must
+      # fail loudly rather than benchmark the wrong tree. Skipped when the
+      # fixture is already at the pin (no checkout ran, so HEAD cannot drift).
+      if [[ "$ref" =~ ^[0-9a-f]{40}$ ]]; then
+        current_ref="$(git -C "$dir" rev-parse HEAD 2>/dev/null || true)"
+        if [[ "$current_ref" != "$ref" ]]; then
+          echo "ERROR: ${name} fixture HEAD is ${current_ref:0:12}, expected pin ${ref:0:12}" >&2
+          return 1
+        fi
       fi
     fi
   fi
