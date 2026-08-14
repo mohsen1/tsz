@@ -5,6 +5,7 @@
 //! Split out of the parent module to satisfy the source-file line cap.
 
 use super::*;
+use tsz_binder::SymbolId;
 
 impl<'a> CheckerState<'a> {
     /// Whether `decl_idx` is a `var`/`let`/`const` initialized with a
@@ -19,12 +20,39 @@ impl<'a> CheckerState<'a> {
     /// `var x`; only once an `x.prop = ...` expando assignment exists does
     /// the redeclaration check stop comparing types
     /// (`TypeScript/tests/cases/conformance/salsa/jsContainerMergeTsDeclaration.ts`).
-    pub(in crate::state_domain::variable_checking) fn is_expando_container_var_decl(
-        &self,
-        decl_idx: NodeIndex,
-        name: &str,
-    ) -> bool {
+    pub(crate) fn is_expando_container_var_decl(&self, decl_idx: NodeIndex, name: &str) -> bool {
         self.is_expando_container_var_decl_in_arena(self.ctx.arena, decl_idx, name)
+    }
+
+    /// Whether the CURRENT file declares `name` (bound to a genuinely
+    /// current-file symbol) as its own JS expando container variable. Used by
+    /// the cross-file-global value-type preference sites: a JS file that owns
+    /// its own expando container must resolve `name` to that container, not
+    /// defer to a `.ts`/`.d.ts` sibling's conflicting global declaration
+    /// (#17443).
+    pub(crate) fn current_file_declares_expando_container_variable(&self, name: &str) -> bool {
+        let Some(sym_id) = self.ctx.binder.file_locals.get(name) else {
+            return false;
+        };
+        self.current_file_owns_expando_container_declaration(sym_id)
+    }
+
+    /// Whether the CURRENT file's binder owns a declaration of `sym_id` that is
+    /// a JS expando container variable (function/arrow/class-expression
+    /// initializer with `name.prop = …` members). Keyed on `SymbolId` for the
+    /// cross-arena delegation guard, which must keep a JS file's own expando
+    /// container local rather than routing `sym_id` to a conflicting sibling's
+    /// arena (#17443). The `get_node_symbol` round-trip keeps this arena-safe
+    /// against raw `SymbolId`/`NodeIndex` reuse across files.
+    pub(crate) fn current_file_owns_expando_container_declaration(&self, sym_id: SymbolId) -> bool {
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return false;
+        };
+        let name = symbol.escaped_name.as_str();
+        symbol.all_declarations().into_iter().any(|decl_idx| {
+            self.ctx.binder.get_node_symbol(decl_idx) == Some(sym_id)
+                && self.is_expando_container_var_decl(decl_idx, name)
+        })
     }
 
     /// Arena-parameterized core of [`is_expando_container_var_decl`], usable

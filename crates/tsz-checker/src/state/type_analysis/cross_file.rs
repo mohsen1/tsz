@@ -331,6 +331,21 @@ impl CheckerState<'_> {
             }
         }
 
+        // A JS expando container variable (`var x = function(){}; x.a = …`) is
+        // FUNCTION-flagged but its declaration is a `VariableDeclaration`, so
+        // the FUNCTION guard above (which tests for a function *node*) does not
+        // catch it. When the current file owns such a container declaration for
+        // this symbol, resolve it locally rather than routing to a conflicting
+        // cross-file sibling's arena — otherwise a `.ts` sibling's `var x =
+        // <number>` becomes the type of the JS file's own `x`, mis-reporting
+        // TS2339 on `x`'s own expando write (#17443). Scoped to checked JS.
+        if self.is_js_file()
+            && self.ctx.compiler_options.check_js
+            && self.current_file_owns_expando_container_declaration(sym_id)
+        {
+            return None; // Handle locally, don't delegate
+        }
+
         let cross_file_symbol_is_class =
             cross_file_symbol.is_some_and(|symbol| symbol.has_any_flags(symbol_flags::CLASS));
         let is_known_cross_file = self.ctx.has_symbol_file_index(sym_id);
