@@ -111,6 +111,8 @@ mod boxed_global_env_authority_tests;
 mod builtin_iterator_implements_tests;
 #[path = "tests/call_architecture_tests.rs"]
 mod call_architecture_tests;
+#[path = "tests/call_argument_type_parameter_target_elaboration_tests.rs"]
+mod call_argument_type_parameter_target_elaboration_tests;
 #[path = "tests/call_checker_diagnostic_relation_routing_arch_tests.rs"]
 mod call_checker_diagnostic_relation_routing_arch_tests;
 #[path = "tests/call_context_relation_routing_arch_tests.rs"]
