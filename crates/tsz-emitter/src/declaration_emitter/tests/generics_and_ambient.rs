@@ -1303,6 +1303,36 @@ export class Person extends Base {
     );
 }
 
+// #17430: a method whose body is a bare `return this.#privateField` has no
+// printable source-text return form (the private access is not reconstructable
+// from source text like `this.pub` or `store[key]` are), so the source-text
+// return-type fallback yields nothing. When the checker has stored the inferred
+// return type directly on the method node, that stored type must be emitted
+// rather than degrading to `any`.
+#[test]
+fn test_bare_private_field_return_emits_stored_return_type() {
+    let output = emit_dts_with_method_node_return_type(
+        r#"
+export class Counter {
+    #value = 1;
+    read() {
+        return this.#value;
+    }
+}
+"#,
+        "read",
+        TypeId::NUMBER,
+    );
+    assert!(
+        output.contains("read(): number;"),
+        "Expected the stored `number` return type, not `any`: {output}"
+    );
+    assert!(
+        !output.contains("read(): any"),
+        "Private-field-returning method must not fall back to `any`: {output}"
+    );
+}
+
 // =============================================================================
 // JS heritage references to imported / re-exported classes
 //

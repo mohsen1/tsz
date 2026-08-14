@@ -226,33 +226,40 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Whether a fresh instance-type build for `class_sym` would re-enter the
-    /// in-flight resolution of one of its OWN arrow-/function-valued property
-    /// initializers (such a node is present on `node_resolution_stack` in an
-    /// enclosing frame).
+    /// in-flight resolution of one of its OWN members whose type is derived from
+    /// a body/initializer still present on `node_resolution_stack` in an
+    /// enclosing frame. Two shapes qualify:
     ///
-    /// This is the precise shape behind the self-reference false-negative: a
-    /// property whose initializer is an arrow/function expression with a
-    /// return-type annotation that references the enclosing class. Typing that
-    /// initializer resolves the annotation, which (via return-type name
-    /// validation or constructor-type building) requests a fresh instance build
-    /// while the initializer node is still on the resolution stack. Building now
-    /// would type that member from its transient `ERROR` placeholder (the
-    /// `get_type_of_node` cycle guard), baking an unsound `ERROR`/`any` member
-    /// type into the cached instance.
+    /// - An arrow-/function-valued **property initializer** with a return-type
+    ///   annotation that references the enclosing class. Typing the initializer
+    ///   resolves the annotation, which (via return-type name validation or
+    ///   constructor-type building) requests a fresh instance build while the
+    ///   initializer node is still on the stack — the self-reference
+    ///   false-negative case (`is_in_flight_class_property_initializer`).
+    /// - An **un-annotated method or getter body**. The class-statement checker
+    ///   drops `class_instance_type_cache[class]` before checking members, so
+    ///   resolving `this.#field` in the body requests a fresh instance build
+    ///   while the body is still on the stack — the `#17430` case
+    ///   (`node_is_in_flight_class_member_body`).
     ///
-    /// The condition is deliberately narrow — only property-initializer
-    /// arrow/function nodes count, not method bodies, type annotations, or other
-    /// in-class nodes — so it does not perturb ordinary class resolution that
-    /// legitimately re-enters a class type while some in-class node is on the
-    /// stack.
+    /// In either shape, building now would type that member from its transient
+    /// `ERROR` placeholder (the `get_type_of_node` cycle guard), baking an
+    /// unsound `ERROR`/`any` type into the cached instance. The caller instead
+    /// returns the already-registered instance type (or a lazy self-reference)
+    /// rather than rebuilding.
+    ///
+    /// Both predicates are deliberately narrow (only the two shapes above, not
+    /// arbitrary in-class nodes), so ordinary class resolution that legitimately
+    /// re-enters a class type while some in-class node is on the stack is not
+    /// perturbed. The stack is walked once for both.
     pub(super) fn class_build_reenters_in_flight_member(
         &self,
         class_sym: tsz_binder::SymbolId,
     ) -> bool {
-        self.ctx
-            .node_resolution_stack
-            .iter()
-            .any(|&node| self.is_in_flight_class_property_initializer(node, class_sym))
+        self.ctx.node_resolution_stack.iter().any(|&node| {
+            self.is_in_flight_class_property_initializer(node, class_sym)
+                || self.node_is_in_flight_class_member_body(node, class_sym)
+        })
     }
 
     /// Whether class construction was re-entered from the root expression of
@@ -280,6 +287,72 @@ impl<'a> CheckerState<'a> {
             property.initializer == node
                 && self.node_enclosing_class_symbol(property_idx) == Some(class_sym)
         })
+    }
+
+    /// Whether `node` sits inside the `body` of an un-annotated method or getter
+    /// of `class_sym` — the `#17430` shape.
+    ///
+    /// Only members whose return type is *inferred from a body* can self-cycle
+    /// when a fresh instance build re-enters them: an un-annotated method and an
+    /// un-annotated getter. An annotated method takes its return type from the
+    /// annotation; setters return nothing and constructors have no return type,
+    /// so none of those re-infer a body and none is matched — keeping ordinary
+    /// class resolution unperturbed.
+    ///
+    /// Climbs the parent chain from `node`, tracking the child it entered each
+    /// parent from, so a member matches only when the entry child is that
+    /// member's own `body` (a signature-position node — a computed member name,
+    /// a parameter default — is never treated as an in-flight body).
+    fn node_is_in_flight_class_member_body(
+        &self,
+        start: NodeIndex,
+        class_sym: tsz_binder::SymbolId,
+    ) -> bool {
+        let mut current = start;
+        let mut child: Option<NodeIndex> = None;
+        // Bounded walk; class-member nesting depth is small in practice.
+        for _ in 0..64 {
+            let Some(node) = self.ctx.arena.get(current) else {
+                return false;
+            };
+            // Only members whose return type is *inferred from a body* can
+            // self-cycle on a rebuild: an un-annotated method and an
+            // un-annotated getter. Setters return nothing and constructors have
+            // no return type, so neither re-infers a body and neither is
+            // matched.
+            let member_body = match node.kind {
+                syntax_kind_ext::METHOD_DECLARATION => self
+                    .ctx
+                    .arena
+                    .get_method_decl(node)
+                    .filter(|method| method.type_annotation.is_none())
+                    .map(|method| method.body),
+                syntax_kind_ext::GET_ACCESSOR => self
+                    .ctx
+                    .arena
+                    .get_accessor(node)
+                    .filter(|accessor| accessor.type_annotation.is_none())
+                    .map(|accessor| accessor.body),
+                _ => None,
+            };
+            if let Some(body) = member_body
+                && child == Some(body)
+                && self.node_enclosing_class_symbol(current) == Some(class_sym)
+            {
+                // Reached an un-annotated member body of `class_sym` along its
+                // `body` child.
+                return true;
+            }
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                return false;
+            };
+            if ext.parent.is_none() {
+                return false;
+            }
+            child = Some(current);
+            current = ext.parent;
+        }
+        false
     }
 
     /// Whether `node` is an arrow/function-expression initializer of a property
