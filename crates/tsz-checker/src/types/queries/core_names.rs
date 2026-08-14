@@ -862,7 +862,20 @@ impl<'a> CheckerState<'a> {
             && let Some(sym_id) = self.ctx.def_to_symbol_id_with_fallback(def_id)
             && let Some(class_idx) = self.get_class_declaration_from_symbol(sym_id)
         {
-            return Some((class_idx, true));
+            // A bare `Lazy(DefId)` pointing at a class symbol is not always the
+            // constructor/static side: `get_class_instance_type`'s in-flight
+            // self-reference deferral (#17456) returns a `Lazy` wrapping the
+            // class's own `DefKind::Class` identity — the INSTANCE side — while
+            // still mid-build. Only the `DefKind::ClassConstructor` companion
+            // identity represents `typeof ClassName`; defer to the DefKind the
+            // same way the type printer's `format_def_id`/`is_class_constructor`
+            // check does, instead of assuming every class-symbol `Lazy` here is
+            // the constructor.
+            let is_constructor = matches!(
+                self.ctx.definition_store.get_kind(def_id),
+                Some(tsz_solver::def::DefKind::ClassConstructor)
+            );
+            return Some((class_idx, is_constructor));
         }
 
         // Generic instance types like `C<number>` appear as
