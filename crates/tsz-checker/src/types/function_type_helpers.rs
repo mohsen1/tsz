@@ -1820,6 +1820,14 @@ impl<'a> CheckerState<'a> {
         // on, since both consumers are gated on it. Uses `function_is_generator`
         // (the ctx-sourced flag the TS7030 path has always used), distinct from
         // the arena-sourced `is_generator` behind `check_return_type` above.
+        // Mirrors the same-named gate in `check_function_return_paths`.
+        let has_generator_return_type_for_completeness = function_is_generator
+            && self.ctx.no_implicit_returns()
+            && self
+                .generator_return_type_for_implicit_return_check(
+                    annotated_return_type.unwrap_or(return_type),
+                )
+                .is_some();
         let ts7030_check_type = if self.ctx.no_implicit_returns() {
             self.return_type_for_implicit_return_check(
                 annotated_return_type.unwrap_or(return_type),
@@ -1886,6 +1894,7 @@ impl<'a> CheckerState<'a> {
             ts7030_check_type,
             has_type_annotation,
             function_is_generator,
+            has_generator_return_type_for_completeness,
         );
     }
 

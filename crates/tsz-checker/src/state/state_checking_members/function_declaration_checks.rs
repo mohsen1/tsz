@@ -1371,6 +1371,7 @@ impl<'a> CheckerState<'a> {
             check_return_type,
             has_declared_return,
             is_generator,
+            has_generator_return_type_for_completeness,
         );
     }
 

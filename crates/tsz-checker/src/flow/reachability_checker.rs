@@ -1198,16 +1198,32 @@ impl<'a> CheckerState<'a> {
     /// every return statement in `checkReturnStatement` regardless of
     /// reachability, so an unreachable bare `return;` (after a `return`/`throw`)
     /// still reports.
+    ///
+    /// A generator's bare `return;` needs a real completion type before it can
+    /// require a value. When `R` was actually extracted from a Generator-shaped
+    /// annotation (`has_generator_return_type_for_completeness`), the ordinary
+    /// `check_return_type` skip check below is authoritative, exactly like the
+    /// fall-off-the-end site. Without that extraction (unannotated, or an
+    /// annotation that isn't Generator-shaped), `check_return_type` falls back
+    /// to `UNKNOWN` — never void/any/undefined — so the ordinary skip check
+    /// would incorrectly treat every such generator as value-requiring. `tsc`
+    /// only requires a value there when the body actually has some other
+    /// value-returning `return <expr>;`; a bare-return-only (or fall-off-only)
+    /// unannotated generator body never does.
     pub(crate) fn report_no_implicit_return_bare_returns(
         &mut self,
         body_idx: NodeIndex,
         check_return_type: TypeId,
         has_type_annotation: bool,
         is_generator: bool,
+        has_generator_return_type_for_completeness: bool,
     ) {
         if self.ctx.strict_null_checks()
             || !self.ctx.no_implicit_returns()
             || check_return_type == TypeId::NEVER
+            || (is_generator
+                && !has_generator_return_type_for_completeness
+                && !self.body_has_return_with_value(body_idx))
             || self.should_skip_no_implicit_return_check(
                 check_return_type,
                 has_type_annotation,

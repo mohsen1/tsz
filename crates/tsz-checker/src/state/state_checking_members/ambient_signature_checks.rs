@@ -1118,6 +1118,13 @@ impl<'a> CheckerState<'a> {
 
             self.ctx.restore_async_context(saved_async_depth);
 
+            // Mirrors the free-function-declaration gate: a generator method's
+            // bare `return;` only requires a value when the annotation itself
+            // supplies a Generator-shaped completion type.
+            let has_generator_return_type_for_completeness = is_generator
+                && self
+                    .generator_return_type_for_implicit_return_check(return_type)
+                    .is_some();
             let mut check_return_type =
                 self.return_type_for_implicit_return_check(return_type, is_async, is_generator);
             if is_async
@@ -1203,6 +1210,7 @@ impl<'a> CheckerState<'a> {
                 check_return_type,
                 has_type_annotation,
                 is_generator,
+                has_generator_return_type_for_completeness,
             );
 
             self.ctx.pop_yield_type();
@@ -1751,6 +1759,7 @@ impl<'a> CheckerState<'a> {
                     accessor.body,
                     check_return_type,
                     has_type_annotation,
+                    false, // accessors cannot be generators
                     false, // accessors cannot be generators
                 );
             }

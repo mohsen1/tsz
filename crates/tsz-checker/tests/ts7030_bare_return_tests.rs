@@ -281,3 +281,82 @@ fn ts7030_silent_for_setter_bare_return() {
     let diags = check(source, no_implicit_returns_nonstrict());
     assert_eq!(diagnostic_count(&diags, 7030), 0);
 }
+
+// -------------------------------------------------------------------------
+// Generators — regression coverage for #17444 (a spurious TS7030 the
+// bare-return collector introduced on generator bodies, net -1 conformance).
+//
+// A generator's bare `return;` only requires a value when a Generator-shaped
+// annotation actually supplies a non-void/any/undefined completion (`R`)
+// type — the same rule `check_function_return_paths` already applies to the
+// fall-off-the-end source. Without that extraction (unannotated, or an
+// annotation that isn't Generator-shaped), the effective completion type
+// falls back to `UNKNOWN`, which is never void/any/undefined on its own, so
+// whether a value is actually required instead follows whether the body has
+// some other value-returning `return <expr>;` — exactly like a non-generator
+// function's ordinary "has a return statement" gate.
+//
+// Oracle: `tsc` 6.0.2 (`--strict false --noImplicitReturns --target esnext`).
+// -------------------------------------------------------------------------
+
+/// An unannotated generator whose only return is a bare `return;` (no value
+/// anywhere in the body) never reports TS7030 — its completion type can't be
+/// extracted, and there is no value-returning return to require one.
+#[test]
+fn ts7030_silent_for_unannotated_generator_bare_return_only() {
+    let source = "function* g(x: boolean) {\n    if (x) {\n        yield 1;\n        return;\n    }\n    yield 2;\n}\n";
+    let diags = check(source, no_implicit_returns_nonstrict());
+    assert_eq!(diagnostic_count(&diags, 7030), 0, "diags: {diags:?}");
+}
+
+/// A generator annotated `Generator<Y, void, N>` is exempt from the
+/// bare-return TS7030 (the ordinary void-return skip), independent of the
+/// new generator completion-type gate.
+#[test]
+fn ts7030_silent_for_generator_void_return_type_bare_return() {
+    let source = "function* g(x: boolean): Generator<number, void, unknown> {\n    if (x) {\n        yield 1;\n        return;\n    }\n    yield 2;\n}\n";
+    let diags = check(source, no_implicit_returns_nonstrict());
+    assert_eq!(diagnostic_count(&diags, 7030), 0, "diags: {diags:?}");
+}
+
+/// An *annotated* generator whose declared completion type genuinely
+/// requires a value (`Generator<Y, number, N>`) still reports TS7030 at a
+/// bare `return;`, even though a sibling branch returns a value.
+#[test]
+fn ts7030_fires_for_annotated_generator_bare_return_with_value_return() {
+    let source = "function* g(x: boolean): Generator<number, number, unknown> {\n    if (x) {\n        yield 1;\n        return;\n    }\n    yield 2;\n    return 6;\n}\n";
+    let diags = check(source, no_implicit_returns_nonstrict());
+    assert_eq!(diagnostic_count(&diags, 7030), 1, "diags: {diags:?}");
+    assert_ts7030_exactly_at_bare_returns(source, &diags);
+}
+
+/// An unannotated generator that DOES have a value-returning `return <expr>;`
+/// somewhere still reports the fall-off-the-end TS7030 (unaffected by the
+/// bare-return gate — this fixture has no bare return at all).
+#[test]
+fn ts7030_fires_for_unannotated_generator_fall_off_with_value_return() {
+    let source = "function* g(x: boolean) {\n    if (x) {\n        yield 1;\n        return 5;\n    }\n    yield 2;\n}\n";
+    let diags = check(source, no_implicit_returns_nonstrict());
+    assert_eq!(diagnostic_count(&diags, 7030), 1, "diags: {diags:?}");
+}
+
+/// An unannotated generator with both a bare `return;` and a sibling
+/// value-returning `return <expr>;` reports TS7030 at the bare return — the
+/// presence of a value-returning return elsewhere is what makes a value
+/// required, not the (unextractable) completion type alone.
+#[test]
+fn ts7030_fires_for_unannotated_generator_bare_return_with_value_return() {
+    let source = "function* g(x: boolean) {\n    if (x) {\n        yield 1;\n        return;\n    }\n    yield 2;\n    return 6;\n}\n";
+    let diags = check(source, no_implicit_returns_nonstrict());
+    assert_eq!(diagnostic_count(&diags, 7030), 1, "diags: {diags:?}");
+    assert_ts7030_exactly_at_bare_returns(source, &diags);
+}
+
+/// Anti-hardcoding: renaming the generator and its parameter must not change
+/// the outcome for the silent unannotated case.
+#[test]
+fn ts7030_generator_gate_is_binder_name_independent() {
+    let source = "function* widget(flag: boolean) {\n    if (flag) {\n        yield 99;\n        return;\n    }\n    yield 1;\n}\n";
+    let diags = check(source, no_implicit_returns_nonstrict());
+    assert_eq!(diagnostic_count(&diags, 7030), 0, "diags: {diags:?}");
+}
