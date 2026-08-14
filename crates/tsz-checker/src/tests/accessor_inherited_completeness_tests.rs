@@ -162,3 +162,45 @@ fn both_annotated_fallthrough_uses_own_annotation_not_setter() {
         &[],
     );
 }
+
+/// A `get`/`set` pair keyed by a **const-enum member** computed name
+/// (`[Gate.Open]`) is one property: the unannotated getter inherits the
+/// annotated setter's parameter type, so a getter body returning the wrong
+/// domain is `TS2322`, exactly as for a plain identifier or string-literal key.
+/// The computed key resolves through the qualified-entity-name path, not the
+/// identifier-only one — `[Gate.Open]` is a property-access expression, which
+/// `binder.resolve_identifier` alone cannot bind, so the pair was previously
+/// never matched and the mismatch went undetected. Oracle-verified vs `tsc`.
+#[test]
+fn const_enum_computed_key_pairs_getter_and_setter_reports_ts2322() {
+    assert_codes(
+        r"
+        const enum Gate { Shut = 0, Open = 1 }
+        class Portal {
+            get [Gate.Open]() {
+                return true;
+            }
+            set [Gate.Open](swing: number) {}
+        }
+        ",
+        &[2322],
+    );
+}
+
+/// The same const-enum-keyed pair when the getter body *does* match the
+/// setter's parameter domain: pairing must not fabricate a spurious mismatch.
+#[test]
+fn const_enum_computed_key_pairs_getter_and_setter_compatible_is_clean() {
+    assert_codes(
+        r"
+        const enum Lever { Down = 2, Up = 3 }
+        class Switchboard {
+            get [Lever.Up]() {
+                return 7;
+            }
+            set [Lever.Up](notch: number) {}
+        }
+        ",
+        &[],
+    );
+}
