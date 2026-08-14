@@ -502,6 +502,9 @@ path = "tests/nolib_user_array_union_member_access_tests.rs"
 name = "noinfer_diagnostic_display_tests"
 path = "tests/noinfer_diagnostic_display_tests.rs"
 [[test]]
+name = "noinfer_callback_return_literal_widening_display_tests"
+path = "tests/noinfer_callback_return_literal_widening_display_tests.rs"
+[[test]]
 name = "array_generic_shorthand_canonical_tests"
 path = "tests/array_generic_shorthand_canonical_tests.rs"
 [[test]]

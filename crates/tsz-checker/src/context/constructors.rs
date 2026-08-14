@@ -302,6 +302,7 @@ impl<'a> CheckerContext<'a> {
             symbol_flow_confirmed: RefCell::new(crate::context::CowCache::default()),
             daa_error_nodes: crate::context::CowCache::default(),
             optional_chain_marker_only_nodes: FxHashSet::default(),
+            noinfer_generic_return_bodies: FxHashSet::default(),
             deferred_ts2454_errors: Vec::new(),
             flow_narrowed_nodes: crate::context::CowCache::new(
                 FxHashSet::with_capacity_and_hasher(256, Default::default()),

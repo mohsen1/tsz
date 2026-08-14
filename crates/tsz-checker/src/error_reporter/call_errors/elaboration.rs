@@ -1151,7 +1151,20 @@ impl<'a> CheckerState<'a> {
         //   `const f: (a: number) => string = (a) => a + 1`
         //   → TS2322 at `a + 1` with "Type 'number' is not assignable to type 'string'."
         let display_target = self.evaluate_type_with_env(expected_return_type);
-        if self.array_elaboration_widening_required_for_display(body_type, display_target) {
+        // A callback body whose contextual return was a `NoInfer<T>` over an
+        // inferred `T` has its fresh return literal widened by tsc's
+        // `getReturnTypeFromBody` while `T` is unfixed. The default anchored
+        // renderer re-reads the raw literal spelling from the body's AST node, so
+        // render the widened source type directly instead to match tsc (#17501).
+        if let Some(widened_source) =
+            self.noinfer_generic_return_body_widened_display(body_idx, body_type)
+        {
+            self.error_type_not_assignable_at_with_widened_source_display(
+                widened_source,
+                display_target,
+                body_idx,
+            );
+        } else if self.array_elaboration_widening_required_for_display(body_type, display_target) {
             self.error_type_not_assignable_at_with_widened_source_display(
                 body_type,
                 display_target,
