@@ -80,6 +80,20 @@ impl Project {
                 // declaration, which either does nothing at runtime for a
                 // pure type or is rejected outright. See `jsdoc_typedef` on
                 // `ImportCandidate`.
+                //
+                // This inline type query is always extension-less
+                // (`import("./a").T`, never `import("./a.js").T`), unlike a
+                // real added import statement, which keeps a JS target's
+                // `.js` per the ending-preference sniffing in
+                // `relative_import_style` (see
+                // `jsconfig_paths_mapping_outranks_relative_for_shortest_preference`,
+                // which asserts `.js` is kept for a plain JS-to-JS relative
+                // fallback). tsc's own inline-import-type rewrite for an
+                // unexported JSDoc typedef never runs that sniffing — it
+                // always emits a bare specifier.
+                let module_specifier =
+                    tsz_common::file_extensions::strip_known_extension(&module_specifier)
+                        .to_string();
                 sink.push(ImportCandidate {
                     module_specifier,
                     local_name: symbol_name.to_string(),
