@@ -72,6 +72,15 @@ pub(crate) struct InferenceCandidate {
     /// Candidate came from array element inference (`T[]` vs a literal array).
     /// tsc's BCT widening applies to these in `NoInfer<T>` positions.
     pub(crate) from_array_element: bool,
+    /// Candidate came from a tuple-element or rest/spread-element position
+    /// (`[T, ...U[]]`, `...a: T[]`) rather than a plain top-level argument.
+    /// tsc infers such element type parameters as the union of the element
+    /// types, so these candidates keep the order-independent union in the
+    /// common-supertype fallback rather than the argument-order leftmost-wins
+    /// used for plain naked arguments (#17484). Kept separate from
+    /// `from_array_element` so the #9667 / #17364 array-element gates are
+    /// unaffected.
+    pub(crate) from_element: bool,
     /// Candidate came from a readonly array-like source. Used when mixed
     /// co/contra inference would otherwise replace a direct readonly argument
     /// with a mutable callback parameter candidate.
@@ -355,6 +364,13 @@ pub(crate) struct InferenceContext<'a> {
     pub(crate) vars_with_substituted_candidates: FxHashSet<InferenceVar>,
     /// Set during array element inference so candidates get `from_array_element = true`.
     pub(crate) in_array_element_context: bool,
+    /// Set while inference descends into a tuple-element or rest/spread-element
+    /// position (`[T, ...U[]]`, `...a: T[]`), so candidates get
+    /// `from_element = true`. Distinct from `in_array_element_context` so the
+    /// array-element first-wins / ranked gates (#9667, #17364) are unaffected;
+    /// this flag only excludes element-position candidates from the plain-naked
+    /// argument leftmost-wins fallback (#17484).
+    pub(crate) in_element_context: bool,
     /// Set while inference is descending through a `readonly` array/tuple source
     /// (e.g. from an `as const` argument or a `readonly T[]` annotation). Literal
     /// candidates collected in this context are non-fresh — tsc does not widen the
@@ -450,6 +466,7 @@ impl<'a> InferenceContext<'a> {
             top_level_in_return_type_unfixed: FxHashSet::default(),
             vars_with_substituted_candidates: FxHashSet::default(),
             in_array_element_context: false,
+            in_element_context: false,
             in_readonly_source_context: false,
             implied_arities: FxHashMap::default(),
             original_type_param_for_var: FxHashMap::default(),
@@ -481,6 +498,7 @@ impl<'a> InferenceContext<'a> {
             top_level_in_return_type_unfixed: FxHashSet::default(),
             vars_with_substituted_candidates: FxHashSet::default(),
             in_array_element_context: false,
+            in_element_context: false,
             in_readonly_source_context: false,
             implied_arities: FxHashMap::default(),
             original_type_param_for_var: FxHashMap::default(),
@@ -868,6 +886,7 @@ impl<'a> InferenceContext<'a> {
                 object_property_name: candidate.object_property_name,
                 source_is_type_annotation: candidate.source_is_type_annotation,
                 from_array_element: candidate.from_array_element,
+                from_element: candidate.from_element,
                 from_readonly_source: candidate.from_readonly_source,
             });
         }
@@ -1430,6 +1449,7 @@ impl<'a> InferenceContext<'a> {
             object_property_name: None,
             source_is_type_annotation: self.source_is_type_annotation,
             from_array_element: self.in_array_element_context,
+            from_element: self.in_element_context,
             from_readonly_source: self.candidate_is_from_readonly_source(ty),
         };
         self.table.union_value(
@@ -1532,6 +1552,7 @@ impl<'a> InferenceContext<'a> {
             object_property_name: context.object_property_name,
             source_is_type_annotation: self.source_is_type_annotation,
             from_array_element: self.in_array_element_context,
+            from_element: self.in_element_context,
             from_readonly_source: self.candidate_is_from_readonly_source(ty),
         };
         if self.collects_contra_candidates() {

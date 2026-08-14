@@ -25,7 +25,26 @@ use super::infer::{InferenceContext, InferenceError};
 
 impl InferenceContext<'_> {
     /// Infer from tuple types, handling variadic (rest) elements.
+    ///
+    /// Candidates collected while inferring tuple element / rest positions are
+    /// flagged `from_element` (via `in_element_context`), so the common-supertype
+    /// fallback keeps tsc's order-independent union for them rather than the
+    /// plain-argument leftmost-wins (`[T, ...U[]]` inference must not first-win
+    /// the rest element, #17484).
     pub(super) fn infer_tuples(
+        &mut self,
+        source_elems: TupleListId,
+        target_elems: TupleListId,
+        priority: InferencePriority,
+    ) -> Result<(), InferenceError> {
+        let prev_element_context = self.in_element_context;
+        self.in_element_context = true;
+        let result = self.infer_tuples_impl(source_elems, target_elems, priority);
+        self.in_element_context = prev_element_context;
+        result
+    }
+
+    fn infer_tuples_impl(
         &mut self,
         source_elems: TupleListId,
         target_elems: TupleListId,

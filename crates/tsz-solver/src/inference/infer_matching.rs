@@ -185,9 +185,12 @@ impl<'a> InferenceContext<'a> {
             // Array types: recurse into element types.
             (Some(TypeData::Array(source_elem)), Some(TypeData::Array(target_elem))) => {
                 let prev = self.in_array_element_context;
+                let prev_element = self.in_element_context;
                 self.in_array_element_context = true;
+                self.in_element_context = true;
                 self.infer_from_types(source_elem, target_elem, priority)?;
                 self.in_array_element_context = prev;
+                self.in_element_context = prev_element;
             }
 
             // Tuple types: recurse into elements
@@ -219,7 +222,11 @@ impl<'a> InferenceContext<'a> {
                         _ => false,
                     };
                     if rest_is_inference_param {
-                        self.infer_from_types(source, rest_type, priority)?;
+                        let prev_element = self.in_element_context;
+                        self.in_element_context = true;
+                        let r = self.infer_from_types(source, rest_type, priority);
+                        self.in_element_context = prev_element;
+                        r?;
                     }
                 }
             }

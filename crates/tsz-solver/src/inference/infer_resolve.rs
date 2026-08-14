@@ -840,6 +840,29 @@ impl<'a> InferenceContext<'a> {
             // (first-wins from the tournament).
             let widened_candidates =
                 self.union_object_and_array_literal_candidates(&widened_candidates);
+            // When a candidate was inferred from an array-literal element position
+            // (a `T[]` parameter), tsc's `getCommonSupertype` fixes `T` to the
+            // leftmost candidate rather than unioning incompatible primitives.
+            // Surface that fact so the supertype fallback matches tsc and a
+            // conflicting naked argument is reported (issue #9667).
+            let has_array_element_candidate =
+                filtered_no_never.iter().any(|c| c.from_array_element);
+            // Every candidate came from a plain argument-expression position — no
+            // object-property, array-element, index-signature or type-annotation
+            // provenance. Only in that provenance is tsz's candidate order the
+            // source argument order that tsc's `getCommonSupertype` `reduceLeft`
+            // keys on, so the primitive-like leftmost-wins fallback is safe to
+            // apply (issue #17484). Object-property / tuple-element candidates
+            // are primitive-like too but their tsz order does not match tsc's, so
+            // they keep the order-independent union.
+            let all_from_plain_argument = !filtered_no_never.is_empty()
+                && filtered_no_never.iter().all(|c| {
+                    !c.from_object_property
+                        && !c.from_array_element
+                        && !c.from_element
+                        && !c.from_index_signature
+                        && !c.source_is_type_annotation
+                });
             // Distinguish the *all-from-array-element* case (e.g. both `V`
             // candidates of `new Map([["", true], ["", 0]])`, one per tuple leg)
             // from the mixed array+naked case (#9667). tsc id-sorts the former
@@ -848,7 +871,12 @@ impl<'a> InferenceContext<'a> {
             // takes the ranked-winner path (#17364).
             let all_from_array_element = !filtered_no_never.is_empty()
                 && filtered_no_never.iter().all(|c| c.from_array_element);
-            self.get_common_supertype_for_inference(&widened_candidates, all_from_array_element)
+            self.get_common_supertype_for_inference(
+                &widened_candidates,
+                has_array_element_candidate,
+                all_from_plain_argument,
+                all_from_array_element,
+            )
         };
         // When candidates come from index signature inference (e.g., inferring T from
         // source properties against target `{ [x: string]: T }`), tsc creates a union
