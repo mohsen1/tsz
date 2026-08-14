@@ -179,3 +179,51 @@ fn plain_boolean_annotation_still_widens_string_literal() {
         "Type 'string' is not assignable to type 'boolean'",
     );
 }
+
+// --- inference-only `NoInfer<…>` wrappers on the target property -------------
+//
+// A target property typed `NoInfer<T>` (with `T` fixed to a literal by a
+// sibling argument) is the same contextual domain as its inner literal — the
+// wrapper is inference-only and carries no domain of its own. The domain
+// decision must therefore see through it: a same-domain literal source is
+// preserved (`{ p: "beta" }` against `NoInfer<"alpha">` keeps `"beta"`, not
+// `string`), while a cross-domain source still widens (`{ slot: "beta" }`
+// against `NoInfer<1>` renders `string`). Regression witnesses for the
+// `conformance/…/noInfer.ts` `foo4` shape (`b: { x: NoInfer<T> }`), which
+// #17488 widened to `string` because the wrapper hid the literal's domain from
+// `are_same_base_literal_kind`. Every message below is oracle-verified against
+// `typescript@7.0.2`; binder names are varied so the rule is proven structural.
+
+#[test]
+fn string_literal_against_noinfer_string_literal_target_is_preserved() {
+    assert_source_display(
+        r#"declare function apply<T extends string>(a: T, b: { p: NoInfer<T> }): void;
+           apply("alpha", { p: "beta" });"#,
+        "Type '\"beta\"' is not assignable to type '\"alpha\"'",
+    );
+    assert_no_source_display(
+        r#"declare function apply<T extends string>(a: T, b: { p: NoInfer<T> }): void;
+           apply("alpha", { p: "beta" });"#,
+        "Type 'string'",
+    );
+}
+
+#[test]
+fn string_literal_against_noinfer_numeric_literal_target_still_widens() {
+    // The `NoInfer<U>` target resolves to the numeric literal `1`; the string
+    // source's domain is genuinely rejected, so the widen survives the unwrap.
+    assert_source_display(
+        r#"declare function coerce<U extends number>(first: U, second: { slot: NoInfer<U> }): void;
+           coerce(1, { slot: "beta" });"#,
+        "Type 'string' is not assignable to type '1'",
+    );
+}
+
+#[test]
+fn number_literal_against_noinfer_numeric_literal_target_is_preserved() {
+    assert_source_display(
+        r#"declare function coerce<U extends number>(first: U, second: { slot: NoInfer<U> }): void;
+           coerce(1, { slot: 7 });"#,
+        "Type '7' is not assignable to type '1'",
+    );
+}

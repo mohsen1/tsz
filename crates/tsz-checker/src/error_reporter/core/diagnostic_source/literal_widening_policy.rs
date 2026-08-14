@@ -82,6 +82,19 @@ impl<'a> CheckerState<'a> {
     /// `contextual_type_allows_literal` gateway (tsc's `isLiteralOfContextualType`)
     /// so it is a structural query over the two types, never a predicate over
     /// rendered text.
+    ///
+    /// The `target` is first resolved to the concrete contextual type tsc
+    /// compares against: env-dependent forms (type-parameter substitutions,
+    /// `Lazy` refs, `keyof`/indexed-access) are evaluated, and inference-only
+    /// `NoInfer<…>` / `readonly` wrappers — which carry no literal domain of
+    /// their own — are peeled. Without this, a target property typed
+    /// `NoInfer<"foo">` (`foo4` in `conformance/…/noInfer.ts`,
+    /// `b: { x: NoInfer<T> }`) reaches the domain check as an opaque wrapper
+    /// whose string literal is invisible to `are_same_base_literal_kind`, so the
+    /// source `"bar"` is spuriously widened to `string` even though tsc keeps
+    /// `"bar"` (both live in the string domain the target admits). The sibling
+    /// call-argument policy (`source_literal_primitive_matches_target_literal`)
+    /// resolves its target the same way before scanning it.
     pub(in crate::error_reporter) fn scalar_source_widens_across_literal_domain(
         &mut self,
         source: TypeId,
@@ -95,7 +108,32 @@ impl<'a> CheckerState<'a> {
                     | tsz_solver::LiteralValue::BigInt(_)
             )
         );
-        is_widenable_scalar && !self.contextual_type_allows_literal(target, source)
+        if !is_widenable_scalar {
+            return false;
+        }
+        let resolved_target = self.resolve_contextual_domain_target(target);
+        !self.contextual_type_allows_literal(resolved_target, source)
+    }
+
+    /// Resolve `target` to the concrete contextual type used for a literal
+    /// domain decision: evaluate env-dependent forms, then strip inference-only
+    /// `NoInfer<…>` / `readonly` wrappers that contribute no domain of their
+    /// own. Re-evaluating after each peel handles a wrapper around an
+    /// env-dependent inner (e.g. `NoInfer<T>` with `T` fixed to `"foo"`).
+    fn resolve_contextual_domain_target(&mut self, target: TypeId) -> TypeId {
+        let evaluated = self.evaluate_type_with_env(target);
+        let mut resolved = self.evaluate_type_for_assignability(evaluated);
+        while let Some(inner) =
+            crate::query_boundaries::common::unwrap_readonly_or_noinfer(self.ctx.types, resolved)
+        {
+            let inner_evaluated = self.evaluate_type_with_env(inner);
+            let inner = self.evaluate_type_for_assignability(inner_evaluated);
+            if inner == resolved {
+                break;
+            }
+            resolved = inner;
+        }
+        resolved
     }
 
     /// Returns `true` when the source literal should be preserved verbatim
