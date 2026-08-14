@@ -552,6 +552,33 @@ impl<'a> CheckerState<'a> {
             self.argument_not_assignable_code_and_template(arg_type, param_type);
         let message = format_message(msg_template, &[&arg_str, &param_str]);
 
+        let Some(anchor) = self.resolve_diagnostic_anchor(idx, DiagnosticAnchorKind::Exact) else {
+            return;
+        };
+
+        // Attach tsc's bare-type-parameter-target elaboration (TS5075/TS5082)
+        // when the parameter is itself a bare type parameter. `tsc`'s
+        // `reportRelationError` appends this note for *every* failed relation to
+        // a bare type-parameter target, regardless of whether the failing
+        // relation is a call argument, a constructor (`new`) argument, or an
+        // assignment. The assignment (TS2322) path and the call-argument
+        // "preserve param display" path already emit it; this shared emitter is
+        // the sink for the remaining call/`new`-argument callers, which dropped
+        // the note entirely (#17447). The helper is a no-op for concrete
+        // targets, so ordinary TS2345s are unaffected.
+        let extra_related = self
+            .unrelated_type_parameter_target_related_info(
+                arg_type,
+                param_type,
+                &arg_str,
+                &param_str,
+                anchor.start,
+                anchor.length,
+                0,
+            )
+            .into_iter()
+            .collect::<Vec<_>>();
+
         let request = if let Some(reason) = analysis.failure_reason {
             DiagnosticRenderRequest::with_failure_reason(
                 DiagnosticAnchorKind::Exact,
@@ -563,9 +590,10 @@ impl<'a> CheckerState<'a> {
             )
         } else {
             DiagnosticRenderRequest::simple(DiagnosticAnchorKind::Exact, code, message)
-        };
+        }
+        .with_extra_related(extra_related);
 
-        self.emit_render_request(idx, request);
+        self.emit_render_request_at_anchor(anchor, request);
     }
 
     /// Pick the diagnostic code and message template for an argument-not-assignable error.
