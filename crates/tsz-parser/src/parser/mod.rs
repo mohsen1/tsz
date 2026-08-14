@@ -342,6 +342,10 @@ mod regex_class_string_disjunction_syntax_character_tests;
 mod regex_negated_class_may_contain_strings_tests;
 
 #[cfg(test)]
+#[path = "../../tests/regex_class_set_operator_continuation_tests.rs"]
+mod regex_class_set_operator_continuation_tests;
+
+#[cfg(test)]
 #[path = "../../tests/regex_class_set_operator_mixing_tests.rs"]
 mod regex_class_set_operator_mixing_tests;
 
