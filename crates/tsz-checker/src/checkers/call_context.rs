@@ -1346,6 +1346,53 @@ impl<'a> CheckerState<'a> {
             .collect()
     }
 
+    /// Whether the contextual-return override would overwrite a type parameter
+    /// that an *argument* already constrains.
+    ///
+    /// tsc resolves a call's type arguments from arguments (`NakedTypeVariable`
+    /// priority) strictly before the contextual return type (`ReturnType`
+    /// priority). So when a return type parameter also appears in a *parameter*
+    /// position, the argument-derived inference wins — even when that inference
+    /// is `unknown`. For example `generic<T>(x: T): T` called with an
+    /// `unknown`-typed argument infers `T = unknown`; assigning the `unknown`
+    /// result to a concrete annotation must still report `TS2322`, and the
+    /// contextual annotation must not retroactively fill `T`.
+    ///
+    /// Only a return type parameter with *no* parameter occurrence (e.g.
+    /// `f<T>(): T`) may be filled from the contextual return type, because no
+    /// argument can constrain it.
+    ///
+    /// `substitution` is the return-context substitution about to be applied;
+    /// returns `true` when at least one type parameter it would fill appears in
+    /// both the return type and a parameter position (argument-owned), meaning
+    /// the override must be skipped.
+    pub(crate) fn contextual_return_substitution_is_argument_owned(
+        &mut self,
+        callee_shape: &tsz_solver::FunctionShape,
+        substitution: &common::TypeSubstitution,
+    ) -> bool {
+        // Type parameters the substitution would fill that appear in the return
+        // type.
+        let return_type_param_names: FxHashSet<Atom> =
+            common::collect_referenced_types(self.ctx.types, callee_shape.return_type)
+                .into_iter()
+                .filter_map(|ty| common::type_param_info(self.ctx.types, ty).map(|info| info.name))
+                .filter(|name| substitution.get(*name).is_some())
+                .collect();
+        if return_type_param_names.is_empty() {
+            return false;
+        }
+        // Argument-owned iff any such type parameter also appears in a parameter
+        // position, where an argument could have constrained it.
+        callee_shape.params.iter().any(|param| {
+            common::references_any_type_param_named(
+                self.ctx.types,
+                param.type_id,
+                &return_type_param_names,
+            )
+        })
+    }
+
     pub(crate) fn should_strip_sensitive_placeholder_substitution(
         &mut self,
         callee_shape: &tsz_solver::FunctionShape,

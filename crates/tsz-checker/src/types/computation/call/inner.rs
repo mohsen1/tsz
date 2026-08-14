@@ -1525,7 +1525,15 @@ impl<'a> CheckerState<'a> {
                         result = CallResult::Success(instantiated_return);
                     }
                 }
+                // A genuine argument-derived result (even `unknown`) must not be
+                // overwritten by the contextual return type; only a return-only
+                // type parameter may be filled from it. See
+                // `contextual_return_substitution_is_argument_owned`.
                 if let CallResult::Success(current_return) = result
+                    && !self.contextual_return_substitution_is_argument_owned(
+                        &shape,
+                        &return_context_substitution,
+                    )
                     && current_return != shape.return_type
                     && common::contains_type_by_id(self.ctx.types, current_return, TypeId::UNKNOWN)
                     && contextual_params_fit_args
