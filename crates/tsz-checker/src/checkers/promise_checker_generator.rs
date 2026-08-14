@@ -62,4 +62,47 @@ impl CheckerState<'_> {
         }
         TypeId::ANY
     }
+
+    /// The generator `TReturn` the per-`return;` (bare-return) TS7030 check
+    /// compares against, mirroring tsc's
+    /// `unwrapReturnType(getReturnTypeOfSignature(func))` in
+    /// `isUnwrappedReturnTypeUndefinedVoidOrAny` / `checkReturnStatement`.
+    ///
+    /// tsc unwraps the signature's `Generator<Y, R, N>` to its `TReturn`
+    /// iteration type; when that iteration type cannot be determined
+    /// (`getIterationTypeOfGeneratorFunctionReturnType` returns nothing) it
+    /// yields `errorType`, an `any`, which *suppresses* TS7030. That is the
+    /// crucial difference from the shared `return_type_for_implicit_return_check`,
+    /// which falls back to `unknown` — a sentinel the TS2355/TS2366 paths rely
+    /// on but one that `should_skip_no_implicit_return_check` does not treat as
+    /// skip-worthy, so a bare `return;` would spuriously report.
+    ///
+    /// - Annotated generator: `effective_return_type` is the annotation's
+    ///   `Generator<Y, R, N>`; `generator_return_completeness` is its extracted
+    ///   `TReturn`. When extraction fails (`None`) fall back to `any` (tsc's
+    ///   `errorType`) — e.g. `Generator<number>`, whose `TReturn` defaults to
+    ///   `any`, or a non-generator annotation.
+    /// - Unannotated generator: the `Generator<Y, R, N>` wrapper is synthesized
+    ///   only *after* this check runs, so `effective_return_type` already holds
+    ///   the inferred `TReturn` directly — it must not be unwrapped again, and
+    ///   `generator_return_completeness` is `None` here.
+    ///
+    /// The caller passes the `TReturn` it already extracted (rather than having
+    /// this method re-extract) because
+    /// [`Self::generator_return_type_for_implicit_return_check`] is not
+    /// idempotent: evaluating a `Generator<Y, R, N>` can expand it into a
+    /// structural object and lose the `Application` wrapper that carries
+    /// `TReturn`, so a second extraction of the same type can spuriously fail.
+    pub(crate) const fn generator_bare_return_check_type(
+        &self,
+        generator_return_completeness: Option<TypeId>,
+        effective_return_type: TypeId,
+        has_declared_return: bool,
+    ) -> TypeId {
+        match generator_return_completeness {
+            Some(t) => t,
+            None if has_declared_return => TypeId::ANY,
+            None => effective_return_type,
+        }
+    }
 }
