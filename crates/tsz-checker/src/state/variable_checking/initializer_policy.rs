@@ -130,31 +130,6 @@ impl<'a> CheckerState<'a> {
         }
         // If there's a type annotation, that determines the type (even for 'any')
         if has_type_annotation {
-            if self.ctx.no_implicit_any()
-                && let Some(sf) = self.ctx.arena.source_files.first()
-                && let Some(jsdoc) = self.find_jsdoc_for_function(facts.decl_idx)
-                && CheckerState::jsdoc_type_tag_function_missing_return(&jsdoc)
-                && let Some((_, comment_pos)) = self.try_jsdoc_with_ancestor_walk_and_pos(
-                    facts.decl_idx,
-                    &sf.comments,
-                    &sf.text,
-                )
-                && let Some(function_pos) =
-                    CheckerState::jsdoc_type_tag_function_keyword_pos_in_source(
-                        &sf.text,
-                        comment_pos,
-                    )
-            {
-                self.ctx.error(
-                    function_pos,
-                    "function".len() as u32,
-                    crate::diagnostics::format_message(
-                        crate::diagnostics::diagnostic_messages::FUNCTION_TYPE_WHICH_LACKS_RETURN_TYPE_ANNOTATION_IMPLICITLY_HAS_AN_RETURN_TYPE,
-                        &["any"],
-                    ),
-                    crate::diagnostics::diagnostic_codes::FUNCTION_TYPE_WHICH_LACKS_RETURN_TYPE_ANNOTATION_IMPLICITLY_HAS_AN_RETURN_TYPE,
-                );
-            }
             if facts.initializer.is_some() {
                 // Evaluate the declared type to resolve conditionals before using as context.
                 // This ensures types like `type C = string extends string ? "yes" : "no"`

@@ -1292,60 +1292,6 @@ impl<'a> CheckerState<'a> {
         expr.eq_ignore_ascii_case("function") || expr.eq_ignore_ascii_case("Function")
     }
 
-    pub(crate) fn jsdoc_type_tag_function_missing_return(jsdoc: &str) -> bool {
-        let Some(expr) = Self::jsdoc_extract_type_tag_expr_braceless(jsdoc) else {
-            return false;
-        };
-        let expr = expr.trim();
-        let Some(rest) = expr.strip_prefix("function") else {
-            return false;
-        };
-        let rest = rest.trim_start();
-        if !rest.starts_with('(') {
-            return false;
-        }
-        let rest = &rest[1..];
-        // Closure-style constructor types like `function(new: object, ...)` have
-        // an implied return type (the type after `new:`).  They never need a
-        // separate `:returnType` suffix, so they should not trigger TS7014.
-        if rest.trim_start().starts_with("new:") || rest.trim_start().starts_with("new :") {
-            return false;
-        }
-        let mut depth = 1u32;
-        let mut close_idx = None;
-        for (i, ch) in rest.char_indices() {
-            match ch {
-                '(' => depth += 1,
-                ')' => {
-                    depth -= 1;
-                    if depth == 0 {
-                        close_idx = Some(i);
-                        break;
-                    }
-                }
-                _ => {}
-            }
-        }
-        let Some(close_idx) = close_idx else {
-            return false;
-        };
-        !rest[close_idx + 1..].trim_start().starts_with(':')
-    }
-
-    pub(crate) fn jsdoc_type_tag_function_keyword_pos_in_source(
-        source_text: &str,
-        comment_pos: u32,
-    ) -> Option<u32> {
-        let comment_start = comment_pos as usize;
-        let comment_text = &source_text[comment_start..];
-        let comment_end = comment_text.find("*/")?;
-        let comment_text = &comment_text[..comment_end];
-        let tag_pos = comment_text.find("@type")?;
-        let rest = &comment_text[tag_pos + "@type".len()..];
-        let fn_rel = rest.find("function")?;
-        Some(comment_pos + (tag_pos + "@type".len() + fn_rel) as u32)
-    }
-
     /// Extract the return type string from `@type {function(): ReturnType}`.
     /// Returns `Some(return_type_str)` if the JSDoc `@type` is a function type
     /// with an explicit return type annotation.

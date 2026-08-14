@@ -314,9 +314,6 @@ impl<'a> CheckerState<'a> {
             && (!is_closure || should_check_closure_jsdoc_param_names)
         {
             self.check_jsdoc_param_tag_names(jsdoc, &func.parameters.nodes, func_idx);
-            if !is_closure {
-                self.check_jsdoc_param_function_types_missing_return_type(jsdoc, func_idx);
-            }
         }
         if !is_closure && self.is_js_file() {
             self.check_jsdoc_overload_implicit_any_return(func_idx);
