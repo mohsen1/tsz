@@ -92,6 +92,62 @@ impl<'a> CheckerState<'a> {
         self.error_argument_not_assignable_at_impl(arg_type, param_type, idx, true);
     }
 
+    /// Emit an argument-not-assignable diagnostic (TS2345/TS2379) at `arg_idx`
+    /// from pre-computed source/target displays, attaching `tsc`'s
+    /// bare-type-parameter-target caveat (TS5075/TS5082) beneath the head when
+    /// `param_type` is a bare type parameter.
+    ///
+    /// This is the argument-position analogue of the TS2322 renderer's
+    /// `unrelated_type_parameter_target_related_info` hook: when a value fails to
+    /// relate to a bare type-parameter target, `tsc` explains that the parameter
+    /// could still be instantiated with a narrower (TS5075) or an arbitrary
+    /// (TS5082) type. The free-type-parameter argument emitter preserves the
+    /// written `T` parameter display through a plain head and would otherwise drop
+    /// that caveat (#17448 / #17449). The note owner returns `None` for any
+    /// non-bare target (a `T[]`/`Array<T>`/`{ x: T }` target merely *contains* a
+    /// free parameter, which carries no caveat), so callers pass the target
+    /// unconditionally and fall back to the plain head when no note applies.
+    ///
+    /// The caller owns the source/target *display* strings (their generic
+    /// preservation and widening policy); this owns the code, message template,
+    /// caveat, and emission.
+    pub(crate) fn emit_argument_not_assignable_with_type_parameter_note(
+        &mut self,
+        arg_type: TypeId,
+        param_type: TypeId,
+        actual_display: &str,
+        target_display: &str,
+        arg_idx: NodeIndex,
+    ) {
+        let (code, msg_template) =
+            self.argument_not_assignable_code_and_template(arg_type, param_type);
+        let message = format_message(msg_template, &[actual_display, target_display]);
+        if let Some(anchor) = self.resolve_diagnostic_anchor(arg_idx, DiagnosticAnchorKind::Exact)
+            && let Some(note) = self.unrelated_type_parameter_target_related_info(
+                arg_type,
+                param_type,
+                actual_display,
+                target_display,
+                anchor.start,
+                anchor.length,
+                0,
+            )
+        {
+            self.emit_render_request_at_anchor(
+                anchor,
+                DiagnosticRenderRequest::with_related(
+                    DiagnosticAnchorKind::Exact,
+                    code,
+                    message,
+                    vec![note],
+                    RelatedInformationPolicy::ELABORATION,
+                ),
+            );
+            return;
+        }
+        self.error_at_node(arg_idx, &message, code);
+    }
+
     /// Promote a sole/grouped missing-required-property argument failure to the
     /// PRIMARY diagnostic at the argument node — TS2741 (one property), TS2739
     /// (a few), TS2740 (many) — replacing the generic TS2345 head, exactly as

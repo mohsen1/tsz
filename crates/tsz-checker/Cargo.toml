@@ -300,6 +300,9 @@ path = "tests/array_source_tuple_target_elaboration_tests.rs"
 name = "ts2345_signature_arity_predicate_elaboration_tests"
 path = "tests/ts2345_signature_arity_predicate_elaboration_tests.rs"
 [[test]]
+name = "ts2345_type_parameter_target_argument_elaboration_tests"
+path = "tests/ts2345_type_parameter_target_argument_elaboration_tests.rs"
+[[test]]
 name = "array_literal_rest_tuple_drill_cap_tests"
 path = "tests/array_literal_rest_tuple_drill_cap_tests.rs"
 [[test]]

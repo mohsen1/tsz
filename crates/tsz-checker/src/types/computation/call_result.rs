@@ -9,7 +9,7 @@ use crate::query_boundaries::diagnostics;
 use crate::query_boundaries::type_computation::core as expr_ops;
 use crate::state::CheckerState;
 use rustc_hash::FxHashSet;
-use tsz_common::diagnostics::{diagnostic_codes, format_message};
+use tsz_common::diagnostics::diagnostic_codes;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
@@ -327,10 +327,17 @@ impl<'a> CheckerState<'a> {
             actual_display = generic_actual_display;
             target_display = generic_target_display;
         }
-        let (code, msg_template) =
-            self.argument_not_assignable_code_and_template(arg_type, param_type);
-        let message = format_message(msg_template, &[&actual_display, &target_display]);
-        self.error_at_node(arg_idx, &message, code);
+        // A bare type-parameter target keeps `tsc`'s "could be instantiated"
+        // caveat beneath the TS2345 head, exactly as the TS2322 surface does
+        // (#17448 / #17449); the note owner is a no-op for the non-bare
+        // free-type-parameter targets this emitter also serves.
+        self.emit_argument_not_assignable_with_type_parameter_note(
+            arg_type,
+            param_type,
+            &actual_display,
+            &target_display,
+            arg_idx,
+        );
     }
 
     fn finite_mapped_parameter_display_type(&mut self, param_type: TypeId) -> Option<TypeId> {
@@ -370,20 +377,6 @@ impl<'a> CheckerState<'a> {
 
     fn stable_call_recovery_return_type(&self, callee_type: TypeId) -> Option<TypeId> {
         crate::query_boundaries::checkers::call::stable_call_recovery_return_type(
-            self.ctx.types,
-            callee_type,
-        )
-    }
-
-    /// Recovery return type for a generic call that failed the argument-count
-    /// check, with the signature's own type parameters resolved to their
-    /// `default → constraint → unknown` fallback (matching tsc). Falls back to
-    /// the plain recovery if the default-resolving walk finds no signature.
-    fn stable_call_recovery_return_type_with_default_type_args(
-        &self,
-        callee_type: TypeId,
-    ) -> Option<TypeId> {
-        crate::query_boundaries::checkers::call::stable_call_recovery_return_type_with_default_type_args(
             self.ctx.types,
             callee_type,
         )
