@@ -95,6 +95,31 @@ impl<'a> CheckerState<'a> {
         target: TypeId,
         anchor_idx: NodeIndex,
     ) -> String {
+        // A fresh object-literal property whose value is a string/number/bigint
+        // literal widens to its primitive when the target property type does not
+        // admit that literal's domain — `{ configurable: "yes" }` against
+        // `{ configurable?: boolean }` renders `string`, not `"yes"`; `{ f: "yes" }`
+        // against `{ f?: 1 | 2 }` renders `string`. This mirrors tsc's
+        // `isLiteralOfContextualType` widening of object-literal property types,
+        // which the solver already applies in the failure reason (it carries
+        // `string`) but the anchor-literal display branches below re-read from the
+        // property value expression and un-widen. The rule is scoped to
+        // object-literal property initializers: a plain assignment
+        // (`let x: 1 | 2; x = "yes"`) instead follows `typeCouldHaveTopLevelSingletonTypes`
+        // (the domain-agnostic literal-sensitivity gate below), which correctly
+        // preserves the source there. Boolean literal sources are excluded — tsc
+        // keeps `true` / `false` verbatim.
+        if let Some(expr_idx) = self
+            .direct_diagnostic_source_expression(anchor_idx)
+            .or_else(|| self.assignment_source_expression(anchor_idx))
+            && self.is_property_assignment_initializer(expr_idx)
+            && let Some(anchor_literal) = self.literal_type_from_initializer(expr_idx)
+            && self.scalar_source_widens_across_literal_domain(anchor_literal, target)
+        {
+            let widened =
+                crate::query_boundaries::common::widen_literal_type(self.ctx.types, anchor_literal);
+            return self.format_assignability_type_for_message(widened, target);
+        }
         // A source identifier declared `unknown`/`any` but flow-narrowed to a
         // concrete type must render the narrowed source, not the stale top-type
         // annotation.

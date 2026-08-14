@@ -32,6 +32,9 @@ dashmap = { workspace = true }
 web-time = { workspace = true }
 stacker = "0.1.23"
 [[test]]
+name = "class_receiver_instance_display_ts18014_ts2445_tests"
+path = "tests/class_receiver_instance_display_ts18014_ts2445_tests.rs"
+[[test]]
 name = "import_assert_keyword_abandon_tests"
 path = "tests/import_assert_keyword_abandon_tests.rs"
 [[test]]
@@ -2983,3 +2986,7 @@ path = "tests/void_return_exception.rs"
 [[test]]
 name = "map_constructor_tuple_element_supertype_order_tests"
 path = "tests/map_constructor_tuple_element_supertype_order_tests.rs"
+
+[[test]]
+name = "object_literal_property_source_domain_widening_tests"
+path = "tests/object_literal_property_source_domain_widening_tests.rs"

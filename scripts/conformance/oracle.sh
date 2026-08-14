@@ -43,6 +43,37 @@ fi
 FILE="$1"
 shift
 
+# The exec at the end appends "$FILE" LAST, after "$@". A second source file
+# passed as an "extra flag" is therefore silently reordered AHEAD of it, so a
+# multi-file invocation does not test the file order it appears to. That
+# produced a confidently-wrong "oracle-verified" claim in #17437, caught only
+# after it merged (#17481). Reject extra source positionals rather than
+# reordering them.
+for arg in "$@"; do
+    case "$arg" in
+        -*) continue ;;
+        *.ts | *.tsx | *.mts | *.cts | *.js | *.jsx | *.mjs | *.cjs)
+            if [ -f "$arg" ]; then
+                cat >&2 <<EOF
+ERROR: oracle.sh accepts exactly one FILE positional, but also got: $arg
+
+  FILE is appended LAST in the underlying tsc invocation, so a second source
+  file is silently reordered ahead of it. A multi-file or file-order claim
+  checked this way is NOT verified.
+
+  For multi-file cases invoke the pinned binary directly (order preserved):
+
+    scripts/node_modules/@typescript/typescript-darwin-arm64/lib/tsc \\
+      --noEmit --pretty false <flags> $FILE $arg
+
+  It is a native binary; 'node <path>' fails on it.
+EOF
+                exit 2
+            fi
+            ;;
+    esac
+done
+
 if [ ! -f "$VERSIONS_FILE" ]; then
     echo "ERROR: Missing versions file: $VERSIONS_FILE" >&2
     exit 1

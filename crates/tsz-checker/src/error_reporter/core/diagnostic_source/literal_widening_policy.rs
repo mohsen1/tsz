@@ -59,6 +59,45 @@ struct TargetPrimitiveScan {
 }
 
 impl<'a> CheckerState<'a> {
+    /// Whether a fresh string/number/bigint literal `source` must widen to its
+    /// primitive base for an assignment-failure display against `target`,
+    /// because `target` does not admit a literal of the *source's* primitive
+    /// domain.
+    ///
+    /// tsc widens a fresh literal property to its primitive whenever the target
+    /// property type is not literal-preferring for that literal's domain — so
+    /// `{ configurable: "yes" }` against `{ configurable?: boolean }` renders
+    /// `string`, and `{ f: "yes" }` against `{ f?: 1 | 2 }` renders `string`,
+    /// because neither target has a *string*-literal surface. It preserves the
+    /// source only when the target admits the source's own domain
+    /// (`{ f: "yes" }` against `{ f?: "a" | "b" }` keeps `"yes"`). The existing
+    /// literal-sensitivity gate that drives this display is domain-agnostic —
+    /// it keeps the literal for any target that could hold a top-level singleton
+    /// (`boolean` is stored as `true | false`, numeric-literal unions are
+    /// singleton-shaped) — so this refines it with the source domain.
+    ///
+    /// Boolean literal sources are excluded: tsc keeps `true` / `false`
+    /// verbatim in these messages (`{ f: true }` against `{ f?: 1 | 2 }` renders
+    /// `true`, never `boolean`). The domain decision reuses the shared
+    /// `contextual_type_allows_literal` gateway (tsc's `isLiteralOfContextualType`)
+    /// so it is a structural query over the two types, never a predicate over
+    /// rendered text.
+    pub(in crate::error_reporter) fn scalar_source_widens_across_literal_domain(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> bool {
+        let is_widenable_scalar = matches!(
+            crate::query_boundaries::common::literal_value(self.ctx.types, source),
+            Some(
+                tsz_solver::LiteralValue::String(_)
+                    | tsz_solver::LiteralValue::Number(_)
+                    | tsz_solver::LiteralValue::BigInt(_)
+            )
+        );
+        is_widenable_scalar && !self.contextual_type_allows_literal(target, source)
+    }
+
     /// Returns `true` when the source literal should be preserved verbatim
     /// in the call-argument display, `false` when it should be widened to
     /// its primitive base.
