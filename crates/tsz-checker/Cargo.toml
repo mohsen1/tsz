@@ -2983,3 +2983,7 @@ path = "tests/void_return_exception.rs"
 [[test]]
 name = "map_constructor_tuple_element_supertype_order_tests"
 path = "tests/map_constructor_tuple_element_supertype_order_tests.rs"
+
+[[test]]
+name = "object_literal_property_source_domain_widening_tests"
+path = "tests/object_literal_property_source_domain_widening_tests.rs"
