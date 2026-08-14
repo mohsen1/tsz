@@ -467,23 +467,20 @@ impl<'a> CheckerState<'a> {
         )
     }
 
-    pub(crate) fn augment_object_type_with_define_properties(
-        &mut self,
-        root_name: &str,
-        base_type: TypeId,
-    ) -> TypeId {
-        // Whole-file scan below does not respect statement order relative to
-        // the property access being checked (see #17410 follow-up): switching
-        // this to `source_files.first()` unmasked a false-positive TS2322
-        // regression where a later `Object.defineProperty` call's type leaked
-        // backward into an earlier assignment's assignability check
-        // (`ensureNoCrashExportAssignmentDefineProperrtyPotentialMerge.ts`).
-        // Reverted to `get(current_file_idx)` until a position-aware fix lands.
-        let Some(source_file) = self.ctx.arena.source_files.get(self.ctx.current_file_idx) else {
-            return base_type;
+    /// Scan the current file's own arena (position 0; see `.first()` note on
+    /// the caller) for every top-level `Object.defineProperty(<root_name>,
+    /// <name>, <descriptor>)` call, returning each resolved `(name,
+    /// descriptor_node)` pair regardless of statement order. Shared by
+    /// [`Self::augment_object_type_with_define_properties`] (builds the
+    /// merged type) and
+    /// [`Self::file_defines_property_via_object_define_property`] (existence
+    /// check for the assignability-checker's same-file-declaration carve-out).
+    fn find_define_property_calls_for_root(&self, root_name: &str) -> Vec<(String, NodeIndex)> {
+        let mut found = Vec::new();
+        let Some(source_file) = self.ctx.arena.source_files.first() else {
+            return found;
         };
 
-        let mut props = Vec::new();
         for &stmt_idx in &source_file.statements.nodes {
             let Some(stmt_node) = self.ctx.arena.get(stmt_idx) else {
                 continue;
@@ -549,11 +546,38 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
 
+            found.push((name, args.nodes[2]));
+        }
+
+        found
+    }
+
+    pub(crate) fn augment_object_type_with_define_properties(
+        &mut self,
+        root_name: &str,
+        base_type: TypeId,
+    ) -> TypeId {
+        // `self.ctx.arena` is the per-file arena of the file whose symbol is
+        // being typed (own-file session or a delegated cross-file child
+        // checker); it holds exactly one source file at position 0. Selecting it
+        // by the program-global `current_file_idx` only succeeds when that file
+        // happens to sit at program index 0, so the `Object.defineProperty`
+        // members were silently dropped for any host file at a non-zero index —
+        // an order-dependence unmasked by the tsc-accurate ts-before-js root
+        // ordering (#17410). Use `.first()` like the 98 sibling sites so the
+        // augmentation depends on the declaring arena, not on file order.
+        let candidates = self.find_define_property_calls_for_root(root_name);
+        if candidates.is_empty() {
+            return base_type;
+        }
+
+        let mut props = Vec::new();
+        for (name, descriptor_idx) in candidates {
             if let Some(prop) = self.define_property_info_from_descriptor(
                 self.ctx.current_file_idx,
                 self.ctx.arena,
                 &name,
-                args.nodes[2],
+                descriptor_idx,
                 props.len() as u32,
             ) {
                 props.push(prop);
@@ -569,6 +593,32 @@ impl<'a> CheckerState<'a> {
             base_type,
             props,
         )
+    }
+
+    /// Returns true when `<root_name>.<prop_name>` also has a same-file
+    /// `Object.defineProperty(<root_name>, "<prop_name>", ...)` declaration,
+    /// independent of statement order relative to the expando assignment.
+    ///
+    /// A JS container property with both an expando assignment and a
+    /// `defineProperty` call for the same name in the same file has *two*
+    /// declaration sites, not one declared type and one write against it.
+    /// tsc infers the property's type as the union of every declaration's
+    /// value type — confirmed via `--declaration` emit on
+    /// `ensureNoCrashExportAssignmentDefineProperrtyPotentialMerge.ts`
+    /// (`declare const B: { NS: string | { bar: ... }; }`) — and never
+    /// assignability-checks sibling declarations against each other (#17429).
+    /// tsz does not compute that union type; this is the narrower fix the
+    /// caller uses to skip the assignability check outright, which matches
+    /// the observable zero-diagnostic result without changing `NS`'s
+    /// resolved type for other consumers.
+    pub(crate) fn file_defines_property_via_object_define_property(
+        &self,
+        root_name: &str,
+        prop_name: &str,
+    ) -> bool {
+        self.find_define_property_calls_for_root(root_name)
+            .iter()
+            .any(|(name, _)| name == prop_name)
     }
 
     /// Match a bare CommonJS export assignment `module.exports = <rhs>` or

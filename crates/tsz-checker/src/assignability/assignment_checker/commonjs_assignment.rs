@@ -182,6 +182,73 @@ impl<'a> CheckerState<'a> {
         self.is_exports_rooted_access(access.expression)
     }
 
+    /// In JS files, `root.prop = value` where `root` is a plain local JS
+    /// container (not `exports`/`module.exports`, which
+    /// `is_commonjs_exports_property_declaration` already covers
+    /// unconditionally) and the same file also declares `prop` via
+    /// `Object.defineProperty(root, "prop", ...)` is one of two sibling
+    /// declaration sites for the same property, not a write against an
+    /// already-fixed type — see
+    /// `file_defines_property_via_object_define_property` for the oracle
+    /// evidence (#17429).
+    fn is_expando_write_matching_same_file_define_property(&self, target_idx: NodeIndex) -> bool {
+        if !self.is_js_file() {
+            return false;
+        }
+
+        let target_idx = self.ctx.arena.skip_parenthesized(target_idx);
+        let Some(target_node) = self.ctx.arena.get(target_idx) else {
+            return false;
+        };
+        if target_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return false;
+        }
+        let Some(access) = self.ctx.arena.get_access_expr(target_node) else {
+            return false;
+        };
+
+        let root_idx = self.ctx.arena.skip_parenthesized(access.expression);
+        let Some(root_ident) = self
+            .ctx
+            .arena
+            .get(root_idx)
+            .and_then(|node| self.ctx.arena.get_identifier(node))
+        else {
+            return false;
+        };
+        if root_ident.escaped_text == "exports" {
+            return false;
+        }
+
+        let Some(prop_name) = self
+            .ctx
+            .arena
+            .get_identifier_at(access.name_or_argument)
+            .map(|ident| ident.escaped_text.as_str())
+        else {
+            return false;
+        };
+
+        self.file_defines_property_via_object_define_property(&root_ident.escaped_text, prop_name)
+    }
+
+    /// Gate for [`Self::is_expando_write_matching_same_file_define_property`],
+    /// called only where the caller already excludes `const` assignments. An
+    /// explicit JSDoc `@type` left-type still gets checked, matching the
+    /// sibling carve-outs above. The caller must only suppress the TS2322
+    /// type-mismatch comparison when this is true — a `writable: false`
+    /// `defineProperty` sibling still reports TS2540 through the ordinary
+    /// `check_readonly_assignment` call, since write permission and
+    /// value-type compatibility are independent tsc mechanisms (#17429).
+    pub(crate) fn suppress_sibling_write_check(
+        &self,
+        target_idx: NodeIndex,
+        has_explicit_jsdoc_left_type: bool,
+    ) -> bool {
+        !has_explicit_jsdoc_left_type
+            && self.is_expando_write_matching_same_file_define_property(target_idx)
+    }
+
     /// In JS files, assignments like `exports.n = {}` or `module.exports.n = {}`
     /// where `n` is subsequently augmented with property assignments (e.g., `exports.n.K = ...`)
     /// are JS container declarations. The type of the container is built up from all
