@@ -769,10 +769,16 @@ impl<'a> CheckerState<'a> {
             return _enum_type;
         };
 
-        let mut props: FxHashMap<Atom, PropertyInfo> = FxHashMap::default();
+        let mut props: FxHashMap<Atom, (SymbolId, PropertyInfo)> = FxHashMap::default();
 
         // Merge ALL exports from the symbol (enum members + namespace exports)
-        // This allows accessing both enum members and namespace methods via EnumName.Member
+        // This allows accessing both enum members and namespace methods via EnumName.Member.
+        // `exports` is a hash-keyed `SymbolTable`, so `exports.iter()` yields members in
+        // arbitrary hash order rather than declaration order. Track each property's
+        // originating `member_id` alongside it so the true source order (SymbolIds are
+        // allocated monotonically as the binder visits declarations) can be restored
+        // below, before `object_with_flags_and_symbol` derives its display
+        // `declaration_order` from this Vec's position.
         for (name, member_id) in exports.iter() {
             // Skip if this member is already being resolved (prevents infinite recursion)
             if self.ctx.symbol_resolution_set.contains(member_id) {
@@ -852,14 +858,16 @@ impl<'a> CheckerState<'a> {
                 }
             }
             let name_atom = self.ctx.types.intern_string(name);
-            props
-                .entry(name_atom)
-                .or_insert(declaration_exports::declaration_export_property(
-                    name_atom, type_id, 0,
-                ));
+            props.entry(name_atom).or_insert((
+                *member_id,
+                declaration_exports::declaration_export_property(name_atom, type_id, 0),
+            ));
         }
 
-        let properties: Vec<PropertyInfo> = props.into_values().collect();
+        let mut ordered_props: Vec<(SymbolId, PropertyInfo)> = props.into_values().collect();
+        ordered_props.sort_by_key(|(member_id, _)| member_id.0);
+        let properties: Vec<PropertyInfo> =
+            ordered_props.into_iter().map(|(_, prop)| prop).collect();
 
         let needs_reverse_map = matches!(
             self.enum_kind(sym_id),

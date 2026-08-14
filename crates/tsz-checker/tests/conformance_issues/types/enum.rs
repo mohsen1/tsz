@@ -1062,3 +1062,110 @@ fn test_class_expression_default_parameter_does_not_emit_false_ts2322() {
         "Did not expect TS2322 for class-expression default parameter. Actual diagnostics: {diagnostics:#?}"
     );
 }
+
+#[test]
+fn test_top_level_enum_ts2739_missing_member_declaration_order() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+enum Order { ASC, DESC }
+let x: typeof Order = {};
+"#,
+    );
+    assert_eq!(
+        diagnostic_message(&diagnostics, 2739),
+        Some("Type '{}' is missing the following properties from type 'typeof Order': ASC, DESC"),
+        "Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_namespace_nested_enum_ts2739_missing_member_declaration_order() {
+    // Regression test: a namespace-nested enum's static (`typeof Ns.E`) shape is
+    // built by `merge_namespace_exports_into_object`, which used to collect the
+    // enum's members through an `FxHashMap<Atom, PropertyInfo>` before handing the
+    // `Vec` to the interner. The interner derives each property's display
+    // `declaration_order` from that Vec's position (`object_with_flags_and_symbol`),
+    // so the hash-map's arbitrary iteration order silently became the "declaration"
+    // order shown in TS2739/TS2741 messages, sometimes reversing it (as it does
+    // here without the fix — `DESC, ASC`). tsc always reports true source order.
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+namespace lf {
+    export enum Order { ASC, DESC }
+}
+let x: typeof lf.Order = {};
+"#,
+    );
+    assert_eq!(
+        diagnostic_message(&diagnostics, 2739),
+        Some("Type '{}' is missing the following properties from type 'typeof Order': ASC, DESC"),
+        "Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_namespace_nested_enum_ts2739_order_with_renamed_binders() {
+    // Same shape as above with different member/namespace names, so the fix
+    // isn't just accidentally matching the `ASC`/`DESC`/`lf` identifiers.
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+namespace outer {
+    export enum Status { Pending, Active, Closed }
+}
+let s: typeof outer.Status = {};
+"#,
+    );
+    assert_eq!(
+        diagnostic_message(&diagnostics, 2739),
+        Some(
+            "Type '{}' is missing the following properties from type 'typeof Status': Pending, Active, Closed"
+        ),
+        "Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_nested_namespace_enum_ts2739_order_two_levels_deep() {
+    // Two levels of namespace nesting between the enum and the type query.
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+namespace a {
+    export namespace b {
+        export enum Level { Low, Medium, High }
+    }
+}
+let x: typeof a.b.Level = {};
+"#,
+    );
+    assert_eq!(
+        diagnostic_message(&diagnostics, 2739),
+        Some(
+            "Type '{}' is missing the following properties from type 'typeof Level': Low, Medium, High"
+        ),
+        "Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_namespace_merged_enum_ts2739_order_with_merged_namespace_function() {
+    // Declaration-merged enum + namespace: `merge_namespace_exports_into_object`
+    // merges both the enum's own members and the merged namespace's value
+    // exports into the same object shape. Both kinds must keep their true
+    // declaration order relative to each other.
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+enum Color { Red, Green, Blue }
+namespace Color {
+    export function mix(): void {}
+}
+let c: typeof Color = {};
+"#,
+    );
+    assert_eq!(
+        diagnostic_message(&diagnostics, 2739),
+        Some(
+            "Type '{}' is missing the following properties from type 'typeof Color': Red, Green, Blue, mix"
+        ),
+        "Actual diagnostics: {diagnostics:#?}"
+    );
+}
