@@ -2154,6 +2154,9 @@ path = "tests/globalthis_namespace_augmentation_tests.rs"
 name = "symbol_index_signature_tests"
 path = "tests/symbol_index_signature_tests.rs"
 [[test]]
+name = "symbol_index_destructuring_tests"
+path = "tests/symbol_index_destructuring_tests.rs"
+[[test]]
 name = "array_unique_symbol_index_key_ts7015_tests"
 path = "tests/array_unique_symbol_index_key_ts7015_tests.rs"
 [[test]]

@@ -601,6 +601,59 @@ impl<'a> CheckerState<'a> {
         )
     }
 
+    /// The value type of a `symbol` index signature (`[k: symbol]: V`, e.g.
+    /// `Record<symbol, V>`) on the destructuring source `parent_type`, if one
+    /// accepts any symbol key — otherwise `None`.
+    ///
+    /// A computed symbol key in an object binding pattern (`{ [s]: v } = obj`)
+    /// desugars to `v = obj[s]`, so a symbol key indexing a receiver with a
+    /// `symbol` index signature is valid (no TS2538) and yields that signature's
+    /// value type. The parent is resolved through aliases/applications first (the
+    /// raw annotation is a `Lazy(DefId)`/`Application` that carries no shape), and
+    /// the result distributes over unions (valid only if *every* member accepts
+    /// the key, yielding the union of their value types) and intersections (valid
+    /// if *any* member does), matching how `obj[s]` is judged.
+    fn binding_parent_symbol_index_value(&mut self, parent_type: TypeId) -> Option<TypeId> {
+        let resolved = self.resolve_lazy_type(parent_type);
+        let resolved = self.resolve_type_for_property_access(resolved);
+        let resolved = self.evaluate_application_type(resolved);
+        if let Some(members) = query::union_members(self.ctx.types, resolved) {
+            if members.is_empty() {
+                return None;
+            }
+            let mut values = Vec::with_capacity(members.len());
+            for member in members {
+                values.push(self.type_member_symbol_index_value(member)?);
+            }
+            return Some(binding_patterns::binding_pattern_member_union_type(
+                self.ctx.types,
+                values,
+            ));
+        }
+        if let Some(members) = common_query::intersection_members(self.ctx.types, resolved) {
+            return members
+                .iter()
+                .find_map(|&member| self.type_member_symbol_index_value(member));
+        }
+        self.type_member_symbol_index_value(resolved)
+    }
+
+    /// The `symbol` index signature value type for a single resolved (non-union,
+    /// non-intersection) constituent. Consults both the dedicated `symbol_index`
+    /// slot and the legacy `string_index`-with-`symbol`-key encoding via
+    /// [`tsz_solver::ObjectShape::symbol_index_signature`], falling back to the
+    /// resolver-backed boundary query.
+    fn type_member_symbol_index_value(&self, type_id: TypeId) -> Option<TypeId> {
+        common_query::object_shape_for_type(self.ctx.types, type_id)
+            .and_then(|shape| shape.symbol_index_signature().map(|sig| sig.value_type))
+            .or_else(|| {
+                crate::query_boundaries::index_signature::resolve_symbol_index(
+                    self.ctx.types.as_type_database(),
+                    type_id,
+                )
+            })
+    }
+
     /// Get the expected type for a binding element from its parent type.
     pub(crate) fn get_binding_element_type_with_request(
         &mut self,
@@ -936,6 +989,21 @@ impl<'a> CheckerState<'a> {
                 }
                 return property_type;
             }
+            // A computed *symbol* key whose parent exposes a `symbol` index
+            // signature (`{ [s]: v } = obj` where obj: `Record<symbol, V>` /
+            // `{ [k: symbol]: V }`) resolves to that index's value type, exactly
+            // like `obj[s]`. Declared symbol *properties* were already handled by
+            // `get_binding_element_literal_key_type` above; this covers the index
+            // case, which otherwise falls through to a false TS2538 (#17528).
+            if common_query::is_symbol_or_unique_symbol(self.ctx.types, key_type)
+                && let Some(value_type) = self.binding_parent_symbol_index_value(parent_type)
+            {
+                return if self.ctx.no_unchecked_indexed_access() {
+                    self.add_undefined_if_missing_for_destructuring(value_type)
+                } else {
+                    value_type
+                };
+            }
         }
 
         // Extract the static property name from binding element.
@@ -1037,8 +1105,11 @@ impl<'a> CheckerState<'a> {
                     };
                     // Symbol types pass the general validity check but can't
                     // index into objects through string/number index signatures,
-                    // UNLESS the parent type (or its constraint for generics)
-                    // has the specific unique symbol as a declared property.
+                    // UNLESS the parent type has the specific unique symbol as a
+                    // declared property. A parent with a `symbol` index signature
+                    // never reaches here — such a key is resolved to the index's
+                    // value type and returned early (see the computed-key handling
+                    // above), matching `obj[s]`.
                     let is_symbol = key_type != TypeId::ERROR
                         && common_query::is_symbol_or_unique_symbol(self.ctx.types, key_type)
                         && !common_query::contains_type_parameters(
@@ -1076,6 +1147,8 @@ impl<'a> CheckerState<'a> {
                 // can't index via string/number index signatures. Suppress when
                 // parent type contains type parameters (deferred to instantiation)
                 // or when the parent type has a matching unique symbol property.
+                // (A `symbol` index signature is handled by the early return in
+                // the computed-key resolution above.)
                 let parent_has_type_params = common_query::contains_type_parameters(
                     self.ctx.types.as_type_database(),
                     parent_type,
