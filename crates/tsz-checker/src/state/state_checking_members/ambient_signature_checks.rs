@@ -1118,8 +1118,23 @@ impl<'a> CheckerState<'a> {
 
             self.ctx.restore_async_context(saved_async_depth);
 
-            let mut check_return_type =
-                self.return_type_for_implicit_return_check(return_type, is_async, is_generator);
+            // A generator's effective TS7030 return type is its `TReturn` (tsc's
+            // `unwrapReturnType`). Extract it once and reuse for the
+            // `check_return_type` sentinel below and the per-bare-return type,
+            // since the extraction is not idempotent (evaluating a
+            // `Generator<Y, R, N>` can expand it structurally and drop the
+            // wrapper). An unannotated generator's `return_type` already holds
+            // its inferred `TReturn`, so extraction returns `None` there.
+            let generator_return_completeness = if is_generator {
+                self.generator_return_type_for_implicit_return_check(return_type)
+            } else {
+                None
+            };
+            let mut check_return_type = if is_generator {
+                generator_return_completeness.unwrap_or(TypeId::UNKNOWN)
+            } else {
+                self.return_type_for_implicit_return_check(return_type, is_async, false)
+            };
             if is_async
                 && check_return_type == return_type
                 && has_type_annotation
@@ -1197,10 +1212,22 @@ impl<'a> CheckerState<'a> {
             }
 
             // TS7030 for each bare `return;`, independent of the fall-off-the-end
-            // check above (both can fire in one method).
+            // check above (both can fire in one method). For a generator the
+            // check type is its `TReturn` (tsc's `unwrapReturnType`); the shared
+            // `check_return_type` re-unwraps an already-unwrapped inferred
+            // `TReturn` and falls back to `unknown`, firing spuriously (#17444).
+            let bare_return_check_type = if is_generator {
+                self.generator_bare_return_check_type(
+                    generator_return_completeness,
+                    return_type,
+                    has_type_annotation,
+                )
+            } else {
+                check_return_type
+            };
             self.report_no_implicit_return_bare_returns(
                 method.body,
-                check_return_type,
+                bare_return_check_type,
                 has_type_annotation,
                 is_generator,
             );

@@ -281,3 +281,197 @@ fn ts7030_silent_for_setter_bare_return() {
     let diags = check(source, no_implicit_returns_nonstrict());
     assert_eq!(diagnostic_count(&diags, 7030), 0);
 }
+
+// ============================================================================
+// Generators (#17444)
+// ============================================================================
+//
+// A generator's bare `return;` reports TS7030 exactly when its `TReturn`
+// iteration type requires a value. tsc's `checkReturnStatement` compares
+// against `unwrapReturnType(getReturnTypeOfSignature)`, which for a generator
+// is `getIterationTypeOfGeneratorFunctionReturnType(Return, ...)`; when that
+// cannot be determined tsc yields `errorType` (an `any`), which *suppresses*
+// TS7030. So a generator is not categorically exempt — it is exempt precisely
+// when its `TReturn` is `void`/`undefined`/`any` (the common inferred shape).
+//
+// #17440 threaded the `is_generator` flag through the bare-return path but
+// never exercised it, and unwrapped an already-unwrapped inferred `TReturn`
+// down to `unknown`, spuriously firing on every inferred generator whose body
+// contains a bare `return;`.
+
+/// Minimal `Generator`/`AsyncGenerator` protocol stubs so annotated cases below
+/// resolve `TReturn` without the full standard lib. Mirrors the lib defaults
+/// (`Generator<T = unknown, TReturn = any, TNext = unknown>`), which is what
+/// makes `Generator<number>`'s `TReturn` `any`. There is no bare `return;` in
+/// the stubs, so prepending them never perturbs the anchor assertions.
+const GENERATOR_STUBS: &str = r#"
+interface IteratorResult<T, TReturn = any> { done?: boolean; value: T; }
+interface Generator<T = unknown, TReturn = any, TNext = unknown> {
+    next(value: TNext): IteratorResult<T, TReturn>;
+    return(value: TReturn): IteratorResult<T, TReturn>;
+    throw(e: any): IteratorResult<T, TReturn>;
+    [Symbol.iterator](): Generator<T, TReturn, TNext>;
+}
+interface AsyncGenerator<T = unknown, TReturn = any, TNext = unknown> {
+    next(value: TNext): Promise<IteratorResult<T, TReturn>>;
+    return(value: TReturn): Promise<IteratorResult<T, TReturn>>;
+    throw(e: any): Promise<IteratorResult<T, TReturn>>;
+    [Symbol.asyncIterator](): AsyncGenerator<T, TReturn, TNext>;
+}
+interface Promise<T> {}
+"#;
+
+/// Type-check a generator source whose annotation references `Generator` /
+/// `AsyncGenerator`, resolving them against [`GENERATOR_STUBS`]. Returns both
+/// the diagnostics and the full (stub-prefixed) source so anchor assertions use
+/// offsets consistent with the diagnostics.
+fn check_gen(body: &str) -> (String, Vec<Diagnostic>) {
+    let full = format!("{GENERATOR_STUBS}\n{body}");
+    let diags = check(&full, no_implicit_returns_nonstrict());
+    (full, diags)
+}
+
+/// Inferred `Generator<string, void, unknown>` (`generatorNoImplicitReturns.ts`
+/// from the conformance corpus). `TReturn` is `void` → no TS7030.
+#[test]
+fn ts7030_inferred_generator_bare_return_silent() {
+    let source = "function* testGenerator(cond: boolean) {\n    if (cond) {\n        return;\n    }\n    yield 'hello';\n}\n";
+    let diags = check(source, no_implicit_returns_nonstrict());
+    assert_eq!(
+        diagnostic_count(&diags, 7030),
+        0,
+        "inferred generator TReturn is void; diags: {:?}",
+        diags.iter().map(|d| (d.code, d.start)).collect::<Vec<_>>()
+    );
+}
+
+/// Inferred generator with a leading `yield;` then a bare `return;` (`g301`
+/// from `generatorReturnTypeInferenceNonStrict.ts`). `TReturn` is `void`, and
+/// the yield-type diagnostics (TS7025/TS7055/TS7057) are unrelated → no TS7030.
+#[test]
+fn ts7030_inferred_generator_yield_then_bare_return_silent() {
+    let source = "function* g301() {\n    yield;\n    return;\n}\n";
+    let mut opt = no_implicit_returns_nonstrict();
+    opt.no_implicit_any = true;
+    let diags = check(source, opt);
+    assert_eq!(
+        diagnostic_count(&diags, 7030),
+        0,
+        "inferred generator TReturn is void; diags: {:?}",
+        diags.iter().map(|d| (d.code, d.start)).collect::<Vec<_>>()
+    );
+}
+
+/// An *unreachable* bare `return;` in an inferred generator (`TReturn` void)
+/// stays silent too — the exemption is on the return type, not reachability.
+#[test]
+fn ts7030_inferred_generator_unreachable_bare_return_silent() {
+    let source = "function* g() {\n    yield 1;\n    throw new Error();\n    return;\n}\n";
+    let diags = check(source, no_implicit_returns_nonstrict());
+    assert_eq!(
+        diagnostic_count(&diags, 7030),
+        0,
+        "inferred generator TReturn is void; diags: {:?}",
+        diags.iter().map(|d| (d.code, d.start)).collect::<Vec<_>>()
+    );
+}
+
+/// `async function*` behaves like `function*`: inferred `AsyncGenerator` with a
+/// `void` `TReturn` → no TS7030 on a bare `return;`.
+#[test]
+fn ts7030_inferred_async_generator_bare_return_silent() {
+    let source = "async function* g(cond: boolean) {\n    if (cond) { return; }\n    yield 1;\n}\n";
+    let diags = check(source, no_implicit_returns_nonstrict());
+    assert_eq!(
+        diagnostic_count(&diags, 7030),
+        0,
+        "inferred async generator TReturn is void; diags: {:?}",
+        diags.iter().map(|d| (d.code, d.start)).collect::<Vec<_>>()
+    );
+}
+
+/// A generator *method* with an inferred `void` `TReturn` is silent as well —
+/// the method site threads the same corrected check type.
+#[test]
+fn ts7030_inferred_generator_method_bare_return_silent() {
+    let source = "class C {\n    *m(cond: boolean) {\n        if (cond) { return; }\n        yield 1;\n    }\n}\n";
+    let diags = check(source, no_implicit_returns_nonstrict());
+    assert_eq!(
+        diagnostic_count(&diags, 7030),
+        0,
+        "inferred generator method TReturn is void; diags: {:?}",
+        diags.iter().map(|d| (d.code, d.start)).collect::<Vec<_>>()
+    );
+}
+
+/// A generator *expression* assigned to a variable, inferred `void` `TReturn` —
+/// covers the function-expression check site.
+#[test]
+fn ts7030_inferred_generator_expression_bare_return_silent() {
+    let source =
+        "const g = function* (cond: boolean) {\n    if (cond) { return; }\n    yield 1;\n};\n";
+    let diags = check(source, no_implicit_returns_nonstrict());
+    assert_eq!(
+        diagnostic_count(&diags, 7030),
+        0,
+        "inferred generator expression TReturn is void; diags: {:?}",
+        diags.iter().map(|d| (d.code, d.start)).collect::<Vec<_>>()
+    );
+}
+
+/// `Generator<number>` — a single written type arg. `TReturn` defaults to `any`
+/// per the lib (`Generator<T = unknown, TReturn = any, TNext = unknown>`), so a
+/// bare `return;` is silent, matching tsc.
+#[test]
+fn ts7030_annotated_generator_default_treturn_any_silent() {
+    let (_full, diags) = check_gen(
+        "function* g(cond: boolean): Generator<number> {\n    if (cond) { return; }\n    yield 1;\n}\n",
+    );
+    assert_eq!(
+        diagnostic_count(&diags, 7030),
+        0,
+        "Generator<number> defaults TReturn to any; diags: {:?}",
+        diags.iter().map(|d| (d.code, d.start)).collect::<Vec<_>>()
+    );
+}
+
+/// `Generator<number, void, unknown>` — explicit `void` `TReturn` → silent.
+#[test]
+fn ts7030_annotated_generator_void_treturn_silent() {
+    let (_full, diags) = check_gen(
+        "function* g(cond: boolean): Generator<number, void, unknown> {\n    if (cond) { return; }\n    yield 1;\n}\n",
+    );
+    assert_eq!(
+        diagnostic_count(&diags, 7030),
+        0,
+        "explicit void TReturn; diags: {:?}",
+        diags.iter().map(|d| (d.code, d.start)).collect::<Vec<_>>()
+    );
+}
+
+/// `Generator<number, number, unknown>` — a non-void `TReturn` *does* require a
+/// value, so a bare `return;` reports TS7030 at that statement (the positive
+/// case that proves the fix does not blanket-exempt generators).
+#[test]
+fn ts7030_annotated_generator_nonvoid_treturn_fires_at_bare_return() {
+    let (full, diags) = check_gen(
+        "function* g(cond: boolean): Generator<number, number, unknown> {\n    if (cond) {\n        return;\n    }\n    yield 1;\n}\n",
+    );
+    assert_ts7030_exactly_at_bare_returns(&full, &diags);
+    assert_eq!(
+        diagnostic_count(&diags, 7030),
+        1,
+        "non-void TReturn requires a value; diags: {:?}",
+        diags.iter().map(|d| (d.code, d.start)).collect::<Vec<_>>()
+    );
+}
+
+/// The generator carve-out is binder-name independent: renaming the generator
+/// and its annotation must not change the verdict.
+#[test]
+fn ts7030_annotated_generator_nonvoid_treturn_binder_name_independent() {
+    let (full, diags) = check_gen(
+        "function* zzz(cond: boolean): Generator<string, string, unknown> {\n    if (cond) {\n        return;\n    }\n    yield 'x';\n}\n",
+    );
+    assert_ts7030_exactly_at_bare_returns(&full, &diags);
+}

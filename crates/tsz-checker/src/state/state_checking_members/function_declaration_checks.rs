@@ -1365,10 +1365,22 @@ impl<'a> CheckerState<'a> {
         }
 
         // TS7030 for each bare `return;`, independent of the fall-off-the-end
-        // check above (both can fire in one function).
+        // check above (both can fire in one function). For a generator the
+        // check type is its `TReturn` (tsc's `unwrapReturnType`); the shared
+        // `check_return_type` re-unwraps an already-unwrapped inferred `TReturn`
+        // and falls back to `unknown`, firing spuriously (#17444).
+        let bare_return_check_type = if is_generator {
+            self.generator_bare_return_check_type(
+                generator_return_type_for_completeness,
+                return_type,
+                has_declared_return,
+            )
+        } else {
+            check_return_type
+        };
         self.report_no_implicit_return_bare_returns(
             func.body,
-            check_return_type,
+            bare_return_check_type,
             has_declared_return,
             is_generator,
         );
