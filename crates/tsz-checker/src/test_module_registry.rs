@@ -279,6 +279,8 @@ mod definite_assignment_logical_compound_tests;
 mod destructured_binding_narrowed_property_tests;
 #[path = "tests/destructured_discriminant_source_narrowing_tests.rs"]
 mod destructured_discriminant_source_narrowing_tests;
+#[path = "tests/destructuring_computed_key_any_dynamic_index_tests.rs"]
+mod destructuring_computed_key_any_dynamic_index_tests;
 #[path = "tests/destructuring_computed_key_error_source_ts2538_tests.rs"]
 mod destructuring_computed_key_error_source_ts2538_tests;
 #[path = "tests/destructuring_computed_key_index_type_ts2538_tests.rs"]

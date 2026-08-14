@@ -609,6 +609,24 @@ impl<'a> CheckerState<'a> {
     /// Distribution over unions/intersections is owned by the resolver. An
     /// ERROR/`any` source has no index signature, so it resolves to `None` here
     /// and its diagnostic cascade is owned by the callers' source guards.
+    /// True when a destructuring source permits an `any`-typed computed key,
+    /// mirroring `{ [k]: v } = obj`'s `obj[k]` desugaring: `k`'s `any` is a
+    /// valid index only when `obj` is generic-with-index-signature-constraint
+    /// or structurally exposes a string/number index signature. A bare `any`
+    /// source is filtered out upstream (`source_is_index_checkable`), and a
+    /// generic constrained by `any`/`unknown`/no constraint still requires the
+    /// resolved constraint to carry an index signature — oracle-verified
+    /// (`typescript@6.0.2`) against plain element access, which this
+    /// destructuring-specific check does NOT match: `o[k]` on a
+    /// `T extends any` source is clean, but `{ [k]: v } = o` on the same
+    /// source reports TS2538, so the exemption cannot simply defer to a
+    /// generic type parameter the way element access does.
+    fn destructuring_source_permits_dynamic_key(&self, parent_type: TypeId) -> bool {
+        let db = self.ctx.types.as_type_database();
+        let resolved = common_query::get_base_constraint_of_type(db, parent_type);
+        crate::query_boundaries::index_signature::has_string_or_number_index_signature(db, resolved)
+    }
+
     fn destructuring_symbol_index_value(
         &self,
         parent_type: TypeId,
@@ -1079,17 +1097,30 @@ impl<'a> CheckerState<'a> {
                     } else {
                         self.resolve_lazy_type(key_type)
                     };
-                    // A genuine `any` is a valid index type for a value-position
-                    // destructuring computed key: `{ [k]: v } = obj` desugars to
-                    // `v = obj[k]`, and element access permits an `any` index.
-                    // Only the strict type-level `isValidIndexType` (keyof/mapped/
-                    // `T[K]`) rejects `any`; that helper must not gate this
-                    // value-position check. But an ERROR key (e.g. `[foo()]` where
-                    // `foo` is not callable) is remapped to ANY above precisely so
-                    // it still reports TS2538 (tsc does too) — so exempt only when
-                    // the ORIGINAL key type is `any`, never the ERROR remap.
-                    let is_invalid = if key_type == TypeId::ANY && check_key == TypeId::ANY {
+                    // An `any` key is a valid index type for a value-position
+                    // destructuring computed key ONLY when the source permits a
+                    // dynamic index: `{ [k]: v } = obj` desugars to `v = obj[k]`,
+                    // so a concrete source with no index signature (`{}`,
+                    // `{ a: T }`) still reports TS2538 for an `any` key exactly
+                    // as tsc's `isValidIndexType` does for the equivalent
+                    // element access — only a source that is itself `any`
+                    // (already filtered above by `source_is_index_checkable`),
+                    // is generic with an index-signature-carrying constraint, or
+                    // structurally carries a string/number index signature
+                    // permits it. Only the strict type-level `isValidIndexType`
+                    // (keyof/mapped/`T[K]`) rejects `any` unconditionally; that
+                    // helper must not gate this value-position check. But an
+                    // ERROR key (e.g. `[foo()]` where `foo` is not callable) is
+                    // remapped to ANY above precisely so it still reports TS2538
+                    // (tsc does too) — so exempt only when the ORIGINAL key type
+                    // is `any`, never the ERROR remap.
+                    let is_invalid = if key_type == TypeId::ANY
+                        && check_key == TypeId::ANY
+                        && self.destructuring_source_permits_dynamic_key(parent_type)
+                    {
                         None
+                    } else if key_type == TypeId::ANY && check_key == TypeId::ANY {
+                        Some(key_type)
                     } else {
                         crate::query_boundaries::type_checking_utilities::get_invalid_index_type_member_strict(self.ctx.types, check_key)
                     };
