@@ -1009,6 +1009,8 @@ mod ts2339_private_access_via_constructor_type_tests;
 mod ts2341_private_access_via_type_param_constraint_tests;
 #[path = "tests/ts2345_private_brand_argument_elaboration_tests.rs"]
 mod ts2345_private_brand_argument_elaboration_tests;
+#[path = "tests/ts2345_unknown_argument_assignability_tests.rs"]
+mod ts2345_unknown_argument_assignability_tests;
 #[path = "tests/ts2353_generic_constraint_tests.rs"]
 mod ts2353_generic_constraint_tests;
 #[path = "tests/ts2383_overload_flag_agreement_tests.rs"]

@@ -1090,8 +1090,11 @@ impl<'a> CheckerState<'a> {
                 actual,
                 fallback_return,
             } => {
+                // `actual` is intentionally not compared to `TypeId::UNKNOWN`:
+                // unlike `ERROR` (an unresolved-type sentinel), `unknown` is a
+                // real, sound type that is assignable only to `any`/`unknown`,
+                // so a mismatch against it is a genuine TS2345.
                 if actual == TypeId::ERROR
-                    || actual == TypeId::UNKNOWN
                     || expected == TypeId::ERROR
                     || expected == TypeId::UNKNOWN
                 {
