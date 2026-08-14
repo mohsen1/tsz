@@ -90,7 +90,15 @@ tsz_ensure_large_ts_repo_fixture() {
         current_ref="$(git -C "$fixture_dir" rev-parse HEAD 2>/dev/null || echo "")"
         if [ "$current_ref" != "$ref" ]; then
             echo "Pinning large-ts-repo to ${ref:0:12}..."
-            tsz_git_fetch_ref_or_fail "large-ts-repo" "$repo" "$ref" "$fixture_dir" || return 1
+            if ! git -C "$fixture_dir" fetch --quiet --depth 1 origin "$ref"; then
+                echo "ERROR: failed to fetch large-ts-repo pin ${ref:0:12} from ${repo}" \
+                    "— the upstream may have rewritten history; re-pin the fixture to a served commit" >&2
+                return 1
+            fi
+            if ! git -C "$fixture_dir" checkout --quiet --detach FETCH_HEAD; then
+                echo "ERROR: failed to check out fetched large-ts-repo pin ${ref:0:12}" >&2
+                return 1
+            fi
         fi
 
         if [[ "$ref" =~ ^[0-9a-f]{40}$ ]]; then
