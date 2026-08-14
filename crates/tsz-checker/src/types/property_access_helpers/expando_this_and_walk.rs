@@ -32,33 +32,45 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(in crate::types_domain) fn js_object_expr_is_this_or_alias(&self, idx: NodeIndex) -> bool {
-        let Some(node) = self.ctx.arena.get(idx) else {
-            return false;
-        };
+        self.this_alias_root_node(idx).is_some()
+    }
+
+    /// Resolves `idx` (a bare `this`, or an identifier aliasing one via
+    /// `const self = this;`) to the underlying `this`-keyword node.
+    fn this_alias_root_node(&self, idx: NodeIndex) -> Option<NodeIndex> {
+        let node = self.ctx.arena.get(idx)?;
         if node.kind == SyntaxKind::ThisKeyword as u16 {
-            return true;
+            return Some(idx);
         }
         if node.kind != SyntaxKind::Identifier as u16 {
-            return false;
+            return None;
         }
 
-        let Some(sym_id) = self.resolve_identifier_symbol(idx) else {
+        let sym_id = self.resolve_identifier_symbol(idx)?;
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        let decl_node = self.ctx.arena.get(symbol.value_declaration)?;
+        let var_decl = self.ctx.arena.get_variable_declaration(decl_node)?;
+        let init_node = self.ctx.arena.get(var_decl.initializer)?;
+        (init_node.kind == SyntaxKind::ThisKeyword as u16).then_some(var_decl.initializer)
+    }
+
+    /// Whether a `this.<prop>` (or aliased-`this`) receiver genuinely binds to
+    /// a real class instance — the only shape tsc infers members for from a
+    /// same-scope prior `this.prop = …` write. `typeof globalThis` and a
+    /// post-TS7 `@constructor` function's implicit-`any` `this` are excluded
+    /// (oracle-verified against `typescript@7.0.2`): both keep re-reporting
+    /// their own missing-member/implicit-any diagnostic instead.
+    pub(in crate::types_domain) fn this_property_assignment_receiver_is_class_instance(
+        &mut self,
+        object_expr_idx: NodeIndex,
+    ) -> bool {
+        let Some(this_idx) = self.this_alias_root_node(object_expr_idx) else {
             return false;
         };
-        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
-            return false;
-        };
-        let decl_node = match self.ctx.arena.get(symbol.value_declaration) {
-            Some(node) => node,
-            None => return false,
-        };
-        let Some(var_decl) = self.ctx.arena.get_variable_declaration(decl_node) else {
-            return false;
-        };
-        let Some(init_node) = self.ctx.arena.get(var_decl.initializer) else {
-            return false;
-        };
-        init_node.kind == SyntaxKind::ThisKeyword as u16
+        !self.is_this_in_nested_function_without_own_this_binding(this_idx)
+            && self
+                .nearest_enclosing_class_for_this_binding(this_idx)
+                .is_some()
     }
 
     fn collect_prior_js_this_property_assignment_type(

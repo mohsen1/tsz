@@ -308,6 +308,7 @@ impl<'a> CheckerState<'a> {
         if self.is_js_file()
             && self.is_this_expression(access.expression)
             && !self.property_access_is_direct_write_target(idx)
+            && self.this_property_assignment_receiver_is_class_instance(access.expression)
             && let Some(member_name) = static_member_name.as_deref()
             && let Some(prior_type) = self.prior_js_this_property_assignment_type(idx, member_name)
         {
