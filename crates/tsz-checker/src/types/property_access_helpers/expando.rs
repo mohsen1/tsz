@@ -933,10 +933,22 @@ impl<'a> CheckerState<'a> {
                 // callable-only gate already covers the narrower case where
                 // `d` carries an intrinsic `.prototype` (function/class
                 // RHS); this covers the general open-container member write.
+                //
+                // Deliberately NOT `expando_base_link_host_verdict` here: its
+                // `member_name == "prototype"` carve-out exists for
+                // `nested_expando_base_link_is_declared`'s narrower question
+                // ("is `X.prototype` a legitimate carrier for a FURTHER
+                // recorded assignment lookup"), not "grant this write
+                // outright" — reusing it here vacuously passed EVERY member
+                // write on ANY `X.prototype` base, including a real class's
+                // (`Module.prototype.identifier = e` must stay TS2339 when
+                // `Module` declares no such member; oracle-verified,
+                // `salsa/typeFromPropertyAssignment23.ts`).
                 if let Some((base_expr, member_name)) =
                     self.split_expando_access_link(object_expr_idx)
                 {
-                    return self.expando_base_link_host_verdict(base_expr, &member_name);
+                    return self.is_expando_property_read(base_expr, &member_name)
+                        && self.nested_expando_base_link_rhs_is_host(base_expr, &member_name);
                 }
             }
         }
