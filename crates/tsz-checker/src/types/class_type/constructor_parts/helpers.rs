@@ -14,6 +14,67 @@ use tsz_solver::{CallSignature, IndexSignature, PropertyInfo, TypeId, TypeParamI
 use super::build_data::StaticMemberBuildData;
 
 impl<'a> CheckerState<'a> {
+    /// Build the fields-only provisional instance for a class whose constructor
+    /// type is being resolved and install it into `symbol_instance_types`.
+    ///
+    /// The provisional carries only the class's declared instance properties
+    /// (no methods, no body inference), so an in-flight TYPE reference to the
+    /// class under construction resolves against a concrete structural shape
+    /// rather than an opaque `Lazy`. It is a stand-in for the window before the
+    /// real instance exists; the caller only installs it when no complete
+    /// instance is registered yet and restores/removes it afterwards
+    /// (issue #17456).
+    ///
+    /// Returns the installed provisional, or `None` when the class declares no
+    /// annotated instance properties (nothing to install).
+    pub(super) fn install_ctor_provisional_instance(
+        &mut self,
+        class: &tsz_parser::parser::node::ClassData,
+        member_count: usize,
+        sym_id: tsz_binder::SymbolId,
+    ) -> Option<TypeId> {
+        let mut inst_props: Vec<PropertyInfo> = Vec::with_capacity(member_count);
+        for &member_idx in &class.members.nodes {
+            let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                continue;
+            };
+            if member_node.kind != syntax_kind_ext::PROPERTY_DECLARATION {
+                continue;
+            }
+            let Some(prop) = self.ctx.arena.get_property_decl(member_node) else {
+                continue;
+            };
+            // Only NON-static properties with semantic declared types.
+            if self.has_static_modifier(&prop.modifiers) {
+                continue;
+            }
+            let Some(type_id) = self.effective_class_property_declared_type(member_idx, prop)
+            else {
+                continue;
+            };
+            let Some(name) = self.get_property_name_resolved(prop.name) else {
+                continue;
+            };
+            let name_atom = self.ctx.types.intern_string(&name);
+            inst_props.push(class_type_boundary::class_member_property(
+                class_type_boundary::ClassMemberProperty::new(name_atom, type_id)
+                    .optional(prop.question_token)
+                    .readonly(self.has_readonly_modifier(&prop.modifiers))
+                    .visibility(self.get_member_visibility(&prop.modifiers, prop.name))
+                    .parent(Some(sym_id)),
+            ));
+        }
+        if inst_props.is_empty() {
+            return None;
+        }
+        let partial_instance =
+            class_type_boundary::class_member_object_type(self.ctx.types, inst_props);
+        self.ctx
+            .symbol_instance_types
+            .insert(sym_id, partial_instance);
+        Some(partial_instance)
+    }
+
     /// Deferred fallback for a re-entrant constructor query: a `Lazy` reference
     /// to the class's `ClassConstructor` companion `DefId`, get-or-created so
     /// the same stable identity the completed computation sets the body on
