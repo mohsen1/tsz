@@ -15,6 +15,7 @@ use tsz_solver::TypeId;
 
 mod annotation_context;
 mod async_jsdoc_return;
+mod expando_container;
 mod lib_decl_arena;
 mod precheck_helpers;
 mod prior_value;
@@ -1218,22 +1219,10 @@ impl<'a> CheckerState<'a> {
                         }
                         return;
                     }
-                    // Check if this is a mergeable declaration by looking at the node kind.
-                    // Mergeable declarations: namespace/module, enum, class, interface, function.
-                    // When these are declared with the same name, they merge instead of conflicting.
+                    // Mergeable declarations (namespace/module, enum, class, interface,
+                    // function, or an expando-container var) merge instead of conflicting.
                     let is_mergeable_declaration =
-                        if let Some(decl_node) = self.ctx.arena.get(decl_idx) {
-                            matches!(
-                                decl_node.kind,
-                                syntax_kind_ext::MODULE_DECLARATION  // namespace/module
-                                | syntax_kind_ext::ENUM_DECLARATION // enum
-                                | syntax_kind_ext::CLASS_DECLARATION // class
-                                | syntax_kind_ext::INTERFACE_DECLARATION // interface
-                                | syntax_kind_ext::FUNCTION_DECLARATION // function
-                            )
-                        } else {
-                            false
-                        };
+                        self.is_mergeable_or_expando_container_decl(decl_idx, var_name.as_deref());
                     // Skip TS2403 when the declarations are in different namespace body
                     // blocks (ModuleBlock nodes) of the same merged namespace. TSC treats
                     // each namespace body as a separate declaration context, so
@@ -1504,17 +1493,15 @@ impl<'a> CheckerState<'a> {
                                         raw
                                     }
                                 };
-                                // Check if other declaration is mergeable (namespace, etc.)
+                                // Check if other declaration is mergeable (namespace, etc.) or
+                                // an expando-container var (`is_expando_container_var_decl`).
                                 let other_node_kind =
                                     self.ctx.arena.get(other_decl).map_or(0, |n| n.kind);
-                                let is_other_mergeable = matches!(
-                                    other_node_kind,
-                                    syntax_kind_ext::MODULE_DECLARATION
-                                        | syntax_kind_ext::ENUM_DECLARATION
-                                        | syntax_kind_ext::CLASS_DECLARATION
-                                        | syntax_kind_ext::INTERFACE_DECLARATION
-                                        | syntax_kind_ext::FUNCTION_DECLARATION
-                                );
+                                let is_other_mergeable = self
+                                    .is_mergeable_or_expando_container_decl(
+                                        other_decl,
+                                        var_name.as_deref(),
+                                    );
                                 // Functions, classes, and enums don't merge with variables,
                                 // so they should not establish a "previous variable type" for TS2403.
                                 // Only other variables and namespaces (which DO merge with vars) establish this.
@@ -1706,7 +1693,16 @@ impl<'a> CheckerState<'a> {
                                     cross_checker.ctx.lib_contexts = lib_contexts.clone();
                                     let other_type = cross_checker.get_type_of_node(other_decl);
                                     drop(cross_arena_guard);
-                                    if other_type != TypeId::ERROR
+                                    // Expando-container exemption, symmetric on both sides
+                                    // (see `is_expando_container_var_decl`).
+                                    let either_side_is_expando_container =
+                                        self.is_expando_container_var_decl_in_arena(
+                                            other_arena,
+                                            other_decl,
+                                            name_str,
+                                        ) || self.is_expando_container_var_decl(decl_idx, name_str);
+                                    if !either_side_is_expando_container
+                                        && other_type != TypeId::ERROR
                                         && !self.are_var_decl_types_compatible(
                                             other_type,
                                             raw_declared_type,
