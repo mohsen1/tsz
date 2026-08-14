@@ -306,7 +306,7 @@ ensure_vite_app_benchmark_fixture() {
 
 ensure_utility_types_fixture() {
     mkdir -p "$EXTERNAL_BENCH_DIR"
-    tsz_ensure_git_fixture "utility-types" "$UTILITY_TYPES_REPO" "$UTILITY_TYPES_REF" "$UTILITY_TYPES_DIR" 1
+    tsz_ensure_git_fixture "utility-types" "$UTILITY_TYPES_REPO" "$UTILITY_TYPES_REF" "$UTILITY_TYPES_DIR" 1 || exit 1
 
     # Rewrite the generated flat tsconfig every run. External fixture clones
     # are cached across benchmark jobs, and stale generated configs can keep
@@ -321,7 +321,7 @@ ensure_utility_types_fixture() {
 
 ensure_ts_toolbelt_fixture() {
     mkdir -p "$EXTERNAL_BENCH_DIR"
-    tsz_ensure_git_fixture "ts-toolbelt" "$TS_TOOLBELT_REPO" "$TS_TOOLBELT_REF" "$TS_TOOLBELT_DIR" 1
+    tsz_ensure_git_fixture "ts-toolbelt" "$TS_TOOLBELT_REPO" "$TS_TOOLBELT_REF" "$TS_TOOLBELT_DIR" 1 || exit 1
 
     # Rewrite the generated flat tsconfig every run; fixture clones are cached
     # across jobs and must pick up script-owned config changes.
@@ -335,7 +335,7 @@ ensure_ts_toolbelt_fixture() {
 
 ensure_ts_essentials_fixture() {
     mkdir -p "$EXTERNAL_BENCH_DIR"
-    tsz_ensure_git_fixture "ts-essentials" "$TS_ESSENTIALS_REPO" "$TS_ESSENTIALS_REF" "$TS_ESSENTIALS_DIR" 1
+    tsz_ensure_git_fixture "ts-essentials" "$TS_ESSENTIALS_REPO" "$TS_ESSENTIALS_REF" "$TS_ESSENTIALS_DIR" 1 || exit 1
 
     # Rewrite the generated flat tsconfig every run; fixture clones are cached
     # across jobs and must pick up script-owned config changes.
@@ -350,7 +350,7 @@ ensure_ts_essentials_fixture() {
 # ─── Real-world fixture: rxjs ───────────────────────────────────────────────
 ensure_rxjs_fixture() {
     mkdir -p "$EXTERNAL_BENCH_DIR"
-    tsz_ensure_git_fixture "rxjs" "$RXJS_REPO" "$RXJS_REF" "$RXJS_DIR" 1
+    tsz_ensure_git_fixture "rxjs" "$RXJS_REPO" "$RXJS_REF" "$RXJS_DIR" 1 || exit 1
     # rxjs has been a monorepo since the v8 work — `src/internal` moved to
     # `packages/rxjs/src/internal`. Detect both layouts.
     local rxjs_src_root
@@ -364,7 +364,7 @@ ensure_rxjs_fixture() {
 # ─── Real-world fixture: type-fest ──────────────────────────────────────────
 ensure_type_fest_fixture() {
     mkdir -p "$EXTERNAL_BENCH_DIR"
-    tsz_ensure_git_fixture "type-fest" "$TYPE_FEST_REPO" "$TYPE_FEST_REF" "$TYPE_FEST_DIR" 1
+    tsz_ensure_git_fixture "type-fest" "$TYPE_FEST_REPO" "$TYPE_FEST_REF" "$TYPE_FEST_DIR" 1 || exit 1
     # Rewrite the generated flat tsconfig every run; fixture clones are cached
     # across jobs and must pick up script-owned config changes.
     local flat_tsconfig="$TYPE_FEST_DIR/tsconfig.flat.json"
@@ -374,7 +374,7 @@ ensure_type_fest_fixture() {
 # ─── Real-world fixture: zod ────────────────────────────────────────────────
 ensure_zod_fixture() {
     mkdir -p "$EXTERNAL_BENCH_DIR"
-    tsz_ensure_git_fixture "zod" "$ZOD_REPO" "$ZOD_REF" "$ZOD_DIR" 1
+    tsz_ensure_git_fixture "zod" "$ZOD_REPO" "$ZOD_REF" "$ZOD_DIR" 1 || exit 1
     # Rewrite the generated flat tsconfig every run; fixture clones are cached
     # across jobs and must pick up script-owned config changes.
     local flat_tsconfig="$ZOD_DIR/tsconfig.flat.json"
@@ -384,7 +384,7 @@ ensure_zod_fixture() {
 # ─── Real-world fixture: kysely (extreme type-level SQL inference) ─────────
 ensure_kysely_fixture() {
     mkdir -p "$EXTERNAL_BENCH_DIR"
-    tsz_ensure_git_fixture "kysely" "$KYSELY_REPO" "$KYSELY_REF" "$KYSELY_DIR" 1
+    tsz_ensure_git_fixture "kysely" "$KYSELY_REPO" "$KYSELY_REF" "$KYSELY_DIR" 1 || exit 1
     local flat_tsconfig="$KYSELY_DIR/tsconfig.flat.json"
     local bench_globals="$KYSELY_DIR/tsz-bench-globals.d.ts"
     tsz_write_kysely_globals "$bench_globals"
@@ -1340,7 +1340,7 @@ ensure_large_ts_repo_fixture() {
     # extends tsconfig.base.json which contains the 200+ `paths` mappings
     # for cross-package @scope/pkg imports. Without those paths, tsc itself
     # emits resolution errors and the benchmark is skipped.
-    tsz_ensure_large_ts_repo_fixture "$LARGE_TS_DIR" "$LARGE_TS_REPO" "$LARGE_TS_REF"
+    tsz_ensure_large_ts_repo_fixture "$LARGE_TS_DIR" "$LARGE_TS_REPO" "$LARGE_TS_REF" || exit 1
 }
 
 run_large_ts_repo_benchmarks() {

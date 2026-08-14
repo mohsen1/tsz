@@ -507,6 +507,30 @@ tsz_project_fixture_sources() {
   esac
 }
 
+# Fetch `ref` into `dir` and detach HEAD onto it. Returns non-zero (with a
+# clear stderr message) instead of leaving `dir`'s HEAD on whatever it
+# happened to be before on failure — callers must check the result rather
+# than assume success, so a dead upstream ref can't be reported as a
+# successful pin against a stale or unrelated commit (#17469). Does not
+# itself decide fatal-vs-recoverable: `project-compile-guard.sh`'s
+# application-row caller treats this as a soft, advisory failure; other
+# callers should treat it as fatal.
+tsz_git_fetch_ref_or_fail() {
+  local name="$1"
+  local repo="$2"
+  local ref="$3"
+  local dir="$4"
+
+  if ! git -C "$dir" fetch --quiet --depth 1 origin "$ref"; then
+    echo "ERROR: failed to fetch ${name} at ${ref} from ${repo} (pinned commit may no longer exist upstream)" >&2
+    return 1
+  fi
+  if ! git -C "$dir" checkout --quiet --detach FETCH_HEAD; then
+    echo "ERROR: failed to check out ${name} FETCH_HEAD after fetching ${ref}" >&2
+    return 1
+  fi
+}
+
 tsz_ensure_git_fixture() {
   local name="$1"
   local repo="$2"
@@ -533,8 +557,7 @@ tsz_ensure_git_fixture() {
     current_ref="$(git -C "$dir" rev-parse HEAD 2>/dev/null || true)"
     if [[ "$current_ref" != "$ref" ]]; then
       echo "Pinning ${name} to ${ref:0:12}..."
-      git -C "$dir" fetch --quiet --depth 1 origin "$ref"
-      git -C "$dir" checkout --quiet --detach FETCH_HEAD
+      tsz_git_fetch_ref_or_fail "$name" "$repo" "$ref" "$dir"
     fi
   fi
 }

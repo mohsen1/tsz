@@ -55,7 +55,7 @@ run_application_project_benchmarks() {
 
     print_header "Real-world Application Project - $app_label"
     local root="$EXTERNAL_BENCH_DIR/$app_fixture_dir"
-    tsz_ensure_git_fixture "$app_fixture_dir" "$app_repo" "$app_ref" "$root" 1
+    tsz_ensure_git_fixture "$app_fixture_dir" "$app_repo" "$app_ref" "$root" 1 || return 1
     echo -e "${GREEN}✓${NC} $app_label pinned at $(git -C "$root" rev-parse --short HEAD)"
 
     if ! (cd "$root/$app_install_root" && eval "$app_install_cmd"); then

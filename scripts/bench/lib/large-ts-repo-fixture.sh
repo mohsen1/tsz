@@ -79,8 +79,7 @@ tsz_ensure_large_ts_repo_fixture() {
         current_ref="$(git -C "$fixture_dir" rev-parse HEAD 2>/dev/null || echo "")"
         if [ "$current_ref" != "$ref" ]; then
             echo "Pinning large-ts-repo to ${ref:0:12}..."
-            git -C "$fixture_dir" fetch --quiet --depth 1 origin "$ref"
-            git -C "$fixture_dir" checkout --quiet --detach FETCH_HEAD
+            tsz_git_fetch_ref_or_fail "large-ts-repo" "$repo" "$ref" "$fixture_dir" || return 1
         fi
     fi
 
