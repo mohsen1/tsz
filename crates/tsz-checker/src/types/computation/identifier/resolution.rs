@@ -947,6 +947,15 @@ impl<'a> CheckerState<'a> {
         name: &str,
         local_sym_id: SymbolId,
     ) -> Option<TypeId> {
+        // A JS expando container declared in the current file is authoritative
+        // for its own uses: `tsc` keeps `a.js`'s `var x = function(){}` (plus
+        // its `x.prop = ...` members) even when `x` merges with a plain
+        // `var x` of another type in a sibling `.ts` file. Deferring to the
+        // sibling's non-JS type here is exactly the contamination that types
+        // the local `x` as the foreign value and rejects its own expando write.
+        if self.current_file_owns_expando_container_variable(local_sym_id) {
+            return None;
+        }
         if self.ctx.binder.file_locals.get(name) != Some(local_sym_id) {
             return self.non_js_cross_file_global_value_type_by_name(name);
         }

@@ -140,8 +140,15 @@ fn check_entry_with_libs(
         .collect()
 }
 
+/// `a.js`'s own `var x = function foo() {}` is a JS expando container, so its
+/// `x.a = ...` write is a valid expando declaration and reports no `TS2339` —
+/// even though `x` merges, across files, with `b.ts`'s `var x` of type
+/// `number`. Oracle-verified: `tsc` (6.0.2 / 7.0.2) reports zero diagnostics
+/// on this pair. This originally asserted the merged `number` type won and a
+/// spurious `TS2339` fired (#17305); #17443 corrected it to tsc parity — the
+/// writing file's own container declaration is authoritative for its writes.
 #[test]
-fn merged_checked_js_global_uses_non_js_type_for_ts2339() {
+fn merged_checked_js_expando_container_write_is_clean() {
     let diagnostics = check_entry_with_libs(
         &[
             (
@@ -178,14 +185,9 @@ var x = function () {
 
     assert_eq!(
         ts2339.len(),
-        1,
-        "Expected exactly one TS2339 for the merged JS/TS global. Actual diagnostics: {diagnostics:#?}"
-    );
-    assert!(
-        ts2339[0]
-            .1
-            .contains("Property 'a' does not exist on type 'number'."),
-        "Expected the checked-JS write error to use the merged TS declaration type. Actual diagnostics: {diagnostics:#?}"
+        0,
+        "a JS expando container's own write must not report TS2339 despite the \
+         cross-file merge with a `number` global. Actual diagnostics: {diagnostics:#?}"
     );
 }
 

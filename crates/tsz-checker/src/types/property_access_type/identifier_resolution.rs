@@ -1384,6 +1384,12 @@ impl<'a> CheckerState<'a> {
                         .arena
                         .get(access.expression)
                         .is_some_and(|expr_node| expr_node.kind == SyntaxKind::Identifier as u16)
+                    // The current file's own expando container is authoritative
+                    // for its writes, so the merged symbol's foreign non-JS
+                    // value must not disable the expando escape hatches below.
+                    && !self
+                        .resolve_identifier_symbol(access.expression)
+                        .is_some_and(|s| self.current_file_owns_expando_container_variable(s))
                     && self
                         .ctx
                         .arena

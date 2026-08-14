@@ -19,11 +19,7 @@ impl<'a> CheckerState<'a> {
     /// `var x`; only once an `x.prop = ...` expando assignment exists does
     /// the redeclaration check stop comparing types
     /// (`TypeScript/tests/cases/conformance/salsa/jsContainerMergeTsDeclaration.ts`).
-    pub(in crate::state_domain::variable_checking) fn is_expando_container_var_decl(
-        &self,
-        decl_idx: NodeIndex,
-        name: &str,
-    ) -> bool {
+    pub(crate) fn is_expando_container_var_decl(&self, decl_idx: NodeIndex, name: &str) -> bool {
         self.is_expando_container_var_decl_in_arena(self.ctx.arena, decl_idx, name)
     }
 
@@ -87,5 +83,64 @@ impl<'a> CheckerState<'a> {
         });
         kind_is_mergeable
             || name.is_some_and(|name| self.is_expando_container_var_decl(decl_idx, name))
+    }
+
+    /// Whether the file currently being checked declares `sym_id` as its own JS
+    /// "expando container" variable (see [`is_expando_container_var_decl`]).
+    ///
+    /// A script-global `var x` in one file merges into a single symbol with a
+    /// same-named `var x` in another file. That merged symbol has one canonical
+    /// owner (`resolve_symbol_file_index`), which may point at the *other*
+    /// file — whose plain, non-expando (e.g. `number`) declaration then wins
+    /// every cross-file-global-preference heuristic and wrongly types this
+    /// file's own `x.prop = ...` write against the foreign type. `tsc` instead
+    /// keeps each expando container's own file authoritative for that file's
+    /// writes. This predicate lets the current file reclaim that ownership.
+    ///
+    /// Arena-safe: only a declaration the *current* binder maps back to this
+    /// exact `SymbolId` (`get_node_symbol` round-trip) is considered, so a
+    /// foreign declaration sharing the raw `SymbolId`, or a cross-arena
+    /// `NodeIndex`, is never read against this file's arena.
+    ///
+    /// [`is_expando_container_var_decl`]:
+    /// CheckerState::is_expando_container_var_decl
+    pub(crate) fn current_file_owns_expando_container_variable(
+        &self,
+        sym_id: tsz_binder::SymbolId,
+    ) -> bool {
+        self.current_file_expando_container_decl(sym_id).is_some()
+    }
+
+    /// The current file's own JS expando-container declaration of `sym_id`, if
+    /// any — the counterpart of [`current_file_owns_expando_container_variable`]
+    /// that also yields the owning `NodeIndex`.
+    ///
+    /// Callers needing the declaration's *type* (base-type selection) use this
+    /// so they resolve `x` through the current file's declaration rather than
+    /// the merged symbol's canonical `value_declaration`, which is the
+    /// first-bound file's — foreign when the sibling `.ts`/`.js` was bound
+    /// first. Arena-safe via the same `get_node_symbol` round-trip.
+    ///
+    /// [`current_file_owns_expando_container_variable`]:
+    /// CheckerState::current_file_owns_expando_container_variable
+    pub(crate) fn current_file_expando_container_decl(
+        &self,
+        sym_id: tsz_binder::SymbolId,
+    ) -> Option<NodeIndex> {
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        // `is_expando_container_var_decl` reborrows `self`, so snapshot the
+        // declarations and name before the loop to release the symbol borrow.
+        let name = symbol.escaped_name.clone();
+        let decls: Vec<NodeIndex> = symbol
+            .declarations
+            .iter()
+            .copied()
+            .chain(std::iter::once(symbol.value_declaration))
+            .collect();
+        decls.into_iter().find(|&decl| {
+            !decl.is_none()
+                && self.ctx.binder.get_node_symbol(decl) == Some(sym_id)
+                && self.is_expando_container_var_decl(decl, &name)
+        })
     }
 }

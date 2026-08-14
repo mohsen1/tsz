@@ -1451,11 +1451,21 @@ impl CheckerState<'_> {
             // Preserve that provenance for plain variables: the program-wide
             // raw-id owner index can point at an unrelated foreign symbol with
             // the same numeric `SymbolId`.
-            let base = if selected_by_current_binder && value_decl.is_some() {
-                self.type_of_value_declaration(value_decl)
-            } else {
-                self.get_type_of_symbol(sym_id)
-            };
+            let base =
+                if let Some(own_expando_decl) = self.current_file_expando_container_decl(sym_id) {
+                    // A JS expando container declared in the current file is
+                    // authoritative for its own uses. The merged symbol's canonical
+                    // `value_declaration` is the first-declared file's — a foreign
+                    // `.ts`/`.js` sibling when it was passed first — so
+                    // `get_type_of_symbol` would resolve `x` to that foreign type
+                    // (e.g. `number`) and reject this file's own `x.prop = ...`
+                    // write. Resolve through this file's declaration instead.
+                    self.type_of_value_declaration(own_expando_decl)
+                } else if selected_by_current_binder && value_decl.is_some() {
+                    self.type_of_value_declaration(value_decl)
+                } else {
+                    self.get_type_of_symbol(sym_id)
+                };
             if (flags & symbol_flags::ALIAS) != 0 {
                 // An import/re-export alias that (transitively) resolves to an
                 // enum yields the enum's *instance* type from

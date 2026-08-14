@@ -242,6 +242,12 @@ impl<'a> CheckerState<'a> {
     /// `TS2339` under `noImplicitAny`, with the open-container leniency still
     /// silencing `{}`-typed receivers when it is off.
     pub(crate) fn expando_write_host_is_foreign_file(&self, sym_id: SymbolId) -> bool {
+        // The current file reclaims ownership of its own expando write when it
+        // genuinely declares `sym_id` as a JS expando-container variable, even
+        // though the merged symbol's single canonical owner points elsewhere.
+        if self.current_file_owns_expando_container_variable(sym_id) {
+            return false;
+        }
         self.ctx
             .resolve_symbol_file_index(sym_id)
             .is_some_and(|file_idx| file_idx != self.ctx.current_file_idx)
@@ -483,6 +489,19 @@ impl<'a> CheckerState<'a> {
             let symbol_declarations = symbol.declarations.clone();
             let symbol_escaped_name = symbol.escaped_name.clone();
 
+            // When the current file declares `sym_id` as its own JS expando
+            // container, `x.prop = e` here is a valid expando declaration
+            // regardless of the merged symbol's canonical `value_declaration`
+            // or of any non-callable declaration a sibling file contributes.
+            // Without this, a cross-file `var x` of another type (or merely
+            // declared first, so its decl becomes the merged
+            // `value_declaration`) makes `is_callable_variable` / the
+            // `has_mixed_non_callable_declaration` scan reject this file's own
+            // write. `tsc` scopes expando validity to the writing file's own
+            // declaration.
+            let current_file_owns_expando =
+                self.current_file_owns_expando_container_variable(sym_id);
+
             // In TS files, `fn.prop = e` is an expando DECLARATION only when
             // the assignment shares its enclosing container (nearest
             // function-like/module, `NONE` = source file; blocks and loop/if
@@ -528,6 +547,10 @@ impl<'a> CheckerState<'a> {
             if self.is_js_file()
                 && self.ctx.compiler_options.check_js
                 && prototype_root_expr.is_none()
+                // The current file's own expando container owns its writes even
+                // when the merged symbol has a foreign non-JS value; only defer
+                // to that value when this file does NOT declare the container.
+                && !self.current_file_owns_expando_container_variable(sym_id)
                 && let Some(root_ident) = self.ctx.arena.get(symbol_target_expr)
                 && root_ident.kind == SyntaxKind::Identifier as u16
                 && let Some(ident) = self.ctx.arena.get_identifier(root_ident)
@@ -723,7 +746,8 @@ impl<'a> CheckerState<'a> {
                             .and_then(|decl| self.ctx.arena.get(decl.initializer))
                             .is_some_and(|init_node| init_node.is_function_expression_or_arrow())
                 };
-            if !is_declared_function_or_class && !is_callable_variable {
+            if !is_declared_function_or_class && !is_callable_variable && !current_file_owns_expando
+            {
                 return false;
             }
 
@@ -746,12 +770,16 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
-            let has_mixed_non_callable_declaration =
-                declaration_indices.iter().copied().any(|decl_idx| {
+            // A non-callable declaration contributed by a *sibling* file must
+            // not disqualify this file's own expando container (see
+            // `current_file_owns_expando`).
+            let has_mixed_non_callable_declaration = !current_file_owns_expando
+                && declaration_indices.iter().copied().any(|decl_idx| {
                     !self.declaration_is_checked_js_constructor_value_declaration(sym_id, decl_idx)
                         && !declaration_is_function_value(decl_idx)
                 });
-            let has_expando_declaration_pattern = !self.is_js_file()
+            let has_expando_declaration_pattern = current_file_owns_expando
+                || !self.is_js_file()
                 || !self.ctx.compiler_options.check_js
                 || (!has_mixed_non_callable_declaration
                     && declaration_indices.iter().copied().all(|decl_idx| {

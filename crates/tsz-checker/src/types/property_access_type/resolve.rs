@@ -320,6 +320,11 @@ impl<'a> CheckerState<'a> {
                     .arena
                     .get(access.expression)
                     .is_some_and(|expr_node| expr_node.kind == SyntaxKind::Identifier as u16)
+                // A current-file expando container owns its own write receiver;
+                // do not preserve a sibling `.ts` global's non-JS value for it.
+                && !self
+                    .resolve_identifier_symbol(access.expression)
+                    .is_some_and(|s| self.current_file_owns_expando_container_variable(s))
                 && self
                     .ctx
                     .arena

@@ -297,8 +297,26 @@ impl CheckerState<'_> {
             .arena
             .get(logical_idx)
             .is_some_and(|node| node.kind == syntax_kind_ext::BINARY_EXPRESSION);
-        if !is_binary && let Some(&cached) = self.ctx.node_types.get(&idx.0) {
-            return cached;
+        if !is_binary {
+            // A current-file JS expando container owns its own write receiver
+            // (see `current_file_expando_container_decl`). Under the CLI's
+            // parallel file checking, a racing pass can populate this node's
+            // `node_types` entry — and `get_type_of_node_with_request` below
+            // would re-read it — with the merged symbol's *foreign* value (a
+            // sibling `.ts`/`.js` `var x` of another type) before the
+            // container-aware identifier resolution runs, wrongly rejecting the
+            // container's own `x.prop = ...` write. Resolve straight through
+            // the container's own declaration, bypassing any such stale cache.
+            if let Some(node) = self.ctx.arena.get(logical_idx)
+                && node.kind == SyntaxKind::Identifier as u16
+                && let Some(sym_id) = self.resolve_identifier_symbol(logical_idx)
+                && let Some(decl) = self.current_file_expando_container_decl(sym_id)
+            {
+                return self.type_of_value_declaration(decl);
+            }
+            if let Some(&cached) = self.ctx.node_types.get(&idx.0) {
+                return cached;
+            }
         }
         if let Some(node) = self.ctx.arena.get(logical_idx)
             && node.kind == syntax_kind_ext::BINARY_EXPRESSION
