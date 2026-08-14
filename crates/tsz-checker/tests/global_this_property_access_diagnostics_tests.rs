@@ -429,6 +429,91 @@ this.someUnknownProperty = 1;
     );
 }
 
+/// A `.ts` file gets no JS "declare a new global property" leniency: even
+/// the bare `=` assignment target still reports TS7053, matching tsc.
+#[test]
+fn ts_file_bare_equals_element_write_still_emits_ts7053() {
+    let source = r#"
+this["someUnknownProperty"] = {};
+"#;
+    let diags = check_with_no_implicit_any(source);
+    assert!(
+        count(&diags, 7053) >= 1,
+        "TS7053 must fire for this['unknown'] = ... in a .ts file; got: {diags:#?}"
+    );
+}
+
+/// A checkJs file's bare `this["y"] = value` is tsc's "declare a new global
+/// property" leniency: the assignment target itself stays silent.
+#[test]
+fn checkjs_global_this_bare_equals_element_write_stays_silent() {
+    let source = r#"
+this["someUnknownProperty"] = {};
+"#;
+    let diags = check_with_no_implicit_any_js(source);
+    assert_eq!(
+        count(&diags, 7053),
+        0,
+        "a bare `this['x'] = ...` declares a new global property in JS and must stay silent; got: {diags:#?}"
+    );
+}
+
+/// The JS leniency is for the assignment target only — a plain read of the
+/// same shape still reports.
+#[test]
+fn checkjs_global_this_element_read_emits_ts7053() {
+    let source = r#"
+var q = this["someUnknownProperty"];
+"#;
+    let diags = check_with_no_implicit_any_js(source);
+    assert!(
+        count(&diags, 7053) >= 1,
+        "a read of this['unknown'] in JS must still emit TS7053; got: {diags:#?}"
+    );
+}
+
+/// A nested element write (`this["y"]["z"] = 1`) reads `this["y"]` first —
+/// that read is not itself the assignment target, so it keeps reporting even
+/// though the outer write is the "new global property" shape.
+#[test]
+fn checkjs_global_this_nested_element_write_emits_ts7053() {
+    let source = r#"
+this["someUnknownProperty"]["z"] = 1;
+"#;
+    let diags = check_with_no_implicit_any_js(source);
+    assert!(
+        count(&diags, 7053) >= 1,
+        "the inner read of this['unknown'] must still emit TS7053; got: {diags:#?}"
+    );
+}
+
+/// A compound assignment reads the current value before writing it, so it
+/// does not qualify for the bare-`=` leniency.
+#[test]
+fn checkjs_global_this_compound_element_write_emits_ts7053() {
+    let source = r#"
+this["someUnknownProperty"] += 1;
+"#;
+    let diags = check_with_no_implicit_any_js(source);
+    assert!(
+        count(&diags, 7053) >= 1,
+        "this['unknown'] += ... in JS must still emit TS7053; got: {diags:#?}"
+    );
+}
+
+/// `++`/`--` read-then-write the same way a compound assignment does.
+#[test]
+fn checkjs_global_this_element_increment_emits_ts7053() {
+    let source = r#"
+this["someUnknownProperty"]++;
+"#;
+    let diags = check_with_no_implicit_any_js(source);
+    assert!(
+        count(&diags, 7053) >= 1,
+        "this['unknown']++ in JS must still emit TS7053; got: {diags:#?}"
+    );
+}
+
 fn check_with_no_implicit_any(source: &str) -> Vec<tsz_checker::diagnostics::Diagnostic> {
     use tsz_checker::context::CheckerOptions;
     tsz_checker::test_utils::check_source(

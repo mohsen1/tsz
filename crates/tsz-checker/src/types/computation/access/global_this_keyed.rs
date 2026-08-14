@@ -2,6 +2,8 @@ use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
 use crate::state::CheckerState;
 use crate::types_domain::queries::core::GlobalReceiver;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::syntax_kind_ext;
+use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 pub(super) enum GlobalThisAccessKind {
@@ -102,12 +104,17 @@ impl<'a> CheckerState<'a> {
         // TS7053: When noImplicitAny is enabled and the access target is
         // `typeof globalThis` (via `this` resolving to global, or a direct
         // `globalThis["x"]`), and the property is not found, emit the
-        // can't-index diagnostic.
+        // can't-index diagnostic. A JS file's bare `this["y"] = value` (an
+        // `=` assignment target, not a compound assignment or `++`/`--`,
+        // which read the missing property first) is tsc's "declare a new
+        // global property" leniency and stays silent; every other shape —
+        // reads, compound writes, and a read used as the base of a further
+        // write like `this["y"]["z"] = 1` — still reports.
         if targets_global_this
             && property_type == TypeId::ANY
             && self.ctx.no_implicit_any()
-            && !self.is_js_file()
             && matches!(request.access_kind, GlobalThisAccessKind::Element)
+            && !(self.is_js_file() && self.is_bare_equals_assignment_target(request.idx))
         {
             let index_str = format!("\"{}\"", request.name);
             self.error_at_node(
@@ -243,6 +250,28 @@ impl<'a> CheckerState<'a> {
             diagnostic_codes::ELEMENT_IMPLICITLY_HAS_AN_ANY_TYPE_BECAUSE_EXPRESSION_OF_TYPE_CANT_BE_USED_TO_IN,
         );
         Some(TypeId::ANY)
+    }
+
+    /// Whether `idx` is the left-hand side of a bare `=` assignment. Distinct
+    /// from the broader `property_access_is_direct_write_target` helper used
+    /// elsewhere: a compound assignment (`+=`) or `++`/`--` reads the current
+    /// value before writing it, so it does not qualify for the "declare a new
+    /// global property" leniency and must still resolve the (missing)
+    /// property like any other read.
+    fn is_bare_equals_assignment_target(&self, idx: NodeIndex) -> bool {
+        let Some(ext) = self.ctx.arena.get_extended(idx) else {
+            return false;
+        };
+        let Some(parent_node) = self.ctx.arena.get(ext.parent) else {
+            return false;
+        };
+        if parent_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+            return false;
+        }
+        let Some(binary) = self.ctx.arena.get_binary_expr(parent_node) else {
+            return false;
+        };
+        binary.left == idx && binary.operator_token == SyntaxKind::EqualsToken as u16
     }
 
     fn resolve_declared_window_literal_key(
