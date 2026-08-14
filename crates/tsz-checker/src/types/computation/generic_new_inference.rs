@@ -11,8 +11,9 @@ impl<'a> CheckerState<'a> {
     ) -> Vec<bool> {
         (0..arg_count)
             .map(|i| {
-                Self::generic_new_param_type_for_arg(shape, i)
-                    .is_some_and(|param_type| self.generic_new_param_preserves_literal(param_type))
+                Self::generic_new_param_type_for_arg(shape, i).is_some_and(|param_type| {
+                    self.generic_new_param_preserves_literal(param_type, shape.return_type)
+                })
             })
             .collect()
     }
@@ -27,10 +28,28 @@ impl<'a> CheckerState<'a> {
         })
     }
 
-    fn generic_new_param_preserves_literal(&mut self, param_type: TypeId) -> bool {
+    fn generic_new_param_preserves_literal(
+        &mut self,
+        param_type: TypeId,
+        return_type: TypeId,
+    ) -> bool {
         let Some(info) = common::type_param_info(self.ctx.types, param_type) else {
             return false;
         };
+        // A type parameter that occurs naked (unwrapped by any application) at
+        // the top level of the construct signature's return type is an
+        // identity-like binder — `new <T>(a: T, b: T): T` — and tsc infers it
+        // straight from the argument's own (unwidened) type, the same as a
+        // plain generic function call: `new Ctor('', 0)` reports "'0' is not
+        // assignable to '\"\"'", not to `string`. A type parameter that is only
+        // reachable through a wrapper — a class instance type (`new Ctor2<T>`,
+        // whose construct signature returns `Ctor2<T>`) or a structural
+        // application (`new <T>(...): Box<T>`) — keeps tsc's normal widened
+        // inference result, which this function's constraint-based check below
+        // (T extends string, etc.) already covers for the constrained case.
+        if common::is_type_parameter_at_top_level(self.ctx.types, return_type, info.name) {
+            return true;
+        }
         let Some(constraint) = info.constraint else {
             return false;
         };

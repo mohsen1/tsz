@@ -2190,6 +2190,9 @@ path = "tests/window_indexed_access_callback_contextual_typing_tests.rs"
 name = "generic_call_primitive_widening_display_tests"
 path = "tests/generic_call_primitive_widening_display_tests.rs"
 [[test]]
+name = "generic_new_naked_return_literal_preservation_tests"
+path = "tests/generic_new_naked_return_literal_preservation_tests.rs"
+[[test]]
 name = "generic_callable_interface_type_argument_display_tests"
 path = "tests/generic_callable_interface_type_argument_display_tests.rs"
 [[test]]

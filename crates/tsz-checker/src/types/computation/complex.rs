@@ -1450,16 +1450,26 @@ impl<'a> CheckerState<'a> {
         }
 
         // For generic constructors (without const type params), widen scalar literal
-        // arg types for error display. During arg collection, preserve_literal_types
-        // was true so that generic inference gets precise literal types (e.g., `true`
-        // for `T = true`). But for TS2345 error messages, tsc displays the widened
-        // type (`boolean`, not `true`). The function call path achieves this via its
-        // multi-pass inference; here we widen explicitly post-collection.
-        if is_generic_new && !has_const_type_params {
-            let preserve_literals = constructor_shape
+        // arg types for both error display and inference. During arg collection,
+        // preserve_literal_types was true so that generic inference gets precise
+        // literal types (e.g., `true` for `T = true`) when a literal itself
+        // determines a tuple/array shape. Post-collection, only the type parameter
+        // positions that `generic_new_literal_preservation_mask` marks (a preserving
+        // constraint, e.g. `T extends string`, or a naked top-level occurrence of T
+        // in the return type — an identity-like signature such as
+        // `new <T>(a: T, b: T): T`) keep the literal; every other position widens,
+        // matching tsc (a real class constructor's implicit `Ctor<T>` return type is
+        // never a naked T, so its arguments always widen). The function call path
+        // achieves the same split via its multi-pass inference.
+        let preserve_literals = if is_generic_new && !has_const_type_params {
+            constructor_shape
                 .as_ref()
                 .map(|shape| self.generic_new_literal_preservation_mask(shape, arg_types.len()))
-                .unwrap_or_default();
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+        if is_generic_new && !has_const_type_params {
             for (i, arg_type) in arg_types.iter_mut().enumerate() {
                 if !preserve_literals.get(i).copied().unwrap_or(false) {
                     *arg_type = tsz_solver::operations::widening::widen_literal_type(
@@ -1474,19 +1484,25 @@ impl<'a> CheckerState<'a> {
                 self.apply_type_argument_ids_to_constructor_type(constructor_type, type_args);
         }
 
-        let arg_types_for_resolution: Vec<TypeId> = if is_generic_new
-            && inferred_new_type_args.is_none()
-            && !has_const_type_params
-        {
-            arg_types
-                .iter()
-                .map(|&arg_type| {
-                    crate::query_boundaries::common::widen_literal_type(self.ctx.types, arg_type)
-                })
-                .collect()
-        } else {
-            arg_types.clone()
-        };
+        let arg_types_for_resolution: Vec<TypeId> =
+            if is_generic_new && inferred_new_type_args.is_none() && !has_const_type_params {
+                arg_types
+                    .iter()
+                    .enumerate()
+                    .map(|(i, &arg_type)| {
+                        if preserve_literals.get(i).copied().unwrap_or(false) {
+                            arg_type
+                        } else {
+                            crate::query_boundaries::common::widen_literal_type(
+                                self.ctx.types,
+                                arg_type,
+                            )
+                        }
+                    })
+                    .collect()
+            } else {
+                arg_types.clone()
+            };
 
         self.ensure_relation_input_ready(constructor_type);
         self.ensure_relation_inputs_ready(&arg_types_for_resolution);
