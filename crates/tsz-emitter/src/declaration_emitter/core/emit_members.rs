@@ -405,6 +405,23 @@ impl<'a> DeclarationEmitter<'a> {
                         self.write(": ");
                         let type_text = self.wrap_async_method_return_type_text(method, type_text);
                         self.write(&type_text);
+                    } else if !method_type_id.is_any_unknown_or_error()
+                        && method_type_id != tsz_solver::types::TypeId::NEVER
+                    {
+                        // `get_return_type` returned None: the checker stored the
+                        // inferred return type directly as the method's node type
+                        // (the same pattern the type-parameter branch above handles).
+                        // The source-text fallback could not reconstruct it — a bare
+                        // `return this.#privateField` body has no printable source-text
+                        // return form — so emit that stored return type rather than
+                        // degrading to `any`.
+                        self.write(": ");
+                        let text = self.print_type_id_with_outer_type_param_nodes(
+                            method_type_id,
+                            &all_param_nodes,
+                        );
+                        let text = self.wrap_async_method_return_type_text(method, text);
+                        self.write(&text);
                     } else if !self.source_is_declaration_file {
                         self.write(": any");
                     }
