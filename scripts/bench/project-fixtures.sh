@@ -507,6 +507,33 @@ tsz_project_fixture_sources() {
   esac
 }
 
+# Whether $1 is the top level of its OWN git repository.
+#
+# A failed clone (or a stale non-repo directory) leaves the fixture path without
+# its own `.git`, so `git -C "$dir" …` silently resolves against an ENCLOSING
+# repository — tsz itself, when the fixtures live under the checkout — and every
+# `rev-parse` then reports an unrelated SHA. That is exactly what made #17469's
+# broken pin print `✓ <fixture> pinned at <tsz sha>`. Requiring the resolved
+# top level to equal the fixture directory rejects that aliasing.
+tsz_git_fixture_is_standalone_repo() {
+  local dir="$1" top dir_phys top_phys
+  [[ -d "$dir/.git" ]] || return 1
+  top="$(git -C "$dir" rev-parse --show-toplevel 2>/dev/null)" || return 1
+  dir_phys="$(cd "$dir" 2>/dev/null && pwd -P)" || return 1
+  top_phys="$(cd "$top" 2>/dev/null && pwd -P)" || return 1
+  [[ "$dir_phys" == "$top_phys" ]]
+}
+
+# Ensure $dir is a fresh checkout of $repo pinned at $ref.
+#
+# Returns non-zero (with a diagnostic on stderr) on ANY failure — a failed
+# clone, an unreachable pin (`git fetch` "not our ref" after an upstream history
+# rewrite), a failed checkout, or a HEAD that does not match the requested pin.
+# The benchmark drivers run each fixture group under `run_isolated`, whose
+# `"$@" || rc=$?` wrapper disables `set -e` for the whole call tree; the pin step
+# therefore MUST report failure through its return status rather than relying on
+# `set -e` to abort, so callers can record a real "fixture failed" row instead of
+# silently benchmarking an empty or wrong tree (#17469).
 tsz_ensure_git_fixture() {
   local name="$1"
   local repo="$2"
@@ -518,14 +545,27 @@ tsz_ensure_git_fixture() {
   if [[ ! -d "$dir/.git" ]]; then
     echo "Cloning ${name} fixture..."
     tsz_remove_fixture_dir "$name" "$dir"
-    git clone --quiet --no-tags --depth 1 "$repo" "$dir"
+    if ! git clone --quiet --no-tags --depth 1 "$repo" "$dir"; then
+      echo "ERROR: failed to clone ${name} fixture from ${repo}" >&2
+      return 1
+    fi
   fi
 
   if [[ "$reclone_dirty" == "1" ]] \
     && [[ -n "$(git -C "$dir" status --porcelain 2>/dev/null)" ]]; then
     echo "${name} fixture is dirty; recloning for reproducibility..."
     tsz_remove_fixture_dir "$name" "$dir"
-    git clone --quiet --no-tags --depth 1 "$repo" "$dir"
+    if ! git clone --quiet --no-tags --depth 1 "$repo" "$dir"; then
+      echo "ERROR: failed to re-clone ${name} fixture from ${repo}" >&2
+      return 1
+    fi
+  fi
+
+  # Never treat a directory that is not its own git checkout as a pinned
+  # fixture: doing so is what let a broken clone report tsz's own SHA (#17469).
+  if ! tsz_git_fixture_is_standalone_repo "$dir"; then
+    echo "ERROR: ${name} fixture at ${dir} is not a standalone git checkout" >&2
+    return 1
   fi
 
   if [[ -n "$ref" ]]; then
@@ -533,8 +573,27 @@ tsz_ensure_git_fixture() {
     current_ref="$(git -C "$dir" rev-parse HEAD 2>/dev/null || true)"
     if [[ "$current_ref" != "$ref" ]]; then
       echo "Pinning ${name} to ${ref:0:12}..."
-      git -C "$dir" fetch --quiet --depth 1 origin "$ref"
-      git -C "$dir" checkout --quiet --detach FETCH_HEAD
+      if ! git -C "$dir" fetch --quiet --depth 1 origin "$ref"; then
+        echo "ERROR: failed to fetch ${name} pin ${ref:0:12} from ${repo}" \
+          "— the upstream may have rewritten history; re-pin the fixture to a served commit" >&2
+        return 1
+      fi
+      if ! git -C "$dir" checkout --quiet --detach FETCH_HEAD; then
+        echo "ERROR: failed to check out fetched ${name} pin ${ref:0:12}" >&2
+        return 1
+      fi
+    fi
+
+    # Confirm the checkout actually landed on the requested commit. Only a
+    # full 40-hex SHA pin is verified by identity (a branch/tag ref resolves to
+    # a distinct commit SHA); a mismatch means a partial or skipped pin, which
+    # must fail loudly rather than benchmark the wrong tree.
+    if [[ "$ref" =~ ^[0-9a-f]{40}$ ]]; then
+      current_ref="$(git -C "$dir" rev-parse HEAD 2>/dev/null || true)"
+      if [[ "$current_ref" != "$ref" ]]; then
+        echo "ERROR: ${name} fixture HEAD is ${current_ref:0:12}, expected pin ${ref:0:12}" >&2
+        return 1
+      fi
     fi
   fi
 }
