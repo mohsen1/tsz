@@ -17,14 +17,15 @@ impl<'a> CheckerState<'a> {
     /// a bare type-parameter target and the relation fails, `tsc` attaches one
     /// of two notes:
     ///
-    ///   * If the parameter has a meaningful constraint (not `any`/`unknown`)
+    ///   * If the parameter has an explicit `extends` constraint (including
+    ///     `any`/`unknown`, which `tsc` normalizes to `unknown` in the message)
     ///     that the source *satisfies*, the failure is that the parameter could
     ///     still be instantiated with a narrower type, so `tsc` reports `TS5075`
     ///     ("`'{src}'` is assignable to the constraint of type `'{T}'`, but
     ///     `'{T}'` could be instantiated with a different subtype of constraint
     ///     `'{constraint}'`.").
-    ///   * Otherwise — the parameter is unconstrained (or top-constrained), or
-    ///     the source does not satisfy the constraint — the parameter could be
+    ///   * Otherwise — the parameter has no `extends` clause at all, or the
+    ///     source does not satisfy the constraint — the parameter could be
     ///     instantiated with something entirely unrelated, so `tsc` reports
     ///     `TS5082` ("`'{T}'` could be instantiated with an arbitrary type which
     ///     could be unrelated to `'{src}'`.").
@@ -59,9 +60,16 @@ impl<'a> CheckerState<'a> {
             depth: note_depth,
             kind: RelatedInformationKind::ChainLink,
         };
+        // An explicit `extends any`/`extends unknown` constraint still counts as
+        // "has a constraint" for this branch — `tsc` normalizes it to `unknown`
+        // in the rendered message (both `T extends any` and `T extends unknown`
+        // show `constraint 'unknown'`), it just never *fails* the assignability
+        // check below since everything is related to `unknown`. Only a bare
+        // type parameter with no `extends` clause at all (`constraint: None`)
+        // takes the unconstrained fallback.
         let constraint =
             crate::query_boundaries::diagnostics::type_parameter_constraint(self.ctx.types, target)
-                .filter(|&c| c != TypeId::ANY && c != TypeId::UNKNOWN);
+                .map(|c| if c == TypeId::ANY { TypeId::UNKNOWN } else { c });
         if let Some(constraint) = constraint
             && self
                 .type_parameter_constraint_elaboration_relation_outcome(source, constraint)
