@@ -42,6 +42,31 @@ impl CheckerState<'_> {
         sym_id: SymbolId,
         flags: u32,
     ) -> Option<TypeId> {
+        let (file_idx, class_sym_id) = self.cross_file_conflicting_class_site(sym_id, flags)?;
+        self.ctx.register_symbol_file_index(class_sym_id, file_idx);
+        Some(self.get_type_of_symbol(class_sym_id))
+    }
+
+    /// Whether `sym_id` (a script-scope variable) loses its name to a class
+    /// declared in an earlier-processed file, per the same first-bound-wins
+    /// rule as [`cross_file_class_type_for_conflicting_variable`]. `&self`-only
+    /// existence check — used by call sites (JS `checkJs` expando-eligibility
+    /// gates) that must deny expando treatment for a shadowed variable without
+    /// paying for full type resolution or requiring `&mut self`.
+    pub(crate) fn cross_file_class_declaration_shadows_variable(
+        &self,
+        sym_id: SymbolId,
+        flags: u32,
+    ) -> bool {
+        self.cross_file_conflicting_class_site(sym_id, flags)
+            .is_some()
+    }
+
+    fn cross_file_conflicting_class_site(
+        &self,
+        sym_id: SymbolId,
+        flags: u32,
+    ) -> Option<(usize, SymbolId)> {
         if flags & symbol_flags::VARIABLE == 0 || flags & symbol_flags::CLASS != 0 {
             return None;
         }
@@ -85,8 +110,7 @@ impl CheckerState<'_> {
                 let Some(class_sym_id) = binder.get_node_symbol(stmt_idx) else {
                     continue;
                 };
-                self.ctx.register_symbol_file_index(class_sym_id, file_idx);
-                return Some(self.get_type_of_symbol(class_sym_id));
+                return Some((file_idx, class_sym_id));
             }
         }
 

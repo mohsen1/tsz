@@ -10,6 +10,7 @@ mod expando;
 mod expando_commonjs_exports;
 mod expando_implicit_any;
 mod expando_prototype_writes;
+mod expando_root_symbol;
 mod iterator_methods;
 
 #[cfg(test)]

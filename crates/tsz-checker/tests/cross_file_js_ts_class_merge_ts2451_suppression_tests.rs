@@ -21,17 +21,22 @@
 //!
 //! `cross_file_variable_class_merge.rs` implements this for ordinary
 //! (non-`checkJs`) property-type resolution — see the `ts2339_*` tests
-//! below, which cover the rule in pure TS. The `.js` + `checkJs` variant of
-//! the same fixture (`ts2451_in_js_when_dts_class_conflicts_with_const`
-//! below) still does not report `TS2339`: a `checkJs` direct-write target
-//! runs assignment-target expando-write machinery
-//! (`property_access_helpers/expando.rs`,
-//! `types/property_access_type/resolve.rs`) ahead of the generic
-//! property-type path, and that machinery grants the write before
-//! `cross_file_variable_class_merge.rs`'s resolution is ever consulted —
-//! traced to at least `is_expando_function_assignment` short-circuiting
-//! before the generic property-access-type path is reached, but the exact
-//! grant site was not pinned down. Not fixed here; left for a follow-up.
+//! below, which cover the rule in pure TS.
+//!
+//! The `.js` + `checkJs` variant of the same fixture
+//! (`ts2451_in_js_when_dts_class_conflicts_with_const` below) additionally
+//! needed a fix in the `checkJs` direct-write expando-eligibility gate: a
+//! `checkJs` direct-write target runs assignment-target expando-write
+//! machinery (`property_access_helpers/expando.rs`) ahead of the generic
+//! property-type path, and `root_symbol_supports_js_expando_read` there
+//! granted expando eligibility from `A`'s own local `var X = {}` shape
+//! without checking whether an earlier-processed file's class had already
+//! taken over the name — the same `mergeSymbol` question
+//! `cross_file_variable_class_merge.rs` answers for the generic path. Fixed
+//! by adding `cross_file_class_declaration_shadows_variable` (same file, a
+//! `&self`-only existence check reusing the type-resolving query's search)
+//! and consulting it from `root_symbol_supports_js_expando_read` before
+//! granting expando eligibility to a plain variable root.
 
 use tsz_checker::context::CheckerOptions;
 use tsz_common::common::ModuleKind;
@@ -77,13 +82,14 @@ fn ts2451_in_dts_when_js_const_conflicts_with_class() {
 }
 
 /// `.js`-side check: `TS2451` fires on `const A = {}` when the conflicting
-/// `.d.ts` file declares `class A`, and the expando assignment `A.d = {}`
-/// is otherwise treated as an ordinary JS expando on the `const`'s own
-/// object-literal type (no `TS2739`/`TS2741` from checking it against the
-/// unrelated class shape). Per the module doc comment, the `TS2339` half of
-/// `jsContainerMergeTsDeclaration3.ts`'s expectation is not yet covered for
-/// this `.js` + `checkJs` shape (see `ts2339_fires_for_pure_ts_cross_file_conflict_no_js_involved`
-/// below for the covered pure-TS shape of the same rule).
+/// `.d.ts` file declares `class A`, and `A.d = {}` is *not* granted as an
+/// ordinary JS expando write — `A` resolves to the earlier-processed class
+/// (per `mergeSymbol`'s first-bound-wins rule) which has no `d` member, so
+/// `TS2339` fires. Neither `TS2739` nor `TS2741` fire: there is no merge to
+/// check the initializer against. Mirrors
+/// `jsContainerMergeTsDeclaration3.ts`'s full `[TS2339,TS2451]` expectation
+/// (see `ts2339_fires_for_pure_ts_cross_file_conflict_no_js_involved` below
+/// for the pure-TS shape of the same rule).
 #[test]
 fn ts2451_in_js_when_dts_class_conflicts_with_const() {
     let diags = compile_files(
@@ -99,9 +105,48 @@ fn ts2451_in_js_when_dts_class_conflicts_with_const() {
         ".js must emit TS2451 for a JS `const` vs TS `class` name conflict; got: {diags:?}"
     );
     assert_eq!(
+        count_code(&diags, 2339),
+        1,
+        "A.d must report TS2339 — A resolves to the earlier-processed class, which has no `d` member; got: {diags:?}"
+    );
+    assert_eq!(
         count_code(&diags, 2739),
         0,
         "must not check the initializer against the unrelated class shape; got: {diags:?}"
+    );
+    assert_eq!(
+        count_code(&diags, 2741),
+        0,
+        "must not check the initializer against the unrelated class shape; got: {diags:?}"
+    );
+}
+
+/// Reversing file processing order: when the `.js` file's own `const A = {}`
+/// is processed *before* the conflicting `.d.ts` class, the variable wins
+/// the merge and keeps its own expando-friendly `{}` type — `A.d = {}`
+/// stays a legitimate JS expando write (`TS2339` must NOT fire), the mirror
+/// image of `ts2451_in_js_when_dts_class_conflicts_with_const` above and of
+/// `variable_ts_file_processed_before_conflicting_class_file_keeps_own_type`
+/// (the pure-TS reversed-order case). `TS2451` still fires on both sides
+/// regardless of order — only whether the write is expando-eligible flips.
+#[test]
+fn ts2451_in_js_when_variable_file_processed_before_conflicting_dts_class() {
+    let diags = compile_files(
+        &[
+            ("a.js", "const A = { };\nA.d = { };"),
+            ("b.d.ts", "declare class A {}"),
+        ],
+        0,
+    );
+    assert_eq!(
+        count_code(&diags, 2451),
+        1,
+        "a.js must still emit TS2451 even though its own variable wins the merge; got: {diags:?}"
+    );
+    assert_eq!(
+        count_code(&diags, 2339),
+        0,
+        "an earlier-processed variable keeps its own expando-eligible `{{}}` type; A.d must not be TS2339; got: {diags:?}"
     );
 }
 
@@ -146,6 +191,11 @@ fn ts2451_independent_of_identifier_choices() {
                 count_code(&diags, 2451),
                 1,
                 "TS2451 must fire for class '{class_name}' + expando '{expando}'; got: {diags:?}"
+            );
+            assert_eq!(
+                count_code(&diags, 2339),
+                1,
+                "TS2339 must fire for class '{class_name}' + expando '{expando}' — not a name/property-specific exemption; got: {diags:?}"
             );
             assert_eq!(
                 count_code(&diags, 2739),
