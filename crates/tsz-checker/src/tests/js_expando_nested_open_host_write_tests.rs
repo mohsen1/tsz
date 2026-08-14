@@ -142,3 +142,33 @@ fn nested_closed_host_prototype_write_stays_ts2339() {
         "a closed-shape nested host must keep TS2339 on `.prototype`; got {codes:?}"
     );
 }
+
+/// Negative control: a real class is not an untracked expando chain-key.
+/// `expando_base_link_host_verdict`'s `member_name == "prototype"`
+/// exemption (used above for a genuinely untracked base like `a.d`) must
+/// not also swallow a `.prototype` write onto a plain class's real,
+/// name-resolvable symbol — `K.prototype.late = 1` on a class with no
+/// declared `late` member stays `TS2339` (regression pin for the fix that
+/// gated the exemption on `base_expr` having no resolvable symbol).
+#[test]
+fn class_prototype_new_member_write_stays_ts2339() {
+    let codes = same_file_codes("class K {\n    method() {}\n}\nK.prototype.late = 1;\n");
+    assert_eq!(
+        codes,
+        vec![2339],
+        "a real class's `.prototype` write for an undeclared member must stay TS2339; got {codes:?}"
+    );
+}
+
+/// Renamed-binder variant of the class negative control: the rule is
+/// structural (base has a resolvable symbol), not keyed on the identifier.
+#[test]
+fn class_prototype_new_member_write_stays_ts2339_renamed_binders() {
+    let codes =
+        same_file_codes("class Widget {\n    render() {}\n}\nWidget.prototype.extra = 1;\n");
+    assert_eq!(
+        codes,
+        vec![2339],
+        "renamed-binder class `.prototype` write must also stay TS2339; got {codes:?}"
+    );
+}

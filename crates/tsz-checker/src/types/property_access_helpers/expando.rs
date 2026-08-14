@@ -1292,9 +1292,18 @@ impl<'a> CheckerState<'a> {
     /// Whether `base_expr.member_name` (e.g. `a.d` in `a.d.c = e`) is itself
     /// a declared, OPEN expando host: a real declared member whose every
     /// visible declaring write is host-shaped (empty literal, function, or
-    /// class expression). `prototype` links are exempt — `prototype` is a
-    /// built-in member carried by the dedicated prototype-expando paths, not
-    /// by assignment records.
+    /// class expression). `prototype` links are exempt from that
+    /// declared-member check — `prototype` is a built-in member carried by
+    /// the dedicated prototype-expando paths, not by assignment records —
+    /// but ONLY when `base_expr` is itself an untracked expando chain-key
+    /// with no name-resolvable symbol (`a.d`, a binder-tracked chain entry).
+    /// A `base_expr` that resolves to a real symbol (a class or function
+    /// declaration, e.g. `K` in `K.prototype`) is not a nested expando
+    /// chain at all; granting the exemption there would accept
+    /// `K.prototype.late = 1` as an expando write on any class regardless
+    /// of whether it ever declared an expando member, silently swallowing
+    /// the `TS2339` tsc reports (oracle-verified — see
+    /// `class_prototype_write_of_absent_member_reports_ts2339`).
     ///
     /// Being a declared member is necessary but not sufficient: the base
     /// link must itself be an expando HOST — its declaring write's RHS an
@@ -1303,7 +1312,7 @@ impl<'a> CheckerState<'a> {
     /// TS2339 under `noImplicitAny`, mirroring tsc's
     /// `getExpandoInitializer` emptiness rule (#17226 gap 1).
     fn expando_base_link_host_verdict(&self, base_expr: NodeIndex, member_name: &str) -> bool {
-        if member_name == "prototype" {
+        if member_name == "prototype" && self.root_symbol_for_expando_read(base_expr).is_none() {
             return true;
         }
 
