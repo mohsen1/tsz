@@ -281,3 +281,82 @@ fn ts7030_silent_for_setter_bare_return() {
     let diags = check(source, no_implicit_returns_nonstrict());
     assert_eq!(diagnostic_count(&diags, 7030), 0);
 }
+
+// -------------------------------------------------------------------------
+// Generators — TS7030 does not fire from a bare `return;` at all unless the
+// generator's `TReturn` was successfully extracted from an explicit
+// `Generator<Y, R, N>`-shaped annotation. An unannotated generator infers
+// `void`/`undefined` for a bare-return-only completion the same way `tsc`
+// does; tsz's extraction falls back to `unknown` when it can't resolve
+// `TReturn`, which must not be treated as "requires a value" (regression
+// test for #17444).
+// -------------------------------------------------------------------------
+
+/// Unannotated generator, reachable bare `return;` alongside a `yield` — must
+/// stay silent (this is the exact #17444 regression shape).
+#[test]
+fn ts7030_silent_for_unannotated_generator_reachable_bare_return() {
+    let source =
+        "function* testGenerator() {\n  if (cond) {\n      return;\n  }\n  yield 'hello';\n}\n";
+    let diags = check(source, no_implicit_returns_nonstrict());
+    assert_eq!(diagnostic_count(&diags, 7030), 0);
+}
+
+/// Unannotated generator, unreachable bare `return;` after another return —
+/// still silent (the generator gate applies regardless of reachability).
+#[test]
+fn ts7030_silent_for_unannotated_generator_unreachable_bare_return() {
+    let source = "function* testGenerator() {\n  return;\n  return;\n  yield 'hello';\n}\n";
+    let diags = check(source, no_implicit_returns_nonstrict());
+    assert_eq!(diagnostic_count(&diags, 7030), 0);
+}
+
+/// `async function*` is a generator too (`FunctionFlags.Generator` covers
+/// async generators) — same silence for an unannotated bare return.
+#[test]
+fn ts7030_silent_for_unannotated_async_generator_bare_return() {
+    let source = "async function* testAsyncGenerator() {\n  if (cond) {\n      return;\n  }\n  yield 'hello';\n}\n";
+    let diags = check(source, no_implicit_returns_nonstrict());
+    assert_eq!(diagnostic_count(&diags, 7030), 0);
+}
+
+/// A generator EXPRESSION (not a declaration) takes the
+/// `function_type_helpers.rs` path instead of `function_declaration_checks.rs`
+/// — same unannotated-bare-return silence is required there too.
+#[test]
+fn ts7030_silent_for_unannotated_generator_expression_bare_return() {
+    let source =
+        "const g = function* () {\n  if (cond) {\n      return;\n  }\n  yield 'hello';\n};\n";
+    let diags = check(source, no_implicit_returns_nonstrict());
+    assert_eq!(diagnostic_count(&diags, 7030), 0);
+}
+
+/// A generator METHOD takes the `ambient_signature_checks.rs` path — same
+/// unannotated-bare-return silence.
+#[test]
+fn ts7030_silent_for_unannotated_generator_method_bare_return() {
+    let source = "class C {\n    *m() {\n        if (cond) {\n            return;\n        }\n        yield 1;\n    }\n}\n";
+    let diags = check(source, no_implicit_returns_nonstrict());
+    assert_eq!(diagnostic_count(&diags, 7030), 0);
+}
+
+/// Anti-hardcoding: renaming the generator function and its yield value must
+/// not change the outcome.
+#[test]
+fn ts7030_silent_for_unannotated_generator_bare_return_is_binder_name_independent() {
+    let source = "function* widgetStream() {\n  if (cond) {\n      return;\n  }\n  yield 42;\n}\n";
+    let diags = check(source, no_implicit_returns_nonstrict());
+    assert_eq!(diagnostic_count(&diags, 7030), 0);
+}
+
+/// Positive control: once a generator's `TReturn` IS successfully extracted
+/// from an explicit annotation, the ordinary bare-return TS7030 rule still
+/// applies exactly as it does for a plain function — the gate above must not
+/// blanket-exempt every generator, only the extraction-failed (unannotated)
+/// case.
+#[test]
+fn ts7030_fires_for_annotated_generator_bare_return_with_non_void_treturn() {
+    let source = "interface Generator<T = unknown, TReturn = any, TNext = unknown> {}\nfunction* g(): Generator<number, unknown, unknown> {\n    if (cond) {\n        return;\n    }\n    yield 1;\n}\n";
+    let diags = check(source, no_implicit_returns_nonstrict());
+    assert_eq!(diagnostic_count(&diags, 7030), 1);
+}

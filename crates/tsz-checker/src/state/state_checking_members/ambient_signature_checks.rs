@@ -1197,13 +1197,23 @@ impl<'a> CheckerState<'a> {
             }
 
             // TS7030 for each bare `return;`, independent of the fall-off-the-end
-            // check above (both can fire in one method).
-            self.report_no_implicit_return_bare_returns(
-                method.body,
-                check_return_type,
-                has_type_annotation,
-                is_generator,
-            );
+            // check above (both can fire in one method). An unannotated generator
+            // method (or one whose `TReturn` can't be extracted) has no reliable
+            // completion type to check a bare return against — see the identical
+            // guard and rationale in `function_declaration_checks.rs`'s
+            // `can_check_generator_completion`.
+            let can_check_generator_completion = !is_generator
+                || self
+                    .generator_return_type_for_implicit_return_check(return_type)
+                    .is_some();
+            if can_check_generator_completion {
+                self.report_no_implicit_return_bare_returns(
+                    method.body,
+                    check_return_type,
+                    has_type_annotation,
+                    is_generator,
+                );
+            }
 
             self.ctx.pop_yield_type();
             self.pop_return_type();

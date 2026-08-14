@@ -1365,13 +1365,23 @@ impl<'a> CheckerState<'a> {
         }
 
         // TS7030 for each bare `return;`, independent of the fall-off-the-end
-        // check above (both can fire in one function).
-        self.report_no_implicit_return_bare_returns(
-            func.body,
-            check_return_type,
-            has_declared_return,
-            is_generator,
-        );
+        // check above (both can fire in one function). Gated the same way as
+        // the completeness branches above: an unannotated generator (or one
+        // whose `TReturn` couldn't be extracted from its annotation) has no
+        // reliable completion type to check a bare return against — `tsc`
+        // infers `void`/`undefined` there, but tsz's fallback is `unknown`,
+        // which would falsely require a value. A generator with a
+        // successfully extracted `TReturn` still applies the ordinary
+        // void/any/undefined-and-union skip rule inside
+        // `report_no_implicit_return_bare_returns` unchanged.
+        if can_check_generator_completion {
+            self.report_no_implicit_return_bare_returns(
+                func.body,
+                check_return_type,
+                has_declared_return,
+                is_generator,
+            );
+        }
     }
 
     fn top_level_terminal_return_flow(&self, body: NodeIndex) -> Option<(bool, bool)> {

@@ -1879,14 +1879,23 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // TS7030 for each bare `return;`, independent of the fall-off-the-end
-        // check above (both can fire in one function).
-        self.report_no_implicit_return_bare_returns(
-            body,
-            ts7030_check_type,
-            has_type_annotation,
-            function_is_generator,
-        );
+        // TS7030 per bare `return;`. Skip an unannotated generator whose
+        // `TReturn` can't be extracted (mirrors `can_check_generator_completion`
+        // in `function_declaration_checks.rs`).
+        if !function_is_generator
+            || self
+                .generator_return_type_for_implicit_return_check(
+                    annotated_return_type.unwrap_or(return_type),
+                )
+                .is_some()
+        {
+            self.report_no_implicit_return_bare_returns(
+                body,
+                ts7030_check_type,
+                has_type_annotation,
+                function_is_generator,
+            );
+        }
     }
 
     /// Check if a return context type is or references a const type parameter.
