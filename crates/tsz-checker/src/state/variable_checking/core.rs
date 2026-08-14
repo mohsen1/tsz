@@ -15,6 +15,7 @@ use tsz_solver::TypeId;
 
 mod annotation_context;
 mod async_jsdoc_return;
+mod expando_container;
 mod lib_decl_arena;
 mod precheck_helpers;
 mod prior_value;
@@ -1221,19 +1222,25 @@ impl<'a> CheckerState<'a> {
                     // Check if this is a mergeable declaration by looking at the node kind.
                     // Mergeable declarations: namespace/module, enum, class, interface, function.
                     // When these are declared with the same name, they merge instead of conflicting.
+                    // A `var`/`let`/`const` initialized with a function/arrow/class expression
+                    // and later augmented with a JS expando (`x.prop = ...`) gets the same
+                    // exemption as a bare `function` declaration (see
+                    // `is_expando_container_var_decl`).
                     let is_mergeable_declaration =
                         if let Some(decl_node) = self.ctx.arena.get(decl_idx) {
                             matches!(
                                 decl_node.kind,
                                 syntax_kind_ext::MODULE_DECLARATION  // namespace/module
-                                | syntax_kind_ext::ENUM_DECLARATION // enum
-                                | syntax_kind_ext::CLASS_DECLARATION // class
-                                | syntax_kind_ext::INTERFACE_DECLARATION // interface
-                                | syntax_kind_ext::FUNCTION_DECLARATION // function
+                            | syntax_kind_ext::ENUM_DECLARATION // enum
+                            | syntax_kind_ext::CLASS_DECLARATION // class
+                            | syntax_kind_ext::INTERFACE_DECLARATION // interface
+                            | syntax_kind_ext::FUNCTION_DECLARATION // function
                             )
                         } else {
                             false
-                        };
+                        } || var_name
+                            .as_deref()
+                            .is_some_and(|name| self.is_expando_container_var_decl(decl_idx, name));
                     // Skip TS2403 when the declarations are in different namespace body
                     // blocks (ModuleBlock nodes) of the same merged namespace. TSC treats
                     // each namespace body as a separate declaration context, so
@@ -1507,6 +1514,10 @@ impl<'a> CheckerState<'a> {
                                 // Check if other declaration is mergeable (namespace, etc.)
                                 let other_node_kind =
                                     self.ctx.arena.get(other_decl).map_or(0, |n| n.kind);
+                                // A `var`/`let`/`const` initialized with a function/arrow/class
+                                // expression and later augmented with a JS expando
+                                // (`x.prop = ...`) gets the same exemption as a bare `function`
+                                // declaration (see `is_expando_container_var_decl`).
                                 let is_other_mergeable = matches!(
                                     other_node_kind,
                                     syntax_kind_ext::MODULE_DECLARATION
@@ -1514,6 +1525,8 @@ impl<'a> CheckerState<'a> {
                                         | syntax_kind_ext::CLASS_DECLARATION
                                         | syntax_kind_ext::INTERFACE_DECLARATION
                                         | syntax_kind_ext::FUNCTION_DECLARATION
+                                ) || var_name.as_deref().is_some_and(
+                                    |name| self.is_expando_container_var_decl(other_decl, name),
                                 );
                                 // Functions, classes, and enums don't merge with variables,
                                 // so they should not establish a "previous variable type" for TS2403.
@@ -1706,7 +1719,22 @@ impl<'a> CheckerState<'a> {
                                     cross_checker.ctx.lib_contexts = lib_contexts.clone();
                                     let other_type = cross_checker.get_type_of_node(other_decl);
                                     drop(cross_arena_guard);
-                                    if other_type != TypeId::ERROR
+                                    // A `var`/`let`/`const` initialized with a function/arrow/class
+                                    // expression and later augmented with a JS expando
+                                    // (`x.prop = ...`) gets the same exemption as a bare `function`
+                                    // declaration (see `is_expando_container_var_decl`) — on
+                                    // *either* side of the pair, matching tsc: the merge is
+                                    // symmetric, so this file's own declaration being an expando
+                                    // container exempts the comparison just as much as the
+                                    // other file's would.
+                                    let either_side_is_expando_container =
+                                        self.is_expando_container_var_decl_in_arena(
+                                            other_arena,
+                                            other_decl,
+                                            name_str,
+                                        ) || self.is_expando_container_var_decl(decl_idx, name_str);
+                                    if !either_side_is_expando_container
+                                        && other_type != TypeId::ERROR
                                         && !self.are_var_decl_types_compatible(
                                             other_type,
                                             raw_declared_type,
