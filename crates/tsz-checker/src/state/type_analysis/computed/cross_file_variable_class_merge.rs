@@ -19,11 +19,12 @@
 //! Scope: this covers ordinary (non-`checkJs`) property-type resolution.
 //! `checkJs` JS files additionally run assignment-target expando-write
 //! machinery (`property_access_helpers/expando.rs`) ahead of the generic
-//! property-type path for a direct `A.d = {}` write; that machinery grants
-//! the write before this resolution is consulted, so a `.js` file's
+//! property-type path for a direct `A.d = {}` write; those eligibility gates
+//! consult `variable_is_shadowed_by_earlier_class` (below) so a `.js` file's
 //! `A.d = {}` following a conflicting earlier-file `declare class A {}`
-//! does not yet report `TS2339` the way tsc does. Not fixed here — see the
-//! `agent-coordination` board for the trace notes.
+//! reports `TS2339` too, matching the order-dependent rule above — but stays
+//! a legitimate expando write when the variable's own file is processed
+//! first.
 
 use crate::state::CheckerState;
 use tsz_binder::{SymbolId, symbol_flags};
@@ -31,20 +32,13 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
 impl CheckerState<'_> {
-    /// When `sym_id` is a script-scope variable whose name collides with a
-    /// class declared in an earlier-processed file, return that class's own
-    /// value type (`typeof <class>`) — the type every reference to the name
-    /// resolves to on `main`, per tsc's first-bound-wins global merge. Returns
-    /// `None` when there is no such earlier-processed remote class, letting
-    /// the caller fall through to the variable's own initializer-derived type.
-    pub(crate) fn cross_file_class_type_for_conflicting_variable(
-        &mut self,
-        sym_id: SymbolId,
-        flags: u32,
-    ) -> Option<TypeId> {
-        if flags & symbol_flags::VARIABLE == 0 || flags & symbol_flags::CLASS != 0 {
-            return None;
-        }
+    /// Scan every file processed before `self.ctx.current_file_idx` for a
+    /// `class` declaration sharing `sym_id`'s name, returning the winning
+    /// class's `(file_idx, SymbolId)`. `&self`-only (no type computation or
+    /// mutation) so callers that just need order-aware shadowing knowledge —
+    /// like the checkJs expando eligibility gates in
+    /// `property_access_helpers/expando.rs` — don't need `&mut self`.
+    fn earlier_conflicting_class(&self, sym_id: SymbolId) -> Option<(usize, SymbolId)> {
         // Script-global merging only: an external module's top-level
         // variable is module-scoped and cannot collide with a class in a
         // different file at all.
@@ -85,11 +79,40 @@ impl CheckerState<'_> {
                 let Some(class_sym_id) = binder.get_node_symbol(stmt_idx) else {
                     continue;
                 };
-                self.ctx.register_symbol_file_index(class_sym_id, file_idx);
-                return Some(self.get_type_of_symbol(class_sym_id));
+                return Some((file_idx, class_sym_id));
             }
         }
 
         None
+    }
+
+    /// When `sym_id` is a script-scope variable whose name collides with a
+    /// class declared in an earlier-processed file, return that class's own
+    /// value type (`typeof <class>`) — the type every reference to the name
+    /// resolves to on `main`, per tsc's first-bound-wins global merge. Returns
+    /// `None` when there is no such earlier-processed remote class, letting
+    /// the caller fall through to the variable's own initializer-derived type.
+    pub(crate) fn cross_file_class_type_for_conflicting_variable(
+        &mut self,
+        sym_id: SymbolId,
+        flags: u32,
+    ) -> Option<TypeId> {
+        if flags & symbol_flags::VARIABLE == 0 || flags & symbol_flags::CLASS != 0 {
+            return None;
+        }
+        let (file_idx, class_sym_id) = self.earlier_conflicting_class(sym_id)?;
+        self.ctx.register_symbol_file_index(class_sym_id, file_idx);
+        Some(self.get_type_of_symbol(class_sym_id))
+    }
+
+    /// `&self`-safe existence check: does an earlier-processed file's `class`
+    /// declaration shadow this (`CLASS`+`VARIABLE`-flagged merged) symbol's
+    /// name? Per tsc's first-bound-wins global merge, the class only wins the
+    /// value-position resolution — and only then does an expando write/read
+    /// against the variable's own shape become illegitimate — when its file
+    /// was processed before `sym_id`'s. See `cross_file_class_type_for_conflicting_variable`
+    /// for the type-computing counterpart used on the pure-TS property-read path.
+    pub(crate) fn variable_is_shadowed_by_earlier_class(&self, sym_id: SymbolId) -> bool {
+        self.earlier_conflicting_class(sym_id).is_some()
     }
 }
