@@ -92,6 +92,70 @@ impl<'a> CheckerState<'a> {
         hasher.finish()
     }
 
+    /// Cache key for the `arg_validation` completed-set memo (#15729
+    /// Direction 1), narrowed to the in-scope type parameters actually
+    /// referenced by `type_args_list` instead of the full
+    /// `type_parameter_scope`.
+    ///
+    /// During nested generic-alias descent (the React-scale
+    /// `jsxIntrinsicUnions` blowup), `push_type_parameters` grows the scope at
+    /// every nesting level, so the same syntactic `(type_ref_idx, sym_id)`
+    /// validated at two different recursion depths hashes to two different
+    /// keys under the full-scope key even when neither depth's outer-only
+    /// parameters affect this reference's own type arguments — the memo never
+    /// hits across the recursion. Narrowing to referenced names only fixes
+    /// that without weakening correctness: `referenced_type_parameter_names`
+    /// walks the exact same exhaustive `NodeAccess::get_children` traversal
+    /// the rest of the checker already trusts for reachability (unused-name
+    /// checks, symbol-reference scans), so it cannot *miss* a name that is
+    /// syntactically present. Any name it incidentally over-collects (a
+    /// property name, a shadowing binder like a mapped type's own key) only
+    /// keeps an extra `type_parameter_scope` entry in the hash — it can only
+    /// make the key more specific than necessary, never cause a stale hit for
+    /// a validation whose real inputs changed.
+    pub(crate) fn type_reference_arg_validation_scope_key_for_args(
+        &self,
+        type_args_list: &tsz_parser::parser::NodeList,
+    ) -> u64 {
+        let referenced = self.referenced_type_parameter_names(type_args_list);
+        let mut entries = self
+            .ctx
+            .type_parameter_scope
+            .iter()
+            .filter(|(name, _)| referenced.contains(name.as_str()))
+            .map(|(name, type_id)| (name.as_str(), type_id.0))
+            .collect::<Vec<_>>();
+        entries.sort_unstable_by(|left, right| left.0.cmp(right.0));
+
+        let mut hasher = rustc_hash::FxHasher::default();
+        self.ctx.in_conditional_extends_depth.hash(&mut hasher);
+        entries.hash(&mut hasher);
+        hasher.finish()
+    }
+
+    /// Collect every identifier name reachable (via the generic node-child
+    /// traversal) from `type_args_list`. Used only to narrow a cache key, so
+    /// over-collecting non-type-parameter identifiers (property names,
+    /// binder labels) is harmless -- see
+    /// [`Self::type_reference_arg_validation_scope_key_for_args`].
+    fn referenced_type_parameter_names(
+        &self,
+        type_args_list: &tsz_parser::parser::NodeList,
+    ) -> rustc_hash::FxHashSet<&str> {
+        let mut names = rustc_hash::FxHashSet::default();
+        let mut stack: Vec<NodeIndex> = type_args_list.nodes.clone();
+        while let Some(idx) = stack.pop() {
+            if idx.is_none() {
+                continue;
+            }
+            if let Some(text) = self.ctx.arena.get_identifier_text(idx) {
+                names.insert(text);
+            }
+            stack.extend(self.ctx.arena.get_children(idx));
+        }
+        names
+    }
+
     /// Check if a type node is an `infer` type, looking through parentheses.
     /// Returns true for `infer T`, `(infer T)`, `((infer T))`, etc.
     fn is_infer_type_node_through_parens(&self, mut node_idx: NodeIndex) -> bool {
@@ -942,7 +1006,7 @@ impl<'a> CheckerState<'a> {
         let validation_cache_key = (
             type_ref_idx.0,
             sym_id.0,
-            self.type_reference_arg_validation_scope_key(),
+            self.type_reference_arg_validation_scope_key_for_args(type_args_list),
         );
         if self
             .ctx
@@ -1534,4 +1598,127 @@ mod recursive_heritage_constraint;
 mod substitution_constraint;
 mod symbol_declaration_helpers;
 mod type_arg_error_helpers;
+
+/// #15729 Direction 1: the `arg_validation` completed-set memo must key on
+/// the in-scope type parameters a reference's type arguments actually
+/// mention, not the full ambient `type_parameter_scope`. Nested generic-alias
+/// descent grows that scope at every level (`push_type_parameters`), so the
+/// old full-scope key changed at every depth even when the deeper levels'
+/// own parameters play no part in a shallower, already-validated reference --
+/// defeating the memo across exactly the recursion the cache exists to
+/// short-circuit (the React-scale `jsxIntrinsicUnions` blowup).
+#[cfg(test)]
+mod arg_validation_scope_key_tests {
+    use crate::context::CheckerOptions;
+    use crate::query_boundaries::common::TypeInterner;
+    use crate::state::CheckerState;
+    use tsz_binder::BinderState;
+    use tsz_parser::parser::ParserState;
+    use tsz_parser::parser::node::NodeAccess;
+    use tsz_parser::parser::syntax_kind_ext;
+    use tsz_solver::TypeId;
+
+    /// Build a checker over `source` and locate the `type_arguments` of the
+    /// first `TYPE_REFERENCE` node whose base name is `base_name`. Leaks the
+    /// parser/binder/interner (test-only) so the returned `CheckerState` can
+    /// carry a `'static` lifetime out of this helper.
+    fn checker_and_type_args(
+        source: &str,
+        base_name: &str,
+    ) -> (CheckerState<'static>, tsz_parser::parser::NodeList) {
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let parser: &'static ParserState = &*Box::leak(Box::new(parser));
+
+        let mut binder = BinderState::new();
+        binder.bind_source_file(parser.get_arena(), root);
+        let binder: &'static BinderState = &*Box::leak(Box::new(binder));
+
+        let types: &'static TypeInterner = &*Box::leak(Box::new(TypeInterner::new()));
+
+        let checker = CheckerState::new(
+            parser.get_arena(),
+            binder,
+            types,
+            "test.ts".to_string(),
+            CheckerOptions::default(),
+        );
+
+        let type_args = checker
+            .ctx
+            .arena
+            .nodes
+            .iter()
+            .find_map(|node| {
+                if node.kind != syntax_kind_ext::TYPE_REFERENCE {
+                    return None;
+                }
+                let data = checker.ctx.arena.get_type_ref(node)?;
+                if checker.ctx.arena.get_identifier_text(data.type_name) != Some(base_name) {
+                    return None;
+                }
+                data.type_arguments.clone()
+            })
+            .unwrap_or_else(|| panic!("no `{base_name}<...>` type reference found in `{source}`"));
+
+        (checker, type_args)
+    }
+
+    #[test]
+    fn narrowed_key_ignores_an_unreferenced_outer_scope_entry() {
+        let (mut checker, type_args) = checker_and_type_args("type X = Wrap<T>;", "Wrap");
+
+        checker
+            .ctx
+            .type_parameter_scope
+            .insert("T".into(), TypeId(1));
+        let narrow_before = checker.type_reference_arg_validation_scope_key_for_args(&type_args);
+        let full_before = checker.type_reference_arg_validation_scope_key();
+
+        // Simulate one more level of nested generic-alias descent pushing an
+        // unrelated type parameter into the ambient scope; `T`'s binding is
+        // unchanged and `Wrap<T>`'s own argument never mentions `Extra`.
+        checker
+            .ctx
+            .type_parameter_scope
+            .insert("Extra".into(), TypeId(2));
+        let narrow_after = checker.type_reference_arg_validation_scope_key_for_args(&type_args);
+        let full_after = checker.type_reference_arg_validation_scope_key();
+
+        assert_eq!(
+            narrow_before, narrow_after,
+            "an outer-scope parameter the reference's type arguments never \
+             mention must not change the narrowed arg_validation cache key"
+        );
+        assert_ne!(
+            full_before, full_after,
+            "control: the full-scope key (pre-fix behavior) does change here, \
+             confirming this scenario is the real memo-defeat case #15729 reports"
+        );
+    }
+
+    #[test]
+    fn narrowed_key_still_changes_when_the_referenced_binding_changes() {
+        let (mut checker, type_args) = checker_and_type_args("type X = Wrap<T>;", "Wrap");
+
+        checker
+            .ctx
+            .type_parameter_scope
+            .insert("T".into(), TypeId(1));
+        let before = checker.type_reference_arg_validation_scope_key_for_args(&type_args);
+
+        checker
+            .ctx
+            .type_parameter_scope
+            .insert("T".into(), TypeId(99));
+        let after = checker.type_reference_arg_validation_scope_key_for_args(&type_args);
+
+        assert_ne!(
+            before, after,
+            "the narrowed key must still change when a name the reference \
+             actually uses resolves to a different type -- narrowing may only \
+             drop irrelevant entries, never relevant ones"
+        );
+    }
+}
 mod union_constraint_helpers;
