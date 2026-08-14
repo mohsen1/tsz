@@ -847,6 +847,17 @@ impl<'a> InferenceContext<'a> {
             // conflicting naked argument is reported (issue #9667).
             let has_array_element_candidate =
                 filtered_no_never.iter().any(|c| c.from_array_element);
+            // Every candidate came from matching a top-level argument directly
+            // against a bare type parameter (`f<T>(a: T, b: T)`), so tsz's
+            // candidate order is the source argument order that tsc's
+            // `getCommonSupertype` `reduceLeft` keys on, making the disjoint
+            // bare-primitive leftmost-wins fallback safe (issue #17484).
+            // Candidates collected inside a structural walk (object property,
+            // tuple/array/rest element) have `from_top_level_naked = false`, so
+            // they keep tsc's order-independent union — tsz's order there does
+            // not match tsc's.
+            let all_from_top_level_naked = !filtered_no_never.is_empty()
+                && filtered_no_never.iter().all(|c| c.from_top_level_naked);
             // Distinguish the *all-from-array-element* case (e.g. both `V`
             // candidates of `new Map([["", true], ["", 0]])`, one per tuple leg)
             // from the mixed array+naked case (#9667). tsc id-sorts the former
@@ -858,6 +869,7 @@ impl<'a> InferenceContext<'a> {
             self.get_common_supertype_for_inference(
                 &widened_candidates,
                 has_array_element_candidate,
+                all_from_top_level_naked,
                 all_from_array_element,
             )
         };

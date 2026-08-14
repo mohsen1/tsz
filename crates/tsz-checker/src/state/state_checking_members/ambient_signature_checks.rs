@@ -1415,11 +1415,14 @@ impl<'a> CheckerState<'a> {
             );
         }
 
-        // Error 1318: An abstract accessor cannot have an implementation
-        // Abstract accessors must not have a body
+        // Error 1318: An abstract accessor cannot have an implementation.
+        // Abstract accessors must not have a body. tsc's `checkGrammarAccessor`
+        // reports this through `grammarErrorOnNode(node.name, …)`, so it anchors
+        // at the accessor name (`get aa`'s `aa`), not the whole member node's
+        // leading `abstract` modifier.
         if accessor.body.is_some() && self.has_abstract_modifier(&accessor.modifiers) {
             self.error_at_node(
-                member_idx,
+                accessor.name,
                 "An abstract accessor cannot have an implementation.",
                 diagnostic_codes::AN_ABSTRACT_ACCESSOR_CANNOT_HAVE_AN_IMPLEMENTATION,
             );
@@ -1839,8 +1842,16 @@ impl<'a> CheckerState<'a> {
             return None;
         }
         let computed = self.ctx.arena.get_computed_property(name_node)?;
-        self.ctx
-            .binder
-            .resolve_identifier(self.ctx.arena, computed.expression)
+        // Resolve the computed key's binding through the shared computed-name
+        // resolver, which handles a *qualified* entity name (`[G.B]`, a const
+        // enum member) via `resolve_qualified_symbol` — not just a bare
+        // identifier. A plain `binder.resolve_identifier` returns `None` for the
+        // property-access expression `G.B`, so `get [G.B]()` / `set [G.B](…)`
+        // never paired: the getter got no contextual return type from the
+        // setter and the getter-return-vs-setter-parameter mismatch (TS2322)
+        // was silently dropped, unlike the identifier / string-literal computed
+        // key forms which already pair. `tsc` late-binds `[G.B]` to the member's
+        // constant key, so both accessors share one property.
+        self.resolve_computed_name_expression_symbol(computed.expression)
     }
 }

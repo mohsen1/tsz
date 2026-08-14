@@ -47,6 +47,18 @@ fn check_named_files(files: &[(&str, &str)], entry_file: &str) -> Vec<Diagnostic
         .collect()
 }
 
+fn check_named_js_files(files: &[(&str, &str)], entry_file: &str) -> Vec<Diagnostic> {
+    let options = CheckerOptions {
+        allow_js: true,
+        check_js: true,
+        ..CheckerOptions::default()
+    };
+    tsz_checker::test_utils::check_multi_file_with_global_index(files, entry_file, options)
+        .into_iter()
+        .filter(|d| d.code != 2318)
+        .collect()
+}
+
 fn expect_diagnostic_code<'a>(diags: &'a [Diagnostic], code: u32, message: &str) -> &'a Diagnostic {
     diags.iter().find(|d| d.code == code).expect(message)
 }
@@ -182,6 +194,106 @@ var x: foo.A = foo.bar("hello");
     assert_eq!(
         ts2708_count, 1,
         "Expected exactly one TS2708 for value access through the import alias, got: {diags:?}"
+    );
+}
+
+#[test]
+fn ts2708_js_prototype_property_assignment_write_on_interface_only_namespace() {
+    // conformance/salsa/prototypePropertyAssignmentMergeWithInterfaceMethod.ts
+    // (bug #27352): `lf` is a pure interface-only namespace with no value
+    // declaration anywhere, so `lf.Transaction = function() {}` has no value
+    // to merge onto — tsc still reports TS2708 on the write, it is not a
+    // legitimate constructor-function/prototype-property-assignment merge.
+    let diags = check_named_js_files(
+        &[
+            (
+                "lib.d.ts",
+                r#"
+declare namespace lf {
+    export interface Transaction {
+        begin(): void
+    }
+}
+"#,
+            ),
+            (
+                "lovefield.js",
+                r#"
+lf.Transaction = function() {};
+"#,
+            ),
+        ],
+        "lovefield.js",
+    );
+    assert!(
+        has_diagnostic_code(&diags, 2708),
+        "Expected TS2708 for a JS write onto an interface-only namespace, got: {diags:?}"
+    );
+}
+
+#[test]
+fn ts2708_js_prototype_property_assignment_write_on_interface_only_namespace_renamed_binder() {
+    // Same shape as above with different binder/member names — the fix must
+    // key off the symbol's flags (namespace has zero value declarations),
+    // not any specific identifier text.
+    let diags = check_named_js_files(
+        &[
+            (
+                "lib.d.ts",
+                r#"
+declare namespace outerSpace {
+    export interface Rocket {
+        launch(): void
+    }
+}
+"#,
+            ),
+            (
+                "app.js",
+                r#"
+outerSpace.Rocket = function() {};
+"#,
+            ),
+        ],
+        "app.js",
+    );
+    assert!(
+        has_diagnostic_code(&diags, 2708),
+        "Expected TS2708 for a JS write onto a renamed interface-only namespace, got: {diags:?}"
+    );
+}
+
+#[test]
+fn ts2708_not_emitted_for_js_prototype_write_when_namespace_has_value_export() {
+    // Negative control preserving the original exemption: when the namespace
+    // is already instantiated (has an independent value export elsewhere in
+    // its body), tsc treats the JS write as a legitimate
+    // prototype-property-assignment merge and does NOT emit TS2708.
+    let diags = check_named_js_files(
+        &[
+            (
+                "lib.d.ts",
+                r#"
+declare namespace lf {
+    export interface Transaction {
+        begin(): void
+    }
+    export function open(): void
+}
+"#,
+            ),
+            (
+                "lovefield.js",
+                r#"
+lf.Transaction = function() {};
+"#,
+            ),
+        ],
+        "lovefield.js",
+    );
+    assert!(
+        !has_diagnostic_code(&diags, 2708),
+        "Should not emit TS2708 for a JS write onto a namespace with an independent value export, got: {diags:?}"
     );
 }
 
