@@ -130,6 +130,12 @@ pub(crate) struct DiagnosticRenderRequest {
     pub message: String,
     /// Strategy for related-information generation.
     pub related: RelatedInfoStrategy,
+    /// Extra pre-built related lines appended *after* whatever `related`
+    /// produces, before normalization. This is how a caller layers an
+    /// independent elaboration (e.g. the bare-type-parameter-target
+    /// `TS5075`/`TS5082` note) on top of a `FromFailureReason` strategy
+    /// without discarding the structural failure lines.
+    pub extra_related: Vec<DiagnosticRelatedInformation>,
     /// Policy for normalizing related information.
     pub related_policy: RelatedInformationPolicy,
 }
@@ -146,6 +152,7 @@ impl DiagnosticRenderRequest {
             code,
             message,
             related: RelatedInfoStrategy::None,
+            extra_related: Vec::new(),
             related_policy: RelatedInformationPolicy::ELABORATION,
         }
     }
@@ -180,6 +187,7 @@ impl DiagnosticRenderRequest {
                 source,
                 target,
             },
+            extra_related: Vec::new(),
             related_policy: RelatedInformationPolicy::ELABORATION,
         }
     }
@@ -197,8 +205,18 @@ impl DiagnosticRenderRequest {
             code,
             message,
             related: RelatedInfoStrategy::Prebuilt(related),
+            extra_related: Vec::new(),
             related_policy: policy,
         }
+    }
+
+    /// Append extra pre-built related lines that render *after* whatever the
+    /// `related` strategy produces. Used to layer an independent elaboration
+    /// (e.g. the bare-type-parameter-target note) onto a request that already
+    /// carries a failure-reason or prebuilt related chain.
+    pub(crate) fn with_extra_related(mut self, extra: Vec<DiagnosticRelatedInformation>) -> Self {
+        self.extra_related = extra;
+        self
     }
 }
 
