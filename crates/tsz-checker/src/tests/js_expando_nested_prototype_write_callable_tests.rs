@@ -108,3 +108,31 @@ fn nested_expando_function_rhs_absent_member_stays_ts2339() {
         "a genuinely-absent member must still be TS2339; got {codes:?}"
     );
 }
+
+/// An empty-object-literal-hosted nested expando member (`a.d = {}`, not
+/// callable) is still an OPEN container: `.prototype` is an ordinary new
+/// member on it, same as any other undeclared member would be — oracle-clean
+/// on tsc, distinct from the callable-RHS rule above (#17482's documented
+/// follow-up gap).
+#[test]
+fn nested_expando_empty_object_rhs_prototype_write_is_clean() {
+    let codes = cross_file_codes("const a = {};\na.d = {};\n", "a.d.prototype = {};\n");
+    assert_eq!(
+        codes,
+        Vec::<u32>::new(),
+        "an empty-object-hosted (open, non-callable) nested expando member must still accept an ordinary `.prototype` write; got {codes:?}"
+    );
+}
+
+/// The same empty-object-host open container also accepts an ordinary
+/// (non-`prototype`) new member write — the general open-container rule
+/// `.prototype` must fall under, not a special case.
+#[test]
+fn nested_expando_empty_object_rhs_ordinary_member_write_is_clean() {
+    let codes = cross_file_codes("const a = {};\na.d = {};\n", "a.d.foo = 1;\n");
+    assert_eq!(
+        codes,
+        Vec::<u32>::new(),
+        "an empty-object-hosted nested expando member must accept an ordinary new member write; got {codes:?}"
+    );
+}

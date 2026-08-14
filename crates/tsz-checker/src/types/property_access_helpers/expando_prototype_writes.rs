@@ -173,6 +173,27 @@ impl<'a> CheckerState<'a> {
         found && all_callable
     }
 
+    /// Whether `base_expr_idx.member_name` (e.g. `a.d` in `a.d.foo = e`) is
+    /// itself a DECLARED expando HOST: at least one syntactically visible
+    /// `base.member = rhs` declaring write exists AND every such write is
+    /// host-shaped (empty literal, function, or class expression). Unlike
+    /// [`Self::nested_expando_base_link_rhs_is_host`]'s permissive default
+    /// (used for reads, where no visible evidence should not manufacture a
+    /// false `TS2339`), granting a NEW member write needs positive evidence
+    /// that the base link is a genuine expando declaration — otherwise a
+    /// structural non-expando link with no declaring write at all (e.g.
+    /// `K.prototype` on a class `K`, which is never assigned `K.prototype = ...`)
+    /// would wrongly open every one of its members to silent writes.
+    pub(super) fn nested_expando_base_link_rhs_is_declared_host(
+        &self,
+        base_expr_idx: NodeIndex,
+        member_name: &str,
+    ) -> bool {
+        let (found, all_host) =
+            self.expando_base_link_rhs_verdict(base_expr_idx, member_name, false);
+        found && all_host
+    }
+
     /// Shared file-scanning core for [`Self::nested_expando_base_link_rhs_is_host`]
     /// and [`Self::nested_expando_base_link_rhs_is_callable`]. Returns
     /// `(found, all_match)`: `found` is true when at least one declaring

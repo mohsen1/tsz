@@ -916,9 +916,33 @@ impl<'a> CheckerState<'a> {
             if let Some(obj_key) =
                 Self::property_access_chain_in_arena(self.ctx.arena, object_expr_idx)
                 && !self.class_has_instance_member(&obj_key, property_name)
-                && let Some(sym_id) = self.root_symbol_for_expando_read(object_expr_idx)
             {
-                return self.root_symbol_supports_js_direct_expando_write(sym_id);
+                if let Some(sym_id) = self.root_symbol_for_expando_read(object_expr_idx) {
+                    return self.root_symbol_supports_js_direct_expando_write(sym_id);
+                }
+
+                // No name-resolvable symbol at the root — a nested expando
+                // chain-key entry (`a.d` in `a.d.foo = e`, itself an expando
+                // member of `a` rather than a real declaration
+                // `resolve_identifier_symbol`/`resolve_qualified_symbol` can
+                // find). Fall back to the base link's own declaring-write
+                // shape, mirroring `root_symbol_supports_js_direct_expando_write`'s
+                // identifier-root emptiness rule: `a.d` is a DECLARED open
+                // expando host — and so accepts any new member write,
+                // `.prototype` included — exactly when at least one visible
+                // `a.d = rhs` declaring write exists and every such write is
+                // host-shaped (empty literal, function, or class expression).
+                // Requiring positive evidence (not just the read side's
+                // permissive default) matters here: a structural link with NO
+                // declaring write at all, like `K.prototype` on a class `K`,
+                // must not be treated as an open host just because nothing
+                // contradicts it.
+                if let Some((base_expr, member_name)) =
+                    self.split_expando_access_link(object_expr_idx)
+                {
+                    return self
+                        .nested_expando_base_link_rhs_is_declared_host(base_expr, &member_name);
+                }
             }
         }
 
