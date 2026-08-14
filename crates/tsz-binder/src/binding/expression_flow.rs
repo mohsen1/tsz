@@ -690,6 +690,15 @@ impl BinderState {
             }) || arena.is_empty_object_literal(rhs)
         }
 
+        // Whether an object-access chain key (`C.prototype`, `M.sub`) walks
+        // through a `prototype` segment. `prototype` is a built-in member
+        // carried by the dedicated prototype-expando paths, so several of the
+        // expando record-time gates below key off it (element-access chains,
+        // class-root chains, nested-base-host exemptions).
+        fn chain_key_has_prototype_segment(obj_key: &str) -> bool {
+            obj_key.split('.').any(|segment| segment == "prototype")
+        }
+
         let Some(lhs_node) = arena.get(lhs) else {
             return;
         };
@@ -769,7 +778,7 @@ impl BinderState {
         // `F.prototype[sym] = val`). TSC's late-bound assignment
         // declarations are unsupported for prototype chains, so we
         // should emit TS7053 rather than suppress it.
-        let is_prototype_element_access = obj_key.split('.').any(|segment| segment == "prototype")
+        let is_prototype_element_access = chain_key_has_prototype_segment(&obj_key)
             && lhs_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION;
         let is_function_or_namespace_root = (symbol.flags
             & (symbol_flags::FUNCTION
@@ -784,7 +793,7 @@ impl BinderState {
         // permissive prototype-expando path — a JS constructor's prototype
         // is genuinely open.
         let is_class_prototype_chain =
-            is_js_class_root && obj_key.split('.').any(|segment| segment == "prototype");
+            is_js_class_root && chain_key_has_prototype_segment(&obj_key);
         if ((is_function_or_namespace_root && (symbol.flags & symbol_flags::CLASS) == 0)
             || is_js_class_root)
             && !is_prototype_element_access
@@ -825,7 +834,7 @@ impl BinderState {
             // on the nested write. `prototype` chains are exempt: `prototype` is
             // a built-in member handled by the dedicated prototype-expando paths.
             if is_js_like_source
-                && !obj_key.split('.').any(|segment| segment == "prototype")
+                && !chain_key_has_prototype_segment(&obj_key)
                 && let Some((parent_key, member_name)) = obj_key.rsplit_once('.')
                 && !self
                     .expando_host_members
@@ -933,6 +942,25 @@ impl BinderState {
                 is_function_like && arena.is_var_const_like_declaration(decl_idx)
             };
             if is_expando_init {
+                // A class-expression host (`const C = class {}`) is a class
+                // root: its `prototype` is the closed instance shape, exactly
+                // like a class declaration's (`is_class_prototype_chain` in the
+                // function/class-root branch above). So it records ordinary
+                // statics (`C.x`) as expandos, but a `C.prototype.member = e`
+                // write for a member the class never declares must stay
+                // TS2339/TS2551, not be silently accepted as a new expando. A
+                // function/arrow-expression host keeps the permissive ES5
+                // constructor prototype idiom (`const C = function () {};
+                // C.prototype.m = …` is a genuine expando). Oracle-verified
+                // (typescript@7.0.2, `--checkJs --allowJs --noImplicitAny`):
+                // `const C = class { method1() {} }; C.prototype.method2 = …`
+                // is TS2551, while the function-expression spelling is clean.
+                if is_js_like_source
+                    && init_node.kind == syntax_kind_ext::CLASS_EXPRESSION
+                    && chain_key_has_prototype_segment(&obj_key)
+                {
+                    return;
+                }
                 // Mirror the function-root branch: in a JS file a nested chain
                 // declares its member only when the immediate base link is an
                 // assignment-declared expando HOST (`expando_host_members` —
@@ -944,7 +972,7 @@ impl BinderState {
                 // with TS2339 under `noImplicitAny`. `prototype` chains are
                 // exempt (dedicated prototype-expando handling).
                 if is_js_like_source
-                    && !obj_key.split('.').any(|segment| segment == "prototype")
+                    && !chain_key_has_prototype_segment(&obj_key)
                     && let Some((parent_key, member_name)) = obj_key.rsplit_once('.')
                     && !self
                         .expando_host_members
