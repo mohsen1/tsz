@@ -281,6 +281,8 @@ mod destructured_binding_narrowed_property_tests;
 mod destructured_discriminant_source_narrowing_tests;
 #[path = "tests/destructuring_relation_routing_arch_tests.rs"]
 mod destructuring_relation_routing_arch_tests;
+#[path = "tests/destructuring_symbol_index_and_error_source_tests.rs"]
+mod destructuring_symbol_index_and_error_source_tests;
 #[path = "tests/diagnostic_sink_message_surgery_arch_tests.rs"]
 mod diagnostic_sink_message_surgery_arch_tests;
 #[path = "tests/diagnostic_source_relation_routing_arch_tests.rs"]

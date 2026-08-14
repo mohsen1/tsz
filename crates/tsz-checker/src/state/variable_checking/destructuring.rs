@@ -894,6 +894,24 @@ impl<'a> CheckerState<'a> {
             };
         }
 
+        // An error-typed object source behaves like `any` for destructuring:
+        // `tsc` types every binding element of an error/`any` source as `any` and
+        // runs none of the computed-key index diagnostics (TS2538) or property
+        // lookups below — an error source must not cascade further index/property
+        // errors. `any` is caught by the caller's own short-circuit (which also
+        // yields `any`), so this object branch is where an *evaluated-to-error*
+        // source is caught; returning `ANY` keeps it consistent with that
+        // short-circuit and with tsc's "error is any". (The array-pattern branch
+        // above returns the source `ERROR` itself instead, because an array
+        // element type of `ERROR` — not `ANY` — is what suppresses its nested
+        // iterability cascade; the object branch has no such nested check here.)
+        // `unknown` is intentionally excluded: it keeps TS2538 for an invalid
+        // computed key and owns its own TS2339 / "Object is of type 'unknown'"
+        // handling further down.
+        if parent_type == TypeId::ERROR {
+            return TypeId::ANY;
+        }
+
         let computed_expr = self
             .ctx
             .arena
@@ -935,6 +953,30 @@ impl<'a> CheckerState<'a> {
                     }
                 }
                 return property_type;
+            }
+
+            // A `symbol`/`unique symbol` computed key that names no declared
+            // property still resolves through a `symbol` index signature on the
+            // source, exactly like the `obj[s]` element access it desugars to.
+            // Return that signature's value type and suppress the property-not-
+            // found / TS2538 paths below. `resolve_symbol_index` distributes over
+            // unions (every member must carry a `symbol` index), reads through
+            // intersections, and evaluates aliases/applications. A declared
+            // symbol *property* match is handled by the literal-key resolution
+            // above; a source with no `symbol` index still falls through to the
+            // correct TS2538. Generic sources defer to instantiation.
+            if common_query::is_symbol_or_unique_symbol(self.ctx.types, key_type)
+                && !common_query::contains_type_parameters(
+                    self.ctx.types.as_type_database(),
+                    parent_type,
+                )
+                && let Some(value_type) =
+                    crate::query_boundaries::index_signature::resolve_symbol_index(
+                        self.ctx.types.as_type_database(),
+                        parent_type,
+                    )
+            {
+                return value_type;
             }
         }
 
