@@ -6,8 +6,62 @@
 
 use super::*;
 use tsz_binder::SymbolId;
+use tsz_binder::symbols::symbol_flags;
 
 impl<'a> CheckerState<'a> {
+    /// Whether some file processed BEFORE the current one (a strictly lower
+    /// file-discovery index) declares `name` as a cross-file-visible value.
+    ///
+    /// That earlier declaration is the PRIMARY/canonical one, and `tsc` resolves
+    /// every reference to the merged global — including property writes in a
+    /// *later* file that also declares `name` as its own JS expando container —
+    /// through that canonical type. So when this holds, the current file's
+    /// expando container is a SUBSEQUENT declaration and must NOT win the
+    /// #17443 container-preference exemption: the canonical (primary) type
+    /// governs local property lookups too, and an expando write against a
+    /// canonical type that lacks the member is a genuine `TS2339`
+    /// (`TypeScript/tests/cases/conformance/salsa/jsContainerMergeTsDeclaration.ts`,
+    /// #17544). The #17443 exemption stays in force only while the container is
+    /// the primary (first-discovered) declaration — the case its own regression
+    /// suite pins.
+    ///
+    /// Keyed on the deterministic file-discovery order (post-#17540/#17549),
+    /// not on thread scheduling, so it does not reintroduce the #16309
+    /// nondeterminism the order-independent behavior was reaching for.
+    pub(crate) fn expando_container_superseded_by_primary_declaration(&self, name: &str) -> bool {
+        let current_idx = self.ctx.current_file_idx;
+        if current_idx == 0 {
+            return false;
+        }
+        let precedes = |file_idx: usize, sym_id: SymbolId, binder: &tsz_binder::BinderState| {
+            file_idx < current_idx
+                && binder
+                    .get_symbol(sym_id)
+                    .is_some_and(|s| s.has_any_flags(symbol_flags::VALUE))
+        };
+        if let Some(index) = self.ctx.global_file_locals_index.as_ref()
+            && let Some(entries) = index.get(name)
+        {
+            if let Some(all_binders) = self.ctx.all_binders.as_ref() {
+                return entries.iter().any(|&(file_idx, sym_id)| {
+                    all_binders
+                        .get(file_idx)
+                        .is_some_and(|binder| precedes(file_idx, sym_id, binder))
+                });
+            }
+            return entries.iter().any(|&(file_idx, _)| file_idx < current_idx);
+        }
+        if let Some(all_binders) = self.ctx.all_binders.as_ref() {
+            return all_binders.iter().enumerate().any(|(file_idx, binder)| {
+                binder
+                    .file_locals
+                    .get(name)
+                    .is_some_and(|sym_id| precedes(file_idx, sym_id, binder))
+            });
+        }
+        false
+    }
+
     /// Whether `kind` is one of the declaration kinds that merge instead of
     /// conflicting for `TS2403` purposes: namespace/module, enum, class,
     /// interface, function. A `var`/`let`/`const` initialized with a

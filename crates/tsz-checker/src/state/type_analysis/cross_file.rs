@@ -342,6 +342,9 @@ impl CheckerState<'_> {
         if self.is_js_file()
             && self.ctx.compiler_options.check_js
             && self.current_file_owns_expando_container_declaration(sym_id)
+            && !self.ctx.binder.get_symbol(sym_id).is_some_and(|s| {
+                self.expando_container_superseded_by_primary_declaration(s.escaped_name.as_str())
+            })
         {
             return None; // Handle locally, don't delegate
         }

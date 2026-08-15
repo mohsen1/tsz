@@ -221,16 +221,24 @@ fn expando_container_own_property_access_not_ts2339_across_container_shapes() {
     }
 }
 
-/// Characterization: with the `.ts` sibling listed first, tsz resolves the JS
-/// file's own expando container the same way — clean. tsc 6.0.2 is order-
-/// dependent here and reports `TS2339` when the non-callable `var x` is the
-/// first declaration; tsz deliberately resolves a file's own expando container
-/// independent of cross-file declaration order (the reproducibility direction
-/// of #16309, and the same order-independent treatment #17437 already gives the
-/// `TS2403` half). No conformance fixture exercises the sibling-first order
-/// (fixtures pin `@filename` order), so this divergence is inert there.
+/// With the conflicting `.ts` sibling listed FIRST, that sibling is the
+/// primary (first-discovered) declaration of the merged global `x`, so its
+/// `number` type is canonical — and `tsc@7.0.2` (the pinned corpus oracle)
+/// resolves `a.js`'s own `x.a = …` write through that canonical `number`,
+/// reporting `TS2339`. The #17443 container-preference exemption only holds
+/// while the JS expando container is the primary declaration
+/// (`..._when_container_is_first` above); once an earlier sibling supersedes
+/// it, the canonical type governs local property lookups too (#17544).
+///
+/// This is order-DEPENDENT on the deterministic file-discovery order
+/// (post-#17540/#17549), which matches `tsc`'s own primary-declaration
+/// semantics; it is not the thread-scheduling nondeterminism #16309 tracks.
+/// The real conformance fixture
+/// `jsContainerMergeTsDeclaration.ts` exercises exactly this order (its
+/// synthetic `include` globs sort `b.ts` ahead of `a.js`), so the prior
+/// order-independent assertion was a genuine divergence from the oracle.
 #[test]
-fn expando_container_own_property_access_clean_regardless_of_sibling_order() {
+fn expando_container_own_property_access_reports_ts2339_when_sibling_is_primary() {
     let diags = compile_files(
         &[
             ("b.ts", "var x = function () { return 1; }();"),
@@ -240,9 +248,81 @@ fn expando_container_own_property_access_clean_regardless_of_sibling_order() {
     );
     assert_eq!(
         count_code(&diags, 2339),
-        0,
-        "a.js's own container property access stays clean regardless of sibling order; got: {diags:?}"
+        1,
+        "a.js's x.a write resolves through the primary sibling's canonical `number`; got: {diags:?}"
     );
+}
+
+/// Full oracle of the salsa fixture with the sibling primary: `tsc@7.0.2`
+/// reports EXACTLY `TS2403` (on the subsequent `a.js` declaration) plus
+/// `TS2339` (on `a.js`'s own `x.a` write against the canonical `number`).
+/// The container-preference exemption suppressed the `TS2339` half before
+/// #17544; the `TS2403` half was never suppressed.
+#[test]
+fn superseded_expando_container_reports_both_ts2403_and_ts2339() {
+    let diags = compile_files(
+        &[
+            ("b.ts", "var x = function () { return 1; }();"),
+            ("a.js", "var x = function foo() {}\nx.a = function bar() {}"),
+        ],
+        1,
+    );
+    assert_eq!(
+        count_code(&diags, 2403),
+        1,
+        "the subsequent expando container still conflicts by TS2403; got: {diags:?}"
+    );
+    assert_eq!(
+        count_code(&diags, 2339),
+        1,
+        "the subsequent expando container's own write resolves the canonical number; got: {diags:?}"
+    );
+}
+
+/// Anti-hardcoding (§25): the superseded-container `TS2339` is structural over
+/// the primary-vs-subsequent file order, not keyed on `x`/`a`/`foo`. Repeat
+/// with varied binder and expando-property names, sibling always primary.
+#[test]
+fn superseded_expando_container_ts2339_independent_of_names() {
+    for var_name in ["widget", "handler"] {
+        for expando in ["extra", "hook"] {
+            let a_src = format!(
+                "var {var_name} = function foo() {{}}\n{var_name}.{expando} = function bar() {{}}"
+            );
+            let b_src = format!("var {var_name} = function () {{ return 1; }}();");
+            let diags = compile_files(&[("b.ts", b_src.as_str()), ("a.js", a_src.as_str())], 1);
+            assert_eq!(
+                count_code(&diags, 2339),
+                1,
+                "superseded container '{var_name}'.'{expando}' must report TS2339; got: {diags:?}"
+            );
+        }
+    }
+}
+
+/// The superseded-container rule holds across container shapes (arrow / class
+/// expression) too — each is a subsequent declaration to the primary sibling.
+#[test]
+fn superseded_expando_container_ts2339_across_container_shapes() {
+    for container in [
+        "var x = function foo() {}",
+        "var x = () => {}",
+        "var x = class {}",
+    ] {
+        let a_src = format!("{container}\nx.a = function bar() {{}}");
+        let diags = compile_files(
+            &[
+                ("b.ts", "var x = function () { return 1; }();"),
+                ("a.js", a_src.as_str()),
+            ],
+            1,
+        );
+        assert_eq!(
+            count_code(&diags, 2339),
+            1,
+            "superseded container shape `{container}` must report TS2339; got: {diags:?}"
+        );
+    }
 }
 
 /// Control: a genuinely-absent member on the container still reports TS2339 —

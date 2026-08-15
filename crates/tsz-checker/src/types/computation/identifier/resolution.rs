@@ -822,6 +822,7 @@ impl<'a> CheckerState<'a> {
         if self.is_js_file()
             && self.ctx.compiler_options.check_js
             && self.current_file_declares_expando_container_variable(name)
+            && !self.expando_container_superseded_by_primary_declaration(name)
         {
             return None;
         }
@@ -959,10 +960,13 @@ impl<'a> CheckerState<'a> {
         local_sym_id: SymbolId,
     ) -> Option<TypeId> {
         // See `cross_file_global_value_type_by_name`: the current file's own
-        // expando container wins over a cross-file `.ts` global (#17443).
+        // expando container wins over a cross-file `.ts` global (#17443) — but
+        // only while it is the primary (first-discovered) declaration. Once an
+        // earlier file declares `name`, its canonical type governs (#17544).
         if self.is_js_file()
             && self.ctx.compiler_options.check_js
             && self.current_file_declares_expando_container_variable(name)
+            && !self.expando_container_superseded_by_primary_declaration(name)
         {
             return None;
         }
