@@ -1329,8 +1329,10 @@ impl<'a> CheckerState<'a> {
                     scope_groups.entry(scope).or_default().push(idx);
                 }
 
+                let mut duplicate_impl_family_found = false;
                 for group in scope_groups.values() {
                     if group.len() > 1 || has_remote_function_implementation {
+                        duplicate_impl_family_found = true;
                         for &idx in group {
                             let error_node = self.get_declaration_name_node(idx).unwrap_or(idx);
                             self.error_at_node(
@@ -1341,6 +1343,31 @@ impl<'a> CheckerState<'a> {
                             if !has_non_function_conflict {
                                 conflicts.remove(&idx);
                             }
+                        }
+                    }
+                }
+
+                // Once this symbol has a genuine duplicate-implementation
+                // family, tsc reports TS2393 on every other local
+                // function-family declaration too — including the bodyless
+                // overload signatures that would otherwise stay clean (e.g. a
+                // namespace reopened with two implementations still needs its
+                // own overload signatures flagged, not just the bodies).
+                if duplicate_impl_family_found {
+                    for (decl_idx, flags, is_local, _, _) in declarations.iter() {
+                        if *is_local
+                            && (flags & symbol_flags::FUNCTION) != 0
+                            && !self.function_has_body(*decl_idx)
+                        {
+                            let error_node = self
+                                .get_declaration_name_node(*decl_idx)
+                                .unwrap_or(*decl_idx);
+                            self.error_at_node(
+                                error_node,
+                                diagnostic_messages::DUPLICATE_FUNCTION_IMPLEMENTATION,
+                                diagnostic_codes::DUPLICATE_FUNCTION_IMPLEMENTATION,
+                            );
+                            conflicts.remove(decl_idx);
                         }
                     }
                 }
