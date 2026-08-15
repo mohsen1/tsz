@@ -174,14 +174,20 @@ result.where('title', 'in', wrongTitles)
         .iter()
         .map(|diagnostic| (diagnostic.code, diagnostic.start))
         .collect();
+    let mixed_list_start = usage
+        .find("['one', 'wrong']")
+        .expect("wrong mixed-list operand");
     let expected = vec![
+        // Argument-level check: the top-level `.where(...)` call's `rhs`
+        // argument fails against the alias `DependentOperand<...>` directly.
         (2345, usage.find("'wrong'").expect("wrong operand") as u32),
-        (
-            2345,
-            usage
-                .find("['one', 'wrong']")
-                .expect("wrong mixed-list operand") as u32,
-        ),
+        // Element-level check: `tsc` type-checks each array-literal element
+        // against the array's contextual element type, so the diagnostic
+        // anchors at the offending `'wrong'` element itself (not the array
+        // literal's start) and reports assignability (`TS2322`), not an
+        // argument error (`TS2345`) — the array as a whole is a valid
+        // `DependentOperand` shape.
+        (2322, (mixed_list_start + "['one', ".len()) as u32),
         (
             2345,
             usage.rfind("wrongTitles").expect("wrong list operand") as u32,
@@ -195,9 +201,7 @@ result.where('title', 'in', wrongTitles)
     assert!(
         result.diagnostics[0].message_text.contains("DependentOperand")
             && result.diagnostics[0].message_text.contains("category")
-            && result.diagnostics[1].message_text.contains("DependentOperand")
             && result.diagnostics[1].message_text.contains("category")
-            && result.diagnostics[2].message_text.contains("DependentOperand")
             && result.diagnostics[2].message_text.contains("title"),
         "dependent-constraint diagnostics must retain their selected field: {:#?}",
         result.diagnostics
