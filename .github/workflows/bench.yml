@@ -73,6 +73,15 @@ jobs:
           if ! sudo apt-get install -y hyperfine; then
             cargo install hyperfine --locked
           fi
+          # `large-ts-repo` is a pnpm workspace: its fixture runs
+          # `pnpm install --frozen-lockfile` (scripts/bench/lib/large-ts-repo-fixture.sh).
+          # Without pnpm that fixture aborts before writing its flat tsconfig, so
+          # the row — declared `benchmark_set: "required"` — silently drops out
+          # of every scheduled run while the job still reports success.
+          if ! command -v pnpm >/dev/null 2>&1; then
+            corepack enable pnpm || npm install -g pnpm
+          fi
+          pnpm --version
 
       - name: Run bench-vs-tsgo on GitHub Actions
         shell: bash
