@@ -700,6 +700,13 @@ impl<'a> CheckerState<'a> {
             self.check_overload_compatibility(member_idx);
         }
 
+        // TS2526: a JSDoc `@return`/`@returns {this}` tag whose host is a
+        // `static` method (which has no `this` type). Method declarations
+        // never reach `check_function_declaration_callback` (its `get_function`
+        // lookup only matches FUNCTION_DECLARATION/EXPRESSION/ARROW_FUNCTION),
+        // so they need this call site instead.
+        self.report_jsdoc_return_this_type_not_allowed(member_idx);
+
         // Error 1245: Method '{0}' cannot have an implementation because it is marked abstract.
         // TSC anchors this error at the method name, not the whole member node.
         if method.body.is_some() && self.has_abstract_modifier(&method.modifiers) {
