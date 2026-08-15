@@ -80,17 +80,37 @@ pub fn discover_ts_files(options: &FileDiscoveryOptions) -> Result<Vec<PathBuf>>
 
     let include_patterns = build_include_patterns(options);
     // tsc's `matchFiles` (compiler/utilities.ts) buckets each discovered file by
-    // the FIRST include pattern that matches it and flattens the buckets in
-    // include-list order — it does not merge-then-alphabetize matches across
-    // patterns. Because the harness's (and tsc's own multi-extension) include
-    // list puts `*.ts`-family patterns ahead of `*.js`-family ones, all `.ts`
-    // files sort ahead of all `.js` files even when a `.js` file's name is
-    // alphabetically earlier. Preserve that per-pattern bucket order here
-    // instead of collapsing every match into one alphabetically sorted set.
-    let mut buckets: Vec<Vec<PathBuf>> = vec![Vec::new(); include_patterns.len()];
+    // the FIRST include *spec* that matches it and flattens the buckets in
+    // spec order — it does not merge-then-alphabetize matches across specs.
+    // Each user-written include entry is one spec, even when it expands to
+    // several glob patterns (a bare directory like `"src"` expands to `"src"`
+    // and `"src/**/*"`, which must still share one bucket). The zero-config
+    // default has exactly one spec (tsc's real default is the single pattern
+    // `**/*`) even though `default_include_patterns` synthesizes several
+    // per-extension glob strings for that one spec — bucketing by the
+    // *expanded* pattern index instead of the originating spec index would
+    // put `.ts` ahead of `.js` in the default case, which is not what tsc
+    // does there (see docs/specs/TSC_ROOT_FILE_ORDER.md; this exact mistake
+    // was landed in #17423 and reverted in #17428). Only an explicit
+    // multi-pattern `include` (e.g. `["*.ts","*.js"]`) actually orders `.ts`
+    // ahead of `.js`.
+    let spec_count = include_patterns
+        .iter()
+        .map(|(spec_index, _)| *spec_index)
+        .max()
+        .map_or(0, |max_index| max_index + 1);
+    let mut buckets: Vec<Vec<PathBuf>> = vec![Vec::new(); spec_count];
     if !include_patterns.is_empty() {
+        let pattern_strings: Vec<String> = include_patterns
+            .iter()
+            .map(|(_, pattern)| pattern.clone())
+            .collect();
+        let spec_indices: Vec<usize> = include_patterns
+            .iter()
+            .map(|(spec_index, _)| *spec_index)
+            .collect();
         let include_set =
-            build_globset(&include_patterns).context("failed to build include globset")?;
+            build_globset(&pattern_strings).context("failed to build include globset")?;
         let exclude_patterns = build_exclude_patterns(options);
         let exclude_set = if exclude_patterns.is_empty() {
             None
@@ -98,7 +118,7 @@ pub fn discover_ts_files(options: &FileDiscoveryOptions) -> Result<Vec<PathBuf>>
             Some(build_globset(&exclude_patterns).context("failed to build exclude globset")?)
         };
 
-        for walk_root in include_walk_roots(&options.base_dir, &include_patterns) {
+        for walk_root in include_walk_roots(&options.base_dir, &pattern_strings) {
             let walker = WalkDir::new(&walk_root)
                 .follow_links(options.follow_links)
                 .into_iter()
@@ -115,9 +135,13 @@ pub fn discover_ts_files(options: &FileDiscoveryOptions) -> Result<Vec<PathBuf>>
                     continue;
                 }
 
-                let Some(bucket_index) =
-                    first_matching_pattern_index(path, &options.base_dir, &walk_root, &include_set)
-                else {
+                let Some(bucket_index) = first_matching_pattern_index(
+                    path,
+                    &options.base_dir,
+                    &walk_root,
+                    &include_set,
+                    &spec_indices,
+                ) else {
                     continue;
                 };
 
@@ -254,33 +278,49 @@ fn matches_discovery_patterns(
             .is_ok_and(|rel| patterns.is_match(rel))
 }
 
-/// Like [`matches_discovery_patterns`], but returns the index of the
-/// earliest-listed include pattern that matches `path` instead of a bool.
-/// Mirrors tsc's `matchFiles`, which assigns each file to the bucket of the
-/// first include regex that matches it.
+/// Like [`matches_discovery_patterns`], but returns the *spec index* (see
+/// [`build_include_patterns`]) of the earliest-matching include spec instead
+/// of a bool. `patterns` is built from the flattened, expanded pattern list;
+/// `spec_indices[i]` gives the originating spec index for `patterns`'s `i`-th
+/// glob, so multiple expanded patterns from one spec (or from tsc's
+/// synthesized zero-config default, which is entirely one spec) collapse to
+/// the same bucket. Mirrors tsc's `matchFiles`, which assigns each file to
+/// the bucket of the first include spec that matches it.
 fn first_matching_pattern_index(
     path: &Path,
     base_dir: &Path,
     walk_root: &Path,
     patterns: &GlobSet,
+    spec_indices: &[usize],
 ) -> Option<usize> {
-    patterns
-        .matches(path)
-        .into_iter()
-        .min()
+    let min_spec_index = |glob_indices: Vec<usize>| -> Option<usize> {
+        glob_indices
+            .into_iter()
+            .filter_map(|glob_index| spec_indices.get(glob_index).copied())
+            .min()
+    };
+    min_spec_index(patterns.matches(path))
         .or_else(|| {
             path.strip_prefix(base_dir)
                 .ok()
-                .and_then(|rel| patterns.matches(rel).into_iter().min())
+                .and_then(|rel| min_spec_index(patterns.matches(rel)))
         })
         .or_else(|| {
             path.strip_prefix(walk_root)
                 .ok()
-                .and_then(|rel| patterns.matches(rel).into_iter().min())
+                .and_then(|rel| min_spec_index(patterns.matches(rel)))
         })
 }
 
-fn build_include_patterns(options: &FileDiscoveryOptions) -> Vec<String> {
+/// Include patterns to match files against, each tagged with the index of
+/// the include *spec* it was expanded from. A spec is one user-written
+/// `include` array entry, or — in the zero-config default case — the single
+/// implicit spec tsc's real default (`**/*`) represents, even though
+/// [`default_include_patterns`] synthesizes several per-extension glob
+/// strings for that one spec. Bucketing discovered files by spec index
+/// (rather than by expanded-pattern index) keeps every pattern derived from
+/// one spec — and the entire zero-config default — in a single bucket.
+fn build_include_patterns(options: &FileDiscoveryOptions) -> Vec<(usize, String)> {
     match options.include.as_ref() {
         Some(patterns) if patterns.is_empty() => Vec::new(),
         Some(patterns) => expand_include_patterns(&normalize_patterns(patterns)),
@@ -289,7 +329,15 @@ fn build_include_patterns(options: &FileDiscoveryOptions) -> Vec<String> {
             // `"files"`. A solution-style config like `{ "files": [], "references": [...] }`
             // must not trigger a full directory walk — tsc treats it as zero input files.
             if options.files.is_empty() && !options.files_explicitly_set {
+                // tsc's real zero-config default is the single pattern `**/*`
+                // (files matched, then filtered by extension) — one spec, one
+                // bucket, so the result is alphabetical. Tag every synthesized
+                // per-extension pattern with the same spec index (0) rather
+                // than letting each one become its own bucket.
                 default_include_patterns(options.allow_js, options.resolve_json_module)
+                    .into_iter()
+                    .map(|pattern| (0, pattern))
+                    .collect()
             } else {
                 Vec::new()
             }
@@ -308,36 +356,40 @@ pub fn default_include_display() -> Vec<String> {
     vec!["**/*".to_string()]
 }
 
-/// Expand include patterns to match files in directories.
+/// Expand include patterns to match files in directories, tagging each
+/// expanded pattern with the index of the user-written spec it came from.
+/// A spec that expands to multiple glob patterns (e.g. a bare directory)
+/// keeps them all under its own spec index, so they bucket together in
+/// [`discover_ts_files`] instead of each claiming a separate bucket.
 ///
 /// TypeScript's include patterns work as follows:
 /// - `src` matches `src/` directory and expands to `src/**/*`
 /// - `src/*` matches files directly in src, but for directories, adds `/**/*`
 /// - Patterns with extensions (e.g., `*.ts`) are used as-is
-fn expand_include_patterns(patterns: &[String]) -> Vec<String> {
+fn expand_include_patterns(patterns: &[String]) -> Vec<(usize, String)> {
     let mut expanded = Vec::new();
-    for pattern in patterns {
+    for (spec_index, pattern) in patterns.iter().enumerate() {
         // If pattern already has glob metacharacters with extensions, use as-is
         if include_pattern_has_supported_extension(pattern) {
-            expanded.push(pattern.clone());
+            expanded.push((spec_index, pattern.clone()));
             continue;
         }
 
         // If pattern ends with /**/* or /**/*.*, it's already expanded
         if pattern.ends_with("/**/*") || pattern.ends_with("/**/*.*") {
-            expanded.push(pattern.clone());
+            expanded.push((spec_index, pattern.clone()));
             continue;
         }
 
         if is_terminal_wildcard_pattern(pattern) {
             let base = pattern.trim_end_matches('/');
-            expanded.push(base.to_string());
-            expanded.push(format!("{base}/**/*"));
+            expanded.push((spec_index, base.to_string()));
+            expanded.push((spec_index, format!("{base}/**/*")));
             continue;
         }
 
         // Directory pattern (no extension or glob at end) - expand to match all files
-        expanded.push(directory_recursive_glob(pattern));
+        expanded.push((spec_index, directory_recursive_glob(pattern)));
     }
     expanded
 }
@@ -665,11 +717,27 @@ mod tests {
             allow_js: false,
             resolve_json_module: false,
         };
+        let implicit_patterns = build_include_patterns(&implicit_options);
+        let pattern_strings: Vec<&str> = implicit_patterns
+            .iter()
+            .map(|(_, pattern)| pattern.as_str())
+            .collect();
         assert_eq!(
-            build_include_patterns(&implicit_options),
+            pattern_strings,
             vec![
                 "*.ts", "*.tsx", "*.mts", "*.cts", "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"
             ]
+        );
+        // The zero-config default is ONE spec (tsc's real default is the
+        // single pattern `**/*`), even though it synthesizes several
+        // per-extension glob strings — every one of them must share spec
+        // index 0 so they bucket together instead of ordering `.ts` ahead
+        // of `.js` the way an explicit multi-pattern `include` would.
+        assert!(
+            implicit_patterns
+                .iter()
+                .all(|(spec_index, _)| *spec_index == 0),
+            "zero-config default patterns must all share spec index 0"
         );
 
         let explicit_options = FileDiscoveryOptions {
@@ -693,8 +761,12 @@ mod tests {
             resolve_json_module: true,
         };
 
+        let pattern_strings: Vec<String> = build_include_patterns(&options)
+            .into_iter()
+            .map(|(_, pattern)| pattern)
+            .collect();
         assert_eq!(
-            build_include_patterns(&options),
+            pattern_strings,
             vec![
                 "*.ts", "*.tsx", "*.mts", "*.cts", "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts",
             ]
@@ -715,14 +787,17 @@ mod tests {
 
     #[test]
     fn test_expand_include_patterns_preserves_explicit_files_and_expands_directories() {
-        let expanded = expand_include_patterns(&[
+        let expanded: Vec<String> = expand_include_patterns(&[
             "src".to_string(),
             "tests/".to_string(),
             "src/*".to_string(),
             "already/**/*".to_string(),
             "index.ts".to_string(),
             "subdir/*.tsx".to_string(),
-        ]);
+        ])
+        .into_iter()
+        .map(|(_, pattern)| pattern)
+        .collect();
 
         assert_eq!(
             expanded,
@@ -739,21 +814,41 @@ mod tests {
     }
 
     #[test]
+    fn test_expand_include_patterns_keeps_one_spec_index_per_directory_entry() {
+        // "src/*" is one user-written spec that expands to two glob patterns
+        // ("src/*" itself and "src/*/**/*"); both must carry the same spec
+        // index so discover_ts_files buckets them together instead of
+        // letting the expansion silently create a second bucket.
+        let expanded = expand_include_patterns(&["src/*".to_string(), "*.ts".to_string()]);
+        let spec_indices: Vec<usize> = expanded.iter().map(|(index, _)| *index).collect();
+        assert_eq!(spec_indices, vec![0, 0, 1]);
+    }
+
+    #[test]
     fn test_expand_include_current_directory_is_root_recursive() {
         // tsc expands a directory spec to `<dir>/**/*`; the current-directory
         // spellings `"."` and `"./"` (the latter normalized to "") must become a
         // root-relative `**/*`, not `./**/*` or `/**/*` (which globset cannot
         // match against discovery-relative paths). See `directory_recursive_glob`.
+        let patterns_only = |patterns: Vec<(usize, String)>| -> Vec<String> {
+            patterns.into_iter().map(|(_, pattern)| pattern).collect()
+        };
         assert_eq!(
-            expand_include_patterns(&normalize_patterns(&[".".to_string()])),
+            patterns_only(expand_include_patterns(&normalize_patterns(&[
+                ".".to_string()
+            ]))),
             vec!["**/*".to_string()]
         );
         assert_eq!(
-            expand_include_patterns(&normalize_patterns(&["./".to_string()])),
+            patterns_only(expand_include_patterns(&normalize_patterns(&[
+                "./".to_string()
+            ]))),
             vec!["**/*".to_string()]
         );
         assert_eq!(
-            expand_include_patterns(&normalize_patterns(&["./src".to_string()])),
+            patterns_only(expand_include_patterns(&normalize_patterns(&[
+                "./src".to_string()
+            ]))),
             vec!["src/**/*".to_string()]
         );
     }
@@ -1093,6 +1188,53 @@ mod tests {
             "a `.ts` file must sort ahead of an alphabetically-earlier `.js` file when \
              discovered through a multi-extension include list, matching tsc's per-pattern \
              bucketing instead of a global alphabetical merge"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_discover_default_include_stays_alphabetical_across_extensions() {
+        // Counterpart to `test_discover_wildcard_matched_ts_precedes_alphabetically_earlier_js`:
+        // tsc's REAL zero-config default is the single pattern `**/*` (files
+        // matched, then filtered by extension) — one spec, one bucket, so the
+        // result is alphabetical, extension family notwithstanding. Bucketing
+        // by the *expanded* per-extension pattern list (rather than by
+        // originating spec) would put every `.ts` file ahead of every `.js`
+        // file here too, which is exactly the regression #17423 landed and
+        // #17428 reverted (see docs/specs/TSC_ROOT_FILE_ORDER.md). With no
+        // explicit `include`, `default_include_patterns` still synthesizes a
+        // multi-pattern per-extension list for discovery, but every pattern
+        // in it must collapse to spec index 0.
+        let dir = std::env::temp_dir().join("tsz_fs_test_default_include_alphabetical");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("a.js"), "var x = 1;").unwrap();
+        fs::write(dir.join("b.ts"), "var x = \"s\";").unwrap();
+
+        let options = FileDiscoveryOptions {
+            base_dir: dir.clone(),
+            files: vec![],
+            files_explicitly_set: false,
+            include: None,
+            exclude: None,
+            out_dir: None,
+            follow_links: false,
+            allow_js: true,
+            resolve_json_module: false,
+        };
+
+        let result = discover_ts_files(&options).unwrap();
+        let names: Vec<_> = result
+            .iter()
+            .map(|path| path.file_name().unwrap().to_string_lossy().to_string())
+            .collect();
+        assert_eq!(
+            names,
+            vec!["a.js".to_string(), "b.ts".to_string()],
+            "with no explicit `include`, discovery must stay alphabetical across \
+             extensions (tsc's zero-config default is the single pattern `**/*`, not a \
+             per-extension bucket list)"
         );
 
         let _ = fs::remove_dir_all(&dir);
