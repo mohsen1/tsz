@@ -1654,10 +1654,27 @@ fn test_match_type_param_in_source_adds_upper_bound() {
 // Multiple Candidates
 // =============================================================================
 
+/// Two inferences into `T` at the same priority: `T = string` then
+/// `T = number`.
+///
+/// tsc does **not** union same-priority candidates — it fixes the type
+/// parameter from the first one and checks later sources against it, which is
+/// why the second source is what gets reported. Verified against the pinned
+/// 7.0.2 oracle:
+///
+/// ```ts
+/// declare function g<T>(...args: T[]): T;
+/// const r = g("s", 1);
+/// // TS2345: Argument of type '1' is not assignable to parameter of type '"s"'.
+/// // r: string
+/// ```
+///
+/// This test previously asserted `string | number`, which made it fail
+/// precisely when the solver was right. Unioning here would also erase the
+/// second source's mismatch, which is the missing-`TS2322` bug in #17553 —
+/// so do not "fix" this by making the solver union.
 #[test]
 fn test_match_multiple_sources_same_param() {
-    // Two inferences into T: T = string and T = number
-    // tsc unions candidates with same priority: result is string | number
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
 
@@ -1671,9 +1688,41 @@ fn test_match_multiple_sources_same_param() {
 
     let var_t = ctx.find_type_param(t_name).unwrap();
     let result = ctx.resolve_with_constraints(var_t).unwrap();
-    // tsc unions multiple candidates at the same priority level
-    let expected_union = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
-    assert_eq!(result, expected_union);
+    assert_eq!(
+        result,
+        TypeId::STRING,
+        "same-priority candidates must resolve to the first one, not a union"
+    );
+    assert_ne!(
+        result,
+        interner.union(vec![TypeId::STRING, TypeId::NUMBER]),
+        "resolving to string | number would absorb the second source's mismatch (#17553)"
+    );
+}
+
+/// Order control for the row above: swapping the two sources swaps the result,
+/// which is what "the first candidate wins" means and what a union-based
+/// resolution could not produce.
+#[test]
+fn test_match_multiple_sources_same_param_takes_the_first_not_the_widest() {
+    let interner = TypeInterner::new();
+    let mut ctx = InferenceContext::new(&interner);
+
+    let (t_name, t_type) = make_type_param(&interner, "T");
+    let _var_t = ctx.fresh_type_param(t_name, false);
+
+    ctx.infer_from_types(TypeId::NUMBER, t_type, InferencePriority::NakedTypeVariable)
+        .unwrap();
+    ctx.infer_from_types(TypeId::STRING, t_type, InferencePriority::NakedTypeVariable)
+        .unwrap();
+
+    let var_t = ctx.find_type_param(t_name).unwrap();
+    let result = ctx.resolve_with_constraints(var_t).unwrap();
+    assert_eq!(
+        result,
+        TypeId::NUMBER,
+        "reversing the source order must reverse the winner"
+    );
 }
 
 // =============================================================================
