@@ -548,6 +548,7 @@ pub(crate) struct CallArgSourceOptions<'a> {
     pub(crate) actual_this_type: Option<TypeId>,
     pub(crate) arg_source_is_type_annotation: &'a [bool],
     pub(crate) arg_source_is_readonly_annotation: &'a [bool],
+    pub(crate) arg_callback_param_unannotated: &'a [Vec<bool>],
 }
 
 pub(crate) fn resolve_call_with_arg_sources<C: AssignabilityChecker>(
@@ -568,6 +569,7 @@ pub(crate) fn resolve_call_with_arg_sources<C: AssignabilityChecker>(
             actual_this_type: opts.actual_this_type,
             arg_source_is_type_annotation: opts.arg_source_is_type_annotation,
             arg_source_is_readonly_annotation: opts.arg_source_is_readonly_annotation,
+            arg_callback_param_unannotated: opts.arg_callback_param_unannotated,
         },
     )
 }

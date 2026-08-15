@@ -271,13 +271,33 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             .flat_map(|p| unpack_tuple_rest_parameter(self.interner, p))
             .collect();
 
+        // #17282: the current argument's unannotated-callback-parameter mask, if
+        // any. Taken here so it applies only to this top-level parameter walk;
+        // nested callback decompositions (reached via the reverse edges below)
+        // see `None` and treat every parameter as annotated.
+        let unannotated_mask = self.current_arg_callback_param_unannotated.take();
+        let source_unannotated = |idx: usize| -> bool {
+            unannotated_mask
+                .as_ref()
+                .and_then(|mask| mask.get(idx))
+                .copied()
+                .unwrap_or(false)
+        };
+
         // Match non-rest params 1-to-1, stopping at the first rest param
         let mut matched = 0;
-        for (s_p, t_p) in s_params.iter().zip(t_params.iter()) {
+        for (idx, (s_p, t_p)) in s_params.iter().zip(t_params.iter()).enumerate() {
             if s_p.rest || t_p.rest {
                 break;
             }
-            self.constrain_parameter_types(ctx, var_map, s_p.type_id, t_p.type_id, priority);
+            self.constrain_parameter_types_with_source(
+                ctx,
+                var_map,
+                s_p.type_id,
+                t_p.type_id,
+                priority,
+                source_unannotated(idx),
+            );
             matched += 1;
         }
 
@@ -1020,6 +1040,37 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         target_param: TypeId,
         priority: crate::types::InferencePriority,
     ) {
+        self.constrain_parameter_types_with_source(
+            ctx,
+            var_map,
+            source_param,
+            target_param,
+            priority,
+            false,
+        );
+    }
+
+    /// As [`Self::constrain_parameter_types`], but `source_unannotated_callback`
+    /// records whether `source_param` is the type of a **context-sensitive
+    /// (unannotated)** callback parameter (issue #17282).
+    ///
+    /// tsc never infers contravariantly from an unannotated callback parameter:
+    /// its contextual type is the enclosing type variable's own binding, so the
+    /// inference is a self-reference carrying no information. tsz eagerly
+    /// materializes that contextual type (and, under the recursive-heritage
+    /// identity collapse, can materialize it to the *wrong* declaration's shape),
+    /// which then becomes a contra-candidate that overrides a legitimate direct
+    /// covariant inference. Skipping the contra add for an unannotated callback
+    /// parameter both matches tsc's net behavior and avoids the pollution.
+    pub(super) fn constrain_parameter_types_with_source(
+        &mut self,
+        ctx: &mut InferenceContext,
+        var_map: &FxHashMap<TypeId, crate::inference::infer::InferenceVar>,
+        source_param: TypeId,
+        target_param: TypeId,
+        priority: crate::types::InferencePriority,
+        source_unannotated_callback: bool,
+    ) {
         // Function parameters are contravariant: if the target parameter is a
         // type variable placeholder, add source as a contra-candidate instead
         // of a regular (covariant) candidate. This matches tsc's behavior where
@@ -1027,7 +1078,18 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // via intersection (not union).
         if let Some(&var) = var_map.get(&target_param) {
             if ctx.collects_contra_candidates() {
-                ctx.add_contra_candidate(var, source_param, priority);
+                // #17282: an unannotated (context-sensitive) callback parameter
+                // carries no contravariant inference in tsc — its contextual type
+                // is the enclosing type variable's own binding. tsz materializes
+                // that type eagerly (and, under the recursive-heritage identity
+                // collapse, to the *wrong* declaration's shape), so tag the
+                // resulting contra-candidate; the `#17282` Round-1-fix restore
+                // ignores such tagged candidates when deciding divergence.
+                if source_unannotated_callback {
+                    ctx.add_contra_candidate_tagged(var, source_param, priority, true);
+                } else {
+                    ctx.add_contra_candidate(var, source_param, priority);
+                }
             } else {
                 ctx.add_candidate(var, source_param, priority);
             }
@@ -1039,7 +1101,13 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 self.interner.lookup(source_param),
                 Some(TypeData::TypeParameter(_))
             );
-            if !source_is_type_param {
+            // #17282: skip the reverse dependency edge for an unannotated
+            // callback parameter — it would re-add the same materialized type as
+            // an *untagged* contra-candidate, defeating the tag above (and tsc
+            // infers nothing from such a parameter in either direction).
+            let skip_reverse_for_unannotated_callback =
+                source_unannotated_callback && ctx.collects_contra_candidates();
+            if !(source_is_type_param || skip_reverse_for_unannotated_callback) {
                 // Use contra mode for the reverse direction so that the
                 // placeholder appearing as source gets a contra-candidate
                 // instead of a hard upper bound. This matches the behavior

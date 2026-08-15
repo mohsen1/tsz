@@ -1251,7 +1251,7 @@ impl<'a> InferenceContext<'a> {
     /// - `ReturnType` (32) is lower priority
     ///
     /// Therefore we use `.min()` instead of `.max()` to find the highest priority candidate.
-    fn filter_candidates_by_priority(
+    pub(crate) fn filter_candidates_by_priority(
         &self,
         candidates: &[InferenceCandidate],
     ) -> Vec<InferenceCandidate> {
