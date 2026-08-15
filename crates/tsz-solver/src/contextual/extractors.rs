@@ -706,7 +706,7 @@ impl<'a> PropertyExtractor<'a> {
         Self {
             db,
             name_atom: db.intern_string(name),
-            is_numeric_name: name.parse::<f64>().is_ok(),
+            is_numeric_name: crate::utils::is_numeric_literal_name(name),
             strip_optional_undefined: false,
         }
     }

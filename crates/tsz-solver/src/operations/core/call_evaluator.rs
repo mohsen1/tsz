@@ -255,6 +255,20 @@ pub struct CallEvaluator<'a, C: AssignabilityChecker> {
     /// array/tuple annotation whose computed argument type was normalized to the
     /// mutable inner container before generic inference.
     pub(crate) arg_source_is_readonly_annotation: Vec<bool>,
+    /// Per-argument, per-parameter marker: `true` at position `[i][j]` when the
+    /// `j`-th parameter of the callback/function-expression argument `i` was
+    /// written **without** a type annotation (context-sensitive). tsc never
+    /// infers contravariantly from such a parameter — its contextual type is the
+    /// enclosing type variable's own binding, carrying no information — so tsz
+    /// must not let its (eagerly materialized) type become a contra-candidate.
+    /// Empty inner vector = no callback-parameter information for that argument
+    /// (all parameters treated as annotated). Issue #17282.
+    pub(crate) arg_callback_param_unannotated: Vec<Vec<bool>>,
+    /// Scratch: the unannotated-parameter mask for the argument whose signature
+    /// is currently being constraint-walked at the top level. Taken (reset to
+    /// `None`) on entry to the top-level parameter walk so nested callback
+    /// decompositions do not inherit it. Issue #17282.
+    pub(crate) current_arg_callback_param_unannotated: Option<Vec<bool>>,
     /// The `this` type provided by the caller (e.g. `obj` in `obj.method()`)
     pub(crate) actual_this_type: Option<TypeId>,
     /// Current recursion depth for `constrain_types` to prevent infinite loops
@@ -386,6 +400,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             contextual_type: None,
             arg_source_is_type_annotation: Vec::new(),
             arg_source_is_readonly_annotation: Vec::new(),
+            arg_callback_param_unannotated: Vec::new(),
+            current_arg_callback_param_unannotated: None,
             actual_this_type: None,
             constraint_recursion_depth: Cell::new(0),
             constraint_step_count: Cell::new(0),
@@ -446,6 +462,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         self.arg_source_is_readonly_annotation.clear();
         self.arg_source_is_readonly_annotation
             .extend_from_slice(markers);
+    }
+
+    pub fn set_arg_callback_param_unannotated(&mut self, masks: &[Vec<bool>]) {
+        self.arg_callback_param_unannotated.clear();
+        self.arg_callback_param_unannotated.extend_from_slice(masks);
     }
 
     /// Returns true if the first argument came from a type assertion (e.g. `1 as 1`).

@@ -245,10 +245,9 @@ impl<'a> CheckerState<'a> {
         // must thread the same markers; otherwise an inferred type parameter
         // (e.g. `Object.fromEntries`'s `T`) is widened `1 -> number` only
         // because the call happened to be overloaded.
-        let arg_source_markers =
-            self.call_arg_source_type_annotation_markers(args, arg_types.len());
-        let arg_readonly_markers =
-            self.call_arg_source_readonly_annotation_markers(args, arg_types.len());
+        // Per-argument source markers (incl. the #17282 unannotated-callback mask).
+        let arg_markers_owned = self.call_arg_source_markers(args, arg_types.len());
+        let arg_markers = arg_markers_owned.as_borrowed();
         for (idx, original_sig) in signatures.iter().enumerate() {
             // An open-ended array/iterable spread can only land on an effective
             // rest parameter; a fixed-arity overload is not applicable (see
@@ -311,8 +310,7 @@ impl<'a> CheckerState<'a> {
                         force_bivariant_callbacks,
                         sig_contextual_type,
                         None,
-                        &arg_source_markers,
-                        &arg_readonly_markers,
+                        &arg_markers,
                     );
                     if matches!(pass1.0, CallResult::Success(_)) {
                         resolution = Some(pass1);
@@ -329,8 +327,7 @@ impl<'a> CheckerState<'a> {
                         force_bivariant_callbacks,
                         sig_contextual_type,
                         None,
-                        &arg_source_markers,
-                        &arg_readonly_markers,
+                        &arg_markers,
                     )
                 })
             };
@@ -1138,8 +1135,7 @@ impl<'a> CheckerState<'a> {
                         force_bivariant_callbacks,
                         sig_contextual_type,
                         actual_this_type,
-                        &arg_source_markers,
-                        &arg_readonly_markers,
+                        &arg_markers,
                     )
                     .2;
                 let return_sub_for_preinfer = if sig_contextual_type.is_some() {
@@ -1374,8 +1370,7 @@ impl<'a> CheckerState<'a> {
                     force_bivariant_callbacks,
                     sig_contextual_type,
                     actual_this_type,
-                    &arg_source_markers,
-                    &arg_readonly_markers,
+                    &arg_markers,
                 );
             if let CallResult::ArgumentTypeMismatch {
                 expected,
@@ -1513,8 +1508,7 @@ impl<'a> CheckerState<'a> {
                         force_bivariant_callbacks,
                         sig_contextual_type,
                         actual_this_type,
-                        &arg_source_markers,
-                        &arg_readonly_markers,
+                        &arg_markers,
                     );
                 if retry_predicate.is_some() {
                     selected_type_predicate = retry_predicate;

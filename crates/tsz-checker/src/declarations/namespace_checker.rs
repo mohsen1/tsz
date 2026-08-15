@@ -383,8 +383,15 @@ impl<'a> CheckerState<'a> {
         namespace_type
     }
 
-    /// Report TS2300 on the class static member that conflicts with a namespace export.
-    /// Returns `true` if a direct (non-inherited) static member was found and reported.
+    /// Report TS2300 on every class static member that conflicts with a namespace
+    /// export. Returns `true` if at least one direct (non-inherited) static member
+    /// was found and reported.
+    ///
+    /// A class can carry more than one static declaration for the same name (an
+    /// overload signature group, e.g. `static m(a): void; static m(a, b): void;`):
+    /// tsc flags every one of them, not just the first — the same "every
+    /// declaration in the duplicate group" rule the reopened-namespace TS2393 case
+    /// follows — so this keeps scanning after a match instead of returning early.
     fn report_duplicate_on_class_static_member(&mut self, sym_id: SymbolId, name: &str) -> bool {
         use tsz_common::diagnostics::diagnostic_codes;
         use tsz_parser::syntax_kind_ext;
@@ -393,6 +400,7 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
+        let mut found_direct = false;
         for &decl_idx in &symbol.declarations {
             let Some(node) = self.ctx.arena.get(decl_idx) else {
                 continue;
@@ -450,11 +458,11 @@ impl<'a> CheckerState<'a> {
                         diagnostic_codes::DUPLICATE_IDENTIFIER,
                         &[name],
                     );
-                    return true;
+                    found_direct = true;
                 }
             }
         }
-        false
+        found_direct
     }
 
     /// Merge namespace exports into a constructor type for class+namespace merging.

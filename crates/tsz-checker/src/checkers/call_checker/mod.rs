@@ -6,7 +6,7 @@
 //! - `diagnostics`: Diagnostic filtering/rollback helpers for speculative call checking.
 //! - `overload_resolution`: Overload resolution across multiple signatures.
 
-mod applicability;
+pub(crate) mod applicability;
 mod candidate_collection;
 mod diagnostics;
 mod non_tuple_spread_signature;

@@ -989,6 +989,13 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // contextual typing. Processing them first allows us to infer type parameters
         // that contextual arguments (lambdas) can then use.
         for (i, &arg_type) in arg_types.iter().enumerate() {
+            // #17282: expose this argument's unannotated-callback-parameter mask
+            // to the parameter constraint walk.
+            self.current_arg_callback_param_unannotated = self
+                .arg_callback_param_unannotated
+                .get(i)
+                .filter(|m| !m.is_empty())
+                .cloned();
             if rest_tuple_start.is_some_and(|start| i >= start) {
                 continue;
             }
@@ -1648,7 +1655,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         {
             let resolved = infer_ctx.probe(var);
             if let Some(round1) = resolved {
-                round1_fixed.insert(var, round1);
+                // #17282: snapshot the pristine covariant-only fix when an
+                // unannotated callback parameter has polluted this pass.
+                round1_fixed.insert(var, infer_ctx.round1_fix_snapshot(var, round1));
             }
             let contextual = structural_return_subst.get(tp.name);
             let resolved = match (resolved, contextual) {
@@ -1731,6 +1740,12 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 )
             };
             for (i, &arg_type) in arg_types.iter().enumerate() {
+                // #17282: same mask exposure as Round 1.
+                self.current_arg_callback_param_unannotated = self
+                    .arg_callback_param_unannotated
+                    .get(i)
+                    .filter(|m| !m.is_empty())
+                    .cloned();
                 if rest_tuple_start.is_some_and(|start| i >= start) {
                     continue;
                 }

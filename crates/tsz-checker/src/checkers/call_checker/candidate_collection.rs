@@ -147,6 +147,72 @@ impl<'a> CheckerState<'a> {
         markers
     }
 
+    /// Compute all three per-argument source-marker vectors as one owned bundle.
+    pub(crate) fn call_arg_source_markers(
+        &self,
+        args: &[NodeIndex],
+        arg_type_count: usize,
+    ) -> crate::checkers_domain::call_checker::applicability::OwnedCallArgSourceMarkers {
+        crate::checkers_domain::call_checker::applicability::OwnedCallArgSourceMarkers {
+            source_is_type_annotation: self
+                .call_arg_source_type_annotation_markers(args, arg_type_count),
+            source_is_readonly_annotation: self
+                .call_arg_source_readonly_annotation_markers(args, arg_type_count),
+            callback_param_unannotated: self
+                .call_arg_callback_param_unannotated_masks(args, arg_type_count),
+        }
+    }
+
+    /// Per-argument, per-parameter mask of context-sensitive (unannotated)
+    /// callback parameters (issue #17282). For an argument that is an arrow /
+    /// function expression, entry `[i][j]` is `true` when its `j`-th parameter
+    /// has no written type annotation; every other argument yields an empty
+    /// inner vector (no callback-parameter information).
+    ///
+    /// The solver uses this to skip contravariant inference from an unannotated
+    /// callback parameter, matching tsc (whose `isContextSensitive` is an
+    /// AST-level property that survives the argument being contextually typed).
+    pub(crate) fn call_arg_callback_param_unannotated_masks(
+        &self,
+        args: &[NodeIndex],
+        arg_type_count: usize,
+    ) -> Vec<Vec<bool>> {
+        // Only the simple aligned case carries reliable per-parameter positions;
+        // a spread argument shifts them, so fall back to "no information".
+        if args.len() != arg_type_count {
+            return Vec::new();
+        }
+        args.iter()
+            .map(|&arg_idx| self.callback_param_unannotated_mask(arg_idx))
+            .collect()
+    }
+
+    fn callback_param_unannotated_mask(&self, arg_idx: NodeIndex) -> Vec<bool> {
+        let arg_idx = self.ctx.arena.skip_parenthesized(arg_idx);
+        let Some(node) = self.ctx.arena.get(arg_idx) else {
+            return Vec::new();
+        };
+        if node.kind != syntax_kind_ext::ARROW_FUNCTION
+            && node.kind != syntax_kind_ext::FUNCTION_EXPRESSION
+        {
+            return Vec::new();
+        }
+        let Some(func) = self.ctx.arena.get_function(node) else {
+            return Vec::new();
+        };
+        func.parameters
+            .nodes
+            .iter()
+            .map(|&param_idx| {
+                self.ctx
+                    .arena
+                    .get(param_idx)
+                    .and_then(|param| self.ctx.arena.get_parameter(param))
+                    .is_some_and(|param| param.type_annotation.is_none())
+            })
+            .collect()
+    }
+
     /// True when the argument node is an explicit user-written type assertion
     /// (`as T`, `<T>expr`, or `expr satisfies T`). These mark the argument as a
     /// type-annotated source: generic inference must not re-widen its literal
