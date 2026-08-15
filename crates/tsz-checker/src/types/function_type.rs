@@ -391,6 +391,16 @@ impl<'a> CheckerState<'a> {
             self.check_jsdoc_param_tag_names(jsdoc, &parameters.nodes, idx);
         }
 
+        // TS2526: a JSDoc `@return`/`@returns {this}` tag whose host function is
+        // not a non-static class/interface member. A function expression or
+        // arrow function assigned as an expression (not a statement) never
+        // reaches `check_function_declaration_callback`'s statement-dispatch
+        // path, so closures need their own call site here — the one place
+        // every closure's type gets computed regardless of syntactic position.
+        if is_closure && self.is_js_file() {
+            self.report_jsdoc_return_this_type_not_allowed(idx);
+        }
+
         // Track whether any parameter actually receives a contextual type from
         // ctx_helper. Used after the loop to decide whether to mark the closure as
         // "contextually checked". We cannot unconditionally mark based on
