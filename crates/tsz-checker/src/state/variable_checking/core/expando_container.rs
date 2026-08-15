@@ -39,17 +39,17 @@ impl<'a> CheckerState<'a> {
                     .get_symbol(sym_id)
                     .is_some_and(|s| s.has_any_flags(symbol_flags::VALUE))
         };
-        if let Some(index) = self.ctx.global_file_locals_index.as_ref()
-            && let Some(entries) = index.get(name)
+        if let Some(entries) = self
+            .ctx
+            .global_file_locals_index
+            .as_ref()
+            .and_then(|index| index.get(name))
         {
-            if let Some(all_binders) = self.ctx.all_binders.as_ref() {
-                return entries.iter().any(|&(file_idx, sym_id)| {
-                    all_binders
-                        .get(file_idx)
-                        .is_some_and(|binder| precedes(file_idx, sym_id, binder))
-                });
-            }
-            return entries.iter().any(|&(file_idx, _)| file_idx < current_idx);
+            return entries.iter().any(|&(file_idx, sym_id)| {
+                self.ctx
+                    .get_binder_for_file(file_idx)
+                    .is_some_and(|binder| precedes(file_idx, sym_id, binder))
+            });
         }
         if let Some(all_binders) = self.ctx.all_binders.as_ref() {
             return all_binders.iter().enumerate().any(|(file_idx, binder)| {
@@ -97,35 +97,48 @@ impl<'a> CheckerState<'a> {
         self.is_expando_container_var_decl_in_arena(self.ctx.arena, decl_idx, name)
     }
 
-    /// Whether the CURRENT file declares `name` (bound to a genuinely
-    /// current-file symbol) as its own JS expando container variable. Used by
-    /// the cross-file-global value-type preference sites: a JS file that owns
-    /// its own expando container must resolve `name` to that container, not
-    /// defer to a `.ts`/`.d.ts` sibling's conflicting global declaration
-    /// (#17443).
-    pub(crate) fn current_file_declares_expando_container_variable(&self, name: &str) -> bool {
+    /// Whether the CURRENT file declares `name` as its own JS expando container
+    /// variable AND that container is authoritative — the primary
+    /// (first-discovered) declaration of the merged global, not superseded by an
+    /// earlier sibling. The single name-keyed gate for the cross-file-global
+    /// value-type preference sites: a JS file that owns an *authoritative*
+    /// expando container resolves `name` to that container, not to a
+    /// `.ts`/`.d.ts` sibling's conflicting global (#17443); once an earlier file
+    /// declares `name`, the canonical (primary) type governs instead (#17544).
+    pub(crate) fn current_file_declares_authoritative_expando_container(&self, name: &str) -> bool {
         let Some(sym_id) = self.ctx.binder.file_locals.get(name) else {
             return false;
         };
-        self.current_file_owns_expando_container_declaration(sym_id)
+        self.current_file_owns_authoritative_expando_container(sym_id)
     }
 
     /// Whether the CURRENT file's binder owns a declaration of `sym_id` that is
-    /// a JS expando container variable (function/arrow/class-expression
-    /// initializer with `name.prop = …` members). Keyed on `SymbolId` for the
-    /// cross-arena delegation guard, which must keep a JS file's own expando
-    /// container local rather than routing `sym_id` to a conflicting sibling's
-    /// arena (#17443). The `get_node_symbol` round-trip keeps this arena-safe
-    /// against raw `SymbolId`/`NodeIndex` reuse across files.
-    pub(crate) fn current_file_owns_expando_container_declaration(&self, sym_id: SymbolId) -> bool {
+    /// an *authoritative* JS expando container variable
+    /// (function/arrow/class-expression initializer with `name.prop = …`
+    /// members) — owned by this file AND the primary declaration of the merged
+    /// global. Keyed on `SymbolId` for the cross-arena delegation guard, which
+    /// must keep a JS file's own expando container local rather than routing
+    /// `sym_id` to a conflicting sibling's arena (#17443) — but only while it is
+    /// the primary declaration (#17544). The `get_node_symbol` round-trip keeps
+    /// the ownership walk arena-safe against raw `SymbolId`/`NodeIndex` reuse
+    /// across files.
+    ///
+    /// Folding the `superseded` check in here (rather than at each caller) keeps
+    /// the container-preference exemption and its primacy guard inseparable: a
+    /// future exemption site cannot reintroduce #17544 by forgetting the guard.
+    pub(crate) fn current_file_owns_authoritative_expando_container(
+        &self,
+        sym_id: SymbolId,
+    ) -> bool {
         let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
             return false;
         };
         let name = symbol.escaped_name.as_str();
-        symbol.all_declarations().into_iter().any(|decl_idx| {
+        let owns = symbol.all_declarations().into_iter().any(|decl_idx| {
             self.ctx.binder.get_node_symbol(decl_idx) == Some(sym_id)
                 && self.is_expando_container_var_decl(decl_idx, name)
-        })
+        });
+        owns && !self.expando_container_superseded_by_primary_declaration(name)
     }
 
     /// Arena-parameterized core of [`is_expando_container_var_decl`], usable

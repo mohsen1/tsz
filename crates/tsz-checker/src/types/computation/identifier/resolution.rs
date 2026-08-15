@@ -821,8 +821,7 @@ impl<'a> CheckerState<'a> {
         // delegation guard) so pure-TS resolution skips the ownership walk.
         if self.is_js_file()
             && self.ctx.compiler_options.check_js
-            && self.current_file_declares_expando_container_variable(name)
-            && !self.expando_container_superseded_by_primary_declaration(name)
+            && self.current_file_declares_authoritative_expando_container(name)
         {
             return None;
         }
@@ -965,8 +964,7 @@ impl<'a> CheckerState<'a> {
         // earlier file declares `name`, its canonical type governs (#17544).
         if self.is_js_file()
             && self.ctx.compiler_options.check_js
-            && self.current_file_declares_expando_container_variable(name)
-            && !self.expando_container_superseded_by_primary_declaration(name)
+            && self.current_file_declares_authoritative_expando_container(name)
         {
             return None;
         }
