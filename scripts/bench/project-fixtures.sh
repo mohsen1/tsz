@@ -563,9 +563,25 @@ tsz_ensure_git_fixture() {
 
   # Never treat a directory that is not its own git checkout as a pinned
   # fixture: doing so is what let a broken clone report tsz's own SHA (#17469).
+  #
+  # Repair before refusing. On CI `.target-bench` is restored by rust-cache, and
+  # a restored tree can carry a `.git` that no longer satisfies this check — so
+  # the clone branch above is skipped (it only fires when `.git` is absent) and
+  # the fixture is rejected outright. That cost 9 of 12 required rows in one run
+  # while the job still reported success (#17565). Re-cloning keeps the
+  # guarantee — the tree we benchmark is a real checkout of the pinned repo —
+  # without failing a row over a cache artefact.
   if ! tsz_git_fixture_is_standalone_repo "$dir"; then
-    echo "ERROR: ${name} fixture at ${dir} is not a standalone git checkout" >&2
-    return 1
+    echo "${name} fixture at ${dir} is not a standalone git checkout; recloning..." >&2
+    tsz_remove_fixture_dir "$name" "$dir"
+    if ! git clone --quiet --no-tags --depth 1 "$repo" "$dir"; then
+      echo "ERROR: failed to re-clone ${name} fixture from ${repo}" >&2
+      return 1
+    fi
+    if ! tsz_git_fixture_is_standalone_repo "$dir"; then
+      echo "ERROR: ${name} fixture at ${dir} is not a standalone git checkout after recloning" >&2
+      return 1
+    fi
   fi
 
   if [[ -n "$ref" ]]; then
