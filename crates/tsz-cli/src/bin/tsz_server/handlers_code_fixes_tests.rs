@@ -1694,3 +1694,92 @@ fn synthetic_missing_name_skips_import_type_queries() {
         "expected no synthetic missing-name diagnostics for import type queries, got {synthetic:?}"
     );
 }
+
+/// End-to-end regression for `importNameCodeFix_importType.ts` at the
+/// tsserver-protocol layer (`getCodeFixes`/`semanticDiagnosticsSync`
+/// handlers), complementing the `Project`-API-level coverage in
+/// `crates/tsz-lsp/src/project/imports/tests.rs`. Both layers must agree
+/// that a real checker-produced `TS2304` on an unimported local JSDoc
+/// `@typedef` resolves to the inline `import("./a").T` code fix.
+#[test]
+fn handle_get_code_fixes_jsdoc_typedef_inline_import() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/tsconfig.json".to_string(),
+        "{\"compilerOptions\":{\"allowJs\":true,\"checkJs\":true}}".to_string(),
+    );
+    server.open_files.insert(
+        "/a.js".to_string(),
+        "export {};\n/** @typedef {number} T */\n".to_string(),
+    );
+    server.open_files.insert(
+        "/b.js".to_string(),
+        "/** @type {T} */\nconst x = 0;\n".to_string(),
+    );
+
+    let diag_req = TsServerRequest {
+        seq: 1,
+        _msg_type: "request".to_string(),
+        command: "semanticDiagnosticsSync".to_string(),
+        arguments: serde_json::json!({
+            "file": "/b.js",
+            "includeLinePosition": true
+        }),
+    };
+    let diag_resp = server.handle_semantic_diagnostics_sync(1, &diag_req);
+    assert!(
+        diag_resp.success,
+        "expected semanticDiagnosticsSync to succeed"
+    );
+
+    let t_diag = diag_resp
+        .body
+        .as_ref()
+        .and_then(serde_json::Value::as_array)
+        .and_then(|diags| {
+            diags.iter().find(|diag| {
+                diag.get("code")
+                    .and_then(serde_json::Value::as_u64)
+                    .map(|code| code as u32)
+                    == Some(tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME)
+            })
+        })
+        .cloned()
+        .expect("expected cannot-find-name diagnostic for T");
+
+    let start_line = t_diag["startLocation"]["line"].as_u64().unwrap() as u32;
+    let start_offset = t_diag["startLocation"]["offset"].as_u64().unwrap() as u32;
+    let end_line = t_diag["endLocation"]["line"].as_u64().unwrap() as u32;
+    let end_offset = t_diag["endLocation"]["offset"].as_u64().unwrap() as u32;
+
+    let req = TsServerRequest {
+        seq: 2,
+        _msg_type: "request".to_string(),
+        command: "getCodeFixes".to_string(),
+        arguments: serde_json::json!({
+            "file": "/b.js",
+            "startLine": start_line,
+            "startOffset": start_offset,
+            "endLine": end_line,
+            "endOffset": end_offset,
+            "errorCodes": [tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME],
+        }),
+    };
+    let resp = server.handle_get_code_fixes(2, &req);
+    assert!(resp.success, "expected getCodeFixes to succeed");
+    let actions = resp
+        .body
+        .as_ref()
+        .and_then(serde_json::Value::as_array)
+        .expect("expected actions array");
+    let import_action = actions
+        .iter()
+        .find(|a| a.get("fixName").and_then(serde_json::Value::as_str) == Some("import"))
+        .unwrap_or_else(|| panic!("expected an import quickfix for 'T', got {actions:?}"));
+    assert_eq!(
+        import_action
+            .get("description")
+            .and_then(serde_json::Value::as_str),
+        Some("Import 'T' via 'import(\"./a\").T'")
+    );
+}
