@@ -12,12 +12,22 @@ import {
 } from "./project-rows.mjs";
 import { BENCH_RUNNER_EXCLUDED_ROWS } from "./project-row-summary.mjs";
 
+// check-artifact-readiness.mjs cannot be imported directly (it runs its CLI,
+// including process.exit(), at module scope), so its RUNTIME_GATED_REQUIRED_ROWS
+// is mirrored here by literal rather than imported. Keep this in sync with
+// that constant (#17561): rows present in bench-vs-tsgo.sh but only measured
+// behind a runtime kill-switch, so a default scheduled run never produces a
+// result for them.
+const RUNTIME_GATED_REQUIRED_ROWS = new Set(["nextjs"]);
+
 // The readiness gate checks only required rows the bench runner actually
-// measures: it subtracts BENCH_RUNNER_EXCLUDED_ROWS and category:"application"
-// rows. Mirror that here so the synthesized artifacts and row counts match.
+// measures: it subtracts BENCH_RUNNER_EXCLUDED_ROWS, RUNTIME_GATED_REQUIRED_ROWS,
+// and category:"application" rows. Mirror that here so the synthesized
+// artifacts and row counts match.
 const REQUIRED_PROJECT_ROWS = ALL_REQUIRED_PROJECT_ROWS.filter(
   (name) =>
     !BENCH_RUNNER_EXCLUDED_ROWS.has(name) &&
+    !RUNTIME_GATED_REQUIRED_ROWS.has(name) &&
     PROJECT_ROWS_BY_NAME[name]?.category !== "application",
 );
 const APPLICATION_PROJECT_ROWS = PROJECT_ROW_DEFINITIONS
@@ -1095,6 +1105,31 @@ withTempDir((dir) => {
   assert.match(jsonRes.stderr, /Required-set coverage gap/);
 });
 console.log("✅ required-set coverage reports an unmeasured declared-required row (non-blocking)");
+
+// Regression (#17561): `nextjs` is declared benchmark_set:"required" but the
+// bench runner gates it off by default (NEXTJS_BENCHMARK_ENABLED=0 unless an
+// explicit --filter reaches it), so it is permanently absent from the daily
+// scheduled artifact. Before RUNTIME_GATED_REQUIRED_ROWS excluded it from
+// REQUIRED_MEASURED_ROWS, that tripped the default missing-row gate on every
+// scheduled run, so bench.yml's readiness step never reported `ready=true`
+// and the site never auto-republished same-day.
+const NEXTJS_ROW = "nextjs";
+assert.ok(
+  ALL_REQUIRED_PROJECT_ROWS.includes(NEXTJS_ROW) && !REQUIRED_PROJECT_ROWS.includes(NEXTJS_ROW),
+  "test fixture expects nextjs to be declared required but excluded from the readiness timing gate",
+);
+withTempDir((dir) => {
+  const file = path.join(dir, "bench.json");
+  const rows = REQUIRED_PROJECT_ROWS.map((name) => makeRow(name, "green"));
+  writeJson(file, makeArtifact(rows));
+  const result = run(file);
+  assert.equal(
+    result.status,
+    0,
+    `nextjs's permanent absence must not block the default readiness gate: ${result.stderr}`,
+  );
+});
+console.log("✅ nextjs absence does not block the default readiness gate (#17561)");
 
 // The opt-in --require-required-coverage flag turns an absent declared-required
 // row into a blocking failure for callers that have given the full set a
