@@ -221,16 +221,18 @@ fn expando_container_own_property_access_not_ts2339_across_container_shapes() {
     }
 }
 
-/// Characterization: with the `.ts` sibling listed first, tsz resolves the JS
-/// file's own expando container the same way — clean. tsc 6.0.2 is order-
-/// dependent here and reports `TS2339` when the non-callable `var x` is the
-/// first declaration; tsz deliberately resolves a file's own expando container
-/// independent of cross-file declaration order (the reproducibility direction
-/// of #16309, and the same order-independent treatment #17437 already gives the
-/// `TS2403` half). No conformance fixture exercises the sibling-first order
-/// (fixtures pin `@filename` order), so this divergence is inert there.
+/// Order-dependent half of #17544: with the `.ts` sibling listed FIRST (and
+/// thus bound first in program order), it is the CANONICAL declaration of
+/// the merged global `x` — `number`, with no `a` member — so `a.js`'s own
+/// `x.a = ...` expando write resolves through that canonical type and
+/// reports `TS2339`, matching real `tsc@7.0.2` (oracle-verified via the
+/// harness's real synthetic include-pattern order, see #17544's issue body;
+/// the local `/opt/node22` `tsc` 6.0.2 disagrees and is not the pinned
+/// oracle). This is exactly `jsContainerMergeTsDeclaration.ts`'s shape
+/// under the conformance harness's real `.ts`-before-`.js` include-glob
+/// ordering.
 #[test]
-fn expando_container_own_property_access_clean_regardless_of_sibling_order() {
+fn expando_container_own_property_access_reports_ts2339_when_sibling_is_canonical() {
     let diags = compile_files(
         &[
             ("b.ts", "var x = function () { return 1; }();"),
@@ -240,8 +242,8 @@ fn expando_container_own_property_access_clean_regardless_of_sibling_order() {
     );
     assert_eq!(
         count_code(&diags, 2339),
-        0,
-        "a.js's own container property access stays clean regardless of sibling order; got: {diags:?}"
+        1,
+        "a.js's own container write must resolve through the canonical (earlier-processed) sibling type; got: {diags:?}"
     );
 }
 
