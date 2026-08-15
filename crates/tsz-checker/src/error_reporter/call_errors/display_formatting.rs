@@ -1176,6 +1176,16 @@ impl<'a> CheckerState<'a> {
 
         let prefer_number_index = prop_node.kind == SyntaxKind::NumericLiteral as u16;
         let prefer_symbol_index = self.is_symbol_property_name(prop_name_idx);
+        // A number index signature only ever covers a canonical numeric name —
+        // tsc's `isNumericLiteralName`. A plain non-numeric name (`b`, `"d"`)
+        // is never constrained by a target's number index just because no
+        // string index exists, and a numeric-*looking* but non-canonical
+        // spelling (`"3.0"`, `"4.0"`) isn't either — falling back to the
+        // number index unconditionally manufactured a spurious per-property
+        // mismatch against every unrelated property once excess checking
+        // deferred to a genuine index-signature violation elsewhere in the
+        // same literal (`numericIndexerConstrainsPropertyDeclarations.ts`/`2.ts`).
+        let key_is_numeric_like = tsz_solver::utils::is_numeric_literal_name(prop_name);
 
         // For type parameters, also check the constraint for index signatures
         let constraint_target =
@@ -1205,9 +1215,11 @@ impl<'a> CheckerState<'a> {
                 } else if prefer_symbol_index {
                     symbol_index.map(|sig| sig.value_type)
                 } else {
-                    string_index
-                        .map(|sig| sig.value_type)
-                        .or_else(|| shape.number_index.as_ref().map(|sig| sig.value_type))
+                    string_index.map(|sig| sig.value_type).or_else(|| {
+                        key_is_numeric_like
+                            .then(|| shape.number_index.as_ref().map(|sig| sig.value_type))
+                            .flatten()
+                    })
                 }
             })?;
 

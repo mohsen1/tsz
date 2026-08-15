@@ -630,6 +630,9 @@ impl<'a> CheckerState<'a> {
         if !has_excess_candidate {
             return false;
         }
+        if self.object_literal_has_failing_index_covered_property(&source_shape, resolved_target) {
+            return true;
+        }
         let widened = crate::query_boundaries::common::widen_freshness(self.ctx.types, source);
         matches!(
             self.mapped_object_literal_excess_value_relation_outcome(widened, target)
@@ -642,6 +645,60 @@ impl<'a> CheckerState<'a> {
                 target_property_type,
             )
         )
+    }
+
+    /// Whether the (un-widened) literal has an own property covered by one of
+    /// `target`'s index signatures whose value fails that signature's value
+    /// type — independent of the checker-facing `RelationFailure`
+    /// classification, which can collapse an index-signature mismatch into a
+    /// nested `MissingProperty`/`MissingProperties` reason when the index's
+    /// own value type is itself a class/interface (`make_index_sig_reason`'s
+    /// "bubble the nested `MissingProperty` up raw" rule) rather than the
+    /// `IncompatiblePropertyValue` shape the widened-relation probe below
+    /// expects. `tsc` suppresses excess-property checking for the whole
+    /// literal whenever ANY property fails its applicable index signature —
+    /// regardless of whether that index's value type is a primitive or a
+    /// class (`numericIndexerConstrainsPropertyDeclarations.ts`/`2.ts`) — so
+    /// this check must not depend on which failure shape the relation
+    /// happens to produce.
+    fn object_literal_has_failing_index_covered_property(
+        &mut self,
+        source_shape: &tsz_solver::ObjectShape,
+        target: TypeId,
+    ) -> bool {
+        let Some(target_shape) =
+            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, target)
+        else {
+            return false;
+        };
+        if target_shape.number_index.is_none()
+            && target_shape.string_index.is_none()
+            && target_shape.symbol_index.is_none()
+        {
+            return false;
+        }
+        source_shape.properties.iter().any(|prop| {
+            let name = self.ctx.types.resolve_atom(prop.name);
+            if let Some(number_idx) = &target_shape.number_index
+                && tsz_solver::utils::is_numeric_literal_name(name.as_ref())
+                && !self.is_assignable_to(prop.type_id, number_idx.value_type)
+            {
+                return true;
+            }
+            if let Some(string_idx) = &target_shape.string_index
+                && !prop.is_symbol_named
+                && !self.is_assignable_to(prop.type_id, string_idx.value_type)
+            {
+                return true;
+            }
+            if let Some(symbol_idx) = &target_shape.symbol_index
+                && prop.is_symbol_named
+                && !self.is_assignable_to(prop.type_id, symbol_idx.value_type)
+            {
+                return true;
+            }
+            false
+        })
     }
 
     pub(crate) fn check_object_literal_named_property_values_against_any_target(
