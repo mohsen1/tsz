@@ -219,6 +219,62 @@ var x: { z: I; [s: string]: { x: any; y: any; } };
 }
 
 #[test]
+fn numeric_literal_property_name_keeps_source_spelling_against_number_index() {
+    // tsc prints the numeric-literal property's source spelling (`2.0`) in the
+    // TS2411 message, not the canonicalized numeric name (`2`) used for index
+    // lookup -- see numericIndexerConstrainsPropertyDeclarations.ts.
+    let source = r#"
+class C {
+    [x: number]: string;
+    2.0: number;
+}
+"#;
+    let diags = get_diagnostics(source);
+    assert!(
+        diags
+            .iter()
+            .any(|d| d.0 == 2411 && d.1.contains("Property '2.0' of type 'number'")),
+        "Should print the source-spelled numeric literal name '2.0', got: {diags:?}"
+    );
+}
+
+#[test]
+fn numeric_literal_property_name_keeps_source_spelling_against_string_index() {
+    let source = r#"
+interface I {
+    [x: string]: string;
+    2.0: number;
+}
+"#;
+    let diags = get_diagnostics(source);
+    assert!(
+        diags
+            .iter()
+            .any(|d| d.0 == 2411 && d.1.contains("Property '2.0' of type 'number'")),
+        "Should print the source-spelled numeric literal name '2.0', got: {diags:?}"
+    );
+}
+
+#[test]
+fn plain_integer_property_name_is_unaffected_by_numeric_literal_spelling() {
+    // Negative control: an integer literal with no fractional spelling still
+    // renders as its plain digits, not accidentally re-quoted or altered.
+    let source = r#"
+class C {
+    [x: number]: string;
+    2: number;
+}
+"#;
+    let diags = get_diagnostics(source);
+    assert!(
+        diags
+            .iter()
+            .any(|d| d.0 == 2411 && d.1.contains("Property '2' of type 'number'")),
+        "Should print the plain integer name '2', got: {diags:?}"
+    );
+}
+
+#[test]
 fn type_literal_in_generic_type_argument_checks_property_against_index_signature() {
     let source = r#"
 type KeysOfIndex<T> = keyof T;

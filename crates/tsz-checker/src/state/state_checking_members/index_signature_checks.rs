@@ -837,7 +837,12 @@ impl<'a> CheckerState<'a> {
                             None => text.trim_end_matches(':').to_string(),
                         })
                         .unwrap_or_else(|| prop_name.clone())
-                } else if name_node.kind == tsz_scanner::SyntaxKind::StringLiteral as u16 {
+                } else if name_node.kind == tsz_scanner::SyntaxKind::StringLiteral as u16
+                    || name_node.kind == tsz_scanner::SyntaxKind::NumericLiteral as u16
+                {
+                    // tsc prints a numeric-literal property name with its source
+                    // spelling (e.g. `2.0`), not the canonicalized numeric name
+                    // (`2`) `prop_name` holds for index-signature lookup purposes.
                     self.node_text(name_idx)
                         .unwrap_or_else(|| prop_name.clone())
                 } else {
