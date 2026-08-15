@@ -147,17 +147,40 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Whether the expando root symbol's value declaration carries an explicit
-    /// type annotation (`const c: SFC<P> = ...`). Annotated roots get member
-    /// types from the annotation, so the assignment-scan walk must not run.
+    /// The symbol's declaration `NodeIndex` that genuinely belongs to the
+    /// CURRENT file's arena, or `None` if this file's binder owns no
+    /// declaration of `sym_id`.
+    ///
+    /// A merged cross-file symbol's `value_declaration` can point into a
+    /// DIFFERENT file's arena once the cross-file binder merge has run —
+    /// `NodeIndex` is an arena-local offset, so reading one against a
+    /// foreign arena silently resolves to an unrelated node instead of
+    /// failing. `get_node_symbol` is the current file's own node-to-symbol
+    /// map, so a round-trip back to `sym_id` proves `decl_idx` is genuinely
+    /// local (the same guard `current_file_owns_expando_container_declaration`
+    /// in `expando_container.rs` already uses for this exact hazard).
+    fn current_file_declaration_for_symbol(
+        &self,
+        sym_id: tsz_binder::SymbolId,
+    ) -> Option<NodeIndex> {
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        symbol
+            .all_declarations()
+            .into_iter()
+            .find(|&decl_idx| self.ctx.binder.get_node_symbol(decl_idx) == Some(sym_id))
+    }
+
+    /// Whether the expando root symbol's CURRENT-FILE declaration carries an
+    /// explicit type annotation (`const c: SFC<P> = ...`). Annotated roots
+    /// get member types from the annotation, so the assignment-scan walk
+    /// must not run.
     pub(super) fn expando_root_symbol_has_type_annotation(
         &self,
         sym_id: tsz_binder::SymbolId,
     ) -> bool {
-        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+        let Some(decl_idx) = self.current_file_declaration_for_symbol(sym_id) else {
             return false;
         };
-        let decl_idx = symbol.value_declaration;
         let Some(node) = self.ctx.arena.get(decl_idx) else {
             return false;
         };
@@ -220,13 +243,13 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    /// The nearest enclosing `BLOCK` of the symbol's value declaration, or
-    /// `NodeIndex::NONE` for a top-level (source-file-scoped) root.
+    /// The nearest enclosing `BLOCK` of the symbol's CURRENT-FILE
+    /// declaration, or `NodeIndex::NONE` for a top-level (source-file-scoped)
+    /// root, or when this file owns no declaration of `sym_id` at all.
     pub(super) fn expando_assignment_walk_root(&self, sym_id: tsz_binder::SymbolId) -> NodeIndex {
-        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+        let Some(mut current) = self.current_file_declaration_for_symbol(sym_id) else {
             return NodeIndex::NONE;
         };
-        let mut current = symbol.value_declaration;
         for _ in 0..64 {
             let Some(ext) = self.ctx.arena.get_extended(current) else {
                 return NodeIndex::NONE;

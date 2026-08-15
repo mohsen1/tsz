@@ -267,3 +267,62 @@ fn missing_member_on_expando_container_still_reports_ts2339() {
         "a genuinely-absent member (x.b) must still be TS2339; got: {diags:?}"
     );
 }
+
+/// #17558: the `TS2403` "here has type" operand for a.js's OWN (non-canonical,
+/// losing) declaration must fold in that same file's own expando members,
+/// matching real `tsc@7.0.2` — even though `b.ts`'s sibling declaration is
+/// canonical for property-lookup purposes (the test directly above). tsz used
+/// to render the bare callable shape `() => void` here (missing the `a`
+/// member); a prior attempt at this fix corrupted the message to the literal
+/// identifier text `'x'` by reading `x`'s own declaration through a
+/// cross-file-arena-unsafe helper.
+#[test]
+fn ts2403_here_has_type_folds_in_non_canonical_files_own_expando_members() {
+    let diags = compile_files(
+        &[
+            ("b.ts", "var x = function () { return 1; }();"),
+            ("a.js", "var x = function foo() {}\nx.a = function bar() {}"),
+        ],
+        1,
+    );
+    let ts2403 = diags
+        .iter()
+        .find(|(code, _)| *code == 2403)
+        .unwrap_or_else(|| panic!("expected a TS2403 diagnostic; got: {diags:?}"));
+    assert!(
+        ts2403
+            .1
+            .contains("here has type '{ (): void; a: () => void; }'"),
+        "TS2403 message must show a.js's own expando-augmented shape, not the bare \
+         callable or a corrupted bare identifier; got: {}",
+        ts2403.1
+    );
+}
+
+/// Adjacent case: renamed binders and expando member name, to prove the rule
+/// is structural over names, not keyed to `x`/`a`/`foo`/`bar`.
+#[test]
+fn ts2403_here_has_type_folds_in_expando_members_independent_of_identifier_choices() {
+    let diags = compile_files(
+        &[
+            ("b.ts", "var widget = function () { return 1; }();"),
+            (
+                "a.js",
+                "var widget = function base() {}\nwidget.hook = function extra() {}",
+            ),
+        ],
+        1,
+    );
+    let ts2403 = diags
+        .iter()
+        .find(|(code, _)| *code == 2403)
+        .unwrap_or_else(|| panic!("expected a TS2403 diagnostic; got: {diags:?}"));
+    assert!(
+        ts2403
+            .1
+            .contains("here has type '{ (): void; hook: () => void; }'"),
+        "TS2403 message must fold in the renamed expando member under a renamed \
+         binder too; got: {}",
+        ts2403.1
+    );
+}
