@@ -141,7 +141,20 @@ pub fn discover_ts_files(options: &FileDiscoveryOptions) -> Result<Vec<PathBuf>>
             list.push(path);
         }
     }
-    list.extend(files);
+    // tsc's project-style discovery (`readDirectory` over `supportedTSExtensions`
+    // then `supportedJSExtensions`) groups pattern-matched root files by
+    // extension family — every `.ts`/`.tsx`/`.d.ts` file before any
+    // `.js`/`.jsx` file — rather than merging them into one alphabetical
+    // list. This governs the order same-named cross-file symbols (e.g. two
+    // `var x` declarations) get bound and merged, which in turn decides
+    // which file a diagnostic like TS2403 anchors on. `files` is currently
+    // BTreeSet-ordered (alphabetical across both families); partition
+    // preserves that alphabetical order within each family while emitting
+    // the TS family ahead of the JS family, matching tsc.
+    let (ts_group, js_group): (Vec<PathBuf>, Vec<PathBuf>) =
+        files.into_iter().partition(|path| is_ts_file(path));
+    list.extend(ts_group);
+    list.extend(js_group);
     Ok(list)
 }
 
@@ -1368,6 +1381,104 @@ mod tests {
             .collect();
         names.sort();
         names
+    }
+
+    /// Same as [`discover_names`] but preserves discovery order instead of
+    /// sorting, for tests that assert on root-file order rather than set
+    /// membership.
+    fn discover_names_ordered(dir: &Path, allow_js: bool) -> Vec<String> {
+        let options = FileDiscoveryOptions {
+            base_dir: dir.to_path_buf(),
+            files: vec![],
+            files_explicitly_set: false,
+            include: None,
+            exclude: None,
+            out_dir: None,
+            follow_links: false,
+            allow_js,
+            resolve_json_module: false,
+        };
+        discover_ts_files(&options)
+            .unwrap()
+            .into_iter()
+            .map(|p| p.file_name().unwrap().to_string_lossy().to_string())
+            .collect()
+    }
+
+    #[test]
+    fn test_discover_orders_ts_family_before_js_family_despite_alphabetical() {
+        // Oracle-verified (pinned tsc 7.0.2, `--project` default include):
+        // tsc's project-style discovery groups root files by
+        // `supportedTSExtensions` before `supportedJSExtensions`
+        // (`allSupportedExtensions`), not by a flat alphabetical merge. An
+        // `a.js` + `b.ts` pair must discover as `[b.ts, a.js]` even though
+        // "a" < "b" — the extension family dominates the stem. This governs
+        // which file cross-file symbol merges (e.g. `var x` in both files)
+        // bind against first, which in turn decides which file a diagnostic
+        // like TS2403 anchors on (`salsa/jsContainerMergeTsDeclaration.ts`).
+        let dir = std::env::temp_dir().join("tsz_fs_test_ts_before_js_order");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("a.js"), "var x = 1;").unwrap();
+        fs::write(dir.join("b.ts"), "var y = 1;").unwrap();
+
+        assert_eq!(
+            discover_names_ordered(&dir, true),
+            vec!["b.ts".to_string(), "a.js".to_string()],
+            "the .ts family must be discovered before the .js family"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_discover_orders_alphabetically_within_each_family() {
+        // Adjacent case: within a single extension family, order stays
+        // alphabetical (oracle-verified) — only the cross-family grouping
+        // changes, not the intra-family ordering.
+        // Distinct stems across families (m/q for .ts, b/y for .js) so no
+        // pair triggers same-stem js-shadowing — this test is purely about
+        // ordering, not shadowing.
+        let dir = std::env::temp_dir().join("tsz_fs_test_alpha_within_family");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("q.ts"), "var p = 1;").unwrap();
+        fs::write(dir.join("m.ts"), "var p = 1;").unwrap();
+        fs::write(dir.join("y.js"), "var r = 1;").unwrap();
+        fs::write(dir.join("b.js"), "var r = 1;").unwrap();
+
+        assert_eq!(
+            discover_names_ordered(&dir, true),
+            vec![
+                "m.ts".to_string(),
+                "q.ts".to_string(),
+                "b.js".to_string(),
+                "y.js".to_string(),
+            ],
+            "ts family first (alphabetical), then js family (alphabetical)"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_discover_orders_tsx_with_ts_family_before_jsx() {
+        // Renamed-extension adjacent case: `.tsx` is part of the ts family
+        // and must still precede `.jsx`/`.js`, proving the grouping is by
+        // extension family, not a hardcoded `.ts`-vs-`.js` pair.
+        let dir = std::env::temp_dir().join("tsz_fs_test_tsx_before_jsx_order");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("a.jsx"), "var x = 1;").unwrap();
+        fs::write(dir.join("b.tsx"), "var y = 1;").unwrap();
+
+        assert_eq!(
+            discover_names_ordered(&dir, true),
+            vec!["b.tsx".to_string(), "a.jsx".to_string()],
+            "the .tsx family must be discovered before the .jsx family"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
