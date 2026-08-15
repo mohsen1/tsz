@@ -1034,6 +1034,18 @@ impl<'a> CheckerState<'a> {
         } else {
             Vec::new()
         };
+        // #17282: unannotated (context-sensitive) callback-parameter mask.
+        let generic_inference_arg_callback_param_unannotated = if is_generic_call {
+            self.call_arg_callback_param_unannotated_masks(args, generic_inference_arg_types.len())
+        } else {
+            Vec::new()
+        };
+        let generic_inference_arg_markers =
+            crate::checkers_domain::call_checker::applicability::CallArgSourceMarkers {
+                source_is_type_annotation: &generic_inference_arg_source_markers,
+                source_is_readonly_annotation: &generic_inference_arg_readonly_markers,
+                callback_param_unannotated: &generic_inference_arg_callback_param_unannotated,
+            };
         // When an argument is a callback whose return type is FIXED by an
         // explicit return annotation or `as`/type assertion that pins a return
         // type parameter, the contextual return must not clamp that parameter
@@ -1089,17 +1101,14 @@ impl<'a> CheckerState<'a> {
                     None,
                     None,
                 )
-            } else if generic_inference_arg_source_markers.iter().any(|&m| m)
-                || generic_inference_arg_readonly_markers.iter().any(|&m| m)
-            {
+            } else if generic_inference_arg_markers.any_set() {
                 self.resolve_call_with_checker_adapter_and_arg_sources(
                     callee_type_for_call,
                     &generic_inference_arg_types,
                     force_bivariant_callbacks,
                     call_resolution_contextual_type,
                     actual_this_type,
-                    &generic_inference_arg_source_markers,
-                    &generic_inference_arg_readonly_markers,
+                    &generic_inference_arg_markers,
                 )
             } else {
                 self.resolve_call_with_checker_adapter(
@@ -1310,6 +1319,14 @@ impl<'a> CheckerState<'a> {
                 self.call_arg_source_type_annotation_markers(args, retry_generic_arg_types.len());
             let retry_arg_readonly_markers = self
                 .call_arg_source_readonly_annotation_markers(args, retry_generic_arg_types.len());
+            let retry_arg_callback_param_unannotated =
+                self.call_arg_callback_param_unannotated_masks(args, retry_generic_arg_types.len());
+            let retry_arg_markers =
+                crate::checkers_domain::call_checker::applicability::CallArgSourceMarkers {
+                    source_is_type_annotation: &retry_arg_source_markers,
+                    source_is_readonly_annotation: &retry_arg_readonly_markers,
+                    callback_param_unannotated: &retry_arg_callback_param_unannotated,
+                };
             let mut retry = if is_super_call {
                 (
                     self.resolve_new_with_checker_adapter(
@@ -1321,17 +1338,14 @@ impl<'a> CheckerState<'a> {
                     None,
                     None,
                 )
-            } else if retry_arg_source_markers.iter().any(|&m| m)
-                || retry_arg_readonly_markers.iter().any(|&m| m)
-            {
+            } else if retry_arg_markers.any_set() {
                 self.resolve_call_with_checker_adapter_and_arg_sources(
                     callee_type_for_call,
                     &retry_generic_arg_types,
                     force_bivariant_callbacks,
                     contextual_type,
                     actual_this_type,
-                    &retry_arg_source_markers,
-                    &retry_arg_readonly_markers,
+                    &retry_arg_markers,
                 )
             } else {
                 self.resolve_call_with_checker_adapter(

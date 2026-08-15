@@ -122,7 +122,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         fixed: TypeId,
     ) -> bool {
         infer_ctx
-            .get_contra_candidate_types(var)
+            .get_annotated_contra_candidate_types(var)
             .into_iter()
             .any(|contra| {
                 if contra.is_any_unknown_or_error() {

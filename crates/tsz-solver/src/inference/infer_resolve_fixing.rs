@@ -400,6 +400,77 @@ impl<'a> InferenceContext<'a> {
         self.fix_current_variables_with(None::<fn(TypeId, TypeId) -> bool>)
     }
 
+    /// The `#17282` Round-1-fix snapshot for `var`: the pristine covariant-only
+    /// fix when an unannotated (context-sensitive) callback parameter has
+    /// contributed a contra-candidate that may have narrowed the fix away from
+    /// the direct-argument inference, else `resolved` unchanged.
+    pub fn round1_fix_snapshot(&mut self, var: InferenceVar, resolved: TypeId) -> TypeId {
+        if self.var_has_unannotated_contra_candidate(var) {
+            self.probe_covariant_only(var).unwrap_or(resolved)
+        } else {
+            resolved
+        }
+    }
+
+    /// Resolve `var` from its **covariant** candidates only, ignoring every
+    /// contra-candidate. Mirrors the covariant branch of
+    /// `fix_current_variables_with` (candidate cleanup + `resolve_from_candidates`)
+    /// without the `resolve_covariant_against_contra` narrowing step.
+    ///
+    /// Used for the `#17282` Round-1-fix snapshot: when an unannotated
+    /// (context-sensitive) callback parameter has contributed a contra-candidate
+    /// that narrowed the fix away from the direct-argument inference, this
+    /// recovers the pristine direct-argument value so the restore targets it.
+    /// Returns `None` when the variable has no usable covariant candidate.
+    pub fn probe_covariant_only(&mut self, var: InferenceVar) -> Option<TypeId> {
+        let root = self.table.find(var);
+        let info = self.table.probe_value(root);
+        if info.candidates.is_empty() {
+            return None;
+        }
+        let is_const = self.is_var_const(root);
+        let dc = self.declared_constraints.get(&root).copied();
+        let dc_preserves_literals = self.literal_preserving_declared_constraints.contains(&root);
+        let mut candidates = self.discard_self_referential_candidates(root, &info.candidates);
+        if !info.upper_bounds.is_empty() {
+            let has_informative_upper_bound = info
+                .upper_bounds
+                .iter()
+                .any(|&upper| !upper.is_any_unknown_or_error());
+            let has_concrete_candidate = candidates
+                .iter()
+                .any(|c| !c.type_id.is_any_unknown_or_error());
+            candidates.retain(|candidate| match candidate.type_id {
+                TypeId::UNKNOWN | TypeId::ERROR => false,
+                TypeId::ANY => !has_informative_upper_bound || !has_concrete_candidate,
+                _ => true,
+            });
+        }
+        if candidates.is_empty() {
+            return None;
+        }
+        // Keep only the best-priority candidates, matching tsc clearing
+        // lower-priority candidates once a better one arrives. This drops the
+        // `ReturnType`-priority Round-2 callback-body candidates (e.g. the `B`
+        // from `u2 => u2.b`) so the Round-1 snapshot is the direct-argument
+        // inference (`A`), not the `A | B` union.
+        let candidates = self.filter_candidates_by_priority(&candidates);
+        if candidates.is_empty() {
+            return None;
+        }
+        let skip_literal_widening = self.top_level_in_return_type_unfixed.contains(&root);
+        let spread_rest_mode = self.spread_rest_var_modes.get(&root).copied();
+        Some(self.resolve_from_candidates(
+            &candidates,
+            is_const,
+            &info.upper_bounds,
+            dc,
+            dc_preserves_literals,
+            skip_literal_widening,
+            spread_rest_mode,
+        ))
+    }
+
     /// Get the current best substitution for all type parameters.
     ///
     /// This returns a `TypeSubstitution` mapping each type parameter to its

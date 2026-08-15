@@ -10,6 +10,47 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
+/// Per-argument source markers threaded into generic-call resolution. Bundled
+/// so the adapter methods stay within the argument-count budget.
+pub(crate) struct CallArgSourceMarkers<'a> {
+    /// Per-argument: source came from a type annotation/assertion.
+    pub(crate) source_is_type_annotation: &'a [bool],
+    /// Per-argument: source came from a readonly array/tuple annotation.
+    pub(crate) source_is_readonly_annotation: &'a [bool],
+    /// Per-argument, per-parameter: unannotated (context-sensitive) callback
+    /// parameter (issue #17282).
+    pub(crate) callback_param_unannotated: &'a [Vec<bool>],
+}
+
+/// Owned counterpart of [`CallArgSourceMarkers`] returned by
+/// `CheckerState::call_arg_source_markers`; borrow it with [`Self::as_borrowed`].
+pub(crate) struct OwnedCallArgSourceMarkers {
+    pub(crate) source_is_type_annotation: Vec<bool>,
+    pub(crate) source_is_readonly_annotation: Vec<bool>,
+    pub(crate) callback_param_unannotated: Vec<Vec<bool>>,
+}
+
+impl OwnedCallArgSourceMarkers {
+    pub(crate) fn as_borrowed(&self) -> CallArgSourceMarkers<'_> {
+        CallArgSourceMarkers {
+            source_is_type_annotation: &self.source_is_type_annotation,
+            source_is_readonly_annotation: &self.source_is_readonly_annotation,
+            callback_param_unannotated: &self.callback_param_unannotated,
+        }
+    }
+}
+
+impl CallArgSourceMarkers<'_> {
+    pub(crate) fn any_set(&self) -> bool {
+        self.source_is_type_annotation.iter().any(|&m| m)
+            || self.source_is_readonly_annotation.iter().any(|&m| m)
+            || self
+                .callback_param_unannotated
+                .iter()
+                .any(|mask| mask.iter().any(|&u| u))
+    }
+}
+
 impl<'a> CheckerState<'a> {
     pub(super) fn callable_context_can_type_function_argument_despite_unresolved(
         &self,
@@ -182,8 +223,7 @@ impl<'a> CheckerState<'a> {
         force_bivariant_callbacks: bool,
         contextual_type: Option<TypeId>,
         actual_this_type: Option<TypeId>,
-        arg_source_is_type_annotation: &[bool],
-        arg_source_is_readonly_annotation: &[bool],
+        markers: &CallArgSourceMarkers<'_>,
     ) -> tsz_solver::operations::CallWithCheckerResult {
         self.ensure_callee_relation_inputs_ready(func_type);
         self.ensure_relation_inputs_ready(arg_types);
@@ -202,17 +242,18 @@ impl<'a> CheckerState<'a> {
                 force_bivariant_callbacks,
                 contextual_type,
                 actual_this_type,
-                arg_source_is_type_annotation,
-                arg_source_is_readonly_annotation,
+                arg_source_is_type_annotation: markers.source_is_type_annotation,
+                arg_source_is_readonly_annotation: markers.source_is_readonly_annotation,
+                arg_callback_param_unannotated: markers.callback_param_unannotated,
             },
         )
     }
 
     /// Resolve a call, routing through the arg-source-aware path when any
     /// argument is a type-annotated source (typed identifier, `as`/`satisfies`
-    /// assertion, or `as const`). Those sources carry non-fresh literals that
-    /// inference must not re-widen. Falls back to the plain adapter when no
-    /// marker is set, preserving its behavior exactly.
+    /// assertion, or `as const`) or an unannotated callback parameter (#17282).
+    /// Falls back to the plain adapter when no marker is set, preserving its
+    /// behavior exactly.
     pub(crate) fn resolve_call_with_checker_adapter_maybe_arg_sources(
         &mut self,
         func_type: TypeId,
@@ -220,20 +261,16 @@ impl<'a> CheckerState<'a> {
         force_bivariant_callbacks: bool,
         contextual_type: Option<TypeId>,
         actual_this_type: Option<TypeId>,
-        arg_source_is_type_annotation: &[bool],
-        arg_source_is_readonly_annotation: &[bool],
+        markers: &CallArgSourceMarkers<'_>,
     ) -> tsz_solver::operations::CallWithCheckerResult {
-        if arg_source_is_type_annotation.iter().any(|&m| m)
-            || arg_source_is_readonly_annotation.iter().any(|&m| m)
-        {
+        if markers.any_set() {
             self.resolve_call_with_checker_adapter_and_arg_sources(
                 func_type,
                 arg_types,
                 force_bivariant_callbacks,
                 contextual_type,
                 actual_this_type,
-                arg_source_is_type_annotation,
-                arg_source_is_readonly_annotation,
+                markers,
             )
         } else {
             self.resolve_call_with_checker_adapter(
@@ -258,8 +295,7 @@ impl<'a> CheckerState<'a> {
         force_bivariant_callbacks: bool,
         contextual_type: Option<TypeId>,
         actual_this_type: Option<TypeId>,
-        arg_source_is_type_annotation: &[bool],
-        arg_source_is_readonly_annotation: &[bool],
+        markers: &CallArgSourceMarkers<'_>,
     ) -> tsz_solver::operations::CallWithCheckerResult {
         self.ensure_callee_relation_inputs_ready(func_type);
         self.ensure_relation_inputs_ready(arg_types);
@@ -269,9 +305,7 @@ impl<'a> CheckerState<'a> {
             state: self,
             overload_subtype_pass: true,
         };
-        if arg_source_is_type_annotation.iter().any(|&m| m)
-            || arg_source_is_readonly_annotation.iter().any(|&m| m)
-        {
+        if markers.any_set() {
             resolve_call_with_arg_sources(
                 db,
                 &mut checker,
@@ -281,8 +315,9 @@ impl<'a> CheckerState<'a> {
                     force_bivariant_callbacks,
                     contextual_type,
                     actual_this_type,
-                    arg_source_is_type_annotation,
-                    arg_source_is_readonly_annotation,
+                    arg_source_is_type_annotation: markers.source_is_type_annotation,
+                    arg_source_is_readonly_annotation: markers.source_is_readonly_annotation,
+                    arg_callback_param_unannotated: markers.callback_param_unannotated,
                 },
             )
         } else {

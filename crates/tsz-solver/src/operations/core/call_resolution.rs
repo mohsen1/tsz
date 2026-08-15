@@ -1801,6 +1801,10 @@ pub struct ResolveCallOptions<'a> {
     pub actual_this_type: Option<TypeId>,
     pub arg_source_is_type_annotation: &'a [bool],
     pub arg_source_is_readonly_annotation: &'a [bool],
+    /// Per-argument, per-parameter mask of context-sensitive (unannotated)
+    /// callback parameters; see `CallEvaluator::arg_callback_param_unannotated`
+    /// (issue #17282). Empty = no information.
+    pub arg_callback_param_unannotated: &'a [Vec<bool>],
 }
 
 pub fn resolve_call_with_checker<C: AssignabilityChecker>(
@@ -1823,6 +1827,7 @@ pub fn resolve_call_with_checker<C: AssignabilityChecker>(
             actual_this_type,
             arg_source_is_type_annotation: &[],
             arg_source_is_readonly_annotation: &[],
+            arg_callback_param_unannotated: &[],
         },
     )
 }
@@ -1840,6 +1845,7 @@ pub fn resolve_call_with_checker_and_arg_sources<C: AssignabilityChecker>(
     evaluator.set_actual_this_type(opts.actual_this_type);
     evaluator.set_arg_source_is_type_annotation(opts.arg_source_is_type_annotation);
     evaluator.set_arg_source_is_readonly_annotation(opts.arg_source_is_readonly_annotation);
+    evaluator.set_arg_callback_param_unannotated(opts.arg_callback_param_unannotated);
     let result = evaluator.resolve_call(func_type, arg_types);
     let predicate = evaluator.last_instantiated_predicate.take();
     let instantiated_params = evaluator.last_instantiated_params.take();

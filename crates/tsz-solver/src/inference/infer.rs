@@ -85,6 +85,12 @@ pub(crate) struct InferenceCandidate {
     /// co/contra inference would otherwise replace a direct readonly argument
     /// with a mutable callback parameter candidate.
     pub(crate) from_readonly_source: bool,
+    /// Contra-candidate contributed by an **unannotated** (context-sensitive)
+    /// callback parameter. tsc infers nothing contravariantly from such a
+    /// parameter; tsz collects it (its eagerly materialized type is needed for
+    /// the `any`-taint path) but the `#17282` Round-1-fix restore treats it as
+    /// non-divergent, since it carries no real inference evidence.
+    pub(crate) from_unannotated_callback_param: bool,
 }
 
 #[derive(Copy, Clone, Debug, Default)]
@@ -887,6 +893,7 @@ impl<'a> InferenceContext<'a> {
                 from_array_element: candidate.from_array_element,
                 from_top_level_naked: candidate.from_top_level_naked,
                 from_readonly_source: candidate.from_readonly_source,
+                from_unannotated_callback_param: candidate.from_unannotated_callback_param,
             });
         }
 
@@ -1423,6 +1430,19 @@ impl<'a> InferenceContext<'a> {
         ty: TypeId,
         priority: InferencePriority,
     ) {
+        self.add_contra_candidate_tagged(var, ty, priority, false);
+    }
+
+    /// As [`Self::add_contra_candidate`], but `from_unannotated_callback_param`
+    /// tags the candidate as contributed by an unannotated (context-sensitive)
+    /// callback parameter (issue #17282).
+    pub fn add_contra_candidate_tagged(
+        &mut self,
+        var: InferenceVar,
+        ty: TypeId,
+        priority: InferencePriority,
+        from_unannotated_callback_param: bool,
+    ) {
         // Inferring a type parameter against *itself* carries no information.
         // The placeholder rename hides this: the inference variable is tracked
         // under a unique `__infer_*` placeholder, while a callback parameter
@@ -1450,6 +1470,7 @@ impl<'a> InferenceContext<'a> {
             from_array_element: self.in_array_element_context,
             from_top_level_naked: self.candidate_from_top_level_naked,
             from_readonly_source: self.candidate_is_from_readonly_source(ty),
+            from_unannotated_callback_param,
         };
         self.table.union_value(
             root,
@@ -1553,6 +1574,7 @@ impl<'a> InferenceContext<'a> {
             from_array_element: self.in_array_element_context,
             from_top_level_naked: self.candidate_from_top_level_naked,
             from_readonly_source: self.candidate_is_from_readonly_source(ty),
+            from_unannotated_callback_param: false,
         };
         if self.collects_contra_candidates() {
             // In contravariant context (e.g., callback parameter structural
@@ -1819,6 +1841,36 @@ impl<'a> InferenceContext<'a> {
             }
         }
         out
+    }
+
+    /// Return deduplicated contravariant candidate types for an inference
+    /// variable, **excluding** those contributed by unannotated
+    /// (context-sensitive) callback parameters (issue #17282). Such candidates
+    /// carry no inference evidence in tsc, so the Round-1-fix restore must not
+    /// treat them as divergent.
+    pub fn get_annotated_contra_candidate_types(&mut self, var: InferenceVar) -> Vec<TypeId> {
+        let root = self.table.find(var);
+        let info = self.table.probe_value(root);
+        let mut out = Vec::with_capacity(info.contra_candidates.len());
+        for candidate in &info.contra_candidates {
+            if candidate.from_unannotated_callback_param {
+                continue;
+            }
+            if !out.contains(&candidate.type_id) {
+                out.push(candidate.type_id);
+            }
+        }
+        out
+    }
+
+    /// Whether `var` has any contra-candidate contributed by an unannotated
+    /// (context-sensitive) callback parameter (issue #17282).
+    pub fn var_has_unannotated_contra_candidate(&mut self, var: InferenceVar) -> bool {
+        let root = self.table.find(var);
+        let info = self.table.probe_value(root);
+        info.contra_candidates
+            .iter()
+            .any(|candidate| candidate.from_unannotated_callback_param)
     }
 
     pub fn has_index_signature_candidates(&mut self, var: InferenceVar) -> bool {
