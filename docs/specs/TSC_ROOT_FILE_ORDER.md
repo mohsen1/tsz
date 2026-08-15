@@ -10,12 +10,20 @@ directly, including with `--singleThreaded --stableTypeOrdering true` — the fl
 
 ## The rule
 
-> Root files are bucketed by the index of the **`include` pattern** that matched
-> them, concatenated in pattern order, and sorted **alphabetically within each
-> bucket**. Files listed in `files` (or as CLI positionals) come first, in the
-> order given.
+> Root files are bucketed by the index of the **`include` spec** that matched
+> them and concatenated in spec order. Within one bucket they follow tsc's
+> **directory walk**: a directory's own files (sorted) come before its
+> subdirectories (sorted), recursively — *not* a sort of whole paths. Files
+> listed in `files` (or as CLI positionals) come first, in the order given.
 >
 > Extension family does **not** affect ordering.
+
+Two independent layers, and a probe can satisfy one while violating the other:
+
+| layer | keyed on | separated by |
+|---|---|---|
+| across buckets | user include-**spec** index | `["*.js","*.ts"]` vs `["*.ts","*.js"]` |
+| within a bucket | directory walk, files before subdirectories | a root file whose name sorts *between* two subdirectory names |
 
 `matchFiles` collects into `results[includeIndex]` and flattens in pattern order.
 `readDirectory` receives an already-**flattened** extension list, so the
@@ -46,16 +54,43 @@ var x = "s";
 
 Swapping the two patterns swaps the order. No extension-family rule can produce
 that. With the default single `**/*` pattern there is exactly one bucket, so the
-result is pure alphabetical order.
+result is the plain walk of one directory — which for a flat project is
+alphabetical.
+
+### Within one bucket: files before subdirectories
+
+Every row above is a **flat** directory, where the walk and a whole-path sort
+agree. They diverge as soon as a subdirectory is involved. Same setup, one
+`include: ["**/*.ts"]` spec, three files:
+
+```ts
+// mmm.ts      var p = 1;  var q = 1;
+// aaa/x.ts    var p = "s"; var r = "s";
+// zzz/y.ts    var q = true; var r = true;
+```
+
+Each variable pairs two files, and its `TS2403` lands on the later one, so the
+three errors pin the total order:
+
+| order | result |
+|---|---|
+| **tsc** | `mmm.ts`, `aaa/x.ts`, `zzz/y.ts` |
+| whole-path sort | `aaa/x.ts`, `mmm.ts`, `zzz/y.ts` |
+
+tsc's `visitDirectory` emits the files of the directory it is visiting before
+recursing into that directory's subdirectories, so `mmm.ts` precedes both
+subdirectories even though `aaa/` sorts before it. A lexicographic sort of whole
+paths interleaves a subdirectory's files among its parent's whenever a parent
+file name sorts between two subdirectory names. The rule applies at every depth.
 
 ## The refuted claim, and why it keeps recurring
 
 > ~~"tsc visits the TypeScript extension group before the JavaScript group, so a
 > `.ts` file always precedes a sibling `.js` file regardless of name."~~
 
-This is **false**, and it has been proposed at least three times (#17410,
-#17423, #17520), twice described as "oracle-verified". #17423 landed on it and
-was reverted in #17428 after it inverted the `TS2403` anchor for every
+This is **false**, and it has been proposed at least four times (#17410, #17423,
+#17520, #17545), repeatedly described as "oracle-verified". #17423 landed on it
+and was reverted in #17428 after it inverted the `TS2403` anchor for every
 default-`include` project.
 
 The inference that produces it is always the same, and it is seductive because
@@ -91,18 +126,17 @@ to resolve twice.
 
 ## tsz status
 
-`discover_ts_files` (`crates/tsz-cli/src/project/fs.rs`) funnels every walk root
-into a single `BTreeSet<PathBuf>`, i.e. purely alphabetical.
+`discover_ts_files` (`crates/tsz-cli/src/project/fs.rs`) implements both layers,
+and matches the oracle on every row in this document:
 
-- **default / single-pattern `include`** — correct, because tsc's default is the
-  single pattern `**/*`, which is also alphabetical.
-- **multi-pattern `include` with `.ts` patterns listed first** — still wrong;
-  tsz sorts alphabetically where tsc would honour pattern order. This is the
-  real, open defect.
-
-The correct fix is one bucket per **user include-spec index**, concatenated in
-pattern order, alphabetical within each, with a file assigned to the first
-pattern that matches.
+- **bucketing by user include-spec index** — #17540. A file is assigned to the
+  first spec that matches it, evaluated **relative to the tsconfig directory**;
+  matching the absolute path first let a later spec's recursive glob
+  (`**/*.ts`, which crosses `/`) claim a file that a directory-scoped earlier
+  spec (`sub/*`) should own, collapsing the buckets.
+- **walk order within a bucket** — `compare_discovery_order`, which orders a
+  directory's own files ahead of its subdirectories rather than sorting whole
+  paths.
 
 **Trap:** `default_discovery_include_patterns`
 (`crates/tsz-common/src/file_extensions.rs`) synthesizes a *multi-pattern
