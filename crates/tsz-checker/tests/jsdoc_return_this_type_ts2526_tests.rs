@@ -40,6 +40,17 @@ fn return_this_on_prototype_function_expression_renamed_binder_reports_ts2526() 
     assert_eq!(ts2526_count(source), 1, "expected one TS2526");
 }
 
+/// An object-literal method assigned onto a constructor's `prototype` is a
+/// third distinct host shape (`METHOD_DECLARATION`, not `FUNCTION_EXPRESSION`
+/// and not a class member) that goes through neither
+/// `check_function_declaration_callback`'s statement-position dispatch nor
+/// `check_class_member_with_request`'s class-member dispatch.
+#[test]
+fn return_this_on_prototype_object_literal_method_reports_ts2526() {
+    let source = "function Cp() {\n}\nCp.prototype = {\n    /** @return {this} */\n    m4() { return this }\n};\n";
+    assert_eq!(ts2526_count(source), 1, "expected one TS2526");
+}
+
 /// An arrow assigned to a `this` property inside a `@class` constructor
 /// function: the arrow passes through to the enclosing plain function, which
 /// supplies no `this` type.

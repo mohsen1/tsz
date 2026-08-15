@@ -1486,6 +1486,15 @@ impl<'a> CheckerState<'a> {
 
         self.check_variance_modifier_not_on_class_member_node(member_idx);
 
+        // TS2526: a JSDoc `@return`/`@returns {this}` tag whose host member
+        // is static. Class members are never checked through
+        // `get_type_of_function_impl` (methods/accessors/constructors each
+        // have their own body-checking path below), so this is the one call
+        // site every class member passes through regardless of kind; the
+        // check itself is a no-op unless the member is a function-like node
+        // carrying a bare `@return {this}` tag.
+        self.report_jsdoc_return_this_type_not_allowed(member_idx);
+
         match node.kind {
             syntax_kind_ext::PROPERTY_DECLARATION => {
                 self.check_property_declaration_with_request(member_idx, request);
