@@ -79,9 +79,27 @@ pub fn discover_ts_files(options: &FileDiscoveryOptions) -> Result<Vec<PathBuf>>
     }
 
     let include_patterns = build_include_patterns(options);
+    // tsc matches each include pattern in array order and appends that
+    // pattern's files before moving to the next pattern, rather than
+    // merging every match into one alphabetically sorted list. The default
+    // discovery patterns (and tsc's own conformance-harness patterns) list
+    // `.ts`/`.tsx` extensions ahead of `.js`/`.jsx`, so a `.ts` file always
+    // becomes tsc's `rootNames`-earlier file even when its name sorts after
+    // a same-directory `.js` file alphabetically. That ordering decides
+    // which cross-file declaration becomes a merged global symbol's
+    // canonical `valueDeclaration` (e.g. TS2403's anchor and operand order
+    // for a `var` redeclared across a `.js`/`.ts` pair), so discovery must
+    // preserve it instead of collapsing to a path sort.
+    let mut pattern_rank: std::collections::HashMap<PathBuf, usize> =
+        std::collections::HashMap::new();
     if !include_patterns.is_empty() {
         let include_set =
             build_globset(&include_patterns).context("failed to build include globset")?;
+        let per_pattern_sets = include_patterns
+            .iter()
+            .map(|pattern| build_globset(std::slice::from_ref(pattern)))
+            .collect::<Result<Vec<_>>>()
+            .context("failed to build per-pattern include globset")?;
         let exclude_patterns = build_exclude_patterns(options);
         let exclude_set = if exclude_patterns.is_empty() {
             None
@@ -118,7 +136,15 @@ pub fn discover_ts_files(options: &FileDiscoveryOptions) -> Result<Vec<PathBuf>>
 
                 let resolved =
                     resolve_discovered_path(path, &options.base_dir, options.follow_links);
-                files.insert(resolved);
+                if files.insert(resolved.clone()) {
+                    let rank = per_pattern_sets
+                        .iter()
+                        .position(|set| {
+                            matches_discovery_patterns(path, &options.base_dir, &walk_root, set)
+                        })
+                        .unwrap_or(per_pattern_sets.len());
+                    pattern_rank.insert(resolved, rank);
+                }
             }
         }
     }
@@ -141,7 +167,13 @@ pub fn discover_ts_files(options: &FileDiscoveryOptions) -> Result<Vec<PathBuf>>
             list.push(path);
         }
     }
-    list.extend(files);
+    let mut remaining: Vec<PathBuf> = files.into_iter().collect();
+    remaining.sort_by(|a, b| {
+        let rank_a = pattern_rank.get(a).copied().unwrap_or(usize::MAX);
+        let rank_b = pattern_rank.get(b).copied().unwrap_or(usize::MAX);
+        rank_a.cmp(&rank_b).then_with(|| a.cmp(b))
+    });
+    list.extend(remaining);
     Ok(list)
 }
 
@@ -1335,6 +1367,77 @@ mod tests {
             result_no_js.len(),
             2,
             "default include without allowJs should find .mts/.cts but not .mjs/.cjs, got: {result_no_js:?}"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Oracle-verified against pinned `tsc` 7.0.2 (`node scripts/node_modules/typescript/bin/tsc
+    /// --project .` with `include: ["*.ts","*.tsx","*.js","*.jsx", ...]`, tsc's own
+    /// `--explainFiles` confirms `b.ts` is matched (and thus ordered) ahead of `a.js`):
+    /// wildcard-discovered files are ordered by which `include` pattern first matches
+    /// them, not by alphabetical path. The default discovery patterns (and the
+    /// conformance harness's synthetic ones) list `.ts`/`.tsx` patterns before
+    /// `.js`/`.jsx` patterns, so a `.ts` file is always tsc's `rootNames`-earlier file
+    /// even when its name sorts after a same-directory `.js` file. This determines
+    /// which cross-file declaration becomes a merged global `var` symbol's canonical
+    /// `valueDeclaration`, and therefore the anchor/operand order of diagnostics like
+    /// TS2403 for a `var` redeclared across a `.js`/`.ts` pair (`salsa/jsContainerMergeTsDeclaration.ts`).
+    #[test]
+    fn test_discover_orders_ts_pattern_matches_ahead_of_js_despite_alphabetical_name() {
+        let dir = unique_temp_dir("ts_before_js_order");
+        fs::write(dir.join("a.js"), "var x = 1;").unwrap();
+        fs::write(dir.join("b.ts"), "var y = 1;").unwrap();
+
+        let options = FileDiscoveryOptions {
+            base_dir: dir.clone(),
+            files: vec![],
+            files_explicitly_set: false,
+            include: None,
+            exclude: None,
+            out_dir: None,
+            follow_links: false,
+            allow_js: true,
+            resolve_json_module: false,
+        };
+
+        let result = discover_ts_files(&options).unwrap();
+        assert_eq!(
+            result,
+            vec![dir.join("b.ts"), dir.join("a.js")],
+            "the .ts pattern match must be ordered ahead of the .js pattern match, matching tsc, even though 'a.js' sorts before 'b.ts' alphabetically"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Adjacent case: a user-authored `include` array with the pattern order
+    /// reversed from the default (`.js` pattern listed before `.ts`) should
+    /// order discovery to match — pattern order, not a fixed extension table,
+    /// drives the result.
+    #[test]
+    fn test_discover_respects_custom_include_pattern_order_over_extension() {
+        let dir = unique_temp_dir("custom_include_pattern_order");
+        fs::write(dir.join("a.ts"), "export const x = 1;").unwrap();
+        fs::write(dir.join("b.js"), "var y = 1;").unwrap();
+
+        let options = FileDiscoveryOptions {
+            base_dir: dir.clone(),
+            files: vec![],
+            files_explicitly_set: false,
+            include: Some(vec!["*.js".to_string(), "*.ts".to_string()]),
+            exclude: None,
+            out_dir: None,
+            follow_links: false,
+            allow_js: true,
+            resolve_json_module: false,
+        };
+
+        let result = discover_ts_files(&options).unwrap();
+        assert_eq!(
+            result,
+            vec![dir.join("b.js"), dir.join("a.ts")],
+            "an explicit include array listing '*.js' before '*.ts' should order the .js match first"
         );
 
         let _ = fs::remove_dir_all(&dir);
