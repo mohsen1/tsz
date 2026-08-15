@@ -1788,12 +1788,25 @@ impl<'a> CheckerState<'a> {
                 return Some(match result {
                     Ok(ty) => ty,
                     Err((namespace_display, member_name)) => {
-                        self.emit_jsdoc_typedef_import_member_error(
-                            comment_pos,
-                            expr,
-                            &namespace_display,
-                            &member_name,
-                        );
+                        // A `@import { member as Alias }` desugars to this same
+                        // `import("./m").member` base type, but it is an import
+                        // *alias*, not a `@typedef` type reference. When `member`
+                        // names a *value*, using the alias as a type is TS2749 at
+                        // the use site (the value-used-as-type path reports it), so
+                        // suppress the `@typedef`-form TS2694 here to avoid
+                        // double-reporting. A genuine `@typedef` keeps TS2694, and a
+                        // truly missing member keeps it too (its own TS2305 anchors
+                        // at the `@import`).
+                        let suppress =
+                            info.from_import_tag && self.jsdoc_import_type_member_is_value(expr);
+                        if !suppress {
+                            self.emit_jsdoc_typedef_import_member_error(
+                                comment_pos,
+                                expr,
+                                &namespace_display,
+                                &member_name,
+                            );
+                        }
                         TypeId::ANY
                     }
                 });

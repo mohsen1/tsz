@@ -10,9 +10,55 @@
 
 use super::name_resolution::JsdocNameMode;
 use crate::state::CheckerState;
+use tsz_binder::symbol_flags;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    /// Whether `name` is bound by an *import alias* (a JSDoc `@import`, a runtime
+    /// ES import, or a TS `import X = ...` alias — an `ALIAS` symbol carrying an
+    /// `import_module`) whose target is a value with no type meaning. Such a name
+    /// is a value-used-as-type error (TS2749) when written in a JSDoc type
+    /// position; the guard at the top of `resolve_jsdoc_type_name` uses this to
+    /// decline it before the `@import` typedef desugar reaches its TS2694 terminal.
+    ///
+    /// The alias's own `ALIAS`/`import_module` identity is read from the raw
+    /// symbol arena because `file_locals` collapses an import alias onto its
+    /// resolved target (dropping the alias flag). The value-only judgement is
+    /// delegated to `jsdoc_name_refers_to_value_only`, which resolves `name`
+    /// through the *current file's* locals — so a genuine
+    /// `@typedef {import("./m").value} V` (a type alias, not an import alias,
+    /// value-only=false) keeps its own TS2694, and an unrelated same-named import
+    /// alias in another file cannot trigger this.
+    pub(crate) fn jsdoc_type_name_is_value_only_import_alias(&mut self, name: &str) -> bool {
+        if name.is_empty() || name.contains('.') {
+            return false;
+        }
+        let is_import_alias = self
+            .ctx
+            .binder
+            .get_symbols()
+            .find_all_by_name(name)
+            .iter()
+            .filter_map(|&s| self.ctx.binder.get_symbol(s))
+            .any(|sym| sym.has_any_flags(symbol_flags::ALIAS) && sym.import_module().is_some());
+        is_import_alias && self.jsdoc_name_refers_to_value_only(name)
+    }
+
+    /// Whether the JSDoc import-type expression `import("./m").member` names a
+    /// member that resolves as a *value* export of the module. Callers use this
+    /// to tell a value-used-as-type `@import` alias (TS2749; the `@typedef`-form
+    /// TS2694 must be suppressed) apart from a truly missing member (TS2694
+    /// kept). Type-eligibility has already been ruled out at the call site, so a
+    /// hit here means the member exists but only in value space.
+    pub(crate) fn jsdoc_import_type_member_is_value(&self, expr: &str) -> bool {
+        Self::parse_jsdoc_import_type(expr)
+            .and_then(|(module_specifier, member)| member.map(|member| (module_specifier, member)))
+            .is_some_and(|(module_specifier, member)| {
+                self.resolve_jsdoc_import_member(&module_specifier, &member)
+                    .is_some()
+            })
+    }
+
     pub(in crate::jsdoc) fn resolve_jsdoc_import_type_reference(
         &mut self,
         type_expr: &str,

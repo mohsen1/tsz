@@ -1927,22 +1927,39 @@ const c = "x";
     let result = compile(&args, base).expect("compile should succeed");
     let codes: Vec<u32> = result.diagnostics.iter().map(|diag| diag.code).collect();
 
-    let assignability_count = codes.iter().filter(|&&code| code == 2322).count();
+    // The string-literal export names (`"a,b"`, `"as"`, `"from"`) each resolve
+    // through the `@import` alias to the exported `value`, which is a *value*
+    // (a `const`). Using such an alias in a `@type` position is a
+    // value-used-as-type error: tsc (oracle 7.0.2) reports TS2749 three times,
+    // anchored at each use and naming the *local* alias — not TS2322, and not a
+    // TS2694 "no exported member" at the `@import` clause. See #17551.
+    let value_as_type = diagnostic_codes::REFERS_TO_A_VALUE_BUT_IS_BEING_USED_AS_A_TYPE_HERE_DID_YOU_MEAN_TYPEOF;
+    let value_as_type_count = codes.iter().filter(|&&code| code == value_as_type).count();
     assert_eq!(
-        assignability_count, 3,
-        "Expected three TS2322 diagnostics from resolved JSDoc imports, got diagnostics: {:?}",
+        value_as_type_count, 3,
+        "Expected three TS2749 (value-used-as-type) diagnostics from the resolved JSDoc import aliases, got diagnostics: {:?}",
+        result.diagnostics
+    );
+    for alias in ["CommaName", "AsName", "FromName"] {
+        assert!(
+            result.diagnostics.iter().any(|diag| diag.code == value_as_type
+                && diag.message_text.contains(&format!("'{alias}'"))),
+            "Expected a TS2749 naming the local alias '{alias}', got diagnostics: {:?}",
+            result.diagnostics
+        );
+    }
+    assert!(
+        !codes.contains(&2322),
+        "The alias uses are value-as-type errors, not assignability (TS2322) errors: {:?}",
         result.diagnostics
     );
     assert!(
-        !codes.contains(&diagnostic_codes::CANNOT_FIND_NAME),
-        "String-literal JSDoc import aliases should resolve, got diagnostics: {:?}",
-        result.diagnostics
-    );
-    assert!(
-        !codes.contains(&diagnostic_codes::CANNOT_FIND_NAME_DID_YOU_MEAN)
+        !codes.contains(&diagnostic_codes::CANNOT_FIND_NAME)
+            && !codes.contains(&diagnostic_codes::CANNOT_FIND_NAME_DID_YOU_MEAN)
             && !codes.contains(&diagnostic_codes::MODULE_HAS_NO_EXPORTED_MEMBER)
+            && !codes.contains(&diagnostic_codes::NAMESPACE_HAS_NO_EXPORTED_MEMBER)
             && !codes.contains(&diagnostic_codes::HAS_NO_EXPORTED_MEMBER_NAMED_DID_YOU_MEAN),
-        "String-literal export names should not produce unresolved-name or bogus member diagnostics: {:?}",
+        "String-literal export names should resolve, not produce unresolved-name or bogus member diagnostics: {:?}",
         result.diagnostics
     );
 }

@@ -661,12 +661,7 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn parse_jsdoc_typedefs(jsdoc: &str) -> Vec<(String, JsdocTypedefInfo)> {
         let mut typedefs = Vec::new();
         let mut current_name: Option<String> = None;
-        let mut current_info = JsdocTypedefInfo {
-            base_type: None,
-            properties: Vec::new(),
-            template_params: Vec::new(),
-            callback: None,
-        };
+        let mut current_info = JsdocTypedefInfo::default();
         let mut wrapped_typedef_body: Option<Vec<String>> = None;
         let mut pending_typedef_rest: Option<String> = None;
         let mut pending_typedef_base_type: Option<String> = None;
@@ -709,9 +704,8 @@ impl<'a> CheckerState<'a> {
                         current_name = Some(name);
                         current_info = JsdocTypedefInfo {
                             base_type: Some(base_type),
-                            properties: Vec::new(),
                             template_params: template_params.clone(),
-                            callback: None,
+                            ..Default::default()
                         };
                     }
                     continue;
@@ -740,9 +734,8 @@ impl<'a> CheckerState<'a> {
                         current_name = Some(name);
                         current_info = JsdocTypedefInfo {
                             base_type,
-                            properties: Vec::new(),
                             template_params: template_params.clone(),
-                            callback: None,
+                            ..Default::default()
                         };
                         continue;
                     }
@@ -759,12 +752,7 @@ impl<'a> CheckerState<'a> {
                     if !name.is_empty() {
                         if let Some(previous_name) = current_name.take() {
                             typedefs.push((previous_name, current_info));
-                            current_info = JsdocTypedefInfo {
-                                base_type: None,
-                                properties: Vec::new(),
-                                template_params: Vec::new(),
-                                callback: None,
-                            };
+                            current_info = JsdocTypedefInfo::default();
                         }
                         let base_type = format!("{{ {} }}", body_lines.join(", "));
                         current_name = Some(name);
@@ -801,20 +789,14 @@ impl<'a> CheckerState<'a> {
                     };
                     if let Some(previous_name) = current_name.take() {
                         typedefs.push((previous_name, current_info));
-                        current_info = JsdocTypedefInfo {
-                            base_type: None,
-                            properties: Vec::new(),
-                            template_params: Vec::new(),
-                            callback: None,
-                        };
+                        current_info = JsdocTypedefInfo::default();
                     }
                     typedefs.push((
                         local_name,
                         JsdocTypedefInfo {
                             base_type: Some(import_type),
-                            properties: Vec::new(),
-                            template_params: Vec::new(),
-                            callback: None,
+                            from_import_tag: true,
+                            ..Default::default()
                         },
                     ));
                 }
@@ -825,12 +807,7 @@ impl<'a> CheckerState<'a> {
                 if rest.starts_with("{{") && Self::parse_jsdoc_curly_type_expr(rest).is_none() {
                     if let Some(previous_name) = current_name.take() {
                         typedefs.push((previous_name, current_info));
-                        current_info = JsdocTypedefInfo {
-                            base_type: None,
-                            properties: Vec::new(),
-                            template_params: Vec::new(),
-                            callback: None,
-                        };
+                        current_info = JsdocTypedefInfo::default();
                     }
                     wrapped_typedef_body = Some(Vec::new());
                     let initial_body = rest.trim_start_matches("{{").trim();
@@ -864,12 +841,7 @@ impl<'a> CheckerState<'a> {
                 if let Some((name, base_type)) = Self::parse_jsdoc_typedef_definition(rest) {
                     if let Some(previous_name) = current_name.take() {
                         typedefs.push((previous_name, current_info));
-                        current_info = JsdocTypedefInfo {
-                            base_type: None,
-                            properties: Vec::new(),
-                            template_params: Vec::new(),
-                            callback: None,
-                        };
+                        current_info = JsdocTypedefInfo::default();
                     }
                     current_name = Some(name);
                     current_info.base_type = base_type;
@@ -901,14 +873,13 @@ impl<'a> CheckerState<'a> {
                     }
                     current_name = Some(name);
                     current_info = JsdocTypedefInfo {
-                        base_type: None,
-                        properties: Vec::new(),
                         template_params: template_params.clone(),
                         callback: Some(JsdocCallbackInfo {
                             params: Vec::new(),
                             return_type: None,
                             predicate: None,
                         }),
+                        ..Default::default()
                     };
                 }
                 continue;

@@ -1134,6 +1134,18 @@ impl<'a> CheckerState<'a> {
     /// This is an internal helper called by `resolve_jsdoc_reference` (step 3).
     /// Do NOT call this directly — use `resolve_jsdoc_reference` instead.
     fn resolve_jsdoc_type_name(&mut self, name: &str) -> Option<TypeId> {
+        // An `@import { value as V }` alias whose target is a value-only export
+        // names no type: used in a JSDoc type position it is a value-used-as-type
+        // error (TS2749), like a runtime `import { value }` used as `let x: value`.
+        // Decline it here — before the `@import` desugar's synthetic typedef
+        // `V -> import("./m").value` (3b) reaches the import-type resolver's TS2694
+        // terminal — so the unresolved-`@type` path emits TS2749 at the use site.
+        // A genuine `@typedef {import("./m").value} V` is not an import alias and
+        // keeps its (correct) TS2694. (See `jsdoc_type_name_is_value_only_import_alias`.)
+        if self.jsdoc_type_name_is_value_only_import_alias(name) {
+            return None;
+        }
+
         // 3a. Qualified names (e.g., `Namespace.Type.Member`)
         if name.contains('.')
             && let Some(resolved) = self.resolve_jsdoc_qualified_type_name(name)

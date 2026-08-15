@@ -4,13 +4,20 @@
 //! all JSDoc subsystem modules (parsing, resolution, params, diagnostics).
 
 /// Parsed `@typedef` or `@callback` definition from a JSDoc comment.
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub(crate) struct JsdocTypedefInfo {
     pub(crate) base_type: Option<String>,
     pub(crate) properties: Vec<JsdocPropertyTagInfo>,
     pub(crate) template_params: Vec<JsdocTemplateParamInfo>,
     /// If this is a `@callback` definition, holds the parsed parameter and return info.
     pub(crate) callback: Option<JsdocCallbackInfo>,
+    /// `true` when this entry was synthesized from a JSDoc `@import { m as V }`
+    /// alias rather than written as a `@typedef`/`@callback`. The two desugar to
+    /// the same `import("./m").m` base type, but only the `@import` form is an
+    /// import *alias*: naming a value-only member through it is TS2749 (a
+    /// value-used-as-type at the use site), whereas the `@typedef` form keeps
+    /// the import-type walk's TS2694. See `type_from_jsdoc_object_typedef`.
+    pub(crate) from_import_tag: bool,
 }
 #[derive(Clone)]
 pub(crate) struct JsdocTemplateParamInfo {
