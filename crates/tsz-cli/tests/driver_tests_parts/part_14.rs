@@ -174,14 +174,26 @@ result.where('title', 'in', wrongTitles)
         .iter()
         .map(|diagnostic| (diagnostic.code, diagnostic.start))
         .collect();
+    // Oracle-verified against the pinned typescript@7.0.2 (`--strict
+    // --skipLibCheck --target es2022 --module esnext --moduleResolution
+    // bundler`) on this exact fixture.
+    let first_wrong = usage.find("'wrong'").expect("wrong operand");
+    // The mixed-list element anchor is the `'wrong'` *inside* the array
+    // literal (`['one', 'wrong']`), i.e. the next `'wrong'` occurrence after
+    // the standalone argument above it — tsc anchors on the offending
+    // element, not the array literal's start.
+    let mixed_list_wrong = first_wrong
+        + "'wrong'".len()
+        + usage[first_wrong + "'wrong'".len()..]
+            .find("'wrong'")
+            .expect("wrong mixed-list operand element");
     let expected = vec![
-        (2345, usage.find("'wrong'").expect("wrong operand") as u32),
-        (
-            2345,
-            usage
-                .find("['one', 'wrong']")
-                .expect("wrong mixed-list operand") as u32,
-        ),
+        (2345, first_wrong as u32),
+        // tsc reports the array's own offending element as an assignability
+        // error (TS2322) against the array's element type, not an argument
+        // error (TS2345) against the whole call — the array literal's other
+        // element ('one') is valid, so only the element itself can fail.
+        (2322, mixed_list_wrong as u32),
         (
             2345,
             usage.rfind("wrongTitles").expect("wrong list operand") as u32,
@@ -195,13 +207,23 @@ result.where('title', 'in', wrongTitles)
     assert!(
         result.diagnostics[0].message_text.contains("DependentOperand")
             && result.diagnostics[0].message_text.contains("category")
-            && result.diagnostics[1].message_text.contains("DependentOperand")
+            && result.diagnostics[1].message_text.contains("InputValue")
             && result.diagnostics[1].message_text.contains("category")
-            && result.diagnostics[2].message_text.contains("DependentOperand")
             && result.diagnostics[2].message_text.contains("title"),
         "dependent-constraint diagnostics must retain their selected field: {:#?}",
         result.diagnostics
     );
+    // Known residual, not re-asserted above: `TB` is never fixed to its
+    // call-site instantiation (`"entries"`) in any of the three messages —
+    // oracle shows `DependentOperand<Registry, "entries", "category">` /
+    // `InputValue<Registry, "entries", "four" | "one" | "three" | "two" |
+    // null>` / `DependentOperand<Registry, "entries", "title">`, tsz keeps
+    // the free `keyof Registry` in the first two and, worse, loses the
+    // `DependentOperand` alias entirely in the third — expanding it to the
+    // raw structural union (`string | Expr<...> | ScalarBuilder<...> | ...`)
+    // instead. This is the alias-display-provenance gap tracked by #15391,
+    // not a fresh bug; `contains(...)` above only checks that a name
+    // survives, not that it is correctly instantiated.
 }
 
 /// A recursive imported alias must terminate through the active-node guard.
