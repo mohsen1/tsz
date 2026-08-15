@@ -129,6 +129,13 @@ impl<'a> CheckerState<'a> {
             effective_type_expr
         };
         if let Some(comment_start) = jsdoc_comment_start {
+            if self.report_jsdoc_param_value_root_used_as_namespace(
+                &effective_type_expr,
+                comment_start,
+                type_expr_offset,
+            ) {
+                return Some(tsz_solver::TypeId::ERROR);
+            }
             self.validate_jsdoc_param_namespace_member_errors(
                 &effective_type_expr,
                 comment_start,
@@ -380,6 +387,79 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn jsdoc_param_is_rest(jsdoc: &str, param_name: &str) -> bool {
         Self::extract_jsdoc_param_type_expr_with_span(jsdoc, param_name)
             .is_some_and(|(expr, _)| expr.starts_with("..."))
+    }
+
+    /// TS7 for `@param`: mirrors `report_jsdoc_value_root_used_as_namespace`'s
+    /// `@type` handling, which only ever ran for the `@type` tag path
+    /// (`jsdoc_type_annotation_for_node`). A JSDoc `@param {A.B}` whose root
+    /// `A` resolves to a plain runtime value (not a namespace/module, class,
+    /// enum, interface, type alias, or import alias) is the same "value used
+    /// as a namespace" shape tsc rejects regardless of which tag carries the
+    /// annotation — it emits TS2503 "Cannot find namespace 'A'" at the root.
+    /// Returns `true` when it emitted, so the caller treats the annotation
+    /// type as `error` instead of resolving the expando member into a
+    /// spurious `typeof`-based TS2339.
+    pub(crate) fn report_jsdoc_param_value_root_used_as_namespace(
+        &mut self,
+        type_expr: &str,
+        comment_start: u32,
+        type_expr_offset: usize,
+    ) -> bool {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+
+        let trimmed = type_expr.trim();
+        // Only bare dotted identifier chains; richer forms carry their own
+        // resolution and diagnostics.
+        if !Self::jsdoc_type_expr_is_plain_qualified_name(trimmed) {
+            return false;
+        }
+        let Some(root) = trimmed.split('.').next().filter(|s| !s.is_empty()) else {
+            return false;
+        };
+        if !self.jsdoc_qualified_root_is_plain_value(root) {
+            return false;
+        }
+        // A qualified JSDoc `@typedef` declares a real type reachable by its
+        // dotted name even when the root is a plain value; only a
+        // value-space expando member is the "used as a namespace" case. Same
+        // exemptions as the `@type` path.
+        if self.resolve_global_jsdoc_typedef_info(trimmed).is_some() {
+            return false;
+        }
+        if self.jsdoc_nameless_typedef_named_visible(trimmed) {
+            return false;
+        }
+
+        let message = format_message(diagnostic_messages::CANNOT_FIND_NAMESPACE, &[root]);
+        let start = self
+            .ctx
+            .arena
+            .source_files
+            .first()
+            .and_then(|source_file| {
+                let source_text = source_file.text.as_ref();
+                source_text
+                    .find(&format!("@param {{{type_expr}}}"))
+                    .map(|offset| offset + "@param {".len())
+            })
+            .map(|offset| offset as u32)
+            .unwrap_or(comment_start + type_expr_offset as u32 + 4);
+        let length = root.len() as u32;
+        let already_reported = self.ctx.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == diagnostic_codes::CANNOT_FIND_NAMESPACE
+                && diagnostic.start == start
+                && diagnostic.length == length
+                && diagnostic.message_text == message
+        });
+        if !already_reported {
+            self.error_at_position(
+                start,
+                length,
+                &message,
+                diagnostic_codes::CANNOT_FIND_NAMESPACE,
+            );
+        }
+        true
     }
 
     pub(crate) fn validate_jsdoc_param_namespace_member_errors(
