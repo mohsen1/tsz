@@ -1003,6 +1003,8 @@ mod ts18031_intersection_conflicting_property_tests;
 mod ts18032_intersection_private_brand_conflict_tests;
 #[path = "tests/ts18050_nullish_keyword_without_strict_null_checks_tests.rs"]
 mod ts18050_nullish_keyword_without_strict_null_checks_tests;
+#[path = "tests/ts2300_class_static_overload_namespace_export_merge_tests.rs"]
+mod ts2300_class_static_overload_namespace_export_merge_tests;
 #[path = "tests/ts2322_private_field_narrowing_write_tests.rs"]
 mod ts2322_private_field_narrowing_write_tests;
 #[path = "tests/ts2322_readonly_array_element_elaboration_tests.rs"]
