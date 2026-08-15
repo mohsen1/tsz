@@ -338,10 +338,16 @@ impl CheckerState<'_> {
         // this symbol, resolve it locally rather than routing to a conflicting
         // cross-file sibling's arena — otherwise a `.ts` sibling's `var x =
         // <number>` becomes the type of the JS file's own `x`, mis-reporting
-        // TS2339 on `x`'s own expando write (#17443). Scoped to checked JS.
+        // TS2339 on `x`'s own expando write (#17443). Scoped to checked JS, and
+        // only while this file's own declaration is canonical: once an earlier
+        // file already declares `x` as a conflicting `var`, that earlier
+        // declaration's type governs here too (#17544).
         if self.is_js_file()
             && self.ctx.compiler_options.check_js
             && self.current_file_owns_expando_container_declaration(sym_id)
+            && self.ctx.binder.get_symbol(sym_id).is_some_and(|symbol| {
+                self.current_file_expando_container_is_canonical(symbol.escaped_name.as_str())
+            })
         {
             return None; // Handle locally, don't delegate
         }

@@ -819,9 +819,16 @@ impl<'a> CheckerState<'a> {
         // sibling's type and mis-reporting `TS2339` on the container's own
         // `name.prop = …` expando write (#17443). JS-gated (like the sibling
         // delegation guard) so pure-TS resolution skips the ownership walk.
+        //
+        // Only when the current file's own declaration is itself the
+        // CANONICAL (earliest-processed) one: once an earlier file already
+        // declares `name` as a conflicting `var`, that earlier declaration's
+        // type governs property lookups even inside this file's own
+        // container (#17544).
         if self.is_js_file()
             && self.ctx.compiler_options.check_js
             && self.current_file_declares_expando_container_variable(name)
+            && self.current_file_expando_container_is_canonical(name)
         {
             return None;
         }
@@ -959,10 +966,12 @@ impl<'a> CheckerState<'a> {
         local_sym_id: SymbolId,
     ) -> Option<TypeId> {
         // See `cross_file_global_value_type_by_name`: the current file's own
-        // expando container wins over a cross-file `.ts` global (#17443).
+        // expando container wins over a cross-file `.ts` global (#17443),
+        // but only when this file's own declaration is canonical (#17544).
         if self.is_js_file()
             && self.ctx.compiler_options.check_js
             && self.current_file_declares_expando_container_variable(name)
+            && self.current_file_expando_container_is_canonical(name)
         {
             return None;
         }

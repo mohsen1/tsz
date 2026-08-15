@@ -74,6 +74,96 @@ impl<'a> CheckerState<'a> {
         })
     }
 
+    /// Whether the CURRENT file's own declaration of `name` is the
+    /// canonical (earliest-processed) global `var` declaration among every
+    /// file that declares `name`. tsc's cross-file `var` merge establishes
+    /// the PRIMARY declared type from whichever file's declaration binds
+    /// FIRST in program order — the same rule the cross-file half of
+    /// `TS2403` uses (`crates/tsz-checker/src/state/variable_checking/core.rs`,
+    /// "Only check against files with lower indices"). Once an earlier file
+    /// declares `name` as a plain (non-block-scoped, non-bare) `var`, that
+    /// earlier declaration's type governs property-lookup resolution
+    /// everywhere `name` is used — including inside a LATER file's own
+    /// expando-container declaration, even though the #17443 exemption
+    /// otherwise keeps a JS file's expando container authoritative for its
+    /// own writes (oracle-verified via `typescript@7.0.2`,
+    /// `TypeScript/tests/cases/conformance/salsa/jsContainerMergeTsDeclaration.ts`,
+    /// #17544). A file with no earlier conflicting declaration (or running
+    /// without the multi-file indices) is trivially canonical.
+    pub(crate) fn current_file_expando_container_is_canonical(&self, name: &str) -> bool {
+        let Some(entries) = self
+            .ctx
+            .global_file_locals_index
+            .as_ref()
+            .and_then(|idx| idx.get(name))
+        else {
+            return true;
+        };
+        let Some(all_arenas) = self.ctx.all_arenas.as_ref() else {
+            return true;
+        };
+        let Some(all_binders) = self.ctx.all_binders.as_ref() else {
+            return true;
+        };
+        let current_file_idx = self.ctx.current_file_idx;
+        for &(file_idx, other_sym_id) in entries.iter() {
+            if file_idx >= current_file_idx {
+                continue;
+            }
+            let Some(other_binder) = all_binders.get(file_idx) else {
+                continue;
+            };
+            if other_binder.is_external_module {
+                continue;
+            }
+            let Some(other_arena) = all_arenas.get(file_idx) else {
+                continue;
+            };
+            let Some(other_sym) = other_binder.get_symbol(other_sym_id) else {
+                continue;
+            };
+            for &other_decl in &other_sym.declarations {
+                if !other_decl.is_some() {
+                    continue;
+                }
+                let Some(other_node) = other_arena.get(other_decl) else {
+                    continue;
+                };
+                if other_node.kind != syntax_kind_ext::VARIABLE_DECLARATION {
+                    continue;
+                }
+                let decl_name_matches = other_arena
+                    .get_variable_declaration(other_node)
+                    .and_then(|vd| other_arena.get(vd.name))
+                    .and_then(|name_node| other_arena.get_identifier(name_node))
+                    .map(|id| other_arena.resolve_identifier_text(id))
+                    .is_some_and(|n| n == name);
+                if !decl_name_matches {
+                    continue;
+                }
+                use tsz_parser::parser::node_flags;
+                let is_block_scoped = other_arena
+                    .get_extended(other_decl)
+                    .and_then(|ext| other_arena.get(ext.parent))
+                    .filter(|parent| parent.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST)
+                    .is_some_and(|parent| node_flags::is_block_scoped(parent.flags as u32));
+                if is_block_scoped {
+                    continue;
+                }
+                let is_bare = other_arena
+                    .get_variable_declaration(other_node)
+                    .is_some_and(|d| d.type_annotation.is_none() && d.initializer.is_none());
+                if is_bare {
+                    continue;
+                }
+                // An earlier file declares a genuine, merge-eligible `var`
+                // of the same name: it is canonical, not the current file.
+                return false;
+            }
+        }
+        true
+    }
+
     /// Arena-parameterized core of [`is_expando_container_var_decl`], usable
     /// for a declaration that lives in a *different* file's arena. The
     /// project-wide expando-property index is looked up on `self` — it is
