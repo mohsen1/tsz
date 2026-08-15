@@ -80,9 +80,19 @@ tsz_ensure_large_ts_repo_fixture() {
     # Never let a directory that is not its own git checkout be treated as a
     # pinned fixture (see tsz_git_fixture_is_standalone_repo in
     # project-fixtures.sh — same #17469 aliasing hazard applies here).
+    # Repair before refusing, for the same cache-restore reason as the shared
+    # helper (#17565).
     if ! tsz_git_fixture_is_standalone_repo "$fixture_dir"; then
-        echo "ERROR: large-ts-repo fixture at ${fixture_dir} is not a standalone git checkout" >&2
-        return 1
+        echo "large-ts-repo fixture at ${fixture_dir} is not a standalone git checkout; recloning..." >&2
+        rm -rf "$fixture_dir"
+        if ! git clone --quiet --no-tags --depth 1 "$repo" "$fixture_dir"; then
+            echo "ERROR: failed to re-clone large-ts-repo fixture from ${repo}" >&2
+            return 1
+        fi
+        if ! tsz_git_fixture_is_standalone_repo "$fixture_dir"; then
+            echo "ERROR: large-ts-repo fixture at ${fixture_dir} is not a standalone git checkout after recloning" >&2
+            return 1
+        fi
     fi
 
     if [ -n "$ref" ]; then
