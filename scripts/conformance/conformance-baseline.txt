@@ -265,7 +265,7 @@ FAIL TypeScript/tests/cases/conformance/jsdoc/declarations/jsDeclarationsTypeRef
 FAIL TypeScript/tests/cases/conformance/jsdoc/errorOnFunctionReturnType.ts | expected:[TS2322,TS2355,TS2534] actual:[TS2322,TS2355,TS2534]
 FAIL TypeScript/tests/cases/conformance/jsdoc/extendsTagEmit.ts | expected:[TS8023] actual:[TS2304,TS8023]
 FAIL TypeScript/tests/cases/conformance/jsdoc/importTag15.ts | expected:[TS2823,TS2857] actual:[TS2857]
-FAIL TypeScript/tests/cases/conformance/jsdoc/importTag17.ts | expected:[TS2749] actual:[TS2694]
+FAIL TypeScript/tests/cases/conformance/jsdoc/importTag17.ts | expected:[TS2749] actual:[]
 FAIL TypeScript/tests/cases/conformance/jsdoc/jsdocDisallowedInTypescript.ts | expected:[TS1005,TS1109,TS1110,TS1128] actual:[TS1005,TS1110,TS17019,TS17020]
 FAIL TypeScript/tests/cases/conformance/jsdoc/jsdocFunctionType.ts | expected:[TS1005,TS2351,TS2683,TS2749,TS7006] actual:[TS1005,TS2351,TS2683,TS2749,TS7006]
 FAIL TypeScript/tests/cases/conformance/jsdoc/jsdocParamTag2.ts | expected:[TS8024] actual:[TS2339,TS8024]
@@ -322,9 +322,7 @@ FAIL TypeScript/tests/cases/conformance/salsa/defaultPropertyAssignedClassWithPr
 FAIL TypeScript/tests/cases/conformance/salsa/exportNestedNamespaces.ts | expected:[TS2339,TS2694] actual:[TS2339,TS7009]
 FAIL TypeScript/tests/cases/conformance/salsa/exportNestedNamespaces2.ts | expected:[TS2339] actual:[]
 FAIL TypeScript/tests/cases/conformance/salsa/inferringClassMembersFromAssignments7.ts | expected:[TS2339] actual:[]
-FAIL TypeScript/tests/cases/conformance/salsa/jsContainerMergeTsDeclaration.ts | expected:[TS2339,TS2403] actual:[TS2403]
 FAIL TypeScript/tests/cases/conformance/salsa/moduleExportAlias.ts | expected:[TS2339] actual:[]
-FAIL TypeScript/tests/cases/conformance/salsa/moduleExportAlias5.ts | expected:[TS2309,TS2339] actual:[TS2309,TS2339]
 FAIL TypeScript/tests/cases/conformance/salsa/moduleExportDuplicateAlias3.ts | expected:[TS2339,TS18048] actual:[TS2339,TS2349]
 FAIL TypeScript/tests/cases/conformance/salsa/moduleExportNestedNamespaces.ts | expected:[TS2339,TS2694] actual:[TS2339,TS7009]
 FAIL TypeScript/tests/cases/conformance/salsa/moduleExportWithExportPropertyAssignment2.ts | expected:[TS2309,TS2339] actual:[TS2309,TS2339]
@@ -363,8 +361,6 @@ FAIL TypeScript/tests/cases/conformance/types/members/objectTypeWithStringIndexe
 FAIL TypeScript/tests/cases/conformance/types/objectTypeLiteral/callSignatures/constructSignatureWithAccessibilityModifiersOnParameters2.ts | expected:[TS2300,TS2369,TS2687] actual:[TS2300,TS2369]
 FAIL TypeScript/tests/cases/conformance/types/objectTypeLiteral/callSignatures/restParametersOfNonArrayTypes.ts | expected:[TS1014,TS2370] actual:[TS1014,TS2370]
 FAIL TypeScript/tests/cases/conformance/types/objectTypeLiteral/callSignatures/stringLiteralTypesInImplementationSignatures2.ts | expected:[TS2300] actual:[TS1117]
-FAIL TypeScript/tests/cases/conformance/types/objectTypeLiteral/indexSignatures/numericIndexerConstrainsPropertyDeclarations.ts | expected:[TS2304,TS2322,TS2411] actual:[TS2304,TS2322,TS2411]
-FAIL TypeScript/tests/cases/conformance/types/objectTypeLiteral/indexSignatures/numericIndexerConstrainsPropertyDeclarations2.ts | expected:[TS2322,TS2411] actual:[TS2322,TS2411]
 FAIL TypeScript/tests/cases/conformance/types/objectTypeLiteral/indexSignatures/stringIndexerConstrainsPropertyDeclarations.ts | expected:[TS2322,TS2411] actual:[TS2322,TS2411]
 FAIL TypeScript/tests/cases/conformance/types/rest/genericRestParameters3.ts | expected:[TS2322,TS2345,TS2554,TS2741] actual:[TS2322,TS2345,TS2554]
 FAIL TypeScript/tests/cases/conformance/types/rest/objectRest.ts | expected:[TS2403,TS2537,TS2739] actual:[TS2537]
@@ -10691,6 +10687,7 @@ PASS TypeScript/tests/cases/conformance/salsa/inferringClassMembersFromAssignmen
 PASS TypeScript/tests/cases/conformance/salsa/inferringClassMembersFromAssignments8.ts
 PASS TypeScript/tests/cases/conformance/salsa/inferringClassStaticMembersFromAssignments.ts
 PASS TypeScript/tests/cases/conformance/salsa/jsContainerMergeJsContainer.ts
+PASS TypeScript/tests/cases/conformance/salsa/jsContainerMergeTsDeclaration.ts
 PASS TypeScript/tests/cases/conformance/salsa/jsContainerMergeTsDeclaration2.ts
 PASS TypeScript/tests/cases/conformance/salsa/jsContainerMergeTsDeclaration3.ts
 PASS TypeScript/tests/cases/conformance/salsa/jsdocConstructorFunctionTypeReference.ts
@@ -10709,6 +10706,7 @@ PASS TypeScript/tests/cases/conformance/salsa/mixedPropertyElementAccessAssignme
 PASS TypeScript/tests/cases/conformance/salsa/moduleExportAlias2.ts
 PASS TypeScript/tests/cases/conformance/salsa/moduleExportAlias3.ts
 PASS TypeScript/tests/cases/conformance/salsa/moduleExportAlias4.ts
+PASS TypeScript/tests/cases/conformance/salsa/moduleExportAlias5.ts
 PASS TypeScript/tests/cases/conformance/salsa/moduleExportAliasElementAccessExpression.ts
 PASS TypeScript/tests/cases/conformance/salsa/moduleExportAliasExports.ts
 PASS TypeScript/tests/cases/conformance/salsa/moduleExportAliasImported.ts
@@ -11287,6 +11285,8 @@ PASS TypeScript/tests/cases/conformance/types/objectTypeLiteral/constructSignatu
 PASS TypeScript/tests/cases/conformance/types/objectTypeLiteral/constructSignatures/constructSignaturesWithOverloadsThatDifferOnlyByReturnType.ts
 PASS TypeScript/tests/cases/conformance/types/objectTypeLiteral/indexSignatures/multipleNumericIndexers.ts
 PASS TypeScript/tests/cases/conformance/types/objectTypeLiteral/indexSignatures/multipleStringIndexers.ts
+PASS TypeScript/tests/cases/conformance/types/objectTypeLiteral/indexSignatures/numericIndexerConstrainsPropertyDeclarations.ts
+PASS TypeScript/tests/cases/conformance/types/objectTypeLiteral/indexSignatures/numericIndexerConstrainsPropertyDeclarations2.ts
 PASS TypeScript/tests/cases/conformance/types/objectTypeLiteral/indexSignatures/numericIndexingResults.ts
 PASS TypeScript/tests/cases/conformance/types/objectTypeLiteral/indexSignatures/stringIndexerConstrainsPropertyDeclarations2.ts
 PASS TypeScript/tests/cases/conformance/types/objectTypeLiteral/indexSignatures/stringIndexingResults.ts
