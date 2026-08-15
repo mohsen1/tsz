@@ -755,7 +755,36 @@ impl<'a> InferenceContext<'a> {
         let has_type_annotation_candidate = filtered_no_never
             .iter()
             .any(|candidate| candidate.source_is_type_annotation);
-        let resolved = if priority_implies_combination || all_from_index_signatures {
+        // ReturnType candidates are the one member of the combination set that
+        // does NOT always union in tsc: two directly-passed callback arguments
+        // that both contribute a ReturnType-priority candidate for the same type
+        // parameter are NOT combined — `declare function k(a: () => T, b: () =>
+        // T): T; k(() => "s", () => 1)` fixes `T = string` from the first
+        // callback and reports `TS2322` on the second (#17553), the "first wins"
+        // rule tsc's `getCommonSupertype` already applies to disjoint bare
+        // primitives elsewhere in this file (naked/array-element candidates).
+        // Scoped tightly to avoid disturbing the index-signature re-union gate
+        // below (which also keys on `priority_implies_combination`): only fires
+        // with 2+ ReturnType candidates that are all disjoint bare primitives
+        // and none index-signature-sourced.
+        let return_type_disjoint_primitives_first_wins = filtered_no_never.len() > 1
+            && !has_index_signature_candidates
+            && filtered_no_never
+                .first()
+                .is_some_and(|c| c.priority == InferencePriority::ReturnType)
+            && filtered_no_never.iter().all(|c| {
+                matches!(
+                    c.type_id,
+                    TypeId::STRING
+                        | TypeId::NUMBER
+                        | TypeId::BOOLEAN
+                        | TypeId::BIGINT
+                        | TypeId::SYMBOL
+                )
+            });
+        let resolved = if return_type_disjoint_primitives_first_wins {
+            candidate_types[0]
+        } else if priority_implies_combination || all_from_index_signatures {
             // Mirror tsc's `getCovariantInference` for the
             // `PriorityImpliesCombination` branch: build the subtype-reduced
             // union of the candidates rather than the common supertype.
