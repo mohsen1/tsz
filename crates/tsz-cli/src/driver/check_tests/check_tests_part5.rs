@@ -695,3 +695,91 @@ interface LibBase {
             "expected exactly one TS18016: {diagnostics:?}"
         );
     }
+
+    // ------------------------------------------------------------------
+    // `export default class` self-referential type-parameter constraint (#17570).
+    //
+    // Structural rule: `export default class C` binds a synthetic `default`
+    // export ALIAS in addition to `C`'s own class symbol. The alias must not take
+    // over the class declaration node's binder symbol; if it does, every lookup
+    // that reaches the class through its declaration node resolves `C` through the
+    // value alias to `typeof C` (the constructor/static side) instead of the class
+    // instance type. A self-referential constraint declared on a *property
+    // initializer* function expression (`static m = <R extends C>(...) => ...`,
+    // also instance-field and `function` forms) is the observable trigger: `R`'s
+    // constraint `C` then appears to have no instance members and a spurious
+    // TS2344 fires. `tsc` is clean here.
+    //
+    // Owner: binder `export default` handling
+    // (`crates/tsz-binder/src/modules/import_export.rs`) — a *named* declaration
+    // clause keeps its own node symbol; only anonymous clauses / bare-identifier
+    // default exports point the clause node at the synthetic alias.
+    //
+    // Names are arbitrary (no `Schema`/`mark`/`make` text) so the outcome tracks
+    // the `export default class` + property-initializer shape, not a spelling.
+    // `tsc`-clean, oracle-verified against typescript 6.0.2.
+    #[test]
+    fn export_default_class_self_referential_constraint_sees_instance_members() {
+        let options = resolved_options_for_es2015_strict_test();
+        let base = std::path::Path::new("/");
+        let diagnostics = collect_test_diagnostics_with_options(
+            &[(
+                "/widget.ts",
+                r#"
+type TagOf<Q extends { readonly tag: unknown }> = Q["tag"];
+export default class Widget<V = any> {
+  readonly tag!: V;
+  static build = <Q extends Widget>(make: (n: number) => TagOf<Q>): Q => null as any;
+  spawn = <Q extends Widget>(make: (n: number) => TagOf<Q>): Q => null as any;
+  static grow = function <Q extends Widget>(make: (n: number) => TagOf<Q>): Q {
+    return null as any;
+  };
+}
+"#,
+            )],
+            &options,
+            base,
+        );
+
+        // The self-referential constraint `Q extends Widget` must see `Widget`'s
+        // instance member `tag`, so `TagOf<Q>` is well-formed — no spurious TS2344.
+        assert!(
+            diagnostics.is_empty(),
+            "expected a fully clean (tsc-parity) check; got: {diagnostics:#?}"
+        );
+    }
+
+    // Negative control for #17570: the fix restores the class's instance members
+    // to the constraint check — it must NOT blanket-suppress TS2344. A type
+    // argument that genuinely fails a utility's constraint, used inside the same
+    // `export default class` static-initializer context, must still report exactly
+    // one TS2344 (`tsc`: `number` does not satisfy `{ readonly tag: unknown }`).
+    #[test]
+    fn export_default_class_unsatisfiable_constraint_still_reports_ts2344() {
+        let options = resolved_options_for_es2015_strict_test();
+        let base = std::path::Path::new("/");
+        let diagnostics = collect_test_diagnostics_with_options(
+            &[(
+                "/widget.ts",
+                r#"
+type TagOf<Q extends { readonly tag: unknown }> = Q["tag"];
+export default class Widget<V = any> {
+  readonly tag!: V;
+  static bad = (): TagOf<number> => 0 as any;
+}
+"#,
+            )],
+            &options,
+            base,
+        );
+
+        assert_eq!(
+            diagnostics.len(),
+            1,
+            "expected exactly one diagnostic; got: {diagnostics:#?}"
+        );
+        assert_eq!(
+            diagnostics[0].code, 2344,
+            "expected TS2344 for the genuinely unsatisfiable constraint; got: {diagnostics:#?}"
+        );
+    }

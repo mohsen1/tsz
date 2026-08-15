@@ -403,8 +403,28 @@ impl BinderState {
                     self.file_locals.set("default".to_string(), default_sym_id);
                 }
 
-                Arc::make_mut(&mut self.node_symbols)
-                    .insert(export.export_clause.0, default_sym_id);
+                // Point the export clause node at the synthetic `default` alias
+                // ONLY when the clause does not already own its own declaration
+                // symbol. A *named* declaration clause (`export default class Foo`,
+                // `export default function foo`) was already bound above, so its
+                // node symbol is the class/function symbol itself. Overwriting it
+                // with the value alias corrupts every later lookup that reaches the
+                // declaration through its node — most visibly a self-referential
+                // type-parameter constraint (`static make = <R extends Foo>(...)`),
+                // which then resolves `Foo` through the value alias to the
+                // constructor/static side instead of the class instance type and
+                // emits a spurious TS2344. Cross-file default-import resolution does
+                // not depend on this mapping: it reaches the declaration through the
+                // "default" export-table entry (`default_sym_id`), whose own
+                // value_declaration still points at the clause.
+                let clause_is_named_declaration = local_name.is_some()
+                    && arena
+                        .get(export.export_clause)
+                        .is_some_and(|clause_node| Self::is_declaration(clause_node.kind));
+                if !clause_is_named_declaration {
+                    Arc::make_mut(&mut self.node_symbols)
+                        .insert(export.export_clause.0, default_sym_id);
+                }
 
                 // Also mark the underlying local symbol as exported if it exists.
                 // For `export default class Foo`, get_identifier_name returns None
