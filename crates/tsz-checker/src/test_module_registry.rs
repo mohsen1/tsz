@@ -665,6 +665,8 @@ mod local_type_vs_type_parameter_declaration_space_tests;
 mod logical_assignment_member_narrowing_tests;
 #[path = "tests/loop_self_referential_property_read_tests.rs"]
 mod loop_self_referential_property_read_tests;
+#[path = "tests/mapped_conditional_infer_false_branch_canonical_tests.rs"]
+mod mapped_conditional_infer_false_branch_canonical_tests;
 #[path = "tests/mapped_infer_with_substitution_tests.rs"]
 mod mapped_infer_with_substitution_tests;
 #[path = "tests/mapped_intersection_excess_property_tests.rs"]
