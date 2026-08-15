@@ -56,9 +56,24 @@ import { measurementProfileStatus } from "./measurement-profile.mjs";
 // infisical/payload/medusa (category:application, promoted to benchmark_set
 // "required" by #13775). Only rows that are required AND part of the required
 // timing shards belong in the readiness required-set.
+//
+// RUNTIME_GATED_REQUIRED_ROWS is a distinct, narrower exclusion: rows that
+// ARE present in bench-vs-tsgo.sh (so they must stay out of
+// BENCH_RUNNER_EXCLUDED_ROWS, whose structural-presence contract is enforced
+// by test-project-rows.mjs) but whose runner function only executes behind a
+// runtime kill-switch. `nextjs` (`run_nextjs_benchmarks`) only runs when
+// NEXTJS_BENCHMARK_ENABLED=1 or an explicit --filter reaches it — a
+// kill-switch for an unstable sparse fixture — so the daily scheduled run
+// (no filter) never produces a result for it. Treating it as
+// required-and-measured made it permanently "missing" and tripped this
+// gate's unconditional missing-row check on every scheduled run, so
+// bench.yml's readiness step never reported ready=true (#17561).
+export const RUNTIME_GATED_REQUIRED_ROWS = new Set(["nextjs"]);
+
 const REQUIRED_MEASURED_ROWS = REQUIRED_PROJECT_ROWS.filter(
   (name) =>
     !BENCH_RUNNER_EXCLUDED_ROWS.has(name) &&
+    !RUNTIME_GATED_REQUIRED_ROWS.has(name) &&
     PROJECT_ROWS_BY_NAME[name]?.category !== "application",
 );
 const REQUIRED_MEASURED_ROW_SET = new Set(REQUIRED_MEASURED_ROWS);
