@@ -1315,24 +1315,33 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             .is_some_and(|tp_data| tp_data.constraint == NodeIndex::NONE)
     }
 
-    pub(super) fn is_this_type_allowed(
+    pub(crate) fn is_this_type_allowed(
         &self,
         this_node_idx: tsz_parser::parser::NodeIndex,
     ) -> bool {
+        is_this_type_allowed_in(self.ctx, this_node_idx)
+    }
+}
+
+/// Walk up from `this_node_idx` looking for the node that supplies a `this`
+/// type. Shared by the TS-syntax `THIS_TYPE` branch and the JSDoc
+/// `@return {this}` gate, which both need the same answer from a
+/// `CheckerContext` alone.
+pub(crate) fn is_this_type_allowed_in(
+    ctx: &crate::CheckerContext,
+    this_node_idx: tsz_parser::parser::NodeIndex,
+) -> bool {
+    {
         use tsz_parser::parser::syntax_kind_ext;
 
         let mut child_idx = this_node_idx;
-        let mut current = self
-            .ctx
-            .arena
-            .get_extended(this_node_idx)
-            .map(|ext| ext.parent);
+        let mut current = ctx.arena.get_extended(this_node_idx).map(|ext| ext.parent);
 
         while let Some(parent_idx) = current {
             if parent_idx.is_none() {
                 break;
             }
-            let Some(node) = self.ctx.arena.get(parent_idx) else {
+            let Some(node) = ctx.arena.get(parent_idx) else {
                 break;
             };
 
@@ -1356,7 +1365,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                     // We must check the modifier list (not node.flags, which holds
                     // node_flags — a different namespace where bit 8 is CONTAINS_THIS,
                     // not STATIC).
-                    let is_static = self.node_has_static_modifier(parent_idx, node);
+                    let is_static = node_has_static_modifier_in(ctx, node);
                     if is_static {
                         return false;
                     }
@@ -1368,7 +1377,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 syntax_kind_ext::CONSTRUCTOR => {
                     // 'this' type not allowed in constructor parameters or return type,
                     // but it IS allowed in the constructor body.
-                    if let Some(c) = self.ctx.arena.get_constructor(node)
+                    if let Some(c) = ctx.arena.get_constructor(node)
                         && child_idx == c.body
                     {
                         return true; // The body provides a 'this' context
@@ -1391,43 +1400,34 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             }
 
             child_idx = parent_idx;
-            current = self
-                .ctx
-                .arena
-                .get_extended(parent_idx)
-                .map(|ext| ext.parent);
+            current = ctx.arena.get_extended(parent_idx).map(|ext| ext.parent);
         }
 
         false
     }
+}
 
-    /// Check whether a class/interface member node has the `static` modifier
-    /// by inspecting its declaration data's modifier list.
-    fn node_has_static_modifier(
-        &self,
-        _node_idx: tsz_parser::parser::NodeIndex,
-        node: &tsz_parser::parser::node::Node,
-    ) -> bool {
+/// Check whether a class/interface member node has the `static` modifier
+/// by inspecting its declaration data's modifier list.
+pub(crate) fn node_has_static_modifier_in(
+    ctx: &crate::CheckerContext,
+    node: &tsz_parser::parser::node::Node,
+) -> bool {
+    {
         use tsz_parser::parser::syntax_kind_ext;
 
         let modifiers = match node.kind {
-            syntax_kind_ext::METHOD_DECLARATION => self
-                .ctx
-                .arena
-                .get_method_decl(node)
-                .map(|m| m.modifiers.clone()),
-            syntax_kind_ext::PROPERTY_DECLARATION => self
-                .ctx
+            syntax_kind_ext::METHOD_DECLARATION => {
+                ctx.arena.get_method_decl(node).map(|m| m.modifiers.clone())
+            }
+            syntax_kind_ext::PROPERTY_DECLARATION => ctx
                 .arena
                 .get_property_decl(node)
                 .map(|p| p.modifiers.clone()),
-            syntax_kind_ext::GET_ACCESSOR | syntax_kind_ext::SET_ACCESSOR => self
-                .ctx
-                .arena
-                .get_accessor(node)
-                .map(|a| a.modifiers.clone()),
-            syntax_kind_ext::INDEX_SIGNATURE => self
-                .ctx
+            syntax_kind_ext::GET_ACCESSOR | syntax_kind_ext::SET_ACCESSOR => {
+                ctx.arena.get_accessor(node).map(|a| a.modifiers.clone())
+            }
+            syntax_kind_ext::INDEX_SIGNATURE => ctx
                 .arena
                 .get_index_signature(node)
                 .map(|i| i.modifiers.clone()),
@@ -1437,7 +1437,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         };
 
         if let Some(mods) = modifiers {
-            self.ctx.arena.is_static(&mods)
+            ctx.arena.is_static(&mods)
         } else {
             false
         }

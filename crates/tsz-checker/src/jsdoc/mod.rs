@@ -43,6 +43,7 @@ pub(crate) mod diagnostics_import_type_constraints;
 pub(crate) mod diagnostics_imports;
 pub(crate) mod diagnostics_return_type;
 pub(crate) mod diagnostics_templates;
+pub(crate) mod diagnostics_this_type;
 pub(crate) mod diagnostics_typedef_name;
 pub(crate) mod lookup;
 pub(crate) mod params;

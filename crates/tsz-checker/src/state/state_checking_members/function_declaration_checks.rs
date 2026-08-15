@@ -318,6 +318,7 @@ impl<'a> CheckerState<'a> {
         if !is_closure && self.is_js_file() {
             self.check_jsdoc_overload_implicit_any_return(func_idx);
         }
+        self.report_jsdoc_return_this_type_not_allowed(func_idx);
 
         // Check parameter initializer placement for implementation vs signature (TS2371)
         self.check_non_impl_parameter_initializers(

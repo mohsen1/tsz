@@ -1837,6 +1837,9 @@ path = "tests/jsdoc_default_import_expando_qualifier_ts2503_tests.rs"
 name = "jsdoc_param_value_root_ts2503_tests"
 path = "tests/jsdoc_param_value_root_ts2503_tests.rs"
 [[test]]
+name = "jsdoc_return_this_type_ts2526_tests"
+path = "tests/jsdoc_return_this_type_ts2526_tests.rs"
+[[test]]
 name = "override_intersection_display_tests"
 path = "tests/override_intersection_display_tests.rs"
 [[test]]
