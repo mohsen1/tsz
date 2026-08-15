@@ -725,9 +725,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             crate::type_queries::contains_infer_types_db(self.interner, target.extends_type)
                 || crate::type_queries::contains_infer_types_db(self.interner, target.true_type)
                 || crate::type_queries::contains_infer_types_db(self.interner, target.false_type);
-        let target_has_generic_extends =
-            crate::visitor::contains_type_parameters(self.interner, target.check_type)
-                && crate::visitor::contains_type_parameters(self.interner, target.extends_type);
+        // `contains_type_parameters` matches both `TypeParameter` and `Infer`, so a
+        // `false` here means `check_type` is fully concrete — no free type parameters
+        // and no `infer` variables.
+        let check_type_is_generic =
+            crate::visitor::contains_type_parameters(self.interner, target.check_type);
+        let target_has_generic_extends = check_type_is_generic
+            && crate::visitor::contains_type_parameters(self.interner, target.extends_type);
 
         // Strategy 1: Distributive constraint evaluation for target-position conditionals.
         //
@@ -778,6 +782,30 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         if target_contains_unbound_infer || target_has_generic_extends {
+            // A target-position conditional whose CHECK type is fully concrete —
+            // no free type parameters and no `infer` variables — is statically
+            // determinable even when its extends clause still carries an `infer`
+            // pattern: the concrete check either matches the pattern (true branch,
+            // binding the infer) or fails it (false branch). Such a conditional
+            // only survives here in deferred form when its extends application
+            // base was transiently unresolved at the time the enclosing mapped
+            // type was evaluated — e.g. a homomorphic unwrapper
+            // `{ [K in keyof T]: T[K] extends Promise<infer U> ? U : T[K] }`
+            // stores the `string`-keyed property as
+            // `string extends Promise<infer U> ? U : string` before `Promise`'s
+            // lib base has materialized. The base *is* resolvable in this relation
+            // context, so reduce the conditional to its real branch and relate
+            // against that, rather than bailing to a spurious `False` — the
+            // reflexivity-breaking `string` not assignable to `string`, i.e.
+            // `M` not assignable to `M` (#17537). When evaluation cannot make
+            // progress (the base is still unresolved here too) the conditional is
+            // unchanged and the original deferred `False` stands.
+            if !check_type_is_generic {
+                let evaluated = self.evaluate_type(target_id);
+                if evaluated != target_id {
+                    return self.check_subtype(source, evaluated);
+                }
+            }
             return SubtypeResult::False;
         }
 
