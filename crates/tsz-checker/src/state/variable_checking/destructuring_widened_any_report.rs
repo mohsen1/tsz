@@ -150,7 +150,25 @@ impl<'a> CheckerState<'a> {
                 // spurious TS2537. The initializer is still evaluated above for its own
                 // checks; only the type override is skipped.
                 if parent_type != TypeId::ANY {
-                    if element_type == TypeId::ANY || element_type == TypeId::UNKNOWN {
+                    // A genuinely `any`-typed default (`= fallback` where
+                    // `fallback: any`) always widens the element to `any`,
+                    // matching tsc's union-with-initializer rule: `any` as a
+                    // union member absorbs every other member
+                    // (`db.union2`/`normalize_union` already encode this), so
+                    // the `related` short-circuit below — which exists to
+                    // avoid a redundant union call when the default's type is
+                    // already covered by the slot type — must not apply here.
+                    // `destructuring_relation_outcome(any, concreteSlotType)`
+                    // reports `related` (any is assignable to anything), which
+                    // would otherwise keep `element_type` at the concrete,
+                    // un-widened slot type and let a nested computed key
+                    // (`{ [k]: y } = fallback`) see a source with no index
+                    // signature — a false TS2538 (oracle-verified: tsc widens
+                    // to `any` here even under `--strict false`).
+                    if element_type == TypeId::ANY
+                        || element_type == TypeId::UNKNOWN
+                        || init_type == TypeId::ANY
+                    {
                         element_type = init_type;
                     } else if !self
                         .destructuring_relation_outcome(init_type, element_type)
