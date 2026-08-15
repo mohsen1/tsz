@@ -161,6 +161,55 @@ impl<'a> CheckerState<'a> {
             .then_some(source)
     }
 
+    /// Walk from a binding pattern up through enclosing binding elements to
+    /// the owning `VariableDeclaration`/`Parameter` and report whether that
+    /// root declaration has **no** effective type annotation.
+    ///
+    /// Mirrors tsc's `getEffectiveTypeAnnotationNode(walkUpBindingElementsAndPatterns(...))`
+    /// gate on `getTypeForBindingElement`: only when no annotation exists
+    /// anywhere up the chain does a binding element's default value widen the
+    /// type consulted for its nested pattern (`getUnionType([type,
+    /// initializerType])`, unconditional on `strictNullChecks`). An annotated
+    /// root keeps the parent-derived type as-is (only conditionally stripping
+    /// `undefined` under `strictNullChecks`).
+    pub(crate) fn binding_pattern_root_lacks_type_annotation(
+        &self,
+        pattern_idx: NodeIndex,
+    ) -> bool {
+        let Some(parent_idx) = self
+            .ctx
+            .arena
+            .get_extended(pattern_idx)
+            .map(|ext| ext.parent)
+        else {
+            return false;
+        };
+        let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
+            return false;
+        };
+        match parent_node.kind {
+            k if k == syntax_kind_ext::PARAMETER => self
+                .ctx
+                .arena
+                .get_parameter(parent_node)
+                .is_some_and(|param| param.type_annotation.is_none()),
+            k if k == syntax_kind_ext::VARIABLE_DECLARATION => self
+                .ctx
+                .arena
+                .get_variable_declaration(parent_node)
+                .is_some_and(|decl| decl.type_annotation.is_none()),
+            k if k == syntax_kind_ext::BINDING_ELEMENT => self
+                .ctx
+                .arena
+                .get_extended(parent_idx)
+                .map(|ext| ext.parent)
+                .is_some_and(|enclosing_pattern_idx| {
+                    self.binding_pattern_root_lacks_type_annotation(enclosing_pattern_idx)
+                }),
+            _ => false,
+        }
+    }
+
     fn should_suppress_missing_property_for_literal_default(
         &self,
         pattern_idx: NodeIndex,

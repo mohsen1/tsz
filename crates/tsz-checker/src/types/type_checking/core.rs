@@ -1424,10 +1424,12 @@ impl<'a> CheckerState<'a> {
         //   (e.g. "foo" stays as "foo", not widened to string)
         // This must happen unconditionally (not gated on assignability checks)
         // because the initializer's type is computed and cached on first access.
+        let mut default_value_type_for_nested = None;
         if element_data.initializer.is_some() && element_type != TypeId::ANY {
             let request = request.read().contextual(element_type);
             let default_value_type =
                 self.get_type_of_node_with_request(element_data.initializer, &request);
+            default_value_type_for_nested = Some(default_value_type);
 
             // TypeScript checks default value assignability for binding elements
             // regardless of whether the property type includes undefined.
@@ -1503,12 +1505,37 @@ impl<'a> CheckerState<'a> {
             && (name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
                 || name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN)
         {
-            // When the binding element has a default value (e.g., `= {}`),
-            // strip `undefined` from the element type before recursing.
-            // The default guarantees the value won't be undefined at runtime,
-            // so nested property lookups should not see `| undefined`.
-            let nested_type = if element_data.initializer.is_some() && self.ctx.strict_null_checks()
-            {
+            // When the binding element has a default value (e.g., `= {}`):
+            // - If no explicit type annotation governs this declaration
+            //   (walking up through enclosing binding elements to the root
+            //   `Parameter`/`VariableDeclaration`), tsc's `getTypeForBindingElement`
+            //   widens the type consulted for the nested pattern to
+            //   `union(elementType, defaultValueType)` — unconditional on
+            //   `strictNullChecks` (oracle-verified: `let [{ [k]: y } = fallback] =
+            //   [{}]` with `fallback: any` reports no TS2538 for the `any` key even
+            //   under `--strict false`, because the union collapses to `any`; the
+            //   same shape WITH an explicit annotation on the outer pattern does
+            //   NOT widen and keeps reporting TS2538).
+            // - Otherwise (an explicit annotation governs this declaration), strip
+            //   `undefined` from the element type instead: the default guarantees
+            //   the value won't be undefined at runtime, so nested property lookups
+            //   should not see `| undefined`.
+            let root_lacks_annotation =
+                self.binding_pattern_root_lacks_type_annotation(pattern_idx);
+            let nested_type = if element_data.initializer.is_some() && root_lacks_annotation {
+                let default_value_type = match default_value_type_for_nested {
+                    Some(ty) => ty,
+                    None => {
+                        let request = request.read().contextual_opt(None);
+                        self.get_type_of_node_with_request(element_data.initializer, &request)
+                    }
+                };
+                crate::query_boundaries::binding_patterns::binding_pattern_initializer_union_type(
+                    self.ctx.types,
+                    element_type,
+                    default_value_type,
+                )
+            } else if element_data.initializer.is_some() && self.ctx.strict_null_checks() {
                 crate::query_boundaries::flow::narrow_destructuring_default(
                     self.ctx.types,
                     element_type,

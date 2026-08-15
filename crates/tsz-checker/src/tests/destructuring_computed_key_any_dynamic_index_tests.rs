@@ -201,3 +201,47 @@ const { [flagKey]: pulled } = emptyHost;
 "#,
     );
 }
+
+// ---------------------------------------------------------------------------
+// A default on the ENCLOSING binding element (not the property itself) must
+// widen the type consulted for a nested computed key, matching tsc's
+// `getTypeForBindingElement` union-with-initializer rule. Regression for the
+// `destructuringEvaluationOrder.ts` conformance false positive this family
+// introduced: an `any`-typed default on an array element makes the nested
+// object pattern's computed-key check see `any`, not the un-widened element
+// type, even though the two types are trivially "related" (which previously
+// short-circuited the widen in `assign_binding_pattern_symbol_types_with_request_reporting`).
+// ---------------------------------------------------------------------------
+
+#[test]
+fn any_key_over_array_element_default_widened_by_any_fallback_is_clean() {
+    assert_no_ts2538(
+        r#"
+declare const untypedKey: any;
+declare const fallback: any;
+let [{ [untypedKey]: pulled } = fallback] = [{}];
+"#,
+    );
+}
+
+#[test]
+fn any_key_over_array_element_default_widened_by_concrete_fallback_still_reports_ts2538() {
+    assert_has_ts2538(
+        r#"
+declare const untypedKey: any;
+declare const fallback: { b: number };
+let [{ [untypedKey]: pulled } = fallback] = [{}];
+"#,
+    );
+}
+
+#[test]
+fn any_key_over_annotated_array_element_default_still_reports_ts2538() {
+    assert_has_ts2538(
+        r#"
+declare const untypedKey: any;
+declare const fallback: any;
+let [{ [untypedKey]: pulled } = fallback]: [{}] = [{}];
+"#,
+    );
+}
