@@ -13,8 +13,7 @@
 use crate::operations::iterators::get_iterator_info;
 use crate::type_queries::get_return_type;
 use crate::types::{
-    IntrinsicKind, ObjectFlags, ObjectShape, ObjectShapeId, PropertyInfo, SymbolRef, TypeId,
-    Visibility,
+    ObjectFlags, ObjectShape, ObjectShapeId, PropertyInfo, SymbolRef, TypeId, Visibility,
 };
 use crate::utils;
 use crate::visitor::{
@@ -269,9 +268,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// this fallback allows the check to pass if the global Object type provides a
     /// compatible property.
     pub(crate) fn get_object_base_property(&mut self, name: Atom) -> Option<PropertyInfo> {
-        let object_type = self.resolver.get_boxed_type(IntrinsicKind::Object)?;
-        let object_type = self.evaluate_type(object_type);
-        let shape_id = object_shape_id(self.interner, object_type)?;
+        let shape_id = self.object_base_prototype_shape_id()?;
         let shape = self.interner.object_shape(shape_id);
         self.lookup_property(&shape.properties, Some(shape_id), name)
             .cloned()
