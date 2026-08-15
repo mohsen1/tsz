@@ -169,6 +169,8 @@ mod class_implements_whole_type_relation_routing_arch_tests;
 mod class_member_circular_return_tests;
 #[path = "tests/class_member_modifier_grammar_first_error_wins_tests.rs"]
 mod class_member_modifier_grammar_first_error_wins_tests;
+#[path = "tests/class_namespace_merge_static_overload_duplicate_ts2300_tests.rs"]
+mod class_namespace_merge_static_overload_duplicate_ts2300_tests;
 #[path = "tests/class_namespace_static_relation_routing_arch_tests.rs"]
 mod class_namespace_static_relation_routing_arch_tests;
 #[path = "tests/class_static_init_self_new_tests.rs"]
