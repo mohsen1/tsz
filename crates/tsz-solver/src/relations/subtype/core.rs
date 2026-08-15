@@ -25,8 +25,9 @@ use crate::operations::AssignabilityChecker;
 #[cfg(test)]
 use crate::types::*;
 use crate::types::{
-    IntrinsicKind, LiteralValue, ObjectFlags, ObjectShape, PropertyInfo, RelationCacheKey,
-    SymbolRef, TemplateSpan, TypeData, TypeId, TypeListId, TypeParamBinderKey, TypeParamInfo,
+    IntrinsicKind, LiteralValue, ObjectFlags, ObjectShape, ObjectShapeId, PropertyInfo,
+    RelationCacheKey, SymbolRef, TemplateSpan, TypeData, TypeId, TypeListId, TypeParamBinderKey,
+    TypeParamInfo,
 };
 use crate::visitor::{
     TypeVisitor, application_id, array_element_type, callable_shape_id, conditional_type_id,
@@ -661,6 +662,24 @@ pub struct SubtypeChecker<'a, R: TypeResolver = NoopResolver> {
     /// thousands of times. Cache the shape once per checker so those
     /// checks avoid rebuilding method signatures and property vectors.
     pub(crate) apparent_primitive_shapes: [Option<Arc<ObjectShape>>; 5],
+    /// The interned object-shape id of the global `Object` prototype, cached once
+    /// per checker for the implicit-`Object.prototype`-member fallback in
+    /// [`get_object_base_property`](Self::get_object_base_property).
+    ///
+    /// That fallback fires for every *absent, required, public* target property
+    /// during object subtyping — a hot path under union-member simplification,
+    /// where a single checker runs an `O(N^2)` pairwise scan (see
+    /// `remove_redundant_members`). The global `Object` type is program-invariant
+    /// for the checker's lifetime (it depends only on the interner/resolver, not
+    /// on any per-pair state or checker flag), so resolving + `evaluate_type`-ing
+    /// it and locating its shape on every call is pure repeated work.
+    ///
+    /// Keyed on `resolver.resolver_generation()` — like the sibling `eval_cache`
+    /// — so a resolver mutation that bumps the generation re-derives the shape
+    /// rather than serving a stale one. The inner `None` records that the
+    /// resolved type carries no object shape, so that miss is not re-derived
+    /// either; the outer `None` means "not yet computed".
+    pub(crate) object_base_shape_id: Option<(u64, Option<ObjectShapeId>)>,
     /// When true (default), non-generic functions may be compared to generic functions
     /// by erasing the target's type parameters to their constraints. This matches tsc's
     /// default `eraseGenerics` behavior for structural type comparison.
@@ -853,6 +872,7 @@ impl<'a> SubtypeChecker<'a, NoopResolver> {
             provisional_rest_union_function_depth: 0,
             eval_cache: FxHashMap::default(),
             apparent_primitive_shapes: std::array::from_fn(|_| None),
+            object_base_shape_id: None,
             type_param_equivalences: Vec::new(),
             maybe_keys: Vec::new(),
             unresolved_lazy_relation_events: RelationEventCounter::new(),
@@ -915,6 +935,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             provisional_rest_union_function_depth: 0,
             eval_cache: FxHashMap::default(),
             apparent_primitive_shapes: std::array::from_fn(|_| None),
+            object_base_shape_id: None,
             type_param_equivalences: Vec::new(),
             maybe_keys: Vec::new(),
             unresolved_lazy_relation_events: RelationEventCounter::new(),
@@ -939,6 +960,25 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     pub fn with_class_check(mut self, check: &'a dyn Fn(SymbolRef) -> bool) -> Self {
         self.is_class_symbol = Some(check);
         self
+    }
+
+    /// Interned shape id of the global `Object` prototype, memoized per resolver
+    /// generation. See [`object_base_shape_id`](Self::object_base_shape_id) for
+    /// why this is cached and how the generation key behaves.
+    pub(crate) fn object_base_prototype_shape_id(&mut self) -> Option<ObjectShapeId> {
+        let generation = self.resolver.resolver_generation();
+        if let Some((cached_generation, cached)) = self.object_base_shape_id
+            && cached_generation == generation
+        {
+            return cached;
+        }
+        let resolved = self
+            .resolver
+            .get_boxed_type(IntrinsicKind::Object)
+            .map(|object_type| self.evaluate_type(object_type))
+            .and_then(|object_type| object_shape_id(self.interner, object_type));
+        self.object_base_shape_id = Some((generation, resolved));
+        resolved
     }
 
     /// Configure how `any` is treated during subtype checks.
