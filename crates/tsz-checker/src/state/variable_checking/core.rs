@@ -658,6 +658,38 @@ impl<'a> CheckerState<'a> {
                         (merged, canonical)
                     })
                     .unwrap_or((false, false));
+                // Augment callable types with this declaration's own file-local
+                // expando properties (`x.a = ...`) regardless of merge-winner
+                // status: the "here has type" operand of a TS2403 message
+                // (`raw_declared_type`, computed from `final_type` below) must
+                // reflect THIS declaration's own expando members even when a
+                // different file's declaration is the merge-canonical one
+                // (`tsc`'s oracle behavior; #17558). `expando_assignment_walk_root`
+                // and `expando_root_symbol_has_type_annotation` resolve against
+                // this file's own declaration of `sym_id` (arena-safe against a
+                // foreign `value_declaration`), so running this unconditionally
+                // does not risk the cross-arena corruption a merge-winner-only
+                // gate used to guard against.
+                if !is_merged_named_type_with_variable && let Some(ref name) = var_name {
+                    final_type = self.augment_callable_type_with_expandos(name, sym_id, final_type);
+                    if self.ctx.is_js_file() {
+                        final_type =
+                            self.augment_object_type_with_define_properties(name, final_type);
+                        if var_decl.initializer.is_some()
+                            && self
+                                .direct_commonjs_module_export_assignment_rhs(
+                                    self.ctx.arena,
+                                    var_decl.initializer,
+                                )
+                                .is_some()
+                        {
+                            final_type = self.ctx.types.factory().intersection2(
+                                final_type,
+                                self.current_file_commonjs_namespace_type(),
+                            );
+                        }
+                    }
+                }
                 // For var redeclarations, do NOT overwrite the symbol type.
                 // The first declaration's type is canonical. Overwriting with a
                 // subsequent declaration's inferred type can corrupt recursive
@@ -667,28 +699,6 @@ impl<'a> CheckerState<'a> {
                     && (is_canonical_value_declaration || is_js_require_binding)
                     && (!is_redeclaration || is_js_require_binding)
                 {
-                    // Augment callable types with expando properties before caching.
-                    if let Some(ref name) = var_name {
-                        final_type =
-                            self.augment_callable_type_with_expandos(name, sym_id, final_type);
-                        if self.ctx.is_js_file() {
-                            final_type =
-                                self.augment_object_type_with_define_properties(name, final_type);
-                            if var_decl.initializer.is_some()
-                                && self
-                                    .direct_commonjs_module_export_assignment_rhs(
-                                        self.ctx.arena,
-                                        var_decl.initializer,
-                                    )
-                                    .is_some()
-                            {
-                                final_type = self.ctx.types.factory().intersection2(
-                                    final_type,
-                                    self.current_file_commonjs_namespace_type(),
-                                );
-                            }
-                        }
-                    }
                     self.cache_symbol_type(sym_id, final_type);
                 }
             }

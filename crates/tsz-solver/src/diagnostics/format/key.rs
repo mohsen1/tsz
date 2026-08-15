@@ -171,14 +171,23 @@ impl<'a> TypeFormatter<'a> {
                     if self.symbol_renders_as_typeof_name(sym_id) {
                         return format!("typeof {name}").into();
                     }
-                    // A function symbol whose callable carries appended value
-                    // properties (expando assignments) renders structurally in
-                    // tsc (`{ (): void; declared: number; }`), never as the
-                    // bare name; `prototype` is not an appended property.
+                    // A function symbol — or a `var`/`let`/`const` initialized
+                    // with a function/arrow/class expression (a JS expando
+                    // container, e.g. `var x = function(){}; x.a = ...;`) —
+                    // whose callable carries appended value properties
+                    // (expando assignments) renders structurally in tsc
+                    // (`{ (): void; declared: number; }`), never as the bare
+                    // name; `prototype` is not an appended property.
                     let expando_augmented_function = self
                         .symbol_arena
                         .and_then(|arena| arena.get(sym_id))
-                        .is_some_and(|sym| sym.has_flags(tsz_binder::symbol_flags::FUNCTION))
+                        .is_some_and(|sym| {
+                            sym.has_flags(tsz_binder::symbol_flags::FUNCTION)
+                                || sym.has_any_flags(
+                                    tsz_binder::symbol_flags::FUNCTION_SCOPED_VARIABLE
+                                        | tsz_binder::symbol_flags::BLOCK_SCOPED_VARIABLE,
+                                )
+                        })
                         && shape
                             .properties
                             .iter()
