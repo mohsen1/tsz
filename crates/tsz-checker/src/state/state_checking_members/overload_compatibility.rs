@@ -511,6 +511,31 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Mirror of `declaration_is_overload_signature_in_arena` for the opposite
+    /// case: a function/method/constructor declaration that carries a body.
+    fn declaration_is_function_family_implementation_in_arena(
+        &self,
+        arena: &tsz_parser::NodeArena,
+        decl_idx: NodeIndex,
+    ) -> bool {
+        let Some(decl_node) = arena.get(decl_idx) else {
+            return false;
+        };
+
+        match decl_node.kind {
+            k if k == syntax_kind_ext::FUNCTION_DECLARATION => arena
+                .get_function(decl_node)
+                .is_some_and(|f| f.body.is_some()),
+            k if k == syntax_kind_ext::METHOD_DECLARATION => arena
+                .get_method_decl(decl_node)
+                .is_some_and(|m| m.body.is_some()),
+            k if k == syntax_kind_ext::CONSTRUCTOR => arena
+                .get_constructor(decl_node)
+                .is_some_and(|c| c.body.is_some()),
+            _ => false,
+        }
+    }
+
     /// Check overload compatibility: implementation must be assignable to all overload signatures.
     ///
     /// Reports TS2394 when an implementation signature is not compatible with its overload signatures.
@@ -536,6 +561,28 @@ impl<'a> CheckerState<'a> {
         let Some(symbol) = self.ctx.binder.get_symbol(impl_sym_id) else {
             return;
         };
+
+        // When this symbol already has 2+ local (same-file) implementations,
+        // tsc treats the whole declaration group as a duplicate-implementation
+        // family (TS2393, owned by the duplicate-identifier pass) rather than
+        // validating overload/implementation compatibility (TS2394) — e.g. a
+        // namespace reopened with two separate bodied `function m` exports.
+        // Skip entirely so this pass does not layer a spurious TS2394 on top.
+        let local_impl_count = symbol
+            .declarations
+            .iter()
+            .copied()
+            .filter(|&decl_idx| {
+                let Some(arena) = self.declaration_arena_for_symbol(impl_sym_id, decl_idx) else {
+                    return false;
+                };
+                std::ptr::eq(arena, self.ctx.arena)
+                    && self.declaration_is_function_family_implementation_in_arena(arena, decl_idx)
+            })
+            .count();
+        if local_impl_count >= 2 {
+            return;
+        }
 
         // Fast path: if there are no overload declarations for this symbol,
         // skip expensive signature lowering/compatibility setup entirely.

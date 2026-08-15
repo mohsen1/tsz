@@ -1033,6 +1033,8 @@ mod ts2353_generic_constraint_tests;
 mod ts2383_overload_flag_agreement_tests;
 #[path = "tests/ts2391_default_export_overload_group_tests.rs"]
 mod ts2391_default_export_overload_group_tests;
+#[path = "tests/ts2393_namespace_reopened_duplicate_implementation_tests.rs"]
+mod ts2393_namespace_reopened_duplicate_implementation_tests;
 #[path = "tests/ts2445_protected_access_via_subclass_this_tests.rs"]
 mod ts2445_protected_access_via_subclass_this_tests;
 #[path = "tests/ts2507_extends_non_constructor_value_base_tests.rs"]
