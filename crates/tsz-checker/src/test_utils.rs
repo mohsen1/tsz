@@ -3,7 +3,7 @@
 //! Provides common parse→bind→check pipeline helpers to eliminate
 //! duplicated test setup boilerplate across checker test modules.
 
-use crate::context::{CheckerOptions, LibContext};
+use crate::context::CheckerOptions;
 use crate::diagnostics::Diagnostic;
 use crate::query_boundaries::common::TypeInterner;
 use crate::state::CheckerState;
@@ -1144,116 +1144,16 @@ pub fn load_typescript_fixture(rel_path: &str) -> String {
         })
 }
 
-/// Parse, bind, and type-check `source` with the given `lib_files` wired
-/// into the binder and checker.
-///
-/// Mirrors [`check_source`] but routes through
-/// [`tsz_binder::BinderState::bind_source_file_with_libs`] and
-/// `Context::set_lib_contexts` / `set_actual_lib_file_count`. Use this
-/// when tests rely on built-in types (`Promise`, `Array`, `Symbol`,
-/// DOM, …); for tests that don't need libs, prefer [`check_source`]
-/// which is faster.
-///
-/// Like [`check_source`], calls `enable_source_file_test_pragmas()` so
-/// `// @ts-expect-error`-style pragmas are honored.
-pub fn check_source_with_libs(
-    source: &str,
-    file_name: &str,
-    options: CheckerOptions,
-    lib_files: &[Arc<LibFile>],
-) -> Vec<Diagnostic> {
-    if lib_files.is_empty() {
-        return with_checked_source(source, file_name, options, None, |checker| {
-            checker.ctx.diagnostics.clone()
-        });
-    }
-    with_checked_source_with_libs(source, file_name, options, lib_files, |checker, _types| {
-        checker.ctx.diagnostics.clone()
-    })
-}
-
-/// Run the canonical parse → bind → check pipeline **with `lib_files` wired
-/// in**, handing the post-check `CheckerState` and the live [`TypeInterner`]
-/// to `extract`. Shared body for the libs-based public helpers so any change
-/// to lib-context setup applies to all of them, and so callers that need the
-/// interner (e.g. type-count probes) don't have to copy the pipeline.
-///
-/// Callers that want the no-libs fast path should special-case
-/// `lib_files.is_empty()` and route to [`with_checked_source`]; this helper
-/// always installs lib contexts (an empty list when `lib_files` is empty).
-fn with_checked_source_with_libs<R>(
-    source: &str,
-    file_name: &str,
-    options: CheckerOptions,
-    lib_files: &[Arc<LibFile>],
-    extract: impl FnOnce(&CheckerState<'_>, &TypeInterner) -> R,
-) -> R {
-    let mut parser = ParserState::new(file_name.to_string(), source.to_string());
-    let source_file = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file_with_libs(parser.get_arena(), source_file, lib_files);
-
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        file_name.to_string(),
-        options,
-    );
-    checker.enable_source_file_test_pragmas();
-
-    let lib_contexts: Vec<LibContext> = lib_files
-        .iter()
-        .map(|lib| LibContext {
-            arena: Arc::clone(&lib.arena),
-            binder: Arc::clone(&lib.binder),
-        })
-        .collect();
-    checker.ctx.set_lib_contexts(lib_contexts);
-    checker.ctx.set_actual_lib_file_count(lib_files.len());
-
-    checker.check_source_file(source_file);
-    extract(&checker, &types)
-}
-
-/// Parse, bind, and type-check `source` with `lib_files`, returning the
-/// diagnostics alongside the number of types interned during the check
-/// ([`TypeInterner::len`]).
-///
-/// This is the in-process analogue of `tsz --extendedDiagnostics`'s
-/// "Types" counter: it exposes how much of the lib-type graph a check
-/// materialized. Lazy lib-interface heritage/member work (#12101, #13933,
-/// #13935, #13936) is measured exactly by this count — a regression that
-/// re-eagerly materializes a receiver's transitive `extends` closure shows
-/// up here as a multi-thousand-type jump even when diagnostics stay
-/// byte-identical. The absolute value depends on the bundled stripped lib
-/// assets (so it differs from the `dist` binary's full-lib numbers), but it
-/// is deterministic for a fixed lib set, which is what a regression guard
-/// needs.
-pub fn check_source_with_libs_type_count(
-    source: &str,
-    file_name: &str,
-    options: CheckerOptions,
-    lib_files: &[Arc<LibFile>],
-) -> (Vec<Diagnostic>, usize) {
-    with_checked_source_with_libs(source, file_name, options, lib_files, |checker, types| {
-        (checker.ctx.diagnostics.clone(), types.len())
-    })
-}
-
-/// `(code, message_text)` projection of [`check_source_with_libs`].
-pub fn check_source_with_libs_code_messages(
-    source: &str,
-    file_name: &str,
-    options: CheckerOptions,
-    lib_files: &[Arc<LibFile>],
-) -> Vec<(u32, String)> {
-    diagnostic_code_messages(check_source_with_libs(
-        source, file_name, options, lib_files,
-    ))
-}
+/// Lib-backed single-file test helpers (`check_source_with_libs` and its
+/// projections, plus the production-faithful
+/// [`check_source_with_libs_shared_def_store`]). Extracted to [`lib_based`]
+/// to keep this module under the file-size cap (§19); re-exported so existing
+/// call sites are unchanged.
+mod lib_based;
+pub use lib_based::{
+    check_source_with_libs, check_source_with_libs_code_messages,
+    check_source_with_libs_shared_def_store, check_source_with_libs_type_count,
+};
 
 /// Multi-file project pipeline helpers. Extracted to [`multi_file`] to keep
 /// this module under the file-size cap (§19); re-exported here so existing

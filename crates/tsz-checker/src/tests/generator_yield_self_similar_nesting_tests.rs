@@ -37,20 +37,35 @@
 //! | `AsyncIterable`/`AsyncIterator`/`Iterator`/`Set`/`Iterable` | `async function*` | TS2345 | TS2345 |
 //! | `Promise<string>`, `string[]`, `{ a: string }` | `async function*` | TS2345 | TS2345 |
 //!
-//! The harness loses the diagnostic on exactly the **self-similar** rows — the
-//! ones where the yielded operand's alias is the same alias as the container's.
-//! One alias away (`Generator` inside an *async* container) it agrees with the
-//! CLI. So the gap is narrow and structural, not a blanket "the harness is
-//! weaker".
+//! The *plain* `check_source_with_libs` harness lost the diagnostic on exactly
+//! the **self-similar** rows — the ones where the yielded operand's alias is
+//! the same alias as the container's. One alias away (`Generator` inside an
+//! *async* container) it agreed with the CLI. So the gap was narrow and
+//! structural, not a blanket "the harness is weaker".
 //!
-//! The `#[ignore]`d rows below assert the CLI's (and `tsc`'s) answer.
+//! ## Mechanism (located, #16125) and the fix
 //!
-//! **This suite used to claim they could not be fixed from a checker or solver
-//! path.** That claim is retracted: it was never measured, and the boundary
-//! measured since (#16125) contradicts it. Do not read the ignores as
-//! "unreachable" — read them as "open, mechanism not yet located".
+//! The mechanism is **not** in the checker or solver relation: the real CLI
+//! reports `TS2345` on the exact repro. The divergence was that the plain
+//! unit harness built its `CheckerState` with a bare `TypeInterner` and **no**
+//! shared `DefinitionStore`, whereas the production driver attaches the
+//! program's shared `DefinitionStore` to the `QueryCache`
+//! (`crates/tsz-core/src/parallel/core/checking.rs`) so the solver's
+//! `DefId`-keyed cross-arena declaration identity (issue #14344,
+//! `TSZ_XARENA_BASE_DECL`) is available. Without the store, the lib generic
+//! `AsyncGenerator`/`Generator`'s base cannot be unified across the user arena
+//! and the lib arena, its variance goes unmeasured
+//! (`try_variance_fast_path → None`), and the same-base relation falls back to
+//! a lossy structural walk that wrongly accepts the mismatched nested yield.
 //!
-//! What has actually been measured, all on `check_source_with_libs`:
+//! The fix is to route this suite through
+//! [`crate::test_utils::check_source_with_libs_shared_def_store`], the
+//! production-faithful harness that attaches a shared `DefinitionStore` — no
+//! checker or solver change. Every row below (previously `#[ignore]`d or a
+//! live control) now matches the CLI and `tsc`.
+//!
+//! What the *plain* `check_source_with_libs` harness measured (the gap this
+//! suite now avoids by using the shared-`DefinitionStore` helper):
 //!
 //! | `d`'s declaration | harness |
 //! | --- | --- |
@@ -80,11 +95,13 @@
 //! container was reduced to its structural shape at the call return without a
 //! display back-reference to its `AsyncGenerator<...>` application. The
 //! anonymous form always held the correct container type; the relation-side
-//! self-similar loss on both forms is the separate, still-open #16125 defect.
+//! self-similar loss on both forms was the #16125 defect, now fixed by routing
+//! this suite through the shared-`DefinitionStore` harness (see above).
 //!
-//! Three directions are measured dead, so they are not worth re-attempting
-//! without new evidence (each was built, measured on this suite, and reverted;
-//! all three left the counts byte-identical):
+//! Three *solver/checker-side* directions were measured dead before the root
+//! cause (the missing harness `DefinitionStore`) was found — kept so they are
+//! not re-attempted (each was built, measured on this suite, and reverted; all
+//! three left the counts byte-identical):
 //!
 //! 1. Minting the `Application` base in `unannotated_generator_return_type`
 //!    through the name-verified `get_or_create_def_id_for_symbol_name` instead
@@ -103,11 +120,15 @@
 //! cross-checked against `tsz --noEmit --strict --pretty false`.
 
 use crate::context::CheckerOptions;
-use crate::test_utils::{check_source_with_libs, load_default_lib_files};
+use crate::test_utils::{check_source_with_libs_shared_def_store, load_default_lib_files};
 
 fn strict_codes(source: &str) -> Vec<u32> {
     let libs = load_default_lib_files();
-    check_source_with_libs(
+    // Route through the production-faithful, shared-`DefinitionStore` harness:
+    // the self-similar rows below need the solver's cross-arena `DefId`
+    // identity for the lib generic (`AsyncGenerator`/`Generator`), which the
+    // plain `check_source_with_libs` path lacks. See the module doc and #16125.
+    check_source_with_libs_shared_def_store(
         source,
         "test.ts",
         CheckerOptions {
@@ -128,9 +149,6 @@ fn strict_codes(source: &str) -> Vec<u32> {
 /// generator expression out of the picture entirely, so a reader cannot
 /// mistake this for an inference problem.
 #[test]
-#[ignore = "#16125 open: the CLI and tsc report TS2345 here, the harness does \
-            not. Mechanism not located; see the module doc for the measured \
-            boundary and the three dead directions"]
 fn harness_sees_async_generator_operand_in_async_container() {
     let codes = strict_codes(
         r#"
@@ -153,9 +171,6 @@ wants(d());
 /// rather than anything async-specific: no `await`, no `[Symbol.asyncIterator]`,
 /// same divergence.
 #[test]
-#[ignore = "#16125 open: the CLI and tsc report TS2345 here, the harness does \
-            not. Mechanism not located; see the module doc for the measured \
-            boundary and the three dead directions"]
 fn harness_sees_sync_generator_operand_in_sync_container() {
     let codes = strict_codes(
         r#"
@@ -414,7 +429,6 @@ wants(d());
 /// two rows above; pinned so a future fix cannot be keyed on anything in the
 /// user's naming without this row staying red.
 #[test]
-#[ignore = "#16125 open: same family as the two rows above, renamed binders"]
 fn renamed_binders_async_generator_operand_in_async_container() {
     let codes = strict_codes(
         r#"
@@ -437,7 +451,6 @@ accepts(emit());
 /// variable declaration loses it too, as TS2322. Pins the finding that
 /// argument-position resolution is not the owner.
 #[test]
-#[ignore = "#16125 open: the same loss on a plain variable declaration (TS2322)"]
 fn variable_declaration_target_loses_the_self_similar_mismatch() {
     let codes = strict_codes(
         r#"
@@ -458,7 +471,6 @@ const forceMismatch: AsyncGenerator<AsyncGenerator<number>> = d();
 /// Depth 3. Pins that a fix has to hold when the interface nests inside itself
 /// more than once, not just at the first level.
 #[test]
-#[ignore = "#16125 open: same family at nesting depth 3"]
 fn depth_three_self_similar_nesting_reports() {
     let codes = strict_codes(
         r#"
