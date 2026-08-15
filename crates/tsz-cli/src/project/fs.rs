@@ -1,6 +1,6 @@
 use anyhow::{Context, Result, bail};
 use globset::{Glob, GlobSet, GlobSetBuilder};
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 use tsz_common::file_extensions::{
     default_discovery_include_patterns, include_pattern_has_supported_extension, is_json_file,
@@ -60,7 +60,7 @@ impl FileDiscoveryOptions {
 }
 
 pub fn discover_ts_files(options: &FileDiscoveryOptions) -> Result<Vec<PathBuf>> {
-    let mut files = BTreeSet::new();
+    let mut seen: HashSet<PathBuf> = HashSet::new();
     let mut explicit_files = Vec::new();
 
     for file in &options.files {
@@ -73,12 +73,21 @@ pub fn discover_ts_files(options: &FileDiscoveryOptions) -> Result<Vec<PathBuf>>
         let is_valid_explicit_file = is_ts_file(&path)
             || is_js_file(&path)
             || (options.resolve_json_module && is_json_file(&path));
-        if is_valid_explicit_file && files.insert(path.clone()) {
+        if is_valid_explicit_file && seen.insert(path.clone()) {
             explicit_files.push(path);
         }
     }
 
     let include_patterns = build_include_patterns(options);
+    // tsc's `matchFiles` (compiler/utilities.ts) buckets each discovered file by
+    // the FIRST include pattern that matches it and flattens the buckets in
+    // include-list order — it does not merge-then-alphabetize matches across
+    // patterns. Because the harness's (and tsc's own multi-extension) include
+    // list puts `*.ts`-family patterns ahead of `*.js`-family ones, all `.ts`
+    // files sort ahead of all `.js` files even when a `.js` file's name is
+    // alphabetically earlier. Preserve that per-pattern bucket order here
+    // instead of collapsing every match into one alphabetically sorted set.
+    let mut buckets: Vec<Vec<PathBuf>> = vec![Vec::new(); include_patterns.len()];
     if !include_patterns.is_empty() {
         let include_set =
             build_globset(&include_patterns).context("failed to build include globset")?;
@@ -106,9 +115,11 @@ pub fn discover_ts_files(options: &FileDiscoveryOptions) -> Result<Vec<PathBuf>>
                     continue;
                 }
 
-                if !matches_discovery_patterns(path, &options.base_dir, &walk_root, &include_set) {
+                let Some(bucket_index) =
+                    first_matching_pattern_index(path, &options.base_dir, &walk_root, &include_set)
+                else {
                     continue;
-                }
+                };
 
                 if let Some(exclude) = exclude_set.as_ref()
                     && matches_discovery_patterns(path, &options.base_dir, &walk_root, exclude)
@@ -118,30 +129,35 @@ pub fn discover_ts_files(options: &FileDiscoveryOptions) -> Result<Vec<PathBuf>>
 
                 let resolved =
                     resolve_discovered_path(path, &options.base_dir, options.follow_links);
-                files.insert(resolved);
+                if seen.insert(resolved.clone()) {
+                    buckets[bucket_index].push(resolved);
+                }
             }
         }
     }
+    // Files within a single bucket come from directory-tree order, which is
+    // not guaranteed alphabetical; sort within each bucket (tsc sorts
+    // directory entries alphabetically during its own walk) without merging
+    // across buckets.
+    for bucket in &mut buckets {
+        bucket.sort();
+    }
+    let discovered: Vec<PathBuf> = buckets.into_iter().flatten().collect();
 
     // tsc excludes `.d.ts` files from the program when a corresponding `.ts`
     // (or `.tsx`) source file exists in the same directory.  This prevents the
     // declaration file from shadowing the source file's exports.
-    let files = exclude_shadowed_declaration_files(files);
+    let discovered = exclude_shadowed_declaration_files(discovered);
 
     // tsc also excludes a wildcard-matched `.js`/`.jsx` (or `.mjs`/`.cjs`)
     // file when a same-stem, higher-priority source file is present in the
     // same directory — a same-named `a.ts`/`a.js` pair resolves to one
     // module, not two. Explicitly listed files (CLI positional args or a
     // tsconfig `files` array) are never shadowed.
-    let mut files = exclude_shadowed_js_files(files, &explicit_files);
+    let discovered = exclude_shadowed_js_files(discovered, &explicit_files);
 
-    let mut list = Vec::with_capacity(files.len());
-    for path in explicit_files {
-        if files.remove(&path) {
-            list.push(path);
-        }
-    }
-    list.extend(files);
+    let mut list = explicit_files;
+    list.extend(discovered);
     Ok(list)
 }
 
@@ -236,6 +252,32 @@ fn matches_discovery_patterns(
         || path
             .strip_prefix(walk_root)
             .is_ok_and(|rel| patterns.is_match(rel))
+}
+
+/// Like [`matches_discovery_patterns`], but returns the index of the
+/// earliest-listed include pattern that matches `path` instead of a bool.
+/// Mirrors tsc's `matchFiles`, which assigns each file to the bucket of the
+/// first include regex that matches it.
+fn first_matching_pattern_index(
+    path: &Path,
+    base_dir: &Path,
+    walk_root: &Path,
+    patterns: &GlobSet,
+) -> Option<usize> {
+    patterns
+        .matches(path)
+        .into_iter()
+        .min()
+        .or_else(|| {
+            path.strip_prefix(base_dir)
+                .ok()
+                .and_then(|rel| patterns.matches(rel).into_iter().min())
+        })
+        .or_else(|| {
+            path.strip_prefix(walk_root)
+                .ok()
+                .and_then(|rel| patterns.matches(rel).into_iter().min())
+        })
 }
 
 fn build_include_patterns(options: &FileDiscoveryOptions) -> Vec<String> {
@@ -458,7 +500,7 @@ fn ensure_file_exists(path: &Path, original: &Path) -> Result<()> {
 /// with the same stem, tsc excludes the declaration file from the program.
 /// This replicates that behavior: for each `.d.ts`/`.d.mts`/`.d.cts` file in
 /// the set, drop it if the corresponding source extension is also present.
-fn exclude_shadowed_declaration_files(files: BTreeSet<PathBuf>) -> BTreeSet<PathBuf> {
+fn exclude_shadowed_declaration_files(files: Vec<PathBuf>) -> Vec<PathBuf> {
     // Quick exit when the set is small enough that no shadowing is possible.
     if files.len() <= 1 {
         return files;
@@ -503,10 +545,7 @@ const JS_SHADOW_FAMILIES: &[&[&str]] = &[
 /// files (CLI positional args or a tsconfig `files` array) are never removed,
 /// even when a higher-priority sibling shadows them — only what a lower-
 /// priority *wildcard* candidate loses to a higher-priority one changes.
-fn exclude_shadowed_js_files(
-    files: BTreeSet<PathBuf>,
-    explicit_files: &[PathBuf],
-) -> BTreeSet<PathBuf> {
+fn exclude_shadowed_js_files(files: Vec<PathBuf>, explicit_files: &[PathBuf]) -> Vec<PathBuf> {
     if files.len() <= 1 {
         return files;
     }
@@ -1002,6 +1041,59 @@ mod tests {
             .map(|path| path.file_name().unwrap().to_string_lossy().to_string())
             .collect();
         assert_eq!(names, vec!["b.js", "a.ts"]);
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_discover_wildcard_matched_ts_precedes_alphabetically_earlier_js() {
+        // tsc's `matchFiles` (compiler/utilities.ts) buckets each discovered
+        // file by the FIRST include pattern that matches it and flattens the
+        // buckets in include-list order; it does not merge every match into
+        // one alphabetically sorted list. Because `*.ts`-family patterns are
+        // listed ahead of `*.js`-family ones (the exact list used by tsc's own
+        // test harness, and by tsz's default discovery), every `.ts` file in
+        // a project must sort ahead of every `.js` file, even when the `.js`
+        // file's name is alphabetically earlier. This determines which
+        // cross-file `var` declaration a mixed `.ts`/`.js` project treats as
+        // primary for TS2403 declaration-merge checks.
+        let dir = std::env::temp_dir().join("tsz_fs_test_ts_before_js_wildcard_order");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("a.js"), "var x = function(){};").unwrap();
+        fs::write(dir.join("b.ts"), "var x = 1;").unwrap();
+
+        let options = FileDiscoveryOptions {
+            base_dir: dir.clone(),
+            files: vec![],
+            files_explicitly_set: false,
+            include: Some(
+                [
+                    "*.ts", "*.tsx", "*.js", "*.jsx", "**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx",
+                ]
+                .into_iter()
+                .map(String::from)
+                .collect(),
+            ),
+            exclude: None,
+            out_dir: None,
+            follow_links: false,
+            allow_js: true,
+            resolve_json_module: false,
+        };
+
+        let result = discover_ts_files(&options).unwrap();
+        let names: Vec<_> = result
+            .iter()
+            .map(|path| path.file_name().unwrap().to_string_lossy().to_string())
+            .collect();
+        assert_eq!(
+            names,
+            vec!["b.ts".to_string(), "a.js".to_string()],
+            "a `.ts` file must sort ahead of an alphabetically-earlier `.js` file when \
+             discovered through a multi-extension include list, matching tsc's per-pattern \
+             bucketing instead of a global alphabetical merge"
+        );
 
         let _ = fs::remove_dir_all(&dir);
     }
