@@ -87,7 +87,10 @@ active campaigns.
 - Diagnostic conformance: exact `12,585 / 12,585`.
 - JavaScript emit: exact `13,530 / 13,530`. Declaration emit: exact
   `1,669 / 1,669`.
-- Fourslash: `6,558 / 6,562` today; the remaining 4 are Hold work.
+- Fourslash: exact `6,562 / 6,562` (confirmed via a full
+  `scripts/fourslash/run-fourslash.sh` run at exact head `50b76b8`,
+  2026-08-16; the previously tracked 4-test gap, including
+  `importNameCodeFix_importType`, is resolved on `main`).
 - `scripts/conformance/conformance-accepted-regressions.txt` stays empty or
   every entry carries fresh exact-head CI evidence. Currently `14` entries:
   pay down or re-justify; removal requires exact-head aggregate CI showing the
