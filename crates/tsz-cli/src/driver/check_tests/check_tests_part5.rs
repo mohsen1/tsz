@@ -695,3 +695,126 @@ interface LibBase {
             "expected exactly one TS18016: {diagnostics:?}"
         );
     }
+
+    // ------------------------------------------------------------------
+    // #17570: `export default class` + a static/instance function-expression
+    // property whose own generic signature is constrained by the enclosing
+    // class collapses to a spurious TS2344.
+    //
+    // Structural rule: a type-parameter constraint that names the enclosing
+    // class, referenced from inside that class's own property-initializer
+    // expression, must resolve against the class's (not-yet-published)
+    // instance type the same way tsc's checker does — deferring to the
+    // class's normal member-check pass rather than substituting whatever
+    // partial/constructor-side type happens to be cached mid-build. tsz's
+    // constructor-shape builder (`class_type::constructor`) fully checks a
+    // static property initializer eagerly, before the class's own instance
+    // type is published, so a self-referential constraint reads a stale
+    // answer and wrongly emits TS2344; the diagnostic then survives
+    // `push_diagnostic`'s first-wins dedup even though the class's later,
+    // authoritative member check would not have raised it.
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn export_default_class_static_arrow_property_self_referential_constraint_is_clean() {
+        let options = resolved_options_for_es2015_strict_test();
+        let diagnostics = collect_test_diagnostics_with_options(
+            &[(
+                "/a.ts",
+                r#"
+type MarkOf<R extends { readonly mark: unknown }> = R["mark"];
+export default class Schema<T> {
+  readonly mark!: T;
+  static make = <R extends Schema<any>>(build: (x: number) => MarkOf<R>): R =>
+    null as any;
+}
+"#,
+            )],
+            &options,
+            std::path::Path::new("/"),
+        );
+        assert!(
+            diagnostics.is_empty(),
+            "expected a fully clean (tsc-parity) check; got: {diagnostics:#?}"
+        );
+    }
+
+    #[test]
+    fn export_default_class_instance_arrow_property_self_referential_constraint_is_clean() {
+        let options = resolved_options_for_es2015_strict_test();
+        let diagnostics = collect_test_diagnostics_with_options(
+            &[(
+                "/a.ts",
+                r#"
+type MarkOf<R extends { readonly mark: unknown }> = R["mark"];
+export default class Schema<T> {
+  readonly mark!: T;
+  go = <R extends Schema<any>>(build: (x: number) => MarkOf<R>): R =>
+    null as any;
+}
+"#,
+            )],
+            &options,
+            std::path::Path::new("/"),
+        );
+        assert!(
+            diagnostics.is_empty(),
+            "expected a fully clean (tsc-parity) check; got: {diagnostics:#?}"
+        );
+    }
+
+    #[test]
+    fn export_default_class_static_property_renamed_binders_self_referential_constraint_is_clean()
+    {
+        // Anti-hardcoding: a differently-named class, type parameter, and
+        // constrained member must not change the outcome.
+        let options = resolved_options_for_es2015_strict_test();
+        let diagnostics = collect_test_diagnostics_with_options(
+            &[(
+                "/a.ts",
+                r#"
+type Foo<Q extends { readonly bar: unknown }> = Q["bar"];
+export default class Widget<U> {
+  readonly bar!: U;
+  static create = <P extends Widget<any>>(build: (x: number) => Foo<P>): P =>
+    null as any;
+}
+"#,
+            )],
+            &options,
+            std::path::Path::new("/"),
+        );
+        assert!(
+            diagnostics.is_empty(),
+            "expected a fully clean (tsc-parity) check; got: {diagnostics:#?}"
+        );
+    }
+
+    #[test]
+    fn export_default_class_static_property_genuine_constraint_violation_still_reports_ts2344() {
+        // Negative control: when the enclosing class genuinely lacks the
+        // member the alias's constraint requires, TS2344 must still fire —
+        // the fix must not turn this into a blanket suppression.
+        let options = resolved_options_for_es2015_strict_test();
+        let diagnostics = collect_test_diagnostics_with_options(
+            &[(
+                "/a.ts",
+                r#"
+type MarkOf<R extends { readonly mark: unknown }> = R["mark"];
+export default class Schema<T> {
+  readonly notmark!: T;
+  static make = <R extends Schema<any>>(build: (x: number) => MarkOf<R>): R =>
+    null as any;
+}
+"#,
+            )],
+            &options,
+            std::path::Path::new("/"),
+        );
+        let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
+        assert_eq!(
+            codes,
+            vec![2344],
+            "expected exactly one genuine TS2344 (Schema lacks `mark`): {diagnostics:?}"
+        );
+    }
