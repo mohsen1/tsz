@@ -44,6 +44,16 @@ impl<'a> CheckerState<'a> {
             node.kind,
             syntax_kind_ext::FUNCTION_EXPRESSION | syntax_kind_ext::ARROW_FUNCTION
         );
+        // TS2526: a JSDoc `@return`/`@returns {this}` tag whose host is not a
+        // non-static class/interface member. `check_function_declaration_callback`
+        // only reaches function-like nodes visited in *statement* position
+        // (`function f() {}`, not `x.m = function () {}`), so a function
+        // expression, method, or accessor checked here as a value's type
+        // would otherwise never be gated. This is the one call site every
+        // function-like node's type passes through regardless of position;
+        // the check dedupes by diagnostic span, so also reaching it via the
+        // statement-position callback for declarations is harmless.
+        self.report_jsdoc_return_this_type_not_allowed(idx);
         let tracks_implicit_any = is_closure || self.is_object_literal_method(idx);
         if is_closure {
             self.ctx.inside_closure_depth += 1;
