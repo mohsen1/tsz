@@ -319,13 +319,15 @@ jobs:
           REPOSITORY: ${{ github.repository }}
         run: |
           set -euo pipefail
-          # bench.yml publishes only from its once-daily `0 3 * * *` scheduled
-          # run (bench.yml:26), whose full-suite job has a 360-minute timeout
-          # (bench.yml:48). So the *minimum* possible gap between two
-          # publishes is already 24h, and the worst case is ~24h + one run's
-          # full duration (observed up to ~8h in practice, e.g. #16066's
-          # 11:14Z publish following a 03:00Z start) before the next day's run
-          # even starts queueing. A 9h threshold is stale by construction: it
+          # bench.yml publishes only from its once-daily scheduled run
+          # (bench.yml:35, moved from 03:00 to 22:00 UTC by #17561 so the run
+          # finishes ahead of the 06:00 gh-pages deploy again), whose
+          # full-suite job has a 360-minute timeout (bench.yml:57). So the
+          # *minimum* possible gap between two publishes is already 24h, and
+          # the worst case is ~24h + one run's full duration (observed up to
+          # ~8h in practice, e.g. #16066's 11:14Z publish following a 03:00Z
+          # start) before the next day's run even starts queueing. A 9h
+          # threshold is stale by construction: it
           # fires every day for the ~15-21h between "one cadence past the last
           # publish" and "the next run finishes" regardless of whether bench
           # is healthy (see #16066 and its 15 predecessor sentinel issues,
