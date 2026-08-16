@@ -92,9 +92,12 @@ active campaigns.
   2026-08-16; the previously tracked 4-test gap, including
   `importNameCodeFix_importType`, is resolved on `main`).
 - `scripts/conformance/conformance-accepted-regressions.txt` stays empty or
-  every entry carries fresh exact-head CI evidence. Currently `14` entries:
-  pay down or re-justify; removal requires exact-head aggregate CI showing the
-  test out of the shard failure set.
+  every entry carries fresh exact-head CI evidence. Currently `0` active
+  entries (every line is a `#` comment; confirmed via
+  `grep -cv '^#\|^\s*$' scripts/conformance/conformance-accepted-regressions.txt`
+  and `python3 scripts/conformance/query-conformance.py --dashboard` →
+  "Accepted-regression gate: 0 listed tests"); keep it that way and require
+  fresh exact-head CI evidence for any new entry.
 - Output-surgery audit stays at zero unallowlisted calls and zero allowlist
   entries.
 - CheckerContext field-count guard is ratcheted at `255` fields after adding
