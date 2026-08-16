@@ -455,6 +455,197 @@ fn evaluate_application_class_uses_construct_signature_return_type() {
     );
 }
 
+/// Phase 6 — dropped-nominal-symbol guard (issue #16055). A class whose
+/// declared constructor body already carries a nominal `symbol` describes a
+/// real, named class declaration. If evaluating that declaration's
+/// construct-signature return type yields a structural object that no
+/// longer carries that symbol, the result is a degraded, partially built
+/// instance body (e.g. a circular import forcing resolution before the
+/// class publishes its final type) rather than the class's true instance
+/// type, so the application must stay opaque instead of surfacing it.
+#[test]
+fn evaluate_application_class_result_dropping_declared_nominal_symbol_stays_opaque() {
+    let interner = TypeInterner::new();
+    let class_symbol = tsz_binder::SymbolId(4050);
+
+    let value_name = interner.intern_string("value");
+    // The construct signature's return type is a structural object that has
+    // LOST the class's nominal symbol — the signature of a partial body
+    // materialized before the class finished building.
+    let degraded_instance = interner.object_with_flags_and_symbol(
+        vec![PropertyInfo::new(value_name, TypeId::STRING)],
+        crate::types::ObjectFlags::empty(),
+        None,
+    );
+
+    let construct_sig = CallSignature {
+        type_params: vec![],
+        params: vec![],
+        this_type: None,
+        return_type: degraded_instance,
+        type_predicate: None,
+        is_method: false,
+    };
+    let class_body = interner.callable(CallableShape {
+        symbol: Some(class_symbol),
+        is_abstract: false,
+        call_signatures: vec![],
+        construct_signatures: vec![construct_sig],
+        properties: vec![],
+        ..Default::default()
+    });
+
+    let mut env = TypeEnvironment::new();
+    let app = alias_application(
+        &interner,
+        &mut env,
+        DefId(405),
+        DefKind::Class,
+        class_body,
+        vec![],
+        vec![],
+    );
+
+    let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
+    let result = evaluator.evaluate(app);
+
+    assert_eq!(
+        result, app,
+        "a class application whose declared body carries a nominal symbol \
+         must stay opaque when the evaluated instance dropped it, instead \
+         of surfacing the degraded structural object"
+    );
+}
+
+/// Same trigger as above with a renamed binder (`Widget`/`data` in spirit —
+/// distinct `DefId`, symbol id, and property name) to prove the guard keys
+/// off structure (symbol presence/absence), not a specific identifier.
+#[test]
+fn evaluate_application_class_result_dropping_declared_nominal_symbol_stays_opaque_renamed() {
+    let interner = TypeInterner::new();
+    let class_symbol = tsz_binder::SymbolId(7070);
+
+    let payload_name = interner.intern_string("payload");
+    let degraded_instance = interner.object_with_flags_and_symbol(
+        vec![PropertyInfo::new(payload_name, TypeId::NUMBER)],
+        crate::types::ObjectFlags::empty(),
+        None,
+    );
+
+    let construct_sig = CallSignature {
+        type_params: vec![],
+        params: vec![],
+        this_type: None,
+        return_type: degraded_instance,
+        type_predicate: None,
+        is_method: false,
+    };
+    let class_body = interner.callable(CallableShape {
+        symbol: Some(class_symbol),
+        is_abstract: false,
+        call_signatures: vec![],
+        construct_signatures: vec![construct_sig],
+        properties: vec![],
+        ..Default::default()
+    });
+
+    let mut env = TypeEnvironment::new();
+    let app = alias_application(
+        &interner,
+        &mut env,
+        DefId(406),
+        DefKind::Class,
+        class_body,
+        vec![],
+        vec![],
+    );
+
+    let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
+    let result = evaluator.evaluate(app);
+
+    assert_eq!(result, app, "renamed-binder variant must also stay opaque");
+}
+
+/// Negative/fallback case: when the evaluated instance KEEPS the class's
+/// nominal symbol, the guard must not fire — the result is a genuine,
+/// complete instance and must be returned normally, not held opaque.
+/// Mirrors `evaluate_application_class_uses_construct_signature_return_type`
+/// (generic substitution via a real type parameter) with a `symbol` added to
+/// both the class body and the instance shape, and inspects the resolved
+/// shape directly rather than assuming a specific post-instantiation
+/// `TypeId` — only the substitution + `evaluate_application` orchestration
+/// decide that identity, not this guard.
+#[test]
+fn evaluate_application_class_result_keeping_declared_nominal_symbol_resolves_normally() {
+    let interner = TypeInterner::new();
+    let class_symbol = tsz_binder::SymbolId(4051);
+    let t_param = unconstrained_param(&interner, "T");
+    let t_type = interner.intern(TypeData::TypeParameter(t_param));
+
+    let value_name = interner.intern_string("value");
+    let instance_shape = interner.object_with_flags_and_symbol(
+        vec![PropertyInfo::new(value_name, t_type)],
+        crate::types::ObjectFlags::empty(),
+        Some(class_symbol),
+    );
+
+    let construct_sig = CallSignature {
+        type_params: vec![],
+        params: vec![ParamInfo::required(value_name, t_type)],
+        this_type: None,
+        return_type: instance_shape,
+        type_predicate: None,
+        is_method: false,
+    };
+    let class_body = interner.callable(CallableShape {
+        symbol: Some(class_symbol),
+        is_abstract: false,
+        call_signatures: vec![],
+        construct_signatures: vec![construct_sig],
+        properties: vec![],
+        ..Default::default()
+    });
+
+    let mut env = TypeEnvironment::new();
+    let app = alias_application(
+        &interner,
+        &mut env,
+        DefId(407),
+        DefKind::Class,
+        class_body,
+        vec![t_param],
+        vec![TypeId::STRING],
+    );
+
+    let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
+    let result = evaluator.evaluate(app);
+
+    assert_ne!(
+        result, app,
+        "a class application whose evaluated instance keeps the declared \
+         nominal symbol must resolve normally, not be held opaque"
+    );
+    let (properties, symbol) = match interner.lookup(result) {
+        Some(TypeData::Object(shape_id)) | Some(TypeData::ObjectWithIndex(shape_id)) => {
+            let shape = interner.object_shape(shape_id);
+            (shape.properties.clone(), shape.symbol)
+        }
+        other => panic!("expected a resolved instance object, got {other:?}"),
+    };
+    assert_eq!(
+        symbol,
+        Some(class_symbol),
+        "the substituted instance must keep the class's nominal symbol"
+    );
+    assert_eq!(properties.len(), 1);
+    assert_eq!(properties[0].name, value_name);
+    assert_eq!(
+        properties[0].type_id,
+        TypeId::STRING,
+        "T must substitute to string in the instantiated instance"
+    );
+}
+
 /// Phase 4 — authoritative application-eval cache read.
 ///
 /// The per-file application-eval cache lives on the `QueryCache`. Evaluators

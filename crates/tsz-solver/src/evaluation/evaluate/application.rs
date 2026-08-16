@@ -207,6 +207,45 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 self.apparent_conditional_branch = saved_apparent;
                 self.decrement_def_depth(def_id);
 
+                // A class application whose declared constructor body
+                // carries a nominal symbol, but whose evaluated result is a
+                // structural object that dropped it, is a degraded,
+                // partially built instance: the class's instance type
+                // carried only its annotated fields (no methods, no nominal
+                // identity) when this application forced its resolution — a
+                // circular import can make a sibling's build reach
+                // `Class<Args>` before the class publishes its final type.
+                // Surfacing that partial object (e.g. as a union member
+                // beside the complete representation) yields spurious
+                // `TS2339`s for every missing method (issue #16055).
+                // Gated on `ctx.class_declared_nominal_symbol` (the
+                // constructor's OWN body already carrying a symbol before
+                // this evaluation) so a class shape that is legitimately
+                // symbol-less throughout — e.g. a synthetic construct
+                // signature with no nominal identity to begin with — never
+                // trips this guard (see
+                // `evaluate_application_class_uses_construct_signature_return_type`,
+                // the regression #16911 caused by skipping this check).
+                // Discard the degraded result: purge whatever the body
+                // evaluation cached under `(def, args)` so a later
+                // evaluation recomputes against the finished body, taint the
+                // run so nothing persists this partial, and keep the
+                // application opaque so a property access re-resolves it.
+                if result != original_type_id
+                    && ctx.class_declared_nominal_symbol
+                    && matches!(
+                        self.interner.lookup(result),
+                        Some(TypeData::Object(_) | TypeData::ObjectWithIndex(_))
+                    )
+                    && self.application_result_dropped_nominal_symbol(result)
+                {
+                    if let Some(db) = self.query_db {
+                        db.invalidate_application_eval_cache_for_def(def_id);
+                    }
+                    self.mark_unresolved_def_seen();
+                    return original_type_id;
+                }
+
                 // Phase 7 — display-alias bookkeeping. Skip entirely when
                 // the result is the original `Application` itself (the
                 // historical `if result != original_type_id` gate).
@@ -238,6 +277,21 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 }
                 result
             }
+        }
+    }
+
+    /// True when `result` is a structural object (`Object`/`ObjectWithIndex`)
+    /// carrying no nominal `symbol`. For a class application this is the
+    /// signature of an instance body instantiated from a partial,
+    /// mid-construction source: the complete instance keeps its class
+    /// `SymbolId`, whereas the annotated-fields-only snapshot produced before
+    /// the class finishes building loses it (issue #16055).
+    fn application_result_dropped_nominal_symbol(&self, result: TypeId) -> bool {
+        match self.interner.lookup(result) {
+            Some(TypeData::Object(shape_id)) | Some(TypeData::ObjectWithIndex(shape_id)) => {
+                self.interner.object_shape(shape_id).symbol.is_none()
+            }
+            _ => false,
         }
     }
 
@@ -324,6 +378,15 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
         let prefer_application_display_alias = is_type_alias_def && !resolved_has_conditional_body;
 
+        let class_declared_nominal_symbol = matches!(def_kind, Some(DefKind::Class))
+            && resolved.is_some_and(|body| {
+                matches!(
+                    self.interner.lookup(body),
+                    Some(TypeData::Callable(cs_id))
+                        if self.interner.callable_shape(cs_id).symbol.is_some()
+                )
+            });
+
         tracing::trace!(
             ?def_id,
             def_name = ?self
@@ -345,6 +408,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             is_type_alias_def,
             prefer_application_display_alias,
             base_is_type_query,
+            class_declared_nominal_symbol,
         }
     }
 

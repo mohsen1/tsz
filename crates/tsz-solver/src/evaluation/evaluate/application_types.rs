@@ -25,6 +25,14 @@ pub(in crate::evaluation) struct ApplicationEvalContext {
     /// type, not the instance type, so `extract_class_instance_body` must
     /// be skipped.
     pub(in crate::evaluation) base_is_type_query: bool,
+    /// True when `def_id` is a `DefKind::Class` whose resolved constructor
+    /// `Callable` body carries a nominal `symbol` (its class `SymbolId`).
+    /// Distinguishes a genuine class declaration — which always keeps its
+    /// `SymbolId` through a correct evaluation — from a synthetic or
+    /// symbol-less constructor shape, so a later structural-object result
+    /// that also lacks a symbol can be recognized as a dropped identity
+    /// (issue #16055) rather than a legitimately symbol-less instance.
+    pub(in crate::evaluation) class_declared_nominal_symbol: bool,
 }
 
 /// Common opening preamble for the homomorphic-mapped shortcuts:
