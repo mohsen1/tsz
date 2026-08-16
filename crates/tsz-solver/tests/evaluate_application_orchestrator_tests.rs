@@ -626,11 +626,7 @@ fn evaluate_application_class_result_keeping_declared_nominal_symbol_resolves_no
          nominal symbol must resolve normally, not be held opaque"
     );
     let (properties, symbol) = match interner.lookup(result) {
-        Some(TypeData::Object(shape_id)) => {
-            let shape = interner.object_shape(shape_id);
-            (shape.properties.clone(), shape.symbol)
-        }
-        Some(TypeData::ObjectWithIndex(shape_id)) => {
+        Some(TypeData::Object(shape_id)) | Some(TypeData::ObjectWithIndex(shape_id)) => {
             let shape = interner.object_shape(shape_id);
             (shape.properties.clone(), shape.symbol)
         }
