@@ -662,8 +662,10 @@ impl<'a> CheckerState<'a> {
                         let member_request = member_ctx_type
                             .map(|ty| request.read().contextual(ty))
                             .unwrap_or_else(|| request.read().contextual_opt(None));
-                        let init_type =
-                            self.get_type_of_node_with_request(prop.initializer, &member_request);
+                        let init_type = self.speculative_static_property_initializer_type(
+                            prop.initializer,
+                            &member_request,
+                        );
                         self.ctx.this_type_stack.pop();
                         self.ctx.preserve_literal_types = prev;
                         let init_type = if init_type == TypeId::ANY
