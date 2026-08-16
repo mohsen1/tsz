@@ -20,8 +20,16 @@ use crate::types::{TypeData, TypeId};
 /// resulting `any extends U ? A : B` reaches the relation raw. Distributing here
 /// keeps the false branch (which the relation would otherwise drop by resolving
 /// the `any` check to a single true-branch pick).
+///
+/// The conditional itself can be one alias hop away (`type Foo<T> = T extends
+/// U ? A : B` referenced as `Foo<any>`): `type_id` then carries an
+/// `Application`/`Lazy` alias reference, not `TypeData::Conditional`, until
+/// evaluated. Evaluate first so this still recognizes the shape through the
+/// alias, matching how tsc resolves a conditional-type-alias reference before
+/// comparing signature return types.
 pub fn distribute_any_check_conditional(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
-    let Some(TypeData::Conditional(cid)) = db.lookup(type_id) else {
+    let evaluated = evaluate_type(db, type_id);
+    let Some(TypeData::Conditional(cid)) = db.lookup(evaluated) else {
         return type_id;
     };
     let cond = db.conditional_type(cid);
