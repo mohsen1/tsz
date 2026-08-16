@@ -19,11 +19,20 @@ on:
         default: true
         type: boolean
   schedule:
-    # Daily full benchmark run that publishes fresh rows to the website. Set
-    # to 03:00 UTC so results land ahead of the 06:00 gh-pages deploy and stay
-    # clear of readme-benchmark-refresh (07:00) and daily-release (09:00). The
+    # Daily full benchmark run that publishes fresh rows to the website.
+    # Runtime has grown from ~2h (when this was tuned to 03:00) to a measured
+    # 3h50m-4h56m plus 45-75min of scheduler queue delay (#17561), so a 03:00
+    # start was finishing at 08:44-09:54 -- after the 06:00 gh-pages deploy,
+    # which then republished the *previous* day's artifact. Set to 22:00 UTC
+    # (previous day, by cron's clock) so the run has ~8h of budget before
+    # 06:00, comfortably covering the current worst-case queue delay + full
+    # suite. gh-pages.yml's own `workflow_run: [Bench]` trigger also
+    # redeploys as soon as this run completes and its artifact is
+    # readiness-clean, independent of this cron -- this schedule only decides
+    # whether the *06:00 scheduled* gh-pages run already has same-day data
+    # rather than falling back to the still-fresh previous run. The
     # `bench-<ref>` concurrency group keeps this to one run at a time.
-    - cron: "0 3 * * *"
+    - cron: "0 22 * * *"
 
 concurrency:
   group: bench-${{ github.ref }}
