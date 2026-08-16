@@ -331,12 +331,11 @@ FAIL TypeScript/tests/cases/conformance/salsa/propertiesOfGenericConstructorFunc
 FAIL TypeScript/tests/cases/conformance/salsa/propertyAssignmentUseParentType2.ts | expected:[TS2322] actual:[TS2322]
 FAIL TypeScript/tests/cases/conformance/salsa/prototypePropertyAssignmentMergedTypeReference.ts | expected:[TS2322,TS2749] actual:[TS2749]
 FAIL TypeScript/tests/cases/conformance/salsa/thisPropertyAssignment.ts | expected:[TS2683,TS7009,TS7017,TS7053] actual:[TS2683,TS7009,TS7017]
-FAIL TypeScript/tests/cases/conformance/salsa/thisTypeOfConstructorFunctions.ts | expected:[TS2339,TS2526,TS2683,TS2749,TS7009] actual:[TS2339,TS2683,TS2749,TS7009]
+FAIL TypeScript/tests/cases/conformance/salsa/thisTypeOfConstructorFunctions.ts | expected:[TS2339,TS2526,TS2683,TS2749,TS7009] actual:[TS2339,TS2526,TS2683,TS2749,TS7009]
 FAIL TypeScript/tests/cases/conformance/salsa/typeFromContextualThisType.ts | expected:[TS7006] actual:[]
 FAIL TypeScript/tests/cases/conformance/salsa/typeFromPropertyAssignment12.ts | expected:[TS2339] actual:[TS2339]
 FAIL TypeScript/tests/cases/conformance/salsa/typeFromPropertyAssignment24.ts | expected:[TS2339,TS2503] actual:[TS2503]
 FAIL TypeScript/tests/cases/conformance/salsa/typeFromPropertyAssignment29.ts | expected:[TS2339] actual:[TS2339]
-FAIL TypeScript/tests/cases/conformance/salsa/typeFromPropertyAssignment35.ts | expected:[TS2503] actual:[TS2339]
 FAIL TypeScript/tests/cases/conformance/salsa/typeFromPropertyAssignment6.ts | expected:[TS2339,TS2702] actual:[TS2339]
 FAIL TypeScript/tests/cases/conformance/statements/VariableStatements/usingDeclarations/awaitUsingDeclarationsInForAwaitOf.3.ts | expected:[TS1123] actual:[TS2304,TS2487]
 FAIL TypeScript/tests/cases/conformance/statements/VariableStatements/usingDeclarations/awaitUsingDeclarationsInForOf.5.ts | expected:[TS1123] actual:[TS2304,TS2487]
@@ -10789,6 +10788,7 @@ PASS TypeScript/tests/cases/conformance/salsa/typeFromPropertyAssignment31.ts
 PASS TypeScript/tests/cases/conformance/salsa/typeFromPropertyAssignment32.ts
 PASS TypeScript/tests/cases/conformance/salsa/typeFromPropertyAssignment33.ts
 PASS TypeScript/tests/cases/conformance/salsa/typeFromPropertyAssignment34.ts
+PASS TypeScript/tests/cases/conformance/salsa/typeFromPropertyAssignment35.ts
 PASS TypeScript/tests/cases/conformance/salsa/typeFromPropertyAssignment36.ts
 PASS TypeScript/tests/cases/conformance/salsa/typeFromPropertyAssignment37.ts
 PASS TypeScript/tests/cases/conformance/salsa/typeFromPropertyAssignment38.ts
