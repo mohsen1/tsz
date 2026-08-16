@@ -633,6 +633,10 @@ impl<'a> DeclarationEmitter<'a> {
                 printer = printer.with_enclosing_symbol(enc_sym);
             }
 
+            if printer.contains_unnameable_self_referential_application(type_id) {
+                self.has_unnameable_self_reference.set(true);
+            }
+
             printer.print_type(type_id)
         } else {
             // Fallback if no interner available

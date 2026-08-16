@@ -334,6 +334,7 @@ impl<'a> DeclarationEmitter<'a> {
                     };
                     let type_text = self
                         .rewrite_recursive_static_class_expression_type(prop_idx, effective_type);
+                    let has_unnameable_self_reference = self.has_unnameable_self_reference.take();
                     let has_object_literal_initializer =
                         self.arena.get(prop.initializer).is_some_and(|node| {
                             node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
@@ -388,7 +389,8 @@ impl<'a> DeclarationEmitter<'a> {
                         }
                     }
                     if emitted_any_for_truncation {
-                    } else if self.printed_type_uses_private_import_type_root(&type_text)
+                    } else if (self.printed_type_uses_private_import_type_root(&type_text)
+                        || has_unnameable_self_reference)
                         && !self.isolated_declarations
                     {
                         if let (Some(file_path), Some((pos, length))) =

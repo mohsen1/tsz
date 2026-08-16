@@ -76,6 +76,16 @@ pub struct DeclarationEmitter<'a> {
     pub(super) current_source_file_idx: Option<NodeIndex>,
     /// Type interner for printing types
     pub(super) type_interner: Option<&'a TypeInterner>,
+    /// Set by the type printer during the most recent `print_type_id_*` call
+    /// when it substituted `any` for an `Application(Lazy(def), _)` reference
+    /// that is both unnameable from the current scope (not exported, and its
+    /// declaring symbol lives outside the printer's own file arena) and
+    /// genuinely self-referential (its own resolved body contains another
+    /// reference back to the same def). Such a reference cannot be
+    /// serialized by name nor by full structural substitution — tsc reports
+    /// `TS7056` for the enclosing declaration instead. Read-and-reset by the
+    /// property/member emit sites right after the printed text is produced.
+    pub(super) has_unnameable_self_reference: std::cell::Cell<bool>,
     /// Binder state for symbol resolution (used by `UsageAnalyzer`)
     pub(super) binder: Option<&'a BinderState>,
     /// Precomputed declaration facts (replaces ad-hoc re-extraction).

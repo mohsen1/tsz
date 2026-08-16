@@ -767,6 +767,45 @@ impl<'a> TypePrinter<'a> {
             .is_some_and(|sym_id| self.is_symbol_visible(sym_id) || self.symbol_is_nameable(sym_id))
     }
 
+    /// True when `type_id` structurally contains an `Application(Lazy(def), _)`
+    /// reference to a type alias that is both unnameable from the current
+    /// declaration-emit scope (not exported, and its declaring symbol lives
+    /// outside this printer's own file arena) and genuinely self-referential
+    /// (the alias's own resolved body contains another reference back to the
+    /// same def). Such a reference cannot be serialized by name (unnameable)
+    /// nor by full structural substitution (the expansion never terminates) —
+    /// `print_lazy_type` falls back to bare `any` for it, which is exactly the
+    /// case tsc instead reports `TS7056` for.
+    ///
+    /// A type that is merely unnameable, or merely self-referential but still
+    /// nameable (or expandable) elsewhere, does not match: both conditions
+    /// must hold on the *same* application for this to fire.
+    pub(crate) fn contains_unnameable_self_referential_application(&self, type_id: TypeId) -> bool {
+        let mut visited = rustc_hash::FxHashSet::default();
+        let mut stack = vec![type_id];
+        while let Some(current) = stack.pop() {
+            if !visited.insert(current) {
+                continue;
+            }
+            if let Some(app_id) = visitor::application_id(self.interner, current) {
+                let app = self.interner.type_application(app_id);
+                if let Some(def_id) = visitor::lazy_def_id(self.interner, app.base)
+                    && !self.type_reference_base_is_nameable(app.base)
+                    && let Some(body) = self.def_type_fallback(def_id)
+                    && self.type_contains_lazy_def(body, def_id, 0)
+                {
+                    return true;
+                }
+            }
+            visitor::for_each_child_by_id(self.interner, current, |child| {
+                if !visited.contains(&child) {
+                    stack.push(child);
+                }
+            });
+        }
+        false
+    }
+
     pub(crate) fn print_enum(&self, def_id: tsz_solver::def::DefId, _members_id: TypeId) -> String {
         // Try to resolve the enum name via DefId -> SymbolId -> symbol name
         if let Some(cache) = self.type_cache
