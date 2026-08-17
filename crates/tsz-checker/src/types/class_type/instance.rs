@@ -343,21 +343,32 @@ impl<'a> CheckerState<'a> {
                             // type-parameter constraint on the return type (e.g.
                             // `<Incoming extends AnyC>` re-instantiating `C` itself)
                             // can resolve against `C`'s not-yet-published instance
-                            // type and spuriously fail a constraint check here. The
-                            // authoritative check runs later, in the normal member
-                            // walk (`class_member_checks.rs`'s
-                            // `get_type_from_type_node` on `method.type_annotation`),
-                            // once the class's real instance type is published — so
-                            // any diagnostic produced by this premature pass is
-                            // discarded, and the node-type cache is cleared so the
-                            // later pass re-validates instead of reusing this
-                            // speculative result (mirrors
+                            // type and spuriously fail its constraint check with
+                            // TS2536/TS2344 here (#17585). The authoritative check
+                            // runs later, in the normal member walk
+                            // (`class_member_checks.rs`'s `get_type_from_type_node`
+                            // on `method.type_annotation`), once the class's real
+                            // instance type is published, so only THOSE two codes are
+                            // discarded and the node-type cache cleared to force a
+                            // re-validation there (mirrors
                             // `speculative_static_property_initializer_type`,
-                            // #17589).
+                            // #17589). Every other diagnostic (e.g. a genuine TS2304
+                            // for an unresolved name in the return type) is kept —
+                            // this prescan is the only pass that visits some nodes,
+                            // so a blanket rollback would silently drop them.
                             let diag_snap = DiagnosticSpeculationSnapshot::new(&self.ctx);
+                            let diag_checkpoint = diag_snap.checkpoint();
                             let return_type = self.get_type_from_type_node(method.type_annotation);
-                            diag_snap.rollback(&mut self.ctx.diagnostic_state());
-                            self.clear_type_cache_recursive(method.type_annotation);
+                            let leaked_self_ref_constraint_failure = self.ctx.diagnostics
+                                [diag_checkpoint..]
+                                .iter()
+                                .any(|d| matches!(d.code, 2536 | 2344));
+                            if leaked_self_ref_constraint_failure {
+                                diag_snap.rollback(&mut self.ctx.diagnostic_state());
+                                self.clear_type_cache_recursive(method.type_annotation);
+                            } else {
+                                diag_snap.commit(&mut self.ctx.diagnostic_state());
+                            }
                             self.pop_type_parameters(type_param_updates);
                             class_type::class_method_callable_type(
                                 self.ctx.types,

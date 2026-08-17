@@ -5,17 +5,27 @@
 //! constraint check just because the enclosing class's real instance type is
 //! not yet published.
 //!
-//! Root cause: `build_class_summary_type`'s rough-instance-type builder
-//! (`crates/tsz-checker/src/types/class_type/constructor.rs`) resolves each
-//! method's return type — including any type-reference constraint checks it
-//! triggers — before the class's own authoritative instance type is
-//! published. For a self-referential method like `merge` below, that
-//! premature resolution sees the enclosing class as an unresolved
-//! placeholder and wrongly reports the constraint as unsatisfied
-//! (TS2536/TS2344). `push_diagnostic`'s first-wins dedup then keeps this
-//! wrong early diagnostic even though the later, authoritative re-check
-//! (once the real instance type is published) resolves cleanly — matching
-//! the mechanism #17589 already fixed for property initializers.
+//! Root cause: `class_instance_phase0_prescan_this`
+//! (`crates/tsz-checker/src/types/class_type/instance.rs`) — a provisional
+//! prescan used only so `this.method()` resolves during other members' body
+//! inference — resolves each method's return type before the class's own
+//! authoritative instance type is published. For a self-referential method
+//! like `merge` below, that premature resolution sees the enclosing class as
+//! an unresolved placeholder and wrongly reports its constraint as
+//! unsatisfied (TS2536/TS2344). `push_diagnostic`'s first-wins dedup then
+//! keeps this wrong early diagnostic even though the later, authoritative
+//! re-check (once the real instance type is published) resolves cleanly —
+//! matching the mechanism #17589 already fixed for property initializers.
+//!
+//! The fix only discards TS2536/TS2344 diagnostics produced during this
+//! prescan (and only then clears the node-type cache to force the later
+//! authoritative re-check) — every other diagnostic from the same prescan
+//! call is left untouched, since this prescan is sometimes the only pass
+//! that visits a given node and a blanket rollback would silently drop
+//! genuine diagnostics (e.g. TS2304 for an unresolved name in the return
+//! type — see `missing_name_in_return_type_still_reported` below, a
+//! regression caught by `compare-to-parent.sh` against
+//! `errorsInGenericTypeReference.ts`).
 //!
 //! Binder names are varied across cases (anti-hardcoding): the fix keys off
 //! structure (a method-return-type re-instantiation of the enclosing,
@@ -173,4 +183,26 @@ fn genuine_constraint_violation_on_same_shape_still_reported() {
         got.contains(&2345),
         "expected TS2345 for the genuine violation, got: {got:?}"
     );
+}
+
+// ---------------------------------------------------------------------------
+// Negative control — an unrelated diagnostic produced by the SAME prescan
+// call (a method return type that is not self-referential) must survive the
+// speculative window untouched. Reduced from the conformance regression this
+// fix's first attempt introduced (`errorsInGenericTypeReference.ts`,
+// `testMethod1(): Foo<{ x: V }>`): only TS2536/TS2344 may be discarded here,
+// never a genuine TS2304 for an unresolved name in the same return type.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn missing_name_in_return_type_still_reported() {
+    let got = codes(
+        "
+        class Foo<T> {}
+        class Bar {
+            method1(): Foo<{ x: V }> { return null as any; }
+        }
+        ",
+    );
+    assert_eq!(got, vec![2304], "expected exactly one TS2304, got: {got:?}");
 }
