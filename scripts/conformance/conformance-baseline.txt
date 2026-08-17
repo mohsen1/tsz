@@ -34,7 +34,6 @@ FAIL TypeScript/tests/cases/compiler/declFileImportModuleWithExportAssignment.ts
 FAIL TypeScript/tests/cases/compiler/declarationEmitBindingPatternsUnused.ts | expected:[TS2842] actual:[TS2842]
 FAIL TypeScript/tests/cases/compiler/declarationEmitExpandoPropertyPrivateName.ts | expected:[TS2352,TS4032] actual:[TS2352,TS2708]
 FAIL TypeScript/tests/cases/compiler/declarationEmitInvalidExport.ts | expected:[TS1128,TS4081] actual:[TS1128]
-FAIL TypeScript/tests/cases/compiler/declarationEmitPrivatePromiseLikeInterface.ts | expected:[TS7056] actual:[]
 FAIL TypeScript/tests/cases/compiler/declarationEmitTripleSlashReferenceAmbientModule.ts | expected:[TS2591] actual:[]
 FAIL TypeScript/tests/cases/compiler/declarationEmitUnknownImport.ts | expected:[TS2303,TS2304,TS2503] actual:[TS2503]
 FAIL TypeScript/tests/cases/compiler/decoratorMetadataWithImportDeclarationNameCollision4.ts | expected:[TS2613] actual:[TS1192]
@@ -189,6 +188,7 @@ FAIL TypeScript/tests/cases/conformance/classes/constructorDeclarations/construc
 FAIL TypeScript/tests/cases/conformance/classes/constructorDeclarations/superCalls/derivedClassSuperProperties.ts | expected:[TS1345,TS2376,TS2401,TS2488,TS17009,TS17011] actual:[TS1345,TS2339,TS2376,TS2401,TS2488,TS2551,TS17009,TS17011]
 FAIL TypeScript/tests/cases/conformance/classes/members/accessibility/privateClassPropertyAccessibleWithinNestedClass.ts | expected:[TS2454,TS2564] actual:[TS2339,TS2341,TS2454,TS2564]
 FAIL TypeScript/tests/cases/conformance/classes/members/accessibility/protectedClassPropertyAccessibleWithinNestedSubclass.ts | expected:[TS2339,TS2564] actual:[TS2339,TS2564]
+FAIL TypeScript/tests/cases/conformance/classes/members/instanceAndStaticMembers/typeOfThisInStaticMembers8.ts | expected:[TS2339,TS2683] actual:[TS2339,TS2683]
 FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/privateNameBadSuper.ts | expected:[TS2376,TS17009] actual:[TS17009]
 FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/privateNameDuplicateField.ts | expected:[TS2300,TS2393,TS2804] actual:[TS2300,TS2393,TS2804]
 FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesUnique-2.ts | expected:[TS18013] actual:[TS2339]
@@ -367,6 +367,7 @@ FAIL TypeScript/tests/cases/conformance/types/specifyingTypes/typeQueries/circul
 FAIL TypeScript/tests/cases/conformance/types/spread/objectSpreadNegative.ts | expected:[TS1117,TS2322,TS2339,TS2349,TS2698,TS2741,TS2783] actual:[TS1117,TS2322,TS2339,TS2349,TS2698,TS2741,TS2783]
 FAIL TypeScript/tests/cases/conformance/types/spread/spreadUnion2.ts | expected:[TS2403] actual:[TS2403]
 FAIL TypeScript/tests/cases/conformance/types/thisType/declarationFiles.ts | expected:[TS2322,TS2526,TS2527,TS2564] actual:[TS2322,TS2526,TS2564]
+FAIL TypeScript/tests/cases/conformance/types/thisType/thisTypeErrors.ts | expected:[TS2331,TS2526,TS2564,TS2683] actual:[TS2331,TS2526,TS2564,TS2683]
 FAIL TypeScript/tests/cases/conformance/types/thisType/thisTypeInFunctions.ts | expected:[TS2339] actual:[TS2322,TS2339,TS2684]
 FAIL TypeScript/tests/cases/conformance/types/tuple/named/namedTupleMembersErrors.ts | expected:[TS2456,TS2574,TS5085,TS5086,TS5087,TS17019] actual:[TS2456,TS2574,TS5086]
 FAIL TypeScript/tests/cases/conformance/types/tuple/wideningTuples3.ts | expected:[TS2322,TS7005] actual:[TS2322]
@@ -1952,6 +1953,7 @@ PASS TypeScript/tests/cases/compiler/declarationEmitPathMappingMonorepo2.ts
 PASS TypeScript/tests/cases/compiler/declarationEmitPreserveReferencedImports.ts
 PASS TypeScript/tests/cases/compiler/declarationEmitPrivateAsync.ts
 PASS TypeScript/tests/cases/compiler/declarationEmitPrivateNameCausesError.ts
+PASS TypeScript/tests/cases/compiler/declarationEmitPrivatePromiseLikeInterface.ts
 PASS TypeScript/tests/cases/compiler/declarationEmitPrivateReadonlyLiterals.ts
 PASS TypeScript/tests/cases/compiler/declarationEmitPrivateSymbolCausesVarDeclarationEmit2.ts
 PASS TypeScript/tests/cases/compiler/declarationEmitPrivateSymbolCausesVarDeclarationToBeEmitted.ts
@@ -6786,7 +6788,6 @@ PASS TypeScript/tests/cases/conformance/classes/members/instanceAndStaticMembers
 PASS TypeScript/tests/cases/conformance/classes/members/instanceAndStaticMembers/typeOfThisInStaticMembers5.ts
 PASS TypeScript/tests/cases/conformance/classes/members/instanceAndStaticMembers/typeOfThisInStaticMembers6.ts
 PASS TypeScript/tests/cases/conformance/classes/members/instanceAndStaticMembers/typeOfThisInStaticMembers7.ts
-PASS TypeScript/tests/cases/conformance/classes/members/instanceAndStaticMembers/typeOfThisInStaticMembers8.ts
 PASS TypeScript/tests/cases/conformance/classes/members/instanceAndStaticMembers/typeOfThisInStaticMembers9.ts
 PASS TypeScript/tests/cases/conformance/classes/members/instanceAndStaticMembers/typeOfThisInstanceMemberNarrowedWithLoopAntecedent.ts
 PASS TypeScript/tests/cases/conformance/classes/members/privateNames/privateNameAccessors.ts
@@ -11446,7 +11447,6 @@ PASS TypeScript/tests/cases/conformance/types/thisType/inferThisType.ts
 PASS TypeScript/tests/cases/conformance/types/thisType/looseThisTypeInFunctions.ts
 PASS TypeScript/tests/cases/conformance/types/thisType/thisTypeAccessibility.ts
 PASS TypeScript/tests/cases/conformance/types/thisType/thisTypeAndConstraints.ts
-PASS TypeScript/tests/cases/conformance/types/thisType/thisTypeErrors.ts
 PASS TypeScript/tests/cases/conformance/types/thisType/thisTypeErrors2.ts
 PASS TypeScript/tests/cases/conformance/types/thisType/thisTypeInAccessors.ts
 PASS TypeScript/tests/cases/conformance/types/thisType/thisTypeInAccessorsNegative.ts
