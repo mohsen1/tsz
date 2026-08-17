@@ -1069,12 +1069,12 @@ impl CheckerState<'_> {
             // call register(). Copy the child's local def_types cache to ensure the
             // parent can resolve Lazy(DefId) references for types nested inside
             // cross-file interfaces (e.g., IServer inside IConfig's properties).
-            if let Ok(child_env) = checker.ctx.type_env.try_borrow() {
-                self.merge_child_type_env_snapshots(
-                    &child_env,
-                    "delegate_cross_arena_symbol_resolution",
-                );
-            }
+            // `get_mut()` not `try_borrow()`: `checker` is exclusively owned here
+            // with its own unshared RefCell, so no live borrow can exist (#14348).
+            self.merge_child_type_env_snapshots(
+                checker.ctx.type_env.get_mut(),
+                "delegate_cross_arena_symbol_resolution",
+            );
 
             let child_namespace_names: rustc_hash::FxHashMap<TypeId, String> =
                 std::mem::take(&mut checker.ctx.namespace_module_names);
@@ -1725,13 +1725,12 @@ impl CheckerState<'_> {
         // and registered their DefId→body mappings in its local type_env cache.
         // Without this merge, the parent cannot resolve Lazy(DefId) references
         // for those inner types after the child checker is dropped.
-        if let Ok(child_env) = checker.ctx.type_env.try_borrow() {
-            self.merge_child_type_env_snapshots(&child_env, "delegate_cross_arena_interface_type");
-        } else {
-            tracing::warn!(
-                "delegate_cross_arena_interface_type: could not borrow child type_env for snapshot"
-            );
-        }
+        // `get_mut()` not `try_borrow()`: `checker` is exclusively owned here
+        // with its own unshared RefCell, so no live borrow can exist (#14348).
+        self.merge_child_type_env_snapshots(
+            checker.ctx.type_env.get_mut(),
+            "delegate_cross_arena_interface_type",
+        );
 
         // Merge the child's cross_file_symbol_targets back into the parent.
         // The child may have discovered new symbol → file mappings (e.g., when
