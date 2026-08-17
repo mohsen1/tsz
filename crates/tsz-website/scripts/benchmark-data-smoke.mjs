@@ -571,6 +571,12 @@ try {
   assert.match(compatibilityDashboard, /utility-types[\s\S]*exit success/);
   assert.match(compatibilityDashboard, /utility-types[\s\S]*10 files/);
   assert.match(compatibilityDashboard, /utility-types[\s\S]*100 MiB peak/);
+  // Ask 5 of #16310: the row's own source size (lines), distinct from the
+  // "files reached" compile-progress column, is surfaced so a 1-file green
+  // and a 1,000-line green do not read the same.
+  assert.match(compatibilityDashboard, /data-compat-sort="size"/);
+  assert.match(compatibilityDashboard, /utility-types[\s\S]*1,000 lines/);
+  assert.match(compatibilityDashboard, /RxJS[\s\S]*12,000 lines/);
   assert.match(compatibilityDashboard, /type-challenges solutions[\s\S]*compat-state green/);
   assert.match(compatibilityDashboard, /umami[\s\S]*compat-state green[\s\S]*204 files[\s\S]*200 MiB peak/);
   assert.doesNotMatch(compatibilityDashboard, /type-challenges assertions/);
@@ -606,6 +612,13 @@ try {
   assert.match(failedOnlyCompatibility, /Not measured/);
   assert.match(failedOnlyCompatibility, /compat-state gray/);
   assert.match(failedOnlyCompatibility, /utility-types[\s\S]*compat-state red[\s\S]*exit success[\s\S]*10 files[\s\S]*—/);
+  // Size is a project-source-size fact independent of measurement state, so it
+  // still renders for a gray/"Not measured" row instead of collapsing to "—".
+  assert.match(failedOnlyCompatibility, /large-ts-repo[\s\S]*1,000,000 lines/);
+  // A defined corpus row with no artifact record at all (e.g. "mitt", never
+  // measured by either fixture) falls back to "—" rather than "0 lines".
+  assert.match(failedOnlyCompatibility, /mitt[\s\S]*Not measured[\s\S]*—<\/td>/);
+  assert.doesNotMatch(failedOnlyCompatibility, /mitt[\s\S]{0,200}0 lines/);
 
   const slugs = new Map();
   for (const page of pages) {

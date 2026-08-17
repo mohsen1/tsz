@@ -142,6 +142,15 @@ function formatFilesReached(value) {
   return count === null ? null : `${fmt(count)} files`;
 }
 
+// Ask 5 of #16310: a 1-file green and a 1396-file green read the same on the
+// compatibility page without this — record the row's own source size next to
+// its state so "N projects compile" and "N meaningful projects compile" stop
+// being indistinguishable.
+function formatProjectSize(value) {
+  const count = finiteNumber(value);
+  return count === null || count <= 0 ? null : `${fmt(count)} lines`;
+}
+
 function formatPeakMemoryMiB(value) {
   const bytes = finiteNumber(value);
   if (bytes === null || bytes <= 0) return null;
@@ -1859,6 +1868,7 @@ export function getProjectCompatibilityDashboard() {
         <tr>
           <th scope="col">${sortableHeader("project", "Project")}</th>
           <th scope="col">${sortableHeader("state", "State")}</th>
+          <th scope="col">${sortableHeader("size", "Size", "number")}</th>
           <th scope="col">${sortableHeader("exit", "Exit class")}</th>
           <th scope="col">${sortableHeader("phase", "Phase")}</th>
           <th scope="col">${sortableHeader("files", "Files", "number")}</th>
@@ -1869,6 +1879,7 @@ export function getProjectCompatibilityDashboard() {
         ${rows.map((row) => `<tr class="compat-item" data-project="${escapeHtml(row.label)}">
           <td class="compat-project" data-sort-key="project" data-sort-value="${escapeHtml(row.label)}"><a href="${row.url}">${escapeHtml(row.label)}</a></td>
           <td data-sort-key="state" data-sort-value="${escapeHtml(row.className)}"><span class="compat-state ${row.className}">${escapeHtml(row.stateLabel)}</span></td>
+          <td data-sort-key="size" data-sort-value="${numericSortValue(row.lines)}">${escapeHtml(formatProjectSize(row.lines) || "—")}</td>
           <td data-sort-key="exit" data-sort-value="${escapeHtml(row.exitClass || "")}"><span class="compat-detail">${escapeHtml(row.exitClass || "unknown")}</span></td>
           <td data-sort-key="phase" data-sort-value="${escapeHtml(row.phase || "")}"><span class="compat-detail">${escapeHtml(row.phase || "unknown")}</span></td>
           <td data-sort-key="files" data-sort-value="${numericSortValue(row.filesReached)}">${escapeHtml(formatFilesReached(row.filesReached) || "—")}</td>
