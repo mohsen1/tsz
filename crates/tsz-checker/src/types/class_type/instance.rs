@@ -12,6 +12,7 @@
 //! construction unchanged.
 
 use super::helpers::{AccessorAggregate, MethodAggregate};
+use crate::context::speculation::DiagnosticSpeculationSnapshot;
 use crate::context::{EnclosingClassInfo, is_js_file_name};
 use crate::query_boundaries::class_type;
 use crate::state::CheckerState;
@@ -336,7 +337,27 @@ impl<'a> CheckerState<'a> {
                         let method_type = if method.type_annotation.is_some() {
                             let (type_params, type_param_updates) =
                                 self.push_type_parameters(&method.type_parameters);
+                            // This is a provisional prescan, not the authoritative
+                            // check (see comment above) — it runs before the class's
+                            // own instance type is published, so a self-referential
+                            // type-parameter constraint on the return type (e.g.
+                            // `<Incoming extends AnyC>` re-instantiating `C` itself)
+                            // can resolve against `C`'s not-yet-published instance
+                            // type and spuriously fail a constraint check here. The
+                            // authoritative check runs later, in the normal member
+                            // walk (`class_member_checks.rs`'s
+                            // `get_type_from_type_node` on `method.type_annotation`),
+                            // once the class's real instance type is published — so
+                            // any diagnostic produced by this premature pass is
+                            // discarded, and the node-type cache is cleared so the
+                            // later pass re-validates instead of reusing this
+                            // speculative result (mirrors
+                            // `speculative_static_property_initializer_type`,
+                            // #17589).
+                            let diag_snap = DiagnosticSpeculationSnapshot::new(&self.ctx);
                             let return_type = self.get_type_from_type_node(method.type_annotation);
+                            diag_snap.rollback(&mut self.ctx.diagnostic_state());
+                            self.clear_type_cache_recursive(method.type_annotation);
                             self.pop_type_parameters(type_param_updates);
                             class_type::class_method_callable_type(
                                 self.ctx.types,
