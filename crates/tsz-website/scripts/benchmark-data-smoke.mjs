@@ -577,6 +577,12 @@ try {
   assert.match(compatibilityDashboard, /data-compat-sort="size"/);
   assert.match(compatibilityDashboard, /utility-types[\s\S]*1,000 lines/);
   assert.match(compatibilityDashboard, /RxJS[\s\S]*12,000 lines/);
+  // Ask 4 of #16311: a row measured against the no-install fixture model's
+  // hand-written `declare module` shims loses coverage at its dependency
+  // boundaries, so it is labeled distinctly from a row with real deps.
+  assert.match(compatibilityDashboard, /data-compat-sort="stubs"/);
+  assert.match(compatibilityDashboard, />MSW<[\s\S]*stubbed module[\s\S]*any member/);
+  assert.match(compatibilityDashboard, /utility-types[\s\S]*no ambient stubs/);
   assert.match(compatibilityDashboard, /type-challenges solutions[\s\S]*compat-state green/);
   assert.match(compatibilityDashboard, /umami[\s\S]*compat-state green[\s\S]*204 files[\s\S]*200 MiB peak/);
   assert.doesNotMatch(compatibilityDashboard, /type-challenges assertions/);
