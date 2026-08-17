@@ -153,6 +153,8 @@ mod class_extends_generic_override_variance_tests;
 mod class_extends_index_relation_routing_arch_tests;
 #[path = "tests/class_feature_target_gates_tests.rs"]
 mod class_feature_target_gates_tests;
+#[path = "tests/class_generic_method_self_ref_return_constraint_tests.rs"]
+mod class_generic_method_self_ref_return_constraint_tests;
 #[path = "tests/class_implements_abstract_member_compat_tests.rs"]
 mod class_implements_abstract_member_compat_tests;
 #[path = "tests/class_implements_call_construct_signature_tests.rs"]
