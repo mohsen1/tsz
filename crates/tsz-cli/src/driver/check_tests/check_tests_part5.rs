@@ -818,3 +818,150 @@ export default class Schema<T> {
             "expected exactly one genuine TS2344 (Schema lacks `mark`): {diagnostics:?}"
         );
     }
+
+    // ------------------------------------------------------------------
+    // #17585: an instance method whose declared return type re-instantiates
+    // the enclosing generic class through a self-referential type-parameter
+    // constraint (zod's `ZodObject.merge<Incoming extends AnyZodObject>`
+    // shape, `AnyZodObject` aliasing `ZodObject<any, any, any>`) collapses to
+    // a spurious TS2536 ("... cannot be used to index type ...").
+    //
+    // Structural rule: while the class's OWN rough-instance-type summary is
+    // being built (`class_type::constructor`'s member scan, used only as the
+    // return type of the class's rough construct signatures), a method's
+    // declared return-type annotation is fully resolved to compute the
+    // summary's callable shape. For a method like `merge` whose return type
+    // re-instantiates the enclosing class via a self-referential type
+    // parameter constraint, that resolution needs the enclosing class's own
+    // instance type — which is not yet published, because this rough scan
+    // IS the pass that (approximately) builds it. The first of several
+    // redundant `push_type_parameters` materializations for the method's own
+    // type parameter therefore resolves the constraint against a
+    // still-incomplete answer and spuriously fails an indexed-access check;
+    // later materializations, run during the class's real member-check pass
+    // once the authoritative instance type is published, resolve correctly.
+    // tsc never validates this during shape-building — tsz's method-shape
+    // builder needs to defer exactly like the sibling property-initializer
+    // fix in #17589.
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn generic_method_return_type_self_referential_class_constraint_is_clean() {
+        let options = resolved_options_for_es2015_strict_test();
+        let diagnostics = collect_test_diagnostics_with_options(
+            &[(
+                "/a.ts",
+                r#"
+type ZodRawShape = { [key: string]: unknown };
+
+class ZodType<Output = any, Def = any, Input = Output> {}
+
+type extendShape<A extends ZodRawShape, B extends ZodRawShape> = A & B;
+
+class ZodObject<T extends ZodRawShape, UnknownKeys = any, Catchall = any> extends ZodType<
+  any,
+  any,
+  any
+> {
+  readonly _shape!: T;
+
+  merge<Incoming extends AnyZodObject>(
+    merging: Incoming
+  ): ZodObject<extendShape<T, Incoming["_shape"]>, UnknownKeys, Catchall> {
+    return {} as any;
+  }
+}
+
+type AnyZodObject = ZodObject<any, any, any>;
+"#,
+            )],
+            &options,
+            std::path::Path::new("/"),
+        );
+        assert!(
+            diagnostics.is_empty(),
+            "expected a fully clean (tsc-parity) check; got: {diagnostics:#?}"
+        );
+    }
+
+    #[test]
+    fn generic_method_return_type_self_referential_class_constraint_renamed_binders_is_clean() {
+        // Anti-hardcoding: a differently-named class, alias, and method/type
+        // parameter must not change the outcome.
+        let options = resolved_options_for_es2015_strict_test();
+        let diagnostics = collect_test_diagnostics_with_options(
+            &[(
+                "/a.ts",
+                r#"
+type BoxShape = { [key: string]: unknown };
+
+class Base<Output = any, Def = any, Input = Output> {}
+
+type widenShape<A extends BoxShape, B extends BoxShape> = A & B;
+
+class Box<T extends BoxShape, Extra = any, Other = any> extends Base<any, any, any> {
+  readonly payload!: T;
+
+  combine<Other2 extends AnyBox>(
+    that: Other2
+  ): Box<widenShape<T, Other2["payload"]>, Extra, Other> {
+    return {} as any;
+  }
+}
+
+type AnyBox = Box<any, any, any>;
+"#,
+            )],
+            &options,
+            std::path::Path::new("/"),
+        );
+        assert!(
+            diagnostics.is_empty(),
+            "expected a fully clean (tsc-parity) check; got: {diagnostics:#?}"
+        );
+    }
+
+    #[test]
+    fn generic_method_return_type_self_referential_class_constraint_genuine_violation_still_reports_ts2536()
+     {
+        // Negative control: when the enclosing class genuinely lacks the
+        // member the indexed access names, TS2536 must still fire — the fix
+        // must not turn this into a blanket suppression of the rough-pass
+        // method-return-type check.
+        let options = resolved_options_for_es2015_strict_test();
+        let diagnostics = collect_test_diagnostics_with_options(
+            &[(
+                "/a.ts",
+                r#"
+type ZodRawShape = { [key: string]: unknown };
+
+class ZodType<Output = any, Def = any, Input = Output> {}
+
+type extendShape<A extends ZodRawShape, B extends ZodRawShape> = A & B;
+
+class ZodObject<T extends ZodRawShape, UnknownKeys = any, Catchall = any> extends ZodType<
+  any,
+  any,
+  any
+> {
+  readonly _wrongName!: T;
+
+  merge<Incoming extends AnyZodObject>(
+    merging: Incoming
+  ): ZodObject<extendShape<T, Incoming["_shape"]>, UnknownKeys, Catchall> {
+    return {} as any;
+  }
+}
+
+type AnyZodObject = ZodObject<any, any, any>;
+"#,
+            )],
+            &options,
+            std::path::Path::new("/"),
+        );
+        let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
+        assert!(
+            codes.contains(&2536),
+            "expected a genuine TS2536 (ZodObject lacks `_shape`): {diagnostics:?}"
+        );
+    }
