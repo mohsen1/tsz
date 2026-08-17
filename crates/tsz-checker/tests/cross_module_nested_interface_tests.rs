@@ -10,7 +10,14 @@ use tsz_common::common::ModuleKind;
 
 fn compile_module_files(files: &[(&str, &str)], entry_idx: usize) -> Vec<(u32, String)> {
     let entry_file = files[entry_idx].0;
-    tsz_checker::test_utils::check_multi_file(
+    // `check_multi_file` gives every file's binder a base-0 `SymbolId` arena,
+    // so unrelated declarations across files can land on the same raw id and
+    // a cross-file qualified-name lookup resolves through the wrong file's
+    // identically numbered symbol (the #15983 family; see
+    // `PER_FILE_SYMBOL_BASE_STRIDE`'s doc comment in `test_utils/multi_file.rs`).
+    // `check_multi_file_with_libs_unique_module_locals` gives each file's
+    // module-local symbols a disjoint id range even with no libs loaded.
+    tsz_checker::test_utils::check_multi_file_with_libs_unique_module_locals(
         files,
         entry_file,
         CheckerOptions {
@@ -18,6 +25,7 @@ fn compile_module_files(files: &[(&str, &str)], entry_idx: usize) -> Vec<(u32, S
             strict: true,
             ..CheckerOptions::default()
         },
+        &[],
     )
     .into_iter()
     .filter(|d| d.code != 2318)
