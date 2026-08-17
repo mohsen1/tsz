@@ -17,11 +17,18 @@ import {
   SLOWDOWN_FAILURE_FACTOR,
 } from "../../../../scripts/bench/row-utils.mjs";
 import { subsystemForCode } from "../../../../scripts/ci/diagnostic-subsystems.mjs";
+import { computeFixtureStubInventory } from "../../../../scripts/bench/lib/fixture-stub-inventory.mjs";
 import { fmt } from "./loc.js";
 import { generatedBenchmarkSource } from "./benchmark_generated_sources.js";
 import { PROJECT_DESCRIPTIONS } from "./project_descriptions.js";
 
 const ROOT = path.resolve(import.meta.dirname, "..", "..", "..", "..");
+
+// Ask 4 of #16311: a row measured against the no-install fixture model's
+// hand-written `declare module` shims has its dependency graph erased to
+// `any` at exactly the boundaries a real checker is hardest at. Computed
+// statically from the stub-writer scripts, keyed by project row name.
+const FIXTURE_STUB_INVENTORY = computeFixtureStubInventory(ROOT);
 
 function formatUtcTimestamp(value) {
   const date = new Date(value);
@@ -149,6 +156,23 @@ function formatFilesReached(value) {
 function formatProjectSize(value) {
   const count = finiteNumber(value);
   return count === null || count <= 0 ? null : `${fmt(count)} lines`;
+}
+
+// Ask 4 of #16311: render "N stubbed modules, M any members" next to a row's
+// state so a green row measured against real dependency types and a green
+// row measured against hand-written `any` shims stop reading as the same
+// claim. Absent from the map means the fixture installs real dependencies
+// (or needs no stub at all) -- not "zero stubs measured as zero".
+function formatFixtureFidelity(counts) {
+  if (!counts || (!counts.stubbedModules && !counts.stubbedAnyMembers)) return null;
+  const parts = [];
+  if (counts.stubbedModules) {
+    parts.push(`${counts.stubbedModules} stubbed module${counts.stubbedModules === 1 ? "" : "s"}`);
+  }
+  if (counts.stubbedAnyMembers) {
+    parts.push(`${counts.stubbedAnyMembers} any member${counts.stubbedAnyMembers === 1 ? "" : "s"}`);
+  }
+  return parts.join(", ");
 }
 
 function formatPeakMemoryMiB(value) {
@@ -740,6 +764,7 @@ function compatibilityRowFor(definition, allResults, artifact) {
     ...state,
     row,
     lines: row?.lines || 0,
+    fixtureStubCounts: FIXTURE_STUB_INVENTORY[definition.name] || null,
     filesReached: compatibility.files_reached ?? null,
     filesReachedReason: compatibility.files_reached_reason ?? null,
     firstFailureClass: compatibility.first_failure_class || null,
@@ -1869,6 +1894,7 @@ export function getProjectCompatibilityDashboard() {
           <th scope="col">${sortableHeader("project", "Project")}</th>
           <th scope="col">${sortableHeader("state", "State")}</th>
           <th scope="col">${sortableHeader("size", "Size", "number")}</th>
+          <th scope="col">${sortableHeader("stubs", "Fixture fidelity", "number")}</th>
           <th scope="col">${sortableHeader("exit", "Exit class")}</th>
           <th scope="col">${sortableHeader("phase", "Phase")}</th>
           <th scope="col">${sortableHeader("files", "Files", "number")}</th>
@@ -1880,6 +1906,7 @@ export function getProjectCompatibilityDashboard() {
           <td class="compat-project" data-sort-key="project" data-sort-value="${escapeHtml(row.label)}"><a href="${row.url}">${escapeHtml(row.label)}</a></td>
           <td data-sort-key="state" data-sort-value="${escapeHtml(row.className)}"><span class="compat-state ${row.className}">${escapeHtml(row.stateLabel)}</span></td>
           <td data-sort-key="size" data-sort-value="${numericSortValue(row.lines)}">${escapeHtml(formatProjectSize(row.lines) || "—")}</td>
+          <td data-sort-key="stubs" data-sort-value="${numericSortValue(row.fixtureStubCounts?.stubbedAnyMembers)}">${escapeHtml(formatFixtureFidelity(row.fixtureStubCounts) || "no ambient stubs")}</td>
           <td data-sort-key="exit" data-sort-value="${escapeHtml(row.exitClass || "")}"><span class="compat-detail">${escapeHtml(row.exitClass || "unknown")}</span></td>
           <td data-sort-key="phase" data-sort-value="${escapeHtml(row.phase || "")}"><span class="compat-detail">${escapeHtml(row.phase || "unknown")}</span></td>
           <td data-sort-key="files" data-sort-value="${numericSortValue(row.filesReached)}">${escapeHtml(formatFilesReached(row.filesReached) || "—")}</td>
