@@ -16,30 +16,40 @@ use super::build_data::StaticMemberBuildData;
 
 impl<'a> CheckerState<'a> {
     /// Type a static/instance property's function-expression initializer
-    /// during constructor-shape building without letting its diagnostics
-    /// survive.
+    /// during constructor-shape building without letting a premature
+    /// self-referential constraint diagnostic survive.
     ///
     /// This runs before the class's own statement check, so a
     /// self-referential type-parameter constraint on the initializer (e.g.
     /// `<R extends Schema>` used inside the initializer's own signature) can
     /// resolve against Schema's not-yet-published instance type and
-    /// spuriously fail a TS2344 constraint check here. The authoritative
-    /// check runs later, in the normal member walk
+    /// spuriously fail a TS2344/TS2536 constraint check here. The
+    /// authoritative check runs later, in the normal member walk
     /// (`check_property_declaration_with_request`), once the class's real
-    /// instance type is published — so any diagnostic produced by this
-    /// premature pass is discarded; `push_diagnostic`'s first-wins dedup
-    /// would otherwise keep this wrong early answer over the later correct
-    /// one. The node-type cache is cleared too, so the later pass
-    /// re-validates instead of reusing this speculative result.
+    /// instance type is published, so only THOSE two codes are discarded and
+    /// the node-type cache cleared to force a re-validation there (mirrors
+    /// `class_instance_phase0_prescan_this`, #17585/#17589). Every other
+    /// diagnostic produced while typing the initializer — e.g. a `this`
+    /// binding-boundary error inside a nested function/class expression — is
+    /// kept: this speculative pass is sometimes the only pass that visits
+    /// those nested nodes, so a blanket rollback would silently drop them.
     pub(super) fn speculative_static_property_initializer_type(
         &mut self,
         initializer: NodeIndex,
         request: &TypingRequest,
     ) -> TypeId {
         let diag_snap = DiagnosticSpeculationSnapshot::new(&self.ctx);
+        let diag_checkpoint = diag_snap.checkpoint();
         let init_type = self.get_type_of_node_with_request(initializer, request);
-        diag_snap.rollback(&mut self.ctx.diagnostic_state());
-        self.clear_type_cache_recursive(initializer);
+        let leaked_self_ref_constraint_failure = self.ctx.diagnostics[diag_checkpoint..]
+            .iter()
+            .any(|d| matches!(d.code, 2536 | 2344));
+        if leaked_self_ref_constraint_failure {
+            diag_snap.rollback(&mut self.ctx.diagnostic_state());
+            self.clear_type_cache_recursive(initializer);
+        } else {
+            diag_snap.commit(&mut self.ctx.diagnostic_state());
+        }
         init_type
     }
 
