@@ -159,7 +159,26 @@ tsz-checker::js_export_surface_tests::part_01::test_current_file_module_exports_
 tsz-checker::js_jsdoc_diagnostics_tests::checked_js_async_jsdoc_expression_body_ts2322_anchors_on_return_expr
 tsz-checker::nonnull_contextual_type_arg_inference_tests::contextual_return_can_refine_transparent_wrapper_inference
 tsz-checker::raw_builder_return_context_inference_tests::different_base_and_ambiguous_union_do_not_pin_the_tag
+# 2026-08-17 shrink (no generation bump — removals are always allowed): the two
+# tsz-cli::driver_tests rows below now pass on main @ 026b8458 — verified with a
+# direct per-test run (`cargo nextest run -p tsz-cli --lib -E
+# 'test(cross_file_dependent_operand_aliases_accept_scalars_and_literal_arrays) or
+# test(declaration_emit_reports_ts7056_for_private_import_type_alias)'`), 2/2
+# passed. #17551 (the untracked-failures issue that first surfaced this
+# baseline's tsz-cli rows) named the TS7056 row as a real missing-diagnostic
+# bug with a conformance twin (`declarationEmitPrivatePromiseLikeInterface.ts`)
+# and asked for the other five to be checked against the oracle before being
+# treated as compiler bugs rather than pinning bugs; this shrink is that check
+# for two of the five — both simply pass now, most likely fixed incidentally by
+# intervening cross-file/instantiation-identity landings between #17551's
+# 2026-08-15 measurement and today. The other two tsz-cli rows below still fail
+# unchanged: `cross_file_class_namespace_merge_value_keeps_call_signature_in_import_cycle`
+# is the live #17567 investigation (checker instance-type-resolution collapse,
+# five sessions of traced-but-unfixed attempts recorded on that issue — do not
+# re-attempt cold without reading its comment history first);
+# `default_lib_validation_normalizes_cross_arena_method_members_after_global_merge`
+# now fails with a different signature than #17551 originally described — a
+# genuine default-lib TS2430 (`Document` incorrectly extends
+# `NonElementParentNode`) — not yet triaged, worth its own issue if picked up.
 tsz-cli::driver::core::check::check_tests::cross_file_class_namespace_merge_value_keeps_call_signature_in_import_cycle
 tsz-cli::driver::core::check::check_tests::default_lib_validation_normalizes_cross_arena_method_members_after_global_merge
-tsz-cli::driver_tests::cross_file_dependent_operand_aliases_accept_scalars_and_literal_arrays
-tsz-cli::driver_tests::declaration_emit_reports_ts7056_for_private_import_type_alias
