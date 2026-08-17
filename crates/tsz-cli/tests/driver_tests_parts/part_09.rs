@@ -185,6 +185,21 @@ fn compile_incremental_reports_ts5033_when_tsbuildinfo_is_not_writable() {
     std::fs::set_permissions(&readonly_dir, std::fs::Permissions::from_mode(0o555))
         .expect("mark readonly dir");
 
+    // Some environments (e.g. containers running as root) ignore directory
+    // write permissions entirely, so the read-only marking above is not
+    // actually enforced. Probe for that before asserting on it, or a
+    // privileged CI/dev runner turns this into a permanent false failure
+    // unrelated to tsz.
+    let probe_writable = std::fs::write(readonly_dir.join(".write_probe"), b"probe").is_ok();
+    let _ = std::fs::remove_file(readonly_dir.join(".write_probe"));
+    if probe_writable {
+        // Directory write permissions are not enforced here (e.g. running as
+        // root) — nothing to assert.
+        std::fs::set_permissions(&readonly_dir, std::fs::Permissions::from_mode(0o755))
+            .expect("restore readonly dir permissions");
+        return;
+    }
+
     write_file(
         &base.join("tsconfig.json"),
         r#"{
