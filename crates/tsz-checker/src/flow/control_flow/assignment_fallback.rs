@@ -526,11 +526,30 @@ impl<'a> FlowAnalyzer<'a> {
 
         let call = self.arena.get_call_expr(call_node)?;
         let callee = self.skip_parens_and_assertions(call.expression);
-        let callee_type = self
+        let resolved_callee = self
             .fallback_cached_callable_reference_type(callee)
             .or_else(|| self.fallback_type_for_reference(callee))
             .or_else(|| self.fallback_expression_type_from_syntax(callee))
-            .map(|ty| self.resolve_lazy_via_env(ty))?;
+            .map(|ty| self.resolve_lazy_via_env_or_context(ty));
+        let Some(callee_type) = resolved_callee.filter(|&ty| !self.is_unresolved_lazy_type(ty))
+        else {
+            // An import-alias callee whose target type is not computed yet is
+            // recoverable: record it so `check_flow_usage` can force the
+            // alias's type and re-run flow narrowing once (import cycles make
+            // "check the provider file first" impossible in general).
+            tracing::trace!(
+                callee = callee.0,
+                resolved = ?resolved_callee,
+                "generic-call fallback: callee unresolved, recording import-alias request"
+            );
+            self.record_unresolved_import_callee(callee);
+            return None;
+        };
+        tracing::trace!(
+            callee = callee.0,
+            callee_type = callee_type.0,
+            "generic-call fallback: callee resolved"
+        );
         if call.type_arguments.is_some() {
             return None;
         }
@@ -567,7 +586,13 @@ impl<'a> FlowAnalyzer<'a> {
                 &env,
                 callee_type,
                 &argument_types,
-            )?;
+            );
+        tracing::trace!(
+            callee_type = callee_type.0,
+            return_type = ?return_type,
+            "generic-call fallback: solver gate result"
+        );
+        let return_type = return_type?;
         self.reject_unresolved_generic_result((return_type != TypeId::ERROR).then_some(return_type))
     }
 
@@ -903,6 +928,37 @@ impl<'a> FlowAnalyzer<'a> {
     /// union against it; callers must recover a concrete declared type instead.
     fn is_unresolved_lazy_type(&self, ty: TypeId) -> bool {
         get_lazy_def_id(self.interner.as_type_database(), ty).is_some()
+    }
+
+    /// Record a call-fallback callee whose local binding is an import alias so
+    /// the `&mut` orchestration layer (`check_flow_usage`) can force the
+    /// alias's type on demand and re-run flow narrowing once.
+    ///
+    /// Only the CURRENT binder's local symbol is recorded: raw foreign
+    /// `SymbolId`s collide across per-file binders and must never be handed to
+    /// `get_type_of_symbol` on this checker. Non-alias callees are ignored —
+    /// a local declaration's type is already recoverable syntactically, so a
+    /// miss there is a genuine (unrecoverable) fallback failure.
+    fn record_unresolved_import_callee(&self, callee: NodeIndex) {
+        let Some(ctx) = self.checker_context else {
+            return;
+        };
+        let Some(local_sym) = self.binder.get_node_symbol(callee).or_else(|| {
+            self.binder
+                .resolve_identifier_with_filter(self.arena, callee, &[], |_| true)
+        }) else {
+            return;
+        };
+        let is_alias = self
+            .binder
+            .get_symbol(local_sym)
+            .is_some_and(|symbol| symbol.has_any_flags(tsz_binder::symbol_flags::ALIAS));
+        if is_alias {
+            ctx.flow_shared
+                .unresolved_import_callees
+                .borrow_mut()
+                .insert(local_sym);
+        }
     }
 
     /// Resolve a declaration's declared type from its syntactic type annotation.

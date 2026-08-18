@@ -171,8 +171,29 @@ tsz-checker::conditional_application_display_tests::deferred_generic_conditional
 # the 2026-08-13 entry and the ts7014 re-pin below. No production code
 # changed. Verified: 3/3 re-pinned tests pass, plus full per-target runs of
 # both affected binaries.
+# 2026-08-18 shrink (no generation bump — removals are always allowed): the
+# imported_generic_result_narrows_inside_reduce_arrow row now passes — fixed,
+# not incidental. The 2026-07-31 note below blamed a missing `TypeData::Lazy`
+# arm in `single_non_rest_generic_call`; a later session refuted that (adding
+# the arm resolves nothing — the cross-file `DefId` was never registered in
+# any `TypeEnvironment`). Actual mechanism: the read-only flow syntactic
+# fallback runs during return-type inference, which never checks sibling
+# assignment statements, so an imported generic callee's alias target has no
+# computed type anywhere at that moment — unavoidable in import cycles, where
+# no file check order can type the provider first. Fix: the fallback records
+# the unresolved import-alias callee in
+# `flow_shared.unresolved_import_callees`; `check_flow_usage` (the `&mut`
+# boundary) drains it, forces `get_type_of_symbol` on the alias, drops the
+# flow results computed while the callee was unresolved, and re-runs the
+# narrowing once. Oracle-confirmed (typescript@7.0.2 and 6.0.2 both clean on
+# the fixture; tsz previously emitted a false TS18048). Verified with a
+# per-target run: `cargo test -p tsz-checker --test
+# generic_call_assignment_flow_tests` — 29 passed (was 27/29 with 2 failing),
+# including three new adjacent-matrix tests (renamed binders, import-cycle
+# form, nullable-result negative control pinning TS2345+TS18048). The
+# colliding_generic_terminals row below is the separate #15983
+# SymbolId-collision family and still fails.
 tsz-checker::generic_call_assignment_flow_tests::colliding_generic_terminals_keep_flow_diagnostics_clean_across_file_orders
-tsz-checker::generic_call_assignment_flow_tests::imported_generic_result_narrows_inside_reduce_arrow
 tsz-checker::generic_generator_member_substitution_tests::generic_generator_genuine_mismatch_still_errors_with_substituted_source
 tsz-checker::issue_14123_repro_tests::issue_14123_alias_array_infer_reports_mismatch
 # 2026-08-18 shrink (no generation bump — removals are always allowed): the two

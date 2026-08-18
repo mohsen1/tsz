@@ -20,6 +20,7 @@ const TS18048: u32 = 18048;
 const TS2322: u32 = 2322;
 const TS2339: u32 = 2339;
 const TS2344: u32 = 2344;
+const TS2345: u32 = 2345;
 const TS2349: u32 = 2349;
 const TS7006: u32 = 7006;
 
@@ -221,6 +222,159 @@ export function collect(columns: RawColumnMetadata[]): TableMetadata[] {
     assert!(
         diagnostics.is_empty(),
         "an imported generic callee must publish the same concrete deferred result: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn imported_generic_result_narrows_with_renamed_binders() {
+    let diagnostics = multi_codes(
+        &[
+            (
+                "sealer.ts",
+                r#"
+export function sealDeep<Payload>(input: Payload): Readonly<Payload> {
+    return input;
+}
+"#,
+            ),
+            (
+                "grouper.ts",
+                r#"
+import { sealDeep } from './sealer.js';
+
+interface Bucket {
+    readonly label: string;
+    readonly entries: Entry[];
+}
+interface Entry { readonly id: string; }
+
+export function group(ids: string[]): Bucket[] {
+    return ids.reduce<Bucket[]>((buckets, id) => {
+        let bucket = buckets.find((candidate) => candidate.label === id);
+        if (!bucket) {
+            bucket = sealDeep({ label: id, entries: [] });
+            buckets.push(bucket);
+        }
+        bucket.entries.push({ id });
+        return buckets;
+    }, []);
+}
+"#,
+            ),
+        ],
+        "grouper.ts",
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "renamed binders must follow the same imported-callee recovery rule: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn imported_generic_result_narrows_inside_reduce_arrow_in_import_cycle() {
+    // Import cycle: no file check order can type the provider first, so the
+    // on-demand forcing retry is the only way flow can see the callee.
+    let diagnostics = multi_codes(
+        &[
+            (
+                "object-utils.ts",
+                r#"
+import type { TableMetadata } from './mysql-introspector.js';
+
+export function freeze<T>(value: T): Readonly<T> {
+    return value;
+}
+
+export function firstTable(tables: TableMetadata[]): TableMetadata | undefined {
+    return tables[0];
+}
+"#,
+            ),
+            (
+                "mysql-introspector.ts",
+                r#"
+import { freeze } from './object-utils.js';
+
+export interface TableMetadata {
+    readonly name: string;
+    readonly isView: boolean;
+    readonly columns: ColumnMetadata[];
+}
+interface ColumnMetadata { readonly name: string; }
+
+export function collect(names: string[]): TableMetadata[] {
+    return names.reduce<TableMetadata[]>((tables, name) => {
+        let table = tables.find((candidate) => candidate.name === name);
+        if (!table) {
+            table = freeze({ name, isView: false, columns: [] });
+            tables.push(table);
+        }
+        table.columns.push({ name });
+        return tables;
+    }, []);
+}
+"#,
+            ),
+        ],
+        "mysql-introspector.ts",
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "an import cycle must not degrade the imported-callee recovery: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn imported_generic_nullable_result_keeps_possibly_undefined() {
+    // Negative control: recovering the imported signature must not
+    // over-narrow. A `Readonly<T> | undefined` result keeps `undefined`
+    // alive, so tsc reports TS2345 at `tables.push(table)` and TS18048 at
+    // the later property access (oracle: typescript@7.0.2).
+    let diagnostics = multi_codes(
+        &[
+            (
+                "object-utils.ts",
+                r#"
+export function maybeFreeze<T>(value: T): Readonly<T> | undefined {
+    return value;
+}
+"#,
+            ),
+            (
+                "mysql-introspector.ts",
+                r#"
+import { maybeFreeze } from './object-utils.js';
+
+interface TableMetadata {
+    readonly name: string;
+    readonly isView: boolean;
+    readonly columns: ColumnMetadata[];
+}
+interface ColumnMetadata { readonly name: string; }
+
+export function collect(names: string[]): TableMetadata[] {
+    return names.reduce<TableMetadata[]>((tables, name) => {
+        let table = tables.find((candidate) => candidate.name === name);
+        if (!table) {
+            table = maybeFreeze({ name, isView: false, columns: [] });
+            tables.push(table);
+        }
+        table.columns.push({ name });
+        return tables;
+    }, []);
+}
+"#,
+            ),
+        ],
+        "mysql-introspector.ts",
+    );
+
+    assert_eq!(
+        diagnostics,
+        vec![TS2345, TS18048],
+        "a nullable imported generic result must keep both oracle diagnostics"
     );
 }
 

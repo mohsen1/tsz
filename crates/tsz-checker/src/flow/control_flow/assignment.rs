@@ -1858,6 +1858,28 @@ impl<'a> FlowAnalyzer<'a> {
         }
     }
 
+    /// Resolve a `Lazy(DefId)` like [`Self::resolve_lazy_via_env`], falling
+    /// back to the full `CheckerContext` resolver on an environment miss.
+    ///
+    /// The flow environment only knows definitions registered before this
+    /// (possibly speculative) flow pass ran; a cross-file imported definition
+    /// reached through the syntactic call fallback may not be among them. The
+    /// context resolver reads the same already-computed channels the main
+    /// check pass uses (`symbol_types`, the cross-file query cache, the shared
+    /// `DefinitionStore`) and never mints a new body, so falling back to it
+    /// cannot diverge from the main pass's answer — it only lets the fallback
+    /// see a definition instead of an unresolved `Lazy`.
+    pub(super) fn resolve_lazy_via_env_or_context(&self, type_id: TypeId) -> TypeId {
+        let resolved = self.resolve_lazy_via_env(type_id);
+        if resolved != type_id {
+            return resolved;
+        }
+        let Some(ctx) = self.checker_context else {
+            return type_id;
+        };
+        crate::query_boundaries::flow::resolve_lazy_def_with_context(self.interner, ctx, type_id)
+    }
+
     /// Resolve a `Lazy(DefId)` type to its concrete representation using the
     /// `TypeEnvironment`. Returns the original type if not lazy or if the
     /// environment is unavailable / doesn't contain the DefId.

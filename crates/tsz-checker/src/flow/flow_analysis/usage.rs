@@ -109,6 +109,11 @@ impl<'a> CheckerState<'a> {
         // x has a definite value — TS2454 should not fire in narrowed branches.
         trace!("Applying flow narrowing");
         let mut narrowed_type = self.apply_flow_narrowing(idx, declared_type);
+        narrowed_type = self.retry_flow_narrowing_after_forcing_import_callees(
+            idx,
+            declared_type,
+            narrowed_type,
+        );
         // The auto/evolving-any treatment of an unannotated `var`/`let` — evolving
         // its read type from control-flow assignments, and (under strictNullChecks)
         // surfacing `undefined` before assignment — is tsc's `noImplicitAny`
@@ -251,6 +256,67 @@ impl<'a> CheckerState<'a> {
 
         trace!(?narrowed_type, "check_flow_usage result");
         narrowed_type
+    }
+
+    /// On-demand forcing for import-alias callees the flow syntactic call
+    /// fallback could not resolve (issue #15396/#13979 family).
+    ///
+    /// The flow analyzer is read-only: when an assignment's RHS is a call to
+    /// an imported generic function whose alias target has never been typed —
+    /// which import cycles make unavoidable, since no file check order can
+    /// type the provider first — the fallback records the alias symbol in
+    /// `flow_shared.unresolved_import_callees` and stays conservative. Here, at
+    /// the `&mut` orchestration boundary, force each recorded alias's type
+    /// through the normal `get_type_of_symbol` path (the same computation the
+    /// main pass performs when it later checks the call expression, so this
+    /// cannot diverge from it), drop the flow results computed while the
+    /// callee was unresolved, and re-run the narrowing once so the fallback
+    /// observes the computed signature. tsc needs no equivalent because its
+    /// flow analysis computes assigned types on demand.
+    fn retry_flow_narrowing_after_forcing_import_callees(
+        &mut self,
+        idx: NodeIndex,
+        declared_type: TypeId,
+        narrowed_type: TypeId,
+    ) -> TypeId {
+        let pending: Vec<SymbolId> = {
+            let mut requests = self.ctx.flow_shared.unresolved_import_callees.borrow_mut();
+            if requests.is_empty() {
+                return narrowed_type;
+            }
+            requests.drain().collect()
+        };
+        let mut resolved_any = false;
+        for alias_sym in pending {
+            let forced = self.get_type_of_symbol(alias_sym);
+            resolved_any |= !matches!(forced, TypeId::ERROR | TypeId::UNKNOWN);
+        }
+        if !resolved_any {
+            return narrowed_type;
+        }
+        // Flow results computed while the callee was unresolved are stale:
+        // both the keyed flow cache and the "no narrowing occurred"
+        // confirmations may encode the conservative (un-killed) union. This
+        // path only runs when an import-alias callee actually failed to
+        // resolve, so the full clear is rare and bounded.
+        self.ctx
+            .flow_shared
+            .flow_analysis_cache
+            .borrow_mut()
+            .clear();
+        self.ctx.symbol_flow_confirmed.borrow_mut().clear();
+        let retried = self.apply_flow_narrowing(idx, declared_type);
+        // Requests recorded during the retry are final misses for this site;
+        // drop them rather than letting the set grow across the file.
+        self.ctx
+            .flow_shared
+            .unresolved_import_callees
+            .borrow_mut()
+            .clear();
+        if retried == TypeId::ERROR {
+            return narrowed_type;
+        }
+        retried
     }
 
     fn symbol_participates_in_flow_analysis(&self, sym_id: SymbolId) -> bool {
