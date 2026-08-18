@@ -787,12 +787,24 @@ impl<'a> FlowAnalyzer<'a> {
             .and_then(|nt| nt.get(&reference.0).copied())
             .filter(|&ty| ty != TypeId::ERROR)
         {
+            tracing::trace!(
+                reference = reference.0,
+                ty = ty.0,
+                "fallback_type_for_reference: node_types hit"
+            );
             return Some(ty);
         }
 
         let sym_id = self.reference_symbol(reference)?;
         let symbol = self.binder.get_symbol(sym_id)?;
         let decl = symbol.primary_declaration()?;
+        tracing::trace!(
+            reference = reference.0,
+            sym_id = sym_id.0,
+            symbol_name = %symbol.escaped_name,
+            decl = decl.0,
+            "fallback_type_for_reference: inspecting symbol declaration"
+        );
         let declared_type = self
             .annotation_type_from_var_decl_node(decl)
             .or_else(|| {
