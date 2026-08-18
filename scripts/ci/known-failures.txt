@@ -205,13 +205,18 @@ tsz-checker::raw_builder_return_context_inference_tests::different_base_and_ambi
 # unchanged: `cross_file_class_namespace_merge_value_keeps_call_signature_in_import_cycle`
 # is the live #17567 investigation (checker instance-type-resolution collapse,
 # five sessions of traced-but-unfixed attempts recorded on that issue — do not
-# re-attempt cold without reading its comment history first);
+# re-attempt cold without reading its comment history first).
+#
+# 2026-08-18 shrink (no generation bump — removals are always allowed):
 # `default_lib_validation_normalizes_cross_arena_method_members_after_global_merge`
-# now fails with a different signature than #17551 originally described — a
-# genuine default-lib TS2430 (`Document` incorrectly extends
-# `NonElementParentNode`) — not yet triaged, worth its own issue if picked up.
+# now passes (#17595). Its default-lib TS2430 (`Document` incorrectly extends
+# `NonElementParentNode`) was a heritage-thin `HTMLElement` — momentarily
+# resolved without `Node`'s inherited members during the DOM
+# `Node`/`Element`/`HTMLElement` resolution cycle — being cached over the
+# complete body via `resolve_lib_type_by_name_inner`'s direct `symbol_types`
+# write, which bypassed the membership-monotone guard the finalize path already
+# applies. Fixed by extending that guard to the direct cache write.
 tsz-cli::driver::core::check::check_tests::cross_file_class_namespace_merge_value_keeps_call_signature_in_import_cycle
-tsz-cli::driver::core::check::check_tests::default_lib_validation_normalizes_cross_arena_method_members_after_global_merge
 # 2026-08-18 shrink (no generation bump — removals are always allowed): the two
 # conformance_issues_features::namespace_construct_signature rows below now pass
 # — verified with a direct per-target run (`cargo test -p tsz-checker --test
