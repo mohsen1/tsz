@@ -320,6 +320,13 @@ pub(super) const fn is_parser_grammar_code(code: u32) -> bool {
         | 1210 // Code contained in a class is evaluated in strict mode
         | 1212 // Identifier expected. '{0}' is a reserved word in strict mode
         | 1213 // Identifier expected. '{0}' is a reserved word in strict mode. Class definitions are automatically in strict mode.
+        | 1214 // Identifier expected. '{0}' is a reserved word in strict mode. Modules are
+               // automatically in strict mode. Third member of tsc's
+               // `checkStrictModeIdentifier` early-return chain (binder-emitted,
+               // semantic-phase there); tsz's parser also emits it eagerly for the
+               // syntactically-known module-context case
+               // (`report_strict_mode_reserved_word_error`), same as its listed
+               // TS1212/TS1213 siblings.
         | 1024 // 'readonly' modifier can only appear on a property declaration or index signature
         | 1242 // 'abstract' modifier can only appear on a class, method, or property declaration
         | 1274 // '{0}' modifier can only appear on a type parameter of a class,

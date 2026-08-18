@@ -733,6 +733,16 @@ impl<'a> FlowAnalyzer<'a> {
                                     // not initial_type which may be an already-narrowed type from loop analysis.
                                     // This is critical for loops like `let code: 0|1 = 0; while(true) { code = code === 1 ? 0 : 1; }`
                                     // where initial_type is `0` (narrowed) but declared type is `0|1`.
+                                    // `annotation_type_from_var_decl_node` only reads
+                                    // `VARIABLE_DECLARATION` annotations, and a parameter's
+                                    // declaration node is commonly absent from `node_types`
+                                    // during loop back-edge walks, so an annotated *parameter*
+                                    // binding must recover its declared union from the
+                                    // annotation syntax. Without that, the reduction base
+                                    // degrades to the loop-narrowed `initial_type` and a
+                                    // widening back-edge write (`x = n` with `x: string |
+                                    // number` narrowed to `string`) can never re-widen the
+                                    // loop-head join.
                                     let declared_type = symbol_id
                                         .and_then(|sid| self.binder.get_symbol(sid))
                                         .filter(|sym| sym.value_declaration.is_some())
@@ -743,6 +753,11 @@ impl<'a> FlowAnalyzer<'a> {
                                                 )
                                                 .or_else(|| {
                                                     types.get(&sym.value_declaration.0).copied()
+                                                })
+                                                .or_else(|| {
+                                                    self.fallback_declared_annotation_type(
+                                                        sym.value_declaration,
+                                                    )
                                                 })
                                             })
                                         });

@@ -34,7 +34,6 @@ FAIL TypeScript/tests/cases/compiler/declFileImportModuleWithExportAssignment.ts
 FAIL TypeScript/tests/cases/compiler/declarationEmitBindingPatternsUnused.ts | expected:[TS2842] actual:[TS2842]
 FAIL TypeScript/tests/cases/compiler/declarationEmitExpandoPropertyPrivateName.ts | expected:[TS2352,TS4032] actual:[TS2352,TS2708]
 FAIL TypeScript/tests/cases/compiler/declarationEmitInvalidExport.ts | expected:[TS1128,TS4081] actual:[TS1128]
-FAIL TypeScript/tests/cases/compiler/declarationEmitPrivatePromiseLikeInterface.ts | expected:[TS7056] actual:[]
 FAIL TypeScript/tests/cases/compiler/declarationEmitTripleSlashReferenceAmbientModule.ts | expected:[TS2591] actual:[]
 FAIL TypeScript/tests/cases/compiler/declarationEmitUnknownImport.ts | expected:[TS2303,TS2304,TS2503] actual:[TS2503]
 FAIL TypeScript/tests/cases/compiler/decoratorMetadataWithImportDeclarationNameCollision4.ts | expected:[TS2613] actual:[TS1192]
@@ -252,7 +251,7 @@ FAIL TypeScript/tests/cases/conformance/jsdoc/declarations/jsDeclarationsExportF
 FAIL TypeScript/tests/cases/conformance/jsdoc/declarations/jsDeclarationsFunctionClassesCjsExportAssignment.ts | expected:[TS1340,TS2683,TS7009] actual:[TS1340,TS2322,TS2683,TS7009]
 FAIL TypeScript/tests/cases/conformance/jsdoc/declarations/jsDeclarationsFunctionLikeClasses2.ts | expected:[TS2350,TS2749] actual:[TS2350,TS2749,TS7023]
 FAIL TypeScript/tests/cases/conformance/jsdoc/declarations/jsDeclarationsFunctions.ts | expected:[TS2349] actual:[]
-FAIL TypeScript/tests/cases/conformance/jsdoc/declarations/jsDeclarationsFunctionsCjs.ts | expected:[TS2339,TS2565] actual:[]
+FAIL TypeScript/tests/cases/conformance/jsdoc/declarations/jsDeclarationsFunctionsCjs.ts | expected:[TS2339,TS2565] actual:[TS2565]
 FAIL TypeScript/tests/cases/conformance/jsdoc/declarations/jsDeclarationsImportAliasExposedWithinNamespace.ts | expected:[] actual:[TS18042]
 FAIL TypeScript/tests/cases/conformance/jsdoc/declarations/jsDeclarationsMissingTypeParameters.ts | expected:[TS1005,TS1099] actual:[TS1005]
 FAIL TypeScript/tests/cases/conformance/jsdoc/declarations/jsDeclarationsModuleReferenceHasEmit.ts | expected:[TS1005,TS2591] actual:[]
@@ -323,7 +322,7 @@ FAIL TypeScript/tests/cases/conformance/salsa/exportNestedNamespaces.ts | expect
 FAIL TypeScript/tests/cases/conformance/salsa/exportNestedNamespaces2.ts | expected:[TS2339] actual:[]
 FAIL TypeScript/tests/cases/conformance/salsa/inferringClassMembersFromAssignments7.ts | expected:[TS2339] actual:[]
 FAIL TypeScript/tests/cases/conformance/salsa/moduleExportAlias.ts | expected:[TS2339] actual:[]
-FAIL TypeScript/tests/cases/conformance/salsa/moduleExportDuplicateAlias3.ts | expected:[TS2339,TS18048] actual:[TS2339,TS2349]
+FAIL TypeScript/tests/cases/conformance/salsa/moduleExportDuplicateAlias3.ts | expected:[TS2339,TS18048] actual:[]
 FAIL TypeScript/tests/cases/conformance/salsa/moduleExportNestedNamespaces.ts | expected:[TS2339,TS2694] actual:[TS2339,TS7009]
 FAIL TypeScript/tests/cases/conformance/salsa/moduleExportWithExportPropertyAssignment2.ts | expected:[TS2309,TS2339] actual:[TS2309,TS2339]
 FAIL TypeScript/tests/cases/conformance/salsa/plainJSGrammarErrors.ts | expected:[TS8009,TS8012,TS8017] actual:[TS1005,TS8009,TS8012,TS8017]
@@ -1952,6 +1951,7 @@ PASS TypeScript/tests/cases/compiler/declarationEmitPathMappingMonorepo2.ts
 PASS TypeScript/tests/cases/compiler/declarationEmitPreserveReferencedImports.ts
 PASS TypeScript/tests/cases/compiler/declarationEmitPrivateAsync.ts
 PASS TypeScript/tests/cases/compiler/declarationEmitPrivateNameCausesError.ts
+PASS TypeScript/tests/cases/compiler/declarationEmitPrivatePromiseLikeInterface.ts
 PASS TypeScript/tests/cases/compiler/declarationEmitPrivateReadonlyLiterals.ts
 PASS TypeScript/tests/cases/compiler/declarationEmitPrivateSymbolCausesVarDeclarationEmit2.ts
 PASS TypeScript/tests/cases/compiler/declarationEmitPrivateSymbolCausesVarDeclarationToBeEmitted.ts

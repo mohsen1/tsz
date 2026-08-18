@@ -524,3 +524,112 @@ export {};
          is missing on the `number` arm. Actual: {d:#?}"
     );
 }
+
+/// #14944 (adjacent, non-self-referential RHS): the widening write's RHS is an
+/// unrelated parameter (`v = n` with `n: number`), so the loop back-edge must
+/// contribute `number` to the loop-head join even though nothing about the RHS
+/// mentions `v`. Guards the declared-type reduction base against degrading to
+/// the guard-narrowed entry arm for *parameter* bindings.
+#[test]
+fn issue_14944_widening_loop_write_from_unrelated_param_still_errors() {
+    let d = compile_and_get_diagnostics(
+        r#"
+function f(v: string | number, n: number) {
+  if (typeof v === "number") return;
+  while (true) {
+    v.length;
+    v = n;
+  }
+}
+export {};
+"#,
+    );
+    assert!(
+        has_error(&d, 2339),
+        "TS2339 expected — the back-edge write `v = n` re-widens `v` to `string | number` \
+         at the loop head, and `.length` is missing on the `number` arm. Actual: {d:#?}"
+    );
+}
+
+/// #14944 (adjacent, renamed binders + `for (;;)` form): same defect through a
+/// different loop syntax and different names, so the fix cannot be scoped to
+/// `while` loops or to any identifier spelling.
+#[test]
+fn issue_14944_widening_self_assignment_for_loop_still_errors() {
+    let d = compile_and_get_diagnostics(
+        r#"
+function h(v: string | number) {
+  if (typeof v === "number") return;
+  for (;;) {
+    v.length;
+    v = v.length;
+  }
+}
+export {};
+"#,
+    );
+    assert!(
+        has_error(&d, 2339),
+        "TS2339 expected — `v = v.length` widens `v` to `string | number` across the \
+         `for (;;)` back edge. Actual: {d:#?}"
+    );
+}
+
+/// #14944 (adjacent, annotated `let` instead of a parameter): the declared-type
+/// reduction base must come from the variable annotation for `let` bindings the
+/// same way it does for parameters; the concrete initializer narrows the entry
+/// type to `string` exactly like the typeof guard does in the parameter form.
+#[test]
+fn issue_14944_widening_self_assignment_annotated_let_still_errors() {
+    if !lib_files_available() {
+        return;
+    }
+    // Lib-enabled harness: the no-lib single-file helper suppresses the
+    // property-level TS2339 on this shape (a pre-existing no-lib display
+    // nuance), while the loop-head join itself widens identically either way.
+    let d = compile_and_get_diagnostics_with_merged_lib_contexts_and_options(
+        r#"
+function g() {
+  let y: string | number = "a";
+  while (true) {
+    y.length;
+    y = y.length;
+  }
+}
+export {};
+"#,
+        CheckerOptions::default(),
+    );
+    assert!(
+        has_error(&d, 2339),
+        "TS2339 expected — `y = y.length` widens `y` to `string | number` across the \
+         back edge even though the initializer narrowed the entry type to `string`. \
+         Actual: {d:#?}"
+    );
+}
+
+/// #14944 (negative control, narrowing-preserving write): a back-edge write
+/// whose RHS stays inside the narrowed arm (`x = x.slice(1)` keeps `string`)
+/// must NOT re-widen the loop-head join — tsc reports no error here. This pins
+/// that the declared-type reduction base fix widens only when the assigned type
+/// actually adds a union arm.
+#[test]
+fn issue_14944_arm_preserving_loop_write_stays_narrowed() {
+    let d = compile_and_get_diagnostics(
+        r#"
+function k(x: string | number) {
+  if (typeof x === "number") return;
+  while (true) {
+    x.length;
+    x = x.slice(1);
+  }
+}
+export {};
+"#,
+    );
+    assert!(
+        !has_error(&d, 2339),
+        "no TS2339 expected — `x = x.slice(1)` keeps `x` in the `string` arm, so the \
+         loop-head join stays `string` and `.length` resolves. Actual: {d:#?}"
+    );
+}

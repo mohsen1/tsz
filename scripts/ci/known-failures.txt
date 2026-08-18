@@ -139,9 +139,38 @@
 # value is assignable to `Function`, so there is no TS2345), so they were renamed
 # and re-pinned to the oracle-confirmed TS1005 + `Function` behavior.
 tsz-checker::conditional_application_display_tests::deferred_generic_conditional_keeps_branch_union
-tsz-checker::conformance_issues_types::types::fp_repro_audit_2026::issue_14944_genuine_widening_self_assignment_still_errors
-tsz-checker::conformance_issues_types::types::r#enum::test_jsdoc_object_literal_property_types_do_not_trigger_self_tdz
-tsz-checker::conformance_issues_types::types::r#enum::test_jsdoc_object_literal_shorthand_and_default_param_preserve_source_types
+# 2026-08-18 shrink (no generation bump — removals are always allowed): the
+# fp_repro_audit_2026::issue_14944_genuine_widening_self_assignment_still_errors
+# row now passes — fixed, not incidental. The killing-definition reduction base
+# in `flow_traversal.rs` only recovered a declared union from
+# `VARIABLE_DECLARATION` annotations; for an annotated *parameter* binding it
+# degraded to the loop-narrowed `initial_type`, so a widening back-edge write
+# (`x = x.length` / `x = n` with `x: string | number` narrowed to `string`)
+# could never re-widen the loop-head join and the genuine TS2339 was dropped.
+# Now falls back to `fallback_declared_annotation_type`, which reads parameter
+# annotations syntactically. Verified with a direct per-target run
+# (`cargo test -p tsz-checker --test conformance_issues_types issue_14944`,
+# 7/7 passed including four new adjacent-matrix tests and a no-error negative
+# control), plus oracle runs on all variants.
+# 2026-08-18 shrink (no generation bump — removals are always allowed): the two
+# conformance_issues_types::types::r#enum rows
+# (test_jsdoc_object_literal_property_types_do_not_trigger_self_tdz,
+# test_jsdoc_object_literal_shorthand_and_default_param_preserve_source_types)
+# and the js_jsdoc_diagnostics_tests row
+# (checked_js_async_jsdoc_expression_body_ts2322_anchors_on_return_expr) were
+# stale pre-TS7 expectations, not compiler bugs. All three fixtures annotate
+# with the Closure `@type {function(...): T}` spelling, which TypeScript 7
+# rejects outright with TS1005 `'}' expected.` (plus TS8030 for method-syntax
+# properties) and gives no type — so the contextual typing those tests
+# asserted (TS2322 drilled into an async arrow's expression body, TS2322 on a
+# default parameter initializer, TS2345 at a call site) can never fire.
+# Oracle-confirmed against `typescript@7.0.2` on all three fixtures; tsz's
+# actual output already matched the TS7 oracle exactly, including per-code
+# counts (TS2322 x2 / TS1005 x3 / TS8030 x1 / TS7006 x2 on the object-literal
+# fixture). Renamed/re-pinned the tests to the TS7 oracle — same fix shape as
+# the 2026-08-13 entry and the ts7014 re-pin below. No production code
+# changed. Verified: 3/3 re-pinned tests pass, plus full per-target runs of
+# both affected binaries.
 tsz-checker::contravariant_app_constrained_type_param_target_tests::same_base_mapped_record_alias_keeps_tsc_variance_quirk
 tsz-checker::generic_call_assignment_flow_tests::colliding_generic_terminals_keep_flow_diagnostics_clean_across_file_orders
 tsz-checker::generic_call_assignment_flow_tests::imported_generic_result_narrows_inside_reduce_arrow
@@ -158,7 +187,6 @@ tsz-checker::issue_14123_repro_tests::issue_14123_alias_array_infer_reports_mism
 # property's read must use the last assignment textually *before* the read
 # instead. Routed ordered reads through the already-existing position-bounded
 # `current_file_commonjs_prior_named_export_type` helper.
-tsz-checker::js_jsdoc_diagnostics_tests::checked_js_async_jsdoc_expression_body_ts2322_anchors_on_return_expr
 tsz-checker::nonnull_contextual_type_arg_inference_tests::contextual_return_can_refine_transparent_wrapper_inference
 tsz-checker::raw_builder_return_context_inference_tests::different_base_and_ambiguous_union_do_not_pin_the_tag
 # 2026-08-17 shrink (no generation bump — removals are always allowed): the two

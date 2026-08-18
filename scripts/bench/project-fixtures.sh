@@ -515,6 +515,26 @@ tsz_project_fixture_sources() {
 # `rev-parse` then reports an unrelated SHA. That is exactly what made #17469's
 # broken pin print `✓ <fixture> pinned at <tsz sha>`. Requiring the resolved
 # top level to equal the fixture directory rejects that aliasing.
+# Resolve a pin to the COMMIT it designates.
+#
+# A pin recorded as a 40-hex SHA is not necessarily a commit: for a release
+# pinned by tag, it is often the *annotated tag object's* SHA. `git checkout`
+# peels such an object to its commit, so `git rev-parse HEAD` afterwards yields
+# the commit — which can never equal the tag-object SHA. Comparing the two
+# directly therefore fails 100% of the time and reports the fixture as unpinned
+# even though the checkout is exactly right (#17565 follow-up: type-fest v5.6.0
+# `4005f60b65a7` peels to `a5491644b321`, which is precisely what CI reported).
+#
+# Peeling makes the comparison commit-vs-commit. `^{commit}` is a no-op on a
+# ref that is already a commit, so the plain-SHA case is unchanged. Echoes the
+# input unchanged when the object is not present locally (before the fetch),
+# which keeps the "needs pinning" branch firing as before.
+tsz_git_fixture_peel_commit() {
+  local dir="$1" ref="$2" peeled
+  peeled="$(git -C "$dir" rev-parse --quiet --verify "${ref}^{commit}" 2>/dev/null || true)"
+  printf '%s\n' "${peeled:-$ref}"
+}
+
 tsz_git_fixture_is_standalone_repo() {
   local dir="$1" top dir_phys top_phys
   [[ -d "$dir/.git" ]] || return 1
@@ -585,9 +605,10 @@ tsz_ensure_git_fixture() {
   fi
 
   if [[ -n "$ref" ]]; then
-    local current_ref
+    local current_ref want_ref
     current_ref="$(git -C "$dir" rev-parse HEAD 2>/dev/null || true)"
-    if [[ "$current_ref" != "$ref" ]]; then
+    want_ref="$(tsz_git_fixture_peel_commit "$dir" "$ref")"
+    if [[ "$current_ref" != "$want_ref" ]]; then
       echo "Pinning ${name} to ${ref:0:12}..."
       if ! git -C "$dir" fetch --quiet --depth 1 origin "$ref"; then
         echo "ERROR: failed to fetch ${name} pin ${ref:0:12} from ${repo}" \
@@ -606,7 +627,8 @@ tsz_ensure_git_fixture() {
     # must fail loudly rather than benchmark the wrong tree.
     if [[ "$ref" =~ ^[0-9a-f]{40}$ ]]; then
       current_ref="$(git -C "$dir" rev-parse HEAD 2>/dev/null || true)"
-      if [[ "$current_ref" != "$ref" ]]; then
+      want_ref="$(tsz_git_fixture_peel_commit "$dir" "$ref")"
+      if [[ "$current_ref" != "$want_ref" ]]; then
         echo "ERROR: ${name} fixture HEAD is ${current_ref:0:12}, expected pin ${ref:0:12}" >&2
         return 1
       fi
