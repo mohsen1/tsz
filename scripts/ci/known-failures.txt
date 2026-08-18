@@ -146,10 +146,6 @@ tsz-checker::conformance_issues_types::types::fp_repro_audit_2026::issue_14944_g
 tsz-checker::conformance_issues_types::types::r#enum::test_jsdoc_object_literal_property_types_do_not_trigger_self_tdz
 tsz-checker::conformance_issues_types::types::r#enum::test_jsdoc_object_literal_shorthand_and_default_param_preserve_source_types
 tsz-checker::contravariant_app_constrained_type_param_target_tests::same_base_mapped_record_alias_keeps_tsc_variance_quirk
-tsz-checker::cross_module_nested_interface_tests::test_cross_module_nested_interface_method_arg_check
-tsz-checker::cross_module_nested_interface_tests::test_three_file_namespace_import_property_type
-tsz-checker::cross_module_nested_interface_tests::test_workspace_method_type_resolution
-tsz-checker::cross_module_nested_interface_tests::test_workspace_property_type_resolution
 tsz-checker::generic_call_assignment_flow_tests::colliding_generic_terminals_keep_flow_diagnostics_clean_across_file_orders
 tsz-checker::generic_call_assignment_flow_tests::imported_generic_result_narrows_inside_reduce_arrow
 tsz-checker::generic_generator_member_substitution_tests::generic_generator_genuine_mismatch_still_errors_with_substituted_source
@@ -182,3 +178,21 @@ tsz-checker::raw_builder_return_context_inference_tests::different_base_and_ambi
 # `NonElementParentNode`) — not yet triaged, worth its own issue if picked up.
 tsz-cli::driver::core::check::check_tests::cross_file_class_namespace_merge_value_keeps_call_signature_in_import_cycle
 tsz-cli::driver::core::check::check_tests::default_lib_validation_normalizes_cross_arena_method_members_after_global_merge
+# 2026-08-17 shrink (no generation bump — removals are always allowed): the four
+# tsz-checker::cross_module_nested_interface_tests rows now pass — HARNESS-ARTIFACTS,
+# not a compiler bug. `compile_module_files`/`compile_two_module_files` used the
+# plain `check_multi_file` helper, which gives every file's binder a base-0
+# `SymbolId` arena (see `PER_FILE_SYMBOL_BASE_STRIDE`'s doc comment in
+# `test_utils/multi_file.rs`); a 3-file chain's `commands.ts` import-equals
+# binding and `server.ts`'s exported interface landed on colliding raw ids, so
+# `config.workspace.name` resolved through the wrong file's identically
+# numbered symbol and reported "Property 'name' does not exist on type
+# 'server'" instead of checking `IWorkspace`. Confirmed as a pure harness
+# artifact: a real `tsz` CLI binary run on the equivalent 2-file repro already
+# matched the `tsc` 6.0.2 oracle exactly (`TS2345`) before this fix. Migrated
+# both helpers to `check_multi_file_with_libs_unique_module_locals` (same
+# #15983-family fix already applied to the kysely/import-type rows above),
+# which gives each file's module-local symbols a disjoint id range even with
+# no libs loaded. Verified with a direct per-target run: `cargo test -p
+# tsz-checker --test cross_module_nested_interface_tests`, 22/22 passed (was
+# 18/22).
