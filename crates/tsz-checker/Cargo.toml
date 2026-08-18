@@ -3008,3 +3008,7 @@ path = "tests/map_constructor_tuple_element_supertype_order_tests.rs"
 [[test]]
 name = "object_literal_property_source_domain_widening_tests"
 path = "tests/object_literal_property_source_domain_widening_tests.rs"
+
+[[test]]
+name = "union_same_base_application_assignability_tests"
+path = "tests/union_same_base_application_assignability_tests.rs"

@@ -1120,8 +1120,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let target_members = union_list_id(self.interner, target)?;
         let members = self.interner.type_list(target_members);
 
-        // Find Application members and non-Application members of the union
-        let mut app_member_id = None;
+        // Find Application members and non-Application members of the union.
+        // Every same-base arm must be collected: keeping only one (the old
+        // code kept the last) mis-judges `App<A> | App<B>` targets in both
+        // directions — a source equal to a non-last arm lost its variance
+        // accept, and a rejection consulted only one arm (#17643).
+        let mut app_member_ids = Vec::new();
         let mut non_app_members = Vec::new();
 
         for &member in members.iter() {
@@ -1130,7 +1134,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 let s_app = self.interner.type_application(s_app_id);
                 let t_app = self.interner.type_application(t_app_id);
                 if s_app.base == t_app.base && s_app.args.len() == t_app.args.len() {
-                    app_member_id = Some(t_app_id);
+                    app_member_ids.push(t_app_id);
                 } else {
                     non_app_members.push(member);
                 }
@@ -1139,24 +1143,32 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             }
         }
 
-        let t_app_id = app_member_id?;
-
-        // Try variance check between source Application and matching target Application
-        match self.try_variance_fast_path(s_app_id, t_app_id) {
-            Some(SubtypeResult::True) => Some(SubtypeResult::True),
-            Some(SubtypeResult::False) => {
-                // Variance rejected the Application member. Check if the source
-                // is a subtype of any non-Application member (e.g., undefined).
-                // For a non-nullable Application type, this is typically false.
-                for &non_app in &non_app_members {
-                    if self.check_subtype(source_type, non_app).is_true() {
-                        return Some(SubtypeResult::True);
-                    }
-                }
-                Some(SubtypeResult::False)
-            }
-            _ => None,
+        if app_member_ids.is_empty() {
+            return None;
         }
+
+        // Try variance between the source Application and every matching arm:
+        // any conclusive accept wins; a rejection is conclusive only when
+        // EVERY same-base arm rejects and no non-Application member (e.g.
+        // `undefined`) accepts the source. Any inconclusive arm defers to the
+        // structural comparison.
+        let mut all_arms_rejected = true;
+        for &t_app_id in &app_member_ids {
+            match self.try_variance_fast_path(s_app_id, t_app_id) {
+                Some(SubtypeResult::True) => return Some(SubtypeResult::True),
+                Some(SubtypeResult::False) => {}
+                _ => all_arms_rejected = false,
+            }
+        }
+        if !all_arms_rejected {
+            return None;
+        }
+        for &non_app in &non_app_members {
+            if self.check_subtype(source_type, non_app).is_true() {
+                return Some(SubtypeResult::True);
+            }
+        }
+        Some(SubtypeResult::False)
     }
 
     /// Check application-to-application structural comparison.
