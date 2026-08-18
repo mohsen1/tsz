@@ -152,16 +152,28 @@
 # (`error_reporter/conditional_alias_display.rs`), wired into
 # `format_assignment_source_type_for_diagnostic`
 # (`error_reporter/core/diagnostic_source/assignment_formatting.rs`) right
-# after the existing guard. Bails to the pre-existing alias-keeping behavior
+# after the existing guard. Reuses the checker's existing determinism/
+# ambiguity logic rather than duplicating it: `compute_ambiguous_conditional_display`
+# (`error_reporter/core_alias_display.rs`) was refactored into
+# `compute_ambiguous_conditional_display_inner(ty, keep_unconstrained_named_alias)`,
+# and the new guard calls it with the carve-out disabled. A first version that
+# hand-rolled the union directly regressed
+# `distributiveConditionalTypeConstraints.ts` (f2/f3/f4 in the TS conformance
+# corpus): it ignored that the check-type parameter's own declared constraint
+# can already decide a single branch deterministically (`T extends unknown[]`
+# in `IsArray<T> = T extends unknown[] ? true : false` always selects `true`),
+# a case tsc keeps the alias for and elaborates against just that branch —
+# caught by `compare-to-parent.sh` (1 newly failing) before landing, fixed by
+# the refactor/reuse instead. Bails to the pre-existing alias-keeping behavior
 # whenever a branch is the bare check-type-parameter itself (`Extract<T, U> =
-# T extends U ? T : never`, via `conditional_branch_union_constraint`'s
-# existing bare-param check) or the computed union still contains a free type
-# parameter (a branch that wraps rather than is the check parameter, e.g. `T
+# T extends U ? T : never`) or wraps rather than is the check parameter (`T
 # extends number ? T[] : boolean` — a known, deliberately out-of-scope gap;
 # tsc partially expands such branches, tsz keeps the full alias). Verified:
 # direct per-target run (`cargo test -p tsz-checker --test
 # conditional_application_display_tests`), 13/13 passed (was 9/10, with 4 new
-# adjacent-case tests); `cargo clippy -p tsz-checker --all-targets` clean.
+# adjacent-case tests); `cargo clippy --workspace --all-targets` clean;
+# `compare-to-parent.sh origin/main` 0 newly-failing / 0 newly-passing
+# (11659/11659 both sides — this row isn't part of the TS conformance corpus).
 # 2026-08-18 shrink (no generation bump — removals are always allowed): the
 # fp_repro_audit_2026::issue_14944_genuine_widening_self_assignment_still_errors
 # row now passes — fixed, not incidental. The killing-definition reduction base
