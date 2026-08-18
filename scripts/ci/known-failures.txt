@@ -256,7 +256,6 @@ tsz-checker::generic_generator_member_substitution_tests::generic_generator_genu
 # property's read must use the last assignment textually *before* the read
 # instead. Routed ordered reads through the already-existing position-bounded
 # `current_file_commonjs_prior_named_export_type` helper.
-tsz-checker::nonnull_contextual_type_arg_inference_tests::contextual_return_can_refine_transparent_wrapper_inference
 tsz-checker::raw_builder_return_context_inference_tests::different_base_and_ambiguous_union_do_not_pin_the_tag
 # 2026-08-17 shrink (no generation bump — removals are always allowed): the two
 # tsz-cli::driver_tests rows below now pass on main @ 026b8458 — verified with a

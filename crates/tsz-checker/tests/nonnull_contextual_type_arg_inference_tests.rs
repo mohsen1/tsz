@@ -392,3 +392,80 @@ let r: Element = f.qs('.bad-name')!;
             .collect::<Vec<_>>()
     );
 }
+
+/// Adjacent matrix for the user-authored identity-homomorphic wrapper fix:
+/// a single-arg alias whose body is `{ [P in keyof T]±mods: T[P] }` must be
+/// treated as a transparent wrapper for return-context refinement exactly like
+/// the lib `Readonly<T>`, regardless of binder names (oracled on tsc 6.0.2).
+#[test]
+fn contextual_return_refines_renamed_identity_readonly_wrapper() {
+    let source = r#"
+type Frost<Q> = { readonly [Key in keyof Q]: Q[Key] };
+declare function chill<V>(value: V): Frost<V>;
+let cold: readonly [string, number][] = chill([["a", 1]]);
+"#;
+    let diagnostics = tsz_checker::test_utils::check_source_diagnostics(source);
+    assert!(
+        diagnostics.is_empty(),
+        "expected renamed identity readonly wrapper to refine tuple inference, got: {:?}",
+        diagnostics
+            .iter()
+            .map(|d| format!("TS{}: {}", d.code, d.message_text))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn contextual_return_identity_wrapper_still_reports_genuine_mismatch() {
+    let source = r#"
+type Frost<Q> = { readonly [Key in keyof Q]: Q[Key] };
+declare function chill<V>(value: V): Frost<V>;
+let bad: readonly [string][] = chill([["a", 1]]);
+let badPrim: readonly [string, boolean][] = chill([["a", 1]]);
+"#;
+    let diagnostics = tsz_checker::test_utils::check_source_diagnostics(source);
+    assert!(
+        diagnostics.len() == 2 && diagnostics.iter().all(|d| d.code == 2322),
+        "expected exactly two TS2322 for genuinely mismatched targets, got: {:?}",
+        diagnostics
+            .iter()
+            .map(|d| format!("TS{}: {}", d.code, d.message_text))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn contextual_return_refines_identity_wrapper_against_structural_object_target() {
+    let source = r#"
+type Frost<Q> = { readonly [Key in keyof Q]: Q[Key] };
+declare function chill<V>(value: V): Frost<V>;
+let shaped: { readonly a: [string, number] } = chill({ a: ["a", 1] });
+"#;
+    let diagnostics = tsz_checker::test_utils::check_source_diagnostics(source);
+    assert!(
+        diagnostics.is_empty(),
+        "expected structural object target to refine through the wrapper, got: {:?}",
+        diagnostics
+            .iter()
+            .map(|d| format!("TS{}: {}", d.code, d.message_text))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn contextual_return_refines_optional_identity_wrapper() {
+    let source = r#"
+type Loose<Q> = { [Key in keyof Q]?: Q[Key] };
+declare function loosen<V>(value: V): Loose<V>;
+let opt: { b?: [string, number] } = loosen({ b: ["b", 2] });
+"#;
+    let diagnostics = tsz_checker::test_utils::check_source_diagnostics(source);
+    assert!(
+        diagnostics.is_empty(),
+        "expected optional identity wrapper to refine tuple inference, got: {:?}",
+        diagnostics
+            .iter()
+            .map(|d| format!("TS{}: {}", d.code, d.message_text))
+            .collect::<Vec<_>>()
+    );
+}
