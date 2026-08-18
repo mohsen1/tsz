@@ -591,6 +591,17 @@ pub(super) const fn is_checker_routed_ts1xxx_grammar(code: u32) -> bool {
         // `getSemanticDiagnostics`.
         1100  // Invalid use of '{0}' in strict mode.
         | 1101 // 'with' statements are not allowed in strict mode.
+        // `checkStrictModeDeleteExpression` and `checkStrictModeIdentifier`
+        // are the same binder family; `checkStrictModeIdentifier` picks
+        // TS1212/TS1213/TS1214 by context in one early-return chain, so all
+        // three share its routing (the TS1314/TS1315/TS1316 principle below).
+        // Oracle-confirmed (typescript@6.0.2, jsFileCompilationBindStrictModeErrors
+        // shape): a TS1489 parse error in a sibling file suppresses every one
+        // of these; alone they coexist with unrelated semantic diagnostics.
+        | 1102 // 'delete' cannot be called on an identifier in strict mode.
+        | 1212 // Identifier expected. '{0}' is a reserved word in strict mode.
+        | 1213 // Identifier expected. '{0}' is a reserved word in strict mode. Class definitions are automatically in strict mode.
+        | 1214 // Identifier expected. '{0}' is a reserved word in strict mode. Modules are automatically in strict mode.
         | 1215 // Invalid use of '{0}'. Modules are automatically in strict mode.
         | 1344 // A label is not allowed here.
         // The break/continue family — tsc's `checkBreakOrContinueStatement`
@@ -1329,6 +1340,21 @@ pub(super) const fn is_real_syntax_error(code: u32) -> bool {
         | 1103 // A character literal must contain exactly one character
         | 1121 // Octal literals are not allowed in strict mode
         | 1124 // Digit expected
+        // The scanner-emitted numeric-literal family. tsc reports each of
+        // these from `scanNumber`/`checkForIdentifierStartAfterNumericLiteral`
+        // into the file's parse diagnostics, so any one of them makes
+        // `getSyntacticDiagnostics` non-empty and the driver skips the entire
+        // semantic phase. Oracle-confirmed (typescript@6.0.2) per code: the
+        // literal alone in one file suppresses an unrelated TS2322 in a
+        // sibling file. TS1121/TS1124 above are the already-listed members.
+        | 1125 // Hexadecimal digit expected
+        | 1177 // Binary digit expected
+        | 1178 // Octal digit expected
+        | 1352 // A bigint literal cannot use exponential notation
+        | 1353 // A bigint literal must be an integer
+        | 1489 // Decimals with leading zeros are not allowed
+        | 6188 // Numeric separators are not allowed here
+        | 6189 // Multiple consecutive numeric separators are not permitted
         | 1144 // '{' or ';' expected
         | 1145 // '{' or JSX element expected
         | 1147 // Import declarations in a namespace cannot reference a module
@@ -1681,3 +1707,7 @@ mod const_using_uninitialized_grammar_tests;
 #[cfg(test)]
 #[path = "check_utils/private_identifier_parse_error_suppression_tests.rs"]
 mod private_identifier_parse_error_suppression_tests;
+
+#[cfg(test)]
+#[path = "check_utils/strict_mode_reserved_word_grammar_tests.rs"]
+mod strict_mode_reserved_word_grammar_tests;
