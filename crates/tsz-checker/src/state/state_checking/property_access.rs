@@ -547,7 +547,7 @@ impl<'a> CheckerState<'a> {
         // namespace-local nominal applications whose first pass resolved through
         // a colliding global declaration.
         if crate::query_boundaries::common::is_generic_application(self.ctx.types, object_type) {
-            let expanded = self.evaluate_application_type(object_type);
+            let expanded = self.evaluate_application_type_for_property_access(object_type);
             if expanded != object_type && expanded != TypeId::ANY && expanded != TypeId::ERROR {
                 mapped_candidate_type = expanded;
                 resolved_object_type = expanded;
