@@ -194,7 +194,27 @@ tsz-checker::conditional_application_display_tests::deferred_generic_conditional
 # colliding_generic_terminals row below is the separate #15983
 # SymbolId-collision family and still fails.
 tsz-checker::generic_call_assignment_flow_tests::colliding_generic_terminals_keep_flow_diagnostics_clean_across_file_orders
-tsz-checker::generic_generator_member_substitution_tests::generic_generator_genuine_mismatch_still_errors_with_substituted_source
+# 2026-08-18 shrink (no generation bump — removals are always allowed): the
+# generic_generator_member_substitution_tests::generic_generator_genuine_mismatch_still_errors_with_substituted_source
+# row now passes — fixed, not incidental. The env-aware property-access
+# post-query pass expanded a generic application receiver with the raw
+# `evaluate_application_type`, which cannot substitute a cross-arena lib
+# interface whose type-parameter push collided with the current file arena
+# (pushed params disagree in arity with the application args, so the shared
+# evaluator's substitution is a no-op); the unsubstituted lib params were then
+# default-filled, so `Generator<Y, R>.next()` typed as
+# `IteratorResult<unknown, any>` and `.value` degraded to `any` — a false
+# negative. Routed the expansion through
+# `evaluate_application_type_for_property_access`, whose arena-collision
+# recovery re-instantiates the identical body with the symbol's canonical
+# parameters. Oracle-confirmed byte-identical against typescript@7.0.2 on
+# Generator/Iterator/AsyncGenerator negative controls plus the positive
+# control; the existing negative-control assertion was re-pinned from
+# `Y | R` to the oracle's actual `R | Y` rendering. Verified with a full
+# per-target run (`cargo test -p tsz-checker --test
+# generic_generator_member_substitution_tests`, 8/8 passed incl. 3 new
+# adjacent-matrix tests) and a two-sided `compare-to-parent.sh` conformance
+# run recorded in the PR.
 tsz-checker::issue_14123_repro_tests::issue_14123_alias_array_infer_reports_mismatch
 # 2026-08-18 shrink (no generation bump — removals are always allowed): the two
 # js_export_surface_tests::part_01 rows below now pass — verified with a direct
