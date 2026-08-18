@@ -341,6 +341,7 @@ impl<'a> CheckerState<'a> {
                         return_type,
                         type_predicate,
                         is_method: false,
+                        declaration_group: 0,
                     });
                     self.pop_type_parameters(type_param_updates);
                 }
@@ -384,6 +385,7 @@ impl<'a> CheckerState<'a> {
                         return_type,
                         type_predicate,
                         is_method: false,
+                        declaration_group: 0,
                     });
                     self.pop_type_parameters(type_param_updates);
                 }
@@ -484,6 +486,7 @@ impl<'a> CheckerState<'a> {
                             return_type,
                             type_predicate,
                             is_method: true,
+                            declaration_group: 0,
                         };
 
                         member_order += 1;

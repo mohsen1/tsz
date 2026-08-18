@@ -598,16 +598,15 @@ fn canonicalize_call_signature_alpha_equivalent_across_names() {
         let pref = interner.type_param(info);
         let sig = CallSignature {
             type_params: vec![info],
-            params: vec![ParamInfo {
-                name: Some(interner.intern_string("x")),
-                type_id: pref,
-                optional: false,
-                rest: false,
-            }],
-            this_type: None,
-            return_type: pref,
-            type_predicate: None,
-            is_method: false,
+            ..CallSignature::new(
+                vec![ParamInfo {
+                    name: Some(interner.intern_string("x")),
+                    type_id: pref,
+                    optional: false,
+                    rest: false,
+                }],
+                pref,
+            )
         };
         interner.callable(CallableShape {
             call_signatures: vec![sig],

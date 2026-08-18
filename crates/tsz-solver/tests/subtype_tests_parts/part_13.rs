@@ -22,6 +22,7 @@ fn test_overload_basic_two_signatures() {
                 return_type: TypeId::NUMBER,
                 type_predicate: None,
                 is_method: false,
+                declaration_group: 0,
             },
             CallSignature {
                 type_params: vec![],
@@ -35,6 +36,7 @@ fn test_overload_basic_two_signatures() {
                 return_type: TypeId::STRING,
                 type_predicate: None,
                 is_method: false,
+                declaration_group: 0,
             },
         ],
         construct_signatures: vec![],
@@ -66,6 +68,7 @@ fn test_overload_by_argument_count() {
                 return_type: TypeId::VOID,
                 type_predicate: None,
                 is_method: false,
+                declaration_group: 0,
             },
             CallSignature {
                 type_params: vec![],
@@ -79,6 +82,7 @@ fn test_overload_by_argument_count() {
                 return_type: TypeId::NUMBER,
                 type_predicate: None,
                 is_method: false,
+                declaration_group: 0,
             },
             CallSignature {
                 type_params: vec![],
@@ -100,6 +104,7 @@ fn test_overload_by_argument_count() {
                 return_type: TypeId::NUMBER,
                 type_predicate: None,
                 is_method: false,
+                declaration_group: 0,
             },
         ],
         construct_signatures: vec![],
@@ -134,6 +139,7 @@ fn test_overload_subtype_more_signatures_to_fewer() {
                 return_type: TypeId::NUMBER,
                 type_predicate: None,
                 is_method: false,
+                declaration_group: 0,
             },
             CallSignature {
                 type_params: vec![],
@@ -147,6 +153,7 @@ fn test_overload_subtype_more_signatures_to_fewer() {
                 return_type: TypeId::STRING,
                 type_predicate: None,
                 is_method: false,
+                declaration_group: 0,
             },
         ],
         construct_signatures: vec![],
@@ -171,6 +178,7 @@ fn test_overload_subtype_more_signatures_to_fewer() {
             return_type: TypeId::NUMBER,
             type_predicate: None,
             is_method: false,
+            declaration_group: 0,
         }],
         construct_signatures: vec![],
         properties: vec![],
@@ -205,6 +213,7 @@ fn test_overload_subtype_fewer_not_subtype_of_more() {
                 return_type: TypeId::NUMBER,
                 type_predicate: None,
                 is_method: false,
+                declaration_group: 0,
             },
             CallSignature {
                 type_params: vec![],
@@ -218,6 +227,7 @@ fn test_overload_subtype_fewer_not_subtype_of_more() {
                 return_type: TypeId::STRING,
                 type_predicate: None,
                 is_method: false,
+                declaration_group: 0,
             },
         ],
         construct_signatures: vec![],
@@ -242,6 +252,7 @@ fn test_overload_subtype_fewer_not_subtype_of_more() {
             return_type: TypeId::NUMBER,
             type_predicate: None,
             is_method: false,
+            declaration_group: 0,
         }],
         construct_signatures: vec![],
         properties: vec![],
@@ -291,6 +302,7 @@ fn test_overload_generic_identity() {
                 return_type: t_param,
                 type_predicate: None,
                 is_method: false,
+                declaration_group: 0,
             },
             CallSignature {
                 type_params: vec![],
@@ -304,6 +316,7 @@ fn test_overload_generic_identity() {
                 return_type: TypeId::STRING,
                 type_predicate: None,
                 is_method: false,
+                declaration_group: 0,
             },
         ],
         construct_signatures: vec![],
@@ -361,6 +374,7 @@ fn test_overload_generic_with_constraint() {
                 return_type: t_string,
                 type_predicate: None,
                 is_method: false,
+                declaration_group: 0,
             },
             CallSignature {
                 type_params: vec![TypeParamInfo {
@@ -380,6 +394,7 @@ fn test_overload_generic_with_constraint() {
                 return_type: t_number,
                 type_predicate: None,
                 is_method: false,
+                declaration_group: 0,
             },
         ],
         construct_signatures: vec![],
@@ -417,6 +432,7 @@ fn test_overload_with_rest_parameter() {
                 return_type: TypeId::NUMBER,
                 type_predicate: None,
                 is_method: false,
+                declaration_group: 0,
             },
             CallSignature {
                 type_params: vec![],
@@ -430,6 +446,7 @@ fn test_overload_with_rest_parameter() {
                 return_type: TypeId::NUMBER,
                 type_predicate: None,
                 is_method: false,
+                declaration_group: 0,
             },
         ],
         construct_signatures: vec![],
@@ -465,6 +482,7 @@ fn test_overload_with_optional_parameters() {
                 return_type: TypeId::STRING,
                 type_predicate: None,
                 is_method: false,
+                declaration_group: 0,
             },
             CallSignature {
                 type_params: vec![],
@@ -486,6 +504,7 @@ fn test_overload_with_optional_parameters() {
                 return_type: TypeId::STRING,
                 type_predicate: None,
                 is_method: false,
+                declaration_group: 0,
             },
         ],
         construct_signatures: vec![],
@@ -520,6 +539,7 @@ fn test_overload_mixed_call_and_construct() {
             return_type: TypeId::STRING,
             type_predicate: None,
             is_method: false,
+            declaration_group: 0,
         }],
         construct_signatures: vec![CallSignature {
             type_params: vec![],
@@ -533,6 +553,7 @@ fn test_overload_mixed_call_and_construct() {
             return_type: TypeId::OBJECT,
             type_predicate: None,
             is_method: false,
+            declaration_group: 0,
         }],
         properties: vec![],
         string_index: None,
@@ -571,6 +592,7 @@ fn test_overload_return_type_union() {
                 return_type: TypeId::NUMBER,
                 type_predicate: None,
                 is_method: false,
+                declaration_group: 0,
             },
             CallSignature {
                 type_params: vec![],
@@ -584,6 +606,7 @@ fn test_overload_return_type_union() {
                 return_type: TypeId::STRING,
                 type_predicate: None,
                 is_method: false,
+                declaration_group: 0,
             },
             CallSignature {
                 type_params: vec![],
@@ -597,6 +620,7 @@ fn test_overload_return_type_union() {
                 return_type: num_or_string,
                 type_predicate: None,
                 is_method: false,
+                declaration_group: 0,
             },
         ],
         construct_signatures: vec![],
@@ -632,6 +656,7 @@ fn test_overload_subtype_signature_order_matters() {
                 return_type: TypeId::NUMBER,
                 type_predicate: None,
                 is_method: false,
+                declaration_group: 0,
             },
             CallSignature {
                 type_params: vec![],
@@ -645,6 +670,7 @@ fn test_overload_subtype_signature_order_matters() {
                 return_type: TypeId::STRING,
                 type_predicate: None,
                 is_method: false,
+                declaration_group: 0,
             },
         ],
         construct_signatures: vec![],
@@ -670,6 +696,7 @@ fn test_overload_subtype_signature_order_matters() {
                 return_type: TypeId::STRING,
                 type_predicate: None,
                 is_method: false,
+                declaration_group: 0,
             },
             CallSignature {
                 type_params: vec![],
@@ -683,6 +710,7 @@ fn test_overload_subtype_signature_order_matters() {
                 return_type: TypeId::NUMBER,
                 type_predicate: None,
                 is_method: false,
+                declaration_group: 0,
             },
         ],
         construct_signatures: vec![],
@@ -773,6 +801,7 @@ fn test_overload_generic_multiple_type_params() {
                 return_type: tuple_t_u,
                 type_predicate: None,
                 is_method: false,
+                declaration_group: 0,
             },
             CallSignature {
                 type_params: vec![TypeParamInfo {
@@ -792,6 +821,7 @@ fn test_overload_generic_multiple_type_params() {
                 return_type: t_param,
                 type_predicate: None,
                 is_method: false,
+                declaration_group: 0,
             },
         ],
         construct_signatures: vec![],
@@ -825,6 +855,7 @@ fn test_overload_reflexivity() {
                 return_type: TypeId::NUMBER,
                 type_predicate: None,
                 is_method: false,
+                declaration_group: 0,
             },
             CallSignature {
                 type_params: vec![],
@@ -838,6 +869,7 @@ fn test_overload_reflexivity() {
                 return_type: TypeId::STRING,
                 type_predicate: None,
                 is_method: false,
+                declaration_group: 0,
             },
         ],
         construct_signatures: vec![],
@@ -873,6 +905,7 @@ fn test_overload_covariant_return_types() {
             return_type: lit_hello,
             type_predicate: None,
             is_method: false,
+            declaration_group: 0,
         }],
         construct_signatures: vec![],
         properties: vec![],
@@ -896,6 +929,7 @@ fn test_overload_covariant_return_types() {
             return_type: TypeId::STRING,
             type_predicate: None,
             is_method: false,
+            declaration_group: 0,
         }],
         construct_signatures: vec![],
         properties: vec![],
@@ -932,6 +966,7 @@ fn test_overload_contravariant_parameters() {
             return_type: TypeId::VOID,
             type_predicate: None,
             is_method: false,
+            declaration_group: 0,
         }],
         construct_signatures: vec![],
         properties: vec![],
@@ -955,6 +990,7 @@ fn test_overload_contravariant_parameters() {
             return_type: TypeId::VOID,
             type_predicate: None,
             is_method: false,
+            declaration_group: 0,
         }],
         construct_signatures: vec![],
         properties: vec![],
@@ -995,6 +1031,7 @@ fn test_overload_construct_signature_subtyping() {
             return_type: obj_with_xy,
             type_predicate: None,
             is_method: false,
+            declaration_group: 0,
         }],
         properties: vec![],
         string_index: None,
@@ -1013,6 +1050,7 @@ fn test_overload_construct_signature_subtyping() {
             return_type: obj_with_x,
             type_predicate: None,
             is_method: false,
+            declaration_group: 0,
         }],
         properties: vec![],
         string_index: None,
@@ -1057,6 +1095,7 @@ fn test_overload_with_this_type() {
                 return_type: TypeId::VOID,
                 type_predicate: None,
                 is_method: false,
+                declaration_group: 0,
             },
             CallSignature {
                 type_params: vec![],
@@ -1070,6 +1109,7 @@ fn test_overload_with_this_type() {
                 return_type: TypeId::VOID,
                 type_predicate: None,
                 is_method: false,
+                declaration_group: 0,
             },
         ],
         construct_signatures: vec![],
@@ -1122,6 +1162,7 @@ fn test_overload_with_properties() {
             return_type: TypeId::NUMBER,
             type_predicate: None,
             is_method: false,
+            declaration_group: 0,
         }],
         construct_signatures: vec![],
         properties: vec![
@@ -1171,6 +1212,7 @@ fn test_overload_generic_default_type() {
             return_type: t_param,
             type_predicate: None,
             is_method: false,
+            declaration_group: 0,
         }],
         construct_signatures: vec![],
         properties: vec![],
@@ -1445,6 +1487,7 @@ fn test_overload_event_handler_pattern() {
                 return_type: TypeId::VOID,
                 type_predicate: None,
                 is_method: false,
+                declaration_group: 0,
             },
             CallSignature {
                 type_params: vec![],
@@ -1466,6 +1509,7 @@ fn test_overload_event_handler_pattern() {
                 return_type: TypeId::VOID,
                 type_predicate: None,
                 is_method: false,
+                declaration_group: 0,
             },
             CallSignature {
                 type_params: vec![],
@@ -1487,6 +1531,7 @@ fn test_overload_event_handler_pattern() {
                 return_type: TypeId::VOID,
                 type_predicate: None,
                 is_method: false,
+                declaration_group: 0,
             },
         ],
         construct_signatures: vec![],
@@ -1595,6 +1640,7 @@ fn test_overload_promise_then_pattern() {
                 return_type: u_param,
                 type_predicate: None,
                 is_method: false,
+                declaration_group: 0,
             },
             // then<U, V>(onFulfilled, onRejected): Promise<U | V>
             CallSignature {
@@ -1632,6 +1678,7 @@ fn test_overload_promise_then_pattern() {
                 return_type: u_or_v,
                 type_predicate: None,
                 is_method: false,
+                declaration_group: 0,
             },
         ],
         construct_signatures: vec![],
@@ -1715,6 +1762,7 @@ fn test_overload_constructor_overloads() {
                 return_type: date_instance,
                 type_predicate: None,
                 is_method: false,
+                declaration_group: 0,
             },
             // new (value: number): Date
             CallSignature {
@@ -1729,6 +1777,7 @@ fn test_overload_constructor_overloads() {
                 return_type: date_instance,
                 type_predicate: None,
                 is_method: false,
+                declaration_group: 0,
             },
             // new (value: string): Date
             CallSignature {
@@ -1743,6 +1792,7 @@ fn test_overload_constructor_overloads() {
                 return_type: date_instance,
                 type_predicate: None,
                 is_method: false,
+                declaration_group: 0,
             },
             // new (year: number, month: number, date?: number): Date
             CallSignature {
@@ -1771,6 +1821,7 @@ fn test_overload_constructor_overloads() {
                 return_type: date_instance,
                 type_predicate: None,
                 is_method: false,
+                declaration_group: 0,
             },
         ],
         properties: vec![],

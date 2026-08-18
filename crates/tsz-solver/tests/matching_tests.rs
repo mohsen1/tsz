@@ -70,6 +70,7 @@ fn unary_call_signature(
         return_type: TypeId::VOID,
         type_predicate: None,
         is_method,
+        declaration_group: 0,
     }
 }
 
@@ -1751,6 +1752,7 @@ fn test_match_callable_signatures() {
             return_type: TypeId::STRING,
             type_predicate: None,
             is_method: false,
+            declaration_group: 0,
         }],
         construct_signatures: Vec::new(),
         properties: Vec::new(),
@@ -1772,6 +1774,7 @@ fn test_match_callable_signatures() {
             return_type: t_type,
             type_predicate: None,
             is_method: false,
+            declaration_group: 0,
         }],
         construct_signatures: Vec::new(),
         properties: Vec::new(),

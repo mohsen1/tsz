@@ -223,6 +223,7 @@ fn test_union_call_mixed_overloads_intersects_this_types_callable() {
                 return_type: TypeId::VOID,
                 type_predicate: None,
                 is_method: false,
+                declaration_group: 0,
             },
             CallSignature {
                 type_params: vec![],
@@ -231,6 +232,7 @@ fn test_union_call_mixed_overloads_intersects_this_types_callable() {
                 return_type: TypeId::VOID,
                 type_predicate: None,
                 is_method: false,
+                declaration_group: 0,
             },
         ],
         ..Default::default()
@@ -298,6 +300,7 @@ fn test_union_call_mixed_overloads_compatible_this_callable() {
                 return_type: TypeId::VOID,
                 type_predicate: None,
                 is_method: false,
+                declaration_group: 0,
             },
             CallSignature {
                 type_params: vec![],
@@ -306,6 +309,7 @@ fn test_union_call_mixed_overloads_compatible_this_callable() {
                 return_type: TypeId::VOID,
                 type_predicate: None,
                 is_method: false,
+                declaration_group: 0,
             },
         ],
         ..Default::default()
@@ -370,6 +374,7 @@ fn test_union_call_multi_overloads_structurally_identical_this_callable() {
                 return_type: TypeId::VOID,
                 type_predicate: None,
                 is_method: false,
+                declaration_group: 0,
             },
             CallSignature {
                 type_params: vec![],
@@ -378,6 +383,7 @@ fn test_union_call_multi_overloads_structurally_identical_this_callable() {
                 return_type: TypeId::VOID,
                 type_predicate: None,
                 is_method: false,
+                declaration_group: 0,
             },
         ],
         ..Default::default()
@@ -392,6 +398,7 @@ fn test_union_call_multi_overloads_structurally_identical_this_callable() {
                 return_type: TypeId::VOID,
                 type_predicate: None,
                 is_method: false,
+                declaration_group: 0,
             },
             CallSignature {
                 type_params: vec![],
@@ -400,6 +407,7 @@ fn test_union_call_multi_overloads_structurally_identical_this_callable() {
                 return_type: TypeId::VOID,
                 type_predicate: None,
                 is_method: false,
+                declaration_group: 0,
             },
         ],
         ..Default::default()
@@ -438,6 +446,7 @@ fn make_construct_callable(
             return_type,
             type_predicate: None,
             is_method: false,
+            declaration_group: 0,
         }],
         ..Default::default()
     })
@@ -618,6 +627,7 @@ fn test_union_new_all_fail_requires_all_member_success() {
                 return_type: TypeId::NUMBER,
                 type_predicate: None,
                 is_method: false,
+                declaration_group: 0,
             },
             CallSignature {
                 type_params: vec![],
@@ -626,6 +636,7 @@ fn test_union_new_all_fail_requires_all_member_success() {
                 return_type: TypeId::BOOLEAN,
                 type_predicate: None,
                 is_method: false,
+                declaration_group: 0,
             },
         ],
         ..Default::default()

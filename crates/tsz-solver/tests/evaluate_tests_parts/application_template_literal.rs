@@ -844,6 +844,7 @@ fn test_application_ref_expansion_with_callable_body() {
         return_type: r_type,
         type_predicate: None,
         is_method: false,
+        declaration_group: 0,
     };
     let callback_body = interner.callable(CallableShape {
         symbol: None,
@@ -876,6 +877,7 @@ fn test_application_ref_expansion_with_callable_body() {
         return_type: TypeId::BOOLEAN,
         type_predicate: None,
         is_method: false,
+        declaration_group: 0,
     };
     let expected = interner.callable(CallableShape {
         symbol: None,
@@ -922,6 +924,7 @@ fn test_application_ref_expansion_with_construct_signature() {
         return_type: t_type,
         type_predicate: None,
         is_method: false,
+        declaration_group: 0,
     };
     let constructor_body = interner.callable(CallableShape {
         symbol: None,
@@ -957,6 +960,7 @@ fn test_application_ref_expansion_with_construct_signature() {
         return_type: obj_x,
         type_predicate: None,
         is_method: false,
+        declaration_group: 0,
     };
     let expected = interner.callable(CallableShape {
         symbol: None,

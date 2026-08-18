@@ -170,6 +170,7 @@ fn make_array_test_env(
         this_type: None,
         type_predicate: None,
         is_method: true,
+        declaration_group: 0,
     };
     // reduce<U>(callbackfn: (prev: U, curr: T, idx: number, arr: T[]) => U, initialValue: U): U
     let reduce_cb_2 = interner.function(FunctionShape {
@@ -226,6 +227,7 @@ fn make_array_test_env(
         this_type: None,
         type_predicate: None,
         is_method: true,
+        declaration_group: 0,
     };
     let reduce_callable = interner.callable(CallableShape {
         symbol: None,
@@ -1559,6 +1561,7 @@ fn test_call_generic_callable_signature() {
             return_type: t_type,
             type_predicate: None,
             is_method: false,
+            declaration_group: 0,
         }],
         construct_signatures: Vec::new(),
         properties: Vec::new(),
@@ -1640,6 +1643,7 @@ fn test_infer_call_signature_identity() {
         return_type: t_type,
         type_predicate: None,
         is_method: false,
+        declaration_group: 0,
     };
 
     let result = infer_call_signature(&interner, &mut subtype, &sig, &[TypeId::NUMBER]);

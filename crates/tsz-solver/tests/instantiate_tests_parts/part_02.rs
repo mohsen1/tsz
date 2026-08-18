@@ -75,6 +75,7 @@ fn overloaded_member_rebinds_dependent_local_constraint_after_outer_instantiatio
         return_type: TypeId::UNKNOWN,
         type_predicate: None,
         is_method: true,
+        declaration_group: 0,
     };
     let fallback = CallSignature {
         type_params: Vec::new(),
@@ -86,6 +87,7 @@ fn overloaded_member_rebinds_dependent_local_constraint_after_outer_instantiatio
         return_type: TypeId::UNKNOWN,
         type_predicate: None,
         is_method: true,
+        declaration_group: 0,
     };
     let callable = interner.callable(CallableShape {
         call_signatures: vec![primary, fallback],

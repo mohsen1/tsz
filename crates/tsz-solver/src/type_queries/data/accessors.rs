@@ -403,6 +403,7 @@ pub fn get_callable_shape_for_type(
                 return_type: func.return_type,
                 type_predicate: func.type_predicate,
                 is_method: func.is_method,
+                declaration_group: 0,
             }],
             construct_signatures: Vec::new(),
             properties: Vec::new(),
@@ -432,17 +433,39 @@ pub fn get_overload_call_signatures(
     None
 }
 
-/// Reorder overload candidates so that specialized signatures (those with literal
-/// type parameters) come before non-specialized signatures.
+/// Reorder overload candidates for resolution, porting tsc's
+/// `reorderCandidates` (checker.ts):
 ///
-/// This matches tsc's `reorderCandidates` behavior (TypeScript GH#1133). Without
-/// this reordering, catch-all `string`/`number` parameter overloads inherited from
-/// base types can shadow more specific literal overloads from derived types in
-/// diamond inheritance scenarios.
-fn reorder_overload_candidates(
+/// - Signatures from a later merged-declaration group (see
+///   [`crate::types::CallSignature::declaration_group`], mirroring
+///   `signature.declaration.parent`) are tried before signatures from an
+///   earlier group, while each group keeps its internal source order. This is
+///   how a user interface re-declaration merged into a lib interface (or a
+///   same-file/cross-file interface re-open) wins overload resolution.
+/// - Specialized signatures (those with literal parameter types) always come
+///   before non-specialized ones regardless of group (TypeScript GH#1133).
+///
+/// The stored signature order in the callable shape stays in source order —
+/// tsc renders merged overload sets in declaration order — so this transient
+/// reorder is applied only where candidates are selected for a call.
+pub fn reorder_overload_candidates(
     db: &dyn TypeDatabase,
     signatures: &[crate::types::CallSignature],
 ) -> Vec<crate::types::CallSignature> {
+    reordered_overload_candidates_if_needed(db, signatures).unwrap_or_else(|| signatures.to_vec())
+}
+
+/// Allocation-avoiding form of [`reorder_overload_candidates`]: returns `None`
+/// when the stored order is already the resolution order (single declaration
+/// group and no specialized/non-specialized mix), so hot call paths can keep
+/// borrowing the shape's own signature list.
+pub fn reordered_overload_candidates_if_needed(
+    db: &dyn TypeDatabase,
+    signatures: &[crate::types::CallSignature],
+) -> Option<Vec<crate::types::CallSignature>> {
+    let needs_group_reorder = signatures
+        .windows(2)
+        .any(|w| w[0].declaration_group != w[1].declaration_group);
     let mut has_specialized = false;
     let mut has_non_specialized = false;
     for sig in signatures {
@@ -455,21 +478,39 @@ fn reorder_overload_candidates(
             break;
         }
     }
-    // Only reorder if there's a mix of specialized and non-specialized
-    if !has_specialized || !has_non_specialized {
-        return signatures.to_vec();
+    let has_specialized_mix = has_specialized && has_non_specialized;
+    if !needs_group_reorder && !has_specialized_mix {
+        return None;
     }
-    let mut specialized = Vec::new();
-    let mut non_specialized = Vec::new();
+
+    // Faithful port of tsc's splice loop. `index` tracks where the next
+    // signature of the *current* group would land; a new group restarts at
+    // `cutoff_index` (the end of the specialized prefix), which floats earlier
+    // groups toward the back. Specialized signatures splice into a prefix of
+    // their own, growing `cutoff_index` so no non-specialized signature can
+    // land before them.
+    let mut result: Vec<crate::types::CallSignature> = Vec::with_capacity(signatures.len());
+    let mut last_group: Option<u32> = None;
+    let mut cutoff_index: usize = 0;
+    let mut index: usize = 0;
+    let mut specialized_index: isize = -1;
     for sig in signatures {
-        if signature_has_literal_types(db, sig) {
-            specialized.push(sig.clone());
+        if last_group == Some(sig.declaration_group) {
+            index += 1;
         } else {
-            non_specialized.push(sig.clone());
+            last_group = Some(sig.declaration_group);
+            index = cutoff_index;
         }
+        let splice_index = if signature_has_literal_types(db, sig) {
+            specialized_index += 1;
+            cutoff_index += 1;
+            specialized_index as usize
+        } else {
+            index
+        };
+        result.insert(splice_index, sig.clone());
     }
-    specialized.extend(non_specialized);
-    specialized
+    Some(result)
 }
 
 /// Check if a call signature has any parameters with literal types.

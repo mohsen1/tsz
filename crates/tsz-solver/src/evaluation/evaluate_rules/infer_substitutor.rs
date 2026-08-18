@@ -508,6 +508,7 @@ impl<'a> InferSubstitutor<'a> {
                             type_params: sig.type_params.clone(),
                             type_predicate: sig.type_predicate,
                             is_method: sig.is_method,
+                            declaration_group: sig.declaration_group,
                         }
                     })
                     .collect();
@@ -547,6 +548,7 @@ impl<'a> InferSubstitutor<'a> {
                             type_params: sig.type_params.clone(),
                             type_predicate: sig.type_predicate,
                             is_method: sig.is_method,
+                            declaration_group: sig.declaration_group,
                         }
                     })
                     .collect();

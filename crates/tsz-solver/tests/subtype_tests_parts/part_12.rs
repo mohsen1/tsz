@@ -179,6 +179,7 @@ fn test_constructor_multiple_construct_signatures_subtype() {
             return_type: instance,
             type_predicate: None,
             is_method: false,
+            declaration_group: 0,
         }],
         properties: vec![],
         string_index: None,
@@ -197,6 +198,7 @@ fn test_constructor_multiple_construct_signatures_subtype() {
                 return_type: instance,
                 type_predicate: None,
                 is_method: false,
+                declaration_group: 0,
             },
             CallSignature {
                 type_params: vec![],
@@ -210,6 +212,7 @@ fn test_constructor_multiple_construct_signatures_subtype() {
                 return_type: instance,
                 type_predicate: None,
                 is_method: false,
+                declaration_group: 0,
             },
         ],
         properties: vec![],

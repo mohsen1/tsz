@@ -974,6 +974,7 @@ fn test_union_call_multi_overload_callable_this_skipped() {
                 return_type: TypeId::VOID,
                 type_predicate: None,
                 is_method: false,
+                declaration_group: 0,
             },
             CallSignature {
                 type_params: vec![],
@@ -982,6 +983,7 @@ fn test_union_call_multi_overload_callable_this_skipped() {
                 return_type: TypeId::VOID,
                 type_predicate: None,
                 is_method: false,
+                declaration_group: 0,
             },
         ],
         ..Default::default()
@@ -997,6 +999,7 @@ fn test_union_call_multi_overload_callable_this_skipped() {
                 return_type: TypeId::VOID,
                 type_predicate: None,
                 is_method: false,
+                declaration_group: 0,
             },
             CallSignature {
                 type_params: vec![],
@@ -1005,6 +1008,7 @@ fn test_union_call_multi_overload_callable_this_skipped() {
                 return_type: TypeId::VOID,
                 type_predicate: None,
                 is_method: false,
+                declaration_group: 0,
             },
         ],
         ..Default::default()
@@ -1098,6 +1102,7 @@ fn test_union_multi_overload_incompatible_per_member_resolution() {
                 type_params: vec![],
                 type_predicate: None,
                 is_method: false,
+                declaration_group: 0,
             },
             CallSignature {
                 params: vec![],
@@ -1106,6 +1111,7 @@ fn test_union_multi_overload_incompatible_per_member_resolution() {
                 type_params: vec![],
                 type_predicate: None,
                 is_method: false,
+                declaration_group: 0,
             },
         ],
         ..Default::default()
@@ -1121,6 +1127,7 @@ fn test_union_multi_overload_incompatible_per_member_resolution() {
                 type_params: vec![],
                 type_predicate: None,
                 is_method: false,
+                declaration_group: 0,
             },
             CallSignature {
                 params: vec![],
@@ -1129,6 +1136,7 @@ fn test_union_multi_overload_incompatible_per_member_resolution() {
                 type_params: vec![],
                 type_predicate: None,
                 is_method: false,
+                declaration_group: 0,
             },
         ],
         ..Default::default()
@@ -1184,6 +1192,7 @@ fn test_union_multi_overload_compatible_this_mismatch() {
                 type_params: vec![],
                 type_predicate: None,
                 is_method: false,
+                declaration_group: 0,
             },
             CallSignature {
                 params: vec![],
@@ -1192,6 +1201,7 @@ fn test_union_multi_overload_compatible_this_mismatch() {
                 type_params: vec![],
                 type_predicate: None,
                 is_method: false,
+                declaration_group: 0,
             },
         ],
         ..Default::default()
@@ -1207,6 +1217,7 @@ fn test_union_multi_overload_compatible_this_mismatch() {
                 type_params: vec![],
                 type_predicate: None,
                 is_method: false,
+                declaration_group: 0,
             },
             CallSignature {
                 params: vec![],
@@ -1215,6 +1226,7 @@ fn test_union_multi_overload_compatible_this_mismatch() {
                 type_params: vec![],
                 type_predicate: None,
                 is_method: false,
+                declaration_group: 0,
             },
         ],
         ..Default::default()
@@ -1271,6 +1283,7 @@ fn test_union_single_plus_multi_overload_succeeds() {
                 type_params: vec![],
                 type_predicate: None,
                 is_method: false,
+                declaration_group: 0,
             },
             CallSignature {
                 params: vec![],
@@ -1279,6 +1292,7 @@ fn test_union_single_plus_multi_overload_succeeds() {
                 type_params: vec![],
                 type_predicate: None,
                 is_method: false,
+                declaration_group: 0,
             },
         ],
         ..Default::default()

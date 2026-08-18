@@ -62,6 +62,7 @@ pub(crate) fn member_call_signatures(
             return_type: fs.return_type,
             type_predicate: fs.type_predicate,
             is_method: fs.is_method,
+            declaration_group: 0,
         }];
     }
     Vec::new()
@@ -1110,6 +1111,7 @@ pub(crate) fn build_method_overload_callable(
                 return_type: shape.return_type,
                 type_predicate: shape.type_predicate,
                 is_method: shape.is_method,
+                declaration_group: 0,
             });
         } else {
             let shape = crate::query_boundaries::common::callable_shape_for_type(tdb, fn_ty)?;

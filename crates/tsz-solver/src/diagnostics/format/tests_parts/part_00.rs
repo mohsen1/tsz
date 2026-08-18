@@ -511,14 +511,7 @@ fn format_union_named_construct_callable_without_parentheses() {
 
     let constructable = db.callable(CallableShape {
         call_signatures: vec![],
-        construct_signatures: vec![CallSignature {
-            type_params: vec![],
-            params: vec![],
-            this_type: None,
-            return_type: TypeId::ANY,
-            type_predicate: None,
-            is_method: false,
-        }],
+        construct_signatures: vec![CallSignature::new(vec![], TypeId::ANY)],
         properties: vec![],
         string_index: None,
         number_index: None,

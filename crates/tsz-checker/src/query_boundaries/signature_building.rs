@@ -103,6 +103,7 @@ pub(crate) const fn call_signature(
         return_type,
         type_predicate,
         is_method,
+        declaration_group: 0,
     }
 }
 

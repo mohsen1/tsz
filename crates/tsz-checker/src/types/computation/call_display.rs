@@ -646,6 +646,7 @@ impl<'a> CheckerState<'a> {
                     return_type: shape.return_type,
                     type_predicate: shape.type_predicate,
                     is_method: shape.is_method,
+                    declaration_group: 0,
                 };
                 self.call_signature_accepts_arg_count(&sig, arg_count)
                     .then_some(vec![sig])

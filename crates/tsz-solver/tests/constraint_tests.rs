@@ -1613,6 +1613,7 @@ fn test_object_entries_like_callable_any_arg_uses_first_overload() {
         return_type: return_sig2,
         type_predicate: None,
         is_method: false,
+        declaration_group: 0,
     };
 
     // Sig 1: <T>(o: { [s: string]: T }): [string, T][]
@@ -1634,6 +1635,7 @@ fn test_object_entries_like_callable_any_arg_uses_first_overload() {
         return_type: return_sig1,
         type_predicate: None,
         is_method: false,
+        declaration_group: 0,
     };
 
     let callable = interner.callable(crate::types::CallableShape {

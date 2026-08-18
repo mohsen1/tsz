@@ -354,6 +354,7 @@ fn commonjs_export_callable_type_with_expando_members(
             return_type: function_shape.return_type,
             type_predicate: function_shape.type_predicate,
             is_method: function_shape.is_method,
+            declaration_group: 0,
         };
         (
             CallableShape {

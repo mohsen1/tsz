@@ -131,6 +131,7 @@ fn pruning_gate_keeps_declaration_only_callable_type_params() {
                 return_type: TypeId::VOID,
                 type_predicate: None,
                 is_method: false,
+                declaration_group: 0,
             }],
             construct_signatures: vec![],
             properties: vec![],
