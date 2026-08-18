@@ -21,12 +21,16 @@ impl<'a> CheckerState<'a> {
                 || prop_name.starts_with("__@");
         }
 
-        if key_type == TypeId::STRING {
-            return true;
-        }
-
+        // A symbol-named property is never covered by a string-keyed index
+        // signature (tsc's `getApplicableIndexInfo` applies only a symbol
+        // index info to it), so the broad-`string` acceptance below must not
+        // claim it (#17623).
         if is_symbol_named {
             return false;
+        }
+
+        if key_type == TypeId::STRING {
+            return true;
         }
 
         let prop_literal =

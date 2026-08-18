@@ -1773,10 +1773,16 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 // number index targets during assignability checks.
             }
 
-            if let Some(string_idx) = string_index {
-                if prop.is_symbol_named {
-                    continue;
-                }
+            // A symbol-named property is never constrained by a string index
+            // signature (tsc's `getApplicableIndexInfos` applies only the
+            // `[k: symbol]` info to it), so the string block is skipped as a
+            // whole rather than `continue`d out of — a `continue` here would
+            // also skip the symbol-index check below, silently accepting a
+            // mismatched symbol-keyed value whenever the target carries BOTH
+            // a string and a symbol index signature (#17623).
+            if let Some(string_idx) = string_index
+                && !prop.is_symbol_named
+            {
                 // Non-matching keys aren't constrained: `click` ∉ `on${string}`, so
                 // `{ click: number }` is fine against `{ [k: on${string}]: () => void }`.
                 if !self.property_name_matches_string_index_key(prop.name, string_idx.key_type) {
