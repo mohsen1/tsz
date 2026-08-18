@@ -172,12 +172,24 @@ impl<'a> CheckerState<'a> {
         else {
             return true;
         };
+        // The provisional prescan instance can appear as the construct return
+        // directly, or wrapped in the provisional `self-application &
+        // rough-instance` intersection built by
+        // `rough_class_instance_return_type` during the same window. Both forms
+        // embed the in-flight instance and must not be treated as finished
+        // (#17586: the wrapped form previously escaped this check, was cached,
+        // and leaked a `C<args> & C<Key, Value>`-shaped instance into later
+        // `new C(...)` results).
         crate::query_boundaries::common::callable_shape_for_type(self.ctx.types, result)
             .is_some_and(|shape| {
-                shape
-                    .construct_signatures
-                    .iter()
-                    .any(|sig| sig.return_type == provisional_instance)
+                shape.construct_signatures.iter().any(|sig| {
+                    sig.return_type == provisional_instance
+                        || crate::query_boundaries::common::intersection_members(
+                            self.ctx.types.as_type_database(),
+                            sig.return_type,
+                        )
+                        .is_some_and(|members| members.contains(&provisional_instance))
+                })
             })
     }
 
