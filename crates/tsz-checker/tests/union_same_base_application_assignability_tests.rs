@@ -155,7 +155,10 @@ interface BOpt { kind: "b"; v: string }
 declare const optKind: { kind: "a" | undefined; v: string };
 const assigned: AOpt | BOpt = optKind;
 "#;
-    assert_clean(source, "optional discriminant (`\"a\" | undefined` is all-unit)");
+    assert_clean(
+        source,
+        "optional discriminant (`\"a\" | undefined` is all-unit)",
+    );
 }
 
 #[test]
