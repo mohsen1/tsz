@@ -104,11 +104,18 @@ function f(x) {
 }
 
 #[test]
-fn checked_js_async_jsdoc_expression_body_ts2322_anchors_on_return_expr() {
-    // Mirrors the checked-JS shape from
-    // `asyncArrowFunction_allowJs`: expression-bodied async arrows still get
-    // the return-expression TS2322, while block-bodied async arrows keep tsc's
-    // non-drilling behavior.
+fn checked_js_async_jsdoc_closure_type_rejected_with_ts1005_no_ts2322() {
+    // Stale pre-TS7 expectation, re-pinned: this used to assert that the
+    // Closure `function(): string` annotation contextually typed both async
+    // arrows and drilled a TS2322 into the expression body's returned `0`.
+    // TypeScript 7 rejects the Closure `function(...)` spelling outright with
+    // TS1005 `'}' expected.` and the annotation yields no type, so neither
+    // arrow has a declared return type and no TS2322 can fire. Oracle
+    // (`typescript@7.0.2`, `--allowJs --checkJs --strict --target es2017`):
+    // exactly two TS1005, one per annotation, and nothing else. The
+    // expression-body vs block-body anchoring contract survives in the arrow
+    // `@type {() => string}` spelling — see
+    // `state::variable_checking::core_tests::async_jsdoc_return_type_tests`.
     let source = r#"
 /** @type {function(): string} */
 const expr = async () => 0;
@@ -130,21 +137,15 @@ const block = async () => {
             ..CheckerOptions::default()
         },
     );
-    let expr_zero = source.find("=> 0").expect("expression body") + "=> ".len();
-    let block_zero = source.find("return 0").expect("block return") + "return ".len();
 
-    let ts2322_starts: Vec<u32> = diagnostics
-        .iter()
-        .filter(|d| d.code == 2322)
-        .map(|d| d.start)
-        .collect();
-    assert!(
-        ts2322_starts.contains(&(expr_zero as u32)),
-        "async expression-body JSDoc TS2322 should anchor on returned `0` at {expr_zero}, got: {diagnostics:#?}"
+    let ts1005_count = diagnostics.iter().filter(|d| d.code == 1005).count();
+    assert_eq!(
+        ts1005_count, 2,
+        "TS7 rejects each Closure `function(): string` annotation with one TS1005, got: {diagnostics:#?}"
     );
     assert!(
-        !ts2322_starts.contains(&(block_zero as u32)),
-        "async block-body JSDoc return should not drill to returned `0` at {block_zero}, got: {diagnostics:#?}"
+        diagnostics.iter().all(|d| d.code != 2322),
+        "the rejected Closure annotation yields no declared type, so no TS2322 may fire, got: {diagnostics:#?}"
     );
 }
 
