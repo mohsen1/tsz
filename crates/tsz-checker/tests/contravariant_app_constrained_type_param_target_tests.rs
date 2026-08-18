@@ -528,3 +528,141 @@ class Box<K extends object> {
     let diags = check_esnext_weakref_source(source);
     assert_diagnostic_shapes_exactly(source, &diags, &[]);
 }
+
+// =========================================================================
+// #17614: two distinct mapped-type aliases with byte-identical bodies intern
+// their instantiations to the same structural TypeIds. The provenance-
+// recovered variance fast path must never weld those into a fictitious
+// same-alias pair: whichever cross-alias assignment is checked SECOND used to
+// silently lose its TS2741, in either order. The same-alias assignments keep
+// tsc's variance-quirk acceptance through the declared-application path.
+// =========================================================================
+
+#[test]
+fn cross_mapped_alias_second_assignment_keeps_ts2741_a_then_b() {
+    let source = r#"
+type RecordA<K extends keyof any, T> = {
+    [P in K]: T;
+};
+type RecordB<K extends keyof any, T> = {
+    [P in K]: T;
+};
+function mixedA(x: RecordB<'a', string>, y: RecordA<string, string>) {
+    x = y;
+}
+function mixedB(x: RecordA<'a', string>, y: RecordB<string, string>) {
+    x = y;
+}
+"#;
+    let diags = check_source_diagnostics(source);
+    assert_diagnostic_shapes_exactly(
+        source,
+        &diags,
+        &[
+            DiagnosticShape::code(2741)
+                .with_message_fragment("required in type 'RecordB<\"a\", string>'"),
+            DiagnosticShape::code(2741)
+                .with_message_fragment("required in type 'RecordA<\"a\", string>'"),
+        ],
+    );
+}
+
+#[test]
+fn cross_mapped_alias_second_assignment_keeps_ts2741_b_then_a() {
+    let source = r#"
+type RecordA<K extends keyof any, T> = {
+    [P in K]: T;
+};
+type RecordB<K extends keyof any, T> = {
+    [P in K]: T;
+};
+function mixedB(x: RecordA<'a', string>, y: RecordB<string, string>) {
+    x = y;
+}
+function mixedA(x: RecordB<'a', string>, y: RecordA<string, string>) {
+    x = y;
+}
+"#;
+    let diags = check_source_diagnostics(source);
+    assert_diagnostic_shapes_exactly(
+        source,
+        &diags,
+        &[
+            DiagnosticShape::code(2741)
+                .with_message_fragment("required in type 'RecordA<\"a\", string>'"),
+            DiagnosticShape::code(2741)
+                .with_message_fragment("required in type 'RecordB<\"a\", string>'"),
+        ],
+    );
+}
+
+#[test]
+fn cross_mapped_alias_alpha_renamed_binders_keep_both_ts2741() {
+    // Alpha-renamed type parameters on the second alias: positional identity
+    // still interns the instantiations to shared TypeIds, so this exercises
+    // the same collision without literal-name overlap.
+    let source = r#"
+type RecordA<K extends keyof any, T> = {
+    [P in K]: T;
+};
+type RecordB<K2 extends keyof any, T2> = {
+    [P2 in K2]: T2;
+};
+function mixedA(x: RecordB<'a', string>, y: RecordA<string, string>) {
+    x = y;
+}
+function mixedB(x: RecordA<'a', string>, y: RecordB<string, string>) {
+    x = y;
+}
+"#;
+    let diags = check_source_diagnostics(source);
+    assert_diagnostic_shapes_exactly(
+        source,
+        &diags,
+        &[
+            DiagnosticShape::code(2741)
+                .with_message_fragment("required in type 'RecordB<\"a\", string>'"),
+            DiagnosticShape::code(2741)
+                .with_message_fragment("required in type 'RecordA<\"a\", string>'"),
+        ],
+    );
+}
+
+#[test]
+fn same_alias_quirk_survives_after_cross_alias_rejections() {
+    // The same-alias variance-quirk acceptance must not be lost once the
+    // cross-alias assignments above have populated caches with rejections:
+    // tsc accepts both same-alias assignments here and rejects only the two
+    // mixed ones, in this order.
+    let source = r#"
+type RecordA<K extends keyof any, T> = {
+    [P in K]: T;
+};
+type RecordB<K extends keyof any, T> = {
+    [P in K]: T;
+};
+function mixedA(x: RecordB<'a', string>, y: RecordA<string, string>) {
+    x = y;
+}
+function mixedB(x: RecordA<'a', string>, y: RecordB<string, string>) {
+    x = y;
+}
+function sameA(x: RecordA<'a', string>, y: RecordA<string, string>) {
+    x = y;
+}
+function sameB(x: RecordB<'a', string>, y: RecordB<string, string>) {
+    x = y;
+}
+"#;
+    let diags = check_source_diagnostics(source);
+    assert_diagnostic_shapes_exactly(
+        source,
+        &diags,
+        &[
+            DiagnosticShape::code(2741)
+                .with_message_fragment("required in type 'RecordB<\"a\", string>'"),
+            DiagnosticShape::code(2741)
+                .with_message_fragment("required in type 'RecordA<\"a\", string>'"),
+        ],
+    );
+}

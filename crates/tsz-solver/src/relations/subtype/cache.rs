@@ -1058,12 +1058,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 // spuriously reject it (the false `TS2416` on method
                 // overrides whose return type is a generic alias over
                 // `Promise` — zod's `_parse`).
-                let s_candidates = [
-                    s_app_id_for_variance,
-                    self.interner
-                        .get_application_eval_origin(source)
-                        .and_then(|origin| application_id(self.interner, origin)),
-                ];
+                let s_display = s_app_id_for_variance;
+                let s_origin = self
+                    .interner
+                    .get_application_eval_origin(source)
+                    .and_then(|origin| application_id(self.interner, origin));
+                let s_candidates = [s_display, s_origin];
                 let mut vr = None;
                 for s_app_id in s_candidates.into_iter().flatten() {
                     vr = self.try_same_base_all_any_target_args(source, Some(s_app_id), t_app_id);
@@ -1082,13 +1082,27 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                             continue;
                         }
                     }
-                    vr = self
-                        .try_same_base_args_identical_or_any(s_app_id, t_app_id)
-                        .or_else(|| self.try_variance_fast_path(s_app_id, t_app_id));
+                    vr = self.try_same_base_args_identical_or_any(s_app_id, t_app_id);
                     if matches!(vr, Some(SubtypeResult::True)) {
                         break;
                     }
                 }
+                // No general `try_variance_fast_path` acceptance here: a
+                // provenance-recovered pair may only silence the structural
+                // walk through the `any`/identical-args lawyer shortcuts
+                // above. Two distinct aliases with byte-identical bodies
+                // intern their instantiations to the SAME structural
+                // `TypeId`s, so the display/eval-origin side-tables of one
+                // `TypeId` can carry writers from EITHER alias; measuring
+                // variance on such a reconstructed pair can weld a fictitious
+                // same-base pair out of a genuinely cross-alias relation and
+                // silence its structural rejection via the same-alias
+                // variance quirk (order-dependent dropped TS2741, #17614).
+                // tsc's `relateVariances` only ever runs on the actual pair
+                // of references being related; tsz's equivalent is the
+                // checker's declared-application path and the real
+                // `Application`-pair branch above, both of which keep their
+                // variance handling.
                 match vr {
                     Some(SubtypeResult::True) => Some(SubtypeResult::True),
                     _ => None,

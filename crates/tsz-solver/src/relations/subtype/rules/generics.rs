@@ -14,8 +14,8 @@ use crate::instantiation::instantiate::fill_application_defaults;
 use crate::types::{MappedModifier, MappedType, TypeData};
 use crate::types::{MappedTypeId, SymbolRef, TypeApplicationId, TypeId};
 use crate::visitor::{
-    application_id, array_element_type, mapped_type_id, tuple_list_id, type_param_info,
-    union_list_id,
+    application_id, array_element_type, contains_type_parameters, mapped_type_id, tuple_list_id,
+    type_param_info, union_list_id,
 };
 use crate::visitors::visitor_predicates::is_primitive_type;
 
@@ -1486,6 +1486,21 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let source_mapped = self.interner.get_mapped(source_mapped_id);
         let target_mapped = self.interner.get_mapped(target_mapped_id);
 
+        // tsc applies this template shortcut (`mappedTypeRelatedTo`) only when
+        // BOTH operands are generic mapped types (`isGenericMappedType`: the key
+        // constraint still contains a type variable). A mapped type whose key
+        // domain is concrete resolves its members, so the pair compares
+        // structurally instead — the reversed key-domain check below would
+        // otherwise accept `{ [P in string]: string }` as assignable to
+        // `{ [P in 'a']: string }`, which tsc rejects with TS2741 after member
+        // resolution (#17614). Returning `False` here is a fall-through: the
+        // dispatch continues to the concrete mapped-expansion paths.
+        if !contains_type_parameters(self.interner, source_mapped.constraint)
+            || !contains_type_parameters(self.interner, target_mapped.constraint)
+        {
+            return SubtypeResult::False;
+        }
+
         // Name-type compatibility is always required: a source with no `as`
         // clause cannot be a subtype of a target that renames its keys (and
         // vice-versa), regardless of how the raw key constraints relate.
@@ -1531,6 +1546,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let result = if let (Some(s_inner_mapped), Some(t_inner_mapped)) = (
             mapped_type_id(self.interner, source_template),
             mapped_type_id(self.interner, target_template),
+        ) && contains_type_parameters(
+            self.interner,
+            self.interner.get_mapped(s_inner_mapped).constraint,
+        ) && contains_type_parameters(
+            self.interner,
+            self.interner.get_mapped(t_inner_mapped).constraint,
         ) {
             self.check_mapped_to_mapped(
                 source_template,
