@@ -1712,6 +1712,50 @@ impl<'a> CheckerState<'a> {
     pub fn error_not_callable_at(&mut self, type_id: TypeId, idx: NodeIndex) {
         use tsz_parser::parser::syntax_kind_ext;
 
+        // TEMP PROBE (#16055): dump the callee type shape driving TS2349.
+        tracing::debug!(
+            callee = type_id.0,
+            data = ?self.ctx.types.lookup(type_id),
+            "TS2349 probe: error_not_callable_at"
+        );
+        if let Some(tsz_solver::TypeData::Union(list_id)) = self.ctx.types.lookup(type_id) {
+            for member in self.ctx.types.type_list(list_id).iter() {
+                let mdata = self.ctx.types.lookup(*member);
+                let detail = match mdata {
+                    Some(tsz_solver::TypeData::Object(sid))
+                    | Some(tsz_solver::TypeData::ObjectWithIndex(sid)) => {
+                        let shape = self
+                            .ctx
+                            .types
+                            .object_shape(tsz_solver::ObjectShapeId(sid.0));
+                        format!(
+                            "object symbol={:?} props={}",
+                            shape.symbol,
+                            shape.properties.len()
+                        )
+                    }
+                    Some(tsz_solver::TypeData::Application(app_id)) => {
+                        let app = self.ctx.types.type_application(app_id);
+                        format!("application base={} args={:?}", app.base.0, app.args)
+                    }
+                    Some(tsz_solver::TypeData::Callable(cs_id)) => {
+                        let shape = self.ctx.types.callable_shape(cs_id);
+                        format!(
+                            "callable symbol={:?} sigs={:?} construct={:?}",
+                            shape.symbol, shape.call_signatures, shape.construct_signatures
+                        )
+                    }
+                    _ => String::new(),
+                };
+                tracing::debug!(
+                    member = member.0,
+                    data = ?mdata,
+                    detail = %detail,
+                    "TS2349 probe: union member"
+                );
+            }
+        }
+
         // Suppress cascade errors from unresolved types.
         // In strictNullChecks mode, TS18046 is preferred for `unknown`;
         // in non-strict mode, `unknown` should emit a TS2349 callability error.
