@@ -230,7 +230,21 @@
 # SymbolId-collision family and still fails.
 tsz-checker::generic_call_assignment_flow_tests::colliding_generic_terminals_keep_flow_diagnostics_clean_across_file_orders
 tsz-checker::generic_generator_member_substitution_tests::generic_generator_genuine_mismatch_still_errors_with_substituted_source
-tsz-checker::issue_14123_repro_tests::issue_14123_alias_array_infer_reports_mismatch
+# 2026-08-18 shrink (no generation bump — removals are always allowed): the
+# issue_14123_repro_tests::issue_14123_alias_array_infer_reports_mismatch row
+# is delisted by fixing the HARNESS-ARTIFACT the r3 adjudication named (top of
+# this file): the suite's recursion unwraps through a lib generic (`Promise`),
+# and the plain `check_source_with_libs` harness cannot unify a lib generic's
+# base declaration across the user and lib arenas (#16125), so the alias
+# application stayed an unevaluated self-application in relation position and
+# the mismatch fixture lost its TS2322 (every target except `never` was
+# silently accepted). The suite now routes through the production-faithful
+# `check_source_with_libs_shared_def_store` construction; the previously
+# failing fixture reports exactly one TS2322 whose source side renders the
+# converged `{ id: 0; }` fixpoint, oracle-exact. No production code changed.
+# Verified with a per-target run: `cargo test -p tsz-checker --test
+# issue_14123_repro_tests` — 8/8 passed (was 6/7; +1 new primitive-target
+# adjacent witness, also oracle-verified), including both TS2589 safety nets.
 # 2026-08-18 shrink (no generation bump — removals are always allowed): the two
 # js_export_surface_tests::part_01 rows below now pass — verified with a direct
 # per-target run (`cargo test -p tsz-checker --test js_export_surface_tests`),
