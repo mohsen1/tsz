@@ -675,39 +675,19 @@ impl<'a> CheckerState<'a> {
             {
                 return Some(owner);
             }
-            // Fallback: a top-level (or nested) JS function with expando
-            // assignments uses the function's own name as the apparent type
-            // for `this`. tsc displays `Property 'X' does not exist on type
-            // 'fn-name'` rather than the inferred expando object shape.
-            //
-            // Suppress the fallback when the function has an explicit JSDoc
-            // `@type` annotation that gives it a callable type — the user
-            // typed the function so the apparent `this` is whatever the
-            // annotation declares (e.g. `(this: Foo) => void`), not the
-            // function's own name.
-            let func_idx = self.find_enclosing_non_arrow_function(receiver)?;
-            if self
-                .jsdoc_callable_type_annotation_for_node(func_idx)
-                .is_some()
-                || self
-                    .get_jsdoc_for_function(func_idx)
-                    .is_some_and(|jsdoc| Self::jsdoc_contains_tag(&jsdoc, "this"))
-            {
-                return None;
-            }
-            let func_node = self.ctx.arena.get(func_idx)?;
-            if func_node.kind != tsz_parser::parser::syntax_kind_ext::FUNCTION_DECLARATION
-                && func_node.kind != tsz_parser::parser::syntax_kind_ext::FUNCTION_EXPRESSION
-            {
-                return None;
-            }
-            let func_data = self.ctx.arena.get_function(func_node)?;
-            let name_node = self.ctx.arena.get(func_data.name)?;
-            return self
-                .ctx
-                .arena
-                .get_identifier(name_node)
-                .map(|ident| ident.escaped_text.to_string());
+            // No function-name fallback: TypeScript 7 never renders the
+            // enclosing function's own name as the apparent type of `this`
+            // (that was TS6 constructor-function inference, which TS7
+            // dropped). When `this` has a contextual receiver — e.g. the
+            // base object of an `x.y = function C() { ... }` assignment —
+            // the diagnostic displays that receiver's actual type (`{}`,
+            // `{ a: number; }`, ...) exactly like an anonymous function
+            // expression; a bare named function's `this` is implicit `any`
+            // (TS2683) and never reaches TS2339 display at all. Verified
+            // against typescript@7.0.2 for the named/anonymous function
+            // expression, function declaration, `@constructor`-tagged, and
+            // expando-function shapes.
+            return None;
         }
         if receiver_node.kind != SyntaxKind::Identifier as u16 {
             return None;
