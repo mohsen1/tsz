@@ -1277,7 +1277,10 @@ impl<'a> CheckerState<'a> {
                     .any(|prop| prop.name == prototype_name)
                 {
                     let prototype_type = current_sym
-                        .map(|sym_id| self.ctx.create_lazy_type_ref(sym_id))
+                        .map(|sym_id| {
+                            let self_sym = self.class_self_reference_symbol(class, sym_id);
+                            self.ctx.create_lazy_type_ref(self_sym)
+                        })
                         .unwrap_or(TypeId::ANY);
                     partial_ctor_props.push(class_type::class_member_property(
                         class_type::ClassMemberProperty::new(prototype_name, prototype_type)

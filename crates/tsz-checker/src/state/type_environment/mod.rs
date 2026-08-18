@@ -4,6 +4,7 @@
 mod app_canon_arg_identity;
 mod application;
 mod core;
+mod def_type_resolution;
 mod formatting;
 pub(crate) mod lazy;
 mod lazy_flow_mirror;

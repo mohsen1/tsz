@@ -117,3 +117,159 @@
              file has a parse error: {gated:?}"
         );
     }
+
+    // ------------------------------------------------------------------
+    // Class self-reference in a property-initializer type-parameter
+    // constraint of a default-exported class (#17570 rows 5/6).
+    //
+    // Structural rule: a class identifier referenced from a type-parameter
+    // constraint inside the class's own property-initializer function
+    // expression denotes the class INSTANCE type. For `export default class`
+    // the class node's symbol is the default-export binding (no `CLASS`
+    // flag), and the eagerly-published value result (`typeof C`) sat in every
+    // def-body/symbol cache when the deferred self-reference resolved — so
+    // the constraint was judged against the static side and reported a
+    // spurious TS2344 that tsc does not. The deferred `Lazy` must be minted
+    // from the CLASS-flagged symbol and must never resolve to a
+    // constructor-shaped value body.
+    //
+    // Every clean row is pinned against typescript@6.0.2. Binder names vary
+    // across rows so the outcome tracks the structure, not a spelling.
+    // ------------------------------------------------------------------
+
+    /// Rows that must be clean: instance arrow property, property `function`
+    /// expression, renamed binders, `InstanceType[typeof C]` constraint
+    /// spelling, plain-class control, and the annotation-position control.
+    #[test]
+    fn export_default_class_self_constraint_in_property_initializer_is_clean() {
+        let options = project_mode_es2015_strict_options();
+        let base = std::path::Path::new("/");
+        let rows: &[(&str, &str)] = &[
+            (
+                "instance-arrow",
+                r#"
+type MarkOf<R extends { readonly mark: unknown }> = R["mark"];
+export default class Schema {
+  readonly mark!: number;
+  go = <R extends Schema>(b: (x: number) => MarkOf<R>): R => null as any;
+}
+"#,
+            ),
+            (
+                "function-expression",
+                r#"
+type MarkOf<R extends { readonly mark: unknown }> = R["mark"];
+export default class Schema {
+  readonly mark!: number;
+  go = function <R extends Schema>(b: (x: number) => MarkOf<R>): R { return null as any; };
+}
+"#,
+            ),
+            (
+                "renamed-binders",
+                r#"
+type PickM<Zq extends { readonly tag: unknown }> = Zq["tag"];
+export default class Widget {
+  readonly tag!: string;
+  run = <Zq extends Widget>(cb: (n: number) => PickM<Zq>): Zq => null as any;
+}
+"#,
+            ),
+            // (The `InstanceType<typeof Schema>` constraint spelling is also
+            // clean, but `InstanceType` is a lib alias and this harness runs
+            // lib-less — that row is oracle-verified in the PR's CLI matrix.)
+            (
+                "generic-class",
+                r#"
+type MarkOf<R extends { readonly mark: unknown }> = R["mark"];
+export default class Schema<T> {
+  readonly mark!: T;
+  go = <R extends Schema<number>>(b: (x: number) => MarkOf<R>): R => null as any;
+}
+"#,
+            ),
+            (
+                "plain-class-control",
+                r#"
+type MarkOf<R extends { readonly mark: unknown }> = R["mark"];
+class Schema {
+  readonly mark!: number;
+  go = <R extends Schema>(b: (x: number) => MarkOf<R>): R => null as any;
+}
+export default Schema;
+"#,
+            ),
+            (
+                "annotation-position-control",
+                r#"
+type MarkOf<R extends { readonly mark: unknown }> = R["mark"];
+export default class Schema {
+  readonly mark!: number;
+  go: <R extends Schema>(b: (x: number) => MarkOf<R>) => R = null as any;
+}
+"#,
+            ),
+        ];
+        for (label, source) in rows {
+            let diagnostics =
+                collect_test_diagnostics_with_options(&[("/case.ts", *source)], &options, base);
+            assert!(
+                diagnostics.is_empty(),
+                "row `{label}` must be tsc-clean; got: {diagnostics:#?}"
+            );
+        }
+    }
+
+    /// Negative control: a constraint the class genuinely violates (no `mark`
+    /// member) must keep its real TS2344 — the fix defers only the
+    /// under-construction window, it does not disable the check.
+    #[test]
+    fn export_default_class_self_constraint_genuine_violation_keeps_ts2344() {
+        let options = project_mode_es2015_strict_options();
+        let base = std::path::Path::new("/");
+        let diagnostics = collect_test_diagnostics_with_options(
+            &[(
+                "/case.ts",
+                r#"
+type MarkOf<R extends { readonly mark: unknown }> = R["mark"];
+export default class Schema {
+  readonly other!: number;
+  go = <R extends Schema>(b: (x: number) => MarkOf<R>): R => null as any;
+}
+"#,
+            )],
+            &options,
+            base,
+        );
+        let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
+        assert!(
+            codes.contains(&2344),
+            "a genuinely violated constraint must still report TS2344: {diagnostics:#?}"
+        );
+    }
+
+    /// The constructor's `prototype` property must also resolve to the
+    /// instance type for a default-exported class — it shares the deferred
+    /// self-reference mint with the constraint path.
+    #[test]
+    fn export_default_class_prototype_member_resolves_to_instance() {
+        let options = project_mode_es2015_strict_options();
+        let base = std::path::Path::new("/");
+        let diagnostics = collect_test_diagnostics_with_options(
+            &[(
+                "/case.ts",
+                r#"
+export default class Schema {
+  readonly mark!: number;
+}
+const m: number = Schema.prototype.mark;
+"#,
+            )],
+            &options,
+            base,
+        );
+        assert!(
+            diagnostics.is_empty(),
+            "`Schema.prototype.mark` must type as the instance member; got: {diagnostics:#?}"
+        );
+    }

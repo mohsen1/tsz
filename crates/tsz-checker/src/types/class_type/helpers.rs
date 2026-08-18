@@ -17,6 +17,37 @@ use tsz_solver::{CallSignature, IndexSignature, TypeId, TypeParamInfo, Visibilit
 /// can restore the class scope entry too).
 pub(crate) type ScopeUpdate = (String, Option<TypeId>, bool);
 
+thread_local! {
+    /// Set when a class self-reference had to be deferred on this thread (a
+    /// bare `Lazy` stand-in was handed out because the class's instance type
+    /// was still under construction). A type computed while this fired is
+    /// window-dependent: the static-initializer speculation
+    /// (`speculative_static_property_initializer_type`) reads and resets it
+    /// around each initializer typing and discards such a result, so the
+    /// authoritative member pass re-derives it against the finished instance
+    /// type (#17570 negative controls). Thread-local (not a `CheckerContext`
+    /// field) because it is pure window bookkeeping, save/restored around
+    /// every read scope — same pattern as `FORCE_IN_PROGRESS` in
+    /// `context::resolver`.
+    static CLASS_SELF_REFERENCE_DEFERRAL_SEEN: std::cell::Cell<bool> =
+        const { std::cell::Cell::new(false) };
+}
+
+/// Record that a deferred class self-reference stand-in was handed out.
+pub(crate) fn note_class_self_reference_deferral() {
+    CLASS_SELF_REFERENCE_DEFERRAL_SEEN.with(|seen| seen.set(true));
+}
+
+/// Swap the deferral-seen window flag, returning the previous value.
+pub(crate) fn replace_class_self_reference_deferral_seen(value: bool) -> bool {
+    CLASS_SELF_REFERENCE_DEFERRAL_SEEN.with(|seen| seen.replace(value))
+}
+
+/// Read the deferral-seen window flag.
+pub(crate) fn class_self_reference_deferral_seen() -> bool {
+    CLASS_SELF_REFERENCE_DEFERRAL_SEEN.with(std::cell::Cell::get)
+}
+
 pub(super) struct MethodAggregate {
     pub(super) overload_signatures: Vec<CallSignature>,
     pub(super) impl_signatures: Vec<CallSignature>,
@@ -200,6 +231,44 @@ impl<'a> CheckerState<'a> {
             .or_else(|| self.ctx.binder.get_node_symbol(class_idx))
     }
 
+    /// The symbol a deferred class *self-reference* must be minted from.
+    ///
+    /// A deferred `Lazy` stands for the class's **instance** type, so it must
+    /// carry a symbol that later resolves through `symbol_instance_types`. For
+    /// `export default class C {}` the class NODE's symbol is the default-export
+    /// binding (`EXPORT_VALUE`/`ALIAS`, no `CLASS` flag) whose cached
+    /// `symbol_types` entry is the exported *value* (`typeof C`); a `Lazy`
+    /// minted from it resolves to the constructor and poisons every type
+    /// position that consumed the deferral (spurious TS2344 on
+    /// `[R extends C]` inside `C`'s own property initializers, #17570). Prefer
+    /// the `CLASS`-flagged symbol the class's own name binds to in file scope;
+    /// keep the node symbol when it already carries `CLASS` (plain and named
+    /// export declarations) or when no better binding exists (anonymous
+    /// `export default class {}`).
+    pub(crate) fn class_self_reference_symbol(
+        &self,
+        class: &tsz_parser::parser::node::ClassData,
+        node_sym: tsz_binder::SymbolId,
+    ) -> tsz_binder::SymbolId {
+        let has_class_flag = |sym: tsz_binder::SymbolId| {
+            self.ctx
+                .binder
+                .symbols
+                .get(sym)
+                .is_some_and(|s| s.has_any_flags(tsz_binder::symbol_flags::CLASS))
+        };
+        if has_class_flag(node_sym) {
+            return node_sym;
+        }
+        self.ctx
+            .arena
+            .get(class.name)
+            .and_then(|n| self.ctx.arena.get_identifier(n))
+            .and_then(|ident| self.ctx.binder.file_locals.get(ident.escaped_text.as_str()))
+            .filter(|&sym| has_class_flag(sym))
+            .unwrap_or(node_sym)
+    }
+
     /// Resolve the symbol of the class that lexically encloses `start`, if any.
     ///
     /// Walks the parent chain until a class-like node is found, then resolves it
@@ -377,12 +446,23 @@ impl<'a> CheckerState<'a> {
         if parent.is_none() {
             return false;
         }
-        let is_property_initializer = self
-            .ctx
-            .arena
-            .get(parent)
-            .is_some_and(|p| p.kind == syntax_kind_ext::PROPERTY_DECLARATION);
-        if !is_property_initializer {
+        // Only an INSTANCE property initializer can be re-entered by an
+        // instance-type build (the member walk skips static members), so an
+        // in-flight STATIC initializer must not defer the build: deferring
+        // there hands a bare `Lazy` to the static initializer's own
+        // constraint checks, silently accepting constraints the finished
+        // instance genuinely violates (#17570 negative controls). tsc
+        // resolves the enclosing class's instance type normally from a static
+        // initializer.
+        let is_instance_property_initializer = self.ctx.arena.get(parent).is_some_and(|p| {
+            p.kind == syntax_kind_ext::PROPERTY_DECLARATION
+                && self
+                    .ctx
+                    .arena
+                    .get_property_decl(p)
+                    .is_some_and(|prop| !self.has_static_modifier(&prop.modifiers))
+        });
+        if !is_instance_property_initializer {
             return false;
         }
         self.node_enclosing_class_symbol(node) == Some(class_sym)
