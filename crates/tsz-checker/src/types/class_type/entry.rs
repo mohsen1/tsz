@@ -112,12 +112,14 @@ impl<'a> CheckerState<'a> {
             && !is_in_resolution_set
             && self.class_build_reenters_in_flight_member(sym_id)
         {
-            if let Some(existing) = self.ctx.symbol_instance_types.get(&sym_id)
+            let self_sym = self.class_self_reference_symbol(class, sym_id);
+            if let Some(existing) = self.ctx.symbol_instance_types.get(&self_sym)
                 && !existing.is_any_unknown_or_error()
             {
                 return existing;
             }
-            return self.ctx.create_lazy_type_ref(sym_id);
+            super::helpers::note_class_self_reference_deferral();
+            return self.ctx.create_lazy_type_ref(self_sym);
         }
 
         let mut walk_state = ClassInstanceWalkState::default();

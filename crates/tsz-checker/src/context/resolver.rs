@@ -1068,8 +1068,22 @@ impl<'a> TypeResolver for CheckerContext<'a> {
             // type environment. Returning the self-lazy wrapper here loses generic
             // application instantiation (`Foo<T>` collapses to bare `Foo`), so give
             // the type environment a chance to provide the real body first.
+            //
+            // A `DefKind::Class` def is excluded outright: a type-position
+            // `Lazy(class def)` denotes the class's INSTANCE type, while
+            // `symbol_types` caches the class's VALUE side (`typeof C`).
+            // Substituting the constructor here silently swaps the static side
+            // in wherever the instance type was deferred — e.g. a class
+            // self-reference in a member initializer's type-parameter
+            // constraint resolves to `typeof C` and fails `TS2344` against a
+            // constraint the instance satisfies (#17570). With no answer here
+            // the evaluator records the unresolved-def taint (#14347), keeping
+            // the window result out of the `TypeId`-keyed caches so a later
+            // pass re-resolves through `symbol_instance_types` once the class
+            // is built.
             if !is_atomics
                 && !has_local_symbol_collision
+                && def_kind != Some(DefKind::Class)
                 && let Some(ty) = self.symbol_types.get(&sym_id)
             {
                 if ty == TypeId::ERROR {
@@ -1213,7 +1227,11 @@ impl<'a> TypeResolver for CheckerContext<'a> {
         // downstream evaluator collapses them to `unknown`, silently
         // erasing the alias's structural contributions in object spreads,
         // intersections, and other consumers.
-        if let Some(body) = self.definition_store.get_body(def_id) {
+        if let Some(body) = self.definition_store.get_body(def_id)
+            // A class def's published body can be the VALUE (constructor) side
+            // — never a valid type-position resolution (#17570).
+            && !self.is_class_value_side_body(def_id, body)
+        {
             tracing::trace!(
                 def_id = def_id.0,
                 type_id = body.0,

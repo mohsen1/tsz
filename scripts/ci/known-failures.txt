@@ -138,7 +138,42 @@
 # two rows' original TS2345 expectation was never reachable under TS7 (a function
 # value is assignable to `Function`, so there is no TS2345), so they were renamed
 # and re-pinned to the oracle-confirmed TS1005 + `Function` behavior.
-tsz-checker::conditional_application_display_tests::deferred_generic_conditional_keeps_branch_union
+# 2026-08-18 shrink (no generation bump — removals are always allowed):
+# `conditional_application_display_tests::deferred_generic_conditional_keeps_branch_union`
+# now passes — fixed, not incidental. TS2322's source-display formatter kept a
+# still-generic deferred conditional's alias spelling (`F<T>`) unconditionally
+# whenever the source still carried a free type parameter, with no check of
+# whether the paired TARGET was itself generic/deferred. tsc only keeps that
+# spelling when the target is ALSO generic (already handled by
+# `generic_deferred_source_keeps_spelling_against_generic_target`); against a
+# concrete target it expands the source to its branch union (`string |
+# boolean`). Added the mirror guard
+# `deferred_conditional_source_branch_union_display`
+# (`error_reporter/conditional_alias_display.rs`), wired into
+# `format_assignment_source_type_for_diagnostic`
+# (`error_reporter/core/diagnostic_source/assignment_formatting.rs`) right
+# after the existing guard. Reuses the checker's existing determinism/
+# ambiguity logic rather than duplicating it: `compute_ambiguous_conditional_display`
+# (`error_reporter/core_alias_display.rs`) was refactored into
+# `compute_ambiguous_conditional_display_inner(ty, keep_unconstrained_named_alias)`,
+# and the new guard calls it with the carve-out disabled. A first version that
+# hand-rolled the union directly regressed
+# `distributiveConditionalTypeConstraints.ts` (f2/f3/f4 in the TS conformance
+# corpus): it ignored that the check-type parameter's own declared constraint
+# can already decide a single branch deterministically (`T extends unknown[]`
+# in `IsArray<T> = T extends unknown[] ? true : false` always selects `true`),
+# a case tsc keeps the alias for and elaborates against just that branch —
+# caught by `compare-to-parent.sh` (1 newly failing) before landing, fixed by
+# the refactor/reuse instead. Bails to the pre-existing alias-keeping behavior
+# whenever a branch is the bare check-type-parameter itself (`Extract<T, U> =
+# T extends U ? T : never`) or wraps rather than is the check parameter (`T
+# extends number ? T[] : boolean` — a known, deliberately out-of-scope gap;
+# tsc partially expands such branches, tsz keeps the full alias). Verified:
+# direct per-target run (`cargo test -p tsz-checker --test
+# conditional_application_display_tests`), 13/13 passed (was 9/10, with 4 new
+# adjacent-case tests); `cargo clippy --workspace --all-targets` clean;
+# `compare-to-parent.sh origin/main` 0 newly-failing / 0 newly-passing
+# (11659/11659 both sides — this row isn't part of the TS conformance corpus).
 # 2026-08-18 shrink (no generation bump — removals are always allowed): the
 # fp_repro_audit_2026::issue_14944_genuine_widening_self_assignment_still_errors
 # row now passes — fixed, not incidental. The killing-definition reduction base
@@ -215,7 +250,21 @@ tsz-checker::generic_call_assignment_flow_tests::colliding_generic_terminals_kee
 # generic_generator_member_substitution_tests`, 8/8 passed incl. 3 new
 # adjacent-matrix tests) and a two-sided `compare-to-parent.sh` conformance
 # run recorded in the PR.
-tsz-checker::issue_14123_repro_tests::issue_14123_alias_array_infer_reports_mismatch
+# 2026-08-18 shrink (no generation bump — removals are always allowed): the
+# issue_14123_repro_tests::issue_14123_alias_array_infer_reports_mismatch row
+# is delisted by fixing the HARNESS-ARTIFACT the r3 adjudication named (top of
+# this file): the suite's recursion unwraps through a lib generic (`Promise`),
+# and the plain `check_source_with_libs` harness cannot unify a lib generic's
+# base declaration across the user and lib arenas (#16125), so the alias
+# application stayed an unevaluated self-application in relation position and
+# the mismatch fixture lost its TS2322 (every target except `never` was
+# silently accepted). The suite now routes through the production-faithful
+# `check_source_with_libs_shared_def_store` construction; the previously
+# failing fixture reports exactly one TS2322 whose source side renders the
+# converged `{ id: 0; }` fixpoint, oracle-exact. No production code changed.
+# Verified with a per-target run: `cargo test -p tsz-checker --test
+# issue_14123_repro_tests` — 8/8 passed (was 6/7; +1 new primitive-target
+# adjacent witness, also oracle-verified), including both TS2589 safety nets.
 # 2026-08-18 shrink (no generation bump — removals are always allowed): the two
 # js_export_surface_tests::part_01 rows below now pass — verified with a direct
 # per-target run (`cargo test -p tsz-checker --test js_export_surface_tests`),
@@ -241,24 +290,28 @@ tsz-checker::raw_builder_return_context_inference_tests::different_base_and_ambi
 # treated as compiler bugs rather than pinning bugs; this shrink is that check
 # for two of the five — both simply pass now, most likely fixed incidentally by
 # intervening cross-file/instantiation-identity landings between #17551's
-# 2026-08-15 measurement and today. The other tsz-cli row below still fails:
-# `default_lib_validation_normalizes_cross_arena_method_members_after_global_merge`
-# now fails with a different signature than #17551 originally described — a
-# genuine default-lib TS2430 (`Document` incorrectly extends
-# `NonElementParentNode`) — not yet triaged, worth its own issue if picked up.
+# 2026-08-15 measurement and today. The two other tsz-cli rows #17551 surfaced
+# (`cross_file_class_namespace_merge_value_keeps_call_signature_in_import_cycle`
+# and `default_lib_validation_normalizes_cross_arena_method_members_after_global_merge`)
+# have both since been fixed and removed — see the two shrink notes below.
+#
 # 2026-08-18 shrink (no generation bump — removals are always allowed):
 # `cross_file_class_namespace_merge_value_keeps_call_signature_in_import_cycle`
 # (the live #17567 investigation) now passes — fixed by teaching
 # `is_incomplete_class_type`'s `Lazy(DefId)` arm to check
 # `class_instance_resolution_set` before evaluating the identity away, and
 # wiring it into `validate_type_args_against_params`'s constraint-satisfied
-# check as a deferred-like-tsc disjunct. Verified: direct per-test run (passed)
-# plus a full `compare-to-parent.sh` conformance run (0 newly passing, 0 newly
-# failing — this test isn't part of the TS conformance corpus) and a full
-# `cargo test -p tsz-cli --lib` run (1853 passed; the only failures are the
-# pre-existing `default_lib_validation_...` row below and environment-specific
-# `tsc_compat_tests` CLI version/help-string checks, unrelated to this change).
-tsz-cli::driver::core::check::check_tests::default_lib_validation_normalizes_cross_arena_method_members_after_global_merge
+# check as a deferred-like-tsc disjunct (#17619).
+#
+# 2026-08-18 shrink (no generation bump — removals are always allowed):
+# `default_lib_validation_normalizes_cross_arena_method_members_after_global_merge`
+# now passes (#17595). Its default-lib TS2430 (`Document` incorrectly extends
+# `NonElementParentNode`) was a heritage-thin `HTMLElement` — momentarily
+# resolved without `Node`'s inherited members during the DOM
+# `Node`/`Element`/`HTMLElement` resolution cycle — being cached over the
+# complete body via `resolve_lib_type_by_name_inner`'s direct `symbol_types`
+# write, which bypassed the membership-monotone guard the finalize path already
+# applies. Fixed by extending that guard to the direct cache write.
 # 2026-08-18 shrink (no generation bump — removals are always allowed): the two
 # conformance_issues_features::namespace_construct_signature rows below now pass
 # — verified with a direct per-target run (`cargo test -p tsz-checker --test

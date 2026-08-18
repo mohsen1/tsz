@@ -170,6 +170,21 @@ pub fn is_numeric_literal_name(name: &str) -> bool {
         || tsz_common::numeric::round_trip_js_number(name).is_some()
 }
 
+/// Checks if a property name uses one of the internal symbol-key encodings.
+///
+/// Symbol-keyed members are stored under synthetic string atoms: `__unique_N`
+/// (a `unique symbol` binding identity), `[Symbol.xxx]` (a well-known symbol
+/// member), `__@` (tsc's own well-known-symbol escape), and
+/// `__symbol_<file>_<sym>` (a plain-`symbol` `const` binding identity). Index
+/// applicability decisions must treat such a name as a symbol key — covered
+/// only by a `[k: symbol]` index signature, never by a `[k: string]` one.
+pub fn is_symbol_like_property_name(name: &str) -> bool {
+    name.starts_with("__unique_")
+        || name.starts_with("[Symbol.")
+        || name.starts_with("__@")
+        || name.starts_with("__symbol_")
+}
+
 /// Canonicalizes a numeric property name to its JavaScript canonical form.
 ///
 /// If the input parses as a number, returns `Some(canonical_form)` where

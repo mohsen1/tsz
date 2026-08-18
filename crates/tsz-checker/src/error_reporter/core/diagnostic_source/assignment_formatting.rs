@@ -205,6 +205,18 @@ impl<'a> CheckerState<'a> {
         {
             return self.format_type_for_assignability_message(source);
         }
+        // The mirror case: a still-generic deferred conditional/indexed-access
+        // source against a *concrete* target expands to its branch union
+        // (`F<T> = T extends number ? string : boolean` against `number`
+        // renders `string | boolean`, not `F<T>`) — tsc's apparent-type display
+        // for a deferred conditional whose result is otherwise fully concrete.
+        // Only fires when the guard above did not (i.e. the target is not
+        // itself generic/deferred); see `deferred_conditional_source_branch_union_display`
+        // for the concreteness/bare-check-param safety conditions.
+        if let Some(display) = self.deferred_conditional_source_branch_union_display(source, target)
+        {
+            return display;
+        }
         // For property-access source expressions whose underlying value type is
         // a `unique symbol` (e.g. `Symbol.toPrimitive`), tsc displays the source
         // as `typeof <expr>` rather than widening to `symbol`. Match that here
