@@ -150,6 +150,25 @@ impl<'a> CheckerState<'a> {
         &mut self,
         ty: TypeId,
     ) -> Option<TypeId> {
+        self.compute_ambiguous_conditional_display_inner(ty, true)
+    }
+
+    /// Core of [`Self::compute_ambiguous_conditional_display`], parameterized
+    /// on whether an unconstrained named generic alias keeps its spelling.
+    ///
+    /// `keep_unconstrained_named_alias = true` is tsc's behavior when the
+    /// caller has no target context (or the target is itself generic/deferred,
+    /// e.g. `T95<U>` against `T94<U>`): the alias is preserved. A TS2322
+    /// source display against a *concrete* target instead expands even the
+    /// unconstrained case (`F<T>` against `number` shows `string | boolean`,
+    /// see `deferred_conditional_source_branch_union_display`), so that caller
+    /// passes `false` to reuse this same branch-union/determinism logic
+    /// without the carve-out.
+    pub(in crate::error_reporter) fn compute_ambiguous_conditional_display_inner(
+        &mut self,
+        ty: TypeId,
+        keep_unconstrained_named_alias: bool,
+    ) -> Option<TypeId> {
         let db = self.ctx.types.as_type_database();
         let cond = crate::query_boundaries::state::type_environment::get_conditional_type(db, ty)?;
         if !cond.is_distributive {
@@ -168,16 +187,18 @@ impl<'a> CheckerState<'a> {
         }
         // A *named* generic conditional alias deferred on an UNCONSTRAINED type
         // parameter (`T95<U>` from `type T95<T> = T extends string ? boolean :
-        // number`) keeps its alias spelling in tsc. The branch union is shown
-        // only for an anonymous conditional or one whose check parameter carries
-        // a real constraint that makes the branch genuinely ambiguous
-        // (`IsArray<T extends object>` → `boolean`). Defer such named,
-        // unconstrained applications to the alias-application display instead of
-        // collapsing them to their branch union.
+        // number`) keeps its alias spelling in tsc when the caller has no
+        // concrete-target context. The branch union is shown for an anonymous
+        // conditional, one whose check parameter carries a real constraint
+        // that makes the branch genuinely ambiguous (`IsArray<T extends
+        // object>` → `boolean`), or (per `keep_unconstrained_named_alias`)
+        // whenever a TS2322-family caller has already established the paired
+        // target is concrete.
         let check_param_unconstrained = param_info
             .constraint
             .is_none_or(|c| c == TypeId::UNKNOWN || c == TypeId::ANY);
-        if check_param_unconstrained
+        if keep_unconstrained_named_alias
+            && check_param_unconstrained
             && self.ctx.types.get_display_alias(ty).is_some_and(|alias| {
                 crate::query_boundaries::diagnostics::type_application(self.ctx.types, alias)
                     .is_some()

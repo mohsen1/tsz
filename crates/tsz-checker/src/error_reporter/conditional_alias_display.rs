@@ -54,14 +54,17 @@ impl<'a> CheckerState<'a> {
     /// instead preserves the alias spelling when the target is ALSO
     /// generic/deferred.
     ///
-    /// Bails (keeps the alias, via `None`) whenever the branch union is not
-    /// fully concrete — `conditional_branch_union_constraint` already refuses
-    /// a bare check-type-parameter branch (`Extract<T, U> = T extends U ? T :
-    /// never` must keep its alias; unioning would leak `never` into display,
-    /// see `generic_conditional_application_keeps_alias_name`), and the
-    /// explicit `contains_type_parameters` check below catches a branch that
-    /// merely *wraps* the check type parameter (`T extends number ? T[] :
-    /// boolean`) rather than being it.
+    /// Delegates the ambiguity/determinism decision to
+    /// `compute_ambiguous_conditional_display_inner` with its unconstrained-
+    /// named-alias carve-out disabled, so a check type parameter whose own
+    /// constraint already decides a single branch deterministically (`T
+    /// extends unknown[]` in `IsArray<T> = T extends unknown[] ? true :
+    /// false`, always the `true` branch) still bails and keeps the alias —
+    /// exactly as it does for the raw-`Conditional` shape
+    /// (`distributiveConditionalTypeConstraints.ts` f2/f3/f4) — while a
+    /// genuinely unconstrained check parameter (`F<T>`, no `extends` at all)
+    /// or one whose constraint leaves the branch ambiguous (`IsArray<T
+    /// extends object>` → `boolean`) reaches the union.
     pub(in crate::error_reporter) fn deferred_conditional_source_branch_union_display(
         &mut self,
         source: TypeId,
@@ -85,18 +88,11 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
             let evaluated = self.evaluate_type_for_assignability(candidate);
-            let Some(union) =
-                crate::query_boundaries::conditional_constraints::conditional_branch_union_constraint(
-                    self.ctx.types,
-                    evaluated,
-                )
+            let Some(union) = self.compute_ambiguous_conditional_display_inner(evaluated, false)
             else {
                 continue;
             };
-            if crate::query_boundaries::common::contains_type_parameters(self.ctx.types, union) {
-                continue;
-            }
-            return Some(self.format_type_for_assignability_message_skip_application_alias(union));
+            return Some(self.format_type_for_assignability_message(union));
         }
         None
     }
