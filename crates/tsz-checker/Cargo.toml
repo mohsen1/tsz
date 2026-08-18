@@ -2193,6 +2193,9 @@ path = "tests/string_literal_module_export_name_grammar_tests.rs"
 name = "jsdoc_tag_boundary_tests"
 path = "tests/jsdoc_tag_boundary_tests.rs"
 [[test]]
+name = "jsdoc_namespace_import_value_member_ts2694_tests"
+path = "tests/jsdoc_namespace_import_value_member_ts2694_tests.rs"
+[[test]]
 name = "jsdoc_import_multiline_tests"
 path = "tests/jsdoc_import_multiline_tests.rs"
 [[test]]
