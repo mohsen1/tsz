@@ -171,7 +171,6 @@ tsz-checker::conditional_application_display_tests::deferred_generic_conditional
 # the 2026-08-13 entry and the ts7014 re-pin below. No production code
 # changed. Verified: 3/3 re-pinned tests pass, plus full per-target runs of
 # both affected binaries.
-tsz-checker::contravariant_app_constrained_type_param_target_tests::same_base_mapped_record_alias_keeps_tsc_variance_quirk
 tsz-checker::generic_call_assignment_flow_tests::colliding_generic_terminals_keep_flow_diagnostics_clean_across_file_orders
 tsz-checker::generic_call_assignment_flow_tests::imported_generic_result_narrows_inside_reduce_arrow
 tsz-checker::generic_generator_member_substitution_tests::generic_generator_genuine_mismatch_still_errors_with_substituted_source
