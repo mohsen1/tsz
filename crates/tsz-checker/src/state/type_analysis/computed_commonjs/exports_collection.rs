@@ -657,6 +657,16 @@ impl<'a> CheckerState<'a> {
         let Some(root_name) = expando_root else {
             return base_type;
         };
+        // A CommonJS export member is never an expando host in tsc 7.0.2: nested
+        // writes `exports.n.K = ...` / `module.exports.n.K = ...` do not grow
+        // `n`'s type (they are TS2339 at the declaring write for every RHS
+        // shape), so its exposed surface must NOT fold them in either — a
+        // consumer's `s.n.K` sees `n`'s own closed type and reports TS2339, the
+        // same as the declaring file. `direct_assignment_expando_root` only ever
+        // yields these two prefixes, so this leaves no other root augmentable.
+        if root_name.starts_with("exports.") || root_name.starts_with("module.exports.") {
+            return base_type;
+        }
         let expando_members =
             self.collect_commonjs_expando_property_types_for_root(target_file_idx, root_name);
         if expando_members.is_empty() {

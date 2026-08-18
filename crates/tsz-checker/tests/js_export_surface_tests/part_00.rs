@@ -583,6 +583,12 @@ module.exports = ns;
 "#,
     );
 
+    // `ns` is a plain local `const ns = {}` — a legitimate expando host — so
+    // `ns.Foo = class {}` is a valid open-world write (no TS2339), and the type
+    // typedef `Foo` and the value member `ns.Foo` live in different declaration
+    // spaces, so tsc 7.0.2 reports no duplicate-identifier TS2300 either. (An
+    // earlier tsz version raised a spurious TS2300 here; the export surface now
+    // matches tsc's 0-diagnostic result.)
     let ts2339: Vec<_> = diagnostics
         .iter()
         .filter(|(code, message)| *code == 2339 && message.contains("'Foo'"))
@@ -597,8 +603,8 @@ module.exports = ns;
         "Expected no TS2339 for JS object expando write on `ns.Foo`, got: {ts2339:#?}"
     );
     assert!(
-        !ts2300.is_empty(),
-        "Expected the duplicate-identifier JSDoc diagnostics to remain, got: {diagnostics:#?}"
+        ts2300.is_empty(),
+        "Expected no spurious TS2300: the typedef and the value member do not collide, got: {diagnostics:#?}"
     );
 }
 
@@ -1051,10 +1057,20 @@ lib.default;
         "./lib.js",
     );
 
+    // The direct element-access exports `b`/`c`/`d`/`default` resolve cleanly.
+    // But `module["exports"]["d"].e = 0` writes a NESTED member on the export
+    // member `d` (a `{}`), which tsc 7.0.2 rejects — that member is never hosted
+    // on the exported surface, so the consumer's `lib.d.e` reports TS2339 on
+    // `{}` (matching the declaring file's own TS2339 at the write).
     let ts2339: Vec<_> = diagnostics.iter().filter(|(c, _)| *c == 2339).collect();
+    assert_eq!(
+        ts2339.len(),
+        1,
+        "Expected exactly one TS2339 — the nested `lib.d.e` read of an illegal export-member expando, got: {diagnostics:#?}"
+    );
     assert!(
-        ts2339.is_empty(),
-        "Expected no TS2339 for literal CommonJS element-access exports, got: {diagnostics:#?}"
+        ts2339[0].1.contains("'e'"),
+        "Expected the TS2339 to name the missing nested member `e`, got: {ts2339:#?}"
     );
 }
 

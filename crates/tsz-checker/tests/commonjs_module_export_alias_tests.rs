@@ -705,7 +705,11 @@ b.func20;
 }
 
 #[test]
-fn test_module_exports_function_expando_assignments_no_ts2339() {
+fn test_module_exports_function_expando_assignments_report_ts2339() {
+    // A CommonJS export member never hosts nested expando growth in tsc 7.0.2
+    // (a TS6 -> TS7 change): `module.exports.b.cat = ...`, `.c.Cls = class {}`,
+    // and `.f.self = ...` are all plain property writes against `b`/`c`/`f`'s
+    // own function types and each report TS2339. (tsc 6.0.2 accepted all three.)
     let diagnostics = check_commonjs_file(
         "index.js",
         r#"
@@ -726,22 +730,26 @@ module.exports.f.self = module.exports.f;
         .iter()
         .filter(|(code, _)| *code == 2339)
         .collect();
-    let ts2565: Vec<_> = diagnostics
-        .iter()
-        .filter(|(code, _)| *code == 2565)
-        .collect();
-    assert!(
-        ts2339.is_empty(),
-        "Expected no TS2339 for CommonJS exported function expandos, got: {ts2339:#?}"
+    assert_eq!(
+        ts2339.len(),
+        3,
+        "Expected TS2339 on each nested write (.cat, .Cls, .self) against the closed function member, got: {diagnostics:#?}"
     );
     assert!(
-        ts2565.is_empty(),
-        "Expected no TS2565 for already-assigned CommonJS export reads, got: {ts2565:#?}"
+        ts2339
+            .iter()
+            .all(|(_, msg)| msg.contains("does not exist on type")),
+        "Expected each TS2339 to name the missing nested member, got: {ts2339:#?}"
     );
 }
 
 #[test]
-fn test_module_exports_nested_class_property_preserves_instance_member_types() {
+fn test_module_exports_nested_class_property_reports_ts2339_cross_file() {
+    // tsc 7.0.2: a CommonJS export member (`module.exports.c`, a function) hosts
+    // no nested member, so `module.exports.c.Cls = class {}` is illegal and the
+    // synthesized export surface must NOT expose `Cls` to consumers. The
+    // consumer's `new b.c.Cls()` therefore reports TS2339 (`Cls` not on
+    // `() => void`), not a resolved instance whose `x` collides with `string`.
     let diagnostics = check_commonjs_two_files(
         "b.js",
         r#"
@@ -770,12 +778,17 @@ const s: string = inst.x;
         .filter(|(code, _)| *code == 2339)
         .collect();
     assert!(
-        ts2339.is_empty(),
-        "Expected nested CommonJS class property instance members to stay visible, got: {diagnostics:#?}"
+        ts2322.is_empty(),
+        "Expected no TS2322: the nested class member is not exposed, so `inst` is `any`, got: {diagnostics:#?}"
+    );
+    assert_eq!(
+        ts2339.len(),
+        1,
+        "Expected TS2339 on the consumer's `new b.c.Cls()` read of the illegal nested member, got: {diagnostics:#?}"
     );
     assert!(
-        !ts2322.is_empty(),
-        "Expected nested CommonJS class property instance member to keep number type, got: {diagnostics:#?}"
+        ts2339[0].1.contains("Cls"),
+        "Expected the consumer TS2339 to name the missing `Cls` member, got: {ts2339:#?}"
     );
 }
 
@@ -1008,5 +1021,100 @@ fn jsdoc_annotated_export_write_still_reports_mismatch() {
         codes.contains(&2322),
         "an explicit @type annotation keeps the assignability check; expected TS2322, \
          got: {codes:?}"
+    );
+}
+
+// ==========================================================================
+// A CommonJS export member never hosts nested expando growth (tsc 7.0.2).
+//
+// `exports.n = {}` / `module.exports.n = {}` makes `n` a closed member; a
+// nested write `exports.n.K = <rhs>` is a plain property assignment against
+// `n`'s own type and reports TS2339 for EVERY rhs shape (object, function,
+// class), naming `n`'s real type (`{}`, `() => void`, ...) as the receiver —
+// never the whole-module `typeof import(...)`. A plain local `var NS = {}`
+// stays a legitimate expando host, so the rule is specific to export members.
+// (tsc 6.0.2 accepted all of these; this is a 6 -> 7 behavior change.)
+// ==========================================================================
+
+#[test]
+fn exports_member_object_rhs_nested_write_reports_ts2339_on_closed_shape() {
+    for prelude in ["exports.n = {};", "module.exports.n = {};"] {
+        let src = format!("{prelude}\nexports.n.K = 5;\n");
+        let diagnostics = check_commonjs_file("index.js", &src);
+        let ts2339: Vec<_> = diagnostics
+            .iter()
+            .filter(|(code, _)| *code == 2339)
+            .collect();
+        assert_eq!(
+            ts2339.len(),
+            1,
+            "nested write on the `{{}}` export member must be a single TS2339, got: {diagnostics:#?}"
+        );
+        assert!(
+            ts2339[0].1.contains("'K'") && ts2339[0].1.contains("'{}'"),
+            "TS2339 must name the missing `K` and the closed `{{}}` receiver (not `typeof import`), got: {:#?}",
+            ts2339[0]
+        );
+    }
+}
+
+#[test]
+fn exports_member_function_rhs_nested_write_reports_ts2339_on_function_shape() {
+    let diagnostics = check_commonjs_file(
+        "index.js",
+        "exports.n = {};\nexports.n.K = function () {\n    this.x = 10;\n};\n",
+    );
+    let ts2339: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2339)
+        .collect();
+    // Two TS2339: the nested write `exports.n.K` on `{}`, and `this.x` inside
+    // the assigned function — `this` binds to the receiver `exports.n` (`{}`),
+    // not to `typeof import(...)`.
+    assert_eq!(
+        ts2339.len(),
+        2,
+        "expected TS2339 at the nested write and at `this.x`, got: {diagnostics:#?}"
+    );
+    assert!(
+        ts2339.iter().all(|(_, msg)| msg.contains("'{}'")),
+        "both TS2339 must report the closed `{{}}` receiver, not `typeof import(...)`, got: {ts2339:#?}"
+    );
+}
+
+#[test]
+fn local_var_object_host_still_grows_nested_members() {
+    // Contrast: a plain local `var NS = {}` is a real expando host, so
+    // `NS.K = class {}` and its use stay clean (unchanged from tsc 6 and 7).
+    let diagnostics = check_commonjs_file(
+        "index.js",
+        "var NS = {};\nNS.K = class {\n    m() { return 1; }\n};\nnew NS.K().m();\n",
+    );
+    let ts2339: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2339)
+        .collect();
+    assert!(
+        ts2339.is_empty(),
+        "a local `var NS = {{}}` must still host `NS.K`, got: {ts2339:#?}"
+    );
+}
+
+#[test]
+fn direct_exports_member_write_stays_valid() {
+    // Guard the boundary: the bare exports object still hosts DIRECT member
+    // declarations. `exports.foo = ...` / `module.exports.bar = ...` must not
+    // be swept up by the nested-member rule.
+    let diagnostics = check_commonjs_file(
+        "index.js",
+        "exports.foo = 1;\nmodule.exports.bar = function () {};\n",
+    );
+    let ts2339: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2339)
+        .collect();
+    assert!(
+        ts2339.is_empty(),
+        "direct CommonJS export member writes must stay valid, got: {ts2339:#?}"
     );
 }

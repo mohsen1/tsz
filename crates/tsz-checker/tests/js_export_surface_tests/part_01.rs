@@ -510,7 +510,13 @@ exports.K = NS.K;
 }
 
 #[test]
-fn test_commonjs_module_exports_nested_namespace_keeps_nested_constructor_side() {
+fn test_commonjs_module_exports_nested_namespace_member_is_not_hosted_cross_file() {
+    // tsc 7.0.2: `module.exports.n = {}` makes `n` a `{}`-typed export member,
+    // and `module.exports.n.K = function () {}` is an illegal nested expando
+    // write on that closed member. The synthesized export surface must NOT
+    // expose `K`, so the consumer's `new s.n.K()` reads a missing member and
+    // reports TS2339 on `{}` — not a resolved (uncallable) constructor. The
+    // sibling direct export `s.Classic` is a real class and stays clean.
     let diagnostics = check_commonjs_two_files(
         "mod.js",
         r#"
@@ -532,23 +538,30 @@ var k = new s.n.K();
 k.x;
 var classic = new s.Classic();
 
-/** @param {s.n.K} c
-    @param {s.Classic} classic */
-function f(c, classic) {
-    c.x;
+function f() {
     classic.p;
 }
 "#,
         "./mod",
     );
 
-    let relevant: Vec<_> = diagnostics
+    let k_missing: Vec<_> = diagnostics
         .iter()
-        .filter(|(code, _)| matches!(*code, 2322 | 2339 | 2351 | 2741))
+        .filter(|(code, message)| *code == 2339 && message.contains("'K'"))
+        .collect();
+    assert_eq!(
+        k_missing.len(),
+        1,
+        "Expected TS2339 on the consumer's `new s.n.K()` read of the un-hosted nested member, got: {diagnostics:#?}"
+    );
+    // The legitimate direct-export class `Classic` must still resolve cleanly.
+    let classic_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, message)| matches!(*code, 2339 | 2351) && message.contains("Classic"))
         .collect();
     assert!(
-        relevant.is_empty(),
-        "Expected nested CommonJS module.exports namespace constructor access to stay typed, got: {relevant:#?}"
+        classic_errors.is_empty(),
+        "Expected the direct export `Classic` to stay a usable constructor, got: {classic_errors:#?}"
     );
 }
 
