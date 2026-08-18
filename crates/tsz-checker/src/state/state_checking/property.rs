@@ -17,7 +17,7 @@ impl<'a> CheckerState<'a> {
         target: TypeId,
         idx: NodeIndex,
     ) {
-        use crate::query_boundaries::common as freshness_query;
+        use crate::query_boundaries::common as common_query;
 
         self.ensure_relation_input_ready(target);
 
@@ -25,10 +25,10 @@ impl<'a> CheckerState<'a> {
         let object_literal_idx = const_assertion_object_literal.unwrap_or(idx);
         let evaluated_target = self.evaluate_type_with_env(target);
 
-        if crate::query_boundaries::common::type_is_conditional_type_result_with_unresolved_inference(
+        if common_query::type_is_conditional_type_result_with_unresolved_inference(
             self.ctx.types,
             target,
-        ) || crate::query_boundaries::common::type_is_conditional_type_result_with_unresolved_inference(
+        ) || common_query::type_is_conditional_type_result_with_unresolved_inference(
             self.ctx.types,
             evaluated_target,
         ) {
@@ -50,7 +50,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // Only check excess properties for FRESH object literals
-        let is_fresh_source = freshness_query::is_fresh_object_type(self.ctx.types, source);
+        let is_fresh_source = common_query::is_fresh_object_type(self.ctx.types, source);
         let explicit_property_names = if is_fresh_source {
             None
         } else if const_assertion_object_literal.is_some() {
@@ -77,14 +77,9 @@ impl<'a> CheckerState<'a> {
 
         if [target, effective_target, resolved_target, evaluated_target]
             .into_iter()
-            .filter_map(|candidate| {
-                crate::query_boundaries::common::mapped_type_info(self.ctx.types, candidate)
-            })
+            .filter_map(|candidate| common_query::mapped_type_info(self.ctx.types, candidate))
             .any(|mapped| {
-                !crate::query_boundaries::common::is_valid_mapped_type_key_type(
-                    self.ctx.types,
-                    mapped.constraint,
-                )
+                !common_query::is_valid_mapped_type_key_type(self.ctx.types, mapped.constraint)
             })
         {
             return;
