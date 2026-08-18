@@ -3,7 +3,7 @@ use super::args_contain_type_parameters;
 use crate::def::DefId;
 use crate::diagnostics::SubtypeFailureReason;
 use crate::types::{TypeApplication, TypeApplicationId, TypeData, TypeId, Variance};
-use crate::visitor::{application_id, object_shape_id, object_with_index_shape_id};
+use crate::visitor::{application_id, lazy_def_id, object_shape_id, object_with_index_shape_id};
 use rustc_hash::FxHashSet;
 use smallvec::SmallVec;
 use std::sync::Arc;
@@ -1223,5 +1223,79 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         None
+    }
+}
+
+impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
+    /// Whether two provenance channels of one provenance-recovered operand
+    /// (its display-alias and application-eval-origin applications) agree on
+    /// the operand's generic identity, for the #17614 ambiguity guard in the
+    /// pre-evaluation variance fast path.
+    ///
+    /// Channels agree when either is absent, when they are the same
+    /// application, or when their bases resolve to the same canonical
+    /// definition. A base-definition DISAGREEMENT is still agreement — not a
+    /// #17614 twin-alias weld — when one base is a transparent alias whose
+    /// registered body reaches the other base through `Lazy`/`Application`
+    /// heads (`AsyncR<T> = Promise<OK<T>>`: display names `AsyncR`, eval
+    /// origin names the underlying `Promise`; both truthfully describe the
+    /// same value, and gating general variance on their mismatch is what
+    /// produced the false TS2416 on `any`-instantiated override returns,
+    /// issue #17630). Byte-identical twin aliases never satisfy the walk:
+    /// each twin's body is its own structural type (mapped/object), not a
+    /// reference to the other definition, so the weld stays refused. The
+    /// walk is a bounded pure lookup (`get_def_raw_body`), so an
+    /// unregistered body simply keeps the pair gated.
+    pub(crate) fn recovered_provenance_channels_agree(
+        &self,
+        a: Option<TypeApplicationId>,
+        b: Option<TypeApplicationId>,
+    ) -> bool {
+        let (Some(a), Some(b)) = (a, b) else {
+            return true;
+        };
+        if a == b {
+            return true;
+        }
+        let canonical_base = |app_id: TypeApplicationId| {
+            let app = self.interner.type_application(app_id);
+            lazy_def_id(self.interner, app.base).map(|def| self.resolver.canonical_def_id(def))
+        };
+        match (canonical_base(a), canonical_base(b)) {
+            (Some(da), Some(db)) => {
+                da == db
+                    || self.alias_body_chain_reaches(da, db)
+                    || self.alias_body_chain_reaches(db, da)
+            }
+            _ => false,
+        }
+    }
+
+    /// Whether following `from`'s registered raw body through
+    /// `Lazy`/`Application` heads reaches the definition `to` within a
+    /// bounded number of alias hops.
+    fn alias_body_chain_reaches(&self, from: DefId, to: DefId) -> bool {
+        let mut current = from;
+        for _ in 0..8 {
+            if current == to {
+                return true;
+            }
+            let Some(body) = self.resolver.get_def_raw_body(current, self.interner) else {
+                return false;
+            };
+            let next = match self.interner.lookup(body) {
+                Some(TypeData::Lazy(def)) => def,
+                Some(TypeData::Application(body_app_id)) => {
+                    let app = self.interner.type_application(body_app_id);
+                    match lazy_def_id(self.interner, app.base) {
+                        Some(def) => def,
+                        None => return false,
+                    }
+                }
+                _ => return false,
+            };
+            current = self.resolver.canonical_def_id(next);
+        }
+        false
     }
 }

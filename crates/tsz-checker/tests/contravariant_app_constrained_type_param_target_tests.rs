@@ -666,3 +666,85 @@ function sameB(x: RecordB<'a', string>, y: RecordB<string, string>) {
         ],
     );
 }
+
+// =========================================================================
+// #17630: the #17614 provenance-ambiguity guard must not treat a display
+// alias over its own underlying base (`AsyncR<T> = Promise<OK<T>>`: the
+// display channel names the user alias, the eval origin names `Promise`)
+// as a fictitious twin-alias weld. An `any`-instantiated override return
+// must keep relating to the concrete base return through general variance
+// measurement (the zod `_parse` shape), while genuinely mismatched
+// arguments keep their TS2416 and the twin-alias weld tests above keep
+// rejecting.
+// =========================================================================
+
+#[test]
+fn any_returning_override_of_alias_over_promise_base_return_stays_clean() {
+    let source = r#"
+type OK<T> = { valid: true; value: T };
+type AsyncR<T> = Promise<OK<T>>;
+class Base<Output> {
+  _parse(data: any): AsyncR<Output> { return null as any; }
+}
+class Child<U> extends Base<U[]> {
+  _parse(data: any): AsyncR<any> { return null as any; }
+}
+"#;
+    let diags = check_es2015_promise_source(source);
+    assert_diagnostic_shapes_exactly(source, &diags, &[]);
+}
+
+#[test]
+fn any_returning_override_accepts_through_two_hop_alias_chain() {
+    // Extra alias hop between the display alias and `Promise`
+    // (`Deferred<T> = Boxed<...>`, `Boxed<T> = Promise<T>`): the
+    // transparency walk must follow the chain, not just one level.
+    let source = r#"
+type Won<T> = { ok: true; payload: T };
+type Boxed<T> = Promise<T>;
+type Deferred<T> = Boxed<Won<T>>;
+class Machine<Yield> {
+  step(input: string): Deferred<Yield> { return null as any; }
+}
+class ChainMachine<L> extends Machine<L[]> {
+  step(input: string): Deferred<any> { return null as any; }
+}
+"#;
+    let diags = check_es2015_promise_source(source);
+    assert_diagnostic_shapes_exactly(source, &diags, &[]);
+}
+
+#[test]
+fn concrete_mismatched_override_against_generic_base_keeps_ts2416() {
+    // Negative control: a genuinely mismatched concrete argument
+    // (`AsyncR<string>` vs `AsyncR<U[]>`) must still be rejected — the
+    // restored variance accept is any-driven, not blanket.
+    let source = r#"
+type OK<T> = { valid: true; value: T };
+type AsyncR<T> = Promise<OK<T>>;
+class Base<Output> {
+  _parse(data: any): AsyncR<Output> { return null as any; }
+}
+class Child<U> extends Base<U[]> {
+  _parse(data: any): AsyncR<string> { return null as any; }
+}
+"#;
+    let diags = check_es2015_promise_source(source);
+    assert_diagnostic_shape(source, &diags, &DiagnosticShape::code(2416));
+}
+
+#[test]
+fn concrete_mismatched_override_against_concrete_base_keeps_ts2416() {
+    let source = r#"
+type OK<T> = { valid: true; value: T };
+type AsyncR<T> = Promise<OK<T>>;
+class Base<Output> {
+  _parse(data: any): AsyncR<Output> { return null as any; }
+}
+class Child extends Base<number> {
+  _parse(data: any): AsyncR<string> { return null as any; }
+}
+"#;
+    let diags = check_es2015_promise_source(source);
+    assert_diagnostic_shape(source, &diags, &DiagnosticShape::code(2416));
+}
