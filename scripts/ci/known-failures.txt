@@ -140,8 +140,6 @@
 # and re-pinned to the oracle-confirmed TS1005 + `Function` behavior.
 tsz-checker::commonjs_module_export_alias_tests::test_module_exports_forward_read_reports_ts2565
 tsz-checker::conditional_application_display_tests::deferred_generic_conditional_keeps_branch_union
-tsz-checker::conformance_issues_features::features::namespace_construct_signature::part_00::test_js_void_zero_expando_reports_named_receiver_type
-tsz-checker::conformance_issues_features::features::namespace_construct_signature::part_01::test_jsdoc_function_return_mismatch_reports_inner_body_error_only
 tsz-checker::conformance_issues_types::types::fp_repro_audit_2026::issue_14944_genuine_widening_self_assignment_still_errors
 tsz-checker::conformance_issues_types::types::r#enum::test_jsdoc_object_literal_property_types_do_not_trigger_self_tdz
 tsz-checker::conformance_issues_types::types::r#enum::test_jsdoc_object_literal_shorthand_and_default_param_preserve_source_types
@@ -178,6 +176,30 @@ tsz-checker::raw_builder_return_context_inference_tests::different_base_and_ambi
 # `NonElementParentNode`) — not yet triaged, worth its own issue if picked up.
 tsz-cli::driver::core::check::check_tests::cross_file_class_namespace_merge_value_keeps_call_signature_in_import_cycle
 tsz-cli::driver::core::check::check_tests::default_lib_validation_normalizes_cross_arena_method_members_after_global_merge
+# 2026-08-18 shrink (no generation bump — removals are always allowed): the two
+# conformance_issues_features::namespace_construct_signature rows below now pass
+# — verified with a direct per-target run (`cargo test -p tsz-checker --test
+# conformance_issues_features`), 388/388 passed (was 388/389, one failure). The
+# one live failure in that run was a THIRD, untracked test in the same file
+# (`part_00::test_jsdoc_param_function_type_without_return_reports_ts7014`,
+# never in this baseline — pre-existing drift, not caused by this session):
+# it asserted the pre-TS7 TS7014 ("lacks return-type annotation") diagnostic
+# for a Closure-style `function(...)` JSDoc type. TypeScript 7 rejects that
+# construct outright with TS1005 before any function-type node is built, so
+# TS7014 can never fire for it — the same landed fix this baseline's
+# 2026-08-13 entry describes (`resolve_jsdoc_reference` mapping Closure
+# `function(...)` heads to `Function`), just never back-ported to this one
+# test. Renamed/re-pinned it to assert TS1005 present and TS7014 absent,
+# matching the oracle-pinned sibling assertions already in
+# `jsdoc_constructor_typeof_source_display_tests.rs`
+# (`jsdoc_closure_function_param_missing_return_is_not_ts7014` et al). No
+# production code changed. The other rows in the batch this session sampled
+# (`test_module_exports_forward_read_reports_ts2565`,
+# `test_plain_js_object_expando_write_stays_open_world_in_check_js` in
+# `js_export_surface_tests`, both already/still tracked or untracked
+# elsewhere) are genuine, oracle-confirmed missing-diagnostic bugs (TS2565,
+# TS2300) independent of any TS2318 no-lib noise in their fixtures — not
+# re-attempted this session, worth their own issue.
 # 2026-08-17 shrink (no generation bump — removals are always allowed): the four
 # tsz-checker::cross_module_nested_interface_tests rows now pass — HARNESS-ARTIFACTS,
 # not a compiler bug. `compile_module_files`/`compile_two_module_files` used the

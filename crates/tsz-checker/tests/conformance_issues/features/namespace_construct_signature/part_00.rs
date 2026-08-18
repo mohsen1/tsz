@@ -918,7 +918,19 @@ const t2 = /** @satisfies T1 */ ({ a: 1 });
 }
 
 #[test]
-fn test_jsdoc_param_function_type_without_return_reports_ts7014() {
+fn test_jsdoc_param_function_type_without_return_reports_ts1005_not_ts7014() {
+    // Stale pre-TS7 expectation: this used to assert TS7014 ("lacks
+    // return-type annotation") for a Closure-style `function(...)` JSDoc
+    // type. TypeScript 7 no longer parses that construct as a function-type
+    // node at all — it rejects it with TS1005 `'}' expected.` and resolves
+    // the annotated parameter to `Function` instead (see
+    // `crates/tsz-checker/src/tests/jsdoc_closure_function_type_tests.rs` and
+    // the sibling oracle-pinned assertions in
+    // `jsdoc_constructor_typeof_source_display_tests.rs`, e.g.
+    // `jsdoc_closure_function_param_missing_return_is_not_ts7014`). With no
+    // parsed function-type node, TS7014 has nothing to anchor on and must
+    // never fire alongside the TS1005 rejection. Oracle (`typescript@7.0.2`,
+    // `--allowJs --checkJs --strict --noImplicitAny`): exactly TS1005.
     let source = r#"
 /** @param {function(...[*])} callback */
 function g(callback) {
@@ -940,8 +952,12 @@ function g(callback) {
     );
 
     assert!(
-        has_error(&diagnostics, 7014),
-        "Expected TS7014 for JSDoc function type without return annotation. Actual diagnostics: {diagnostics:#?}"
+        has_error(&diagnostics, 1005),
+        "Expected TS1005 for the rejected Closure `function(...)` JSDoc type. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 7014),
+        "TS7014 must not fire once TS1005 has already rejected the Closure function type (no function-type node was built). Actual diagnostics: {diagnostics:#?}"
     );
 }
 
