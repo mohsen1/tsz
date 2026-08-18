@@ -41,6 +41,66 @@ impl<'a> CheckerState<'a> {
         self.reduced_alias_app_display(ty)
     }
 
+    /// Source/argument-position entry for a still-generic conditional whose
+    /// branch union is fully concrete, displayed against a concrete target.
+    ///
+    /// tsc evaluates a deferred conditional's *apparent* type — the union of
+    /// its two branches — for a TS2322-family source display whenever the
+    /// paired target is concrete (not itself generic/deferred): `F<T> = T
+    /// extends number ? string : boolean` assigned to `number` renders
+    /// `'string | boolean' is not assignable to 'number'`, not `'F<T>'`. This
+    /// is the mirror of
+    /// `generic_deferred_source_keeps_spelling_against_generic_target`, which
+    /// instead preserves the alias spelling when the target is ALSO
+    /// generic/deferred.
+    ///
+    /// Bails (keeps the alias, via `None`) whenever the branch union is not
+    /// fully concrete — `conditional_branch_union_constraint` already refuses
+    /// a bare check-type-parameter branch (`Extract<T, U> = T extends U ? T :
+    /// never` must keep its alias; unioning would leak `never` into display,
+    /// see `generic_conditional_application_keeps_alias_name`), and the
+    /// explicit `contains_type_parameters` check below catches a branch that
+    /// merely *wraps* the check type parameter (`T extends number ? T[] :
+    /// boolean`) rather than being it.
+    pub(in crate::error_reporter) fn deferred_conditional_source_branch_union_display(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> Option<String> {
+        if crate::query_boundaries::common::contains_type_parameters(self.ctx.types, target) {
+            return None;
+        }
+        if !crate::query_boundaries::common::contains_type_parameters(self.ctx.types, source) {
+            return None;
+        }
+        let display_alias = self.ctx.types.get_display_alias(source);
+        for candidate in [Some(source), display_alias].into_iter().flatten() {
+            if !(crate::query_boundaries::common::is_conditional_type(self.ctx.types, candidate)
+                || crate::query_boundaries::diagnostics::alias_application_body_reduces_through_conditional_or_indexed(
+                    self.ctx.types,
+                    &self.ctx.definition_store,
+                    candidate,
+                ))
+            {
+                continue;
+            }
+            let evaluated = self.evaluate_type_for_assignability(candidate);
+            let Some(union) =
+                crate::query_boundaries::conditional_constraints::conditional_branch_union_constraint(
+                    self.ctx.types,
+                    evaluated,
+                )
+            else {
+                continue;
+            };
+            if crate::query_boundaries::common::contains_type_parameters(self.ctx.types, union) {
+                continue;
+            }
+            return Some(self.format_type_for_assignability_message_skip_application_alias(union));
+        }
+        None
+    }
+
     fn reduced_alias_app_candidate_display(&mut self, candidate: TypeId) -> Option<String> {
         if !crate::query_boundaries::diagnostics::alias_application_body_reduces_through_conditional_or_indexed(
             self.ctx.types,

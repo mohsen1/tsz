@@ -138,7 +138,30 @@
 # two rows' original TS2345 expectation was never reachable under TS7 (a function
 # value is assignable to `Function`, so there is no TS2345), so they were renamed
 # and re-pinned to the oracle-confirmed TS1005 + `Function` behavior.
-tsz-checker::conditional_application_display_tests::deferred_generic_conditional_keeps_branch_union
+# 2026-08-18 shrink (no generation bump — removals are always allowed):
+# `conditional_application_display_tests::deferred_generic_conditional_keeps_branch_union`
+# now passes — fixed, not incidental. TS2322's source-display formatter kept a
+# still-generic deferred conditional's alias spelling (`F<T>`) unconditionally
+# whenever the source still carried a free type parameter, with no check of
+# whether the paired TARGET was itself generic/deferred. tsc only keeps that
+# spelling when the target is ALSO generic (already handled by
+# `generic_deferred_source_keeps_spelling_against_generic_target`); against a
+# concrete target it expands the source to its branch union (`string |
+# boolean`). Added the mirror guard
+# `deferred_conditional_source_branch_union_display`
+# (`error_reporter/conditional_alias_display.rs`), wired into
+# `format_assignment_source_type_for_diagnostic`
+# (`error_reporter/core/diagnostic_source/assignment_formatting.rs`) right
+# after the existing guard. Bails to the pre-existing alias-keeping behavior
+# whenever a branch is the bare check-type-parameter itself (`Extract<T, U> =
+# T extends U ? T : never`, via `conditional_branch_union_constraint`'s
+# existing bare-param check) or the computed union still contains a free type
+# parameter (a branch that wraps rather than is the check parameter, e.g. `T
+# extends number ? T[] : boolean` — a known, deliberately out-of-scope gap;
+# tsc partially expands such branches, tsz keeps the full alias). Verified:
+# direct per-target run (`cargo test -p tsz-checker --test
+# conditional_application_display_tests`), 13/13 passed (was 9/10, with 4 new
+# adjacent-case tests); `cargo clippy -p tsz-checker --all-targets` clean.
 # 2026-08-18 shrink (no generation bump — removals are always allowed): the
 # fp_repro_audit_2026::issue_14944_genuine_widening_self_assignment_still_errors
 # row now passes — fixed, not incidental. The killing-definition reduction base
