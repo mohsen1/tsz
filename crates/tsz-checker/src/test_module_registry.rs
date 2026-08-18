@@ -23,6 +23,8 @@ mod accessor_inherited_completeness_tests;
 mod accessor_this_parameter_pairing_tests;
 #[path = "tests/alias_application_display_retention_tests.rs"]
 mod alias_application_display_retention_tests;
+#[path = "tests/ambient_class_override_type_compat_tests.rs"]
+mod ambient_class_override_type_compat_tests;
 #[path = "tests/ambient_declare_async_modifier_tests.rs"]
 mod ambient_declare_async_modifier_tests;
 #[path = "tests/ambient_declare_async_static_modifier_tests.rs"]
