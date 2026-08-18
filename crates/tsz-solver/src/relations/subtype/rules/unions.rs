@@ -888,18 +888,34 @@ fn is_discriminant_for_union<R: TypeResolver>(
             };
 
         let prop_type = prop.type_id;
-        // Check if any constituent is a unit type.
-        // Resolve Lazy types first — enum member property types may still
-        // be Lazy(DefId) in the object shape after top-level union evaluation.
-        for &constituent in &get_type_constituents(db, prop_type) {
-            let resolved = if let Some(def_id) = lazy_def_id(db, constituent) {
-                resolver.resolve_lazy(def_id, db).unwrap_or(constituent)
-            } else {
-                constituent
-            };
-            if is_identity_comparable_type(db, resolved) || is_literal_type(db, resolved) {
-                has_unit = true;
-            }
+        // A member's property type marks the property as discriminant-capable
+        // only when the WHOLE type is unit-like: `boolean`, a single unit
+        // type, or a union whose EVERY constituent is a unit type (tsc's
+        // `isLiteralType`, feeding `CheckFlags.HasLiteralType`). A mixed
+        // union like `string | undefined` must NOT qualify: crediting its one
+        // unit constituent would let a wide source (`Output | undefined`
+        // instantiated with a union) narrow per-constituent into different
+        // same-base arms and wrongly accept (#17643).
+        // Resolve `Lazy` constituents first — enum member property types may
+        // still be `Lazy(DefId)` in the object shape after top-level union
+        // evaluation.
+        // `boolean` counts as unit-like wherever it appears: tsc models it as
+        // the union `true | false`, so both a bare `boolean` property and a
+        // `boolean | undefined` union satisfy the every-constituent rule.
+        let whole_type_is_unit = get_type_constituents(db, prop_type)
+            .iter()
+            .all(|&constituent| {
+                let resolved = if let Some(def_id) = lazy_def_id(db, constituent) {
+                    resolver.resolve_lazy(def_id, db).unwrap_or(constituent)
+                } else {
+                    constituent
+                };
+                resolved == TypeId::BOOLEAN
+                    || is_identity_comparable_type(db, resolved)
+                    || is_literal_type(db, resolved)
+            });
+        if whole_type_is_unit {
+            has_unit = true;
         }
 
         if !seen_types.contains(&prop_type) {
