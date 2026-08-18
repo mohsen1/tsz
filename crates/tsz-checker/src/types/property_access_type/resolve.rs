@@ -714,15 +714,13 @@ impl<'a> CheckerState<'a> {
             && !commonjs_named_props_disallowed
             && self.current_file_commonjs_exports_target_is_unshadowed(access.expression)
             && let Some(member_name) = static_member_name.as_deref()
-            && let Some(prior_type) = self.current_file_commonjs_named_export_type(member_name)
+            && let Some(prior_type) = self.current_file_commonjs_export_property_read_type(
+                idx,
+                access.expression,
+                access.name_or_argument,
+                member_name,
+            )
         {
-            // This fast path skips the general ordering check below, so a
-            // non-aliasable export property needs its own TS2565 check here.
-            if self.expando_property_read_before_assignment(idx, access.expression, member_name)
-                && self.commonjs_export_property_is_ordered(access.expression, member_name)
-            {
-                self.report_property_used_before_assigned(access.name_or_argument, member_name);
-            }
             return prior_type;
         }
 

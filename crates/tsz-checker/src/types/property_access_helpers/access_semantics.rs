@@ -130,6 +130,45 @@ impl<'a> CheckerState<'a> {
             && self.commonjs_export_property_has_non_aliasable_assignment(property_name)
     }
 
+    /// Same-file `exports.NAME`/`module.exports.NAME` read fast path.
+    ///
+    /// An ordered property (`commonjs_export_property_is_ordered`) is typed
+    /// from the last assignment textually before `property_access_idx`, not
+    /// from the last assignment in the whole file — same flow-sensitivity as
+    /// the function/class-declaration-receiver expando case. This fast path
+    /// skips the general ordering check in the caller, so an ordered
+    /// property needs its own TS2565 check here.
+    pub(crate) fn current_file_commonjs_export_property_read_type(
+        &mut self,
+        property_access_idx: NodeIndex,
+        object_expr_idx: NodeIndex,
+        name_node: NodeIndex,
+        property_name: &str,
+    ) -> Option<TypeId> {
+        let is_ordered = self.commonjs_export_property_is_ordered(object_expr_idx, property_name);
+        let prior_type = if is_ordered {
+            let read_pos = self
+                .ctx
+                .arena
+                .pos_at(property_access_idx)
+                .unwrap_or(u32::MAX);
+            self.current_file_commonjs_prior_named_export_type(property_name, read_pos)
+        } else {
+            self.current_file_commonjs_named_export_type(property_name)
+        };
+        let prior_type = prior_type?;
+        if is_ordered
+            && self.expando_property_read_before_assignment(
+                property_access_idx,
+                object_expr_idx,
+                property_name,
+            )
+        {
+            self.report_property_used_before_assigned(name_node, property_name);
+        }
+        Some(prior_type)
+    }
+
     /// Report TS2565 "Property '{0}' is used before being assigned." at
     /// `name_node`. Shared by the two `exports`/`module.exports` property-read
     /// call sites: the `current_file_commonjs_named_export_type` fast path
