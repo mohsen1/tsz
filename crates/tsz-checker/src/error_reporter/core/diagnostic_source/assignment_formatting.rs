@@ -205,6 +205,14 @@ impl<'a> CheckerState<'a> {
         {
             return self.format_type_for_assignability_message(source);
         }
+        // The mirror of the guard above: target is *concrete*, so a deferred
+        // conditional source whose check type has no branch-deciding
+        // constraint renders as the union of its branches rather than its
+        // alias spelling. See `deferred_conditional_branch_union_source_display`.
+        if let Some(display) = self.deferred_conditional_branch_union_source_display(source, target)
+        {
+            return display;
+        }
         // For property-access source expressions whose underlying value type is
         // a `unique symbol` (e.g. `Symbol.toPrimitive`), tsc displays the source
         // as `typeof <expr>` rather than widening to `symbol`. Match that here

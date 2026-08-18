@@ -150,6 +150,18 @@ function g<T>(p: F<T>): void { const y: number = p; }
     assert_any_contains(source, "string | boolean");
 }
 
+#[test]
+fn deferred_generic_conditional_keeps_branch_union_renamed_binders() {
+    // Same structural rule, different identifiers/branch types — proves the
+    // rule is not keyed on a particular alias/parameter name or branch shape.
+    let source = r#"
+type Choose_Zx<Q> = Q extends bigint ? symbol : object;
+function pick_zx<Q>(item: Choose_Zx<Q>): void { const out_zx: number = item; }
+"#;
+    assert_any_contains(source, "symbol | object");
+    assert_none_contains(source, "Choose_Zx<Q>");
+}
+
 // ── Source position against a generic target (the alias is preserved) ──
 //
 // tsc renders the *source* of a TS2322 with its written conditional/indexed

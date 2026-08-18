@@ -138,7 +138,32 @@
 # two rows' original TS2345 expectation was never reachable under TS7 (a function
 # value is assignable to `Function`, so there is no TS2345), so they were renamed
 # and re-pinned to the oracle-confirmed TS1005 + `Function` behavior.
-tsz-checker::conditional_application_display_tests::deferred_generic_conditional_keeps_branch_union
+# 2026-08-18 shrink (no generation bump — removals are always allowed):
+# conditional_application_display_tests::deferred_generic_conditional_keeps_branch_union
+# now passes — fixed, not incidental. `F<T> = T extends number ? string :
+# boolean` applied to an unconstrained `T` against a *concrete* target
+# (`const y: number = p`) displayed the alias spelling `F<T>` instead of tsc's
+# branch union `string | boolean`. The existing generic-target guard
+# (`generic_deferred_source_keeps_spelling_against_generic_target`) only
+# covers the mirror case where the target is ALSO generic (`T95<U>` vs
+# `T94<U>`, alias kept); nothing computed the branch-union display for the
+# concrete-target case. Added `deferred_conditional_branch_union_source_display`
+# (`error_reporter/conditional_alias_display.rs`), which evaluates the source,
+# extracts its `ConditionalType`, and computes tsc's
+# `getConstraintOfConditionalType` default constraint
+# (`conditional_default_constraint_from_data`) — using it as the display only
+# when the constraint is itself free of type parameters, so a conditional that
+# resolves through a constraint/`infer` to a single branch (`Ret_Cj<T>`) or
+# whose branch union still mentions the check type (`Defer_Ai<T> = T extends
+# unknown ? { v: T } : never`) correctly keeps its alias spelling — both
+# already covered by `computed_alias_source_display_tests` and reverified
+# green. Verified: direct per-target run
+# (`cargo test -p tsz-checker --test conditional_application_display_tests`),
+# 11/11 passed (was 9/10; two new adjacent tests added: renamed
+# binders/branch-shape). `cargo test -p tsz-checker --lib
+# computed_alias_source_display_tests`, 29/29 passed (no regressions,
+# including the two negative-control alias-keeping tests this change must not
+# touch). Oracle-verified against `typescript@7.0.2` on all new/changed cases.
 # 2026-08-18 shrink (no generation bump — removals are always allowed): the
 # fp_repro_audit_2026::issue_14944_genuine_widening_self_assignment_still_errors
 # row now passes — fixed, not incidental. The killing-definition reduction base

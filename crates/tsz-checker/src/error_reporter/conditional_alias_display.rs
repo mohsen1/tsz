@@ -118,4 +118,55 @@ impl<'a> CheckerState<'a> {
             ))
         .then(|| self.format_type_for_assignability_message_skip_application_alias(evaluated))
     }
+
+    /// Source display for a still-generic conditional (or conditional-bodied
+    /// alias application) against a *concrete* target — the sibling of
+    /// `generic_deferred_source_keeps_spelling_against_generic_target`, which
+    /// owns the mirror case (target also generic, alias spelling kept).
+    ///
+    /// When the conditional's check type is a free type parameter with no
+    /// branch-deciding constraint, `tsc` never narrows it to a single branch:
+    /// `getConstraintOfConditionalType` computes the union of both branches as
+    /// its apparent form (`F<T> = T extends number ? string : boolean` against
+    /// unconstrained `T` displays `string | boolean`, not `F<T>`, once the
+    /// target is concrete). Returns `None` — deferring to the alias-spelling
+    /// fallbacks elsewhere in this file — when that union still carries a free
+    /// type parameter (`Defer_Ai<T> = T extends unknown ? { v: T } : never`
+    /// keeps its alias: `{ v: T } | never` is not concrete) or when the
+    /// conditional resolves through a constraint/`infer` to a single branch
+    /// instead of a genuine union (`Ret_Cj<T>`'s `infer R` case) — `tsc` keeps
+    /// the alias there too, since `get_conditional_type_id` only matches an
+    /// unreduced `Conditional` node and this helper never picks a branch
+    /// itself.
+    pub(in crate::error_reporter) fn deferred_conditional_branch_union_source_display(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> Option<String> {
+        if !crate::query_boundaries::diagnostics::contains_type_parameters(self.ctx.types, source)
+            || crate::query_boundaries::diagnostics::contains_type_parameters(
+                self.ctx.types,
+                target,
+            )
+        {
+            return None;
+        }
+        let evaluated = self.evaluate_type_for_assignability(source);
+        let cond_id = crate::query_boundaries::common::get_conditional_type_id(
+            self.ctx.types.as_type_database(),
+            evaluated,
+        )?;
+        let cond = self.ctx.types.get_conditional(cond_id);
+        let constraint = tsz_solver::type_queries::conditional_default_constraint_from_data(
+            self.ctx.types.as_type_database(),
+            &cond,
+        )?;
+        if crate::query_boundaries::diagnostics::contains_type_parameters(
+            self.ctx.types,
+            constraint,
+        ) {
+            return None;
+        }
+        Some(self.format_type_for_assignability_message_skip_application_alias(constraint))
+    }
 }
