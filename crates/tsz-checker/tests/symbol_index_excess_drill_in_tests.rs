@@ -77,6 +77,74 @@ const v3: BagAlias = { [marker]: { count: 2 }, plain: 3 };
 }
 
 #[test]
+fn symbol_member_absorbed_by_wide_string_index_backwards_compat() {
+    // tsc "Permitted for backwards compatibility" (indexSignatures1.ts): a
+    // WIDE `[k: string]` index with no symbol index absorbs a symbol-keyed
+    // member outright — no excess report and no value check, even when the
+    // value mismatches the string index's value type or carries a nested
+    // excess property. Oracled on 7.0.2.
+    let mismatched_value = check_source_diagnostics(
+        r#"
+declare const marker: unique symbol;
+const o2: { [key: string]: string } = { [marker]: 42 };
+"#,
+    );
+    assert!(
+        mismatched_value.is_empty(),
+        "wide string index absorbs a symbol member without a value check, got: {mismatched_value:?}"
+    );
+
+    let nested_excess = check_source_diagnostics(
+        r#"
+declare const marker: unique symbol;
+const o3: { [key: string]: { n: number } } = { [marker]: { n: 1, extra: 2 } };
+"#,
+    );
+    assert!(
+        nested_excess.is_empty(),
+        "wide string index absorbs a symbol member without a nested drill-in, got: {nested_excess:?}"
+    );
+}
+
+#[test]
+fn ts2353_symbol_member_not_absorbed_by_template_string_index() {
+    // The backwards-compat absorption is specific to the wide `string` key: a
+    // template-literal string index does not cover a symbol-keyed member, so
+    // with no symbol index the member is excess. Oracled on 7.0.2.
+    let diags = check_source_diagnostics(
+        r#"
+declare const marker: unique symbol;
+const t3: { [key: `data${string}`]: string } = { [marker]: 42 };
+"#,
+    );
+    let ts2353: Vec<_> = diags.iter().filter(|d| d.code == 2353).collect();
+    assert_eq!(
+        ts2353.len(),
+        1,
+        "expected TS2353 for a symbol member against a template-key-only index target, got: {diags:?}"
+    );
+}
+
+#[test]
+fn relation_symbol_member_not_checked_against_string_only_index() {
+    // Relation level (non-fresh source): a symbol-keyed property is simply
+    // not constrained by a string-only-index target — assignment is clean.
+    // With a symbol index present and violated, the relation fails (covered
+    // by the flat-TS2418 in-source test via the fresh-literal path).
+    let diags = check_source_diagnostics(
+        r#"
+declare const marker: unique symbol;
+declare const src: { [marker]: number };
+const t1: { [key: string]: string } = src;
+"#,
+    );
+    assert!(
+        diags.is_empty(),
+        "a symbol-keyed property is not constrained by a string-only index target, got: {diags:?}"
+    );
+}
+
+#[test]
 fn symbol_index_and_string_index_each_check_their_own_props() {
     // The string-keyed property still checks against the STRING index
     // value even when a symbol-keyed member is present and fine: the two

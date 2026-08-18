@@ -858,6 +858,18 @@ impl<'a> CheckerState<'a> {
 
                     if !matches_index && symbol_index_value_type.is_none() && target_prop.is_none()
                     {
+                        // Backwards-compat absorption (tsc, `indexSignatures1.ts`
+                        // "Permitted for backwards compatibility"): when the
+                        // target has a WIDE `[k: string]` index and no symbol
+                        // index, a symbol-keyed member is permitted outright —
+                        // no excess report and no value check (oracled on
+                        // 7.0.2: even a mismatched or excess-carrying value is
+                        // accepted). A template-literal string key or a
+                        // number-only index does NOT absorb it (TS2353), and a
+                        // present symbol index takes the value check instead.
+                        if source_prop.is_symbol_named && idx_key_type == TypeId::STRING {
+                            continue;
+                        }
                         let report_idx = self
                             .find_object_literal_property_element(
                                 object_literal_idx,
