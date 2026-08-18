@@ -81,10 +81,13 @@ impl<'a> CheckerState<'a> {
     ///
     /// `function C() {} C.f(); C.f = a;` reports TS2565 in tsc: the expando is a
     /// declaration on the function, so using it before the assignment is an
-    /// error. A plain object (`var o = {}`) or a CommonJS `exports` object is
-    /// not ordered — tsc types those from every assignment in the program
-    /// regardless of position and reports nothing, so a use that textually
-    /// precedes the assignment is fine.
+    /// error. A plain object (`var o = {}`) is not ordered — tsc types it from
+    /// every assignment in the program regardless of position and reports
+    /// nothing, so a use that textually precedes the assignment is fine. A
+    /// CommonJS `module.exports`/`exports` object IS ordered (oracle-verified,
+    /// #17608) but is not a plain Identifier receiver here — that case is
+    /// checked separately by the call sites via
+    /// `current_file_commonjs_exports_target_is_unshadowed`.
     pub(crate) fn expando_root_has_ordered_declarations(&mut self, access_expr: NodeIndex) -> bool {
         let Some(node) = self.ctx.arena.get(access_expr) else {
             return false;

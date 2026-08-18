@@ -154,7 +154,14 @@ impl<'a> CheckerState<'a> {
         {
             if node.pos < read_pos {
                 *assigned_before = true;
-            } else if node.pos > read_pos {
+            } else if node.pos > read_pos && !self.is_entity_name_expression(binary.right) {
+                // An entity-name RHS (`exports.j = k`, `exports.j = ns.k`) binds
+                // `j` as an alias of `k`/`ns.k` in tsc, not as a flow-tracked
+                // property declaration — alias resolution has no TDZ, so a read
+                // preceding such an assignment is not "used before assigned"
+                // (oracle-verified, #17608). A non-entity-name RHS (function
+                // expression, object literal, call, literal, …) is a real
+                // declaration and keeps the ordering.
                 *assigned_after = true;
             }
         }

@@ -714,6 +714,10 @@ impl<'a> CheckerState<'a> {
             && !commonjs_named_props_disallowed
             && self.current_file_commonjs_exports_target_is_unshadowed(access.expression)
             && let Some(member_name) = static_member_name.as_deref()
+            // Fall through to the ordered TS2565 check below instead of this
+            // unordered shortcut when ordered (#17608).
+            && !(self.ctx.compiler_options.check_js
+                && self.expando_property_read_before_assignment(idx, access.expression, member_name))
             && let Some(prior_type) = self.current_file_commonjs_named_export_type(member_name)
         {
             return prior_type;
@@ -780,12 +784,12 @@ impl<'a> CheckerState<'a> {
                         .enclosing_expression_statement(idx)
                         .and_then(|stmt_idx| self.js_statement_declared_type(stmt_idx))
                         .is_some();
-                // Only a function/class declaration's expando properties are
-                // ordered in tsc. On a plain object or a CommonJS `exports`
-                // object the property type comes from every assignment in the
-                // program, so a use before the assignment is not an error.
-                let receiver_is_ordered =
-                    self.expando_root_has_ordered_declarations(access.expression);
+                // A function/class expando and a CommonJS export member are
+                // both ordered in tsc; a plain object literal is not
+                // (oracle-verified, #17608).
+                let receiver_is_ordered = self
+                    .expando_root_has_ordered_declarations(access.expression)
+                    || self.current_file_commonjs_exports_target_is_unshadowed(access.expression);
                 if !suppress_for_jsdoc_type_decl && receiver_is_ordered {
                     use crate::diagnostics::format_message;
                     use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
