@@ -913,6 +913,18 @@ impl<'a> FlowAnalyzer<'a> {
             .type_environment
             .and_then(|env| env.borrow().get(SymbolRef(target.0)));
         let target_is_current = target_file_idx == Some(ctx.current_file_idx);
+        tracing::trace!(
+            reference = reference.0,
+            local_sym_id = ?local_sym_id,
+            sym_id = sym_id.0,
+            target = target.0,
+            target_file_idx = ?target_file_idx,
+            current_file_idx = ctx.current_file_idx,
+            cross_file = ?cross_file.as_ref().map(|(ty, _)| ty.0),
+            owner_def_type = ?owner_def_type.map(|ty| ty.0),
+            target_env_type = ?target_env_type.map(|ty| ty.0),
+            "generic-call fallback: cached callable reference sources"
+        );
         let ty = cross_file
             .map(|(ty, _)| ty)
             .or(owner_def_type)
