@@ -147,8 +147,17 @@ tsz-checker::generic_call_assignment_flow_tests::colliding_generic_terminals_kee
 tsz-checker::generic_call_assignment_flow_tests::imported_generic_result_narrows_inside_reduce_arrow
 tsz-checker::generic_generator_member_substitution_tests::generic_generator_genuine_mismatch_still_errors_with_substituted_source
 tsz-checker::issue_14123_repro_tests::issue_14123_alias_array_infer_reports_mismatch
-tsz-checker::js_export_surface_tests::part_01::test_current_file_exports_reads_use_prior_assignment_types
-tsz-checker::js_export_surface_tests::part_01::test_current_file_module_exports_reads_use_prior_assignment_types
+# 2026-08-18 shrink (no generation bump — removals are always allowed): the two
+# js_export_surface_tests::part_01 rows below now pass — verified with a direct
+# per-target run (`cargo test -p tsz-checker --test js_export_surface_tests`),
+# 81/81 passed (was 79/81). Fixed incidentally by #17610's CommonJS
+# export-property ordering fix: the `current_file_commonjs_named_export_type`
+# fast path in `types/property_access_type/resolve.rs` always resolved a
+# read to the last assignment in the *whole file*, even for a property #17610
+# made "ordered" (one with a non-aliasable direct assignment) — an ordered
+# property's read must use the last assignment textually *before* the read
+# instead. Routed ordered reads through the already-existing position-bounded
+# `current_file_commonjs_prior_named_export_type` helper.
 tsz-checker::js_jsdoc_diagnostics_tests::checked_js_async_jsdoc_expression_body_ts2322_anchors_on_return_expr
 tsz-checker::nonnull_contextual_type_arg_inference_tests::contextual_return_can_refine_transparent_wrapper_inference
 tsz-checker::raw_builder_return_context_inference_tests::different_base_and_ambiguous_union_do_not_pin_the_tag
