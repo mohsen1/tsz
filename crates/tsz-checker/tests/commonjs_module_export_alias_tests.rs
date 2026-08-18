@@ -1083,6 +1083,34 @@ fn exports_member_function_rhs_nested_write_reports_ts2339_on_function_shape() {
 }
 
 #[test]
+fn exports_member_named_function_rhs_this_receiver_is_closed_shape() {
+    // A NAMED function expression assigned to an illegal nested export member
+    // must type its body's `this` exactly like the anonymous form: the closed
+    // `{}` receiver, never a synthesized instance of the function's own name.
+    for (prelude, factory) in [
+        ("exports.n = {};", "C"),
+        ("module.exports.n = {};", "renamedFactory"),
+    ] {
+        let src =
+            format!("{prelude}\nexports.n.K = function {factory}() {{\n    this.x = 10;\n}};\n");
+        let diagnostics = check_commonjs_file("index.js", &src);
+        let ts2339: Vec<_> = diagnostics
+            .iter()
+            .filter(|(code, _)| *code == 2339)
+            .collect();
+        assert_eq!(
+            ts2339.len(),
+            2,
+            "expected TS2339 at the nested write and at `this.x`, got: {diagnostics:#?}"
+        );
+        assert!(
+            ts2339.iter().all(|(_, msg)| msg.contains("'{}'")),
+            "both TS2339 must report the closed `{{}}` receiver, not the function's own name, got: {ts2339:#?}"
+        );
+    }
+}
+
+#[test]
 fn local_var_object_host_still_grows_nested_members() {
     // Contrast: a plain local `var NS = {}` is a real expando host, so
     // `NS.K = class {}` and its use stay clean (unchanged from tsc 6 and 7).
