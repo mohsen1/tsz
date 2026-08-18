@@ -341,6 +341,30 @@ pub(crate) fn resolve_lazy_def_with_env(
     type_id
 }
 
+/// Resolve a `Lazy(DefId)` type through the full checker-context resolver.
+///
+/// The flow `TypeEnvironment` only holds definitions that were registered into
+/// it before the (possibly speculative) flow pass ran. A cross-file imported
+/// definition reached only through flow's syntactic call fallback may never
+/// have been registered there, while the `CheckerContext` resolver still
+/// reaches it through the same channels the main check pass uses
+/// (`symbol_types`, the cross-file query cache, and the shared
+/// `DefinitionStore`). Use this as the env-miss fallback so flow resolves the
+/// same definitions the main pass would, without minting anything new.
+pub(crate) fn resolve_lazy_def_with_context(
+    db: &dyn TypeDatabase,
+    ctx: &crate::context::CheckerContext<'_>,
+    type_id: TypeId,
+) -> TypeId {
+    if let Some(def_id) = tsz_solver::type_queries::get_lazy_def_id(db, type_id)
+        && let Some(resolved) =
+            tsz_solver::relations::subtype::TypeResolver::resolve_lazy(ctx, def_id, db)
+    {
+        return resolved;
+    }
+    type_id
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

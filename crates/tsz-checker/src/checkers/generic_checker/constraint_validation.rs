@@ -1,4 +1,5 @@
 use crate::query_boundaries::checkers::generic as query;
+use crate::query_boundaries::class::is_incomplete_class_type;
 use crate::query_boundaries::common as query_common;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
@@ -1574,7 +1575,6 @@ impl CheckerState<'_> {
                         // before checking. E.g., `WeakKeyTypes[keyof WeakKeyTypes]`
                         // must be reduced to `object | symbol` for the assignability
                         // check to work correctly.
-                        //
                         // Ensure lazy refs inside the constraint are resolved in the
                         // type environment BEFORE evaluation. Without this, constraints
                         // like `WeakKeyTypes[keyof WeakKeyTypes]` (where WeakKeyTypes is
@@ -1624,6 +1624,7 @@ impl CheckerState<'_> {
                         let mut is_satisfied = self
                             .type_arg_constraint_relation_outcome(base_for_check, inst_constraint)
                             .related
+                            || is_incomplete_class_type(self, base_for_check)
                             || self.base_union_members_satisfy_constraint(
                                 base_for_check,
                                 inst_constraint,
@@ -1843,13 +1844,11 @@ impl CheckerState<'_> {
                 }
 
                 // Fallback for recursive generic constraints (coinductive semantics).
-                //
                 // For self-referential constraints like `T extends AA<T>` in
                 // `interface AA<T extends AA<T>>`, checking if a type arg satisfies
                 // the constraint leads to circular structural checks that the
                 // subtype checker can't resolve (pre-evaluation destroys DefId
                 // identity needed for cycle detection).
-                //
                 // Coinductive fix: if the constraint is an Application of some base
                 // interface, and the type arg's interface extends that same base
                 // interface (via heritage), the constraint is coinductively satisfied.

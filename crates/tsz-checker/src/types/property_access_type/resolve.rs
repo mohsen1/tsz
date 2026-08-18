@@ -863,26 +863,14 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        if skip_flow_narrowing
-            && self.is_js_file()
-            && self.property_access_is_direct_write_target(idx)
-            && let Some(base_export_name) =
-                self.current_file_commonjs_export_member_name(access.expression)
-        {
-            let surface = self.resolve_js_export_surface(self.ctx.current_file_idx);
-            if !surface.suppresses_expando_merge()
-                && let Some(base_type) =
-                    surface.lookup_named_export(&base_export_name, self.ctx.types)
-                && (crate::query_boundaries::common::is_object_like_type(self.ctx.types, base_type)
-                    || crate::query_boundaries::common::callable_shape_for_type(
-                        self.ctx.types,
-                        base_type,
-                    )
-                    .is_some())
-            {
-                return TypeId::ANY;
-            }
-        }
+        // A CommonJS export member (`exports.ns`) never hosts nested expando
+        // growth in tsc 7.0.2: a write target `exports.ns.K = ...` is a plain
+        // property assignment against `ns`'s own closed type, so it must fall
+        // through to the ordinary property lookup and report TS2339 for every
+        // RHS shape (object, function, or class) — not be answered `any` from
+        // the exported member's shape. The direct-export-object write path
+        // above (access.expression is `exports` / `module.exports` itself)
+        // still governs legitimate `exports.foo = ...` declarations.
 
         if self.report_namespace_value_access_for_type_only_import_equals_expr(access.expression) {
             return TypeId::ERROR;

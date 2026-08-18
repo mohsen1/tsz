@@ -927,7 +927,7 @@ pub(crate) fn should_report_member_type_mismatch_bivariant(
 /// Check if a type is an incomplete class instance type that resulted from
 /// circular resolution (0 properties, likely because inherited members from
 /// a base class that was still being resolved were dropped).
-fn is_incomplete_class_type(checker: &mut CheckerState<'_>, type_id: TypeId) -> bool {
+pub(crate) fn is_incomplete_class_type(checker: &mut CheckerState<'_>, type_id: TypeId) -> bool {
     match checker.ctx.types.lookup(type_id) {
         Some(tsz_solver::TypeData::Object(shape_id))
         | Some(tsz_solver::TypeData::ObjectWithIndex(shape_id)) => {
@@ -954,7 +954,22 @@ fn is_incomplete_class_type(checker: &mut CheckerState<'_>, type_id: TypeId) -> 
                 is_incomplete_class_type(checker, evaluated)
             }
         }
-        Some(tsz_solver::TypeData::Lazy(_)) => {
+        Some(tsz_solver::TypeData::Lazy(def_id)) => {
+            // A self-referential class Lazy(def_id) whose own instance type is
+            // still mid-build (its symbol is in `class_instance_resolution_set`)
+            // is incomplete *at this identity*, regardless of what it evaluates
+            // to. Evaluating it first (as the branch below does) can resolve a
+            // reentrant class-body Lazy to a degraded stand-in — e.g. the
+            // class's own constructor/`Callable` shape — that carries no arm
+            // here and is wrongly treated as a complete, unrelated type. Check
+            // the in-flight set before evaluating away that identity.
+            if checker
+                .ctx
+                .def_to_symbol_id(def_id)
+                .is_some_and(|sym_id| checker.ctx.class_instance_resolution_set.contains(&sym_id))
+            {
+                return true;
+            }
             // Lazy types that haven't been resolved yet — check the resolved form
             let evaluated = checker.evaluate_type_for_assignability(type_id);
             if evaluated != type_id {

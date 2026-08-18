@@ -722,20 +722,28 @@ impl BinderState {
             return;
         }
 
-        // CommonJS export chains like `module.exports.foo = ...` and
-        // `module.exports.foo.bar = ...` don't resolve through `file_locals`
-        // because `module` is not a user-declared symbol. Track them directly
-        // so the checker can reuse one expando summary path for property reads
-        // and forward-reference TS2565 checks.
-        if obj_key == "module.exports"
-            || obj_key.starts_with("module.exports.")
-            || obj_key == "exports"
-            || obj_key.starts_with("exports.")
-        {
+        // Direct CommonJS export writes (`exports.foo = ...`,
+        // `module.exports.foo = ...`) declare a named export member. `module`
+        // is not a user-declared symbol, so track the exports object directly,
+        // giving the checker one expando summary path for property reads and
+        // forward-reference TS2565 checks.
+        if obj_key == "module.exports" || obj_key == "exports" {
             Arc::make_mut(&mut self.expando_properties)
                 .entry(obj_key)
                 .or_default()
                 .insert(prop_name);
+            return;
+        }
+
+        // A MEMBER of a CommonJS exports object (`exports.foo.bar = ...`,
+        // `module.exports.foo.bar = ...`) is never itself an expando host in
+        // tsc 7.0.2: the deeper write is a plain property assignment against
+        // `foo`'s own closed type and reports TS2339 for every RHS shape
+        // (empty object, function, or class expression), unlike a plain local
+        // `var NS = {}; NS.k = ...` which does grow. Record nothing so the
+        // nested write falls through to the checker's ordinary property-access
+        // path.
+        if obj_key.starts_with("module.exports.") || obj_key.starts_with("exports.") {
             return;
         }
 

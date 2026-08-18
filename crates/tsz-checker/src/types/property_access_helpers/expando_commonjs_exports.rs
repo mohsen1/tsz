@@ -39,6 +39,34 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// A property/element access whose receiver chain is rooted at this file's
+    /// CommonJS exports object with at least one intermediate member — i.e.
+    /// `exports.X`, `module.exports.X`, `exports.X.Y`, and deeper. tsc 7.0.2
+    /// treats such a member as a CLOSED value, never an expando host: a further
+    /// write or read `<member>.Z` is a plain property access against the
+    /// member's own type (TS2339 when absent) for every RHS shape (object,
+    /// function, or class). The bare exports object itself (`exports` /
+    /// `module.exports`) is NOT a member — direct writes `exports.X = ...` stay
+    /// valid — so it returns `false`.
+    pub(in crate::types_domain) fn is_current_file_commonjs_export_member_access(
+        &self,
+        idx: NodeIndex,
+    ) -> bool {
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+        {
+            return false;
+        }
+        let Some(access) = self.ctx.arena.get_access_expr(node) else {
+            return false;
+        };
+        self.is_current_file_commonjs_export_base_syntax(access.expression)
+            || self.is_current_file_commonjs_export_member_access(access.expression)
+    }
+
     pub(super) fn is_current_file_commonjs_export_base_for_expando(&self, idx: NodeIndex) -> bool {
         if self
             .ctx

@@ -1058,12 +1058,42 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 // spuriously reject it (the false `TS2416` on method
                 // overrides whose return type is a generic alias over
                 // `Promise` — zod's `_parse`).
-                let s_candidates = [
-                    s_app_id_for_variance,
+                let s_origin = self
+                    .interner
+                    .get_application_eval_origin(source)
+                    .and_then(|origin| application_id(self.interner, origin));
+                // A side's provenance is AMBIGUOUS when its display-alias
+                // and eval-origin channels name applications of canonically
+                // different definitions: aliases with byte-identical bodies
+                // intern instantiations to the same `TypeId`s, and welding
+                // channels can mint a fictitious same-base pair out of a
+                // cross-alias relation, silencing its structural rejection via
+                // measured variance (#17614); only the general variance
+                // measurement requires unambiguous provenance.
+                let base_def = |c: &Self, app_id| {
+                    let app = c.interner.type_application(app_id);
+                    lazy_def_id(c.interner, app.base).map(|def| c.resolver.canonical_def_id(def))
+                };
+                let channels_agree = |c: &Self, a: Option<_>, b: Option<_>| match (a, b) {
+                    (Some(a), Some(b)) => {
+                        a == b || base_def(c, a).is_some_and(|d| Some(d) == base_def(c, b))
+                    }
+                    _ => true,
+                };
+                let t_real = application_id(self.interner, target);
+                let t_display = t_real.or_else(|| {
                     self.interner
-                        .get_application_eval_origin(source)
-                        .and_then(|origin| application_id(self.interner, origin)),
-                ];
+                        .get_display_alias(target)
+                        .and_then(|alias| application_id(self.interner, alias))
+                });
+                let t_origin = t_real.or_else(|| {
+                    self.interner
+                        .get_application_eval_origin(target)
+                        .and_then(|origin| application_id(self.interner, origin))
+                });
+                let provenance_unambiguous = channels_agree(self, s_app_id_for_variance, s_origin)
+                    && channels_agree(self, t_display, t_origin);
+                let s_candidates = [s_app_id_for_variance, s_origin];
                 let mut vr = None;
                 for s_app_id in s_candidates.into_iter().flatten() {
                     vr = self.try_same_base_all_any_target_args(source, Some(s_app_id), t_app_id);
@@ -1084,7 +1114,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     }
                     vr = self
                         .try_same_base_args_identical_or_any(s_app_id, t_app_id)
-                        .or_else(|| self.try_variance_fast_path(s_app_id, t_app_id));
+                        .or_else(|| {
+                            provenance_unambiguous
+                                .then(|| self.try_variance_fast_path(s_app_id, t_app_id))
+                                .flatten()
+                        });
                     if matches!(vr, Some(SubtypeResult::True)) {
                         break;
                     }
