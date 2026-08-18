@@ -139,7 +139,19 @@
 # value is assignable to `Function`, so there is no TS2345), so they were renamed
 # and re-pinned to the oracle-confirmed TS1005 + `Function` behavior.
 tsz-checker::conditional_application_display_tests::deferred_generic_conditional_keeps_branch_union
-tsz-checker::conformance_issues_types::types::fp_repro_audit_2026::issue_14944_genuine_widening_self_assignment_still_errors
+# 2026-08-18 shrink (no generation bump — removals are always allowed): the
+# fp_repro_audit_2026::issue_14944_genuine_widening_self_assignment_still_errors
+# row now passes — fixed, not incidental. The killing-definition reduction base
+# in `flow_traversal.rs` only recovered a declared union from
+# `VARIABLE_DECLARATION` annotations; for an annotated *parameter* binding it
+# degraded to the loop-narrowed `initial_type`, so a widening back-edge write
+# (`x = x.length` / `x = n` with `x: string | number` narrowed to `string`)
+# could never re-widen the loop-head join and the genuine TS2339 was dropped.
+# Now falls back to `fallback_declared_annotation_type`, which reads parameter
+# annotations syntactically. Verified with a direct per-target run
+# (`cargo test -p tsz-checker --test conformance_issues_types issue_14944`,
+# 7/7 passed including four new adjacent-matrix tests and a no-error negative
+# control), plus oracle runs on all variants.
 # 2026-08-18 shrink (no generation bump — removals are always allowed): the two
 # conformance_issues_types::types::r#enum rows
 # (test_jsdoc_object_literal_property_types_do_not_trigger_self_tdz,
