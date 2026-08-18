@@ -114,6 +114,44 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Whether `access_expr` is the CommonJS `exports`/`module.exports`
+    /// object and `property_name` has a non-aliasable direct assignment
+    /// (see `commonjs_export_property_has_non_aliasable_assignment`) — the
+    /// per-property counterpart of `expando_root_has_ordered_declarations`
+    /// for the one receiver kind (`exports`/`module.exports`) that is never
+    /// itself a function/class declaration, so ordering must be decided per
+    /// assigned property instead of per receiver.
+    pub(crate) fn commonjs_export_property_is_ordered(
+        &self,
+        access_expr: NodeIndex,
+        property_name: &str,
+    ) -> bool {
+        self.current_file_commonjs_exports_target_is_unshadowed(access_expr)
+            && self.commonjs_export_property_has_non_aliasable_assignment(property_name)
+    }
+
+    /// Report TS2565 "Property '{0}' is used before being assigned." at
+    /// `name_node`. Shared by the two `exports`/`module.exports` property-read
+    /// call sites: the `current_file_commonjs_named_export_type` fast path
+    /// (which would otherwise return before ever reaching the general expando
+    /// ordering check) and that general check itself.
+    pub(crate) fn report_property_used_before_assigned(
+        &mut self,
+        name_node: NodeIndex,
+        property_name: &str,
+    ) {
+        use crate::diagnostics::format_message;
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+        self.error_at_node(
+            name_node,
+            &format_message(
+                diagnostic_messages::PROPERTY_IS_USED_BEFORE_BEING_ASSIGNED,
+                &[property_name],
+            ),
+            diagnostic_codes::PROPERTY_IS_USED_BEFORE_BEING_ASSIGNED,
+        );
+    }
+
     pub(crate) fn expando_receiver_is_function_constructor(&self, access_expr: NodeIndex) -> bool {
         let Some(node) = self.ctx.arena.get(access_expr) else {
             return false;

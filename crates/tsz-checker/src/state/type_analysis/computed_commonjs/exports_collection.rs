@@ -310,6 +310,68 @@ impl<'a> CheckerState<'a> {
         current
     }
 
+    /// Whether `property_name` has at least one direct `exports.NAME` /
+    /// `module.exports.NAME` assignment in this file whose RHS is not an
+    /// "aliasable expression" (an entity-name expression `a`/`a.b.c`, or a
+    /// class expression).
+    ///
+    /// tsc's binder (`isAliasableExpression`, `bindExportsPropertyAssignment`)
+    /// gives an aliasable-RHS export assignment `SymbolFlags.Alias`; alias
+    /// reads resolve to the aliased declaration's own widened type and never
+    /// go through flow-sensitive "used before assigned" analysis, so they are
+    /// unordered regardless of textual position — this is the existing
+    /// `commonjs_exports_is_not_ordered` behavior. Any other RHS shape
+    /// (function expression, arrow function, object literal, ...) is instead
+    /// bound as a real `Property` declaration with its own flow-assignment
+    /// node, so a read that precedes it is ordered and reports TS2565, e.g.
+    /// `module.exports.jj = module.exports.j; module.exports.j = function
+    /// j() {};` (oracle-verified, `tsc` 6.0.2).
+    pub(crate) fn commonjs_export_property_has_non_aliasable_assignment(
+        &self,
+        property_name: &str,
+    ) -> bool {
+        let arena = self.ctx.arena;
+        let Some(source_file) = arena.source_files.first() else {
+            return false;
+        };
+        let export_aliases = Self::collect_commonjs_export_aliases_in_arena(arena);
+        let mut pending_props: FxHashMap<String, Vec<(NodeIndex, Option<String>)>> =
+            FxHashMap::default();
+        let mut ordered_names: Vec<String> = Vec::new();
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt_node) = arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
+                continue;
+            }
+            let Some(stmt) = arena.get_expression_statement(stmt_node) else {
+                continue;
+            };
+            Self::collect_direct_commonjs_assignment_exports(
+                arena,
+                stmt.expression,
+                &mut pending_props,
+                &mut ordered_names,
+                &export_aliases,
+            );
+        }
+        pending_props.get(property_name).is_some_and(|assignments| {
+            assignments
+                .iter()
+                .any(|(rhs_idx, _)| !self.commonjs_export_assignment_rhs_is_aliasable(*rhs_idx))
+        })
+    }
+
+    fn commonjs_export_assignment_rhs_is_aliasable(&self, rhs_idx: NodeIndex) -> bool {
+        self.is_entity_name_expression(rhs_idx)
+            || self
+                .ctx
+                .arena
+                .get(rhs_idx)
+                .is_some_and(|node| node.kind == syntax_kind_ext::CLASS_EXPRESSION)
+    }
+
     /// The declared type from a JSDoc `@type` tag leading the `module.exports
     /// = X` / `exports = X` statement that owns `rhs_expr`, if any.
     ///

@@ -138,7 +138,6 @@
 # two rows' original TS2345 expectation was never reachable under TS7 (a function
 # value is assignable to `Function`, so there is no TS2345), so they were renamed
 # and re-pinned to the oracle-confirmed TS1005 + `Function` behavior.
-tsz-checker::commonjs_module_export_alias_tests::test_module_exports_forward_read_reports_ts2565
 tsz-checker::conditional_application_display_tests::deferred_generic_conditional_keeps_branch_union
 tsz-checker::conformance_issues_features::features::namespace_construct_signature::part_00::test_js_void_zero_expando_reports_named_receiver_type
 tsz-checker::conformance_issues_features::features::namespace_construct_signature::part_01::test_jsdoc_function_return_mismatch_reports_inner_body_error_only

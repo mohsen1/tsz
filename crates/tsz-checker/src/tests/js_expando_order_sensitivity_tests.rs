@@ -89,6 +89,71 @@ fn exports_property_assigned_after_use_is_not_ordered() {
     assert!(!js_codes(source).contains(&USED_BEFORE_ASSIGNED));
 }
 
+// --- `exports`/`module.exports` are ordered per-property when that
+// property's own RHS is not an "aliasable expression" (an identifier,
+// dotted name, or class expression) — tsc's binder gives an aliasable-RHS
+// export assignment `SymbolFlags.Alias` (never ordered, see above); any
+// other RHS shape is a real `Property` declaration, ordered like the
+// function/class declarations at the top of this file. Oracle-verified
+// (`tsc` 6.0.2, `--allowJs --checkJs --strict`).
+
+#[test]
+fn commonjs_exports_function_expression_assignment_is_ordered() {
+    let source = "exports.jj = exports.j;\nexports.j = function j() { };\n";
+    assert!(js_codes(source).contains(&USED_BEFORE_ASSIGNED));
+}
+
+/// `module.exports.NAME` behaves identically to bare `exports.NAME`.
+#[test]
+fn commonjs_module_exports_function_expression_assignment_is_ordered() {
+    let source = "module.exports.jj = module.exports.j;\nmodule.exports.j = function j() { };\n";
+    assert!(js_codes(source).contains(&USED_BEFORE_ASSIGNED));
+}
+
+/// A different binder/property name, so the rule is structural.
+#[test]
+fn commonjs_exports_function_expression_assignment_is_ordered_renamed() {
+    let source = "exports.pending = exports.widget;\nexports.widget = function widget() { };\n";
+    assert!(js_codes(source).contains(&USED_BEFORE_ASSIGNED));
+}
+
+#[test]
+fn commonjs_exports_arrow_function_assignment_is_ordered() {
+    let source = "exports.jj = exports.j;\nexports.j = () => { };\n";
+    assert!(js_codes(source).contains(&USED_BEFORE_ASSIGNED));
+}
+
+#[test]
+fn commonjs_exports_object_literal_assignment_is_ordered() {
+    let source = "exports.jj = exports.j;\nexports.j = { };\n";
+    assert!(js_codes(source).contains(&USED_BEFORE_ASSIGNED));
+}
+
+/// A class expression is still an "aliasable expression" in tsc's binder
+/// (`isAliasableExpression` covers entity names *and* class expressions), so
+/// unlike the function-expression/arrow/object-literal RHS above it stays
+/// unordered.
+#[test]
+fn commonjs_exports_class_expression_assignment_is_not_ordered() {
+    let source = "exports.jj = exports.j;\nexports.j = class { };\n";
+    assert!(!js_codes(source).contains(&USED_BEFORE_ASSIGNED));
+}
+
+/// An identifier-reference RHS keeps the property unordered even when the
+/// referenced declaration is itself a hoisted function.
+#[test]
+fn commonjs_exports_identifier_assignment_is_still_not_ordered() {
+    let source = "exports.jj = exports.j;\nfunction j() { }\nexports.j = j;\n";
+    assert!(!js_codes(source).contains(&USED_BEFORE_ASSIGNED));
+}
+
+/// In-order assignment stays silent for the non-aliasable RHS shape too.
+#[test]
+fn commonjs_exports_function_expression_assignment_before_use_is_silent() {
+    let source = "exports.j = function j() { };\nexports.jj = exports.j;\n";
+    assert!(!js_codes(source).contains(&USED_BEFORE_ASSIGNED));
+}
+
 /// The ordinary in-order case stays silent everywhere.
 #[test]
 fn assignment_before_use_is_silent_for_every_receiver() {
