@@ -570,7 +570,21 @@ namespace Intl {
 }
 
 #[test]
-fn test_jsdoc_object_literal_property_types_do_not_trigger_self_tdz() {
+fn test_jsdoc_object_literal_closure_types_rejected_do_not_trigger_self_tdz() {
+    // Stale pre-TS7 expectation, re-pinned: this used to assert that the
+    // Closure `function(number): number` property annotations contextually
+    // typed the function-valued properties (yielding TS2322 on their bodies
+    // and TS2345 at the `obj.method2("0")` call site). TypeScript 7 rejects
+    // the Closure `function(...)` spelling outright with TS1005 `'}'
+    // expected.`, so those annotations yield no type: the method parameters
+    // fall back to implicit `any` (TS7006 under `noImplicitAny`) and no
+    // TS2345 can fire. The method-syntax property additionally gets TS8030
+    // (arity check against the unparsed tag); arrow-valued properties do not.
+    // The non-Closure annotations keep their checks: `bar` (TS2322
+    // number/string) and the `lol` shorthand (TS2322 undefined/string), and
+    // the shorthand must still not fire a self-TDZ TS2448 on `obj`. Oracle
+    // (`typescript@7.0.2`, `--allowJs --checkJs --strict --noImplicitAny
+    // --target es2015`): TS2322 x2, TS8030 x1, TS1005 x3, TS7006 x2.
     let source = r#"
 // @ts-check
 var lol;
@@ -614,9 +628,30 @@ var s1 = obj.method2("0");
         !has_error(&diagnostics, 2448),
         "Did not expect TS2448 on the declaration while checking JSDoc-typed object literal properties. Actual diagnostics: {diagnostics:#?}"
     );
+    let count = |code: u32| -> usize { diagnostics.iter().filter(|(c, _)| *c == code).count() };
+    assert_eq!(
+        count(2322),
+        2,
+        "Expected exactly the `bar` and shorthand-`lol` TS2322s (the Closure-typed function properties have no declared type under TS7). Actual diagnostics: {diagnostics:#?}"
+    );
+    assert_eq!(
+        count(1005),
+        3,
+        "Expected one TS1005 per rejected Closure `function(...)` annotation. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert_eq!(
+        count(8030),
+        1,
+        "Expected TS8030 only for the method-syntax property's Closure tag, not the arrow-valued ones. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert_eq!(
+        count(7006),
+        2,
+        "Expected implicit-any TS7006 on `method1`/`method2`'s `n1` once the Closure annotations yield no type (the defaulted `num` infers from its initializer). Actual diagnostics: {diagnostics:#?}"
+    );
     assert!(
-        has_error(&diagnostics, 2322) && has_error(&diagnostics, 2345),
-        "Expected the property-level and call-site JSDoc diagnostics to remain. Actual diagnostics: {diagnostics:#?}"
+        !has_error(&diagnostics, 2345),
+        "No TS2345 may fire at `obj.method2(\"0\")` once `n1` is implicit-any under TS7. Actual diagnostics: {diagnostics:#?}"
     );
 }
 
@@ -806,7 +841,17 @@ const result = foo({
 }
 
 #[test]
-fn test_jsdoc_object_literal_shorthand_and_default_param_preserve_source_types() {
+fn test_jsdoc_object_literal_shorthand_preserves_source_type_closure_type_rejected() {
+    // Stale pre-TS7 expectation, re-pinned: this used to assert that the
+    // Closure `function(number): number` annotation contextually typed
+    // `arrowFunc`, checking its default parameter initializer `"0"` against
+    // `number` (TS2322 string/number). TypeScript 7 rejects the Closure
+    // spelling with TS1005 `'}' expected.` and the annotation yields no type,
+    // so `num` infers `string` from its initializer and no such TS2322
+    // exists. The shorthand half survives unchanged: `lol` is declared but
+    // unassigned at the literal, so its `@type {string}` still yields TS2322
+    // undefined/string. Oracle (`typescript@7.0.2`, `--allowJs --checkJs
+    // --strict --noImplicitAny --target es2015`): TS1005 x1, TS2322 x1.
     let diagnostics = compile_and_get_diagnostics_named(
         "test.js",
         r#"
@@ -830,18 +875,25 @@ const obj = {
         },
     );
 
-    assert!(
-        diagnostics.iter().any(|(code, message)| {
-            *code == 2322 && message.contains("Type 'string' is not assignable to type 'number'.")
-        }),
-        "Expected contextual JSDoc function typing to check default parameter initializers. Actual diagnostics: {diagnostics:#?}"
+    let ts2322: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2322)
+        .collect();
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "Expected only the shorthand TS2322 (the Closure annotation yields no type under TS7, so the default parameter is unchecked). Actual diagnostics: {diagnostics:#?}"
     );
     assert!(
-        diagnostics.iter().any(|(code, message)| {
-            *code == 2322
-                && message.contains("Type 'undefined' is not assignable to type 'string'.")
-        }),
+        ts2322[0]
+            .1
+            .contains("Type 'undefined' is not assignable to type 'string'."),
         "Expected JSDoc shorthand property mismatch to preserve the undefined source type. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert_eq!(
+        diagnostics.iter().filter(|(c, _)| *c == 1005).count(),
+        1,
+        "Expected one TS1005 for the rejected Closure `function(...)` annotation. Actual diagnostics: {diagnostics:#?}"
     );
 }
 
