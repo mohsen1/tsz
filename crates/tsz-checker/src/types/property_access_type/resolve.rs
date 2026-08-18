@@ -716,6 +716,13 @@ impl<'a> CheckerState<'a> {
             && let Some(member_name) = static_member_name.as_deref()
             && let Some(prior_type) = self.current_file_commonjs_named_export_type(member_name)
         {
+            // This fast path skips the general ordering check below, so a
+            // non-aliasable export property needs its own TS2565 check here.
+            if self.expando_property_read_before_assignment(idx, access.expression, member_name)
+                && self.commonjs_export_property_is_ordered(access.expression, member_name)
+            {
+                self.report_property_used_before_assigned(access.name_or_argument, member_name);
+            }
             return prior_type;
         }
 
@@ -780,22 +787,17 @@ impl<'a> CheckerState<'a> {
                         .enclosing_expression_statement(idx)
                         .and_then(|stmt_idx| self.js_statement_declared_type(stmt_idx))
                         .is_some();
-                // Only a function/class declaration's expando properties are
-                // ordered in tsc. On a plain object or a CommonJS `exports`
-                // object the property type comes from every assignment in the
-                // program, so a use before the assignment is not an error.
-                let receiver_is_ordered =
-                    self.expando_root_has_ordered_declarations(access.expression);
+                // A function/class declaration's expando properties are
+                // ordered; a plain object's are not. `exports`/
+                // `module.exports` is the same unless this property's own
+                // assignment is non-aliasable (see `commonjs_export_property_is_ordered`).
+                let receiver_is_ordered = self
+                    .expando_root_has_ordered_declarations(access.expression)
+                    || self.commonjs_export_property_is_ordered(access.expression, property_name);
                 if !suppress_for_jsdoc_type_decl && receiver_is_ordered {
-                    use crate::diagnostics::format_message;
-                    use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-                    self.error_at_node(
+                    self.report_property_used_before_assigned(
                         access.name_or_argument,
-                        &format_message(
-                            diagnostic_messages::PROPERTY_IS_USED_BEFORE_BEING_ASSIGNED,
-                            &[property_name],
-                        ),
-                        diagnostic_codes::PROPERTY_IS_USED_BEFORE_BEING_ASSIGNED,
+                        property_name,
                     );
                 }
             }
