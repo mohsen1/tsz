@@ -96,9 +96,13 @@ tsz_ensure_large_ts_repo_fixture() {
     fi
 
     if [ -n "$ref" ]; then
-        local current_ref
+        # Peel the pin to a commit before comparing — a 40-hex pin can be an
+        # annotated tag object, which `git rev-parse HEAD` can never equal.
+        # See tsz_git_fixture_peel_commit in project-fixtures.sh.
+        local current_ref want_ref
         current_ref="$(git -C "$fixture_dir" rev-parse HEAD 2>/dev/null || echo "")"
-        if [ "$current_ref" != "$ref" ]; then
+        want_ref="$(tsz_git_fixture_peel_commit "$fixture_dir" "$ref")"
+        if [ "$current_ref" != "$want_ref" ]; then
             echo "Pinning large-ts-repo to ${ref:0:12}..."
             if ! git -C "$fixture_dir" fetch --quiet --depth 1 origin "$ref"; then
                 echo "ERROR: failed to fetch large-ts-repo pin ${ref:0:12} from ${repo}" \
@@ -113,7 +117,8 @@ tsz_ensure_large_ts_repo_fixture() {
 
         if [[ "$ref" =~ ^[0-9a-f]{40}$ ]]; then
             current_ref="$(git -C "$fixture_dir" rev-parse HEAD 2>/dev/null || echo "")"
-            if [ "$current_ref" != "$ref" ]; then
+            want_ref="$(tsz_git_fixture_peel_commit "$fixture_dir" "$ref")"
+            if [ "$current_ref" != "$want_ref" ]; then
                 echo "ERROR: large-ts-repo fixture HEAD is ${current_ref:0:12}, expected pin ${ref:0:12}" >&2
                 return 1
             fi
