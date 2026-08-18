@@ -1417,6 +1417,7 @@ impl<'a> CheckerState<'a> {
                 && old != ty
                 && old != TypeId::ERROR
                 && old != TypeId::ANY
+            {
                 // Membership-monotone: a lib interface can be re-resolved to a
                 // heritage-thin body (an inherited base dropped while it was
                 // itself mid-resolution) without `heritage_incomplete` being set
@@ -1430,13 +1431,32 @@ impl<'a> CheckerState<'a> {
                 // that strictly loses members clobber a more-complete cached
                 // body (the membership-maximal body wins regardless of the order
                 // resolutions finalize).
-                && !crate::query_boundaries::lib_augmentations::lib_body_strictly_loses_members(
+                if crate::query_boundaries::lib_augmentations::lib_body_strictly_loses_members(
                     self.ctx.types,
                     old,
                     ty,
-                )
-            {
-                self.ctx.symbol_types.insert(sym_id, ty);
+                ) {
+                    // Keep AND re-adopt the maximal body, exactly like the
+                    // finalize path does ("keep and re-mirror the existing,
+                    // more-complete body"). Skipping only the write while still
+                    // returning/caching the thin `ty` splits the interface's
+                    // identity: `symbol_types` and the def store keep the
+                    // complete body while the name caches and every caller of
+                    // this resolution get the thin one. Two distinct `TypeId`s
+                    // for one merged interface then meet in a relation and
+                    // mis-fire (e.g. `genericMethodOverspecialization`'s
+                    // `(e: HTMLElement | null) => number` rejected against
+                    // itself, #17641).
+                    tracing::trace!(
+                        name,
+                        ?old,
+                        ?ty,
+                        "resolve_lib_type_by_name: thin re-derivation rejected; adopting cached maximal body"
+                    );
+                    lib_type_id = Some(old);
+                } else {
+                    self.ctx.symbol_types.insert(sym_id, ty);
+                }
             }
         }
 

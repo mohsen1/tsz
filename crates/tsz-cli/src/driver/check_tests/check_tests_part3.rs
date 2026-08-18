@@ -888,6 +888,58 @@ interface Document {
         );
     }
 
+    /// Regression for #17641: the membership-monotone guard on the lib
+    /// `symbol_types` write (#17631) rejected a thin re-derivation but still
+    /// returned and name-cached it, splitting the merged `HTMLElement` into two
+    /// `TypeId`s. The two identities then met in `elements.map(...)`'s
+    /// contextual-parameter relation and mis-fired a TS2345 whose argument and
+    /// parameter types render identically. The full
+    /// `compiler/genericMethodOverspecialization.ts` fixture must stay clean
+    /// (tsc reports nothing: the user-arena `getElementById` overload wins and
+    /// every callback checks against one `HTMLElement` identity).
+    #[test]
+    fn global_lib_merge_keeps_one_element_identity_for_array_callbacks() {
+        let diagnostics = collect_es2015_default_lib_diagnostics(
+            r#"
+var names = ["list", "table1", "table2", "table3", "summary"];
+
+interface HTMLElement {
+    clientWidth: number;
+    isDisabled: boolean;
+}
+
+declare var document: Document;
+interface Document {
+    getElementById(elementId: string): HTMLElement;
+}
+
+var elements = names.map(function (name) {
+    return document.getElementById(name);
+});
+
+
+var xxx = elements.filter(function (e) {
+    return !e.isDisabled;
+});
+
+var widths: number[] = elements.map(function (e) {
+    return e.clientWidth;
+});
+"#,
+        );
+
+        assert!(
+            !diagnostics.iter().any(|diag| {
+                diag.code == diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE
+            }),
+            "Did not expect a TS2345 from a split lib-interface identity, got: {diagnostics:?}"
+        );
+        assert!(
+            diagnostics.is_empty(),
+            "Expected the merged-lib-interface fixture to be clean like tsc, got: {diagnostics:?}"
+        );
+    }
+
     #[test]
     fn collect_diagnostics_respects_skip_default_lib_check_for_global_node_merge() {
         let dir = tempfile::TempDir::new().expect("temp dir");
