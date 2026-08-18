@@ -12,3 +12,7 @@ mod prescan;
 mod walk_state;
 
 pub(super) use helpers::can_skip_base_instantiation;
+pub(crate) use helpers::{
+    class_self_reference_deferral_seen, note_class_self_reference_deferral,
+    replace_class_self_reference_deferral_seen,
+};

@@ -1026,6 +1026,23 @@ impl CheckerContext<'_> {
         self.types.lazy(def_id)
     }
 
+    /// Whether `body` is the VALUE side (`typeof C`) of a `DefKind::Class`
+    /// def — the constructor shape `get_type_of_symbol` publishes under the
+    /// class `DefId` for `typeof` queries. A type-position `Lazy(class def)`
+    /// denotes the class's INSTANCE type, so resolution paths must never
+    /// substitute such a body for it: doing so silently swaps the static side
+    /// in wherever the instance type was deferred (e.g. a class
+    /// self-reference in a member initializer's type-parameter constraint
+    /// fails TS2344 against a constraint the instance satisfies, #17570).
+    /// Merged interface+value symbols publish a genuine instance body under
+    /// the shared `DefId`, so only a constructor-shaped body is flagged.
+    pub(crate) fn is_class_value_side_body(&self, def_id: DefId, body: TypeId) -> bool {
+        self.definition_store.get_kind(def_id) == Some(tsz_solver::def::DefKind::Class)
+            && crate::query_boundaries::checkers::constructor::has_construct_signatures(
+                self.types, body,
+            )
+    }
+
     /// Look up the `SymbolId` for a `DefId` (reverse mapping).
     ///
     /// Uses a two-tier lookup strategy:

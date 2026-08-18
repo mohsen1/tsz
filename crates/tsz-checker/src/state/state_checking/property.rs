@@ -17,7 +17,7 @@ impl<'a> CheckerState<'a> {
         target: TypeId,
         idx: NodeIndex,
     ) {
-        use crate::query_boundaries::common as freshness_query;
+        use crate::query_boundaries::common as common_query;
 
         self.ensure_relation_input_ready(target);
 
@@ -25,10 +25,10 @@ impl<'a> CheckerState<'a> {
         let object_literal_idx = const_assertion_object_literal.unwrap_or(idx);
         let evaluated_target = self.evaluate_type_with_env(target);
 
-        if crate::query_boundaries::common::type_is_conditional_type_result_with_unresolved_inference(
+        if common_query::type_is_conditional_type_result_with_unresolved_inference(
             self.ctx.types,
             target,
-        ) || crate::query_boundaries::common::type_is_conditional_type_result_with_unresolved_inference(
+        ) || common_query::type_is_conditional_type_result_with_unresolved_inference(
             self.ctx.types,
             evaluated_target,
         ) {
@@ -50,7 +50,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // Only check excess properties for FRESH object literals
-        let is_fresh_source = freshness_query::is_fresh_object_type(self.ctx.types, source);
+        let is_fresh_source = common_query::is_fresh_object_type(self.ctx.types, source);
         let explicit_property_names = if is_fresh_source {
             None
         } else if const_assertion_object_literal.is_some() {
@@ -77,14 +77,9 @@ impl<'a> CheckerState<'a> {
 
         if [target, effective_target, resolved_target, evaluated_target]
             .into_iter()
-            .filter_map(|candidate| {
-                crate::query_boundaries::common::mapped_type_info(self.ctx.types, candidate)
-            })
+            .filter_map(|candidate| common_query::mapped_type_info(self.ctx.types, candidate))
             .any(|mapped| {
-                !crate::query_boundaries::common::is_valid_mapped_type_key_type(
-                    self.ctx.types,
-                    mapped.constraint,
-                )
+                !common_query::is_valid_mapped_type_key_type(self.ctx.types, mapped.constraint)
             })
         {
             return;
@@ -842,9 +837,34 @@ impl<'a> CheckerState<'a> {
                         prop_name.as_ref(),
                         source_prop.is_symbol_named,
                     );
+                    // A symbol-named property's applicable index signature is
+                    // the target's `[k: symbol]` one — never the string index
+                    // handled above (#17623). Its nested-literal value drills
+                    // into the symbol index VALUE type the same way a
+                    // string-keyed property drills into the string index's.
+                    let symbol_index_value_type = if source_prop.is_symbol_named {
+                        target_shape
+                            .symbol_index_signature()
+                            .map(|symbol_idx| symbol_idx.value_type)
+                    } else {
+                        None
+                    };
                     let target_prop = target_props.iter().find(|p| p.name == source_prop.name);
 
-                    if !matches_index && target_prop.is_none() {
+                    if !matches_index && symbol_index_value_type.is_none() && target_prop.is_none()
+                    {
+                        // Backwards-compat absorption (tsc, `indexSignatures1.ts`
+                        // "Permitted for backwards compatibility"): when the
+                        // target has a WIDE `[k: string]` index and no symbol
+                        // index, a symbol-keyed member is permitted outright —
+                        // no excess report and no value check (oracled on
+                        // 7.0.2: even a mismatched or excess-carrying value is
+                        // accepted). A template-literal string key or a
+                        // number-only index does NOT absorb it (TS2353), and a
+                        // present symbol index takes the value check instead.
+                        if source_prop.is_symbol_named && idx_key_type == TypeId::STRING {
+                            continue;
+                        }
                         let report_idx = self
                             .find_object_literal_property_element(
                                 object_literal_idx,
@@ -858,6 +878,9 @@ impl<'a> CheckerState<'a> {
                     let mut nested_types = Vec::new();
                     if matches_index {
                         nested_types.push(idx_value_type);
+                    }
+                    if let Some(symbol_value_type) = symbol_index_value_type {
+                        nested_types.push(symbol_value_type);
                     }
                     if let Some(target_prop) = target_prop {
                         // Continue iterating after a mismatch — tsc reports all mismatching

@@ -15,20 +15,36 @@
 //! (`R = { id: 0 }`): the positive assignment must hold and a mismatched target
 //! must report TS2322. Binder names are varied across cases so the guard is
 //! structural, not identifier-driven.
+//!
+//! Harness fidelity: these route through the shared-`DefinitionStore` checker
+//! construction (`check_source_with_libs_shared_def_store`), the
+//! production-driver shape, NOT the plain `check_source_with_libs` path.
+//! The recursion here unwraps through a *lib generic* (`Promise`), and the
+//! plain harness cannot unify a lib generic's base declaration across the
+//! user arena and the lib arena (issue #16125): the alias application then
+//! stays an unevaluated self-application in relation position, and the
+//! mismatch witness silently loses its `TS2322` (only a `never` target still
+//! rejects, via the no-progress `target == NEVER` arm in `check_subtype`) —
+//! a harness-only false negative the real CLI does not exhibit (the r3
+//! known-failures adjudication, re-confirmed 2026-08-18). Under the shared
+//! store the fixpoint converges and the oracle-exact diagnostic fires.
 
 use tsz_checker::CheckerOptions;
-use tsz_checker::test_utils::check_source_with_libs_code_messages;
+use tsz_checker::test_utils::check_source_with_libs_shared_def_store;
 
-fn codes(source: &str) -> Vec<u32> {
+fn code_messages(source: &str) -> Vec<(u32, String)> {
     let libs = tsz_checker::test_utils::load_default_lib_files();
     let opts = CheckerOptions {
         strict: true,
         ..CheckerOptions::default()
     };
-    check_source_with_libs_code_messages(source, "test.ts", opts, &libs)
-        .into_iter()
-        .map(|(c, _)| c)
-        .collect()
+    tsz_checker::test_utils::diagnostic_code_messages(check_source_with_libs_shared_def_store(
+        source, "test.ts", opts, &libs,
+    ))
+}
+
+fn codes(source: &str) -> Vec<u32> {
+    code_messages(source).into_iter().map(|(c, _)| c).collect()
 }
 
 /// The minimal witness from the issue: Promise → `{ payload }` → `(infer E)[]`
@@ -58,10 +74,12 @@ const ok: { id: 0 } = r;
 /// Same shape, renamed binders, with a mismatched target: the conditional still
 /// resolves to `{ id: 0 }`, so assigning it to `{ id: 1 }` reports exactly one
 /// TS2322 — proving the recursion converged to a concrete value rather than a
-/// deferred placeholder.
+/// deferred placeholder. The rendered source side must name the converged
+/// fixpoint (`{ id: 0; }`), not the alias application, matching `tsc`:
+/// "Type '{ id: 0; }' is not assignable to type '{ id: 1; }'."
 #[test]
 fn issue_14123_alias_array_infer_reports_mismatch() {
-    let c = codes(
+    let cm = code_messages(
         r#"
 type Unwrap<Q> =
     Q extends Promise<infer A> ? Unwrap<A> :
@@ -74,11 +92,50 @@ declare const value: Result;
 const bad: { id: 1 } = value;
 "#,
     );
+    assert!(
+        !cm.iter().any(|(c, _)| *c == 2589),
+        "must converge, no TS2589. Got: {cm:?}"
+    );
+    let ts2322: Vec<_> = cm.iter().filter(|(c, _)| *c == 2322).collect();
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "mismatched target must report exactly one TS2322. Got: {cm:?}"
+    );
+    assert!(
+        ts2322[0].1.contains("{ id: 0; }"),
+        "the TS2322 source side must render the converged fixpoint \
+         `{{ id: 0; }}`, not a deferred alias application. Got: {:?}",
+        ts2322[0].1
+    );
+}
+
+/// Second mismatch witness, renamed binders and a *primitive* target: a
+/// converged object fixpoint assigned to `string` must also reject. In the
+/// low-fidelity (non-shared-`DefinitionStore`) harness this family regressed
+/// to "assignable to everything except `never`", so the target-shape spread
+/// (object literal above, primitive here) pins the rejection as coming from
+/// the converged value itself rather than one lucky target comparison.
+#[test]
+fn issue_14123_alias_array_infer_rejects_primitive_target() {
+    let c = codes(
+        r#"
+type Peel2<Z> =
+    Z extends Promise<infer K> ? Peel2<K> :
+    Z extends { payload: infer L } ? Peel2<L> :
+    Z extends (infer M)[] ? Peel2<M> :
+    Z;
+type Carton<W> = Promise<{ payload: W[] }>;
+type Got = Peel2<Carton<{ id: 0 }>>;
+declare const got: Got;
+const bad: string = got;
+"#,
+    );
     assert!(!c.contains(&2589), "must converge, no TS2589. Got: {c:?}");
     assert_eq!(
         c.iter().filter(|&&x| x == 2322).count(),
         1,
-        "mismatched target must report exactly one TS2322. Got: {c:?}"
+        "primitive mismatched target must report exactly one TS2322. Got: {c:?}"
     );
 }
 

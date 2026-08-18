@@ -687,6 +687,10 @@ mod strict_null_manual;
 mod symbol_index_signature_tests;
 
 #[cfg(test)]
+#[path = "../tests/symbol_index_excess_drill_in_tests.rs"]
+mod symbol_index_excess_drill_in_tests;
+
+#[cfg(test)]
 #[path = "../tests/jsdoc_dotted_typedef_import_type_tests.rs"]
 mod jsdoc_dotted_typedef_import_type_tests;
 #[cfg(test)]

@@ -1417,6 +1417,24 @@ impl<'a> CheckerState<'a> {
                 && old != ty
                 && old != TypeId::ERROR
                 && old != TypeId::ANY
+                // Membership-monotone: a lib interface can be re-resolved to a
+                // heritage-thin body (an inherited base dropped while it was
+                // itself mid-resolution) without `heritage_incomplete` being set
+                // — e.g. `HTMLElement` momentarily resolved without `Node`'s
+                // members during the DOM `Node`/`Element`/`HTMLElement` cycle
+                // (#12299/#17595). Overwriting the cached body with that thin
+                // form makes a later `HTMLElement <: Element` check see a
+                // `Node`-less `HTMLElement` and mis-fire a default-lib `TS2430`.
+                // Mirror `register_finalized_lib_body_for_def`'s guard, which
+                // this direct cache write bypasses: never let a re-derivation
+                // that strictly loses members clobber a more-complete cached
+                // body (the membership-maximal body wins regardless of the order
+                // resolutions finalize).
+                && !crate::query_boundaries::lib_augmentations::lib_body_strictly_loses_members(
+                    self.ctx.types,
+                    old,
+                    ty,
+                )
             {
                 self.ctx.symbol_types.insert(sym_id, ty);
             }

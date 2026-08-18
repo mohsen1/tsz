@@ -862,7 +862,32 @@ impl<'a> CheckerState<'a> {
         // Use get_construct_signature (not get_contextual_signature) to include generic
         // construct signatures — those are skipped by contextual extraction but needed
         // for two-pass inference where we infer the type params ourselves.
-        let constructor_shape_type = self.resolve_ref_type(constructor_type);
+        let mut constructor_shape_type = self.resolve_ref_type(constructor_type);
+        // A class constructor read through a re-entrant resolution window can
+        // still carry the provisional `Self<Params> & <rough prescan
+        // instance>` construct return built by
+        // `rough_class_instance_return_type`. tsc resolves the `new` result
+        // against the finished class; keep only the deferred self-application
+        // so the window artifact cannot leak into the expression type
+        // (#17586: false TS2322 on zod's `ZodRecord.create`).
+        {
+            let db = self.ctx.types.as_type_database();
+            if let Some(own_def) =
+                crate::query_boundaries::common::callable_shape_for_type(db, constructor_shape_type)
+                    .and_then(|shape| shape.symbol)
+                    .and_then(|sym_id| self.ctx.get_existing_def_id(sym_id))
+                && let Some(sanitized) =
+                    crate::query_boundaries::checkers::constructor::construct_returns_without_self_window_artifact(
+                        db,
+                        constructor_shape_type,
+                        own_def,
+                    )
+            {
+                constructor_type = sanitized;
+                constructor_shape_type = sanitized;
+            }
+        }
+        let constructor_shape_type = constructor_shape_type;
         let constructor_shape = call_checker::get_construct_signature(
             self.ctx.types,
             constructor_shape_type,

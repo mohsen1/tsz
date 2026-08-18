@@ -1625,7 +1625,9 @@ impl CheckerState<'_> {
                 {
                     return Some((partial_instance, Vec::new()));
                 }
-                let fallback = self.ctx.create_lazy_type_ref(active_class_sym);
+                let self_sym = self.class_self_reference_symbol(class, active_class_sym);
+                crate::class_type::note_class_self_reference_deferral();
+                let fallback = self.ctx.create_lazy_type_ref(self_sym);
                 return Some((fallback, Vec::new()));
             }
 

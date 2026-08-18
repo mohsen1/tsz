@@ -698,6 +698,7 @@ pub(crate) struct PropertyExtractor<'a> {
     db: &'a dyn TypeDatabase,
     name_atom: Atom,
     is_numeric_name: bool,
+    is_symbol_name: bool,
     strip_optional_undefined: bool,
 }
 
@@ -707,6 +708,7 @@ impl<'a> PropertyExtractor<'a> {
             db,
             name_atom: db.intern_string(name),
             is_numeric_name: crate::utils::is_numeric_literal_name(name),
+            is_symbol_name: crate::utils::is_symbol_like_property_name(name),
             strip_optional_undefined: false,
         }
     }
@@ -733,7 +735,12 @@ impl<'a> PropertyExtractor<'a> {
 
     fn index_signature_applies(&self, idx: &IndexSignature) -> bool {
         match idx.key_type {
-            TypeId::ANY | TypeId::STRING => true,
+            TypeId::ANY => true,
+            // A symbol-keyed member is covered only by a `[k: symbol]` index
+            // signature, never a `[k: string]` one (tsc
+            // `getApplicableIndexInfo`), so a wide-`string` key must decline
+            // it rather than claim every property name (#17623).
+            TypeId::STRING => !self.is_symbol_name,
             TypeId::NUMBER => self.is_numeric_name,
             _ => query_relation(
                 self.db,
@@ -785,6 +792,17 @@ impl TypeVisitor for PropertyExtractor<'_> {
         {
             return Some(idx.value_type);
         }
+        // A symbol-keyed member resolves through the `[k: symbol]` index
+        // signature — its applicable index info (#17623). The legacy
+        // symbol-in-`string_index`-slot encoding is already covered by the
+        // string-slot check above (its key type is `symbol`, taken through
+        // the relation arm of `index_signature_applies`).
+        if self.is_symbol_name
+            && let Some(idx) = shape.symbol_index_signature()
+            && self.index_signature_applies(idx)
+        {
+            return Some(idx.value_type);
+        }
         None
     }
 
@@ -803,6 +821,13 @@ impl TypeVisitor for PropertyExtractor<'_> {
         }
         // Fall back to string index signature value type
         if let Some(ref idx) = shape.string_index
+            && self.index_signature_applies(idx)
+        {
+            return Some(idx.value_type);
+        }
+        // Symbol-keyed members: see `visit_object` (#17623).
+        if self.is_symbol_name
+            && let Some(idx) = shape.symbol_index_signature()
             && self.index_signature_applies(idx)
         {
             return Some(idx.value_type);
@@ -862,6 +887,7 @@ impl TypeVisitor for PropertyExtractor<'_> {
                     db: self.db,
                     name_atom: self.name_atom,
                     is_numeric_name: self.is_numeric_name,
+                    is_symbol_name: self.is_symbol_name,
                     strip_optional_undefined: self.strip_optional_undefined,
                 };
                 extractor.extract(member)
@@ -879,6 +905,7 @@ impl TypeVisitor for PropertyExtractor<'_> {
                     db: self.db,
                     name_atom: self.name_atom,
                     is_numeric_name: self.is_numeric_name,
+                    is_symbol_name: self.is_symbol_name,
                     strip_optional_undefined: self.strip_optional_undefined,
                 };
                 extractor.extract(member)

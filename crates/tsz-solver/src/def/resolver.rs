@@ -1670,11 +1670,33 @@ impl TypeResolver for TypeEnvironment {
                 store.module_augmented_body_or_current(def_id, ty, interner)
             })
         };
+        // For a `DefKind::Class` def, the def-map entry can be the VALUE side:
+        // `get_type_of_symbol` registers the constructor type under the class
+        // `DefId` for `typeof` queries (see `resolve_type_query` above), while
+        // the instance type lives in `class_instance_types`. A type-position
+        // `Lazy(class def)` denotes the INSTANCE type, so when the instance is
+        // not registered yet (its build is deferred mid-member-typing) a
+        // constructor-shaped def body must not be substituted — it silently
+        // swaps in `typeof C` and fails constraints the instance satisfies
+        // (spurious TS2344, #17570). Merged interface+value symbols store a
+        // genuine instance body under the shared `DefId`, so only a body that
+        // is itself constructor-shaped is withheld.
+        let class_value_side_body = |def: DefId, body: TypeId| {
+            self.definition_store
+                .as_ref()
+                .and_then(|store| store.get_kind(def))
+                == Some(crate::def::DefKind::Class)
+                && crate::type_queries::get_callable_shape(interner, body)
+                    .is_some_and(|shape| !shape.construct_signatures.is_empty())
+        };
         // For classes, return the instance type (type position) instead of the constructor type
         if let Some(&instance_type) = self.class_instance_types.get(&def_id.0) {
             return Some(instance_type);
         }
         if let Some(ty) = self.get_def(def_id) {
+            if class_value_side_body(def_id, ty) {
+                return None;
+            }
             return Some(augment(def_id, ty));
         }
 
@@ -1691,7 +1713,9 @@ impl TypeResolver for TypeEnvironment {
         if let Some(&instance_type) = self.class_instance_types.get(&real_def.0) {
             return Some(instance_type);
         }
-        self.get_def(real_def).map(|ty| augment(real_def, ty))
+        self.get_def(real_def)
+            .filter(|&ty| !class_value_side_body(real_def, ty))
+            .map(|ty| augment(real_def, ty))
     }
 
     fn resolve_this_type(&self, _interner: &dyn TypeDatabase) -> Option<TypeId> {

@@ -464,6 +464,16 @@ impl<'a> CheckerState<'a> {
     ) -> bool {
         use crate::query_boundaries::property_access::is_function_type;
 
+        // A CommonJS export member (`exports.n`, `module.exports.n`, deeper)
+        // is never an expando host in tsc 7.0.2: a nested write
+        // `exports.n.K = function () {}` is a plain property assignment against
+        // `n`'s own closed type and reports TS2339, not a declaration. Only the
+        // bare exports object hosts direct member writes, and it is not a
+        // member, so this gate leaves `exports.n = ...` unaffected.
+        if self.is_current_file_commonjs_export_member_access(object_expr_idx) {
+            return false;
+        }
+
         let prototype_root_expr = self.ctx.arena.get(object_expr_idx).and_then(|node| {
             if node.kind != tsz_parser::parser::syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
                 return None;
@@ -881,17 +891,10 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        // CommonJS exports behave like namespace-like value objects in JS/checkJs.
-        // When an exported member is function-typed, assignments such as
-        // `module.exports.f.self = module.exports.f` should use the same expando
-        // path as plain `f.self = ...`.
-        if self
-            .current_file_commonjs_export_member_name(object_expr_idx)
-            .is_some()
-        {
-            return true;
-        }
-
+        // A CommonJS export member is never an expando host (tsc 7.0.2); the
+        // `is_current_file_commonjs_export_member_access` gate at the top of
+        // this function has already returned `false` for `exports.f.self = ...`
+        // and friends, so no namespace-like carve-out belongs here.
         false
     }
 
@@ -910,6 +913,14 @@ impl<'a> CheckerState<'a> {
         }
 
         if !self.property_access_is_write_target_or_base(property_access_idx) {
+            return false;
+        }
+
+        // A CommonJS export member never hosts nested expando growth in tsc
+        // 7.0.2 (`exports.n.K = ...` / `module.exports.n.K = ...` is TS2339 for
+        // every RHS shape). The bare exports object is not a member, so direct
+        // writes `exports.n = ...` stay valid.
+        if self.is_current_file_commonjs_export_member_access(object_expr_idx) {
             return false;
         }
 
@@ -1006,6 +1017,14 @@ impl<'a> CheckerState<'a> {
         if self.is_current_file_commonjs_export_base_syntax(object_expr_idx)
             && !self.is_current_file_commonjs_export_base_for_expando(object_expr_idx)
         {
+            return false;
+        }
+
+        // A CommonJS export member exposes no nested expando members in tsc
+        // 7.0.2: reading `exports.n.K` looks `K` up on `n`'s own closed type
+        // (TS2339 when absent). The bare exports object is not a member, so
+        // `exports.n` (a direct member read) still resolves normally.
+        if self.is_current_file_commonjs_export_member_access(object_expr_idx) {
             return false;
         }
 
