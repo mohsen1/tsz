@@ -141,13 +141,67 @@ function f<T>(x: Extract<Extract<T, Foo>, Bar>) {
 
 #[test]
 fn deferred_generic_conditional_keeps_branch_union() {
-    // Still generic (free `T`): tsc shows the branch union, never expanding to a
-    // concrete shape. Matches today's behavior; locks in the no-over-reach guard.
+    // Still generic (free `T`), target concrete (`number`): tsc expands the
+    // source to its branch union `string | boolean` for display rather than
+    // keeping the alias `F<T>` — the conditional's two branches are fully
+    // concrete, so there is nothing left to defer.
     let source = r#"
 type F<T> = T extends number ? string : boolean;
 function g<T>(p: F<T>): void { const y: number = p; }
 "#;
     assert_any_contains(source, "string | boolean");
+    assert_none_contains(source, "F<T>");
+}
+
+#[test]
+fn deferred_generic_conditional_keeps_branch_union_renamed_binders() {
+    // Same structural rule as `deferred_generic_conditional_keeps_branch_union`,
+    // different identifiers — proves it is not keyed on a particular alias or
+    // type-parameter name.
+    let source = r#"
+type G<S> = S extends string ? number : boolean;
+function h<S>(p: G<S>): void { const z: string = p; }
+"#;
+    assert_any_contains(source, "number | boolean");
+    assert_none_contains(source, "G<S>");
+}
+
+#[test]
+fn deferred_conditional_branch_wrapping_check_param_keeps_alias() {
+    // A branch that merely *wraps* the check type parameter (`T[]`, not the
+    // bare parameter itself) is not a fully concrete branch union — tsc
+    // renders a partial union `boolean | T[]` here, which tsz does not
+    // reproduce; the safe fallback is to keep the deferred alias spelling
+    // rather than either mis-expand or drop the still-generic branch. This
+    // locks in the conservative behavior (no regression from the branch-union
+    // guard above) rather than the not-yet-implemented partial expansion.
+    let source = r#"
+type H<T> = T extends number ? T[] : boolean;
+function i<T>(p: H<T>): void { const z: string = p; }
+"#;
+    assert_any_contains(source, "H<T>");
+    assert_none_contains(source, "boolean | T[]");
+}
+
+#[test]
+fn deferred_conditional_bare_check_param_branch_keeps_alias_against_concrete_target() {
+    // The branch-union guard must not fire when a branch is the bare check
+    // type parameter itself (`Extract<T, U> = T extends U ? T : never`):
+    // unioning would leak `never` into the display. Unlike
+    // `generic_conditional_application_keeps_alias_name` (a function-argument
+    // TS2345 case), this is a plain TS2322 assignment against a concrete
+    // object target, exercising the same guard this test file's primary fix
+    // touches.
+    let source = r#"
+type Extract2<T, U> = T extends U ? T : never;
+type Foo = { foo: string };
+type Bar = { bar: string };
+function f<T>(x: Extract2<Extract2<T, Foo>, Bar>) {
+  const target: { foo: string; bat: string } = x;
+}
+"#;
+    assert_any_contains(source, "Extract2<Extract2<T, Foo>, Bar>");
+    assert_none_contains(source, "type 'never'");
 }
 
 // ── Source position against a generic target (the alias is preserved) ──
