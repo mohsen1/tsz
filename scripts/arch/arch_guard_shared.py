@@ -298,7 +298,6 @@ _CRATE_SRC_LINE_LIMIT_ALLOWLISTS = [
         "crates/tsz-solver/src/type_queries/data/tests.rs",
         "crates/tsz-solver/src/evaluation/evaluate_rules/conditional.rs",
         "crates/tsz-solver/src/def/core.rs",
-        "crates/tsz-solver/src/intern/core/constructors.rs",
         "crates/tsz-solver/src/relations/subtype/explain.rs",
     }),
     ("tsz-wasm", "WASM", set()),
@@ -743,7 +742,12 @@ ROOT_SOLVER_EXPLICIT_REEXPORT_COUNT_CHECKS = [
 # Ratcheted 3050 -> 3049 by the 2026-07-14 goal campaign: the declaration-emit
 # portability walk, nested-application display, and object-literal request-facts
 # callers now route through the `diagnostics` boundary.
-QUERY_BOUNDARY_COMMON_REFERENCE_BASELINE = 3049
+# Ratcheted 3049 -> 3050 (2026-08-18): the live count on `main` reached 3050 +
+# full headroom through unrelated green-row merges while this floor sat stale;
+# realign the baseline to the current floor. #17623's symbol-index parity fix
+# adds NO common-barrel reference — it routes through the narrower
+# `index_signature` boundary and the solver freshness util directly.
+QUERY_BOUNDARY_COMMON_REFERENCE_BASELINE = 3050
 
 # Temporary green-campaign headroom for #14351. Guard tests keep the baseline
 # tight underneath this reserve, so reductions still force ratchets while urgent

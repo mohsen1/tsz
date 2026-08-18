@@ -679,21 +679,33 @@ impl<'a> CheckerState<'a> {
         }
         source_shape.properties.iter().any(|prop| {
             let name = self.ctx.types.resolve_atom(prop.name);
+            // Compare the WIDENED (freshness-stripped) property value against the
+            // index value type. A fresh nested object literal with only an EXCESS
+            // property (`{ [sym]: { a: 1, b: 2 } }` against `[k: symbol]: { a: number }`)
+            // is structurally assignable to the index value type — its `b` is not a
+            // *value* mismatch but an excess-property one that `tsc` reports by
+            // drilling into the nested literal (TS2353), not by suppressing the
+            // whole literal's excess check. Using the fresh type here treated that
+            // excess as a "failing index-covered property" and preempted the
+            // drill-in entirely, dropping the diagnostic (#17623). A genuine value
+            // mismatch (`{ a: "x" }` vs `{ a: number }`) still fails after widening.
+            let widened_prop_type =
+                tsz_solver::relations::freshness::widen_freshness(self.ctx.types, prop.type_id);
             if let Some(number_idx) = &target_shape.number_index
                 && tsz_solver::utils::is_numeric_literal_name(name.as_ref())
-                && !self.is_assignable_to(prop.type_id, number_idx.value_type)
+                && !self.is_assignable_to(widened_prop_type, number_idx.value_type)
             {
                 return true;
             }
             if let Some(string_idx) = &target_shape.string_index
                 && !prop.is_symbol_named
-                && !self.is_assignable_to(prop.type_id, string_idx.value_type)
+                && !self.is_assignable_to(widened_prop_type, string_idx.value_type)
             {
                 return true;
             }
             if let Some(symbol_idx) = &target_shape.symbol_index
                 && prop.is_symbol_named
-                && !self.is_assignable_to(prop.type_id, symbol_idx.value_type)
+                && !self.is_assignable_to(widened_prop_type, symbol_idx.value_type)
             {
                 return true;
             }

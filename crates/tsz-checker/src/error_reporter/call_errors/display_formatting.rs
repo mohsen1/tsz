@@ -1039,6 +1039,34 @@ impl<'a> CheckerState<'a> {
         let resolved_target = self.resolve_type_for_property_access(target_type);
         let evaluated_target = self.judge_evaluate(resolved_target);
         let contextual_target = self.evaluate_contextual_type(target_type);
+
+        // A symbol-keyed computed property is covered ONLY by the target's
+        // `[k: symbol]` index signature (tsc `getApplicableIndexInfo`). The
+        // string-keyed property-access resolution below stringifies the key
+        // (`[sym]` -> a display name) and so matches a competing `[k: string]`
+        // index instead, returning the WRONG drill target when the target
+        // carries both a string and a symbol index — the flat TS2418 then
+        // rendered the string index's value type, and a nested object-valued
+        // symbol index was never drilled into (should be TS2322/TS2353, #17623).
+        // Resolve the symbol index value up front and prefer it (the
+        // union/lazy-aware `resolve_symbol_index` yields `None` for a `string`
+        // index, so a non-symbol-indexed target falls through). A declared symbol
+        // member that mismatches its own index value is a `TS2411` shape whose
+        // whole-object relation failure owns the diagnostic, so preferring the
+        // index value here does not lose a member-precedence report.
+        if prefer_symbol_index
+            && let Some(symbol_value) = [resolved_target, evaluated_target, contextual_target]
+                .into_iter()
+                .find_map(|candidate| {
+                    crate::query_boundaries::index_signature::resolve_symbol_index(
+                        self.ctx.types,
+                        candidate,
+                    )
+                })
+        {
+            return Some((symbol_value, symbol_value));
+        }
+
         let mut contextual_property_type = None;
         let mut env_property_type = None;
         let mut mapped_property_display_type = None;

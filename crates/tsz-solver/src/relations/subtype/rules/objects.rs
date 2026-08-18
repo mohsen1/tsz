@@ -1773,15 +1773,21 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 // number index targets during assignability checks.
             }
 
-            if let Some(string_idx) = string_index {
-                if prop.is_symbol_named {
-                    continue;
-                }
+            // A symbol-keyed source property is covered ONLY by a `[k: symbol]`
+            // index signature, never by the `[k: string]`/`[k: number]` branches
+            // (tsc `getApplicableIndexInfo`). Guarding the string branch on
+            // `!prop.is_symbol_named` — instead of `continue`-ing the whole
+            // iteration — is load-bearing: when the target carries BOTH a string
+            // and a symbol index (`{ [k: string]: number; [k: symbol]: V }`), a
+            // bare `continue` here skipped the symbol branch below, so a
+            // symbol-keyed value was never checked against `V` at all (false
+            // negatives TS2322/TS2418, #17623).
+            if let Some(string_idx) = string_index
+                && !prop.is_symbol_named
                 // Non-matching keys aren't constrained: `click` ∉ `on${string}`, so
                 // `{ click: number }` is fine against `{ [k: on${string}]: () => void }`.
-                if !self.property_name_matches_string_index_key(prop.name, string_idx.key_type) {
-                    continue;
-                }
+                && self.property_name_matches_string_index_key(prop.name, string_idx.key_type)
+            {
                 // Note: We do NOT reject readonly source properties against writable
                 // string index targets. A source with readonly properties (e.g., enum
                 // namespaces, frozen objects) IS assignable to a target with a writable
