@@ -5,7 +5,7 @@
 //! and publish the answer into the type environment" entry consumed by
 //! `evaluate_type_with_resolution` and relation preparation.
 
-use crate::query_boundaries::common::lazy_def_id;
+use crate::query_boundaries::definition_identity::is_lazy_def_identity;
 use crate::state::CheckerState;
 use tsz_binder::symbol_flags;
 use tsz_solver::TypeId;
@@ -136,7 +136,7 @@ impl CheckerState<'_> {
         // (cycle-break), inserting it into `type_env` would shadow the DefinitionStore
         // fallback and cause the `resolved == type_id` guard in the caller to short-circuit.
         // Prefer the concrete body from DefinitionStore when it is already available.
-        if lazy_def_id(self.ctx.types, resolved) == Some(def_id) {
+        if is_lazy_def_identity(self.ctx.types, resolved, def_id) {
             if let Some(body) = self.ctx.definition_store.get_body(def_id)
                 && body != resolved
                 && body != TypeId::ERROR
