@@ -203,6 +203,9 @@ path = "tests/recursive_generic_interface_application_display_tests.rs"
 name = "export_default_interface_type_import_tests"
 path = "tests/export_default_interface_type_import_tests.rs"
 [[test]]
+name = "export_default_class_self_constraint_regression_tests"
+path = "tests/export_default_class_self_constraint_regression_tests.rs"
+[[test]]
 name = "default_imported_generic_alias_assertion_tests"
 path = "tests/default_imported_generic_alias_assertion_tests.rs"
 [[test]]
