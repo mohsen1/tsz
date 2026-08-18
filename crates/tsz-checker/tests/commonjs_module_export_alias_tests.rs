@@ -704,8 +704,18 @@ b.func20;
     );
 }
 
+/// A CommonJS export member (`module.exports.b`, `.c`, `.f`) never hosts
+/// FURTHER nested expando growth, regardless of its own RHS shape (function,
+/// class, or plain object literal) — unlike a genuine local `var`/`let`/
+/// `const`/function/class root, where the same chain shape stays a legitimate
+/// open host. Oracle-verified (`typescript@7.0.2`, `--strict --allowJs
+/// --checkJs`): `module.exports.b = function b() {}; module.exports.b.cat =
+/// "cat";` reports `TS2339` on `.cat`, same for `.Cls` and `.self`.
+/// `typescript@6.0.2` (this test's prior pin) allowed the nesting; the repo's
+/// oracle moved to 7.0.2, which tightened it (`scripts/conformance/
+/// typescript-versions.json`).
 #[test]
-fn test_module_exports_function_expando_assignments_no_ts2339() {
+fn test_module_exports_function_expando_nested_member_reports_ts2339() {
     let diagnostics = check_commonjs_file(
         "index.js",
         r#"
@@ -726,23 +736,54 @@ module.exports.f.self = module.exports.f;
         .iter()
         .filter(|(code, _)| *code == 2339)
         .collect();
-    let ts2565: Vec<_> = diagnostics
-        .iter()
-        .filter(|(code, _)| *code == 2565)
-        .collect();
-    assert!(
-        ts2339.is_empty(),
-        "Expected no TS2339 for CommonJS exported function expandos, got: {ts2339:#?}"
-    );
-    assert!(
-        ts2565.is_empty(),
-        "Expected no TS2565 for already-assigned CommonJS export reads, got: {ts2565:#?}"
+    assert_eq!(
+        ts2339.len(),
+        3,
+        "Expected TS2339 on each nested member write past a direct CommonJS \
+         export member (.cat, .Cls, .self), got: {diagnostics:#?}"
     );
 }
 
+/// Negative control, same structural rule as above: a genuine LOCAL
+/// function/class expando root (not routed through `exports`/`module.exports`)
+/// keeps its existing nested-growth eligibility — oracle-verified clean under
+/// `typescript@7.0.2` too, so this pins that the CommonJS-export-specific
+/// rejection above does not overreach onto ordinary local expando chains.
 #[test]
-fn test_module_exports_nested_class_property_preserves_instance_member_types() {
-    let diagnostics = check_commonjs_two_files(
+fn test_local_function_expando_nested_member_stays_clean() {
+    let diagnostics = check_commonjs_file(
+        "index.js",
+        r#"
+function b() {}
+b.cat = "cat";
+class C {}
+C.Cls = class {};
+"#,
+    );
+
+    let ts2339: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2339)
+        .collect();
+    assert!(
+        ts2339.is_empty(),
+        "Expected no TS2339 for a local (non-exports) function/class expando \
+         nested member, got: {ts2339:#?}"
+    );
+}
+
+/// A CommonJS export member's OWN nested chain reports `TS2339` on the
+/// declaring write itself (`module.exports.c.Cls = class {...}`), same file.
+/// Oracle-verified (`typescript@7.0.2`).
+///
+/// Scoped to the single declaring file: the exported TYPE SURFACE a
+/// cross-file consumer sees (`resolve_js_export_surface`) still exposes
+/// `c.Cls` with its instance shape after this fix — that surface-synthesis
+/// side of the same defect is a separate, unfixed gap (tracked in the
+/// follow-up issue), not something this test's assertion should paper over.
+#[test]
+fn test_module_exports_nested_class_property_reports_ts2339() {
+    let diagnostics = check_commonjs_file(
         "b.js",
         r#"
 module.exports.c = function c() {};
@@ -752,30 +793,15 @@ module.exports.c.Cls = class {
     }
 };
 "#,
-        "a.ts",
-        r#"
-import b = require("./b.js");
-const inst = new b.c.Cls();
-const s: string = inst.x;
-"#,
-        "./b.js",
     );
 
-    let ts2322: Vec<_> = diagnostics
-        .iter()
-        .filter(|(code, _)| *code == 2322)
-        .collect();
     let ts2339: Vec<_> = diagnostics
         .iter()
         .filter(|(code, _)| *code == 2339)
         .collect();
     assert!(
-        ts2339.is_empty(),
-        "Expected nested CommonJS class property instance members to stay visible, got: {diagnostics:#?}"
-    );
-    assert!(
-        !ts2322.is_empty(),
-        "Expected nested CommonJS class property instance member to keep number type, got: {diagnostics:#?}"
+        !ts2339.is_empty(),
+        "Expected TS2339 on the nested CommonJS export member write (.Cls), got: {diagnostics:#?}"
     );
 }
 

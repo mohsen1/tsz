@@ -497,6 +497,20 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
+        // A CommonJS export member's own chain (`module.exports.b` in
+        // `module.exports.b.cat = …`, or `…b.prototype.cat = …`) is never
+        // itself a further expando host, regardless of RHS shape (function,
+        // class, or object literal) — matching the sibling gate in
+        // `is_expando_property_read`/`is_js_expando_object_assignment`.
+        // Without this, the symbol-flag check below grants ANY symbol
+        // carrying FUNCTION/CLASS flags, which does not distinguish a
+        // genuine local declaration from a synthetic export-member binding.
+        if !self.is_current_file_commonjs_export_base_syntax(object_expr_idx)
+            && self.expando_chain_root_is_commonjs_export_base(object_expr_idx)
+        {
+            return false;
+        }
+
         // Resolve object symbol for both simple identifiers and qualified chains.
         let symbol_target_expr = prototype_root_expr.unwrap_or(object_expr_idx);
         let sym_id = self
@@ -949,6 +963,21 @@ impl<'a> CheckerState<'a> {
                 return true;
             }
 
+            // A CommonJS export member's own chain (`module.exports.b` in
+            // `module.exports.b.cat = …`) is never itself a further expando
+            // host, regardless of RHS shape — see the matching gate in
+            // `is_expando_property_read`. This mirrors that same rule for
+            // the declaring-write path, which resolves `object_expr_idx` to
+            // a real `SymbolId` (the export member) and would otherwise
+            // reach `root_symbol_supports_js_direct_expando_write`'s
+            // FUNCTION/CLASS branch, which does not distinguish a genuine
+            // local declaration from a synthetic export-member binding.
+            if !self.is_current_file_commonjs_export_base_syntax(object_expr_idx)
+                && self.expando_chain_root_is_commonjs_export_base(object_expr_idx)
+            {
+                return false;
+            }
+
             if let Some(obj_key) =
                 Self::property_access_chain_in_arena(self.ctx.arena, object_expr_idx)
                 && !self.class_has_instance_member(&obj_key, property_name)
@@ -1005,6 +1034,22 @@ impl<'a> CheckerState<'a> {
     ) -> bool {
         if self.is_current_file_commonjs_export_base_syntax(object_expr_idx)
             && !self.is_current_file_commonjs_export_base_for_expando(object_expr_idx)
+        {
+            return false;
+        }
+
+        // A direct CommonJS export member (`exports.n` / `module.exports.n`)
+        // never itself hosts FURTHER nested expando growth — oracle-verified
+        // (`typescript@7.0.2`, both `exports.n = {}` and `exports.n = function
+        // (){}`/`class {}` RHS shapes): `exports.n.K = …` is `TS2339` on the
+        // `n` base's frozen `{}`/`() => void` type, unlike an ordinary LOCAL
+        // `var`/`let`/`const` open host, where the same chain shape (`const a
+        // = {}; a.d = {}; a.d.member = …`) is clean
+        // (`js_expando_nested_open_host_write_tests.rs`). `typescript@6.0.2`
+        // permitted this exports-rooted nesting; 7.0.2 tightened it, and the
+        // pinned oracle is 7.0.2.
+        if !self.is_current_file_commonjs_export_base_syntax(object_expr_idx)
+            && self.expando_chain_root_is_commonjs_export_base(object_expr_idx)
         {
             return false;
         }
@@ -1322,6 +1367,24 @@ impl<'a> CheckerState<'a> {
                 Some((access.expression, member))
             }
             _ => None,
+        }
+    }
+
+    /// Whether `idx`'s property/element-access chain, walked down to its
+    /// base, ultimately roots in the current file's CommonJS `exports` or
+    /// `module.exports` — at ANY depth, not just `idx` itself. Used to
+    /// distinguish a CommonJS export member's OWN nested chain (`exports.n.K`,
+    /// never a further expando host) from a genuine local variable's chain
+    /// (`a.d`, `const a = {}` — eligible), which share the same AST shape.
+    fn expando_chain_root_is_commonjs_export_base(&self, idx: NodeIndex) -> bool {
+        if self.is_current_file_commonjs_export_base_syntax(idx) {
+            return true;
+        }
+        match self.split_expando_access_link(idx) {
+            Some((base_expr, _member)) => {
+                self.expando_chain_root_is_commonjs_export_base(base_expr)
+            }
+            None => false,
         }
     }
 
