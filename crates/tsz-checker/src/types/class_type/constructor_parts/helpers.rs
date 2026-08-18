@@ -40,11 +40,23 @@ impl<'a> CheckerState<'a> {
     ) -> TypeId {
         let diag_snap = DiagnosticSpeculationSnapshot::new(&self.ctx);
         let diag_checkpoint = diag_snap.checkpoint();
+        let prev_deferral_seen =
+            crate::class_type::replace_class_self_reference_deferral_seen(false);
         let init_type = self.get_type_of_node_with_request(initializer, request);
+        let deferral_seen = crate::class_type::class_self_reference_deferral_seen();
+        crate::class_type::replace_class_self_reference_deferral_seen(
+            prev_deferral_seen || deferral_seen,
+        );
         let leaked_self_ref_constraint_failure = self.ctx.diagnostics[diag_checkpoint..]
             .iter()
             .any(|d| matches!(d.code, 2536 | 2344));
-        if leaked_self_ref_constraint_failure {
+        // A typing that consumed a deferred (still-under-construction) class
+        // self-reference is window-dependent even when it produced no
+        // diagnostic: the deferral may have silently satisfied a constraint
+        // the finished instance genuinely violates. Discard it the same way
+        // as a leaked failure so the authoritative member pass re-derives the
+        // type — and any diagnostic — against the finished instance (#17570).
+        if leaked_self_ref_constraint_failure || deferral_seen {
             diag_snap.rollback(&mut self.ctx.diagnostic_state());
             self.clear_type_cache_recursive(initializer);
         } else {
