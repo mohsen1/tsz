@@ -958,27 +958,15 @@ impl<'a> CheckerState<'a> {
             }
             return self.format_type_for_assignability_message(constraint);
         }
-        if self.is_js_file()
-            && let Some(receiver) = self.access_receiver_for_diagnostic_node(idx)
-            && let Some(receiver_node) = self.ctx.arena.get(receiver)
-            && receiver_node.kind == SyntaxKind::Identifier as u16
-            && let Some(ident) = self.ctx.arena.get_identifier(receiver_node)
-            && let Some(shape) =
-                crate::query_boundaries::common::object_shape_for_type(self.ctx.types, type_id)
-            && shape.symbol.is_none()
-            && self
-                .resolve_identifier_symbol(receiver)
-                .and_then(|sym_id| self.ctx.binder.get_symbol(sym_id))
-                .and_then(|symbol| self.ctx.arena.get(symbol.value_declaration))
-                .and_then(|decl_node| self.ctx.arena.get_variable_declaration(decl_node))
-                .is_some_and(|decl| {
-                    self.ctx.arena.get(decl.initializer).is_some_and(|init| {
-                        init.kind == tsz_parser::parser::syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
-                    })
-                })
-        {
-            return format!("typeof {}", ident.escaped_text);
-        }
+        // A JS local initialized with an object literal displays its
+        // structural widened shape in TS2339 (`{ a: number; }` for
+        // `const o = { a: 1 }`), for reads and writes alike — never
+        // `typeof o`. TypeScript 7 reserves `typeof X` receiver displays
+        // for class/enum/namespace value sides; even a self-referential
+        // object literal prints structurally (`{ self: ...; }`).
+        // Oracle-verified against typescript@7.0.2 (#17622), so no
+        // object-literal-initializer carve-out belongs here: fall through
+        // to the type-based formatter.
         let diagnostic_receiver = self.access_receiver_for_diagnostic_node(idx);
         let is_direct_element_access_diagnostic = self
             .ctx
