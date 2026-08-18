@@ -390,7 +390,17 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 continue;
             }
 
-            match self.resolve_property_access_inner(member, prop_atom) {
+            // TEMP PROBE (#16055)
+            let __probe_result = self.resolve_property_access_inner(member, prop_atom);
+            if self.interner().resolve_atom_ref(prop_atom).as_ref() == "_parseSync" {
+                tracing::debug!(
+                    member = member.0,
+                    mdata = ?self.interner().lookup(member),
+                    result = ?__probe_result,
+                    "16055 union-member _parseSync"
+                );
+            }
+            match __probe_result {
                 PropertyAccessResult::Success {
                     type_id,
                     write_type,
