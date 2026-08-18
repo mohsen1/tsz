@@ -842,9 +842,22 @@ impl<'a> CheckerState<'a> {
                         prop_name.as_ref(),
                         source_prop.is_symbol_named,
                     );
+                    // A symbol-named property's applicable index signature is
+                    // the target's `[k: symbol]` one — never the string index
+                    // handled above (#17623). Its nested-literal value drills
+                    // into the symbol index VALUE type the same way a
+                    // string-keyed property drills into the string index's.
+                    let symbol_index_value_type = if source_prop.is_symbol_named {
+                        target_shape
+                            .symbol_index_signature()
+                            .map(|symbol_idx| symbol_idx.value_type)
+                    } else {
+                        None
+                    };
                     let target_prop = target_props.iter().find(|p| p.name == source_prop.name);
 
-                    if !matches_index && target_prop.is_none() {
+                    if !matches_index && symbol_index_value_type.is_none() && target_prop.is_none()
+                    {
                         let report_idx = self
                             .find_object_literal_property_element(
                                 object_literal_idx,
@@ -858,6 +871,9 @@ impl<'a> CheckerState<'a> {
                     let mut nested_types = Vec::new();
                     if matches_index {
                         nested_types.push(idx_value_type);
+                    }
+                    if let Some(symbol_value_type) = symbol_index_value_type {
+                        nested_types.push(symbol_value_type);
                     }
                     if let Some(target_prop) = target_prop {
                         // Continue iterating after a mismatch — tsc reports all mismatching
