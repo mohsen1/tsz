@@ -470,20 +470,6 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         let s_mapped = self.interner.get_mapped(s_mapped_id);
         let t_mapped = self.interner.get_mapped(t_mapped_id);
 
-        // tsc applies the template-comparison shortcut (`mappedTypeRelatedTo`)
-        // only when BOTH operands are generic mapped types (`isGenericMappedType`:
-        // the key constraint still contains a type variable). A mapped type whose
-        // key domain is concrete resolves its members and compares structurally —
-        // the reversed key-domain check below would otherwise accept
-        // `{ [P in string]: string }` as assignable to `{ [P in 'a']: string }`,
-        // which tsc rejects with TS2741 after member resolution (#17614).
-        // `None` falls through to the full structural comparison.
-        if !crate::visitor::contains_type_parameters(self.interner, s_mapped.constraint)
-            || !crate::visitor::contains_type_parameters(self.interner, t_mapped.constraint)
-        {
-            return None;
-        }
-
         // Name-type compatibility is always required: a source with no `as`
         // clause cannot be compatible with a target that renames its keys (and
         // vice-versa), regardless of how the raw key constraints relate.
