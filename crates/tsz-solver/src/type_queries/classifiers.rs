@@ -645,10 +645,14 @@ pub fn is_deferred_constraint_relative_operand(
                 return true;
             }
         }
-        Some(TypeData::Application(_)) => {
-            if generic_alias_application_hides_deferred_indexed_access(db, definitions, type_id) {
-                return true;
-            }
+        Some(TypeData::Application(_))
+            if generic_alias_application_hides_deferred_indexed_access(
+                db,
+                definitions,
+                type_id,
+            ) =>
+        {
+            return true;
         }
         _ => {}
     }
