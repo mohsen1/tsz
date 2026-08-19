@@ -14,6 +14,7 @@ use super::assignability::{
     is_object_prototype_method_for_array_target, is_primitive_type_name,
 };
 mod nested_application_property_mismatch;
+mod property_pair_frame;
 #[path = "render_failure_index_access.rs"]
 mod render_failure_index_access;
 #[path = "render_failure_missing_property.rs"]

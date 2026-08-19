@@ -518,14 +518,15 @@ impl<'a> CheckerState<'a> {
                     target_property_type,
                 );
                 if !self.nested_reason_reuses_enclosing_application_source(nested_source, source) {
-                    let nested_diag = self.render_failure_reason(
-                        nested,
-                        nested_source,
-                        nested_target,
+                    self.push_property_relation_with_pair_frame(
+                        &mut diag,
                         idx,
+                        (start, length),
+                        (source_property_type, target_property_type),
+                        nested,
+                        (nested_source, nested_target),
                         depth + 1,
                     );
-                    Self::push_nested_chain(&mut diag, nested_diag, depth + 1);
                 }
             }
             return diag;
@@ -547,9 +548,15 @@ impl<'a> CheckerState<'a> {
                 source_property_type,
                 target_property_type,
             );
-            let nested_diag =
-                self.render_failure_reason(nested, nested_source, nested_target, idx, depth + 1);
-            Self::push_nested_chain(&mut diag, nested_diag, depth + 1);
+            self.push_property_relation_with_pair_frame(
+                &mut diag,
+                idx,
+                (start, length),
+                (source_property_type, target_property_type),
+                nested,
+                (nested_source, nested_target),
+                depth + 1,
+            );
         }
         diag
     }
