@@ -372,6 +372,7 @@ impl<'a> CheckerContext<'a> {
             symbol_resolution_depth: Cell::new(0),
             max_symbol_resolution_depth: super::MAX_SYMBOL_RESOLUTION_DEPTH,
             class_instance_resolution_set: FxHashSet::default(),
+            provisional_class_value_epoch: std::cell::Cell::new(0),
             class_constructor_resolution_set: FxHashSet::default(),
             window_partial_ctor_types: FxHashMap::default(),
             jsdoc_enum_resolution_set: FxHashSet::default(),

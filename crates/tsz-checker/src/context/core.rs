@@ -163,6 +163,24 @@ impl TypeCache {
 }
 
 impl<'a> CheckerContext<'a> {
+    /// Record that a provisional class-instance/constructor value (a
+    /// prescan/rough partial, an in-resolution `class_instance_type_cache`
+    /// entry, or a window partial constructor) was served to a consumer.
+    ///
+    /// Solver evaluations observe this through
+    /// `TypeResolver::provisional_value_epoch` and skip persisting results
+    /// computed across a bump, so a partial-derived materialization cannot
+    /// permanently shadow the completed body (issue #16055).
+    pub(crate) fn note_provisional_class_value(&self) {
+        // TEMP PROBE (#16055)
+        tracing::debug!(
+            epoch = self.provisional_class_value_epoch.get(),
+            "16055 probe: provisional class value served"
+        );
+        self.provisional_class_value_epoch
+            .set(self.provisional_class_value_epoch.get().wrapping_add(1));
+    }
+
     /// Clear test-observable type-node resolution counts for a fresh check.
     #[cfg(test)]
     pub(crate) fn reset_type_node_resolution_counts_for_test(&self) {

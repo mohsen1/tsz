@@ -122,6 +122,8 @@ impl<'a> CheckerState<'a> {
                 if self.ctx.class_constructor_resolution_set.len() > 1
                     && let Some(&window_partial) = self.ctx.window_partial_ctor_types.get(&sym_id)
                 {
+                    // Mid-resolution window partial serve (issue #16055).
+                    self.ctx.note_provisional_class_value();
                     return window_partial;
                 }
                 // Re-entrant constructor resolution with no usable partial:

@@ -36,6 +36,23 @@ pub trait TypeResolver {
         0
     }
 
+    /// Monotone count of *provisional* class-instance values this resolver has
+    /// served: answers derived from a class whose instance/constructor type was
+    /// still mid-resolution (a prescan/rough partial), which a later resolve
+    /// replaces with the completed body.
+    ///
+    /// An evaluation during which this moved is a function of the resolution
+    /// window it ran in, not of its input `TypeId`s alone — persisting it in a
+    /// cache keyed purely on input `TypeId`s lets the partial-derived answer
+    /// permanently shadow the completed one (issue #16055: a class application
+    /// materialized against a rough partial kept its placeholder methods and
+    /// split the class into two union-member identities). Evaluators compare
+    /// this before and after a run and treat movement like
+    /// `unresolved_def_seen`: return the result, skip the cache write.
+    fn provisional_value_epoch(&self) -> u64 {
+        0
+    }
+
     /// Whether this resolver carries no definition/symbol context (the
     /// [`NoopResolver`] sentinel used by `SubtypeChecker::new`).
     ///

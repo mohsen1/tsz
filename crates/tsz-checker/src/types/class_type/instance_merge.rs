@@ -151,6 +151,10 @@ impl CheckerState<'_> {
                             // before merging — mirroring the normal non-cycle path
                             // below — or inherited members keep the bare type param
                             // (its constraint) instead of the supplied argument.
+                            // Serving a mid-resolution partial for the base:
+                            // taint in-flight evaluations so nothing persists
+                            // a result derived from it (issue #16055).
+                            self.ctx.note_provisional_class_value();
                             let partial = if let Some(cached_partial) = cached_partial {
                                 Some(cached_partial)
                             } else if let Some(base_node) = self.ctx.arena.get(base_class_idx)

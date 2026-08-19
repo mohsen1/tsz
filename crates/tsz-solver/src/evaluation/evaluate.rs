@@ -221,6 +221,13 @@ pub struct TypeEvaluator<'a, R: TypeResolver = NoopResolver> {
     /// Snapshot of `unresolved_def_epoch` for the innermost in-flight
     /// application body. Saved/restored beside `app_body_limit_epoch`.
     app_body_unresolved_def_epoch: u32,
+    /// Last observed [`TypeResolver::provisional_value_epoch`]. When the
+    /// resolver serves a value derived from a mid-resolution class partial
+    /// (issue #16055), the epoch moves; `observe_provisional_epoch` folds the
+    /// movement into `mark_unresolved_def_seen` so every `TypeId`-keyed cache
+    /// write computed across the movement is skipped and a later evaluation
+    /// recomputes against the completed body.
+    provisional_epoch_seen: u64,
     /// Whether this evaluator may *write* the `closed_eval_cache`. Only the
     /// checker's authoritative, context-free type-resolution pass opts in (via
     /// `with_closed_eval_writes`). Evaluators running mid-relation, mid-inference
@@ -418,6 +425,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             unresolved_def_seen: false,
             unresolved_def_epoch: 0,
             app_body_unresolved_def_epoch: 0,
+            provisional_epoch_seen: resolver.provisional_value_epoch(),
             closed_eval_writes_allowed: false,
             tainted: FxHashSet::default(),
             audit_evaluator_id: crate::evaluation::memo_audit::next_evaluator_id(),
@@ -1193,6 +1201,30 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         self.note_limit_event();
     }
 
+    /// Fold resolver-reported provisional serves into the unresolved-def
+    /// machinery (see [`TypeResolver::provisional_value_epoch`]).
+    ///
+    /// Called before cache-write decisions (`memo_insert`) and at the end of
+    /// a top-level `evaluate` so the public `is_unresolved_def_seen` reflects
+    /// any provisional class partial served during this run. Each observed
+    /// movement re-marks, so per-application epoch snapshots
+    /// (`app_body_unresolved_def_epoch`) keep their precision: an application
+    /// body evaluated entirely after the last movement stays cacheable.
+    #[inline]
+    pub(super) fn observe_provisional_epoch(&mut self) {
+        let now = self.resolver.provisional_value_epoch();
+        if now != self.provisional_epoch_seen {
+            // TEMP PROBE (#16055)
+            tracing::debug!(
+                seen = self.provisional_epoch_seen,
+                now,
+                "16055 probe: evaluator observed provisional epoch movement"
+            );
+            self.provisional_epoch_seen = now;
+            self.mark_unresolved_def_seen();
+        }
+    }
+
     /// Whether this run evaluated an application whose base `DefId` had no
     /// resolvable body (see `unresolved_def_seen`).
     #[inline]
@@ -1348,6 +1380,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // See the `closed_eval` module for the safety gates.
         let limit_snapshot = EvaluationCacheLimitSnapshot::capture(self.interner);
         let result = self.evaluate_guarded(type_id);
+        // Fold any provisional class-partial serve into `unresolved_def_seen`
+        // before the closed-eval commit and before the caller reads
+        // `is_unresolved_def_seen` (issue #16055).
+        self.observe_provisional_epoch();
         self.commit_closed_eval_writes(limit_snapshot);
         result
     }
@@ -1390,6 +1426,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// be persisted to depth-agnostic caches; see the `tainted` field.
     #[inline]
     fn memo_insert(&mut self, epoch_at_entry: u32, type_id: TypeId, result: TypeId) {
+        // A provisional class partial served during this node's evaluation
+        // must gate this write like an unresolved def (issue #16055).
+        self.observe_provisional_epoch();
         if self.limit_epoch != epoch_at_entry {
             self.tainted.insert(type_id);
         } else {
@@ -1687,6 +1726,10 @@ mod tests;
 #[cfg(test)]
 #[path = "../../tests/evaluate_application_orchestrator_tests.rs"]
 mod orchestrator_tests;
+
+#[cfg(test)]
+#[path = "../../tests/provisional_epoch_tests.rs"]
+mod provisional_epoch_tests;
 
 #[cfg(test)]
 #[path = "../../tests/union_simplification_generic_member_tests.rs"]

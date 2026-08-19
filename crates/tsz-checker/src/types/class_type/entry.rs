@@ -56,6 +56,10 @@ impl<'a> CheckerState<'a> {
                     .get(&class_idx)
                     .copied(),
             ) {
+                // Serving a mid-resolution partial: taint in-flight
+                // evaluations so they do not persist results derived from it
+                // (issue #16055).
+                self.ctx.note_provisional_class_value();
                 return result;
             }
 
@@ -70,6 +74,9 @@ impl<'a> CheckerState<'a> {
             }
         } else {
             if is_in_resolution_set {
+                // Mid-resolution partial serve; see the sibling branch above
+                // (issue #16055).
+                self.ctx.note_provisional_class_value();
                 return self
                     .ctx
                     .class_instance_type_cache

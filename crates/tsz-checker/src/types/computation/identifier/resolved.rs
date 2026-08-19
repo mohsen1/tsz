@@ -1397,6 +1397,11 @@ impl CheckerState<'_> {
             let ctor_already_resolving =
                 self.ctx.class_constructor_resolution_set.contains(&sym_id);
             if ctor_already_resolving {
+                // Every branch below serves a value derived from a
+                // mid-resolution constructor window: taint in-flight
+                // evaluations so nothing persists a result computed against
+                // it (issue #16055).
+                self.ctx.note_provisional_class_value();
                 // Try cached constructor type first
                 if let Some(class_idx) = self.get_class_declaration_from_symbol(sym_id)
                     && let Some(cached_ctor) = self

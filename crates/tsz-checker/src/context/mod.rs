@@ -1164,6 +1164,15 @@ pub struct CheckerContext<'a> {
     pub merged_value_types: FxHashMap<SymbolId, TypeId>,
     /// O(1) lookup set for class instance type resolution to avoid recursion.
     pub class_instance_resolution_set: FxHashSet<SymbolId>,
+    /// Monotone count of provisional class-instance/constructor values served
+    /// while their owning class was still mid-resolution (a prescan/rough
+    /// partial, an in-resolution `class_instance_type_cache` entry, or a
+    /// window partial constructor). Exposed to the solver through
+    /// `TypeResolver::provisional_value_epoch`: an evaluation during which
+    /// this moved must not persist its result in `TypeId`-keyed caches, or a
+    /// partial-derived materialization permanently shadows the completed one
+    /// (issue #16055).
+    pub provisional_class_value_epoch: std::cell::Cell<u64>,
     /// O(1) lookup set for class constructor type resolution to avoid recursion.
     pub class_constructor_resolution_set: FxHashSet<SymbolId>,
     /// Window-scoped partial constructor types published while a class's

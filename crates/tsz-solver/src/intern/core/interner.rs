@@ -1471,6 +1471,18 @@ impl TypeInterner {
         // #13246: TLS intern-cache miss -> shard slow path.
         tsz_common::perf_counters::record_interner_intern_tls_outcome(false);
         let result = self.intern_slow(key, hash, pc);
+        // TEMP PROBE (#16055): backtrace the creation of the two ZodType
+        // materializations that end up as distinct union siblings.
+        if result.0 == 3513 || result.0 == 14734 {
+            static SEEN: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+            if SEEN.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 4 {
+                tracing::debug!(
+                    id = result.0,
+                    backtrace = %std::backtrace::Backtrace::force_capture(),
+                    "16055 probe: interned tracked TypeId"
+                );
+            }
+        }
         if result != TypeId::ERROR {
             let evicted = cache::intern_insert(hash, self.instance_id, key, result);
             if evicted {
@@ -1715,6 +1727,18 @@ impl TypeInterner {
 
     pub(in crate::intern) fn intern_type_list(&self, members: Vec<TypeId>) -> TypeListId {
         tsz_common::perf_counters::record_interner_type_list_intern_call();
+        // TEMP PROBE (#16055): backtrace lists pairing the partial-derived
+        // materialization with a sibling.
+        if members.iter().any(|m| m.0 == 3513) {
+            static SEEN_L: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+            if SEEN_L.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 4 {
+                tracing::debug!(
+                    members = ?members,
+                    backtrace = %std::backtrace::Backtrace::force_capture(),
+                    "16055 probe: type list containing 3513"
+                );
+            }
+        }
         TypeListId(self.type_lists.intern(&members))
     }
 
@@ -1722,10 +1746,32 @@ impl TypeInterner {
     /// already has a `SmallVec` or slice reference.
     pub(in crate::intern) fn intern_type_list_from_slice(&self, members: &[TypeId]) -> TypeListId {
         tsz_common::perf_counters::record_interner_type_list_intern_call();
+        // TEMP PROBE (#16055): see intern_type_list.
+        if members.iter().any(|m| m.0 == 3513) {
+            static SEEN_S: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+            if SEEN_S.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 4 {
+                tracing::debug!(
+                    members = ?members,
+                    backtrace = %std::backtrace::Backtrace::force_capture(),
+                    "16055 probe: type slice containing 3513"
+                );
+            }
+        }
         TypeListId(self.type_lists.intern(members))
     }
 
     pub(super) fn intern_tuple_list(&self, elements: Vec<TupleElement>) -> TupleListId {
+        // TEMP PROBE (#16055): see intern_type_list.
+        if elements.iter().any(|e| e.type_id.0 == 3513) {
+            static SEEN_T: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+            if SEEN_T.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 4 {
+                tracing::debug!(
+                    elements = ?elements,
+                    backtrace = %std::backtrace::Backtrace::force_capture(),
+                    "16055 probe: tuple list containing 3513"
+                );
+            }
+        }
         TupleListId(self.tuple_lists.intern(&elements))
     }
 

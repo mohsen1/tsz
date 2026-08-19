@@ -997,6 +997,15 @@ impl CheckerState<'_> {
                                 } else {
                                     None
                                 };
+                                if from_node_cache.is_some()
+                                    && self.ctx.class_instance_resolution_set.contains(&sym_id)
+                                {
+                                    // The node cache held a mid-resolution
+                                    // partial: taint in-flight evaluations so
+                                    // nothing persists a result derived from
+                                    // it (issue #16055).
+                                    self.ctx.note_provisional_class_value();
+                                }
 
                                 // If neither cache has it, try building via
                                 // class_instance_type_from_symbol (will create
@@ -1830,13 +1839,21 @@ impl CheckerState<'_> {
                     .symbol_instance_types
                     .get(&sym_id)
                     .or_else(|| {
-                        symbol.primary_declaration().and_then(|idx| {
+                        let from_node_cache = symbol.primary_declaration().and_then(|idx| {
                             self.ctx
                                 .class_instance_type_cache
                                 .borrow()
                                 .get(&idx)
                                 .copied()
-                        })
+                        });
+                        if from_node_cache.is_some()
+                            && self.ctx.class_instance_resolution_set.contains(&sym_id)
+                        {
+                            // Mid-resolution partial serve; see the sibling
+                            // fallback above (issue #16055).
+                            self.ctx.note_provisional_class_value();
+                        }
+                        from_node_cache
                     })
                     .unwrap_or_else(|| {
                         // Try building the instance type directly from the class symbol.

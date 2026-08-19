@@ -767,6 +767,13 @@ impl<'a> TypeResolver for CheckerContext<'a> {
             .saturating_add(self.symbol_instance_types.version())
     }
 
+    /// See [`CheckerContext::note_provisional_class_value`]: moved when a
+    /// mid-resolution class partial was served, so evaluators skip persisting
+    /// results computed across it (issue #16055).
+    fn provisional_value_epoch(&self) -> u64 {
+        self.provisional_class_value_epoch.get()
+    }
+
     /// Resolve a symbol reference to its cached type (deprecated).
     ///
     /// `TypeData::Ref` is removed, but we keep this for compatibility.
