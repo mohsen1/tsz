@@ -679,7 +679,10 @@ impl<'a> CheckerState<'a> {
         })
     }
 
-    fn callback_prefers_argument_level_return_mismatch(&self, arg_idx: NodeIndex) -> bool {
+    pub(crate) fn callback_prefers_argument_level_return_mismatch(
+        &self,
+        arg_idx: NodeIndex,
+    ) -> bool {
         let Some(func) = self
             .callback_function_index(arg_idx)
             .and_then(|idx| self.ctx.arena.get(idx))
