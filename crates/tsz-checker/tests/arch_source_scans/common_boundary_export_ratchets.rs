@@ -259,7 +259,7 @@ const MIGRATED_OUT_OF_COMMON_SHAPE_CONTAINMENT: &[&str] = &[
     "is_callable_type",
     "is_conditional_type",
     "is_constructor_like_type",
-    "is_deferred_indexed_access_or_intersection_with_one",
+    "is_deferred_constraint_relative_operand",
     "is_definitely_nullish",
     "is_distributive_conditional_with_deferred_check",
     "is_empty_object_type",
