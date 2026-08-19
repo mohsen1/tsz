@@ -172,6 +172,14 @@ impl CheckerContext<'_> {
     /// Register an enum member's parent enum in **both** type environments
     /// through the race-safe deferral discipline.
     pub(crate) fn register_enum_parent_in_envs(&self, member_def_id: DefId, parent_def_id: DefId) {
+        // Publish the member -> parent edge directly to the shared
+        // `DefinitionStore` as well. The env write-through only reaches the
+        // store for envs that already have it wired at write time, but
+        // solver-side generic-call inference reads the edge through the
+        // `QueryCache`'s attached store (its resolver has no env access), so
+        // the edge must be present there regardless of env wiring order.
+        self.definition_store
+            .register_enum_parent(member_def_id, parent_def_id);
         self.register_in_envs(DeferredFlowEnvWrite::RegisterEnumParent {
             member_def_id,
             parent_def_id,

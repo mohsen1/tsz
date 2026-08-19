@@ -344,11 +344,14 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             .iter()
                             .all(|&bound| self.checker.is_assignable_to(bound, constraint_ty));
                         if !all_subtypes_of_constraint {
+                            let leftmost_dropped_by_priority =
+                                infer_ctx.has_mixed_priority_candidates(var);
                             let candidate = self.resolve_direct_parameter_inference_type(
                                 &non_constraint_bounds,
                                 infer_ctx.best_common_type(&non_constraint_bounds),
                                 has_usable_contra_candidates,
                                 infer_ctx.has_fresh_array_element_candidate(var),
+                                leftmost_dropped_by_priority,
                             );
                             let upper_bounds_ok = constraints.upper_bounds.iter().all(|upper| {
                                 !matches!(upper, &TypeId::ANY | &TypeId::UNKNOWN | &TypeId::ERROR)
@@ -418,11 +421,14 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             } else if direct_param_vars.contains(&var)
                                 && !has_index_signature_candidates
                             {
+                                let leftmost_dropped_by_priority =
+                                    infer_ctx.has_mixed_priority_candidates(var);
                                 self.resolve_direct_parameter_inference_type(
                                     &lower_bounds,
                                     ty,
                                     has_usable_contra_candidates,
                                     infer_ctx.has_fresh_array_element_candidate(var),
+                                    leftmost_dropped_by_priority,
                                 )
                             } else {
                                 ty
@@ -561,11 +567,14 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             let fallback = if direct_param_vars.contains(&var)
                                 && !has_index_signature_candidates
                             {
+                                let leftmost_dropped_by_priority =
+                                    infer_ctx.has_mixed_priority_candidates(var);
                                 self.resolve_direct_parameter_inference_type(
                                     &lower_bounds,
                                     fallback,
                                     has_usable_contra_candidates,
                                     infer_ctx.has_fresh_array_element_candidate(var),
+                                    leftmost_dropped_by_priority,
                                 )
                             } else {
                                 fallback

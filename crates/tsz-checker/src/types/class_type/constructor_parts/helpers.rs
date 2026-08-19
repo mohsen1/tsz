@@ -83,6 +83,7 @@ impl<'a> CheckerState<'a> {
         class: &tsz_parser::parser::node::ClassData,
         member_count: usize,
         sym_id: tsz_binder::SymbolId,
+        class_type_params: &[tsz_solver::TypeParamInfo],
     ) -> Option<TypeId> {
         let mut inst_props: Vec<PropertyInfo> = Vec::with_capacity(member_count);
         for &member_idx in &class.members.nodes {
@@ -123,7 +124,62 @@ impl<'a> CheckerState<'a> {
         self.ctx
             .symbol_instance_types
             .insert(sym_id, partial_instance);
+        // Register the fields-only snapshot as the class's provisional
+        // instance (#16055) so application evaluation keeps `C[args]` opaque
+        // instead of materializing from it while the constructor window is
+        // open. Publication of the completed instance clears the registration.
+        if !class_type_params.is_empty() {
+            let def_id = self.ctx.get_or_create_def_id(sym_id);
+            self.ctx.types.register_provisional_class_instance(
+                partial_instance,
+                def_id,
+                class_type_params.to_vec().into(),
+            );
+        }
         Some(partial_instance)
+    }
+
+    /// Compute the type of a class constructor's implicit `prototype` member.
+    ///
+    /// For a generic class the prototype is shared across all instantiations,
+    /// so `C.prototype` has every type parameter substituted with `any`. While
+    /// the class's own instance is still a provisional (mid-build) snapshot,
+    /// materializing from it would intern a degraded object that the
+    /// constructor type carries durably as its `prototype` member (#16055);
+    /// defer to the class application over `any` arguments instead, so the
+    /// member resolves against the completed instance identity once the class
+    /// publishes.
+    pub(super) fn class_prototype_member_type(
+        &mut self,
+        current_sym: Option<tsz_binder::SymbolId>,
+        instance_type: TypeId,
+        class_type_params: &[tsz_solver::TypeParamInfo],
+    ) -> TypeId {
+        if class_type_params.is_empty() {
+            return instance_type;
+        }
+        let any_args: Vec<TypeId> = class_type_params.iter().map(|_| TypeId::ANY).collect();
+        let provisional_def = current_sym.and_then(|sym_id| {
+            self.ctx
+                .types
+                .provisional_class_instance(instance_type)
+                .filter(|(def, _)| *def == self.ctx.get_or_create_def_id(sym_id))
+                .map(|(def, _)| def)
+        });
+        if let Some(def_id) = provisional_def {
+            let lazy = self.ctx.types.lazy(def_id);
+            return self.ctx.types.application(lazy, any_args);
+        }
+        let substitution = crate::query_boundaries::common::TypeSubstitution::from_args(
+            self.ctx.types,
+            class_type_params,
+            &any_args,
+        );
+        crate::query_boundaries::common::instantiate_type(
+            self.ctx.types,
+            instance_type,
+            &substitution,
+        )
     }
 
     /// Deferred fallback for a re-entrant constructor query: a `Lazy` reference
