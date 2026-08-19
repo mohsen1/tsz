@@ -14,7 +14,9 @@ use crate::def::resolver::TypeResolver;
 use crate::diagnostics::SubtypeFailureReason;
 use crate::relations::subtype::SubtypeChecker;
 use crate::types::TypeId;
-use crate::visitor::{application_id, is_type_parameter, union_list_id};
+use crate::visitor::{
+    application_id, is_type_parameter, object_shape_id, object_with_index_shape_id, union_list_id,
+};
 
 impl<R: TypeResolver> SubtypeChecker<'_, R> {
     /// Wrap a promoted sole-real-member failure in
@@ -296,6 +298,22 @@ impl<R: TypeResolver> SubtypeChecker<'_, R> {
             }
         }
 
+        // A FRESH object-literal source never reaches tsc's
+        // `typeRelatedToSomeType` best-member frame: `isRelatedTo`'s
+        // excess-property phase (`hasExcessProperties`, checker.ts) runs
+        // first, reduces the union target to the discriminant-matched
+        // constituent (else its object-like members), and reports the first
+        // source property whose type fails against those members' property
+        // types folded directly beneath the head line — no member frame.
+        // Non-fresh sources skip that phase and keep the member frame below.
+        // Witness family: #17721.
+        if source_members.len() == 1
+            && let Some(reason) =
+                self.fresh_object_literal_union_property_fold(resolved_source, &members)
+        {
+            return Some(reason);
+        }
+
         // Structural union target: select the best-matching member the way
         // tsc's `getBestMatchingType` does — discriminant first, then
         // key-overlap, and no member at all when nothing overlaps. See
@@ -312,10 +330,11 @@ impl<R: TypeResolver> SubtypeChecker<'_, R> {
         // index-signature mismatch, …) elaborates beneath a
         // `Type 'S' is not assignable to type '<member>'.` member frame —
         // the checker's `UnionTargetMismatch` renderer owns that split.
-        // Fresh object-literal sources never reach this reason: the
+        // Fresh object-literal sources whose failure is a present property's
+        // type mismatch folded above and never reach this reason; the
         // checker's expression elaboration
         // (`try_elaborate_assignment_source_error`) reports at the
-        // offending property node first.
+        // offending property node first when a property-level anchor exists.
         if let Some(member) = best_member {
             for &source_member in &source_members {
                 if self.check_subtype(source_member, member).is_true() {
@@ -367,5 +386,104 @@ impl<R: TypeResolver> SubtypeChecker<'_, R> {
             source_type: source,
             target_union_members: members.to_vec(),
         })
+    }
+
+    /// `tsc`'s `hasExcessProperties` union fold for a fresh object-literal
+    /// source: reduce the union target to the discriminant-matched member
+    /// (`findMatchingDiscriminantType`), falling back to every object-like
+    /// member, then report the FIRST source property (declaration order) whose
+    /// type fails against those members' property types
+    /// (`getTypeOfPropertyInTypes`: per-member property type, `undefined` for
+    /// a member lacking the property) as a bare
+    /// [`SubtypeFailureReason::PropertyTypeMismatch`] — rendered
+    /// `Types of property 'X' are incompatible.` directly beneath the head,
+    /// with the property relation's own reason nested below and NO member
+    /// frame. Returns `None` for a non-fresh source, a union with no
+    /// object-like member, or when no present property fails (a missing
+    /// required property keeps the best-member elaboration).
+    fn fresh_object_literal_union_property_fold(
+        &mut self,
+        resolved_source: TypeId,
+        members: &[TypeId],
+    ) -> Option<SubtypeFailureReason> {
+        let shape_id = object_shape_id(self.interner, resolved_source)
+            .or_else(|| object_with_index_shape_id(self.interner, resolved_source))?;
+        if !self.interner.object_shape(shape_id).is_fresh_literal() {
+            return None;
+        }
+        let check_members: Vec<TypeId> =
+            match self.union_discriminant_matched_member(resolved_source, members) {
+                Some(member) => vec![member],
+                None => members
+                    .iter()
+                    .copied()
+                    .filter(|&member| {
+                        let resolved = self.apparent_type_for_keys(member);
+                        object_shape_id(self.interner, resolved).is_some()
+                            || object_with_index_shape_id(self.interner, resolved).is_some()
+                    })
+                    .collect(),
+            };
+        if check_members.is_empty() {
+            return None;
+        }
+        // tsc iterates the fresh literal's properties in DECLARATION order
+        // (`getPropertiesOfType`), so when several properties fail, the
+        // first-declared one is the reported witness. The stored shape is
+        // name-sorted; restore declaration order (0 = unrecorded, kept after
+        // the recorded ones in stored order — `sort_by_key` is stable).
+        let mut properties: Vec<(u32, tsz_common::interner::Atom, TypeId)> = self
+            .interner
+            .object_shape(shape_id)
+            .properties
+            .iter()
+            .map(|prop| {
+                let order = if prop.declaration_order == 0 {
+                    u32::MAX
+                } else {
+                    prop.declaration_order
+                };
+                (order, prop.name, prop.type_id)
+            })
+            .collect();
+        properties.sort_by_key(|&(order, _, _)| order);
+        for (_, name, source_prop) in properties {
+            let mut member_prop_types = Vec::with_capacity(check_members.len());
+            let mut any_present = false;
+            for &member in &check_members {
+                match self.discriminant_property_type(member, name) {
+                    Some(prop_type) => {
+                        any_present = true;
+                        member_prop_types.push(prop_type);
+                    }
+                    // `getTypeOfPropertyInTypes`: a member without the
+                    // property contributes `undefined` to the checked union.
+                    None => member_prop_types.push(TypeId::UNDEFINED),
+                }
+            }
+            // A property unknown to every checked member belongs to the
+            // excess-property report, not a property-type fold.
+            if !any_present {
+                continue;
+            }
+            let target_prop = if let [single] = member_prop_types.as_slice() {
+                *single
+            } else {
+                self.interner.union(member_prop_types)
+            };
+            if self.check_subtype(source_prop, target_prop).is_true() {
+                continue;
+            }
+            let nested_reason = self
+                .explain_failure_guarded(source_prop, target_prop)
+                .map(Box::new);
+            return Some(SubtypeFailureReason::PropertyTypeMismatch {
+                property_name: name,
+                source_property_type: source_prop,
+                target_property_type: target_prop,
+                nested_reason,
+            });
+        }
+        None
     }
 }

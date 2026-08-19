@@ -7,11 +7,15 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn target_preserves_literal_surface(&mut self, target: TypeId) -> bool {
         let target = self.evaluate_type_for_assignability(target);
 
+        // Any unit-literal kind qualifies (string / number / boolean /
+        // bigint): tsc's fresh-literal preservation is per-property and
+        // kind-agnostic, so an all-numeric discriminated union preserves the
+        // source display exactly like a string-discriminated one (#17721).
         let has_literal_member = |shape: &tsz_solver::ObjectShape| {
             shape
                 .properties
                 .iter()
-                .any(|prop| self.type_contains_string_literal(prop.type_id))
+                .any(|prop| self.type_contains_unit_literal(prop.type_id))
         };
 
         if let Some(shape) =

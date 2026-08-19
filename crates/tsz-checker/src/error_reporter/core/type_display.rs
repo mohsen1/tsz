@@ -1838,6 +1838,25 @@ impl<'a> CheckerState<'a> {
         widened != type_id && widened == primitive_base
     }
 
+    /// True when `type_id` is — or, recursively, has a union member that is —
+    /// a unit literal of any primitive base (`string` / `number` / `boolean` /
+    /// `bigint`). Kind-agnostic sibling of
+    /// [`Self::type_contains_literal_of_primitive_base`] for the coarse
+    /// target-side gate: tsc's fresh-literal display preservation
+    /// (`isLiteralOfContextualType`) is not string-specific, so a target whose
+    /// literal members are all numeric/boolean/bigint preserves the source
+    /// literal display exactly like a string-literal-bearing one. The
+    /// per-property same-base refinement stays with
+    /// `type_contains_literal_of_primitive_base`.
+    pub(in crate::error_reporter) fn type_contains_unit_literal(&self, type_id: TypeId) -> bool {
+        if let Some(members) = query::union_members(self.ctx.types, type_id) {
+            return members
+                .iter()
+                .any(|&member| self.type_contains_unit_literal(member));
+        }
+        query::widen_literal_to_primitive(self.ctx.types, type_id) != type_id
+    }
+
     pub(in crate::error_reporter) fn literal_expression_display(
         &self,
         expr_idx: NodeIndex,

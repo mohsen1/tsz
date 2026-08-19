@@ -220,6 +220,56 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         names
     }
 
+    /// Like [`Self::object_like_property_names`], but in the properties'
+    /// DECLARATION order rather than the shape's name-sorted storage order,
+    /// mirroring tsc's `getPropertiesOfType` iteration (which drives
+    /// discriminant-selection tie-breaks). Properties without a recorded
+    /// `declaration_order` (stored as 0) keep their storage order after the
+    /// recorded ones.
+    pub(super) fn object_like_property_names_in_declaration_order(
+        &mut self,
+        type_id: TypeId,
+    ) -> Vec<tsz_common::interner::Atom> {
+        use crate::type_queries::data::get_intersection_members;
+
+        let resolved = self.apparent_type_for_keys(type_id);
+        let mut entries: Vec<(u32, tsz_common::interner::Atom)> = Vec::new();
+        if let Some(sid) = object_shape_id(self.interner, resolved)
+            .or_else(|| object_with_index_shape_id(self.interner, resolved))
+        {
+            self.push_property_names_with_declaration_order(sid, &mut entries);
+        }
+        if let Some(members) = get_intersection_members(self.interner, resolved) {
+            for member in members {
+                let resolved_member = self.apparent_type_for_keys(member);
+                if let Some(sid) = object_shape_id(self.interner, resolved_member)
+                    .or_else(|| object_with_index_shape_id(self.interner, resolved_member))
+                {
+                    self.push_property_names_with_declaration_order(sid, &mut entries);
+                }
+            }
+        }
+        entries.sort_by_key(|&(order, _)| order);
+        entries.into_iter().map(|(_, name)| name).collect()
+    }
+
+    fn push_property_names_with_declaration_order(
+        &self,
+        shape_id: crate::types::ObjectShapeId,
+        entries: &mut Vec<(u32, tsz_common::interner::Atom)>,
+    ) {
+        for prop in self.interner.object_shape(shape_id).properties.iter() {
+            if !entries.iter().any(|&(_, name)| name == prop.name) {
+                let order = if prop.declaration_order == 0 {
+                    u32::MAX
+                } else {
+                    prop.declaration_order
+                };
+                entries.push((order, prop.name));
+            }
+        }
+    }
+
     /// Returns `true` if `type_id` is function-like — i.e. has at least one
     /// call or construct signature. Used by TS2739/TS2741 explain code to skip
     /// `prototype` from the missing-property list (tsc treats `prototype` as
