@@ -358,6 +358,39 @@ pub fn is_indexed_access(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     matches!(db.lookup(type_id), Some(TypeData::IndexAccess(_, _)))
 }
 
+/// Returns true if `type_id` is a *deferred* indexed access — an
+/// `IndexAccess(_, _)` that still mentions a type parameter (`T[K]`,
+/// `T[keyof T]`, or `Obj[K]` with a generic index) — or an intersection
+/// carrying one as a member.
+///
+/// `tsc` never relates such an operand against a union's constituents: the
+/// relation defers to the operand's constraint, so it never reaches the
+/// best-matching-member re-report that collapses a single-survivor nullable
+/// union in diagnostics. A fully concrete indexed access evaluates before
+/// display and does not qualify. Display-policy sibling of
+/// `is_type_parameter_or_intersection_with_type_parameter`.
+pub fn is_deferred_indexed_access_or_intersection_with_one(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
+    let is_deferred = |t: TypeId| {
+        matches!(db.lookup(t), Some(TypeData::IndexAccess(_, _)))
+            && super::contains_type_parameters_db(db, t)
+    };
+    if is_deferred(type_id) {
+        return true;
+    }
+    match db.lookup(type_id) {
+        Some(TypeData::Intersection(list_id)) => {
+            db.type_list(list_id).iter().any(|&m| is_deferred(m))
+        }
+        _ => false,
+    }
+}
+
 /// If `type_id` is an `IndexAccess(obj, KeyOf(obj))` (the same operand on both
 /// sides — the canonical `Foo[keyof Foo]` shape used by lib types like
 /// `type WeakKey = WeakKeyTypes[keyof WeakKeyTypes]`), return `Some(obj)`.
