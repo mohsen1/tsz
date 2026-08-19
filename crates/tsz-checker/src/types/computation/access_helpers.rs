@@ -1108,9 +1108,11 @@ impl<'a> CheckerState<'a> {
         receiver: TypeId,
         index_type: TypeId,
     ) -> bool {
-        !crate::query_boundaries::common::contains_type_parameters(self.ctx.types, receiver)
-            && self
-                .concrete_receiver_write_target_should_preserve_indexed_access(receiver, index_type)
+        !crate::query_boundaries::containment_queries::contains_type_parameters(
+            self.ctx.types,
+            receiver,
+        ) && self
+            .concrete_receiver_write_target_should_preserve_indexed_access(receiver, index_type)
     }
 
     fn index_resolves_to_keyof_of_receiver(

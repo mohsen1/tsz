@@ -736,8 +736,9 @@ impl<'a> CheckerState<'a> {
             // pinned typescript@7.0.2, #17718 witness 2 family: `Type
             // 'Bag[KSel]' is not assignable to type 'string | undefined'.`).
             let preserve_deferred_surface =
-                crate::query_boundaries::common::is_deferred_constraint_relative_operand(
+                crate::query_boundaries::shape_predicates::is_deferred_constraint_relative_operand(
                     self.ctx.types.as_type_database(),
+                    &self.ctx.definition_store,
                     expr_display_type,
                 );
             let display_type = if expr_display_type != TypeId::ERROR {
