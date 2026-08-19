@@ -766,6 +766,21 @@ pub struct TypeEnvironment {
     /// Populated by checker-side computed-property resolution and consumed by
     /// solver-side `keyof` evaluation to preserve unique-symbol key identity.
     well_known_symbol_name_to_ref: FxHashMap<String, SymbolRef>,
+    /// Reverse of [`Self::well_known_symbol_name_to_ref`]: every `SymbolRef` ever
+    /// registered for a canonical `[Symbol.xxx]` name -> that name.
+    ///
+    /// The forward map keeps a single `SymbolRef` per name (last write wins), but
+    /// a well-known symbol is denoted by *several* distinct `SymbolRef`s across
+    /// the pipeline — the lib `SymbolConstructor` member ref, the ref a use-site
+    /// `typeof Symbol.xxx` resolves to, and the ref recovered from an interface's
+    /// own computed-name expression can all differ. A later registration for one
+    /// spelling would otherwise clobber the forward entry and make the reverse
+    /// name lookup miss for a `SymbolRef` that legitimately denotes the same
+    /// well-known symbol (the method-member `M[typeof Symbol.iterator]` residual,
+    /// #17720). `SymbolRef -> name` is a true function — a given ref denotes one
+    /// symbol — so accumulating every ref here (never removing) lets the reverse
+    /// lookup recognize the name regardless of registration order.
+    well_known_symbol_ref_to_name: FxHashMap<SymbolRef, String>,
     /// Maps a merged interface+value `SymbolRef` to its VALUE-space type for
     /// `typeof` queries.
     ///
@@ -813,6 +828,7 @@ impl TypeEnvironment {
             this_type: None,
             unresolved_name_resolutions: FxHashMap::default(),
             well_known_symbol_name_to_ref: FxHashMap::default(),
+            well_known_symbol_ref_to_name: FxHashMap::default(),
             typeof_value_types: FxHashMap::default(),
         }
     }
@@ -847,6 +863,13 @@ impl TypeEnvironment {
     /// Register the `SymbolRef` behind a canonical well-known symbol key name
     /// (e.g. `"[Symbol.iterator]"`).
     pub fn register_well_known_symbol_name(&mut self, name: String, symbol_ref: SymbolRef) {
+        // Accumulate the reverse `ref -> name` edge (first spelling wins; a ref
+        // denotes one symbol, so a repeat is a no-op and a conflict would be a
+        // pre-existing identity bug we do not want to propagate). This is kept
+        // even when the forward entry is later overwritten for another ref.
+        self.well_known_symbol_ref_to_name
+            .entry(symbol_ref)
+            .or_insert_with(|| name.clone());
         self.well_known_symbol_name_to_ref.insert(name, symbol_ref);
         self.bump_generation();
     }
@@ -859,9 +882,17 @@ impl TypeEnvironment {
     /// Reverse of [`TypeEnvironment::get_well_known_symbol_ref`]: the canonical
     /// `[Symbol.xxx]` name registered for a well-known symbol `SymbolRef`.
     ///
-    /// The registry holds only the handful of well-known symbols, so a linear
-    /// scan is cheaper than maintaining a second always-in-sync reverse map.
+    /// Backed by the accumulating [`Self::well_known_symbol_ref_to_name`] map so
+    /// every ref ever registered for a name resolves back to it, not only the
+    /// one the forward `name -> ref` map currently holds.
     pub fn lookup_well_known_symbol_name(&self, symbol: SymbolRef) -> Option<&str> {
+        // The reverse map records *every* ref ever registered for a name, so it
+        // recognizes a `SymbolRef` whose forward entry was later overwritten for
+        // a different spelling of the same well-known symbol. Fall back to the
+        // forward scan for any entry that predates the reverse accumulation.
+        if let Some(name) = self.well_known_symbol_ref_to_name.get(&symbol) {
+            return Some(name.as_str());
+        }
         self.well_known_symbol_name_to_ref
             .iter()
             .find_map(|(name, &reg)| (reg == symbol).then_some(name.as_str()))

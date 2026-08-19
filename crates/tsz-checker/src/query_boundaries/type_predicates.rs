@@ -107,22 +107,6 @@ pub(crate) fn is_recursive_operation_application(
     tsz_solver::type_queries::is_recursive_operation_application_db(db, def_store, type_id)
 }
 
-/// Check if a type is a deferred (type-parameter-mentioning) indexed access,
-/// or an intersection carrying one, or a generic alias application whose
-/// declared body is one. Display-policy sibling of
-/// `common::is_type_parameter_or_intersection_with_type_parameter`.
-pub(crate) fn is_deferred_indexed_access_or_intersection_with_one(
-    db: &dyn TypeDatabase,
-    definitions: &tsz_solver::def::DefinitionStore,
-    type_id: TypeId,
-) -> bool {
-    tsz_solver::type_queries::is_deferred_indexed_access_or_intersection_with_one(
-        db,
-        definitions,
-        type_id,
-    )
-}
-
 pub(crate) fn type_predicate_type_assignable_to_parameter_with<F>(
     db: &dyn TypeDatabase,
     predicate_type: TypeId,

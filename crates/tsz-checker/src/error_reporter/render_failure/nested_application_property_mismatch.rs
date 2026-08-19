@@ -557,6 +557,33 @@ impl<'a> CheckerState<'a> {
                 diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
             );
             diag.push_elaboration_in_span(start, length, detail, reason.diagnostic_code(), 0);
+            // A property source that defers to its base constraint (a deferred
+            // indexed access `T[K]`, a bare `keyof T`, or a conditional) keeps
+            // the written operand and the *full* nullable-union target at the
+            // leaf pair: tsc renders the as-written relation (`TBox[KKey]` vs
+            // `string | undefined`) and then walks the constraint, never the
+            // best-matching-member collapse (`... vs string`) that the solver's
+            // evaluated nested reason carries. Emit the raw pair and stop — the
+            // deeper constraint walk is separate elaboration tsz does not
+            // synthesize, and emitting the collapsed member here would be wrong.
+            if crate::query_boundaries::common::is_deferred_constraint_relative_operand(
+                self.ctx.types.as_type_database(),
+                &self.ctx.definition_store,
+                source_property_type,
+            ) {
+                let source_str = self.format_type_for_assignability_message(source_property_type);
+                let target_str = self.format_type_for_assignability_message(target_property_type);
+                let leaf = format_message(
+                    diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                    &[&source_str, &target_str],
+                );
+                diag.push_elaboration(
+                    leaf,
+                    diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                    depth + 1,
+                );
+                return diag;
+            }
             if let Some(nested) = nested_reason {
                 // A header-led nested reason (tuple element/arity,
                 // index-signature) leads with its specialized line, not the
