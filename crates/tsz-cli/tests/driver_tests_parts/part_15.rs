@@ -292,3 +292,182 @@ fn cross_file_interface_merge_new_reversed_file_order_flips_winner() {
         "with reversed program order the other file's construct group is later and must win, got: {diags:?}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Cross-file FUNCTION declaration merging: one global function symbol
+// re-declared across program script files forms one merged overload set
+// (tsc FunctionExcludes permits function+function merging), resolved with the
+// later declaration group's signatures tried first (reorderCandidates keyed
+// on signature.declaration.parent). Oracle: tsc 6.0.2 on each fixture. The
+// same-file parent-keyed grouping (namespace block re-opens) is covered here
+// too since the group key is the declaration parent, not the file.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn cross_file_function_merge_call_prefers_later_declaration_group() {
+    let (_tmp, diags) = compile_ordered_files(&[
+        ("early.ts", "declare function paint(x: string): 1;\n"),
+        (
+            "late.ts",
+            "declare function paint(x: string): 2;\nconst chosen: 2 = paint(\"x\");\n",
+        ),
+    ]);
+    assert!(
+        diags.is_empty(),
+        "later file's declaration group must win the merged function call, got: {diags:?}"
+    );
+}
+
+#[test]
+fn cross_file_function_merge_usage_in_earlier_file_prefers_later_group() {
+    let (_tmp, diags) = compile_ordered_files(&[
+        (
+            "consumer.ts",
+            "declare function sample(x: string): 1;\nconst level: 2 = sample(\"x\");\n",
+        ),
+        ("extension.ts", "declare function sample(x: string): 2;\n"),
+    ]);
+    assert!(
+        diags.is_empty(),
+        "a call in the earlier file still resolves against the later declaration group, got: {diags:?}"
+    );
+}
+
+#[test]
+fn cross_file_function_merge_reversed_file_order_flips_winner() {
+    let (_tmp, diags) = compile_ordered_files(&[
+        (
+            "use.ts",
+            "declare function draw(x: string): 2;\nconst picked: 2 = draw(\"x\");\n",
+        ),
+        ("other.ts", "declare function draw(x: string): 1;\n"),
+    ]);
+    assert!(
+        diags.iter().any(|(code, message)| *code == 2322
+            && message.contains("'1'")
+            && message.contains("'2'")),
+        "with reversed program order the other file's group is later and must win, got: {diags:?}"
+    );
+}
+
+#[test]
+fn cross_file_function_merge_unions_applicable_overloads() {
+    // Before the merge existed, the calling file saw only its own local
+    // declaration and reported a false TS2345 for an argument only the other
+    // file's overload accepts.
+    let (_tmp, diags) = compile_ordered_files(&[
+        ("numeric.ts", "declare function pick(x: number): \"num\";\n"),
+        (
+            "stringy.ts",
+            "declare function pick(x: string): \"str\";\nconst got: \"num\" = pick(42);\n",
+        ),
+    ]);
+    assert!(
+        diags.is_empty(),
+        "the merged overload set must include the other file's applicable signature, got: {diags:?}"
+    );
+}
+
+#[test]
+fn cross_file_function_merge_specialized_signature_hoists_above_later_group() {
+    // Specialized (literal-parameter) signatures splice above every group,
+    // even one from an earlier file; non-literal calls still prefer the later
+    // group's general signature.
+    let (_tmp, diags) = compile_ordered_files(&[
+        (
+            "spec.ts",
+            "declare function spin(x: \"lit\"): \"spec1\";\ndeclare function spin(x: string): \"gen1\";\n",
+        ),
+        (
+            "gen.ts",
+            "declare function spin(x: string): \"gen2\";\nconst a: \"spec1\" = spin(\"lit\");\nconst b: \"gen2\" = spin(\"other\" as string);\n",
+        ),
+    ]);
+    assert!(
+        diags.is_empty(),
+        "specialized signatures hoist above the later group; general calls take the later group, got: {diags:?}"
+    );
+}
+
+#[test]
+fn cross_file_function_merge_three_files_pick_latest_group() {
+    let (_tmp, diags) = compile_ordered_files(&[
+        ("one.ts", "declare function link(x: string): 1;\n"),
+        ("two.ts", "declare function link(x: string): 2;\n"),
+        (
+            "three.ts",
+            "declare function link(x: string): 3;\nconst last: 3 = link(\"x\");\n",
+        ),
+    ]);
+    assert!(
+        diags.is_empty(),
+        "the latest of three function declaration groups must win, got: {diags:?}"
+    );
+}
+
+#[test]
+fn same_file_function_overloads_interleaved_stay_one_group() {
+    // The group key is the declaration PARENT (the source file), not lexical
+    // adjacency: top-level overloads separated by other statements are still
+    // one group, so forward order wins within the file.
+    let (_tmp, diags) = compile_ordered_files(&[(
+        "single.ts",
+        "declare function read(x: string): 1;\ndeclare const filler: number;\ndeclare function read(x: string): 2;\nconst first: 1 = read(\"x\");\n",
+    )]);
+    assert!(
+        diags.is_empty(),
+        "interleaved same-file declarations share the source-file group (forward order wins), got: {diags:?}"
+    );
+}
+
+#[test]
+fn same_file_ambient_namespace_reopen_function_forms_later_group() {
+    // Each namespace block is its own declaration parent, so a re-opened
+    // block's signatures form a later group even within one file.
+    let (_tmp, diags) = compile_ordered_files(&[(
+        "registry.ts",
+        "declare namespace Registry {\n  export function lookup(x: string): 1;\n}\ndeclare namespace Registry {\n  export function lookup(x: string): 2;\n}\nconst found: 2 = Registry.lookup(\"x\");\n",
+    )]);
+    assert!(
+        diags.is_empty(),
+        "a re-opened namespace block's function signatures form a later declaration group, got: {diags:?}"
+    );
+}
+
+#[test]
+fn module_local_functions_do_not_merge_across_files() {
+    // Negative control: module-scoped functions never merge with another
+    // file's same-named function, so each file keeps its own overload set.
+    let (_tmp, diags) = compile_ordered_files(&[
+        (
+            "mod_a.ts",
+            "export {};\nfunction scoped(x: string): 1;\nfunction scoped(x: unknown): unknown { return 1; }\nconst a: 1 = scoped(\"x\");\n",
+        ),
+        (
+            "mod_b.ts",
+            "export {};\nfunction scoped(x: string): 2;\nfunction scoped(x: unknown): unknown { return 2; }\nconst b: 2 = scoped(\"x\");\n",
+        ),
+    ]);
+    assert!(
+        diags.is_empty(),
+        "module-local functions must not merge across files, got: {diags:?}"
+    );
+}
+
+#[test]
+fn declare_global_block_function_merge_prefers_later_file() {
+    let (_tmp, diags) = compile_ordered_files(&[
+        (
+            "aug_one.ts",
+            "export {};\ndeclare global {\n  function gauge(x: string): 1;\n}\n",
+        ),
+        (
+            "aug_two.ts",
+            "export {};\ndeclare global {\n  function gauge(x: string): 2;\n}\nconst level: 2 = gauge(\"x\");\n",
+        ),
+    ]);
+    assert!(
+        diags.is_empty(),
+        "`declare global` blocks merge like any program-file groups (later file wins), got: {diags:?}"
+    );
+}

@@ -1429,19 +1429,13 @@ impl<'a> CheckerState<'a> {
             // Impl signature is never an externally visible call signature.
             // Body-less decls are the overloads; JSDoc `@overload` substitutes
             // only when zero body-less decls exist across all declarations.
-            let mut overloads = Vec::new();
-            let mut implementation_decl = NodeIndex::NONE;
-
-            for &decl_idx in &declarations {
-                let Some(func) = self.ctx.arena.get_function_at(decl_idx) else {
-                    continue;
-                };
-                if func.body.is_none() {
-                    overloads.push(self.call_signature_from_function(func, decl_idx));
-                } else {
-                    implementation_decl = decl_idx;
-                }
-            }
+            // Collection merges bodiless declarations from every program file
+            // re-declaring the symbol and stamps tsc's `reorderCandidates`
+            // declaration-group boundaries (`signature.declaration.parent`,
+            // forward program order) so call resolution tries later groups
+            // first while stored/display order stays forward.
+            let (mut overloads, implementation_decl) =
+                self.merged_function_overload_signatures(sym_id, &declarations);
 
             if overloads.is_empty()
                 && let Some(impl_func) = self.ctx.arena.get_function_at(implementation_decl)
