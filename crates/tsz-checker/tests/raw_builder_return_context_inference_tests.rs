@@ -371,3 +371,161 @@ function recover<Outer>(): Promise<Outer> {
         "nested Promise.catch generic control",
     );
 }
+
+/// #17673 item 1: aliases are transparent to tsc's ambiguous-union merge.
+/// Every error case below was oracle-pinned against tsc 6.0.2 (`--strict`):
+/// tsc reports exactly one TS2322 on the return statement.
+fn assert_single_ts2322(body: &str, context: &str) {
+    let source = format!("{PRELUDE}\n{body}");
+    let diagnostics = check_source_diagnostics(&source);
+    let codes: Vec<_> = diagnostics
+        .iter()
+        .map(|diagnostic| diagnostic.code)
+        .collect();
+    assert_eq!(codes, vec![2322], "{context}: {diagnostics:#?}");
+}
+
+#[test]
+fn alias_wrapped_ambiguous_arms_report_the_return_mismatch() {
+    assert_single_ts2322(
+        r#"
+type StrRow = RawBuilder<string>
+type NumRow = RawBuilder<number>
+function aliasArms(): StrRow | NumRow {
+  return sql``
+}
+"#,
+        "both arms alias-wrapped",
+    );
+}
+
+#[test]
+fn mixed_alias_and_direct_ambiguous_arms_report_the_return_mismatch() {
+    assert_single_ts2322(
+        r#"
+type StrRow = RawBuilder<string>
+function mixedAliasDirect(): StrRow | RawBuilder<number> {
+  return sql``
+}
+"#,
+        "one alias arm plus one direct arm",
+    );
+}
+
+#[test]
+fn generic_alias_ambiguous_arms_report_the_return_mismatch() {
+    assert_single_ts2322(
+        r#"
+type Row<Payload> = RawBuilder<Payload>
+function genericAliasArms(): Row<string> | Row<number> {
+  return sql``
+}
+"#,
+        "both arms through a generic alias of the base",
+    );
+}
+
+#[test]
+fn tag_declared_to_return_the_alias_application_reports_against_direct_arms() {
+    assert_single_ts2322(
+        r#"
+type Row<Payload> = RawBuilder<Payload>
+interface RowTag {
+  <Tagged = unknown>(parts: TemplateStringsArray, ...values: unknown[]): Row<Tagged>
+}
+declare const rowSql: RowTag
+function tagReturnsAlias(): RawBuilder<string> | RawBuilder<number> {
+  return rowSql``
+}
+"#,
+        "tag's declared return is the generic alias, arms are direct",
+    );
+}
+
+#[test]
+fn ordinary_call_with_alias_arms_reports_the_return_mismatch() {
+    assert_single_ts2322(
+        r#"
+type StrRow = RawBuilder<string>
+type NumRow = RawBuilder<number>
+function callAliasArms(): StrRow | NumRow {
+  return rawCall()
+}
+"#,
+        "ordinary zero-evidence call form with alias arms",
+    );
+}
+
+#[test]
+fn alias_arms_with_undefined_arm_report_the_return_mismatch() {
+    assert_single_ts2322(
+        r#"
+type StrRow = RawBuilder<string>
+type NumRow = RawBuilder<number>
+function aliasArmsUndef(): StrRow | NumRow | undefined {
+  return sql``
+}
+"#,
+        "alias arms plus a nullish arm",
+    );
+}
+
+#[test]
+fn alias_to_a_different_base_does_not_merge_and_stays_clean() {
+    assert_clean(
+        r#"
+interface OtherBuilder<T> { readonly other: T }
+type OtherRow = OtherBuilder<number>
+function aliasOtherBase(): RawBuilder<string> | OtherRow {
+  return sql``
+}
+"#,
+        "alias of a different base keeps the single-arm inference",
+    );
+}
+
+#[test]
+fn single_alias_arm_with_null_still_infers_from_that_arm() {
+    assert_clean(
+        r#"
+type StrRow = RawBuilder<string>
+function singleAliasNull(): StrRow | null {
+  return sql``
+}
+"#,
+        "single alias arm plus null keeps inferring from the arm",
+    );
+}
+
+#[test]
+fn alias_chain_arm_reports_the_return_mismatch() {
+    assert_single_ts2322(
+        r#"
+type Row<Payload> = RawBuilder<Payload>
+type StrRow = Row<string>
+type StrRow2 = StrRow
+function chainArms(): StrRow2 | RawBuilder<number> {
+  return sql``
+}
+"#,
+        "arm through a two-hop alias chain",
+    );
+}
+
+#[test]
+fn tag_declared_through_an_alias_chain_reports_against_direct_arms() {
+    assert_single_ts2322(
+        r#"
+type Row<Payload> = RawBuilder<Payload>
+type Row2<Payload> = Row<Payload>
+interface Row2Tag {
+  <Tagged = unknown>(parts: TemplateStringsArray, ...values: unknown[]): Row2<Tagged>
+}
+declare const row2Sql: Row2Tag
+function chainReturn(): RawBuilder<string> | RawBuilder<number> {
+  return row2Sql``
+}
+"#,
+        "tag's declared return is a two-hop alias chain, arms are direct",
+    );
+}
