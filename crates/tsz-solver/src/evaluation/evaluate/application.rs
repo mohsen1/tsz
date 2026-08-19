@@ -1879,6 +1879,10 @@ enum SameAliasExpansion {
 }
 
 #[cfg(test)]
+#[path = "../../../tests/provisional_class_instance_window_tests.rs"]
+mod provisional_class_instance_window_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::caches::db::TypeApplicationEvalCache;
