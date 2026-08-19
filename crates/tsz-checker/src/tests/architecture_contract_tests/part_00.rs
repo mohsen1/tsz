@@ -1241,8 +1241,19 @@ fn test_assignment_and_binding_default_assignability_use_central_gateway_helpers
         "computation mismatch checks should route through check_assignable_or_report gateway helpers"
     );
 
-    let type_computation_complex_src = fs::read_to_string("src/types/computation/complex.rs")
+    let mut type_computation_complex_src = fs::read_to_string("src/types/computation/complex.rs")
         .expect("failed to read src/types/computation/complex.rs for architecture guard");
+    // Include split-off modules that are part of the `computation/complex`
+    // logical module, exactly as the `helpers.rs` + `binary.rs` pair above.
+    // The gateway call lives in whichever shard owns the mismatch path, so
+    // grepping only `complex.rs` turns a *relocation* into a false breach
+    // (#17748 moved the new-expression argument path into
+    // `complex_new_arg_mismatch.rs`).
+    type_computation_complex_src.push_str(
+        &fs::read_to_string("src/types/computation/complex_new_arg_mismatch.rs").expect(
+            "failed to read src/types/computation/complex_new_arg_mismatch.rs for architecture guard",
+        ),
+    );
     assert!(
         type_computation_complex_src.contains("check_argument_assignable_or_report("),
         "computation/complex argument mismatch checks should route through check_argument_assignable_or_report"
