@@ -72,3 +72,167 @@ const c = "x";
         result.diagnostics
     );
 }
+
+// ---------------------------------------------------------------------------
+// Cross-file interface declaration merging: overload resolution order.
+//
+// When one global interface symbol has declarations in multiple program
+// files, tsc resolves calls against the merged overload set with the LATER
+// declaration group's signatures tried first (reorderCandidates), while the
+// stored/display order stays forward. Program order is the driver's file
+// order. Oracle: tsc 6.0.2/7.0.2 on each fixture (#17646 cross-file
+// follow-up). The same-file re-open ordering is fenced separately by
+// `merged_interface_overload_order_tests` in tsz-checker (#17652).
+// ---------------------------------------------------------------------------
+
+fn compile_ordered_files(files: &[(&str, &str)]) -> (TempDir, Vec<(u32, String)>) {
+    let tmp = TempDir::new().unwrap();
+    let base = &tmp.path;
+    for (name, contents) in files {
+        write_file(&base.join(name), contents);
+    }
+    let mut args = default_args();
+    args.no_emit = true;
+    args.types = Some(Vec::new());
+    args.files = files.iter().map(|(name, _)| PathBuf::from(name)).collect();
+    let result = compile(&args, base).expect("compile should succeed");
+    let diags = result
+        .diagnostics
+        .iter()
+        .map(|diag| (diag.code, diag.message_text.clone()))
+        .collect();
+    (tmp, diags)
+}
+
+#[test]
+fn cross_file_interface_merge_call_prefers_later_declaration_group() {
+    let (_tmp, diags) = compile_ordered_files(&[
+        ("early.ts", "interface Widget { paint(x: string): 1 }\n"),
+        (
+            "late.ts",
+            "interface Widget { paint(x: string): 2 }\ndeclare const w: Widget;\nconst chosen: 2 = w.paint(\"x\");\n",
+        ),
+    ]);
+    assert!(
+        diags.is_empty(),
+        "later file's declaration group must win the merged-overload call, got: {diags:?}"
+    );
+}
+
+#[test]
+fn cross_file_interface_merge_earlier_group_annotation_reports_ts2322() {
+    let (_tmp, diags) = compile_ordered_files(&[
+        ("first.ts", "interface Gauge { read(x: string): 1 }\n"),
+        (
+            "second.ts",
+            "interface Gauge { read(x: string): 2 }\ndeclare const gauge: Gauge;\nconst wrong: 1 = gauge.read(\"x\");\n",
+        ),
+    ]);
+    assert!(
+        diags.iter().any(|(code, message)| *code == 2322
+            && message.contains("'2'")
+            && message.contains("'1'")),
+        "annotating with the earlier group's return type must fail (call returns 2), got: {diags:?}"
+    );
+}
+
+#[test]
+fn cross_file_interface_merge_reversed_file_order_flips_winner() {
+    // Same sources as the first test but the file carrying the use comes
+    // FIRST, so the other file's group is now the later one and must win.
+    let (_tmp, diags) = compile_ordered_files(&[
+        (
+            "use.ts",
+            "interface Panel { draw(x: string): 2 }\ndeclare const p: Panel;\nconst picked: 2 = p.draw(\"x\");\n",
+        ),
+        ("other.ts", "interface Panel { draw(x: string): 1 }\n"),
+    ]);
+    assert!(
+        diags.iter().any(|(code, message)| *code == 2322
+            && message.contains("'1'")
+            && message.contains("'2'")),
+        "with reversed program order the other file's group is later and must win, got: {diags:?}"
+    );
+}
+
+#[test]
+fn cross_file_interface_merge_usage_in_earlier_file_prefers_later_group() {
+    let (_tmp, diags) = compile_ordered_files(&[
+        (
+            "consumer.ts",
+            "interface Meter { sample(x: string): 1 }\ndeclare const meter: Meter;\nconst level: 2 = meter.sample(\"x\");\n",
+        ),
+        ("extension.ts", "interface Meter { sample(x: string): 2 }\n"),
+    ]);
+    assert!(
+        diags.is_empty(),
+        "a call in the earlier file still resolves against the later declaration group, got: {diags:?}"
+    );
+}
+
+#[test]
+fn cross_file_interface_merge_three_files_pick_latest_group() {
+    let (_tmp, diags) = compile_ordered_files(&[
+        ("one.ts", "interface Chain { link(x: string): 1 }\n"),
+        ("two.ts", "interface Chain { link(x: string): 2 }\n"),
+        (
+            "three.ts",
+            "interface Chain { link(x: string): 3 }\ndeclare const chain: Chain;\nconst last: 3 = chain.link(\"x\");\n",
+        ),
+    ]);
+    assert!(
+        diags.is_empty(),
+        "the latest of three declaration groups must win, got: {diags:?}"
+    );
+}
+
+#[test]
+fn cross_file_interface_merge_multi_reopen_in_earlier_file_composes_with_later_file() {
+    let (_tmp, diags) = compile_ordered_files(&[
+        (
+            "reopened.ts",
+            "interface Stack { top(x: string): 1 }\ninterface Stack { top(x: string): 2 }\n",
+        ),
+        (
+            "final.ts",
+            "interface Stack { top(x: string): 3 }\ndeclare const stack: Stack;\nconst tip: 3 = stack.top(\"x\");\n",
+        ),
+    ]);
+    assert!(
+        diags.is_empty(),
+        "same-file re-open groups compose with a later file's group (later file wins), got: {diags:?}"
+    );
+}
+
+#[test]
+fn cross_file_interface_merge_non_matching_later_group_falls_through_to_earlier() {
+    let (_tmp, diags) = compile_ordered_files(&[
+        ("base.ts", "interface Port { open(x: string): 1 }\n"),
+        (
+            "extra.ts",
+            "interface Port { open(x: number): 9 }\ndeclare const port: Port;\nconst fallback: 1 = port.open(\"s\");\n",
+        ),
+    ]);
+    assert!(
+        diags.is_empty(),
+        "a later group that does not match the arguments falls through to the earlier group, got: {diags:?}"
+    );
+}
+
+#[test]
+fn cross_file_interface_merge_bare_call_signatures_prefer_later_group() {
+    let (_tmp, diags) = compile_ordered_files(&[
+        (
+            "callable_a.ts",
+            "interface Factory { (x: string): 1; new (x: string): Factory }\n",
+        ),
+        (
+            "callable_b.ts",
+            "interface Factory { (x: string): 2 }\ndeclare const make: Factory;\nconst made: 2 = make(\"s\");\n",
+        ),
+    ]);
+    assert!(
+        diags.is_empty(),
+        "interface-level call signatures from the later file must be tried first, got: {diags:?}"
+    );
+}

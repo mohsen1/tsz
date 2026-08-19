@@ -126,6 +126,16 @@ pub(crate) enum InterfaceMergeMode {
     Heritage,
     /// Declaration/augmentation merge — same-named methods accumulate overloads.
     Declaration,
+    /// Declaration merge across program files (global script-interface
+    /// re-opens). Same accumulation semantics as [`Self::Declaration`], with
+    /// one addition: the base side is a *later* program file's declaration
+    /// group, so its accumulated signatures get `declaration_group` stamps
+    /// offset above the derived side's. Storage keeps forward declaration
+    /// order (earlier file first, tsc display order) while
+    /// `reorder_overload_candidates` tries the later group first at call
+    /// resolution (tsc `reorderCandidates`). Callers must pass the
+    /// earlier-file type as `derived` and the later-file type as `base`.
+    CrossFileDeclaration,
 }
 
 /// Merges an additional string-keyed index signature into an existing one by
@@ -1294,6 +1304,24 @@ impl<'a> CheckerState<'a> {
         self.merge_interface_types_with_mode(derived, base, InterfaceMergeMode::Declaration)
     }
 
+    /// Cross-program-file variant of [`Self::merge_interface_types`]: `earlier`
+    /// is the merged type of the declaration groups from earlier program files,
+    /// `later` a subsequent file's declaration group. Accumulated overload sets
+    /// keep forward storage order but stamp the later group's
+    /// `declaration_group` above the earlier side's so call resolution tries
+    /// the later group first. See [`InterfaceMergeMode::CrossFileDeclaration`].
+    pub(crate) fn merge_interface_types_cross_file_declaration(
+        &mut self,
+        earlier: TypeId,
+        later: TypeId,
+    ) -> TypeId {
+        self.merge_interface_types_with_mode(
+            earlier,
+            later,
+            InterfaceMergeMode::CrossFileDeclaration,
+        )
+    }
+
     /// Heritage (`extends`) variant of [`Self::merge_interface_types`]: a
     /// derived member that shares a name with a base member overrides
     /// (replaces) it rather than accumulating an overload set. See
@@ -1307,7 +1335,7 @@ impl<'a> CheckerState<'a> {
         self.merge_interface_types_with_mode(derived, base, InterfaceMergeMode::Heritage)
     }
 
-    fn merge_interface_types_with_mode(
+    pub(crate) fn merge_interface_types_with_mode(
         &mut self,
         derived: TypeId,
         base: TypeId,
@@ -1378,8 +1406,30 @@ impl<'a> CheckerState<'a> {
                     base_construct_sigs = base_shape.construct_signatures.len(),
                     "Callable+Callable merge signature counts"
                 );
+                // In a cross-file declaration merge the base side is a later
+                // program file's declaration group: offset its group stamps
+                // above the derived side's so `reorder_overload_candidates`
+                // tries the later group first while storage keeps forward
+                // declaration order (tsc reorderCandidates vs display order).
+                let base_group_offset = if mode == InterfaceMergeMode::CrossFileDeclaration {
+                    derived_shape
+                        .call_signatures
+                        .iter()
+                        .chain(derived_shape.construct_signatures.iter())
+                        .map(|sig| sig.declaration_group)
+                        .max()
+                        .unwrap_or(0)
+                        + 1
+                } else {
+                    0
+                };
+                let offset_group = |mut sig: tsz_solver::CallSignature| {
+                    sig.declaration_group += base_group_offset;
+                    sig
+                };
                 let mut call_signatures = derived_shape.call_signatures.clone();
-                call_signatures.extend(base_shape.call_signatures.iter().cloned());
+                call_signatures
+                    .extend(base_shape.call_signatures.iter().cloned().map(offset_group));
                 // Deduplicate inherited call signatures from diamond inheritance.
                 // When C extends C1 and C2, and both inherit from B (which has a
                 // catch-all like `(x: string): void`), that catch-all appears in
@@ -1389,7 +1439,13 @@ impl<'a> CheckerState<'a> {
                 // all derived-specific overloads.
                 dedup_call_signatures_keep_last(&mut call_signatures);
                 let mut construct_signatures = derived_shape.construct_signatures.clone();
-                construct_signatures.extend(base_shape.construct_signatures.iter().cloned());
+                construct_signatures.extend(
+                    base_shape
+                        .construct_signatures
+                        .iter()
+                        .cloned()
+                        .map(offset_group),
+                );
                 dedup_call_signatures_keep_last(&mut construct_signatures);
                 let properties =
                     self.merge_properties(&derived_shape.properties, &base_shape.properties, mode);
@@ -1793,141 +1849,6 @@ impl<'a> CheckerState<'a> {
             // No mergeable member found - fall back to plain intersection
             factory.intersection2(derived, base)
         }
-    }
-
-    /// Merge a derived property that shares a name with a `base` property.
-    ///
-    /// In `Heritage` mode the derived member overrides the base member outright
-    /// (no overload accumulation). Only `Declaration`/augmentation merges
-    /// concatenate same-named callable signatures into a shared overload set.
-    fn merge_overriding_property(
-        &mut self,
-        derived_prop: &tsz_solver::PropertyInfo,
-        base_prop: &tsz_solver::PropertyInfo,
-        mode: InterfaceMergeMode,
-    ) -> tsz_solver::PropertyInfo {
-        let merged_type = if mode == InterfaceMergeMode::Declaration
-            && crate::query_boundaries::common::callable_shape_for_type(
-                self.ctx.types,
-                base_prop.type_id,
-            )
-            .is_some()
-            && crate::query_boundaries::common::callable_shape_for_type(
-                self.ctx.types,
-                derived_prop.type_id,
-            )
-            .is_some()
-        {
-            self.merge_interface_types(derived_prop.type_id, base_prop.type_id)
-        } else {
-            derived_prop.type_id
-        };
-
-        let mut prop = derived_prop.clone();
-        // When the merge produces a new callable type (from concatenating
-        // derived + base call signatures), update BOTH type_id and write_type.
-        // Leaving write_type pointing to the derived-only callable creates a
-        // false "split accessor" (type_id != write_type) that triggers the
-        // contravariant write-type check in check_property_compatibility,
-        // causing false TS2322 errors for interface-extends assignments.
-        if merged_type != derived_prop.type_id && prop.write_type == derived_prop.type_id {
-            prop.write_type = merged_type;
-        }
-        prop.type_id = merged_type;
-        prop
-    }
-
-    /// Merge derived and base interface properties.
-    ///
-    /// Derived properties override base properties when names match.
-    /// Property order matches tsc: derived (own) members are listed first in
-    /// declaration order, followed by base members not overridden by derived.
-    /// `declaration_order` is offset for base-only members so a stable sort by
-    /// `declaration_order` reproduces this own-first / base-last layout — for
-    /// both diagnostic display and downstream `keyof T` iteration.
-    ///
-    /// # Arguments
-    /// * `derived` - Properties from the derived interface
-    /// * `base` - Properties from the base interface
-    ///
-    /// # Returns
-    /// The merged properties vector
-    pub(crate) fn merge_properties(
-        &mut self,
-        derived: &[tsz_solver::PropertyInfo],
-        base: &[tsz_solver::PropertyInfo],
-        mode: InterfaceMergeMode,
-    ) -> Vec<tsz_solver::PropertyInfo> {
-        use rustc_hash::FxHashMap;
-        use tsz_common::interner::Atom;
-
-        // Find the max declaration_order from derived so base-only properties
-        // can be offset to come after all derived properties (tsc parity).
-        let derived_max_order = derived
-            .iter()
-            .map(|p| p.declaration_order)
-            .max()
-            .unwrap_or(0);
-
-        let total_len = derived.len() + base.len();
-        if total_len <= 32 {
-            let mut merged: Vec<tsz_solver::PropertyInfo> = Vec::with_capacity(total_len);
-            // Walk derived first so own members keep their (low) declaration_order
-            // and appear before inherited members in the final ordering.
-            for prop in derived {
-                let merged_prop = match base.iter().find(|p| p.name == prop.name) {
-                    Some(base_prop) => self.merge_overriding_property(prop, base_prop, mode),
-                    None => prop.clone(),
-                };
-                merged.push(merged_prop);
-            }
-            // Append base-only members with offset declaration_order so a sort by
-            // declaration_order keeps them after all derived members.
-            for base_prop in base {
-                if !derived.iter().any(|p| p.name == base_prop.name) {
-                    let mut new_prop = base_prop.clone();
-                    new_prop.declaration_order = derived_max_order + base_prop.declaration_order;
-                    merged.push(new_prop);
-                }
-            }
-            return merged;
-        }
-
-        let mut derived_map: FxHashMap<Atom, &tsz_solver::PropertyInfo> =
-            FxHashMap::with_capacity_and_hasher(derived.len(), Default::default());
-        for prop in derived {
-            derived_map.insert(prop.name, prop);
-        }
-
-        let mut merged = Vec::with_capacity(total_len);
-
-        // Walk derived first so own members keep their (low) declaration_order.
-        // For names that also appear in base, merge callable signatures.
-        let mut base_by_name: FxHashMap<Atom, &tsz_solver::PropertyInfo> =
-            FxHashMap::with_capacity_and_hasher(base.len(), Default::default());
-        for base_prop in base {
-            base_by_name.insert(base_prop.name, base_prop);
-        }
-
-        for derived_prop in derived {
-            let merged_prop = match base_by_name.get(&derived_prop.name) {
-                Some(base_prop) => self.merge_overriding_property(derived_prop, base_prop, mode),
-                None => derived_prop.clone(),
-            };
-            merged.push(merged_prop);
-        }
-
-        // Append base-only members with offset declaration_order so they sort
-        // after the derived members.
-        for base_prop in base {
-            if !derived_map.contains_key(&base_prop.name) {
-                let mut new_prop = base_prop.clone();
-                new_prop.declaration_order = derived_max_order + base_prop.declaration_order;
-                merged.push(new_prop);
-            }
-        }
-
-        merged
     }
 
     /// Get the interned Atom for a member name node, resolving computed symbol

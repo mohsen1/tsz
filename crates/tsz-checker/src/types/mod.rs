@@ -8,6 +8,7 @@ pub(crate) mod function_type_circular;
 pub(crate) mod function_type_helpers;
 pub(crate) mod function_type_signature_display;
 mod interface_heritage_class;
+mod interface_member_merge;
 pub mod interface_type;
 pub mod module_augmentation;
 mod module_augmentation_prime;
