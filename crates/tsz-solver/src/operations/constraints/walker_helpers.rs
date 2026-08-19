@@ -157,7 +157,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     /// back-reference (the baked-object case). Up to two views come back —
     /// as-written first, evaluated second — so callers prefer the direct
     /// spelling and still match through the alias hop.
-    pub(super) fn transparent_application_views(
+    pub(crate) fn transparent_application_views(
         &mut self,
         type_id: TypeId,
     ) -> smallvec::SmallVec<[(TypeId, Vec<TypeId>); 2]> {
@@ -295,7 +295,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         None
     }
 
-    pub(super) fn application_bases_share_declaration(
+    pub(crate) fn application_bases_share_declaration(
         &self,
         source_base: TypeId,
         target_base: TypeId,
