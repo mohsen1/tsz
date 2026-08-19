@@ -369,35 +369,32 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     }
 
     /// Whether a fresh literal inferred for `tp_name` should be preserved (not
-    /// widened to its primitive) so a conditional / `Exclude` parameter
-    /// referencing it can reduce to `never` (issue #9652).
+    /// widened to its primitive) when resolving the parameter.
     ///
-    /// This is a deliberately narrow stopgap, not the full tsc `widenLiteralTypes`
-    /// / `inference.topLevel` model. tsc's `topLevel` is a *runtime* property of
-    /// where each inference candidate came from (cleared by callback-return,
-    /// array-element, intersection-member, … contributions), which a static
-    /// signature inspection cannot reproduce faithfully. To avoid changing
-    /// inference for unrelated shapes — and regressing conformance — preservation
-    /// is restricted to the case the bug needs: the type parameter is at the top
-    /// level of the return type and flows into a conditional / `Exclude`
-    /// parameter that can reduce to `never`. Every other shape keeps its prior
-    /// (widening) behavior. Generalizing to tsc's full model is a follow-up.
+    /// Mirrors the return-position half of tsc's `widenLiteralTypes` gate
+    /// (`getCovariantInference`): candidates widen only when
+    /// `inference.topLevel && (inference.isFixed ||
+    /// !isTypeParameterAtTopLevelInReturnType(signature, tp))`, so a type
+    /// parameter at the top level of the signature's return type keeps fresh
+    /// literal candidates (`<T>(x: T): T` infers `1`, and `<T, U>(x: T,
+    /// cb: (a: T) => U, y: U): U` keeps `U := 1` for both the round-2
+    /// callback relation and the final result — issue #17686). A parameter
+    /// that appears only under a constructor (`(): T[]`, `(): { v: T }`)
+    /// still widens. This was previously restricted to conditional-reducing
+    /// parameter shapes (issue #9652); that restriction made the round-2
+    /// argument relation run against a widened instantiation the reported
+    /// signature display never showed.
+    ///
+    /// Not modeled: tsc's `inference.isFixed` re-widening and the runtime
+    /// `topLevel` candidate-provenance bit (cleared by intersection-member and
+    /// similar contributions). Array-element provenance is handled by the
+    /// callers' `all_candidates_from_array_elements` guards.
     pub(super) fn type_param_preserves_inferred_literal(
         &mut self,
         func: &FunctionShape,
         tp_name: tsz_common::Atom,
     ) -> bool {
-        if !self.type_param_at_top_level_through_aliases(func.return_type, tp_name) {
-            return false;
-        }
-        let param_types: Vec<TypeId> = func.params.iter().map(|p| p.type_id).collect();
-        param_types.iter().any(|&param_type| {
-            crate::visitor::contains_type_parameter_named(
-                self.interner.as_type_database(),
-                param_type,
-                tp_name,
-            ) && self.type_reduces_via_conditional(param_type)
-        })
+        self.type_param_at_top_level_through_aliases(func.return_type, tp_name)
     }
 
     /// Whether `ty` is — or, for a top-level alias application such as
