@@ -178,6 +178,21 @@ fn complete_contextual_type_param_plan(
             !common::contains_type_parameters(db, mapped)
                 && !common::contains_infer_types(db, mapped)
         }) {
+            // The callee's own binding for this name is already concrete, but
+            // `request.type_id` (the contextual type being completed) may
+            // still contain an unrelated type parameter that merely shares
+            // this name -- e.g. a tuple element carrying an *outer* generic
+            // function's own type parameter (`Kind<F, R, A>` inferred as
+            // `[A_outer, B_outer]`, then destructured against a callee whose
+            // own declared type parameters happen to also be named `A`/`B`).
+            // Substitutions are name-keyed (see the shadowing note below), so
+            // applying the callee's concrete binding here would silently
+            // overwrite that outer occurrence instead of leaving it for the
+            // enclosing signature to resolve. Drop the binding in that case
+            // rather than applying it.
+            if common::contains_type_parameter_named(db, request.type_id, tp.name) {
+                plan.substitution.remove(tp.name);
+            }
             continue;
         }
         // A round-1 candidate may legitimately mention a type parameter of an

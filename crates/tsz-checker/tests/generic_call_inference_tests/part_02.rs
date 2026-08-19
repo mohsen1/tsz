@@ -1694,3 +1694,81 @@ db.selectFrom("sys.tables as tables")
         "Kysely-style selection callback should keep its builder context. Got: {diags:#?}"
     );
 }
+
+// A nested generic call's callback destructures a tuple built from an
+// *outer* function's own type parameters. When the callee's own declared
+// type parameters happen to share names with the outer ones, contextual
+// completion must not let the callee's (name-keyed) binding overwrite the
+// outer parameter's occurrence inside the already-resolved tuple.
+
+#[test]
+fn nested_generic_call_tuple_destructure_colliding_type_param_names_stays_clean() {
+    let source = r#"
+declare function map2<A, B>(self: A, f: (a: A) => B): B;
+declare function pair2<X, Y>(left: X, right: Y): [X, Y];
+function use2<A, B>(left: A, right: B, f: (a: A, b: B) => string): string {
+    return map2(pair2(left, right), ([a, b]) => f(a, b));
+}
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.is_empty(),
+        "outer type parameter surfacing in a destructured tuple must not be \
+         overwritten by the callee's same-named type parameter binding. Diagnostics: {diags:#?}"
+    );
+}
+
+#[test]
+fn nested_generic_call_tuple_destructure_colliding_names_still_reports_real_mismatch() {
+    let source = r#"
+declare function map2<A, B>(self: A, f: (a: A) => B): B;
+declare function pair2<X, Y>(left: X, right: Y): [X, Y];
+function bad<A, B>(left: A, right: B, f: (a: A, b: B) => string): string {
+    return map2(pair2(left, right), ([a, b]) => f(b, a));
+}
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        has_diagnostic_message_containing(
+            &diags,
+            2345,
+            "Argument of type 'B' is not assignable to parameter of type 'A'",
+        ),
+        "swapping the destructured arguments must still be a real TS2345, \
+         even with colliding outer/callee type parameter names. Diagnostics: {diags:#?}"
+    );
+}
+
+#[test]
+fn nested_generic_call_object_destructure_colliding_type_param_names_stays_clean() {
+    let source = r#"
+declare function map3<A, B>(self: A, f: (a: A) => B): B;
+declare function pack<X, Y>(a: X, b: Y): { a: X; b: Y };
+function use5<A, B>(left: A, right: B, f: (a: A, b: B) => string): string {
+    return map3(pack(left, right), ({ a, b }) => f(a, b));
+}
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.is_empty(),
+        "object binding pattern variant of the tuple-destructure collision must \
+         also stay clean. Diagnostics: {diags:#?}"
+    );
+}
+
+#[test]
+fn nested_generic_call_tuple_destructure_renamed_type_params_stays_clean() {
+    let source = r#"
+declare function mapR<P, Q>(self: P, f: (a: P) => Q): Q;
+declare function pairR<M, N>(left: M, right: N): [M, N];
+function useR<A, B>(left: A, right: B, f: (a: A, b: B) => string): string {
+    return mapR(pairR(left, right), ([a, b]) => f(a, b));
+}
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.is_empty(),
+        "renamed binders (no name collision) must stay clean, as before the fix. \
+         Diagnostics: {diags:#?}"
+    );
+}
