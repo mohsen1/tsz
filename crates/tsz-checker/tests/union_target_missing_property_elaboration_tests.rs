@@ -18,9 +18,11 @@
 //! (`utility-types-project: Object literals lose missing property names in
 //! mapped union messages`).
 //!
-//! Property *type* mismatches and excess properties are reported at the
-//! offending property's location by the object-literal contextual elaboration
-//! (unchanged), so these tests assert the *missing-property* family only.
+//! Property *type* mismatches on non-fresh sources elaborate beneath a member
+//! frame (see `union_target_property_mismatch_elaboration_tests`); fresh
+//! object literals report excess/mismatched properties at the offending
+//! property's location via the object-literal contextual elaboration. These
+//! tests assert the *missing-property* family only.
 //!
 //! Tests vary the mapped-type iteration variable, the property names, and the
 //! alias/interface names so a fix keyed to a particular spelling would not
