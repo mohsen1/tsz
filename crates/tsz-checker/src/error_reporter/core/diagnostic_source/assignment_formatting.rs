@@ -1021,6 +1021,17 @@ impl<'a> CheckerState<'a> {
         {
             return display;
         }
+        // tsc keys display identity on the alias reference written at the use
+        // site (`aliasSymbol` travels with the reference, not the interned
+        // content), so an annotation `: Second` renders `Second` even when
+        // another alias of the identical interned type registered first in the
+        // reverse type-to-def table. Resolve the written reference itself —
+        // per-occurrence identity — rather than trusting that global map.
+        if display_target == target
+            && let Some(display) = self.written_alias_reference_target_display(anchor_idx, target)
+        {
+            return display;
+        }
         if let Some(display) = self.keyof_type_alias_body_display(display_target) {
             return display;
         }

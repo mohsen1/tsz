@@ -465,6 +465,87 @@ impl<'a> CheckerState<'a> {
         Some(self.ctx.types.resolve_atom(alias_name))
     }
 
+    /// When the assignment target's declared annotation is a **bare,
+    /// non-generic** `TYPE_REFERENCE` to a type alias whose lowered body is
+    /// identity-equal to the displayed target type, render that alias's own
+    /// declared name.
+    ///
+    /// `tsc` keys a type's display identity on the alias reference written at
+    /// the use site (`aliasSymbol` travels with the *reference*, not the
+    /// interned content), so `type First = string | number; type Second =
+    /// string | number; const a: Second = flag` renders `Second`. tsz interns
+    /// one `TypeId` per content and the reverse `type_to_def` table
+    /// (`register_type_to_def`) is earliest-declaration-wins, so a global
+    /// lookup answers `First` for both spellings. The written annotation is
+    /// the per-occurrence provenance that recovers the reference identity.
+    ///
+    /// Declines — keeping the established display paths — for:
+    /// - a reference with type arguments, or an alias with type parameters (a
+    ///   generic application keeps its `Name[Args]` surface already);
+    /// - an alias `tsc` renders by its underlying type
+    ///   ([`type_alias_displayed_as_underlying`]: computed conditional /
+    ///   indexed-access / `keyof` bodies, bare enum / interface / class
+    ///   references, intrinsic singletons);
+    /// - a bare alias-to-alias forwarding body (`type Outer = Inner`) — `tsc`
+    ///   resolves the reference through the chain and stamps the *inner*
+    ///   alias (oracle-pinned: `Inner`), owned by the chain-following paths;
+    /// - an alias whose body does not resolve to the exact displayed target
+    ///   type, so a narrowed or unrelated target can never be repainted.
+    ///
+    /// [`type_alias_displayed_as_underlying`]: crate::query_boundaries::assignability_alias_display::type_alias_displayed_as_underlying
+    pub(in crate::error_reporter) fn written_alias_reference_target_display(
+        &mut self,
+        anchor_idx: NodeIndex,
+        target: TypeId,
+    ) -> Option<String> {
+        let target_expr = self
+            .assignment_target_expression(anchor_idx)
+            .unwrap_or(anchor_idx);
+        let def_id = {
+            let (arena, annotation_idx) =
+                self.declared_type_annotation_node_for_expression(target_expr)?;
+            let type_ref = arena.get_type_ref(arena.get(annotation_idx)?)?;
+            if type_ref.type_arguments.is_some() {
+                return None;
+            }
+            self.annotation_type_reference_alias_def_id(arena, annotation_idx)?
+        };
+        let alias_name = {
+            let def = self.ctx.definition_store.get(def_id)?;
+            if !def.type_params.is_empty() {
+                return None;
+            }
+            def.name
+        };
+        if crate::query_boundaries::assignability_alias_display::type_alias_displayed_as_underlying(
+            self.ctx.types.as_type_database(),
+            &self.ctx.definition_store,
+            def_id,
+        )
+        .is_some()
+        {
+            return None;
+        }
+        let body = self.ctx.definition_store.get_body(def_id)?;
+        // A bare alias-to-alias forwarding body: tsc renders the alias the
+        // chain resolves to, not the forwarding name written here.
+        if crate::query_boundaries::common::lazy_def_id(self.ctx.types.as_type_database(), body)
+            .and_then(|next| self.ctx.definition_store.get_kind(next))
+            == Some(tsz_solver::def::DefKind::TypeAlias)
+        {
+            return None;
+        }
+        // Per-occurrence identity guard: the written alias must lower to the
+        // exact type being displayed. A narrowed target, a nested property
+        // target, or any other type reached through this anchor keeps its
+        // established display.
+        let resolved_body = self.resolve_lazy_type(body);
+        if resolved_body != self.resolve_lazy_type(target) {
+            return None;
+        }
+        Some(self.ctx.types.resolve_atom(alias_name))
+    }
+
     fn declared_source_type_annotation_node(&self, expr_idx: NodeIndex) -> Option<NodeIndex> {
         let expr_idx = self.ctx.arena.skip_parenthesized_and_assertions(expr_idx);
         let node = self.ctx.arena.get(expr_idx)?;

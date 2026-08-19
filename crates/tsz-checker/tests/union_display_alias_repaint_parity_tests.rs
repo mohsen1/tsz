@@ -462,20 +462,109 @@ fn an_alias_declared_after_the_use_site_does_not_repaint_the_longhand_union_targ
 /// Two distinct aliases of the *same* interned union: each written spelling
 /// keeps its own name rather than collapsing to whichever registered first.
 ///
-/// Red both with and without the target gate above, because it is a different
-/// mechanism: `register_type_to_def` is first-writer-wins on the interned
-/// `TypeId`, so `First` wins globally and the gate — which only decides
-/// *whether* to consult that table — has no second name to offer. Fixing it
-/// needs per-occurrence alias reference identity at lowering, not a display
-/// gate.
+/// `register_type_to_def` is first-writer-wins on the interned `TypeId`, so a
+/// global reverse lookup answers `First` for both spellings. Fixed by the
+/// per-occurrence gate `written_alias_reference_target_display`, which resolves
+/// the annotation's own written reference to its alias definition and requires
+/// the alias body to be identity-equal to the displayed target.
 #[test]
-#[ignore = "separate open divergence: `register_type_to_def` is first-writer-wins per interned TypeId, so two aliases of one union both render the first; needs per-occurrence alias identity at lowering"]
 fn two_aliases_of_one_union_each_keep_their_own_written_target_spelling() {
     let source = "type First = string | number;\n\
                   type Second = string | number;\n\
                   declare const flag: boolean;\n\
                   const a: Second = flag;\n";
     assert_eq!(rendered_target_type(source), "Second");
+}
+
+/// The first-declared spelling of the same pair keeps *its* name too — the fix
+/// renders the written reference, not "the other alias".
+#[test]
+fn two_aliases_of_one_union_first_written_target_keeps_the_first_alias() {
+    let source = "type First = string | number;\n\
+                  type Second = string | number;\n\
+                  declare const flag: boolean;\n\
+                  const a: First = flag;\n";
+    assert_eq!(rendered_target_type(source), "First");
+}
+
+/// Renamed binders and a three-member union, so no row of this family can be
+/// satisfied by anything keyed on the `First`/`Second` spelling or the
+/// two-member shape.
+#[test]
+fn renamed_binder_alias_pair_three_member_union_target_keeps_the_written_alias() {
+    let source = "type AlphaKeys = string | number | symbol;\n\
+                  type BetaKeys = string | number | symbol;\n\
+                  declare const held: boolean;\n\
+                  const sink: AlphaKeys = held;\n";
+    assert_eq!(rendered_target_type(source), "AlphaKeys");
+}
+
+/// The written alias declared *after* the use site (and after an unreferenced
+/// twin) still names the diagnostic, ruling out a declaration-order artifact.
+#[test]
+fn written_alias_declared_after_the_use_site_still_names_the_target() {
+    let source = "declare const flag: boolean;\n\
+                  const a: Late = flag;\n\
+                  type Early = string | number;\n\
+                  type Late = string | number;\n";
+    assert_eq!(rendered_target_type(source), "Late");
+}
+
+/// The same collapse for **object**-bodied alias pairs — the defect is alias
+/// reference identity, not a union-shaped special case.
+#[test]
+fn two_object_aliases_of_one_shape_keep_their_own_written_target_spelling() {
+    let source = "type ObjA = { p: number };\n\
+                  type ObjB = { p: number };\n\
+                  declare const flag: boolean;\n\
+                  const o: ObjB = flag;\n";
+    assert_eq!(rendered_target_type(source), "ObjB");
+}
+
+/// Negative control: two aliases of the same *computed* body (a reduced
+/// conditional) both render the underlying type — tsc attaches no
+/// `aliasSymbol` to a reducing operator's shared result, so the
+/// per-occurrence gate must decline via `type_alias_displayed_as_underlying`.
+#[test]
+fn two_computed_body_aliases_still_render_the_underlying_type() {
+    let source = "type CondA = true extends true ? string : number;\n\
+                  type CondB = true extends true ? string : number;\n\
+                  declare const flag: boolean;\n\
+                  const c: CondB = flag;\n";
+    assert_eq!(rendered_target_type(source), "string");
+}
+
+/// Negative control on the forwarding chain: `type Outer = Inner` written at
+/// the use site renders `Inner` — tsc resolves the bare alias-to-alias
+/// reference through the chain and stamps the inner alias (oracle-pinned on
+/// 7.0.2), so the per-occurrence gate declines a forwarding body and leaves
+/// the chain-following display path in charge.
+///
+/// Red both with and without the per-occurrence gate: tsz renders `Outer`
+/// through the established display path (the gate correctly declines, so it
+/// neither causes nor can fix this). Recorded rather than fixed — the
+/// chain-resolution display is the alias-underlying family's own owner
+/// (`type_alias_displayed_as_underlying` currently keeps a forwarding alias's
+/// declared name where tsc re-stamps the inner alias).
+#[test]
+#[ignore = "separate open divergence: a bare alias-to-alias forwarding target renders the outer alias name; tsc resolves the chain and shows the inner alias"]
+fn bare_alias_to_alias_forwarding_target_renders_the_inner_alias() {
+    let source = "type Inner = string | number;\n\
+                  type Outer = Inner;\n\
+                  declare const flag: boolean;\n\
+                  const c: Outer = flag;\n";
+    assert_eq!(rendered_target_type(source), "Inner");
+}
+
+/// The source-side dual of the two-alias pair: the declared annotation of the
+/// *source* identifier keeps its own written spelling too.
+#[test]
+fn two_aliases_of_one_union_source_keeps_its_own_written_spelling() {
+    let source = "type First = string | number;\n\
+                  type Second = string | number;\n\
+                  declare const s: Second;\n\
+                  const t: boolean = s;\n";
+    assert_eq!(rendered_source_type(source), "Second");
 }
 
 /// Baseline with no alias anywhere: the structural render must be unchanged, so
