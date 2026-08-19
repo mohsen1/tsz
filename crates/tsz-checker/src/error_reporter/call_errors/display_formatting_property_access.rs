@@ -17,6 +17,16 @@ impl<'a> CheckerState<'a> {
         call_args: &[NodeIndex],
         annotation_type_node: NodeIndex,
     ) -> Option<String> {
+        // With no signature-owned type parameters there is no call-level
+        // inference to reconstruct: the checked parameter type is already the
+        // correct display. Re-resolving the declaration's annotation here
+        // would drop enclosing type parameters (a method of a generic class
+        // rendered `(a: T) => U` through this path resolves `T`/`U` outside
+        // their scope to `any`), where tsc shows the receiver-instantiated
+        // parameter type.
+        if raw_shape.type_params.is_empty() {
+            return None;
+        }
         let mut replacements = FxHashMap::default();
         for (raw_param, &call_arg_idx) in raw_shape.params.iter().zip(call_args.iter()) {
             let actual_arg_type = self.elaboration_source_expression_type(call_arg_idx);
@@ -375,19 +385,21 @@ impl<'a> CheckerState<'a> {
     ) -> Option<String> {
         let parent_idx = self.ctx.arena.get_extended(arg_idx)?.parent;
         let parent = self.ctx.arena.get(parent_idx)?;
-        let (callee_expr, args): (NodeIndex, &[NodeIndex]) = match parent.kind {
-            k if k == syntax_kind_ext::CALL_EXPRESSION => {
-                let call = self.ctx.arena.get_call_expr(parent)?;
-                let args = call.arguments.as_ref()?;
-                (call.expression, &args.nodes)
-            }
-            k if k == syntax_kind_ext::NEW_EXPRESSION => {
-                let new_expr = self.ctx.arena.get_call_expr(parent)?;
-                let args = new_expr.arguments.as_ref()?;
-                (new_expr.expression, &args.nodes)
-            }
-            _ => return None,
-        };
+        let (callee_expr, args, has_explicit_type_args): (NodeIndex, &[NodeIndex], bool) =
+            match parent.kind {
+                k if k == syntax_kind_ext::CALL_EXPRESSION
+                    || k == syntax_kind_ext::NEW_EXPRESSION =>
+                {
+                    let call = self.ctx.arena.get_call_expr(parent)?;
+                    let args = call.arguments.as_ref()?;
+                    let has_explicit_type_args = call
+                        .type_arguments
+                        .as_ref()
+                        .is_some_and(|type_args| !type_args.nodes.is_empty());
+                    (call.expression, &args.nodes, has_explicit_type_args)
+                }
+                _ => return None,
+            };
 
         let arg_index = args.iter().position(|&candidate| candidate == arg_idx)?;
         let callee_type = self.get_type_of_node(callee_expr);
@@ -414,7 +426,14 @@ impl<'a> CheckerState<'a> {
 
         // Direct arguments later in the same generic call can fix a callback's
         // return type more specifically than the instantiated parameter surface.
-        let callback_return_tp = self.raw_callback_return_type_param_name(raw_param_type);
+        // Only when the call actually infers that type parameter: an explicit
+        // type-argument list fixes every type parameter before inference, and
+        // tsc renders the fixed instantiation, not the later argument's literal.
+        let callback_return_tp = if has_explicit_type_args {
+            None
+        } else {
+            self.raw_callback_return_type_param_name(raw_param_type)
+        };
         let mut replacements = FxHashMap::default();
         self.collect_type_param_display_replacements(raw_param_type, param_type, &mut replacements);
 
