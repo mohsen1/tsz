@@ -475,6 +475,15 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
                         // Target is an enum type but not the parent
                         Some(false)
                     }
+                    (None, Some(tp)) if self.subtype.resolver.defs_are_equivalent(tp, s_def) => {
+                        // Whole-enum source vs one of its OWN member types: tsc
+                        // models an enum type as the union of its member types,
+                        // so defer to the structural member comparison — a
+                        // single-member enum IS its member type (`One` relates
+                        // to `One.Only`), while a multi-member enum's value
+                        // union fails against any single member's value.
+                        None
+                    }
                     _ => {
                         // Two full enum TYPES compare structurally by member
                         // set (tsc's isEnumTypeRelatedTo: every source member
