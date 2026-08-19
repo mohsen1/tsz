@@ -131,8 +131,14 @@ impl<R: TypeResolver> SubtypeChecker<'_, R> {
                     // target's own nullish members is never the witness
                     // (`undefined` <: `T | undefined` — the failing member of
                     // `{ a: boolean } | undefined` vs `{ a: string } |
-                    // undefined` is the object arm, not `undefined`).
-                    if self.check_subtype(source_member, resolved_target).is_true() {
+                    // undefined` is the object arm, not `undefined`). Gated to
+                    // genuine multi-member sources: for a single-member walk
+                    // `source_member` IS `resolved_source`, so this would
+                    // re-query the exact pair being explained and pick up the
+                    // relation stack's provisional in-progress verdict.
+                    if source_members.len() > 1
+                        && self.check_subtype(source_member, resolved_target).is_true()
+                    {
                         continue;
                     }
                     // A type-parameter member has no best-matching target

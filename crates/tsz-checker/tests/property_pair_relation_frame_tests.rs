@@ -22,11 +22,11 @@
 //! depth. Property and binder names vary across cases so a fix keyed to a
 //! particular spelling cannot satisfy the suite.
 
-use tsz_checker::test_utils::check_source_diagnostics;
+use tsz_checker::test_utils::{check_with_options, strict_checker_options};
 use tsz_common::diagnostics::Diagnostic;
 
 fn diagnostics(source: &str) -> Vec<Diagnostic> {
-    check_source_diagnostics(source)
+    check_with_options(source, strict_checker_options())
 }
 
 /// The full chain of the single diagnostic with `code`: the primary message
