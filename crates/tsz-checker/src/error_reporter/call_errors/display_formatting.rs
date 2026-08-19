@@ -1871,6 +1871,32 @@ impl<'a> CheckerState<'a> {
             return display;
         }
 
+        // A FRESH object-literal argument failing a UNION parameter renders
+        // its TS2345 head role-based, exactly like the TS2322 head after the
+        // fresh-literal union fold (#17721): each property keeps its literal
+        // when the contextual (target) property type carries a literal of the
+        // same primitive base and widens otherwise (tsc renders the checked
+        // fresh type, so `{ p: 1, q: 8 }` against `{ p: 1; q: 4 } | { p: 2;
+        // q: 8 }` shows `{ p: 1; q: 8; }`). The unconditional argument
+        // widening below would erase every literal to its primitive base.
+        // Non-union parameters keep the widening pipeline — its
+        // literal-surface rewrite already matches tsc there, and the
+        // role-based formatter over-widens intersection-wrapped sources.
+        if self.ctx.types.get_display_properties(arg_type).is_some() {
+            let evaluated_param = self.evaluate_type_for_assignability(param_type);
+            if crate::query_boundaries::diagnostics::union_members(self.ctx.types, evaluated_param)
+                .is_some()
+            {
+                return self.format_type_for_diagnostic_role(
+                    arg_type,
+                    crate::error_reporter::type_display_policy::DiagnosticTypeDisplayRole::AssignmentSource {
+                        target: param_type,
+                        anchor_idx: arg_idx,
+                    },
+                );
+            }
+        }
+
         let mut display_type = if param_type == TypeId::NEVER {
             if let Some(display) = self.zero_argument_call_list_display(arg_idx) {
                 return display;
