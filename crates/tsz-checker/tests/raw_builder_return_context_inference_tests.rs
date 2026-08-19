@@ -748,3 +748,125 @@ function unknownArm<O>(): RawBuilder<O> | RawBuilder<unknown> {
         "combined union collapses into the unknown arm",
     );
 }
+
+// -----------------------------------------------------------------------------
+// Union-target head-line display: alias-spelled members must not collapse.
+//
+// The union display's constituent-collapse identity keyed an evaluated generic
+// instantiation on its *declaring interface symbol*, so two alias-spelled
+// instantiations of the same base (`StrRow = RawBuilder<string>`,
+// `NumRow = RawBuilder<number>`) collapsed to one member and the TS2322 head
+// rendered `... is not assignable to type 'StrRow'` where tsc renders the full
+// written union. The identity now keys on the display-alias provenance (the
+// application the evaluated form was produced from), so distinct
+// instantiations stay distinct while same-type duplicates keep collapsing.
+// Every pinned fragment below is oracle-pinned against tsc 6.0.2 (`--strict`).
+// -----------------------------------------------------------------------------
+
+#[test]
+fn alias_arm_ambiguous_union_message_renders_the_full_union_target() {
+    assert_single_ts2322_message(
+        r#"
+type StrRow = RawBuilder<string>
+type NumRow = RawBuilder<number>
+function aliasArms(): StrRow | NumRow {
+  return sql``
+}
+"#,
+        "Type 'RawBuilder<string | number>' is not assignable to type 'StrRow | NumRow'",
+        "alias arms full union target display",
+    );
+}
+
+#[test]
+fn generic_alias_arm_ambiguous_union_message_renders_the_full_union_target() {
+    assert_single_ts2322_message(
+        r#"
+type Row<Payload> = RawBuilder<Payload>
+function genericAliasArms(): Row<string> | Row<number> {
+  return sql``
+}
+"#,
+        "Type 'RawBuilder<string | number>' is not assignable to type 'Row<string> | Row<number>'",
+        "generic alias arms full union target display",
+    );
+}
+
+#[test]
+fn nullish_alias_arm_ambiguous_union_message_renders_the_full_union_target() {
+    assert_single_ts2322_message(
+        r#"
+type StrRow = RawBuilder<string>
+type NumRow = RawBuilder<number>
+function aliasArmsUndef(): StrRow | NumRow | undefined {
+  return sql``
+}
+"#,
+        "Type 'RawBuilder<string | number>' is not assignable to type 'StrRow | NumRow | undefined'",
+        "alias arms plus undefined full union target display",
+    );
+}
+
+#[test]
+fn renamed_binder_alias_arm_message_renders_the_full_union_target() {
+    assert_single_ts2322_message(
+        r#"
+interface CrateRow<Payload> {
+  readonly slot: Payload | undefined
+  readonly sealed: true
+}
+interface StampTag {
+  <Mark = unknown>(parts: TemplateStringsArray, ...values: unknown[]): CrateRow<Mark>
+}
+declare const stamp: StampTag
+type FirstCrate = CrateRow<string>
+type SecondCrate = CrateRow<number>
+function pickCrate(): FirstCrate | SecondCrate {
+  return stamp``
+}
+"#,
+        "Type 'CrateRow<string | number>' is not assignable to type 'FirstCrate | SecondCrate'",
+        "renamed binders alias arms full union target display",
+    );
+}
+
+// KNOWN ORDER RESIDUAL: for a mixed alias/direct union target tsc renders the
+// members reordered (`'RawBuilder<number> | StrRow'`); tsz keeps the written
+// order. The fragment below pins only the *non-collapse* (both members present
+// in the head line) — the member-order family is owned by the solver's
+// `union_member_order.rs` and is out of scope here.
+#[test]
+fn mixed_alias_and_direct_arm_message_keeps_both_union_target_members() {
+    assert_single_ts2322_message(
+        r#"
+type StrRow = RawBuilder<string>
+function mixedAliasDirect(): StrRow | RawBuilder<number> {
+  return sql``
+}
+"#,
+        "is not assignable to type 'StrRow | RawBuilder<number>'",
+        "mixed alias and direct arms keep both target members",
+    );
+}
+
+// Negative control: the same alias written twice is one constituent — the
+// per-instantiation identity must not stop genuine same-type duplicates from
+// collapsing. tsc renders a single member here (no union in the target
+// display, no second member frame).
+#[test]
+fn duplicate_alias_arm_target_still_collapses_to_one_member() {
+    let source = format!(
+        "{PRELUDE}\ntype StrRow = RawBuilder<string>\ndeclare const rbBool: RawBuilder<boolean>\nconst dup: StrRow | StrRow = rbBool\n"
+    );
+    let diagnostics = check_source_diagnostics(&source);
+    let codes: Vec<_> = diagnostics
+        .iter()
+        .map(|diagnostic| diagnostic.code)
+        .collect();
+    assert_eq!(codes, vec![2322], "duplicate alias arms: {diagnostics:#?}");
+    let message = &diagnostics[0].message_text;
+    assert!(
+        !message.contains('|'),
+        "duplicate alias arms must collapse to a single target member, got: {message}"
+    );
+}
