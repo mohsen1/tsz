@@ -721,8 +721,28 @@ impl<'a> CheckerState<'a> {
                 }
                 return self.format_declared_annotation_for_diagnostic(&annotation_text);
             }
+            // A source that is itself a deferred constraint-relative operand
+            // (`Bag[KSel]`, bare `keyof T`, a distributive conditional) keeps
+            // its written spelling here too — `widen_type_for_display` has no
+            // dedicated `IndexAccess`/`KeyOf` case and otherwise falls through
+            // to `judge`/relation machinery downstream that resolves it against
+            // its constraint, collapsing e.g. `Bag[KSel]` to `number` before
+            // the identity ever reaches display. This is the expression-typed
+            // sibling of `generic_deferred_source_keeps_spelling_against_generic_target`
+            // above: that guard only preserves the spelling when the TARGET is
+            // also generic, but tsc keeps a deferred constraint-relative
+            // SOURCE's own spelling regardless of whether the target is
+            // concrete (oracle-verified via `scripts/conformance/oracle.sh` vs
+            // pinned typescript@7.0.2, #17718 witness 2 family: `Type
+            // 'Bag[KSel]' is not assignable to type 'string | undefined'.`).
+            let preserve_deferred_surface =
+                crate::query_boundaries::shape_predicates::is_deferred_constraint_relative_operand(
+                    self.ctx.types.as_type_database(),
+                    &self.ctx.definition_store,
+                    expr_display_type,
+                );
             let display_type = if expr_display_type != TypeId::ERROR {
-                let widened_expr_type = if preserve_literal_surface {
+                let widened_expr_type = if preserve_literal_surface || preserve_deferred_surface {
                     expr_display_type
                 } else {
                     self.widen_type_for_display(expr_display_type)
@@ -732,7 +752,19 @@ impl<'a> CheckerState<'a> {
             } else {
                 self.widen_type_for_display(source)
             };
-            let display_type = self.widen_function_like_display_type(display_type);
+            // `widen_function_like_display_type` unconditionally evaluates its
+            // input before checking whether it is even function-like — for a
+            // deferred constraint-relative operand that eagerly resolves
+            // `Bag[KSel]` to `number`, undoing the preservation above. Skip it
+            // for the same operands `preserve_deferred_surface` already
+            // protects; a deferred `IndexAccess`/`KeyOf`/`Conditional` is never
+            // itself function-like, so there is nothing for this widening step
+            // to do for it anyway.
+            let display_type = if preserve_deferred_surface {
+                display_type
+            } else {
+                self.widen_function_like_display_type(display_type)
+            };
             if let Some(display) =
                 self.new_expression_nominal_source_display(expr_idx, display_type)
             {
