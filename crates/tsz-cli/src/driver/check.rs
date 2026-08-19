@@ -819,7 +819,15 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
     // module-only TS files (no `declare global`, no interface that augments
     // a lib type) this removes a fixed ~30-lib-file recheck tax that was
     // dominating the per-invocation floor (~380–430ms on tiny files).
+    //
+    // `skipLibCheck` short-circuits the same machinery: the recheck runs
+    // after every user file is already checked, so its sole product is
+    // diagnostics on the lib `.d.ts` files — which `skipLibCheck` discards.
+    // Reproducing and then throwing away a full ~30-lib-file semantic check
+    // is pure waste (issue #17675: `global_node_merge` fixtures ran 100–300s
+    // under `skipLibCheck`). Skip the whole recheck up front instead.
     let needs_lib_recheck = can_recheck_checker_libs
+        && !options.skip_lib_check
         && (!affected_lib_interfaces.is_empty() || !affected_lib_extension_interfaces.is_empty());
     let baseline_lib_diagnostics = if needs_lib_recheck {
         collect_checker_lib_baseline_fingerprints(
@@ -833,7 +841,11 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
     } else {
         FxHashSet::default()
     };
+    // These are TS2552 diagnostics that originate in the baseline lib `.d.ts`
+    // files; `skipLibCheck` suppresses lib-file diagnostics, so do not compute
+    // (or emit) them in that mode.
     let baseline_lib_datetimeformatpart_diagnostics = if can_recheck_checker_libs
+        && !options.skip_lib_check
         && !options.lib_is_default
         && !has_esnext_umbrella_lib(checker_libs)
         && should_preserve_datetimeformatpart_spelling_baseline(checker_libs)
@@ -1291,9 +1303,9 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
                 );
                 let mut lib_diags = lib_diags;
                 retain_program_induced_lib_diagnostics(&mut lib_diags, &baseline_lib_diagnostics);
-                if !options.skip_lib_check {
-                    diagnostics.extend(lib_diags);
-                }
+                // `needs_lib_recheck` is already gated on `!skip_lib_check`, so
+                // reaching here means these lib diagnostics are wanted.
+                diagnostics.extend(lib_diags);
                 request_cache_counters.merge(lib_counters);
                 parallel_qc_stats.merge(&query_cache.statistics());
             }
@@ -1646,9 +1658,9 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
                     check_checker_lib_file(&checker_lib_file_env, lib_idx, &query_cache, None);
                 let mut lib_diags = lib_diags;
                 retain_program_induced_lib_diagnostics(&mut lib_diags, &baseline_lib_diagnostics);
-                if !options.skip_lib_check {
-                    diagnostics.extend(lib_diags);
-                }
+                // `needs_lib_recheck` is already gated on `!skip_lib_check`, so
+                // reaching here means these lib diagnostics are wanted.
+                diagnostics.extend(lib_diags);
                 request_cache_counters.merge(lib_counters);
             }
         }
