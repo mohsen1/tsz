@@ -12,7 +12,7 @@ pub(crate) use super::common::{
     array_element_type as get_array_element_type, call_signatures_for_type,
     classify_for_literal_value, classify_for_predicate_signature, construct_signatures_for_type,
     contains_free_type_parameters, contains_type_parameter_named, contains_type_parameters,
-    function_shape_for_type, instantiate_type, is_assignment_operator,
+    function_shape_for_type, has_call_signatures, instantiate_type, is_assignment_operator,
     is_compound_assignment_operator, is_keyof_type, is_literal_type_through_type_constraints,
     is_logical_compound_assignment_operator, is_narrowing_literal, is_type_parameter_like,
     is_union_type, is_unit_type, is_unknown_narrowing_literal, literal_value,
