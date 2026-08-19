@@ -529,3 +529,106 @@ function chainReturn(): RawBuilder<string> | RawBuilder<number> {
         "tag's declared return is a two-hop alias chain, arms are direct",
     );
 }
+
+/// #17673 item 2: the ambiguous-union TS2322 must render the contextually
+/// inferred source type, not a context-free re-derivation that lets the tag's
+/// type parameter fall back to its `unknown` default. Every message fragment
+/// below was oracle-pinned against tsc 6.0.2 (`--strict`).
+fn assert_single_ts2322_message(body: &str, fragment: &'static str, context: &str) {
+    let source = format!("{PRELUDE}\n{body}");
+    let diagnostics = check_source_diagnostics(&source);
+    assert_diagnostic_shapes_exactly(
+        &source,
+        &diagnostics,
+        &[DiagnosticShape::code(2322).with_message_fragment(fragment)],
+    );
+    let _ = context;
+}
+
+#[test]
+fn ambiguous_union_message_renders_the_inferred_union_source() {
+    assert_single_ts2322_message(
+        r#"
+function twoArm(): RawBuilder<string> | RawBuilder<number> {
+  return sql``
+}
+"#,
+        "Type 'RawBuilder<string | number>' is not assignable to type 'RawBuilder<string> | RawBuilder<number>'",
+        "two-arm tag source display",
+    );
+}
+
+#[test]
+fn three_arm_ambiguous_union_message_renders_the_full_inferred_union() {
+    assert_single_ts2322_message(
+        r#"
+function threeArm(): RawBuilder<string> | RawBuilder<number> | RawBuilder<boolean[]> {
+  return sql``
+}
+"#,
+        "Type 'RawBuilder<string | number | boolean[]>' is not assignable",
+        "three-arm tag source display",
+    );
+}
+
+#[test]
+fn renamed_binders_ambiguous_union_message_renders_the_inferred_union_source() {
+    assert_single_ts2322_message(
+        r#"
+interface CrateRow<Payload> {
+  readonly slot: Payload | undefined
+  readonly sealed: true
+}
+interface StampTag {
+  <Mark = unknown>(parts: TemplateStringsArray, ...values: unknown[]): CrateRow<Mark>
+}
+declare const stamp: StampTag
+function pickCrate(): CrateRow<string> | CrateRow<number> {
+  return stamp``
+}
+"#,
+        "Type 'CrateRow<string | number>' is not assignable to type 'CrateRow<string> | CrateRow<number>'",
+        "renamed binders source display",
+    );
+}
+
+#[test]
+fn ordinary_call_ambiguous_union_message_renders_the_inferred_union_source() {
+    assert_single_ts2322_message(
+        r#"
+function viaCall(): RawBuilder<string> | RawBuilder<number> {
+  return rawCall()
+}
+"#,
+        "Type 'RawBuilder<string | number>' is not assignable to type 'RawBuilder<string> | RawBuilder<number>'",
+        "ordinary zero-evidence call source display",
+    );
+}
+
+#[test]
+fn nullish_arm_ambiguous_union_message_renders_the_inferred_union_source() {
+    assert_single_ts2322_message(
+        r#"
+function withUndef(): RawBuilder<string> | RawBuilder<number> | undefined {
+  return sql``
+}
+"#,
+        "Type 'RawBuilder<string | number>' is not assignable",
+        "nullish arm source display",
+    );
+}
+
+#[test]
+fn alias_arm_ambiguous_union_message_renders_the_inferred_union_source() {
+    assert_single_ts2322_message(
+        r#"
+type StrRow = RawBuilder<string>
+type NumRow = RawBuilder<number>
+function aliasArms(): StrRow | NumRow {
+  return sql``
+}
+"#,
+        "Type 'RawBuilder<string | number>' is not assignable",
+        "alias arms source display",
+    );
+}
