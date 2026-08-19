@@ -101,7 +101,8 @@ impl<R: TypeResolver> SubtypeChecker<'_, R> {
         // the structural union members, so keep that first-failing-member
         // behavior here.
         if application_shaped_comparison {
-            for &member in members.iter() {
+            let mut missing_property_reason = None;
+            'find_missing: for &member in members.iter() {
                 if self.check_subtype(resolved_source, member).is_true() {
                     continue;
                 }
@@ -120,18 +121,27 @@ impl<R: TypeResolver> SubtypeChecker<'_, R> {
                         _ => None,
                     };
                     if let Some(property_name) = missing_property {
-                        return Some(SubtypeFailureReason::MissingProperty {
-                            property_name,
-                            source_type: source,
-                            target_type: target,
-                        });
+                        missing_property_reason = Some(property_name);
+                        break 'find_missing;
                     }
                 }
             }
-            return Some(SubtypeFailureReason::NoUnionMemberMatches {
-                source_type: source,
-                target_union_members: members.to_vec(),
-            });
+            if let Some(property_name) = missing_property_reason {
+                return Some(SubtypeFailureReason::MissingProperty {
+                    property_name,
+                    source_type: source,
+                    target_type: target,
+                });
+            }
+            // No member failed on a missing property: fall through to the
+            // general best-matching-member elaboration below instead of
+            // collapsing to a bare union-head line. tsc's `getBestMatchingType`
+            // always re-relates against the selected member with errors
+            // enabled regardless of source shape, so an application-shaped
+            // source failing on a property *type* mismatch (not a missing
+            // property) — e.g. a generic tag's inferred `RawBuilder<string |
+            // number>` against `StrRow | RawBuilder<number>` — still drills
+            // into that member's own reason instead of losing the chain.
         }
 
         // Nullable-object target (`T | null`, `T | undefined`,
