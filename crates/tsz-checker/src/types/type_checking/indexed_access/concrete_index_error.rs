@@ -261,18 +261,18 @@ impl CheckerState<'_> {
             // A well-known-symbol-keyed member (`[Symbol.iterator]`) is a *named*
             // member, not a symbol index signature, so the symbol-index key-space
             // check above does not accept it and the access falls through here.
-            // When the concrete object actually declares that member under its
-            // canonical `[Symbol.xxx]` key the access resolves it — the
-            // value-position `i[Symbol.iterator]` does — so the type-position
-            // access must not report TS2538 either. `tsc` reports nothing.
+            // `tsc` never reports TS2538 for such a key: when the object declares
+            // the member the access is valid (the value-position
+            // `i[Symbol.iterator]` resolves it), and when it does not the missing
+            // *named* key is a TS2339 ("property does not exist"), not TS2538.
+            // Either way the caller's resolver-aware key path (which recovers the
+            // canonical `[Symbol.xxx]` name and emits TS2339 only on a genuine
+            // miss) owns the outcome, so defer to it rather than emitting a
+            // spurious TS2538 here.
             if let Some(sym) = crate::query_boundaries::type_construction::unique_symbol_ref(
                 self.ctx.types,
                 index_type,
-            ) && let Some(name) = self.ctx.well_known_symbol_name_for_ref(sym)
-                && matches!(
-                    self.resolve_property_access_with_env(concrete_object_type, &name),
-                    tsz_solver::operations::property::PropertyAccessResult::Success { .. }
-                )
+            ) && self.ctx.well_known_symbol_name_for_ref(sym).is_some()
             {
                 return false;
             }
