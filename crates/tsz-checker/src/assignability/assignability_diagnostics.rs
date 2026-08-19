@@ -664,6 +664,7 @@ impl<'a> CheckerState<'a> {
         skip_source_elaboration: bool,
     ) -> bool {
         let source = self.narrow_this_from_enclosing_typeof_guard(source_idx, source);
+        let target = self.normalize_concrete_keyof_relation_target(target);
         let force_nested_error_nullish_report =
             self.should_report_nullish_assignment_through_nested_target_error(source, target);
         let exact_optional_mismatch = self.has_exact_optional_property_mismatch(source, target);
