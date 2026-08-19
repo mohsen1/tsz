@@ -508,6 +508,32 @@ impl<'a> CheckerState<'a> {
             if type_ref.type_arguments.is_some() {
                 return None;
             }
+            // An alias whose own declared RHS is a reference to another name
+            // (`type Outer = Inner`, `type BoxNum = Box[number]`,
+            // `type Foo2 = Id[{...}]`) inherits that name's display policy,
+            // which the established chain/application-aware paths already
+            // implement: tsc splits the application family itself (`BoxNum`
+            // keeps the alias, the recursive mapped `Id[{...}]` of
+            // `deeplyNestedMappedTypes.ts` renders the substituted
+            // application), so repainting from here regressed the latter.
+            // Only an alias that declares its shape in place (union, object,
+            // array, tuple, function, ...) is this gate's collapse family.
+            // The declaration walk mirrors `annotation_type_query_alias_def_id`.
+            let sym_id = self
+                .ctx
+                .binder
+                .resolve_identifier(arena, type_ref.type_name)?;
+            let symbol = self.ctx.binder.get_symbol(sym_id)?;
+            let rhs_is_reference = symbol.declarations.iter().any(|&decl_idx| {
+                arena
+                    .get(decl_idx)
+                    .and_then(|decl_node| arena.get_type_alias(decl_node))
+                    .and_then(|alias| arena.get(alias.type_node))
+                    .is_some_and(|rhs| rhs.kind == syntax_kind_ext::TYPE_REFERENCE)
+            });
+            if rhs_is_reference {
+                return None;
+            }
             self.annotation_type_reference_alias_def_id(arena, annotation_idx)?
         };
         let alias_name = {

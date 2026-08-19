@@ -556,6 +556,62 @@ fn bare_alias_to_alias_forwarding_target_renders_the_inner_alias() {
     assert_eq!(rendered_target_type(source), "Inner");
 }
 
+/// Negative control on application-bodied aliases, half one: a plain
+/// generic-application body keeps the written alias (`BoxNum`), which the
+/// established application display path already produced — the
+/// per-occurrence gate declines application bodies and must not disturb it.
+#[test]
+fn plain_application_bodied_alias_target_keeps_the_written_alias() {
+    let source = "type Box<T> = { v: T };\n\
+                  type BoxNum = Box<number>;\n\
+                  declare const flag: boolean;\n\
+                  const b: BoxNum = flag;\n";
+    assert_eq!(rendered_target_type(source), "BoxNum");
+}
+
+/// Negative control on application-bodied aliases, half two: a *recursive
+/// mapped* application body renders the substituted application, not the
+/// written alias — tsc splits the application-bodied family this way
+/// (oracle-pinned; the deep form is conformance `deeplyNestedMappedTypes.ts`,
+/// which regressed when the per-occurrence gate repainted it and is why the
+/// gate declines every application body).
+#[test]
+fn recursive_mapped_application_alias_target_renders_the_application() {
+    let source = "type Id<T> = { [K in keyof T]: Id<T[K]> };\n\
+                  type FooA = Id<{ x: { c: number } }>;\n\
+                  type FooB = Id<{ x: { c: string } }>;\n\
+                  declare const fa: FooA;\n\
+                  const fb: FooB = fa;\n";
+    // The source here is not `boolean`, so this row asserts the whole head
+    // line rather than going through `rendered_target_type`.
+    let diagnostics = check_source_with_libs_code_messages(
+        source,
+        "case.ts",
+        CheckerOptions {
+            strict: true,
+            ..Default::default()
+        },
+        &load_default_lib_files(),
+    );
+    let heads: Vec<&String> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2322)
+        .map(|(_, message)| message)
+        .collect();
+    assert_eq!(
+        heads.len(),
+        1,
+        "expected exactly one TS2322: {diagnostics:?}"
+    );
+    assert!(
+        heads[0].starts_with(
+            "Type 'Id<{ x: { c: number; }; }>' is not assignable to type 'Id<{ x: { c: string; }; }>'."
+        ),
+        "unexpected head: {}",
+        heads[0]
+    );
+}
+
 /// The source-side dual of the two-alias pair: the declared annotation of the
 /// *source* identifier keeps its own written spelling too.
 #[test]
