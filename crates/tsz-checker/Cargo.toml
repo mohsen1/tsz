@@ -2453,6 +2453,9 @@ path = "tests/array_mutation_unrelated_narrowing_tests.rs"
 [[test]]
 name = "array_mutation_same_array_join_narrowing_tests"
 path = "tests/array_mutation_same_array_join_narrowing_tests.rs"
+[[test]]
+name = "optional_parameter_reassignment_declared_type_recovery_tests"
+path = "tests/optional_parameter_reassignment_declared_type_recovery_tests.rs"
 
 [[test]]
 name = "public_package_unique_symbol_emit_tests"
