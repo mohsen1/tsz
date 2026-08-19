@@ -70,15 +70,15 @@ impl<'a> CheckerState<'a> {
         source: TypeId,
         target: TypeId,
     ) -> Option<String> {
-        if crate::query_boundaries::common::contains_type_parameters(self.ctx.types, target) {
+        if crate::query_boundaries::diagnostics::contains_type_parameters(self.ctx.types, target) {
             return None;
         }
-        if !crate::query_boundaries::common::contains_type_parameters(self.ctx.types, source) {
+        if !crate::query_boundaries::diagnostics::contains_type_parameters(self.ctx.types, source) {
             return None;
         }
         let display_alias = self.ctx.types.get_display_alias(source);
         for candidate in [Some(source), display_alias].into_iter().flatten() {
-            if !(crate::query_boundaries::common::is_conditional_type(self.ctx.types, candidate)
+            if !(crate::query_boundaries::diagnostics::is_conditional_type(self.ctx.types, candidate)
                 || crate::query_boundaries::diagnostics::alias_application_body_reduces_through_conditional_or_indexed(
                     self.ctx.types,
                     &self.ctx.definition_store,
