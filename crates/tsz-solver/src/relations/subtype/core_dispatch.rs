@@ -1457,7 +1457,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // - MemberType: For structural assignability to primitives (E1 <: number)
         // =======================================================================
 
-        if let (Some((s_def_id, _s_members)), Some((t_def_id, _t_members))) = (
+        if let (Some((s_def_id, s_members)), Some((t_def_id, _t_members))) = (
             enum_components(self.interner, source),
             enum_components(self.interner, target),
         ) {
@@ -1498,6 +1498,21 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 if self.resolver.is_enum_type(target, self.interner) {
                     return SubtypeResult::True;
                 }
+            }
+
+            // Whole-enum source vs a member of the SAME enum: tsc models an
+            // enum type as the union of its member types, so the relation
+            // reduces to the value domains — a single-member enum IS its
+            // member type (`One` relates to `One.Only`), while a multi-member
+            // enum's value union fails against any single member's value.
+            // Nominality is already satisfied (same enum), so compare the
+            // structural member values.
+            if self
+                .resolver
+                .get_enum_parent_def_id(t_def_id)
+                .is_some_and(|parent| self.resolver.defs_are_equivalent(parent, s_def_id))
+            {
+                return self.check_subtype(s_members, target);
             }
 
             // Different enums are NOT compatible (nominal typing)
