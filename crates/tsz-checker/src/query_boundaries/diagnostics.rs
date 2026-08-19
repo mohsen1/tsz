@@ -44,6 +44,18 @@ pub(crate) use super::index_signature::{IndexKind, has_index_signature};
 pub(crate) use tsz_solver::type_queries::AssignmentNumericDisplayChildren;
 pub(crate) use tsz_solver::type_queries::is_this_type;
 
+/// `true` when the type is — or has a union member that is — a string, number,
+/// boolean, or bigint unit literal. The domain-agnostic counterpart of the
+/// string-only `string_literal_value` surface, used by assignment-diagnostic
+/// display to decide whether a fresh source literal should be preserved
+/// verbatim against a contextual target that carries a matching literal
+/// (mirroring tsc's `isLiteralOfContextualType`). Owned by the diagnostics
+/// boundary because only `error_reporter/` presentation code consults it
+/// (issue #12947).
+pub(crate) fn type_contains_unit_literal(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::type_queries::type_contains_unit_literal(db, type_id)
+}
+
 /// Resolve the binder symbol backing an object type, for diagnostic
 /// elaboration (spelling suggestions, missing-property anchors). Used only by
 /// `error_reporter/` presentation code, so it is owned by the diagnostics

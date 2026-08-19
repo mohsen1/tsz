@@ -88,6 +88,50 @@ const bg: Big = { amt: 1n, tag: "y" };
 }
 
 #[test]
+fn bigint_only_literal_properties_preserved_against_union_target() {
+    // No string sibling to trip the legacy string-only literal-surface gate:
+    // both arms are all-bigint, split across arms (`lo: 1n` matches arm one,
+    // `hi: 4n` matches arm two). tsc keeps both bigint literals.
+    let messages = ts2322_messages(
+        r#"
+type Range = { lo: 1n; hi: 2n } | { lo: 3n; hi: 4n };
+const rg: Range = { lo: 1n, hi: 4n };
+"#,
+    );
+    assert!(
+        messages.iter().any(|m| m.contains("{ lo: 1n; hi: 4n; }")),
+        "bigint-only literal properties should be preserved, got: {messages:?}"
+    );
+    assert!(
+        !messages.iter().any(|m| m.contains("bigint")),
+        "bigint-only literals must not be widened to `bigint`, got: {messages:?}"
+    );
+}
+
+#[test]
+fn boolean_only_literal_properties_preserved_against_union_target() {
+    // All-boolean arms, split across arms (`fst: true` matches arm one,
+    // `snd: true` matches arm two). No string sibling, so this only passes
+    // once the literal-surface gate recognizes boolean literals too.
+    let messages = ts2322_messages(
+        r#"
+type Pair = { fst: true; snd: false } | { fst: false; snd: true };
+const pr: Pair = { fst: true, snd: true };
+"#,
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|m| m.contains("{ fst: true; snd: true; }")),
+        "boolean-only literal properties should be preserved, got: {messages:?}"
+    );
+    assert!(
+        !messages.iter().any(|m| m.contains("boolean")),
+        "boolean-only literals must not be widened to `boolean`, got: {messages:?}"
+    );
+}
+
+#[test]
 fn mixed_numeric_and_string_literal_properties_preserved() {
     let messages = ts2322_messages(
         r#"
