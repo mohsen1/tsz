@@ -236,3 +236,59 @@ fn cross_file_interface_merge_bare_call_signatures_prefer_later_group() {
         "interface-level call signatures from the later file must be tried first, got: {diags:?}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Cross-file interface declaration merging: construct-signature (`new`)
+// resolution order. tsc's reorderCandidates is shared between call and
+// construct resolution, so the later program file's construct group is tried
+// first too. Oracle: tsc 7.0.2 on each fixture. The same-file re-open
+// construct ordering is fenced by `merged_interface_construct_order_tests`
+// in tsz-checker.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn cross_file_interface_merge_new_prefers_later_declaration_group() {
+    let (_tmp, diags) = compile_ordered_files(&[
+        ("early.ts", "interface WidgetCtor { new (x: string): 1 }\n"),
+        (
+            "late.ts",
+            "interface WidgetCtor { new (x: string): 2 }\ndeclare const Widget: WidgetCtor;\nconst built: 2 = new Widget(\"x\");\n",
+        ),
+    ]);
+    assert!(
+        diags.is_empty(),
+        "later file's construct group must win the merged `new`, got: {diags:?}"
+    );
+}
+
+#[test]
+fn cross_file_interface_merge_new_usage_in_earlier_file_prefers_later_group() {
+    let (_tmp, diags) = compile_ordered_files(&[
+        (
+            "consumer.ts",
+            "interface RigCtor { new (x: string): 1 }\ndeclare const Rig: RigCtor;\nconst built: 2 = new Rig(\"x\");\n",
+        ),
+        ("extension.ts", "interface RigCtor { new (x: string): 2 }\n"),
+    ]);
+    assert!(
+        diags.is_empty(),
+        "a `new` in the earlier file still resolves against the later construct group, got: {diags:?}"
+    );
+}
+
+#[test]
+fn cross_file_interface_merge_new_reversed_file_order_flips_winner() {
+    let (_tmp, diags) = compile_ordered_files(&[
+        (
+            "use.ts",
+            "interface FlipCtor { new (x: string): 2 }\ndeclare const Flip: FlipCtor;\nconst flipped: 2 = new Flip(\"x\");\n",
+        ),
+        ("other.ts", "interface FlipCtor { new (x: string): 1 }\n"),
+    ]);
+    assert!(
+        diags.iter().any(|(code, message)| *code == 2322
+            && message.contains("'1'")
+            && message.contains("'2'")),
+        "with reversed program order the other file's construct group is later and must win, got: {diags:?}"
+    );
+}
