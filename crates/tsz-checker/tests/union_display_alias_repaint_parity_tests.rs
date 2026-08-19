@@ -353,3 +353,192 @@ fn renamed_binders_variadic_infer_tail_renders_the_collapsed_tuple() {
                   const dest: boolean = held;\n";
     assert_eq!(rendered_source_type(source), "[8, 7]");
 }
+
+// ---------------------------------------------------------------------------
+// The TARGET mirror of the repaint rows above.
+//
+// The source side was fixed by #16610/#16645 via an annotation-node gate
+// (`longhand_primitive_union_source_display`); the target side kept no such
+// gate, so `let a: string | number = someBoolean` rendered the *target* as an
+// unrelated alias's name whenever one of that shape was declared anywhere in
+// the program. Same defect, same owner, opposite position.
+//
+// Every expectation below was verified against the pinned oracle
+// (`typescript@7.0.2` via `scripts/conformance/oracle.sh`, `--strict`).
+// ---------------------------------------------------------------------------
+
+/// The rendered target-type name from the single `TS2322` a row produces.
+///
+/// Every fixture below assigns a `boolean` to the annotation under test, so the
+/// message is always `Type 'boolean' is not assignable to type 'X'.` and `X` is
+/// the display surface.
+fn rendered_target_type(source: &str) -> String {
+    let diagnostics = check_source_with_libs_code_messages(
+        source,
+        "case.ts",
+        CheckerOptions {
+            strict: true,
+            ..Default::default()
+        },
+        &load_default_lib_files(),
+    );
+    let assignability: Vec<&(u32, String)> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2322)
+        .collect();
+    assert_eq!(
+        assignability.len(),
+        1,
+        "expected exactly one TS2322 for this fixture, got {diagnostics:?}"
+    );
+    let message = &assignability[0].1;
+    let rest = message
+        .strip_prefix("Type 'boolean' is not assignable to type '")
+        .unwrap_or_else(|| panic!("unexpected TS2322 shape: {message}"));
+    let end = rest
+        .rfind("'.")
+        .unwrap_or_else(|| panic!("unexpected TS2322 shape: {message}"));
+    rest[..end].to_string()
+}
+
+/// A longhand primitive union **target** is not repainted by a user alias of
+/// the same shape declared in the same file and never referenced.
+#[test]
+fn longhand_primitive_union_target_is_not_repainted_by_an_unreferenced_user_alias() {
+    let source = "type Zed = string | number;\n\
+                  declare const flag: boolean;\n\
+                  const dest: string | number = flag;\n";
+    assert_eq!(rendered_target_type(source), "string | number");
+}
+
+/// The positive control: an annotation written *through* the alias keeps the
+/// alias name on the target side too, so the gate suppresses repaints without
+/// erasing genuine alias spellings.
+#[test]
+fn union_target_written_through_its_alias_renders_the_alias() {
+    let source = "type Zed = string | number;\n\
+                  declare const flag: boolean;\n\
+                  const dest: Zed = flag;\n";
+    assert_eq!(rendered_target_type(source), "Zed");
+}
+
+/// Renamed binders and a three-member union, so no row can be satisfied by
+/// anything keyed on the `Zed` spelling or the two-member shape.
+#[test]
+fn renamed_binders_longhand_three_member_union_target_is_not_repainted() {
+    let source = "type Trio = string | number | symbol;\n\
+                  declare const held: boolean;\n\
+                  const sink: string | number | symbol = held;\n";
+    assert_eq!(rendered_target_type(source), "string | number | symbol");
+}
+
+/// The widest-reach target row: repainted by the **lib** alias `PropertyKey`,
+/// which the annotation never mentions.
+#[test]
+fn longhand_primitive_union_target_is_not_repainted_by_an_unreferenced_lib_alias() {
+    let source = "declare const flag: boolean;\n\
+                  const dest: string | number | symbol = flag;\n";
+    assert_eq!(rendered_target_type(source), "string | number | symbol");
+}
+
+/// Positive control for the lib alias: written through, it keeps its name.
+#[test]
+fn union_target_written_through_a_lib_alias_renders_the_lib_alias() {
+    let source = "declare const flag: boolean;\n\
+                  const dest: PropertyKey = flag;\n";
+    assert_eq!(rendered_target_type(source), "PropertyKey");
+}
+
+/// The alias declared *after* the use site repaints just the same on main, so
+/// the outcome is not a declaration-order artifact.
+#[test]
+fn an_alias_declared_after_the_use_site_does_not_repaint_the_longhand_union_target() {
+    let source = "declare const flag: boolean;\n\
+                  const dest: string | number = flag;\n\
+                  type Later = string | number;\n";
+    assert_eq!(rendered_target_type(source), "string | number");
+}
+
+/// Two distinct aliases of the *same* interned union: each written spelling
+/// keeps its own name rather than collapsing to whichever registered first.
+///
+/// Red both with and without the target gate above, because it is a different
+/// mechanism: `register_type_to_def` is first-writer-wins on the interned
+/// `TypeId`, so `First` wins globally and the gate — which only decides
+/// *whether* to consult that table — has no second name to offer. Fixing it
+/// needs per-occurrence alias reference identity at lowering, not a display
+/// gate.
+#[test]
+#[ignore = "separate open divergence: `register_type_to_def` is first-writer-wins per interned TypeId, so two aliases of one union both render the first; needs per-occurrence alias identity at lowering"]
+fn two_aliases_of_one_union_each_keep_their_own_written_target_spelling() {
+    let source = "type First = string | number;\n\
+                  type Second = string | number;\n\
+                  declare const flag: boolean;\n\
+                  const a: Second = flag;\n";
+    assert_eq!(rendered_target_type(source), "Second");
+}
+
+/// Baseline with no alias anywhere: the structural render must be unchanged, so
+/// the gate is not what produces the member spelling in the ordinary case.
+#[test]
+fn longhand_primitive_union_target_with_no_alias_in_scope_renders_structurally() {
+    let source = "declare const flag: boolean;\n\
+                  const dest: string | number = flag;\n";
+    assert_eq!(rendered_target_type(source), "string | number");
+}
+
+/// Written in the reverse order, the target still renders in tsc's canonical
+/// member order — the gate renders the *type*, not the annotation's text, so it
+/// cannot resurrect written order (which #17715 established tsc ignores).
+#[test]
+fn reverse_written_longhand_union_target_renders_in_canonical_member_order() {
+    let source = "type Zed = string | number;\n\
+                  declare const flag: boolean;\n\
+                  const dest: number | string = flag;\n";
+    assert_eq!(rendered_target_type(source), "string | number");
+}
+
+/// Negative control on the nullish-collapse boundary: a longhand
+/// `string | undefined` target against a non-nullish source still collapses to
+/// `string` (#17714's single-survivor rule). The gate is ordered after the
+/// nullish strip precisely so it cannot override that.
+#[test]
+fn longhand_nullable_union_target_still_collapses_to_its_single_survivor() {
+    let source = "type Maybe = string | undefined;\n\
+                  declare const flag: boolean;\n\
+                  const dest: string | undefined = flag;\n";
+    assert_eq!(rendered_target_type(source), "string");
+}
+
+/// The alias-written half of the same nullish pair should keep the alias name
+/// (`Maybe`), as tsc does — its collapse lives in the structural elaboration
+/// path, which an annotation carrying an `aliasSymbol` never enters.
+///
+/// Red both with and without the target gate above: tsz renders `string`
+/// because `strip_nullish_for_assignability_display` runs unconditionally,
+/// before any annotation is consulted. Recorded here rather than fixed, since
+/// making the strip alias-aware is the nullable-display family's own owner
+/// (#17714 / `nullable_union_assignability_target_display_tests.rs`), not this
+/// repaint gate's.
+#[test]
+#[ignore = "separate open divergence: the nullish strip runs before the annotation is consulted, so an alias-written `string | undefined` target collapses to `string` instead of keeping its name"]
+fn nullable_union_target_written_through_its_alias_renders_the_alias() {
+    let source = "type Maybe = string | undefined;\n\
+                  declare const flag: boolean;\n\
+                  const dest: Maybe = flag;\n";
+    assert_eq!(rendered_target_type(source), "Maybe");
+}
+
+/// Object-member union targets are outside the gate's admitted shape (it takes
+/// primitive keywords only) and were already correct; this row pins that the
+/// established anonymous-composite path still owns them.
+#[test]
+fn object_member_union_target_still_renders_structurally() {
+    let source = "type Qux = { p: number } | { q: string };\n\
+                  declare const flag: boolean;\n\
+                  const dest: { p: number } | { q: string } = flag;\n";
+    assert_eq!(
+        rendered_target_type(source),
+        "{ p: number; } | { q: string; }"
+    );
+}
