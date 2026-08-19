@@ -1143,48 +1143,70 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             && !ctx.collects_contra_candidates()
                             && ctx.parameter_recovery_mode
                                 != ParameterRecoveryMode::StandaloneReverse
-                            && let Some(TypeData::Application(s_app_id)) =
-                                self.interner.lookup(source)
+                            && let Some(TypeData::Application(_)) = self.interner.lookup(source)
                         {
-                            let s_app = self.interner.type_application(s_app_id);
-                            let s_base = s_app.base;
-                            let s_args_len = s_app.args.len();
-                            let mut merged_member_args: Vec<Vec<TypeId>> =
-                                vec![Vec::new(); s_args_len];
-                            let mut merged_member_count = 0usize;
-                            let mut unmerged_members: Vec<TypeId> = Vec::new();
-                            for &member in t_members.iter() {
-                                if is_nullish(member) {
-                                    continue;
-                                }
-                                if let Some(TypeData::Application(m_app_id)) =
-                                    self.interner.lookup(member)
-                                {
-                                    let m_app = self.interner.type_application(m_app_id);
-                                    if m_app.args.len() == s_args_len
-                                        && self
-                                            .application_bases_share_declaration(m_app.base, s_base)
+                            // Aliases are transparent to tsc's inference on BOTH
+                            // sides of the scan: an alias arm (`type StrRow =
+                            // RawBuilder<string>`, arm `StrRow` or `Row<string>`
+                            // via `type Row<T> = RawBuilder<T>`) merges with
+                            // direct arms, and a tag declared to return the
+                            // alias application (`Row<Tagged>`) merges against
+                            // direct `RawBuilder<...>` arms. Try the as-written
+                            // source view first, then the evaluated one.
+                            let source_views = self.transparent_application_views(source);
+                            trace!(
+                                ?source,
+                                views = source_views.len(),
+                                members = t_members.len(),
+                                "return-context union merge scan"
+                            );
+                            for (s_base, s_args) in source_views {
+                                let s_args_len = s_args.len();
+                                let mut merged_member_args: Vec<Vec<TypeId>> =
+                                    vec![Vec::new(); s_args_len];
+                                let mut merged_member_count = 0usize;
+                                let mut unmerged_members: Vec<TypeId> = Vec::new();
+                                for &member in t_members.iter() {
+                                    if is_nullish(member) {
+                                        continue;
+                                    }
+                                    if let Some(m_args) =
+                                        self.union_arm_merge_args(member, s_base, s_args_len)
                                     {
-                                        for (i, &arg) in m_app.args.iter().enumerate() {
+                                        for (i, &arg) in m_args.iter().enumerate() {
                                             merged_member_args[i].push(arg);
                                         }
                                         merged_member_count += 1;
-                                        continue;
+                                    } else {
+                                        unmerged_members.push(member);
                                     }
                                 }
-                                unmerged_members.push(member);
-                            }
-                            if merged_member_count > 1 {
-                                let merged_args: Vec<TypeId> = merged_member_args
-                                    .iter()
-                                    .map(|args| self.interner.union_from_slice(args))
-                                    .collect();
-                                let merged = self.interner.application(s_base, merged_args);
-                                self.constrain_types(ctx, var_map, source, merged, priority);
-                                for member in unmerged_members {
-                                    self.constrain_types(ctx, var_map, source, member, priority);
+                                if merged_member_count > 1 {
+                                    let merged_args: Vec<TypeId> = merged_member_args
+                                        .iter()
+                                        .map(|args| self.interner.union_from_slice(args))
+                                        .collect();
+                                    let merged = self.interner.application(s_base, merged_args);
+                                    // For the evaluated source view, constrain the
+                                    // aligned application form so the same-base
+                                    // walk seeds the placeholder directly; for the
+                                    // as-written view this re-interns to `source`
+                                    // itself.
+                                    let aligned_source = self.interner.application(s_base, s_args);
+                                    self.constrain_types(
+                                        ctx,
+                                        var_map,
+                                        aligned_source,
+                                        merged,
+                                        priority,
+                                    );
+                                    for member in unmerged_members {
+                                        self.constrain_types(
+                                            ctx, var_map, source, member, priority,
+                                        );
+                                    }
+                                    return;
                                 }
-                                return;
                             }
                         }
                         for &member in t_members.iter() {
