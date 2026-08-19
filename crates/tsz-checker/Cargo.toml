@@ -101,6 +101,9 @@ path = "tests/arithmetic_operand_validity_tests.rs"
 name = "generic_interface_target_property_elaboration_tests"
 path = "tests/generic_interface_target_property_elaboration_tests.rs"
 [[test]]
+name = "generic_return_literal_widen_gate_tests"
+path = "tests/generic_return_literal_widen_gate_tests.rs"
+[[test]]
 name = "failed_generic_call_default_type_args_tests"
 path = "tests/failed_generic_call_default_type_args_tests.rs"
 [[test]]
