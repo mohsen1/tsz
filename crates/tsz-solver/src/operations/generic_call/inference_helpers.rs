@@ -81,16 +81,29 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             let has_concrete_literal_conflict =
                 self.has_conflicting_literal_bases(&concrete_lower_bounds);
             // tsc keeps the LEFTMOST candidate on a base conflict
-            // (`getCommonSupertype`'s `reduceLeft`) and widens it
-            // (`getWidenedLiteralType`): `f1({ r: () => E1.X }, E2.X)` fixes
-            // `T = E1` and reports TS2345 on the `E2.X` argument, and
-            // `f1({ r: () => 0 }, "s")` fixes `T = number` likewise. tsz's
-            // priority-filtered `inferred` can instead carry a LATER
-            // argument's candidate (a source-function-return candidate is
-            // recorded at `ReturnType` priority while a naked argument is
-            // `NakedTypeVariable`), which inverts the reported mismatch onto
-            // the first argument. Re-anchor on the first concrete bound's
-            // widened base when the priority winner carries a different base.
+            // (`getCommonSupertype`'s `reduceLeft`) and, for an enum member,
+            // widens it to its parent enum (`getWidenedLiteralType`):
+            // `f1({ r: () => E1.X }, E2.X)` fixes `T = E1` and reports TS2345
+            // on the `E2.X` argument. tsz's priority-filtered `inferred` can
+            // instead carry a LATER argument's candidate (a
+            // source-function-return candidate is recorded at `ReturnType`
+            // priority while a naked argument is `NakedTypeVariable`), which
+            // inverts the reported mismatch onto the first argument.
+            // Re-anchor on the first concrete bound's widened base when the
+            // priority winner carries a different base.
+            //
+            // Scoped to ENUM-BRANDED first bounds: for a bare literal the
+            // widen is wrong in return-position shapes — tsc keeps `U = 1`
+            // for `c3.foo3(1, function (a) { return '' }, 1)` and elaborates
+            // `'string' is not assignable to '1'`, so a blanket literal
+            // re-anchor regressed `genericCallWithFunctionTypedArguments` /
+            // `genericClassWithFunctionTypedMemberArguments` /
+            // `destructuringParameterDeclaration3ES5+ES6` (PR #17680 review).
+            // The enum member -> parent widen holds in every oracle probe
+            // (object-wrapped, bare-callback, and mixed shapes, single- and
+            // multi-member enums alike); the literal-freshness/return-position
+            // flag algebra bare literals need is a separate campaign.
+            //
             // Gated on `leftmost_dropped_by_priority`: with a same-priority
             // candidate list the resolver's own combination (BCT tournament,
             // the all-object-property first-property fallback) already
@@ -99,6 +112,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             if has_concrete_literal_conflict
                 && leftmost_dropped_by_priority
                 && let Some(&first) = concrete_lower_bounds.first()
+                && matches!(self.interner.lookup(first), Some(TypeData::Enum(..)))
                 && let Some(first_base) = self.primitive_base_of(first)
                 && self.primitive_base_of(inferred) != Some(first_base)
             {
