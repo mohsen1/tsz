@@ -422,6 +422,21 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         args: &[TypeId],
         ctx: &ApplicationEvalContext,
     ) -> ApplicationEvalOutcome {
+        // The def resolved to a provisional (mid-build) class instance
+        // snapshot (#16055): materializing `C[args]` against the partial body
+        // would intern a degraded object (annotated fields plus method
+        // placeholders) that durable composites embed beside the completed
+        // representation. Keep the application opaque — the same treatment the
+        // dropped-symbol guard below applies to symbol-less partials — and
+        // taint the run so nothing persists a result computed inside the
+        // window; a later evaluation resolves against the published instance.
+        if let Some(resolved) = ctx.resolved
+            && self.interner.provisional_class_instance(resolved).is_some()
+        {
+            self.mark_unresolved_def_seen();
+            return ApplicationEvalOutcome::Computed(original_type_id);
+        }
+
         // Recursive-call-return placeholder: an `Application(Lazy(value_def),
         // type_args)` whose `value_def` is a value-space symbol (a function or
         // `const`/`let`/`var` initialized to a function) with a callable type
@@ -1862,6 +1877,10 @@ enum SameAliasExpansion {
     /// Convergent or still-generic: keep the meta-rereduce identity wrapper.
     None,
 }
+
+#[cfg(test)]
+#[path = "../../../tests/provisional_class_instance_window_tests.rs"]
+mod provisional_class_instance_window_tests;
 
 #[cfg(test)]
 mod tests {

@@ -52,6 +52,7 @@ struct UnionComplexityThreadState {
 mod cache;
 mod display;
 mod function_shapes;
+mod provisional_registry;
 mod storage;
 mod union_complexity;
 mod variance_cache;
@@ -375,6 +376,10 @@ pub struct TypeInterner {
     /// one context-dependence).
     pub(super) proto_instantiation_cache:
         DashMap<crate::caches::instantiation_cache::InstantiationCacheKey, TypeId, FxBuildHasher>,
+    /// Provisional (mid-build) class instance registry (#16055 / #14345);
+    /// accessors and semantics in `interner/provisional_registry.rs`.
+    pub(super) provisional_class_instance_registry:
+        DashMap<TypeId, (crate::def::DefId, Arc<[TypeParamInfo]>), FxBuildHasher>,
     /// Result memo for `collect_contravariant_infer_names`, keyed by the pattern
     /// `TypeId`.
     ///
@@ -857,6 +862,7 @@ impl TypeInterner {
             contains_type_by_id_cache: DashMap::with_hasher(FxBuildHasher),
             prune_union_members_cache: DashMap::with_hasher(FxBuildHasher),
             proto_instantiation_cache: DashMap::with_hasher(FxBuildHasher),
+            provisional_class_instance_registry: DashMap::with_hasher(FxBuildHasher),
             contravariant_infer_names_cache: DashMap::with_hasher(FxBuildHasher),
             union_normalize_cache: DashMap::with_hasher(FxBuildHasher),
             subtype_reduced_cache: DashMap::with_hasher(FxBuildHasher),
