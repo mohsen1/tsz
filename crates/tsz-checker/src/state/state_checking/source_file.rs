@@ -4,6 +4,7 @@
 //! reserved-await identifier checks (TS1262).
 
 use crate::context::{TypingRequest, is_declaration_file_name};
+use crate::query_boundaries::common::{callable_shape_for_type, unique_symbol_ref};
 use crate::state::CheckerState;
 use crate::statements::StatementChecker;
 use rustc_hash::FxHashSet;
@@ -46,7 +47,7 @@ impl CheckerState<'_> {
     /// per-file `type_env`, so the seed runs per file.
     ///
     /// `SymbolConstructor` carries a call signature, so it resolves to a
-    /// `Callable` type; its members are read from the callable/object shape when
+    /// `Callable` type; its members are read from the callable shape when
     /// `collect_properties` (which reports a bare callable as `NonObject`) does
     /// not surface them, so the seed is not silently skipped.
     fn seed_well_known_symbol_names(&mut self) {
@@ -92,7 +93,7 @@ impl CheckerState<'_> {
         // pre-pass. Read the members from whichever representation actually
         // carries them: the merged `collect_properties` result when it is
         // object-shaped (it also folds heritage/intersection), otherwise the
-        // callable or object shape's own property list.
+        // callable shape's own property list.
         let members = match tsz_solver::objects::collect_properties(
             symbol_ctor_resolved,
             self.ctx.types,
@@ -101,19 +102,9 @@ impl CheckerState<'_> {
             tsz_solver::objects::PropertyCollectionResult::Properties { properties, .. } => {
                 properties
             }
-            _ => crate::query_boundaries::common::callable_shape_for_type(
-                self.ctx.types,
-                symbol_ctor_resolved,
-            )
-            .map(|shape| shape.properties.clone())
-            .or_else(|| {
-                crate::query_boundaries::common::object_shape_for_type(
-                    self.ctx.types,
-                    symbol_ctor_resolved,
-                )
+            _ => callable_shape_for_type(self.ctx.types, symbol_ctor_resolved)
                 .map(|shape| shape.properties.clone())
-            })
-            .unwrap_or_default(),
+                .unwrap_or_default(),
         };
         // A well-known member is typed `unique symbol`; its property type carries
         // the same `UniqueSymbol(ref)` a use-site `typeof Symbol.<name>` resolves
@@ -128,10 +119,7 @@ impl CheckerState<'_> {
                 if name.starts_with("[Symbol.") || name.starts_with("__") {
                     return None;
                 }
-                let sym_ref = crate::query_boundaries::common::unique_symbol_ref(
-                    self.ctx.types,
-                    prop.type_id,
-                )?;
+                let sym_ref = unique_symbol_ref(self.ctx.types, prop.type_id)?;
                 Some((format!("[Symbol.{name}]"), sym_ref))
             })
             .collect();

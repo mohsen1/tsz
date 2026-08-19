@@ -1002,6 +1002,19 @@ impl<'a> CheckerState<'a> {
         {
             return self.format_type_for_assignability_message(display_target);
         }
+        // A longhand primitive-keyword union target annotation
+        // (`string | number`) carries no `aliasSymbol`, so tsc renders it by its
+        // members rather than repainting it with a coincidentally-shaped alias
+        // reached through the reverse type-to-def lookup (#16610) — the target
+        // mirror of the source-side guard. Gated on `display_target == target`
+        // like the annotation-derived branches below, so the nullish strip above
+        // keeps precedence (`string | undefined` against a non-nullish source
+        // renders `string`, matching tsc's single-survivor collapse).
+        if display_target == target
+            && let Some(display) = self.longhand_primitive_union_target_display(anchor_idx, target)
+        {
+            return display;
+        }
         if display_target == target
             && let Some(display) =
                 self.readonly_array_alias_target_display(target_expr, display_target)
