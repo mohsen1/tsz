@@ -39,11 +39,24 @@ impl<'a> CheckerState<'a> {
         if self.keyof_operand_yields_concrete_literal_keyset(operand) {
             return true;
         }
-        // Operands whose shape is not directly visible — enum types and enum
-        // namespaces (`keyof typeof E` excludes the implicit numeric index),
-        // `typeof x` queries, and class instance references — are judged by
-        // the evaluated key set itself: a finite unit-literal set is a
-        // literal context regardless of how the operand was spelled.
+        // Operands whose shape is not directly visible but whose identity is a
+        // value or class reference — enum types and enum namespaces
+        // (`keyof typeof E` excludes the implicit numeric index), `typeof x`
+        // queries, and class instance references — are judged by the evaluated
+        // key set itself: a finite unit-literal set is a literal context
+        // regardless of how the operand was spelled. Type-alias operands are
+        // deliberately NOT judged this way: a generic remapped mapped-type
+        // alias (`{ [K in keyof Orig as DistributiveNonIndex<K>]: any }`) can
+        // evaluate to a narrower all-literal set here while tsc's key set
+        // keeps the generic member and widens the source
+        // (`keyRemappingKeyofResult.ts`).
+        let operand_is_class_ref =
+            crate::query_boundaries::diagnostics::lazy_def_id(self.ctx.types, operand)
+                .and_then(|def_id| self.ctx.definition_store.get(def_id))
+                .is_some_and(|def| def.kind == tsz_solver::def::DefKind::Class);
+        if !operand_is_class_ref && !self.keyof_display_operand_is_value_derived(operand) {
+            return false;
+        }
         let evaluated = self.evaluate_type_for_assignability(ty);
         evaluated != ty
             && crate::query_boundaries::diagnostics::is_finite_unit_literal_keyset(
