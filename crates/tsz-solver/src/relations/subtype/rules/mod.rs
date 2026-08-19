@@ -16,6 +16,7 @@
 //! - `conditionals`: Conditional type checking
 
 pub mod conditionals;
+pub mod enums;
 pub mod functions;
 pub mod generics;
 pub mod intrinsic_object;

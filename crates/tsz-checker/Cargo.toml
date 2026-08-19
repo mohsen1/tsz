@@ -3020,3 +3020,7 @@ path = "tests/js_object_literal_receiver_display_tests.rs"
 [[test]]
 name = "overloaded_method_override_ts2416_count_tests"
 path = "tests/overloaded_method_override_ts2416_count_tests.rs"
+
+[[test]]
+name = "number_to_enum_member_assignability_tests"
+path = "tests/number_to_enum_member_assignability_tests.rs"

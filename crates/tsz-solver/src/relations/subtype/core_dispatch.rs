@@ -862,6 +862,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     }
                 }
             }
+            // An intrinsic source against an `Enum` target is owned by the
+            // enum-target rule (`rules/enums.rs`), not this arm's early False.
+            if enum_components(self.interner, target).is_some() {
+                return self.check_non_enum_source_to_enum_target(source, target);
+            }
             // When target is an unevaluated IndexAccess (e.g., Obj[K] where K is a
             // type parameter), don't return False early. The IndexAccess fallback
             // (check_generic_index_access_subtype) after the visitor dispatch can
@@ -1509,15 +1514,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return self.check_subtype(s_members, target);
         }
 
-        // Target is Enum, Source is not - check Rule #7 first, then structural member type
-        if let Some((t_def_id, t_members)) = enum_components(self.interner, target) {
-            // Rule #7: number is assignable to numeric enums
-            if source == TypeId::NUMBER && self.resolver.is_numeric_enum(t_def_id) {
-                return SubtypeResult::True;
-            }
-            // For number literals, fall through to structural check against t_members
-            // so that only actual enum member values (e.g., 0|1|2) are accepted
-            return self.check_subtype(source, t_members);
+        // Target is Enum, Source is not - Rule #7, tsc's numeric-member
+        // admission, and the structural member fallthrough (`rules/enums.rs`).
+        if enum_components(self.interner, target).is_some() {
+            return self.check_non_enum_source_to_enum_target(source, target);
         }
 
         // =======================================================================
