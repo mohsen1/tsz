@@ -24,20 +24,24 @@ use crate::def::resolver::TypeResolver;
 use crate::relations::subtype::SubtypeChecker;
 use crate::type_queries::flow::is_unit_type;
 use crate::types::{ObjectShapeId, TypeId};
-use crate::visitor::{object_shape_id, object_with_index_shape_id};
+use crate::visitor::{application_id, object_shape_id, object_with_index_shape_id};
 use tsz_common::interner::Atom;
 
 impl<R: TypeResolver> SubtypeChecker<'_, R> {
     /// Select the union member `tsc`'s `getBestMatchingType` would elaborate a
     /// failed object-to-union assignment against: a discriminant match first,
-    /// then the highest-key-overlap member (ties to the last), and `None` when
-    /// no member shares a key with the source.
+    /// then a same-generic-base type-reference match, then the
+    /// highest-key-overlap member (ties to the last), and `None` when no
+    /// member shares a key with the source.
     pub(super) fn select_union_target_best_member(
         &mut self,
         resolved_source: TypeId,
         members: &[TypeId],
     ) -> Option<TypeId> {
         if let Some(member) = self.union_discriminant_matched_member(resolved_source, members) {
+            return Some(member);
+        }
+        if let Some(member) = self.matching_generic_reference_member(resolved_source, members) {
             return Some(member);
         }
 
@@ -62,6 +66,43 @@ impl<R: TypeResolver> SubtypeChecker<'_, R> {
             }
         }
         best_member
+    }
+
+    /// `tsc`'s `getBestMatchingType` -> `findMatchingTypeReferenceOrTypeAliasReference`:
+    /// when the source is a generic type reference (an `Application`), the
+    /// first union member that instantiates the *same* generic declaration is
+    /// the match (`source.target === target.target`), ahead of any
+    /// property-overlap scoring. An alias arm (`type StrRow =
+    /// RawBuilder<string>`) and a directly-spelled arm (`RawBuilder<number>`)
+    /// of the same base still share this identity, so the alias is hopped
+    /// before comparing bases. Returns `None` when the source is not an
+    /// `Application` of a nominal (`Lazy`) base, or no member shares it.
+    fn matching_generic_reference_member(
+        &mut self,
+        source: TypeId,
+        members: &[TypeId],
+    ) -> Option<TypeId> {
+        let source_def = self.generic_reference_base_def_id(source)?;
+        members
+            .iter()
+            .copied()
+            .find(|&member| self.generic_reference_base_def_id(member) == Some(source_def))
+    }
+
+    /// The `DefId` of the generic declaration `type_id` instantiates, hopping
+    /// one alias indirection first (`StrRow` -> `RawBuilder<string>`). `None`
+    /// when `type_id` is not (after that hop) an `Application` — e.g. a
+    /// structural/anonymous generic instantiation, which tsc's own
+    /// `ObjectFlags.Reference` gate also excludes from this match.
+    fn generic_reference_base_def_id(&mut self, type_id: TypeId) -> Option<crate::def::DefId> {
+        let resolved = self.resolve_lazy_type(type_id);
+        let application = application_id(self.interner, resolved)
+            .map(|_| resolved)
+            .or_else(|| self.interner.get_display_alias(resolved))
+            .or_else(|| self.interner.get_application_eval_origin(resolved))?;
+        let app_id = application_id(self.interner, application)?;
+        let base = self.interner.type_application(app_id).base;
+        self.application_base_def_id(base)
     }
 
     /// `tsc`'s `getBestMatchingType` -> `findMatchingDiscriminantType`: when the

@@ -743,7 +743,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         Some(SubtypeResult::True)
     }
 
-    pub(super) fn application_base_def_id(&self, base: TypeId) -> Option<DefId> {
+    pub(in crate::relations::subtype) fn application_base_def_id(
+        &self,
+        base: TypeId,
+    ) -> Option<DefId> {
         if base.is_intrinsic() {
             return None;
         }

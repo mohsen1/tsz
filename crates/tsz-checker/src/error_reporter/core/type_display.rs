@@ -32,6 +32,80 @@ fn preserve_signature_return_literals_active() -> bool {
     PRESERVE_SIGNATURE_RETURN_LITERALS.with(std::cell::Cell::get)
 }
 
+/// Reorder the top-level members of a repainted union annotation so the
+/// nullish keywords render at the tail — `null` first, then `undefined` —
+/// matching `tsc`'s `formatUnionTypes`, which filters nullable constituents
+/// out of the printed member walk and appends them after it. The annotation
+/// repaint otherwise preserves the written order (`undefined | (() => void)`),
+/// an order `tsc` never prints.
+///
+/// Only parts that are exactly the `null`/`undefined` keywords move; both are
+/// reserved in type-name position, so a top-level union part with that text
+/// can only be the intrinsic. The text is returned unchanged (original
+/// spacing included) when the parts are already in canonical order.
+fn reorder_nullish_union_parts_to_tail(text: &str) -> String {
+    // Split on top-level ` | `, tracking bracket depth and string/template
+    // literals so pipes inside parameter lists, generics, tuples, object
+    // shapes, or literal types don't split. A `>` that closes an arrow (`=>`)
+    // is not a bracket.
+    let bytes = text.as_bytes();
+    let mut parts: Vec<&str> = Vec::new();
+    let mut depth = 0u32;
+    let mut quote: Option<char> = None;
+    let mut start = 0usize;
+    for (i, ch) in text.char_indices() {
+        if let Some(active) = quote {
+            if ch == active && (i == 0 || bytes[i - 1] != b'\\') {
+                quote = None;
+            }
+            continue;
+        }
+        match ch {
+            '\'' | '"' | '`' => quote = Some(ch),
+            '(' | '<' | '[' | '{' => depth += 1,
+            '>' if i > 0 && bytes[i - 1] == b'=' => {}
+            ')' | '>' | ']' | '}' => depth = depth.saturating_sub(1),
+            '|' if depth == 0
+                && i > 0
+                && bytes[i - 1] == b' '
+                && bytes.get(i + 1) == Some(&b' ') =>
+            {
+                parts.push(text[start..i - 1].trim());
+                start = i + 2;
+            }
+            _ => {}
+        }
+    }
+    parts.push(text[start..].trim());
+    if parts.len() < 2 {
+        return text.to_string();
+    }
+
+    let mut ordered: Vec<&str> = Vec::with_capacity(parts.len());
+    let mut has_null = false;
+    let mut has_undefined = false;
+    for &part in &parts {
+        match part {
+            "null" => has_null = true,
+            "undefined" => has_undefined = true,
+            other => ordered.push(other),
+        }
+    }
+    if !has_null && !has_undefined {
+        return text.to_string();
+    }
+    if has_null {
+        ordered.push("null");
+    }
+    if has_undefined {
+        ordered.push("undefined");
+    }
+    if ordered == parts {
+        return text.to_string();
+    }
+    ordered.join(" | ")
+}
+
 /// RAII guard that makes assignability display normalization preserve declared
 /// signature return literals for the duration of its lifetime, restoring the
 /// previous state on drop (including on unwind), mirroring the depth/budget
@@ -163,6 +237,9 @@ impl<'a> CheckerState<'a> {
         let close_count = text.chars().filter(|&ch| ch == ')').count();
         if open_count != close_count || text.is_empty() {
             return None;
+        }
+        if text.contains(" | ") {
+            text = reorder_nullish_union_parts_to_tail(&text);
         }
         if text.contains(" & ") && text.contains(" | ") {
             text = parenthesize_intersection_in_union_text(&text);

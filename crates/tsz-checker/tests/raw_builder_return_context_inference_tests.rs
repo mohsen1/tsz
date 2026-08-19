@@ -830,11 +830,13 @@ function pickCrate(): FirstCrate | SecondCrate {
     );
 }
 
-// KNOWN ORDER RESIDUAL: for a mixed alias/direct union target tsc renders the
-// members reordered (`'RawBuilder<number> | StrRow'`); tsz keeps the written
-// order. The fragment below pins only the *non-collapse* (both members present
-// in the head line) — the member-order family is owned by the solver's
-// `union_member_order.rs` and is out of scope here.
+// The head line renders both members in the written source order
+// (`'StrRow | RawBuilder<number>'`); oracle-reverified against tsc 6.0.2 with
+// the arms swapped in source too (`RawBuilder<number> | StrRow`) — tsc's own
+// head line and elaboration target are unaffected by which arm was written
+// first, and tsz's canonical interner order (string-arg sorts before
+// number-arg, `union_member_order.rs`) already agrees, so this is not the
+// order residual a prior session's comment claimed.
 #[test]
 fn mixed_alias_and_direct_arm_message_keeps_both_union_target_members() {
     assert_single_ts2322_message(
@@ -846,6 +848,120 @@ function mixedAliasDirect(): StrRow | RawBuilder<number> {
 "#,
         "is not assignable to type 'StrRow | RawBuilder<number>'",
         "mixed alias and direct arms keep both target members",
+    );
+}
+
+// Structural rule: `getBestMatchingType`'s `findMatchingTypeReferenceOrTypeAliasReference`
+// step runs before property-overlap scoring — when the source is a generic
+// type reference, tsc elaborates against the first union member instantiating
+// the *same* generic declaration, alias-spelled or not. tsz's
+// `select_union_target_best_member` (`explain_union_discriminant.rs`) only had
+// the discriminant-match and overlap steps, so an application-shaped source
+// vs. a same-base mixed-arm union target fell through
+// `explain_union_target_failure`'s application-shaped-comparison branch,
+// which gives up with a bare union-head line whenever no member fails with a
+// *missing* property (this shape fails on a property *type* mismatch
+// instead). Both gaps are fixed: the missing type-reference step, and the
+// bare fallback no longer swallowing a genuine structural reason.
+//
+// Oracle-pinned (tsc 6.0.2 `--strict`): the assignment elaborates against
+// `StrRow` (first same-base arm) with the full chain, never against
+// `RawBuilder<number>` and never collapsing to the head line alone.
+#[test]
+fn mixed_alias_and_direct_arm_elaborates_against_first_same_base_arm() {
+    let source = format!(
+        "{PRELUDE}\ntype StrRow = RawBuilder<string>\ndeclare const src: RawBuilder<string | number>\nconst pinnedTarget: StrRow | RawBuilder<number> = src\n"
+    );
+    let diagnostics = check_source_diagnostics(&source);
+    assert_diagnostic_shapes_exactly(
+        &source,
+        &diagnostics,
+        &[DiagnosticShape::code(2322)
+            .with_message_fragment("is not assignable to type 'StrRow | RawBuilder<number>'")
+            .with_related_min(2)],
+    );
+    let full_chain = diagnostics
+        .iter()
+        .flat_map(|d| {
+            d.related_information
+                .iter()
+                .map(|r| r.message_text.as_str())
+        })
+        .collect::<Vec<_>>()
+        .join(" | ");
+    assert!(
+        full_chain.contains("is not assignable to type 'StrRow'"),
+        "expected the chain to drill into the first same-base arm (StrRow), got: {full_chain}"
+    );
+    assert!(
+        !full_chain.contains("is not assignable to type 'RawBuilder<number>'"),
+        "must not elaborate against the later same-base arm, got: {full_chain}"
+    );
+}
+
+// Same shape with the union arms written in the opposite order: tsc's choice
+// of elaboration member does not depend on source spelling order (oracle
+// reverified), only on the canonical interner order, so this must match the
+// unswapped case above.
+#[test]
+fn reversed_written_order_still_elaborates_against_first_same_base_arm() {
+    let source = format!(
+        "{PRELUDE}\ntype StrRow = RawBuilder<string>\ndeclare const src: RawBuilder<string | number>\nconst pinnedTarget: RawBuilder<number> | StrRow = src\n"
+    );
+    let diagnostics = check_source_diagnostics(&source);
+    let full_chain = diagnostics
+        .iter()
+        .flat_map(|d| {
+            d.related_information
+                .iter()
+                .map(|r| r.message_text.as_str())
+        })
+        .collect::<Vec<_>>()
+        .join(" | ");
+    assert!(
+        full_chain.contains("is not assignable to type 'StrRow'"),
+        "expected the chain to drill into StrRow regardless of written order, got: {full_chain}"
+    );
+}
+
+// Negative control: renamed alias/interface still resolves the same-base
+// match through the alias hop, not through name spelling.
+#[test]
+fn renamed_alias_still_elaborates_against_first_same_base_arm() {
+    let source = format!(
+        "{PRELUDE}\ntype FirstRow = RawBuilder<string>\ndeclare const renamedSrc: RawBuilder<string | number>\nconst pinnedRenamed: FirstRow | RawBuilder<number> = renamedSrc\n"
+    );
+    let diagnostics = check_source_diagnostics(&source);
+    let full_chain = diagnostics
+        .iter()
+        .flat_map(|d| {
+            d.related_information
+                .iter()
+                .map(|r| r.message_text.as_str())
+        })
+        .collect::<Vec<_>>()
+        .join(" | ");
+    assert!(
+        full_chain.contains("is not assignable to type 'FirstRow'"),
+        "expected the chain to drill into the renamed alias arm, got: {full_chain}"
+    );
+}
+
+// Negative control: a genuinely different generic base (no shared DefId) must
+// not be treated as a type-reference match — this still falls through to the
+// existing discriminant/overlap selection, unaffected by the new step.
+#[test]
+fn different_generic_base_arms_still_report_a_mismatch() {
+    let source = format!(
+        "{PRELUDE}\ninterface OtherBuilder<Output> {{\n  readonly expressionType: Output | undefined\n  readonly isRawBuilder: true\n}}\ndeclare const otherSrc: RawBuilder<string>\nconst pinnedOther: RawBuilder<number> | OtherBuilder<number> = otherSrc\n"
+    );
+    let diagnostics = check_source_diagnostics(&source);
+    assert_diagnostic_shapes_exactly(
+        &source,
+        &diagnostics,
+        &[DiagnosticShape::code(2322).with_message_fragment(
+            "is not assignable to type 'OtherBuilder<number> | RawBuilder<number>'",
+        )],
     );
 }
 
