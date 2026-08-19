@@ -1815,6 +1815,25 @@ impl DefinitionStore {
         self.state_flags.is_tuple_spread_flattened_alias(def_id)
     }
 
+    /// Record a non-generic type alias whose declared body is a *bare*
+    /// (argument-free) type reference resolving to the non-generic
+    /// interface/class declaration `target`. `tsc` attaches no `aliasSymbol`
+    /// to the declaration's shared nominal type, so diagnostics render the
+    /// declaration's own name (`type IA = Iface` renders `Iface`). Keyed per
+    /// alias def because the resolved body may flatten to the declaration's
+    /// structural shape, which no longer records which reference produced it.
+    pub fn record_bare_nominal_ref_alias(&self, alias_def: DefId, target_def: DefId) {
+        self.state_flags
+            .record_bare_nominal_ref_alias(alias_def, target_def);
+        self.bump_generation();
+    }
+
+    /// The interface/class declaration recorded for `alias_def` via
+    /// [`Self::record_bare_nominal_ref_alias`], if any.
+    pub fn bare_nominal_ref_alias_target(&self, alias_def: DefId) -> Option<DefId> {
+        self.state_flags.bare_nominal_ref_alias_target(alias_def)
+    }
+
     /// Find all `DefId`s registered under the given name.
     pub fn find_defs_by_name(&self, name: Atom) -> Option<Vec<DefId>> {
         self.name_to_defs.get(&name).map(|r| r.clone())
