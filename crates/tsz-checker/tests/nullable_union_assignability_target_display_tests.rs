@@ -371,3 +371,102 @@ fn literal_member_source_still_collapses_and_widens() {
         "literal member source must still collapse and widen, got: {msg}"
     );
 }
+
+// =====================================================================
+// Deferred (generic) indexed-access sources: same rule as type
+// parameters. A `T[K]` whose object or index still mentions a type
+// parameter defers to its constraint — it never enters the best-match
+// re-report that collapses a single-survivor nullable union — so tsc
+// keeps the full declared union at that pair's line. Only a *concrete*
+// indexed access (which evaluates before display) collapses. All
+// expectations oracle-pinned against the pinned typescript@7.0.2 via
+// `scripts/conformance/oracle.sh` (`--strict`).
+// =====================================================================
+
+/// Generic-base indexed access annotated at top level keeps the full union on
+/// the head line: `Type 'TD[KD]' is not assignable to type 'string | undefined'.`
+#[test]
+fn top_level_indexed_access_source_keeps_full_union() {
+    let msg = message(
+        "function whee<TD extends { d: number }, KD extends keyof TD>(x: TD[KD]) {\n  const y: string | undefined = x;\n}\n",
+        2322,
+    );
+    assert!(
+        msg.contains("type 'string | undefined'"),
+        "top-level indexed-access source must keep the full union, got: {msg}"
+    );
+}
+
+/// Same rule for `| null` with a concrete base and generic index, renamed
+/// binders (anti-hardcoding): the head keeps `number | null`.
+#[test]
+fn concrete_base_generic_index_keeps_null_member() {
+    let msg = message(
+        "interface Rows { first: string; second: string }\nfunction nulled<KR extends keyof Rows>(x: Rows[KR]) {\n  const y: number | null = x;\n}\n",
+        2322,
+    );
+    assert!(
+        msg.contains("type 'number | null'"),
+        "generic-index indexed-access head must keep the `| null` member, got: {msg}"
+    );
+}
+
+/// TS2345 head with a generic-base indexed-access argument keeps the union:
+/// `Argument of type 'TE[KE]' is not assignable to parameter of type
+/// 'string | undefined'.`
+#[test]
+fn ts2345_head_indexed_access_source_keeps_full_union() {
+    let msg = message(
+        "declare function gulp(v: string | undefined): void;\nfunction pipe<TE extends { e: number }, KE extends keyof TE>(x: TE[KE]) {\n  gulp(x);\n}\n",
+        2345,
+    );
+    assert!(
+        msg.contains("type 'string | undefined'"),
+        "TS2345 indexed-access head must keep the full union, got: {msg}"
+    );
+}
+
+/// Both nullish members survive against a deferred indexed-access source.
+/// (Member ORDER within the rendered union is a separate live work item —
+/// assert membership, not order.)
+#[test]
+fn indexed_access_source_keeps_both_nullish_members() {
+    let msg = message_with_chain(
+        "function both<TB extends { a: number }, KB extends keyof TB>(x: { m: TB[KB] }) {\n  const y: { m: string | undefined | null } = x;\n}\n",
+        2322,
+    );
+    assert!(
+        msg.contains("null") && msg.contains("undefined") && msg.contains("string"),
+        "both nullish members must survive against an indexed-access source, got: {msg}"
+    );
+}
+
+/// Concrete base with a *generic index* (`Obj[KP]`) is still deferred: the
+/// head line keeps the union. (tsc's constraint drill one level deeper then
+/// collapses against the concrete constraint — that line is separate
+/// elaboration machinery, not asserted here.)
+#[test]
+fn concrete_base_generic_index_head_keeps_full_union() {
+    let msg = message(
+        "interface Obj { a: number; b: number }\nfunction idx<KP extends keyof Obj>(x: Obj[KP]) {\n  const y: string | undefined = x;\n}\n",
+        2322,
+    );
+    assert!(
+        msg.contains("type 'string | undefined'"),
+        "generic-index indexed-access head must keep the full union, got: {msg}"
+    );
+}
+
+/// Positive control: a CONCRETE indexed access (`Conc[\"a\"]` = `number`)
+/// evaluates before display and still collapses the nullable target.
+#[test]
+fn concrete_indexed_access_member_source_still_collapses() {
+    let msg = message_with_chain(
+        "interface Conc { a: number }\nfunction flat(x: { m: Conc[\"a\"] }) {\n  const y: { m: string | undefined } = x;\n}\n",
+        2322,
+    );
+    assert!(
+        msg.contains("Type 'number' is not assignable to type 'string'."),
+        "concrete indexed-access member source must still collapse, got: {msg}"
+    );
+}

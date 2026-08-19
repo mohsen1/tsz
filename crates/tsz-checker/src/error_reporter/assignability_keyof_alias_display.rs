@@ -169,6 +169,65 @@ impl<'a> CheckerState<'a> {
             })
     }
 
+    /// Operand-kind display for a bare `keyof` type in assignability
+    /// messages (`ty` is the `KeyOf` type, `operand` its inner type):
+    ///
+    /// * free type parameter operand — always the `keyof T` spelling, even
+    ///   when `T` has an inline anonymous constraint whose keys could be
+    ///   enumerated (the anonymous-object branch reaches the constraint via
+    ///   `get_object_shape`'s `TypeParameter` look-through, so the guard runs
+    ///   first);
+    /// * value-derived operand (`keyof typeof E`) — the evaluated key union;
+    /// * named alias / symbol-bearing operand — the `keyof Name` spelling;
+    /// * anonymous object operand (`keyof { ... }`) — the evaluated key set:
+    ///   tsc only prints `keyof X` when `X` is a named reference.
+    ///
+    /// `None` when no branch owns the display (caller falls through to its
+    /// generic paths).
+    pub(in crate::error_reporter) fn keyof_operand_display_for_assignability_message(
+        &mut self,
+        ty: TypeId,
+        keyof_inner: TypeId,
+    ) -> Option<String> {
+        if let Some(param_info) = crate::query_boundaries::diagnostics::type_param_info(
+            self.ctx.types.as_type_database(),
+            keyof_inner,
+        ) {
+            let param_name = self.ctx.types.resolve_atom_ref(param_info.name);
+            return Some(format!("keyof {param_name}"));
+        }
+
+        if let Some(display) = self.value_derived_keyof_reduced_display(ty, keyof_inner) {
+            return Some(display);
+        }
+
+        if let Some(alias_name) = self.lookup_type_alias_name_for_display(keyof_inner) {
+            return Some(format!("keyof {alias_name}"));
+        }
+
+        if let Some(shape) =
+            crate::query_boundaries::diagnostics::object_shape_for_type(self.ctx.types, keyof_inner)
+            && let Some(sym_id) = shape.symbol
+            && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+        {
+            return Some(format!("keyof {}", symbol.escaped_name));
+        }
+
+        if crate::query_boundaries::diagnostics::object_shape_for_type(self.ctx.types, keyof_inner)
+            .is_some_and(|shape| shape.symbol.is_none())
+        {
+            let evaluated = self.evaluate_type_with_env(ty);
+            if evaluated != ty
+                && evaluated != TypeId::ERROR
+                && crate::query_boundaries::diagnostics::keyof_inner_type(self.ctx.types, evaluated)
+                    .is_none()
+            {
+                return Some(self.format_type_for_assignability_message(evaluated));
+            }
+        }
+        None
+    }
+
     /// The reduced key-union display for a `keyof` type whose operand is
     /// value-derived, or `None` when the operand is a named type reference or
     /// the `keyof` does not reduce. `ty` is the `KeyOf` type and `operand` its

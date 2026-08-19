@@ -355,60 +355,14 @@ impl<'a> CheckerState<'a> {
             return format!("keyof {alias_name}");
         }
 
+        // Bare `keyof` operand-kind display policy — owned by the keyof alias
+        // display shard (`assignability_keyof_alias_display.rs`).
         if let Some(keyof_inner) =
             crate::query_boundaries::common::keyof_inner_type(self.ctx.types, ty)
+            && let Some(display) =
+                self.keyof_operand_display_for_assignability_message(ty, keyof_inner)
         {
-            // tsc always prints `keyof T` when the operand is a free type
-            // parameter, even when T has an inline anonymous constraint whose
-            // keys could be enumerated. The anonymous-object branch below
-            // reaches the constraint via `get_object_shape`'s TypeParameter
-            // look-through, so we must guard here before that path fires.
-            if let Some(param_info) = crate::query_boundaries::common::type_param_info(
-                self.ctx.types.as_type_database(),
-                keyof_inner,
-            ) {
-                let param_name = self.ctx.types.resolve_atom_ref(param_info.name);
-                return format!("keyof {param_name}");
-            }
-
-            // A value-derived operand (`keyof typeof E`) renders as its
-            // evaluated key union, never `keyof E` (named *type* operands
-            // take the alias/symbol spelling branches below).
-            if let Some(display) = self.value_derived_keyof_reduced_display(ty, keyof_inner) {
-                return display;
-            }
-
-            if let Some(alias_name) = self.lookup_type_alias_name_for_display(keyof_inner) {
-                return format!("keyof {alias_name}");
-            }
-
-            if let Some(shape) =
-                crate::query_boundaries::common::object_shape_for_type(self.ctx.types, keyof_inner)
-                && let Some(sym_id) = shape.symbol
-                && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
-            {
-                return format!("keyof {}", symbol.escaped_name);
-            }
-
-            // Anonymous object operand (an inline `keyof { ... }` type literal):
-            // the operand has no user-visible name, so tsc renders the evaluated
-            // key set (`"a" | "b"`) rather than the `keyof { ... }` spelling — an
-            // index type only prints `keyof X` when `X` is a named reference. The
-            // alias-name branch above already returned for a named alias and the
-            // symbol-name branch for a symbol-bearing operand, so here it is
-            // enough to confirm the operand is an object with no binder symbol.
-            if crate::query_boundaries::common::object_shape_for_type(self.ctx.types, keyof_inner)
-                .is_some_and(|shape| shape.symbol.is_none())
-            {
-                let evaluated = self.evaluate_type_with_env(ty);
-                if evaluated != ty
-                    && evaluated != TypeId::ERROR
-                    && crate::query_boundaries::common::keyof_inner_type(self.ctx.types, evaluated)
-                        .is_none()
-                {
-                    return self.format_type_for_assignability_message(evaluated);
-                }
-            }
+            return display;
         }
 
         if let Some(alias_name) = self.lookup_type_alias_name_for_display(ty) {
@@ -1306,6 +1260,19 @@ impl<'a> CheckerState<'a> {
         // Concrete operands keep the collapse (`number` vs
         // `string | undefined` renders `string`).
         if query_common::is_type_parameter_or_intersection_with_type_parameter(
+            self.ctx.types.as_type_database(),
+            other,
+        ) {
+            return None;
+        }
+        // The same deferral applies to a still-deferred indexed access
+        // (`T[K]`, or `Obj[K]` with a generic index): its relation to a union
+        // defers to the operand's constraint, so tsc keeps the full declared
+        // union on that pair's line (`Obj[KP]` vs `string | undefined` stays
+        // `string | undefined`; the constraint drill one level deeper then
+        // collapses against the concrete constraint). A fully concrete
+        // indexed access evaluates before display and still collapses.
+        if query_common::is_deferred_indexed_access_or_intersection_with_one(
             self.ctx.types.as_type_database(),
             other,
         ) {
