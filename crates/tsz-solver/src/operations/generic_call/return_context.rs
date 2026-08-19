@@ -408,154 +408,6 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         self.interner.evaluate_type(type_id)
     }
 
-    fn return_context_application_base_def_id(&self, base: TypeId) -> Option<crate::def::DefId> {
-        let resolver = self
-            .checker
-            .type_resolver()
-            .unwrap_or_else(|| self.interner.as_type_resolver());
-        match self.interner.lookup(base)? {
-            TypeData::Lazy(def_id) => Some(resolver.canonical_def_id(def_id)),
-            TypeData::TypeQuery(symbol) => resolver
-                .symbol_to_def_id(symbol)
-                .map(|def_id| resolver.canonical_def_id(def_id)),
-            _ => None,
-        }
-    }
-
-    fn return_context_application_bases_match(&self, source: TypeId, target: TypeId) -> bool {
-        if source == target {
-            return true;
-        }
-
-        let Some(source_def) = self.return_context_application_base_def_id(source) else {
-            return false;
-        };
-        let Some(target_def) = self.return_context_application_base_def_id(target) else {
-            return false;
-        };
-        let resolver = self
-            .checker
-            .type_resolver()
-            .unwrap_or_else(|| self.interner.as_type_resolver());
-        resolver.defs_are_equivalent(source_def, target_def)
-    }
-
-    /// Recover the canonical `Application(base, args)` for a type used during
-    /// return-context inference.
-    ///
-    /// A contextual return type such as `GenericClass<[string, boolean]>` can
-    /// exist in the interner in two shapes: the as-written
-    /// `Application(GenericClass, [[string, boolean]])` and the *baked*
-    /// (already-evaluated) structural object that merely displays as
-    /// `GenericClass<[string, boolean]>`. The baked form has no
-    /// `TypeData::Application`, so the application-aware matchers cannot
-    /// decompose it and any tracked type parameter on the source side is left
-    /// unbound — the inner generic call's own type parameter then falls back to
-    /// its declared constraint (e.g. `T := {}`), spuriously rejecting a
-    /// deferred callback argument.
-    ///
-    /// The evaluator records a display-alias back-reference from the baked form
-    /// to its originating application, so consult it (and, as a last resort, a
-    /// fresh evaluation) to restore the structural decomposition through the
-    /// validated `Application`↔`Application` path instead of relying on rendered
-    /// type text. This mirrors the checker-side
-    /// `return_context_application_info` so both return-context implementations
-    /// decompose the same baked contextual shapes.
-    fn return_context_application_info(
-        &mut self,
-        type_id: TypeId,
-    ) -> Option<(TypeId, Vec<TypeId>)> {
-        if let Some(info) = self.app_info_or_alias(type_id) {
-            return Some(info);
-        }
-        let evaluated = self.evaluate_return_context_match_type(type_id);
-        if evaluated == type_id {
-            return None;
-        }
-        self.app_info_or_alias(evaluated)
-    }
-
-    /// The non-evaluating half of `return_context_application_info`: take the
-    /// application form directly, else through a single display-alias hop. A
-    /// caller that already holds the evaluated form pairs a raw call with an
-    /// `app_info_or_alias(eval)` call to skip the redundant re-evaluation.
-    fn app_info_or_alias(&self, type_id: TypeId) -> Option<(TypeId, Vec<TypeId>)> {
-        let db = self.interner.as_type_database();
-        crate::type_queries::get_application_info(db, type_id).or_else(|| {
-            self.interner
-                .get_display_alias(type_id)
-                .and_then(|alias| crate::type_queries::get_application_info(db, alias))
-        })
-    }
-
-    /// Match direct, same-base return applications before any structural
-    /// expansion can expose foreign type parameters from nested members.
-    ///
-    /// For `G<TCall>` against the contextual `G<X>`, `X` is the whole aligned
-    /// return argument. It may legitimately contain free parameters from the
-    /// enclosing declaration, so the ordinary nested/member contamination
-    /// guard must not reject it. Other tracked call parameters remain blocked,
-    /// and nested structural matching continues through the guarded fallback.
-    fn collect_aligned_return_application_substitution(
-        &mut self,
-        source: TypeId,
-        target: TypeId,
-        tracked_type_params: &FxHashSet<tsz_common::Atom>,
-        substitution: &mut TypeSubstitution,
-        visited: &mut FxHashSet<(TypeId, TypeId)>,
-    ) -> bool {
-        let Some((source_base, source_args)) = self.return_context_application_info(source) else {
-            return false;
-        };
-        let Some((target_base, target_args)) = self.return_context_application_info(target) else {
-            return false;
-        };
-        if source_args.len() != target_args.len()
-            || !self.return_context_application_bases_match(source_base, target_base)
-        {
-            return false;
-        }
-
-        let has_aligned_tracked_param = source_args.iter().any(|&source_arg| {
-            matches!(
-                self.interner.lookup(source_arg),
-                Some(TypeData::TypeParameter(tp))
-                    if substitution.domain_contains_type_parameter(&tp, tracked_type_params)
-            )
-        });
-        if !has_aligned_tracked_param {
-            return false;
-        }
-
-        for (&source_arg, &target_arg) in source_args.iter().zip(&target_args) {
-            if let Some(TypeData::TypeParameter(tp)) = self.interner.lookup(source_arg)
-                && substitution.domain_contains_type_parameter(&tp, tracked_type_params)
-            {
-                if substitution.get(tp.name).is_none()
-                    && !target_arg.is_any_unknown_or_error()
-                    && !self.type_references_other_tracked_params(
-                        target_arg,
-                        &tp,
-                        tracked_type_params,
-                        substitution,
-                    )
-                {
-                    substitution.insert(tp.name, target_arg);
-                }
-                continue;
-            }
-
-            self.collect_return_context_substitution(
-                source_arg,
-                target_arg,
-                tracked_type_params,
-                substitution,
-                visited,
-            );
-        }
-        true
-    }
-
     fn collect_return_context_substitution(
         &mut self,
         source: TypeId,
@@ -657,6 +509,35 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 if !substitution.is_empty() {
                     return;
                 }
+            }
+        }
+
+        // tsc's `PriorityImpliesCombination` for an ambiguous same-base union
+        // return context (#17643 / #17667 / #17673): when the source return is an
+        // application `Base<..>` and every non-nullish arm of the contextual union
+        // is an application of the same `Base` declaration with matching arity,
+        // tsc combines the arms' aligned type arguments into a single union
+        // (`Base<a0|b0, a1|b1, ..>`) and infers the tag's tracked parameters from
+        // that combined application. Probing the arms one at a time instead pins a
+        // tracked parameter to whichever single arm produces a binding, silently
+        // dropping the others — including a foreign outer-scope type-parameter arm
+        // (`Base<O>`) the untracked-target guard discards, which hides the
+        // ambiguity and lets the surviving concrete arm match (a false-negative
+        // TS2322). Merging first, then routing through the aligned-application
+        // path (which legitimately admits a foreign outer-scope argument), keeps
+        // the combined `Base<a|b>` so the inferred return re-derives it and the
+        // relation reports the mismatch tsc reports.
+        if let Some(merged_target) = self.ambiguous_same_base_union_merged_target(source, target) {
+            let before_len = substitution.len();
+            if self.collect_aligned_return_application_substitution(
+                source,
+                merged_target,
+                tracked_type_params,
+                substitution,
+                visited,
+            ) && substitution.len() > before_len
+            {
+                return;
             }
         }
 
@@ -1417,6 +1298,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         self.resolve_with_request(GenericCallRequest::new(func, arg_types))
     }
 }
+
+#[path = "return_context/aligned_application.rs"]
+mod aligned_application;
 
 #[cfg(test)]
 #[path = "return_context/aligned_application_tests.rs"]

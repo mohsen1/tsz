@@ -171,7 +171,12 @@ fn different_base_and_nested_member_paths_keep_untracked_guard() {
 }
 
 #[test]
-fn union_context_with_disagreeing_same_base_arms_stays_ambiguous() {
+fn union_context_with_disagreeing_same_base_arms_combines_the_arguments() {
+    // `tsc`'s `PriorityImpliesCombination` (#17643 / #17673 item 3): an ambiguous
+    // same-base union return context binds the tracked parameter to the union of
+    // every arm's aligned argument (`Base<string | number>`), not to a single arm
+    // and not to nothing. Combining is what lets the inferred return re-derive the
+    // combined application and report the mismatch `tsc` reports.
     let interner = TypeInterner::new();
     let resolver = interner.as_type_resolver();
     let call_param = tp(51);
@@ -183,5 +188,8 @@ fn union_context_with_disagreeing_same_base_arms_stays_ambiguous() {
     ]);
 
     let result = substitution(&interner, resolver, vec![call_param], source, contextual);
-    assert_eq!(result.get(call_param.name), None);
+    assert_eq!(
+        result.get(call_param.name),
+        Some(interner.union(vec![TypeId::STRING, TypeId::NUMBER])),
+    );
 }

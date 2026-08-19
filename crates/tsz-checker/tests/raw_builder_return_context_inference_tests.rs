@@ -529,3 +529,116 @@ function chainReturn(): RawBuilder<string> | RawBuilder<number> {
         "tag's declared return is a two-hop alias chain, arms are direct",
     );
 }
+
+/// #17673 item 3: an ambiguous same-base union return context now combines
+/// *every* arm's aligned argument into the tag's inferred parameter
+/// (`PriorityImpliesCombination`), so a foreign outer-scope type-parameter arm
+/// (`RawBuilder<O>`) is no longer silently dropped in favour of the lone
+/// concrete arm — the previously-accepted return now reports the TS2322 tsc
+/// reports. Each case was oracle-pinned against tsc 6.0.2 (`--strict`): exactly
+/// one TS2322 whose source is the combined `RawBuilder<..>` application.
+///
+/// The full message also carries the contextual target union; tsc reorders its
+/// arms (concrete before type-parameter) through display machinery orthogonal
+/// to this inference fix, so these assertions pin the code set and the combined
+/// *source* — the half this change owns.
+fn assert_single_ts2322_source(body: &str, source_display: &str, context: &str) {
+    let source = format!("{PRELUDE}\n{body}");
+    let diagnostics = check_source_diagnostics(&source);
+    let codes: Vec<_> = diagnostics.iter().map(|d| d.code).collect();
+    assert_eq!(codes, vec![2322], "{context}: {diagnostics:#?}");
+    let needle = format!("Type '{source_display}' is not assignable to type '");
+    assert!(
+        diagnostics[0].message_text.contains(&needle),
+        "{context}: expected source `{source_display}`, got {:?}",
+        diagnostic_code_message_refs(&diagnostics),
+    );
+}
+
+#[test]
+fn foreign_type_param_arm_combines_into_the_bound() {
+    // tsc: Type 'RawBuilder<number | O>' is not assignable to type
+    // 'RawBuilder<number> | RawBuilder<O>'.
+    assert_single_ts2322_source(
+        r#"
+function genericOuter<O>(): RawBuilder<O> | RawBuilder<number> {
+  return sql``
+}
+"#,
+        "RawBuilder<number | O>",
+        "foreign type-param arm participates in the combined bound",
+    );
+}
+
+#[test]
+fn foreign_type_param_arm_combines_through_an_ordinary_call() {
+    assert_single_ts2322_source(
+        r#"
+function genericOuterCall<O>(): RawBuilder<O> | RawBuilder<number> {
+  return rawCall()
+}
+"#,
+        "RawBuilder<number | O>",
+        "ordinary zero-evidence call form with a foreign type-param arm",
+    );
+}
+
+#[test]
+fn renamed_outer_binder_foreign_arm_combines_into_the_bound() {
+    // Anti-hardcoding: the outer binder name must not drive the merge.
+    // tsc: Type 'RawBuilder<number | Payload>' is not assignable to type
+    // 'RawBuilder<Payload> | RawBuilder<number>'.
+    assert_single_ts2322_source(
+        r#"
+function renamedBinder<Payload>(): RawBuilder<Payload> | RawBuilder<number> {
+  return sql``
+}
+"#,
+        "RawBuilder<number | Payload>",
+        "renamed outer binder still combines",
+    );
+}
+
+#[test]
+fn two_foreign_type_param_arms_combine_into_the_bound() {
+    // tsc: Type 'RawBuilder<A | B>' is not assignable to type
+    // 'RawBuilder<A> | RawBuilder<B>'.
+    assert_single_ts2322_source(
+        r#"
+function twoForeign<A, B>(): RawBuilder<A> | RawBuilder<B> {
+  return sql``
+}
+"#,
+        "RawBuilder<A | B>",
+        "two foreign type-param arms combine to A | B",
+    );
+}
+
+#[test]
+fn foreign_type_param_arm_with_a_nullish_arm_combines_into_the_bound() {
+    // tsc: Type 'RawBuilder<number | O>' is not assignable to type
+    // 'RawBuilder<number> | RawBuilder<O> | undefined'.
+    assert_single_ts2322_source(
+        r#"
+function withNull<O>(): RawBuilder<O> | RawBuilder<number> | undefined {
+  return sql``
+}
+"#,
+        "RawBuilder<number | O>",
+        "a nullish arm does not disturb the foreign-arm combination",
+    );
+}
+
+#[test]
+fn single_foreign_type_param_arm_with_null_infers_from_that_arm() {
+    // A single non-nullish arm is unambiguous: `Tagged := O`, so the tag's
+    // return matches the arm and tsc reports nothing (oracle-clean).
+    assert_clean(
+        r#"
+function singleForeignNull<O>(): RawBuilder<O> | null {
+  return sql``
+}
+"#,
+        "single foreign-param arm plus null keeps inferring from the arm",
+    );
+}
