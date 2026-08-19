@@ -95,7 +95,22 @@ pub fn type_alias_displayed_as_underlying(
             return alias_resolved_body_underlying(interner, body);
         }
         match interner.lookup(body) {
-            Some(TypeData::Lazy(next_def)) => current_def = next_def,
+            // A bare reference to an enum or an enum member resolves to the
+            // declaration's shared nominal type, which never carries tsc's
+            // `aliasSymbol`. tsc therefore renders the declaration's own name
+            // (`Mode`, `Mode.A`, or the bare enum name for a single-member
+            // enum) instead of the alias name. An alias-to-alias reference
+            // keeps following the chain.
+            Some(TypeData::Lazy(next_def)) => {
+                if is_enum_or_enum_member_ref(def_store, next_def) {
+                    return Some(body);
+                }
+                current_def = next_def;
+            }
+            // An already-evaluated enum or enum-member body (`TypeData::Enum`)
+            // is the same shared nominal type in evaluated form; render it
+            // under its own name for the same reason.
+            Some(TypeData::Enum(_, _)) => return Some(body),
             // A utility/generic application's display depends on the head alias'
             // declared body. A *conditional*-bodied utility loses tsc's alias
             // symbol once the conditional reduces, so the evaluated result is
@@ -113,6 +128,25 @@ pub fn type_alias_displayed_as_underlying(
             _ => return None,
         }
     }
+}
+
+/// True when `def_id` names an enum declaration or an enum member. Members are
+/// identified by their parent-enum edge, which is how member defs are keyed
+/// regardless of the `DefKind` they were stabilized under. A type alias whose
+/// body is a bare reference to one of these points at the shared nominal enum
+/// type, so it renders the declaration's own name.
+///
+/// tsc applies the same no-`aliasSymbol` rule to bare interface and class
+/// references (`type IA = Iface` renders `Iface`), but tsz does not store
+/// those alias bodies as `Lazy` declaration refs, so extending this check to
+/// them is a separate slice.
+fn is_enum_or_enum_member_ref(def_store: &DefinitionStore, def_id: DefId) -> bool {
+    if def_store.get_enum_parent(def_id).is_some() {
+        return true;
+    }
+    def_store
+        .get(def_id)
+        .is_some_and(|def| def.kind == DefKind::Enum)
 }
 
 /// Evaluate a computed alias body whose top-level operator never carries tsc's
