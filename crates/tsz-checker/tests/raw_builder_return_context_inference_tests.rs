@@ -632,3 +632,119 @@ function aliasArms(): StrRow | NumRow {
         "alias arms source display",
     );
 }
+// -----------------------------------------------------------------------------
+// #17673 item 3: a union arm whose type argument is a FOREIGN (outer-scope)
+// type parameter still makes the union ambiguous. The return-context
+// substitution must not pin the tag's parameter from the concrete arm alone;
+// tsc combines the per-arm candidates (`Tagged := number | O`) and the return
+// assignability check reports TS2322.
+// -----------------------------------------------------------------------------
+
+#[test]
+fn foreign_param_arm_with_concrete_arm_reports_the_return_mismatch() {
+    assert_single_ts2322(
+        r#"
+function genericOuter<O>(): RawBuilder<O> | RawBuilder<number> {
+  return sql``
+}
+"#,
+        "foreign outer param arm plus concrete arm",
+    );
+}
+
+#[test]
+fn renamed_foreign_binder_arm_reports_the_return_mismatch() {
+    assert_single_ts2322(
+        r#"
+function pickRow<Elem>(): RawBuilder<Elem> | RawBuilder<string> {
+  return sql``
+}
+"#,
+        "renamed foreign binder, string concrete arm",
+    );
+}
+
+#[test]
+fn reversed_arm_order_foreign_param_reports_the_return_mismatch() {
+    assert_single_ts2322(
+        r#"
+function genericOuter<O>(): RawBuilder<number> | RawBuilder<O> {
+  return sql``
+}
+"#,
+        "concrete arm first, foreign param arm second",
+    );
+}
+
+#[test]
+fn two_foreign_param_arms_report_the_return_mismatch() {
+    assert_single_ts2322(
+        r#"
+function twoOuter<A, B>(): RawBuilder<A> | RawBuilder<B> {
+  return sql``
+}
+"#,
+        "both arms foreign outer params",
+    );
+}
+
+#[test]
+fn alias_wrapped_foreign_param_arm_reports_the_return_mismatch() {
+    assert_single_ts2322(
+        r#"
+type ORow<Payload> = RawBuilder<Payload>
+function aliasOuter<O>(): ORow<O> | RawBuilder<number> {
+  return sql``
+}
+"#,
+        "foreign param arm through a generic alias of the base",
+    );
+}
+
+#[test]
+fn ordinary_call_foreign_param_arm_reports_the_return_mismatch() {
+    assert_single_ts2322(
+        r#"
+function genericOuter<O>(): RawBuilder<O> | RawBuilder<number> {
+  return rawCall()
+}
+"#,
+        "ordinary zero-evidence call form with a foreign param arm",
+    );
+}
+
+#[test]
+fn single_foreign_arm_with_null_still_infers_from_that_arm() {
+    assert_clean(
+        r#"
+function nullableOuter<O>(): RawBuilder<O> | null {
+  return sql``
+}
+"#,
+        "single foreign param arm with a nullish arm pins the param",
+    );
+}
+
+#[test]
+fn single_foreign_arm_with_undefined_still_infers_from_that_arm() {
+    assert_clean(
+        r#"
+function undefOuter<O>(): RawBuilder<O> | undefined {
+  return sql``
+}
+"#,
+        "single foreign param arm with an undefined arm pins the param",
+    );
+}
+
+#[test]
+fn foreign_arm_with_unknown_argument_arm_stays_clean() {
+    assert_clean(
+        r#"
+function unknownArm<O>(): RawBuilder<O> | RawBuilder<unknown> {
+  return sql``
+}
+"#,
+        "combined union collapses into the unknown arm",
+    );
+}
