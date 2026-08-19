@@ -3031,3 +3031,7 @@ path = "tests/enum_discriminant_union_assignability_tests.rs"
 [[test]]
 name = "number_to_enum_member_assignability_tests"
 path = "tests/number_to_enum_member_assignability_tests.rs"
+
+[[test]]
+name = "enum_inference_candidate_first_wins_tests"
+path = "tests/enum_inference_candidate_first_wins_tests.rs"

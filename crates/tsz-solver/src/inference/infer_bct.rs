@@ -162,6 +162,7 @@ impl<'a> InferenceContext<'a> {
         array_element_first_wins: bool,
         naked_argument_first_wins: bool,
         all_from_array_element: bool,
+        all_from_object_properties: bool,
     ) -> TypeId {
         if types.is_empty() {
             return TypeId::UNKNOWN;
@@ -368,9 +369,44 @@ impl<'a> InferenceContext<'a> {
         let all_signature_bearing = primary_types
             .iter()
             .all(|&ty| visitor::is_function_type(self.interner, ty));
+        // Enum-branded candidate sets follow tsc's `getCommonSupertype`
+        // exactly: `literalTypesWithSameBaseType` unions unit candidates only
+        // when they all share one base type, and enum members of DIFFERENT
+        // enums (or two distinct whole enums) fail that test, so control
+        // reaches the `reduceLeft` leftmost-wins fallback — tsc never unions
+        // across enums (`f1(..., r: () => E1.X, E2.X)` fixes `T = E1` and
+        // reports TS2345 on the `E2.X` argument). The union fallback's two
+        // rationales do not apply here: enum relations are nominal, so
+        // `is_subtype` is exact and O(1) on `Enum` pairs, and cross-argument
+        // candidate order is source order in both compilers. Same-base sets
+        // (members of ONE enum) keep the union, and all-object-property sets
+        // are excluded so the caller's first-property-wins fallback (keyed on
+        // property name/index, which reproduces tsc's target-order pick)
+        // stays in charge of that provenance.
+        let all_enum_branded_disjoint_bases = !all_from_object_properties && {
+            let mut first_base = None;
+            let mut saw_distinct_base = false;
+            let mut all_enum_with_known_base = true;
+            for &ty in &primary_types {
+                let Some(base) = self.enum_candidate_base_def(ty) else {
+                    all_enum_with_known_base = false;
+                    break;
+                };
+                match first_base {
+                    None => first_base = Some(base),
+                    Some(first) => {
+                        if first != base {
+                            saw_distinct_base = true;
+                        }
+                    }
+                }
+            }
+            all_enum_with_known_base && saw_distinct_base
+        };
         let first_wins_for_incompatible = has_undefined
             || has_null
             || all_signature_bearing
+            || all_enum_branded_disjoint_bases
             || ((array_element_first_wins || naked_argument_first_wins)
                 && all_bare_primitive_intrinsic);
         // When *every* disjoint bare-primitive candidate came from an

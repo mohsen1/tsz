@@ -39,6 +39,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         inferred: TypeId,
         has_usable_contra_candidates: bool,
         has_array_element_candidates: bool,
+        leftmost_dropped_by_priority: bool,
     ) -> TypeId {
         if lower_bounds.len() <= 1 {
             return inferred;
@@ -79,6 +80,30 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             // can report a proper TS2345 mismatch.
             let has_concrete_literal_conflict =
                 self.has_conflicting_literal_bases(&concrete_lower_bounds);
+            // tsc keeps the LEFTMOST candidate on a base conflict
+            // (`getCommonSupertype`'s `reduceLeft`) and widens it
+            // (`getWidenedLiteralType`): `f1({ r: () => E1.X }, E2.X)` fixes
+            // `T = E1` and reports TS2345 on the `E2.X` argument, and
+            // `f1({ r: () => 0 }, "s")` fixes `T = number` likewise. tsz's
+            // priority-filtered `inferred` can instead carry a LATER
+            // argument's candidate (a source-function-return candidate is
+            // recorded at `ReturnType` priority while a naked argument is
+            // `NakedTypeVariable`), which inverts the reported mismatch onto
+            // the first argument. Re-anchor on the first concrete bound's
+            // widened base when the priority winner carries a different base.
+            // Gated on `leftmost_dropped_by_priority`: with a same-priority
+            // candidate list the resolver's own combination (BCT tournament,
+            // the all-object-property first-property fallback) already
+            // reproduces tsc's pick, and the raw constraint-set bound order
+            // is not tsc's candidate order there.
+            if has_concrete_literal_conflict
+                && leftmost_dropped_by_priority
+                && let Some(&first) = concrete_lower_bounds.first()
+                && let Some(first_base) = self.primitive_base_of(first)
+                && self.primitive_base_of(inferred) != Some(first_base)
+            {
+                return first_base;
+            }
             if !has_concrete_literal_conflict {
                 // If direct inference collapsed to a single non-union candidate while
                 // we also have contravariant evidence, preserve the combined direct
@@ -216,59 +241,6 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 .flags
                 .contains(ObjectFlags::FRESH_LITERAL),
             Some(TypeData::Tuple(_)) => true,
-            _ => false,
-        }
-    }
-
-    fn should_preserve_nullable_direct_inference_result(
-        &self,
-        lower_bounds: &[TypeId],
-        inferred: TypeId,
-    ) -> bool {
-        if !lower_bounds
-            .iter()
-            .copied()
-            .any(|bound| self.type_includes_nullish_member(bound))
-        {
-            return false;
-        }
-
-        let Some(TypeData::Union(members)) = self.interner.lookup(inferred) else {
-            return false;
-        };
-
-        let mut has_nullish = false;
-        let mut non_nullish_count = 0;
-
-        for &member in self.interner.type_list(members).iter() {
-            if member.is_nullish() {
-                has_nullish = true;
-            } else {
-                non_nullish_count += 1;
-                if non_nullish_count > 1 {
-                    return false;
-                }
-            }
-        }
-
-        has_nullish && non_nullish_count == 1
-    }
-
-    fn type_includes_nullish_member(&self, ty: TypeId) -> bool {
-        if ty.is_nullish() {
-            return true;
-        }
-        if ty.is_intrinsic() {
-            return false;
-        }
-
-        match self.interner.lookup(ty) {
-            Some(TypeData::Union(members)) => self
-                .interner
-                .type_list(members)
-                .iter()
-                .copied()
-                .any(TypeId::is_nullish),
             _ => false,
         }
     }
