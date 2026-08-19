@@ -171,8 +171,10 @@ class Panel extends Frame<number> {
 
 #[test]
 fn overload_signatures_with_implementation_keep_single_combined_ts2416() {
-    // The combined-shape overload path owns multi-declaration sets; this
-    // change must not alter how many diagnostics it produces.
+    // tsc reports one TS2416 per overload/implementation declaration in the
+    // derived member's own declaration set, not one combined diagnostic for
+    // the whole set (pinned against tsc 7.0.2: three declarations here, three
+    // TS2416s, each anchored at its own declaration).
     let source = r#"
 class Spool {
   wind(x: string): number { return 1; }
@@ -183,13 +185,14 @@ class Reel extends Spool {
   wind(x: unknown): string { return "s"; }
 }
 "#;
-    assert_eq!(compat_codes(source), vec![TS2416]);
+    assert_eq!(compat_codes(source), vec![TS2416, TS2416, TS2416]);
 }
 
 #[test]
 fn ambient_overload_set_keeps_single_combined_ts2416() {
-    // Multi-declaration ambient overload sets were already checked through
-    // the combined-shape path before this fix; pin that count unchanged.
+    // Same rule as above: tsc reports one TS2416 per declaration in the
+    // ambient overload set (two declarations here, two TS2416s), not one
+    // combined diagnostic (pinned against tsc 7.0.2).
     let source = r#"
 declare class Crate {
   probe(x: string): number;
@@ -199,5 +202,5 @@ declare class Parcel extends Crate {
   probe(x: number): string;
 }
 "#;
-    assert_eq!(compat_codes(source), vec![TS2416]);
+    assert_eq!(compat_codes(source), vec![TS2416, TS2416]);
 }
