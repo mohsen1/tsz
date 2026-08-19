@@ -1244,6 +1244,17 @@ impl<'a> TypeFormatter<'a> {
     /// else — anonymous object types, literals, intrinsics — keys on its own
     /// `TypeId`, which is what interning already made canonical for it.
     fn union_member_display_identity(&self, type_id: TypeId) -> UnionMemberDisplayIdentity {
+        // An evaluated generic instantiation carries display-alias provenance
+        // back to the `Application` it was produced from (`RawBuilder<string>`
+        // spelled `StrRow`). That application — not the declaring interface
+        // symbol — is the constituent's identity: two instantiations of the
+        // same declaration with different type arguments are different union
+        // members (`StrRow | NumRow` must not collapse to `StrRow`), while the
+        // same application reached through two evaluated forms still shares
+        // one key.
+        if let Some(application) = self.interner.get_display_alias(type_id) {
+            return UnionMemberDisplayIdentity::Instantiation(application.0);
+        }
         match self.union_member_declaration_symbol(type_id) {
             Some(sym_id) => UnionMemberDisplayIdentity::Declaration(sym_id.0),
             None => UnionMemberDisplayIdentity::Anonymous(type_id.0),
@@ -1318,6 +1329,11 @@ impl<'a> TypeFormatter<'a> {
 /// Identity key produced by [`TypeFormatter::union_member_display_identity`].
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 enum UnionMemberDisplayIdentity {
+    /// An evaluated generic instantiation, keyed on the `TypeId` of the
+    /// `Application` its display-alias provenance names — per-instantiation
+    /// identity, so same-declaration members with different type arguments
+    /// stay distinct.
+    Instantiation(u32),
     /// A constituent that names a declaration, keyed on its `SymbolId`.
     Declaration(u32),
     /// Anything else, keyed on the constituent's own `TypeId`.

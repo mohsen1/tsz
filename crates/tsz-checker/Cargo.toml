@@ -191,6 +191,9 @@ path = "tests/return_context_identity_wrapper_literal_tests.rs"
 name = "raw_builder_return_context_inference_tests"
 path = "tests/raw_builder_return_context_inference_tests.rs"
 [[test]]
+name = "permuted_alias_return_context_inference_tests"
+path = "tests/permuted_alias_return_context_inference_tests.rs"
+[[test]]
 name = "nested_generic_union_callback_return_tests"
 path = "tests/nested_generic_union_callback_return_tests.rs"
 [[test]]
@@ -1475,6 +1478,9 @@ path = "tests/program_context_tests.rs"
 [[test]]
 name = "generic_call_inference_tests"
 path = "tests/generic_call_inference_tests.rs"
+[[test]]
+name = "generic_call_outer_param_name_collision_tests"
+path = "tests/generic_call_outer_param_name_collision_tests.rs"
 [[test]]
 name = "generic_param_source_apparent_type_inference_tests"
 path = "tests/generic_param_source_apparent_type_inference_tests.rs"
@@ -3046,9 +3052,17 @@ name = "number_to_enum_member_assignability_tests"
 path = "tests/number_to_enum_member_assignability_tests.rs"
 
 [[test]]
+name = "enum_inference_candidate_first_wins_tests"
+path = "tests/enum_inference_candidate_first_wins_tests.rs"
+
+[[test]]
 name = "provisional_class_instance_window_tests"
 path = "tests/provisional_class_instance_window_tests.rs"
 
 [[test]]
 name = "union_target_property_mismatch_elaboration_tests"
 path = "tests/union_target_property_mismatch_elaboration_tests.rs"
+
+[[test]]
+name = "property_pair_relation_frame_tests"
+path = "tests/property_pair_relation_frame_tests.rs"

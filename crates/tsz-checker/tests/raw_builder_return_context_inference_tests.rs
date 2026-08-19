@@ -529,3 +529,344 @@ function chainReturn(): RawBuilder<string> | RawBuilder<number> {
         "tag's declared return is a two-hop alias chain, arms are direct",
     );
 }
+
+/// #17673 item 2: the ambiguous-union TS2322 must render the contextually
+/// inferred source type, not a context-free re-derivation that lets the tag's
+/// type parameter fall back to its `unknown` default. Every message fragment
+/// below was oracle-pinned against tsc 6.0.2 (`--strict`).
+fn assert_single_ts2322_message(body: &str, fragment: &'static str, context: &str) {
+    let source = format!("{PRELUDE}\n{body}");
+    let diagnostics = check_source_diagnostics(&source);
+    assert_diagnostic_shapes_exactly(
+        &source,
+        &diagnostics,
+        &[DiagnosticShape::code(2322).with_message_fragment(fragment)],
+    );
+    let _ = context;
+}
+
+#[test]
+fn ambiguous_union_message_renders_the_inferred_union_source() {
+    assert_single_ts2322_message(
+        r#"
+function twoArm(): RawBuilder<string> | RawBuilder<number> {
+  return sql``
+}
+"#,
+        "Type 'RawBuilder<string | number>' is not assignable to type 'RawBuilder<string> | RawBuilder<number>'",
+        "two-arm tag source display",
+    );
+}
+
+#[test]
+fn three_arm_ambiguous_union_message_renders_the_full_inferred_union() {
+    assert_single_ts2322_message(
+        r#"
+function threeArm(): RawBuilder<string> | RawBuilder<number> | RawBuilder<boolean[]> {
+  return sql``
+}
+"#,
+        "Type 'RawBuilder<string | number | boolean[]>' is not assignable",
+        "three-arm tag source display",
+    );
+}
+
+#[test]
+fn renamed_binders_ambiguous_union_message_renders_the_inferred_union_source() {
+    assert_single_ts2322_message(
+        r#"
+interface CrateRow<Payload> {
+  readonly slot: Payload | undefined
+  readonly sealed: true
+}
+interface StampTag {
+  <Mark = unknown>(parts: TemplateStringsArray, ...values: unknown[]): CrateRow<Mark>
+}
+declare const stamp: StampTag
+function pickCrate(): CrateRow<string> | CrateRow<number> {
+  return stamp``
+}
+"#,
+        "Type 'CrateRow<string | number>' is not assignable to type 'CrateRow<string> | CrateRow<number>'",
+        "renamed binders source display",
+    );
+}
+
+#[test]
+fn ordinary_call_ambiguous_union_message_renders_the_inferred_union_source() {
+    assert_single_ts2322_message(
+        r#"
+function viaCall(): RawBuilder<string> | RawBuilder<number> {
+  return rawCall()
+}
+"#,
+        "Type 'RawBuilder<string | number>' is not assignable to type 'RawBuilder<string> | RawBuilder<number>'",
+        "ordinary zero-evidence call source display",
+    );
+}
+
+#[test]
+fn nullish_arm_ambiguous_union_message_renders_the_inferred_union_source() {
+    assert_single_ts2322_message(
+        r#"
+function withUndef(): RawBuilder<string> | RawBuilder<number> | undefined {
+  return sql``
+}
+"#,
+        "Type 'RawBuilder<string | number>' is not assignable",
+        "nullish arm source display",
+    );
+}
+
+#[test]
+fn alias_arm_ambiguous_union_message_renders_the_inferred_union_source() {
+    assert_single_ts2322_message(
+        r#"
+type StrRow = RawBuilder<string>
+type NumRow = RawBuilder<number>
+function aliasArms(): StrRow | NumRow {
+  return sql``
+}
+"#,
+        "Type 'RawBuilder<string | number>' is not assignable",
+        "alias arms source display",
+    );
+}
+// -----------------------------------------------------------------------------
+// #17673 item 3: a union arm whose type argument is a FOREIGN (outer-scope)
+// type parameter still makes the union ambiguous. The return-context
+// substitution must not pin the tag's parameter from the concrete arm alone;
+// tsc combines the per-arm candidates (`Tagged := number | O`) and the return
+// assignability check reports TS2322.
+// -----------------------------------------------------------------------------
+
+#[test]
+fn foreign_param_arm_with_concrete_arm_reports_the_return_mismatch() {
+    assert_single_ts2322(
+        r#"
+function genericOuter<O>(): RawBuilder<O> | RawBuilder<number> {
+  return sql``
+}
+"#,
+        "foreign outer param arm plus concrete arm",
+    );
+}
+
+#[test]
+fn renamed_foreign_binder_arm_reports_the_return_mismatch() {
+    assert_single_ts2322(
+        r#"
+function pickRow<Elem>(): RawBuilder<Elem> | RawBuilder<string> {
+  return sql``
+}
+"#,
+        "renamed foreign binder, string concrete arm",
+    );
+}
+
+#[test]
+fn reversed_arm_order_foreign_param_reports_the_return_mismatch() {
+    assert_single_ts2322(
+        r#"
+function genericOuter<O>(): RawBuilder<number> | RawBuilder<O> {
+  return sql``
+}
+"#,
+        "concrete arm first, foreign param arm second",
+    );
+}
+
+#[test]
+fn two_foreign_param_arms_report_the_return_mismatch() {
+    assert_single_ts2322(
+        r#"
+function twoOuter<A, B>(): RawBuilder<A> | RawBuilder<B> {
+  return sql``
+}
+"#,
+        "both arms foreign outer params",
+    );
+}
+
+#[test]
+fn alias_wrapped_foreign_param_arm_reports_the_return_mismatch() {
+    assert_single_ts2322(
+        r#"
+type ORow<Payload> = RawBuilder<Payload>
+function aliasOuter<O>(): ORow<O> | RawBuilder<number> {
+  return sql``
+}
+"#,
+        "foreign param arm through a generic alias of the base",
+    );
+}
+
+#[test]
+fn ordinary_call_foreign_param_arm_reports_the_return_mismatch() {
+    assert_single_ts2322(
+        r#"
+function genericOuter<O>(): RawBuilder<O> | RawBuilder<number> {
+  return rawCall()
+}
+"#,
+        "ordinary zero-evidence call form with a foreign param arm",
+    );
+}
+
+#[test]
+fn single_foreign_arm_with_null_still_infers_from_that_arm() {
+    assert_clean(
+        r#"
+function nullableOuter<O>(): RawBuilder<O> | null {
+  return sql``
+}
+"#,
+        "single foreign param arm with a nullish arm pins the param",
+    );
+}
+
+#[test]
+fn single_foreign_arm_with_undefined_still_infers_from_that_arm() {
+    assert_clean(
+        r#"
+function undefOuter<O>(): RawBuilder<O> | undefined {
+  return sql``
+}
+"#,
+        "single foreign param arm with an undefined arm pins the param",
+    );
+}
+
+#[test]
+fn foreign_arm_with_unknown_argument_arm_stays_clean() {
+    assert_clean(
+        r#"
+function unknownArm<O>(): RawBuilder<O> | RawBuilder<unknown> {
+  return sql``
+}
+"#,
+        "combined union collapses into the unknown arm",
+    );
+}
+
+// -----------------------------------------------------------------------------
+// Union-target head-line display: alias-spelled members must not collapse.
+//
+// The union display's constituent-collapse identity keyed an evaluated generic
+// instantiation on its *declaring interface symbol*, so two alias-spelled
+// instantiations of the same base (`StrRow = RawBuilder<string>`,
+// `NumRow = RawBuilder<number>`) collapsed to one member and the TS2322 head
+// rendered `... is not assignable to type 'StrRow'` where tsc renders the full
+// written union. The identity now keys on the display-alias provenance (the
+// application the evaluated form was produced from), so distinct
+// instantiations stay distinct while same-type duplicates keep collapsing.
+// Every pinned fragment below is oracle-pinned against tsc 6.0.2 (`--strict`).
+// -----------------------------------------------------------------------------
+
+#[test]
+fn alias_arm_ambiguous_union_message_renders_the_full_union_target() {
+    assert_single_ts2322_message(
+        r#"
+type StrRow = RawBuilder<string>
+type NumRow = RawBuilder<number>
+function aliasArms(): StrRow | NumRow {
+  return sql``
+}
+"#,
+        "Type 'RawBuilder<string | number>' is not assignable to type 'StrRow | NumRow'",
+        "alias arms full union target display",
+    );
+}
+
+#[test]
+fn generic_alias_arm_ambiguous_union_message_renders_the_full_union_target() {
+    assert_single_ts2322_message(
+        r#"
+type Row<Payload> = RawBuilder<Payload>
+function genericAliasArms(): Row<string> | Row<number> {
+  return sql``
+}
+"#,
+        "Type 'RawBuilder<string | number>' is not assignable to type 'Row<string> | Row<number>'",
+        "generic alias arms full union target display",
+    );
+}
+
+#[test]
+fn nullish_alias_arm_ambiguous_union_message_renders_the_full_union_target() {
+    assert_single_ts2322_message(
+        r#"
+type StrRow = RawBuilder<string>
+type NumRow = RawBuilder<number>
+function aliasArmsUndef(): StrRow | NumRow | undefined {
+  return sql``
+}
+"#,
+        "Type 'RawBuilder<string | number>' is not assignable to type 'StrRow | NumRow | undefined'",
+        "alias arms plus undefined full union target display",
+    );
+}
+
+#[test]
+fn renamed_binder_alias_arm_message_renders_the_full_union_target() {
+    assert_single_ts2322_message(
+        r#"
+interface CrateRow<Payload> {
+  readonly slot: Payload | undefined
+  readonly sealed: true
+}
+interface StampTag {
+  <Mark = unknown>(parts: TemplateStringsArray, ...values: unknown[]): CrateRow<Mark>
+}
+declare const stamp: StampTag
+type FirstCrate = CrateRow<string>
+type SecondCrate = CrateRow<number>
+function pickCrate(): FirstCrate | SecondCrate {
+  return stamp``
+}
+"#,
+        "Type 'CrateRow<string | number>' is not assignable to type 'FirstCrate | SecondCrate'",
+        "renamed binders alias arms full union target display",
+    );
+}
+
+// KNOWN ORDER RESIDUAL: for a mixed alias/direct union target tsc renders the
+// members reordered (`'RawBuilder<number> | StrRow'`); tsz keeps the written
+// order. The fragment below pins only the *non-collapse* (both members present
+// in the head line) — the member-order family is owned by the solver's
+// `union_member_order.rs` and is out of scope here.
+#[test]
+fn mixed_alias_and_direct_arm_message_keeps_both_union_target_members() {
+    assert_single_ts2322_message(
+        r#"
+type StrRow = RawBuilder<string>
+function mixedAliasDirect(): StrRow | RawBuilder<number> {
+  return sql``
+}
+"#,
+        "is not assignable to type 'StrRow | RawBuilder<number>'",
+        "mixed alias and direct arms keep both target members",
+    );
+}
+
+// Negative control: the same alias written twice is one constituent — the
+// per-instantiation identity must not stop genuine same-type duplicates from
+// collapsing. tsc renders a single member here (no union in the target
+// display, no second member frame).
+#[test]
+fn duplicate_alias_arm_target_still_collapses_to_one_member() {
+    let source = format!(
+        "{PRELUDE}\ntype StrRow = RawBuilder<string>\ndeclare const rbBool: RawBuilder<boolean>\nconst dup: StrRow | StrRow = rbBool\n"
+    );
+    let diagnostics = check_source_diagnostics(&source);
+    let codes: Vec<_> = diagnostics
+        .iter()
+        .map(|diagnostic| diagnostic.code)
+        .collect();
+    assert_eq!(codes, vec![2322], "duplicate alias arms: {diagnostics:#?}");
+    let message = &diagnostics[0].message_text;
+    assert!(
+        !message.contains('|'),
+        "duplicate alias arms must collapse to a single target member, got: {message}"
+    );
+}

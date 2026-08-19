@@ -227,6 +227,30 @@ fn complete_contextual_type_param_plan(
             plan.substitution.remove(tp.name);
             continue;
         }
+        // Name-keyed capture guard: the contextual type handed to this pass was
+        // already instantiated once with the round-1 candidates, so an
+        // occurrence of `tp.name` inside it may belong to an *enclosing*
+        // signature's parameter that a different callee parameter's candidate
+        // legitimately introduced (`map<F, R, A, B>(self: Kind<F, R, A>, f:
+        // (a: A) => B)` called inside `use<F, R, A, B>` infers `A := B_outer`;
+        // the callee's own `B` is still unfixed). Substitutions are name-keyed,
+        // so defaulting the unfixed `B` here would rewrite the foreign
+        // `B_outer` occurrence to `unknown` as well — a tsz-only false
+        // positive; `tsc` keeps the outer parameter. When any *other*
+        // parameter's round-1 candidate mentions this name, leave the name
+        // unbound instead of capturing it.
+        let name_introduced_by_other_candidate = request.type_params.iter().any(|other| {
+            other.name != tp.name
+                && request
+                    .current_substitution
+                    .get(other.name)
+                    .is_some_and(|candidate| {
+                        common::contains_type_parameter_named(db, candidate, tp.name)
+                    })
+        });
+        if name_introduced_by_other_candidate {
+            continue;
+        }
         let replacement = tp.default.or(tp.constraint).unwrap_or(TypeId::UNKNOWN);
         let replacement = common::instantiate_type(db, replacement, &plan.substitution);
         let replacement = if common::contains_type_parameters(db, replacement)

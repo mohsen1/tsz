@@ -651,6 +651,15 @@ impl<'a> CheckerState<'a> {
                         .collect();
                     trace!(
                         substitution_is_empty = substitution.is_empty(),
+                        substitution_entries = ?substitution
+                            .map()
+                            .iter()
+                            .map(|(name, ty)| (
+                                self.ctx.types.resolve_atom(*name),
+                                ty.0,
+                                self.format_type(*ty),
+                            ))
+                            .collect::<Vec<_>>(),
                         "Round 1 inference: substitution computed"
                     );
                     let mut round2_substitution = substitution.clone();
@@ -782,7 +791,18 @@ impl<'a> CheckerState<'a> {
                             }
                         }
                     }
-                    trace!("Round 2 substitution prepared");
+                    trace!(
+                        round2_entries = ?round2_substitution
+                            .map()
+                            .iter()
+                            .map(|(name, ty)| (
+                                self.ctx.types.resolve_atom(*name),
+                                ty.0,
+                                self.format_type(*ty),
+                            ))
+                            .collect::<Vec<_>>(),
+                        "Round 2 substitution prepared"
+                    );
 
                     // === Pre-inference from annotated callback parameters ===
                     // When a callback is context-sensitive (has unannotated params) AND has

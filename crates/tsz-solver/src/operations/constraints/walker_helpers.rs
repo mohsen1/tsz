@@ -157,7 +157,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     /// back-reference (the baked-object case). Up to two views come back —
     /// as-written first, evaluated second — so callers prefer the direct
     /// spelling and still match through the alias hop.
-    pub(super) fn transparent_application_views(
+    pub(crate) fn transparent_application_views(
         &mut self,
         type_id: TypeId,
     ) -> smallvec::SmallVec<[(TypeId, Vec<TypeId>); 2]> {
@@ -230,22 +230,50 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 current = body;
             }
         }
-        let (mut base, args) = info?;
-        // Hop parameter-passthrough alias bases so `Row<X>` compares as
-        // `RawBuilder<X>`.
-        for _ in 0..4 {
-            let Some(next) = self.parameter_passthrough_alias_base(base) else {
-                break;
-            };
-            base = next;
-        }
-        Some((base, args))
+        let (base, args) = info?;
+        // Hop alias bases that forward to another application so `Row<X>`
+        // compares as `RawBuilder<X>` and `Flip<X, Y>` as `Pair<Y, X>`.
+        Some(self.hop_alias_forwarded_application(base, args))
     }
 
-    /// If `base` names a generic alias whose body is an application over
-    /// exactly the alias's own type parameters in declared order
-    /// (`type Row<T> = RawBuilder<T>`), return the body's base; else `None`.
-    fn parameter_passthrough_alias_base(&self, base: TypeId) -> Option<TypeId> {
+    /// Iteratively rewrite an application view through alias bases that merely
+    /// forward to another application, composing the argument remap at each
+    /// hop (`alias_forwarded_application`). Identity when the base is not such
+    /// an alias; the hop count is fuel-bounded like the other alias walks.
+    pub(crate) fn hop_alias_forwarded_application(
+        &self,
+        mut base: TypeId,
+        mut args: Vec<TypeId>,
+    ) -> (TypeId, Vec<TypeId>) {
+        for _ in 0..4 {
+            let Some((next_base, next_args)) = self.alias_forwarded_application(base, &args) else {
+                break;
+            };
+            base = next_base;
+            args = next_args;
+        }
+        (base, args)
+    }
+
+    /// If `base` names a generic alias whose body is an application over the
+    /// alias's own type parameters, return the body's base together with the
+    /// outer arguments carried into the body's argument positions.
+    ///
+    /// The declared-order passthrough (`type Row<T> = RawBuilder<T>`) keeps
+    /// the outer arguments as written. Otherwise every body argument must be
+    /// one of the alias's own parameters — matched by binder identity, so a
+    /// shadowing outer binder with the same name cannot alias in — and the
+    /// outer argument list must supply every parameter; permutation
+    /// (`type Flip<A, B> = Pair<B, A>`) and repetition
+    /// (`type Dup<T> = Pair<T, T>`) then remap positionally. A body argument
+    /// that is any other type shape (including a compound mentioning a
+    /// parameter, like `T[]`) declines the hop rather than risking a wrong
+    /// alignment.
+    fn alias_forwarded_application(
+        &self,
+        base: TypeId,
+        args: &[TypeId],
+    ) -> Option<(TypeId, Vec<TypeId>)> {
         let Some(TypeData::Lazy(def_id)) = self.interner.lookup(base) else {
             return None;
         };
@@ -260,16 +288,28 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         }
         let body = resolver.resolve_lazy(def_id, db)?;
         let (body_base, body_args) = crate::type_queries::get_application_info(db, body)?;
-        if body_args.len() != params.len() {
+        let declared_order = body_args.len() == params.len()
+            && body_args.iter().zip(params.iter()).all(|(&arg, param)| {
+                matches!(
+                    self.interner.lookup(arg),
+                    Some(TypeData::TypeParameter(tp)) if tp.is_same_binder(*param)
+                )
+            });
+        if declared_order {
+            return Some((body_base, args.to_vec()));
+        }
+        if args.len() != params.len() {
             return None;
         }
-        for (&arg, param) in body_args.iter().zip(params.iter()) {
-            match self.interner.lookup(arg) {
-                Some(TypeData::TypeParameter(tp)) if tp.is_same_binder(*param) => {}
-                _ => return None,
-            }
+        let mut mapped = Vec::with_capacity(body_args.len());
+        for &body_arg in &body_args {
+            let Some(TypeData::TypeParameter(tp)) = self.interner.lookup(body_arg) else {
+                return None;
+            };
+            let position = params.iter().position(|param| tp.is_same_binder(*param))?;
+            mapped.push(args[position]);
         }
-        Some(body_base)
+        Some((body_base, mapped))
     }
 
     /// Match one union arm against the merge scan's source application view,
@@ -295,7 +335,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         None
     }
 
-    pub(super) fn application_bases_share_declaration(
+    pub(crate) fn application_bases_share_declaration(
         &self,
         source_base: TypeId,
         target_base: TypeId,

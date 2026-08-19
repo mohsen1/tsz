@@ -1557,6 +1557,7 @@ impl<'a> CheckerState<'a> {
                         | syntax_kind_ext::FUNCTION_EXPRESSION
                         | syntax_kind_ext::NON_NULL_EXPRESSION
                         | syntax_kind_ext::NEW_EXPRESSION
+                        | syntax_kind_ext::TAGGED_TEMPLATE_EXPRESSION
                 ) {
                     self.ctx.node_types.insert(idx.0, result);
                 }
