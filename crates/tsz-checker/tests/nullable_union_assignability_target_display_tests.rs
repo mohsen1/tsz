@@ -373,14 +373,20 @@ fn literal_member_source_still_collapses_and_widens() {
 }
 
 // =====================================================================
-// Deferred (generic) indexed-access sources: same rule as type
-// parameters. A `T[K]` whose object or index still mentions a type
-// parameter defers to its constraint — it never enters the best-match
-// re-report that collapses a single-survivor nullable union — so tsc
-// keeps the full declared union at that pair's line. Only a *concrete*
-// indexed access (which evaluates before display) collapses. All
-// expectations oracle-pinned against the pinned typescript@7.0.2 via
-// `scripts/conformance/oracle.sh` (`--strict`).
+// Deferred constraint-relative sources beyond a bare type parameter.
+//
+// A source whose relation to a union defers to its base constraint — a
+// type-parameter-mentioning indexed access (`T[K]`), a bare `keyof T`, or a
+// distributive conditional — keeps the FULL nullable union on its pair's line,
+// at the top-level head and at the property-mismatch drill leaf alike. tsc
+// keeps the as-written operand there and walks the constraint one level deeper;
+// the solver's evaluated nested reason instead carries a best-matching-member
+// collapse (`... vs string`), which the drill-leaf fix overrides back to the
+// raw pair. A fully concrete operand carries no type parameter, evaluates
+// before display, and still collapses.
+//
+// All expectations oracle-pinned against the pinned typescript@7.0.2
+// (`--strict`). Binder names vary across cases (anti-hardcoding).
 // =====================================================================
 
 /// Generic-base indexed access annotated at top level keeps the full union on
@@ -441,10 +447,8 @@ fn indexed_access_source_keeps_both_nullish_members() {
     );
 }
 
-/// Concrete base with a *generic index* (`Obj[KP]`) is still deferred: the
-/// head line keeps the union. (tsc's constraint drill one level deeper then
-/// collapses against the concrete constraint — that line is separate
-/// elaboration machinery, not asserted here.)
+/// Concrete base with a *generic index* (`Obj[KP]`) is still deferred: the head
+/// line keeps the union.
 #[test]
 fn concrete_base_generic_index_head_keeps_full_union() {
     let msg = message(
@@ -457,8 +461,75 @@ fn concrete_base_generic_index_head_keeps_full_union() {
     );
 }
 
-/// Positive control: a CONCRETE indexed access (`Conc[\"a\"]` = `number`)
-/// evaluates before display and still collapses the nullable target.
+/// A type-parameter-mentioning indexed-access member-leaf source keeps the
+/// union at the drill leaf (was `Type 'TBox[KKey]' ... to type 'string'`).
+#[test]
+fn indexed_access_member_leaf_drill_keeps_full_union() {
+    let msg = message_with_chain(
+        "function dig<TBox, KKey extends keyof TBox>(x: { m: TBox[KKey] }) {\n  const y: { m: string | undefined } = x;\n}\n",
+        2322,
+    );
+    assert!(
+        msg.contains("Type 'TBox[KKey]' is not assignable to type 'string | undefined'."),
+        "indexed-access member-leaf drill must keep the full nullable union, got: {msg}"
+    );
+}
+
+/// Bare `keyof T` member-leaf source keeps `| undefined` on the drill leaf
+/// (the solver's best-matching-member reason had collapsed it to `string`).
+#[test]
+fn keyof_member_leaf_source_keeps_full_union() {
+    let msg = message_with_chain(
+        "function fold<TObj>(box: { m: keyof TObj }) {\n  const sink: { m: string | undefined } = box;\n}\n",
+        2322,
+    );
+    assert!(
+        msg.contains("Type 'keyof TObj' is not assignable to type 'string | undefined'."),
+        "keyof member-leaf drill must keep the full nullable union, got: {msg}"
+    );
+}
+
+/// Same rule for `| null`, renamed binders.
+#[test]
+fn keyof_member_leaf_source_keeps_null_member() {
+    let msg = message_with_chain(
+        "function grab<TValue>(x: { prop: keyof TValue }) {\n  const y: { prop: number | null } = x;\n}\n",
+        2322,
+    );
+    assert!(
+        msg.contains("Type 'keyof TValue' is not assignable to type 'number | null'."),
+        "keyof member-leaf drill must keep the `| null` member, got: {msg}"
+    );
+}
+
+/// Top-level (non-member) `keyof T` source keeps the full union on the head.
+#[test]
+fn top_level_keyof_source_keeps_full_union() {
+    let msg = message(
+        "function pick<Item>(x: keyof Item) {\n  const y: string | undefined = x;\n}\n",
+        2322,
+    );
+    assert!(
+        msg.contains("type 'string | undefined'"),
+        "top-level keyof source must keep the full union, got: {msg}"
+    );
+}
+
+/// Top-level `keyof T`, `| null`, renamed binder.
+#[test]
+fn top_level_keyof_source_keeps_null_member() {
+    let msg = message(
+        "function nab<Row>(x: keyof Row) {\n  const y: string | null = x;\n}\n",
+        2322,
+    );
+    assert!(
+        msg.contains("type 'string | null'"),
+        "top-level keyof source must keep the `| null` member, got: {msg}"
+    );
+}
+
+/// Negative control: a fully CONCRETE indexed access (`Conc["a"]` = `number`)
+/// carries no type parameter, evaluates before display, and still collapses.
 #[test]
 fn concrete_indexed_access_member_source_still_collapses() {
     let msg = message_with_chain(

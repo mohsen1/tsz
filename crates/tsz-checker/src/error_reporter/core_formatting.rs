@@ -1304,14 +1304,11 @@ impl<'a> CheckerState<'a> {
         ) {
             return None;
         }
-        // The same deferral applies to a still-deferred indexed access
-        // (`T[K]`, or `Obj[K]` with a generic index): its relation to a union
-        // defers to the operand's constraint, so tsc keeps the full declared
-        // union on that pair's line (`Obj[KP]` vs `string | undefined` stays
-        // `string | undefined`; the constraint drill one level deeper then
-        // collapses against the concrete constraint). A fully concrete
-        // indexed access evaluates before display and still collapses.
-        if query_common::is_deferred_indexed_access_or_intersection_with_one(
+        // The same deferral applies to any other *deferred* generic operand
+        // that relates to a union through its base constraint — `T[K]`,
+        // `keyof T`, a distributive conditional, or an intersection carrying
+        // one — so the full declared union is kept (see the classifier's doc).
+        if query_common::is_deferred_constraint_relative_operand(
             self.ctx.types.as_type_database(),
             other,
         ) {
