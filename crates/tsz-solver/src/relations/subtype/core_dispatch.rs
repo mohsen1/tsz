@@ -1448,76 +1448,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return self.check_source_to_mapped_expansion(source, target, mapped_id);
         }
 
-        // =======================================================================
-        // ENUM TYPE CHECKING (Nominal Identity)
-        // =======================================================================
-        // Enums are nominal types - two different enums with the same member types
-        // are NOT compatible. Enum(DefId, MemberType) preserves both:
-        // - DefId: For nominal identity (E1 != E2)
-        // - MemberType: For structural assignability to primitives (E1 <: number)
-        // =======================================================================
-
-        if let (Some((s_def_id, _s_members)), Some((t_def_id, _t_members))) = (
-            enum_components(self.interner, source),
-            enum_components(self.interner, target),
-        ) {
-            // Cross-module import barrels can give the same enum (or member)
-            // declaration two distinct `DefId`s (the declaring file's key and an
-            // import-alias key reached via a re-export). They denote the same
-            // nominal enum, so compare through `defs_are_equivalent` (which
-            // canonicalizes alias-forwarding and falls back to `SymbolId`)
-            // instead of raw `DefId` equality. Raw `==` here makes the narrowing
-            // subtype check (`E.MEMBER <: E`) fail whenever the discriminant
-            // property type and the literal member were reached through
-            // different module paths, collapsing the receiver to `never` (the
-            // mobx `IDerivationState_` cross-file enum cascade).
-            let same_def = self.resolver.defs_are_equivalent(s_def_id, t_def_id);
-
-            if same_def
-                && source != target
-                && crate::type_queries::is_literal_enum_member(self.interner, source)
-                && crate::type_queries::is_literal_enum_member(self.interner, target)
-            {
-                return SubtypeResult::False;
-            }
-
-            // Enum to Enum: Nominal check - definitions must match
-            if same_def {
-                return SubtypeResult::True;
-            }
-
-            // Check for member-to-parent relationship (e.g., E.A -> E)
-            // If source is a member of the target enum, it is a subtype
-            if self
-                .resolver
-                .get_enum_parent_def_id(s_def_id)
-                .is_some_and(|parent| self.resolver.defs_are_equivalent(parent, t_def_id))
-            {
-                // Source is a member of target enum
-                // Only allow if target is the full enum type (not a different member)
-                if self.resolver.is_enum_type(target, self.interner) {
-                    return SubtypeResult::True;
-                }
-            }
-
-            // Different enums are NOT compatible (nominal typing)
-            return SubtypeResult::False;
-        }
-
-        // Source is Enum, Target is not - check structural member type
-        if let Some((_s_def_id, s_members)) = enum_components(self.interner, source) {
-            return self.check_subtype(s_members, target);
-        }
-
-        // Target is Enum, Source is not - check Rule #7 first, then structural member type
-        if let Some((t_def_id, t_members)) = enum_components(self.interner, target) {
-            // Rule #7: number is assignable to numeric enums
-            if source == TypeId::NUMBER && self.resolver.is_numeric_enum(t_def_id) {
-                return SubtypeResult::True;
-            }
-            // For number literals, fall through to structural check against t_members
-            // so that only actual enum member values (e.g., 0|1|2) are accepted
-            return self.check_subtype(source, t_members);
+        // Enum relations (nominal identity + structural member values) live in
+        // `rules/enums.rs`; `None` means neither side is an enum.
+        if let Some(result) = self.check_enum_relations(source, target) {
+            return result;
         }
 
         // =======================================================================

@@ -2079,6 +2079,9 @@ path = "tests/typeof_function_generic_alias_narrowing_tests.rs"
 name = "discriminant_literal_reference_narrowing_tests"
 path = "tests/discriminant_literal_reference_narrowing_tests.rs"
 [[test]]
+name = "discriminated_union_tuple_nullable_element_tests"
+path = "tests/discriminated_union_tuple_nullable_element_tests.rs"
+[[test]]
 name = "unique_symbol_discriminant_narrowing_tests"
 path = "tests/unique_symbol_discriminant_narrowing_tests.rs"
 [[test]]
@@ -3023,3 +3026,7 @@ path = "tests/js_object_literal_receiver_display_tests.rs"
 [[test]]
 name = "overloaded_method_override_ts2416_count_tests"
 path = "tests/overloaded_method_override_ts2416_count_tests.rs"
+
+[[test]]
+name = "enum_discriminant_union_assignability_tests"
+path = "tests/enum_discriminant_union_assignability_tests.rs"
