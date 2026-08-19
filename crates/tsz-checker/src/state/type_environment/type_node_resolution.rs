@@ -1106,6 +1106,75 @@ impl<'a> CheckerState<'a> {
         query::callable_with_appended_properties(self.ctx.types, callable_shape, new_props)
     }
 
+    /// Provisional twin of [`Self::augment_callable_type_with_expandos`] for use
+    /// while `sym_id` is still on the resolution stack (circular re-entry —
+    /// see `provisional_circular_function_symbol_type`). Each member's type
+    /// comes from [`Self::provisional_expando_property_signature_type`], which
+    /// builds a function-valued member's signature structurally instead of
+    /// checking its body — the checking path is exactly what re-enters
+    /// `sym_id`'s own resolution for `root.member = function () { this... }`.
+    /// A non-function member is simply omitted from this transient shape.
+    pub(crate) fn augment_provisional_callable_type_with_expando_function_members(
+        &mut self,
+        root_name: &str,
+        sym_id: SymbolId,
+        base_type: TypeId,
+    ) -> TypeId {
+        use rustc_hash::FxHashSet;
+
+        let expando_props = self.collect_expando_properties_for_root(root_name);
+        if expando_props.is_empty() {
+            return base_type;
+        }
+
+        let positions = self.expando_property_source_positions(root_name);
+        let mut ordered_props: Vec<String> = expando_props.into_iter().collect();
+        ordered_props.sort_by(|a, b| match (positions.get(a), positions.get(b)) {
+            (Some(pa), Some(pb)) => pa.cmp(pb).then_with(|| a.cmp(b)),
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => a.cmp(b),
+        });
+
+        let Some((callable_shape, mut property_count)) =
+            query::callable_shape_for_expando_base(self.ctx.types, base_type, sym_id)
+        else {
+            return base_type;
+        };
+
+        let existing: FxHashSet<tsz_common::interner::Atom> =
+            callable_shape.properties.iter().map(|p| p.name).collect();
+        let mut new_props = Vec::new();
+        let mut seen: FxHashSet<tsz_common::interner::Atom> = FxHashSet::default();
+
+        for prop_name in ordered_props {
+            let prop_atom = self.ctx.types.intern_string(&prop_name);
+            if existing.contains(&prop_atom) || !seen.insert(prop_atom) {
+                continue;
+            }
+
+            let Some(prop_type) =
+                self.provisional_expando_property_signature_type(sym_id, root_name, &prop_name)
+            else {
+                continue;
+            };
+
+            new_props.push(query::js_expando_property(
+                prop_atom,
+                prop_type,
+                sym_id,
+                property_count,
+            ));
+            property_count += 1;
+        }
+
+        if new_props.is_empty() {
+            return base_type;
+        }
+
+        query::callable_with_appended_properties(self.ctx.types, callable_shape, new_props)
+    }
+
     /// Resolve `name` to a lib-declared global value (`declare var`/`function`/
     /// `class`) and return its value type, if any. Used as the recovery path
     /// for `globalThis.<name>` accesses when the in-scope `<name>` is a

@@ -588,52 +588,15 @@ impl<'a> CheckerState<'a> {
             if let Some(display) = self.js_prototype_object_literal_receiver_display(receiver) {
                 return Some(display);
             }
-            // Outside prototype literals, retain the real enclosing
-            // class/constructor instance fallback.
-            if let Some(owner) = self
-                .find_enclosing_non_arrow_function(receiver)
-                .and_then(|func_idx| self.find_assignment_lhs_for_rhs(func_idx))
-                .and_then(|lhs_idx| {
-                    let lhs_node = self.ctx.arena.get(lhs_idx)?;
-                    if lhs_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-                        && lhs_node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
-                    {
-                        return None;
-                    }
-                    let access = self.ctx.arena.get_access_expr(lhs_node)?;
-                    // `X.prototype = { ... }`: naming the LHS owner prints
-                    // `typeof X` where tsc names the literal.
-                    if self
-                        .ctx
-                        .arena
-                        .get_identifier_at(access.name_or_argument)
-                        .is_some_and(|ident| ident.escaped_text == "prototype")
-                    {
-                        return None;
-                    }
-                    let receiver_node = self.ctx.arena.get(access.expression)?;
-                    if receiver_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-                        || receiver_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
-                    {
-                        return None;
-                    }
-                    let sym_id =
-                        self.resolve_identifier_symbol(access.expression)
-                            .or_else(|| {
-                                self.expression_text(access.expression)
-                                    .and_then(|text| self.ctx.binder.file_locals.get(text.as_str()))
-                            })?;
-                    let symbol = self.ctx.binder.get_symbol(sym_id)?;
-                    self.ctx
-                        .arena
-                        .get(symbol.value_declaration)
-                        .is_some_and(|decl| decl.is_function_like())
-                        .then(|| self.expression_text(access.expression))
-                        .flatten()
-                })
-            {
-                return Some(format!("typeof {owner}"));
-            }
+            // Outside prototype literals, retain the real enclosing CLASS
+            // static-side fallback only. TypeScript 7 dropped TS6-era
+            // constructor-function inference: a plain FUNCTION owner (with
+            // or without a `@constructor` tag or a `this.x = ...` body) no
+            // longer renders as `typeof <name>` here — its receiver is the
+            // owner's real structural merged shape, which the type-based
+            // formatter below already prints correctly once the semantic
+            // `this` type carries the expando members (#17654). Only a real
+            // `class` owner's static side keeps the `typeof K` display.
             if let Some(owner) = self
                 .find_enclosing_non_arrow_function(receiver)
                 .and_then(|func_idx| self.find_assignment_lhs_for_rhs(func_idx))
@@ -664,9 +627,7 @@ impl<'a> CheckerState<'a> {
                         .resolve_identifier_symbol(lhs_access.expression)
                         .or_else(|| self.resolve_qualified_symbol(lhs_access.expression))?;
                     let owner_symbol = self.ctx.binder.get_symbol(owner_sym)?;
-                    if owner_symbol.has_any_flags(
-                        tsz_binder::symbol_flags::FUNCTION | tsz_binder::symbol_flags::CLASS,
-                    ) {
+                    if owner_symbol.has_any_flags(tsz_binder::symbol_flags::CLASS) {
                         Some(format!("typeof {owner_text}"))
                     } else {
                         None
