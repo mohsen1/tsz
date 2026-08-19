@@ -1189,13 +1189,24 @@ impl<'a> CheckerState<'a> {
                     depth,
                 );
             } else {
-                let nested_diag = self.render_failure_reason(
+                let mut nested_diag = self.render_failure_reason(
                     nested_reason,
                     nested_source,
                     nested_target,
                     idx,
                     depth + 1,
                 );
+                // `push_nested_chain` renumbers only the nested headline to
+                // this line's child position (`depth`); the nested render
+                // placed the headline's own children at `depth + 2`, which
+                // would leave a skipped indent level beneath it. Pull the
+                // nested children up one level so the drill sits directly
+                // beneath the renumbered headline.
+                nested_diag.related_information = nested_diag
+                    .related_information
+                    .into_iter()
+                    .map(|related| related.with_depth_shift(-1))
+                    .collect();
                 Self::push_nested_chain(&mut diag, nested_diag, depth);
             }
         }

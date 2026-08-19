@@ -71,6 +71,31 @@ impl<R: TypeResolver> SubtypeChecker<'_, R> {
         member
     }
 
+    /// tsc's `getBestMatchingType` same-reference step
+    /// (`findMatchingTypeReferenceOrTypeAliasReference`): the first union
+    /// member — in the target's own member order — whose generic application
+    /// names the source's own canonical base, across forwarding-alias
+    /// spellings on either side. Returns the member as written in the union
+    /// (the alias spelling the elaboration frame displays), or `None` when
+    /// no member shares the source's base or the source has no recoverable
+    /// application identity.
+    fn union_same_base_reference_member(
+        &mut self,
+        source: TypeId,
+        resolved_source: TypeId,
+        members: &[TypeId],
+    ) -> Option<TypeId> {
+        let source_base = self
+            .explain_application_base_def(source)
+            .or_else(|| self.explain_application_base_def(resolved_source))?;
+        members.iter().copied().find(|&member| {
+            self.explain_application_base_def(member)
+                .is_some_and(|member_base| {
+                    self.application_base_defs_match(source_base, member_base)
+                })
+        })
+    }
+
     /// Explain a failed relation whose `resolved_target` is a union. Always
     /// returns a reason; the caller has already established the union shape.
     pub(super) fn explain_union_target_failure(
@@ -94,6 +119,34 @@ impl<R: TypeResolver> SubtypeChecker<'_, R> {
         let source_members = union_list_id(self.interner, resolved_source)
             .map(|list_id| self.interner.type_list(list_id).as_ref().to_vec())
             .unwrap_or_else(|| vec![resolved_source]);
+
+        // tsc's `getBestMatchingType` prefers a same-reference member
+        // (`findMatchingTypeReferenceOrTypeAliasReference`) over both the
+        // application-shaped missing-property fold and the key-overlap pick
+        // below: the failure elaborates beneath a member frame against the
+        // first union member naming the source's own generic base, and that
+        // member relation drills its differing type argument (`Type 'string |
+        // number' is not assignable to type 'number'.` -> `Type 'string' is
+        // not assignable to type 'number'.`) instead of walking properties.
+        // Union-shaped sources are excluded: tsc's union-source walk
+        // (`eachTypeRelatedToType`) reports before any best-member selection,
+        // and the blocks below own that shape. Sole-real-member nullable
+        // targets (`T | undefined`) are excluded the same way: tsc folds
+        // their head to the source-vs-member pair with no member frame, and
+        // the promotion block below owns that fold.
+        if source_members.len() == 1
+            && members.iter().filter(|m| !m.is_nullish()).count() > 1
+            && let Some(member) =
+                self.union_same_base_reference_member(source, resolved_source, &members)
+            && let Some(reason) = self.explain_failure_guarded(resolved_source, member)
+        {
+            return Some(SubtypeFailureReason::UnionTargetMismatch {
+                source_type: source,
+                target_type: target,
+                member_type: member,
+                nested_reason: Box::new(reason),
+            });
+        }
 
         // Application-shaped comparison (e.g. assigning to `Foo<X>` that
         // resolves to a union): tsc collapses the elaboration to a direct
