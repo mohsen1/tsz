@@ -122,8 +122,30 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // Order the cross-file augmentation groups by their owning file index so
+        // the fold is deterministic across runs. `cross_file_groups` is keyed on
+        // each arena's raw pointer, so a plain iteration walks buckets in
+        // address (memory-layout) order — that leaks ASLR/allocator behavior
+        // into the interned augmentation type identity and, downstream, into
+        // union-member order and property lookup. Sort by file index (with the
+        // arena's source file name as a stable tiebreaker) so the fold follows
+        // program-declaration order.
+        let mut ordered_groups: Vec<(Arc<NodeArena>, Vec<NodeIndex>)> =
+            cross_file_groups.into_values().collect();
+        ordered_groups.sort_by_cached_key(|(arena, _)| {
+            (
+                self.ctx
+                    .get_file_idx_for_arena(arena.as_ref())
+                    .unwrap_or(usize::MAX),
+                arena
+                    .source_files
+                    .first()
+                    .map(|sf| sf.file_name.clone())
+                    .unwrap_or_default(),
+            )
+        });
         let mut found_types = Vec::new();
-        for (_, (arena, decls)) in cross_file_groups {
+        for (arena, decls) in ordered_groups {
             let decl_binder = binder_for_arena(arena.as_ref()).unwrap_or(self.ctx.binder);
             let global_idx = file_locals_idx.as_deref();
             let all_binders_slice = all_binders.as_ref().map(|v| v.as_slice());
@@ -414,9 +436,27 @@ impl<'a> CheckerState<'a> {
             }
         }
         // The `augmentation_decls` borrow of `self.ctx.binder` ends here, freeing
-        // `&mut self` for the computed-name precompute below.
-        let cross_groups: Vec<(Arc<NodeArena>, Vec<tsz_parser::parser::NodeIndex>)> =
+        // `&mut self` for the computed-name precompute below. The
+        // `cross_file_groups` map is keyed on each arena's raw pointer, so a
+        // plain `into_values` iteration follows address (memory-layout) order.
+        // Sort by owning file index (with the arena's source-file name as a
+        // stable tiebreaker) so the downstream fold — lowering, property
+        // lookup, and union assembly — follows program order regardless of
+        // ASLR/allocator layout.
+        let mut cross_groups: Vec<(Arc<NodeArena>, Vec<tsz_parser::parser::NodeIndex>)> =
             cross_file_groups.into_values().collect();
+        cross_groups.sort_by_cached_key(|(arena, _)| {
+            (
+                self.ctx
+                    .get_file_idx_for_arena(arena.as_ref())
+                    .unwrap_or(usize::MAX),
+                arena
+                    .source_files
+                    .first()
+                    .map(|sf| sf.file_name.clone())
+                    .unwrap_or_default(),
+            )
+        });
 
         // Pre-compute computed property names the AST-only lowering can't resolve
         // (e.g. `[k]` where `k` is a `const` string/number/unique-symbol binding),
