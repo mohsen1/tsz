@@ -673,6 +673,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 continue;
             }
 
+            // A position discriminates only when at least one arm's element type
+            // is unit-like as a whole and the arms are not uniform — the tuple
+            // analog of `is_discriminant_for_union`, sharing the same gate so a
+            // nullable element (`string | undefined`) cannot masquerade as a
+            // discriminant and let a wider tuple source distribute per-constituent
+            // across arms (#17643).
             let mut has_unit = false;
             let mut seen_types = Vec::new();
             for target_tuple in &target_tuples {
@@ -680,12 +686,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 if !seen_types.contains(&target_type) {
                     seen_types.push(target_type);
                 }
-                for &constituent in &get_type_constituents(self.interner, target_type) {
-                    if is_identity_comparable_type(self.interner, constituent)
-                        || is_literal_type(self.interner, constituent)
-                    {
-                        has_unit = true;
-                    }
+                if whole_type_is_unit_like(self.interner, self.resolver, target_type) {
+                    has_unit = true;
                 }
             }
 
@@ -920,32 +922,12 @@ fn is_discriminant_for_union<R: TypeResolver>(
 
         let prop_type = prop.type_id;
         // A member's property type marks the property as discriminant-capable
-        // only when the WHOLE type is unit-like: `boolean`, a single unit
-        // type, or a union whose EVERY constituent is a unit type (tsc's
-        // `isLiteralType`, feeding `CheckFlags.HasLiteralType`). A mixed
-        // union like `string | undefined` must NOT qualify: crediting its one
-        // unit constituent would let a wide source (`Output | undefined`
-        // instantiated with a union) narrow per-constituent into different
-        // same-base arms and wrongly accept (#17643).
-        // Resolve `Lazy` constituents first — enum member property types may
-        // still be `Lazy(DefId)` in the object shape after top-level union
-        // evaluation.
-        // `boolean` counts as unit-like wherever it appears: tsc models it as
-        // the union `true | false`, so both a bare `boolean` property and a
-        // `boolean | undefined` union satisfy the every-constituent rule.
-        let whole_type_is_unit = get_type_constituents(db, prop_type)
-            .iter()
-            .all(|&constituent| {
-                let resolved = if let Some(def_id) = lazy_def_id(db, constituent) {
-                    resolver.resolve_lazy(def_id, db).unwrap_or(constituent)
-                } else {
-                    constituent
-                };
-                resolved == TypeId::BOOLEAN
-                    || is_identity_comparable_type(db, resolved)
-                    || is_literal_type(db, resolved)
-            });
-        if whole_type_is_unit {
+        // only when the WHOLE type is unit-like (`whole_type_is_unit_like`, tsc's
+        // `isLiteralType`). A mixed union like `string | undefined` must NOT
+        // qualify: crediting its one unit constituent would let a wide source
+        // (`Output | undefined` instantiated with a union) narrow per-constituent
+        // into different same-base arms and wrongly accept (#17643).
+        if whole_type_is_unit_like(db, resolver, prop_type) {
             has_unit = true;
         }
 
@@ -956,6 +938,40 @@ fn is_discriminant_for_union<R: TypeResolver>(
 
     // Must have at least one unit type and different types across members
     has_unit && seen_types.len() > 1
+}
+
+/// Whether a type is unit-like *as a whole*, matching tsc's `isLiteralType`
+/// (feeding `CheckFlags.HasLiteralType`): `boolean`, a single unit type, or a
+/// union whose EVERY constituent is a unit type. A mixed union like
+/// `string | undefined` does NOT qualify — crediting its one unit constituent
+/// would let the discriminated-union relation narrow a wide source
+/// per-constituent into different arms and wrongly accept (#17643). `Lazy(DefId)`
+/// constituents (e.g. an enum-member type still stored lazily in an object shape
+/// or a tuple element) are resolved first. `boolean` counts wherever it appears:
+/// tsc models it as `true | false`, so a bare `boolean` and a `boolean | undefined`
+/// union both satisfy the every-constituent rule.
+///
+/// Shared by the object-member (`is_discriminant_for_union`) and tuple-element
+/// (`type_related_to_discriminated_tuple_type`) discriminant detectors so the two
+/// cannot drift — the drift that left tuple discriminated unions unfixed after the
+/// object case was fixed (#17643).
+fn whole_type_is_unit_like<R: TypeResolver>(
+    db: &dyn TypeDatabase,
+    resolver: &R,
+    type_id: TypeId,
+) -> bool {
+    get_type_constituents(db, type_id)
+        .iter()
+        .all(|&constituent| {
+            let resolved = if let Some(def_id) = lazy_def_id(db, constituent) {
+                resolver.resolve_lazy(def_id, db).unwrap_or(constituent)
+            } else {
+                constituent
+            };
+            resolved == TypeId::BOOLEAN
+                || is_identity_comparable_type(db, resolved)
+                || is_literal_type(db, resolved)
+        })
 }
 
 /// Create a new object type by narrowing MULTIPLE properties simultaneously.

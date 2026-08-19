@@ -2076,6 +2076,9 @@ path = "tests/typeof_function_generic_alias_narrowing_tests.rs"
 name = "discriminant_literal_reference_narrowing_tests"
 path = "tests/discriminant_literal_reference_narrowing_tests.rs"
 [[test]]
+name = "discriminated_union_tuple_nullable_element_tests"
+path = "tests/discriminated_union_tuple_nullable_element_tests.rs"
+[[test]]
 name = "unique_symbol_discriminant_narrowing_tests"
 path = "tests/unique_symbol_discriminant_narrowing_tests.rs"
 [[test]]
@@ -3028,3 +3031,7 @@ path = "tests/enum_discriminant_union_assignability_tests.rs"
 [[test]]
 name = "enum_name_display_qualification_tests"
 path = "tests/enum_name_display_qualification_tests.rs"
+
+[[test]]
+name = "number_to_enum_member_assignability_tests"
+path = "tests/number_to_enum_member_assignability_tests.rs"

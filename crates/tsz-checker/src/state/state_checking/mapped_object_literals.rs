@@ -696,19 +696,25 @@ impl<'a> CheckerState<'a> {
                 let name = self.ctx.types.resolve_atom(prop_name);
                 if let Some(number_idx) = &target_shape.number_index
                     && tsz_solver::utils::is_numeric_literal_name(name.as_ref())
-                    && !self.is_assignable_to(widened_prop_type, number_idx.value_type)
+                    && !self
+                        .diagnostic_relation_outcome(widened_prop_type, number_idx.value_type)
+                        .related
                 {
                     return true;
                 }
                 if let Some(string_idx) = &target_shape.string_index
                     && !is_symbol_named
-                    && !self.is_assignable_to(widened_prop_type, string_idx.value_type)
+                    && !self
+                        .diagnostic_relation_outcome(widened_prop_type, string_idx.value_type)
+                        .related
                 {
                     return true;
                 }
                 if let Some(symbol_idx) = &target_shape.symbol_index
                     && is_symbol_named
-                    && !self.is_assignable_to(widened_prop_type, symbol_idx.value_type)
+                    && !self
+                        .diagnostic_relation_outcome(widened_prop_type, symbol_idx.value_type)
+                        .related
                 {
                     return true;
                 }
