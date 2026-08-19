@@ -315,11 +315,7 @@ impl<'a> CheckerState<'a> {
         // `{ outer: { m: T[K] } }` too. The structured leaf reason (a collapsed
         // best-matching member) is discarded for the same reason it is at the
         // property-drill leaf: it would render the wrong pair.
-        if crate::query_boundaries::common::is_deferred_constraint_relative_operand(
-            self.ctx.types.as_type_database(),
-            leaf_src,
-        ) {
-            self.push_deferred_constraint_walk(diag, leaf_src, leaf_tgt, depth);
+        if self.try_push_deferred_constraint_walk(diag, leaf_src, leaf_tgt, depth) {
             return;
         }
         if let Some(leaf) = leaf {
@@ -351,6 +347,30 @@ impl<'a> CheckerState<'a> {
                 diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                 depth,
             );
+        }
+    }
+
+    /// Emit the deferred-constraint-relative walk for a property leaf when
+    /// `source` is such an operand (`T[K]`, `keyof T`, a conditional, or a
+    /// generic alias application still deferred through its arguments), returning
+    /// whether it fired. Every property-drill leaf that keeps the as-written
+    /// operand — the single-property drill, the dotted-path collapse, and the
+    /// call-argument surfaces — funnels its source through this one predicate and
+    /// [`Self::push_deferred_constraint_walk`], so the "deferred source -> walk"
+    /// decision (and the operand classifier it depends on) lives in a single
+    /// place rather than being restated at each renderer.
+    pub(super) fn try_push_deferred_constraint_walk(
+        &mut self,
+        diag: &mut Diagnostic,
+        source: TypeId,
+        target: TypeId,
+        base_depth: u32,
+    ) -> bool {
+        if self.is_deferred_constraint_relative_source(source) {
+            self.push_deferred_constraint_walk(diag, source, target, base_depth);
+            true
+        } else {
+            false
         }
     }
 
@@ -702,17 +722,12 @@ impl<'a> CheckerState<'a> {
             // (`TBox[KKey]` vs `string | undefined`) and the constraint-walk
             // elaboration tsc emits beneath it; the solver's collapsed nested
             // reason is discarded here because it would show the wrong pair.
-            if crate::query_boundaries::common::is_deferred_constraint_relative_operand(
-                self.ctx.types.as_type_database(),
-                &self.ctx.definition_store,
+            if self.try_push_deferred_constraint_walk(
+                &mut diag,
                 source_property_type,
+                target_property_type,
+                depth + 1,
             ) {
-                self.push_deferred_constraint_walk(
-                    &mut diag,
-                    source_property_type,
-                    target_property_type,
-                    depth + 1,
-                );
                 return diag;
             }
             if let Some(nested) = nested_reason {
