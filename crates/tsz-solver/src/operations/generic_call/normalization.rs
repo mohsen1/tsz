@@ -390,6 +390,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         if !self.type_param_at_top_level_through_aliases(func.return_type, tp_name) {
             return false;
         }
+        if self.contextual_return_type_pins_literal(func, tp_name) {
+            return true;
+        }
         let param_types: Vec<TypeId> = func.params.iter().map(|p| p.type_id).collect();
         param_types.iter().any(|&param_type| {
             crate::visitor::contains_type_parameter_named(
@@ -398,6 +401,49 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 tp_name,
             ) && self.type_reduces_via_conditional(param_type)
         })
+    }
+
+    /// Whether the call's contextual type pins `tp_name` — which already occurs
+    /// at the top level of the return type — to a widenable literal.
+    ///
+    /// When a generic call result is checked against a literal contextual type
+    /// (`const c: 1 = pair(2, a => 1, 1)`), `tsc` seeds a `ReturnType`-priority
+    /// inference from that contextual type and does **not** widen the resulting
+    /// fresh literal candidate for the return-position parameter: the widened
+    /// form (`number`, `string`, …) would no longer satisfy the literal the
+    /// caller demanded. tsz's single-type-parameter fast path already models
+    /// this (`should_preserve_literal`); this extends the same rule to the full
+    /// inference engine so multi-parameter / callback signatures agree.
+    ///
+    /// This gate is deliberately coarser than that fast path: it reads only the
+    /// contextual type, not the inferred candidate, because it runs at marking
+    /// time (`type_param_preserves_inferred_literal`, before candidates are
+    /// resolved). That is sound because the mark only suppresses *literal*
+    /// widening — when the resolved candidate is not a widenable literal the
+    /// mark is a no-op, so a non-literal candidate is never spuriously pinned.
+    ///
+    /// Restricted to a naked return-position parameter (`f<U>(...): U`): a
+    /// wrapped occurrence (`U[]`, or `{ v: U }` against a non-matching context)
+    /// is left to widen, matching `constructor_wrapped_return_param_still_widens`.
+    fn contextual_return_type_pins_literal(
+        &self,
+        func: &FunctionShape,
+        tp_name: tsz_common::Atom,
+    ) -> bool {
+        let Some(ctx) = self.contextual_type else {
+            return false;
+        };
+        if ctx.is_any_unknown_or_error() {
+            return false;
+        }
+        let return_is_naked_tp =
+            crate::type_param_info(self.interner.as_type_database(), func.return_type)
+                .is_some_and(|info| info.name == tp_name);
+        if !return_is_naked_tp {
+            return false;
+        }
+        let widened = crate::operations::widening::widen_literal_type(self.interner, ctx);
+        widened != ctx
     }
 
     /// Whether `ty` is — or, for a top-level alias application such as
