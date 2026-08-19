@@ -53,6 +53,18 @@ pub trait TypeResolver {
         0
     }
 
+    /// Whether `def_id`'s registered body/instance is currently a
+    /// mid-resolution partial (its class's instance or constructor build is
+    /// in flight). While true, evaluating an `Application` of the def must
+    /// keep the application opaque instead of materializing a partial-derived
+    /// instance: the materialization would be interned into durable composite
+    /// types (heritage args, member types, tuple slots) and permanently split
+    /// the class into two identities once the completed body exists
+    /// (issue #16055).
+    fn def_is_provisional(&self, _def_id: DefId) -> bool {
+        false
+    }
+
     /// Whether this resolver carries no definition/symbol context (the
     /// [`NoopResolver`] sentinel used by `SubtypeChecker::new`).
     ///
@@ -1652,6 +1664,10 @@ impl TypeResolver for TypeEnvironment {
     /// [`TypeEnvironment::mark_def_provisional`] (issue #16055).
     fn provisional_value_epoch(&self) -> u64 {
         self.provisional_epoch.get()
+    }
+
+    fn def_is_provisional(&self, def_id: DefId) -> bool {
+        !self.provisional_defs.is_empty() && self.provisional_defs.contains(&def_id.0)
     }
 
     fn canonical_def_id(&self, def_id: DefId) -> DefId {

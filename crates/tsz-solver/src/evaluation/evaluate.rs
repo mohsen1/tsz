@@ -1210,16 +1210,19 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// movement re-marks, so per-application epoch snapshots
     /// (`app_body_unresolved_def_epoch`) keep their precision: an application
     /// body evaluated entirely after the last movement stays cacheable.
+    /// Read-only variant of [`Self::observe_provisional_epoch`] for `&self`
+    /// cache-write gates: true when the resolver's provisional epoch moved
+    /// past the last folded observation. The movement is folded into the
+    /// unresolved-def state at the next `&mut` observation point.
+    #[inline]
+    pub(super) fn provisional_epoch_moved_unobserved(&self) -> bool {
+        self.resolver.provisional_value_epoch() != self.provisional_epoch_seen
+    }
+
     #[inline]
     pub(super) fn observe_provisional_epoch(&mut self) {
         let now = self.resolver.provisional_value_epoch();
         if now != self.provisional_epoch_seen {
-            // TEMP PROBE (#16055)
-            tracing::debug!(
-                seen = self.provisional_epoch_seen,
-                now,
-                "16055 probe: evaluator observed provisional epoch movement"
-            );
             self.provisional_epoch_seen = now;
             self.mark_unresolved_def_seen();
         }

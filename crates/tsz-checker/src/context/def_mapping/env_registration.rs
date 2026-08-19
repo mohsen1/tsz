@@ -141,6 +141,22 @@ impl CheckerContext<'_> {
         let provisional = self
             .def_to_symbol_id(def_id)
             .is_some_and(|sym| self.class_instance_resolution_set.contains(&sym));
+        // A rewrite (a different instance body replacing a previously
+        // registered one) means every eval-family entry derived from the old
+        // body — above all the `(def, args)` application-eval fixpoints
+        // materialized against a mid-resolution partial — is stale. Sweep
+        // them so post-rewrite resolutions recompute against the new body
+        // instead of serving the partial-derived twin (issue #16055).
+        let previous = self
+            .type_env
+            .try_borrow()
+            .ok()
+            .and_then(|env| env.get_class_instance_type(def_id));
+        if let Some(prev) = previous
+            && prev != instance_type
+        {
+            self.types.invalidate_application_eval_cache_for_def(def_id);
+        }
         self.register_in_envs(DeferredFlowEnvWrite::InsertClassInstance {
             def_id,
             instance_type,

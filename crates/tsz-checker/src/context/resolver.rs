@@ -767,6 +767,21 @@ impl<'a> TypeResolver for CheckerContext<'a> {
             .saturating_add(self.symbol_instance_types.version())
     }
 
+    /// A class whose instance or constructor build is currently in flight
+    /// serves partial bodies; applications of its def must stay opaque
+    /// (issue #16055).
+    fn def_is_provisional(&self, def_id: DefId) -> bool {
+        if self.class_instance_resolution_set.is_empty()
+            && self.class_constructor_resolution_set.is_empty()
+        {
+            return false;
+        }
+        self.def_to_symbol_id(def_id).is_some_and(|sym| {
+            self.class_instance_resolution_set.contains(&sym)
+                || self.class_constructor_resolution_set.contains(&sym)
+        })
+    }
+
     /// See [`CheckerContext::note_provisional_class_value`]: moved when a
     /// mid-resolution class partial was served, so evaluators skip persisting
     /// results computed across it (issue #16055). Folds in both env-side
@@ -890,13 +905,29 @@ impl<'a> TypeResolver for CheckerContext<'a> {
     /// Callers that must NOT trigger forcing (the variance gap fingerprint) use
     /// [`Self::resolve_lazy_lookup_only`].
     fn resolve_lazy(&self, def_id: DefId, interner: &dyn TypeDatabase) -> Option<TypeId> {
-        if let Some(body) = self.resolve_lazy_lookup_only(def_id, interner) {
-            return Some(body);
+        let result = if let Some(body) = self.resolve_lazy_lookup_only(def_id, interner) {
+            Some(body)
+        } else if crate::state_checking::lazy_lib_member::on_demand_forcing_disabled() {
+            None
+        } else {
+            self.force_def_on_miss(def_id)
+        };
+        // ANY body served for a class whose instance/constructor build is
+        // currently in flight is derived from a mid-resolution state — a
+        // prescan/rough partial or a provisional install — regardless of
+        // which cache branch produced it. Taint overlapping evaluations so
+        // nothing persists a result computed against it; the completed build
+        // re-serves a final body outside the window (issue #16055).
+        if result.is_some()
+            && !(self.class_instance_resolution_set.is_empty()
+                && self.class_constructor_resolution_set.is_empty())
+            && let Some(sym) = self.def_to_symbol_id(def_id)
+            && (self.class_instance_resolution_set.contains(&sym)
+                || self.class_constructor_resolution_set.contains(&sym))
+        {
+            self.note_provisional_class_value();
         }
-        if crate::state_checking::lazy_lib_member::on_demand_forcing_disabled() {
-            return None;
-        }
-        self.force_def_on_miss(def_id)
+        result
     }
 
     /// Lookup-only `DefId` resolution: the original `resolve_lazy` body with no
@@ -1021,6 +1052,15 @@ impl<'a> TypeResolver for CheckerContext<'a> {
             if !has_local_symbol_collision
                 && let Some(instance_type) = self.symbol_instance_types.get(&sym_id)
             {
+                // The class's instance/constructor build is in flight, so this
+                // entry can be the provisionally installed partial (annotated
+                // fields + placeholder methods): taint overlapping evaluations
+                // so nothing persists a result derived from it (issue #16055).
+                if self.class_constructor_resolution_set.contains(&sym_id)
+                    || self.class_instance_resolution_set.contains(&sym_id)
+                {
+                    self.note_provisional_class_value();
+                }
                 if let Some(kind) = def_kind {
                     if matches!(
                         kind,

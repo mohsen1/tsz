@@ -246,6 +246,36 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     return original_type_id;
                 }
 
+                // The dropped-symbol guard above catches one shape of partial
+                // (annotated fields only, no nominal identity). A prescan
+                // partial KEEPS the class symbol — its methods are merely
+                // `(...args: any) => any` placeholders — so it sails through
+                // that check. The resolver knows the class's build is still
+                // in flight: while it is, keep the application opaque instead
+                // of materializing ANY partial-derived instance. A
+                // materialization here gets interned into durable composite
+                // types (heritage args, member types, tuple slots) and
+                // permanently splits the class into two union-member
+                // identities once the completed body exists — the residual
+                // TS2349 of issue #16055. Property access on the opaque
+                // application still resolves members through
+                // `resolve_application_property`, matching the established
+                // behavior of the guard above.
+                if result != original_type_id
+                    && ctx.is_class_def
+                    && matches!(
+                        self.interner.lookup(result),
+                        Some(TypeData::Object(_) | TypeData::ObjectWithIndex(_))
+                    )
+                    && self.resolver.def_is_provisional(def_id)
+                {
+                    if let Some(db) = self.query_db {
+                        db.invalidate_application_eval_cache_for_def(def_id);
+                    }
+                    self.mark_unresolved_def_seen();
+                    return original_type_id;
+                }
+
                 // Phase 7 — display-alias bookkeeping. Skip entirely when
                 // the result is the original `Application` itself (the
                 // historical `if result != original_type_id` gate).
@@ -409,6 +439,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             prefer_application_display_alias,
             base_is_type_query,
             class_declared_nominal_symbol,
+            is_class_def: matches!(def_kind, Some(DefKind::Class)),
         }
     }
 
@@ -1085,7 +1116,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         evaluated: TypeId,
     ) {
         let body_saw_unresolved_def = self.application_body_saw_unresolved_def();
+        // A provisional class-partial serve not yet folded into the
+        // unresolved-def epochs (no memo write happened between the resolver
+        // excursion and this cache write) must still gate this write: the
+        // result was instantiated against a mid-resolution body and would
+        // permanently shadow the completed one (issue #16055).
+        let provisional_moved = self.provisional_epoch_moved_unobserved();
         let cacheable = !body_saw_unresolved_def
+            && !provisional_moved
             && (self.application_eval_result_cacheable()
                 || self.is_concrete_application_fixpoint(expanded_args, evaluated));
         crate::evaluation::eval_materialization_probe::record_application_cache_insert(

@@ -33,6 +33,10 @@ pub(in crate::evaluation) struct ApplicationEvalContext {
     /// that also lacks a symbol can be recognized as a dropped identity
     /// (issue #16055) rather than a legitimately symbol-less instance.
     pub(in crate::evaluation) class_declared_nominal_symbol: bool,
+    /// True when `def_id` resolved to `DefKind::Class` — drives the
+    /// provisional-window opacity guard (issue #16055) alongside
+    /// `class_declared_nominal_symbol`.
+    pub(in crate::evaluation) is_class_def: bool,
 }
 
 /// Common opening preamble for the homomorphic-mapped shortcuts:

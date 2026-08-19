@@ -172,11 +172,6 @@ impl<'a> CheckerContext<'a> {
     /// computed across a bump, so a partial-derived materialization cannot
     /// permanently shadow the completed body (issue #16055).
     pub(crate) fn note_provisional_class_value(&self) {
-        // TEMP PROBE (#16055)
-        tracing::debug!(
-            epoch = self.provisional_class_value_epoch.get(),
-            "16055 probe: provisional class value served"
-        );
         self.provisional_class_value_epoch
             .set(self.provisional_class_value_epoch.get().wrapping_add(1));
     }
