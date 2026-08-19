@@ -3077,3 +3077,11 @@ path = "tests/union_source_boolean_witness_tests.rs"
 [[test]]
 name = "union_nullish_display_tail_order_tests"
 path = "tests/union_nullish_display_tail_order_tests.rs"
+
+[[test]]
+name = "union_target_same_base_member_frame_tests"
+path = "tests/union_target_same_base_member_frame_tests.rs"
+
+[[test]]
+name = "generic_signature_dual_callback_inference_tests"
+path = "tests/generic_signature_dual_callback_inference_tests.rs"

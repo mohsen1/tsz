@@ -587,6 +587,32 @@ impl<'a> CheckerState<'a> {
                 diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
             );
             diag.push_elaboration_in_span(start, length, detail, reason.diagnostic_code(), 0);
+            // A property source that defers to its base constraint (a deferred
+            // indexed access `T[K]`, a bare `keyof T`, or a conditional) keeps
+            // the written operand and the *full* nullable-union target at the
+            // leaf pair: tsc renders the as-written relation (`TBox[KKey]` vs
+            // `string | undefined`) and then walks the constraint, never the
+            // best-matching-member collapse (`... vs string`) that the solver's
+            // evaluated nested reason carries. Emit the raw pair and stop — the
+            // deeper constraint walk is separate elaboration tsz does not
+            // synthesize, and emitting the collapsed member here would be wrong.
+            if crate::query_boundaries::common::is_deferred_constraint_relative_operand(
+                self.ctx.types.as_type_database(),
+                source_property_type,
+            ) {
+                let source_str = self.format_type_for_assignability_message(source_property_type);
+                let target_str = self.format_type_for_assignability_message(target_property_type);
+                let leaf = format_message(
+                    diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                    &[&source_str, &target_str],
+                );
+                diag.push_elaboration(
+                    leaf,
+                    diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                    depth + 1,
+                );
+                return diag;
+            }
             if let Some(nested) = nested_reason {
                 // A header-led nested reason (tuple element/arity,
                 // index-signature) leads with its specialized line, not the
@@ -1219,13 +1245,32 @@ impl<'a> CheckerState<'a> {
                     depth,
                 );
             } else {
-                let nested_diag = self.render_failure_reason(
+                let mut nested_diag = self.render_failure_reason(
                     nested_reason,
                     nested_source,
                     nested_target,
                     idx,
                     depth + 1,
                 );
+                // `push_nested_chain` renumbers only the nested headline to
+                // this line's child position (`depth`). The union-source
+                // renderer places the headline's own children at `depth + 2`
+                // (its member header sits at `ctx.depth + 1`), which would
+                // leave a skipped indent level beneath the renumbered
+                // headline — pull exactly that shape up one level. A nested
+                // same-generic drill (`Wrap` of `Wrap`) and the other arms
+                // already place children at `depth + 1`, so shifting them
+                // would flatten a genuinely nested chain into siblings.
+                if matches!(
+                    nested_reason,
+                    tsz_solver::SubtypeFailureReason::UnionSourceMismatch { .. }
+                ) {
+                    nested_diag.related_information = nested_diag
+                        .related_information
+                        .into_iter()
+                        .map(|related| related.with_depth_shift(-1))
+                        .collect();
+                }
                 Self::push_nested_chain(&mut diag, nested_diag, depth);
             }
         }

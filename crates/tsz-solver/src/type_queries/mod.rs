@@ -64,9 +64,9 @@ pub use classifiers::{
     classify_for_constructor_access, classify_for_excess_properties, classify_for_interface_merge,
     get_application_lazy_def_id, get_conditional_type_id, get_keyof_type, get_lazy_def_id,
     get_mapped_type_id, get_type_query_symbol_ref, indexed_access_self_keyof,
-    is_compound_this_relative_surface_type, is_deferred_lazy_or_indexed_access,
-    is_deferred_type_operation, is_distributive_conditional_with_deferred_check, is_indexed_access,
-    is_only_false_or_never,
+    is_compound_this_relative_surface_type, is_deferred_constraint_relative_operand,
+    is_deferred_lazy_or_indexed_access, is_deferred_type_operation,
+    is_distributive_conditional_with_deferred_check, is_indexed_access, is_only_false_or_never,
 };
 pub use conditional_infer_alias::*;
 // `get_def_id` is an alias for `get_lazy_def_id` (identical semantics).
@@ -89,7 +89,7 @@ pub use extended::{
     is_number_literal, is_object_with_index_type, is_string_like_type, is_string_literal,
     is_type_or_base_identical, key_matches_number_index, key_matches_string_index,
     source_is_or_base_identical_to_fixed, string_like_type_for_type, type_contains_string_literal,
-    widen_literal_to_primitive,
+    type_contains_unit_literal, widen_literal_to_primitive,
 };
 pub use extended_constructors::{
     AbstractClassCheckKind, AbstractConstructorAnchor, BaseInstanceMergeKind, ClassDeclTypeKind,

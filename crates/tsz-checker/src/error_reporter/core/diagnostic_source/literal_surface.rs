@@ -7,15 +7,20 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn target_preserves_literal_surface(&mut self, target: TypeId) -> bool {
         let target = self.evaluate_type_for_assignability(target);
 
-        // Any unit-literal kind qualifies (string / number / boolean /
-        // bigint): tsc's fresh-literal preservation is per-property and
-        // kind-agnostic, so an all-numeric discriminated union preserves the
-        // source display exactly like a string-discriminated one (#17721).
+        // A target preserves the source's literal surface when any of its
+        // (arm) properties carries a unit literal of *any* domain — string,
+        // number, boolean, or bigint. Restricting this to string literals
+        // wrongly widened numeric/bigint/boolean-literal object-literal sources
+        // against a same-domain union target (e.g. `{ p: 1; q: 4 }` against
+        // `{ p: 1; q: 2 } | { p: 3; q: 4 }` rendered `{ p: number; q: number }`
+        // instead of tsc's `{ p: 1; q: 4 }`).
         let has_literal_member = |shape: &tsz_solver::ObjectShape| {
-            shape
-                .properties
-                .iter()
-                .any(|prop| self.type_contains_unit_literal(prop.type_id))
+            shape.properties.iter().any(|prop| {
+                crate::query_boundaries::diagnostics::type_contains_unit_literal(
+                    self.ctx.types,
+                    prop.type_id,
+                )
+            })
         };
 
         if let Some(shape) =

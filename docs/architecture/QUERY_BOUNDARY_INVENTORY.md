@@ -29,6 +29,7 @@ Categories:
 | [`class_type.rs`](../../crates/tsz-checker/src/query_boundaries/class_type.rs) | Compatibility shim | class-type shape helpers | Thin wrappers over solver type queries. |
 | [`common.rs`](../../crates/tsz-checker/src/query_boundaries/common.rs) | Compatibility shim plus quarantine helper | broad type-data predicates, constructors, display helpers, and data wrappers | Largest migration surface; prefer narrower stable modules for new calls. |
 | [`construct_signatures.rs`](../../crates/tsz-checker/src/query_boundaries/construct_signatures.rs) | Stable API | construct-signature summarization | Checker-facing construct-signature query. |
+| [`containment_queries.rs`](../../crates/tsz-checker/src/query_boundaries/containment_queries.rs) | Stable API | recursive containment predicates and reachability collectors (`contains_*`/`collect_*`/`walk_*`) | Carved out of `common.rs` (#8225 paydown); delegates to solver visitors/type queries. |
 | [`definite_assignment.rs`](../../crates/tsz-checker/src/query_boundaries/definite_assignment.rs) | Diagnostic adapter | constructor/property use-before-assignment decisions | Keeps TS2454/strict-property-initialization policy out of call sites. |
 | [`diagnostics.rs`](../../crates/tsz-checker/src/query_boundaries/diagnostics.rs) | Diagnostic adapter | display-oriented type/property queries | Used by diagnostic formatting and spelling suggestions. |
 | [`dispatch.rs`](../../crates/tsz-checker/src/query_boundaries/dispatch.rs) | Compatibility shim | expression-dispatch type constructors/classifiers | Migration surface for dispatch code. |
@@ -43,6 +44,7 @@ Categories:
 | [`recursive_alias.rs`](../../crates/tsz-checker/src/query_boundaries/recursive_alias.rs) | Stable API | recursive alias detection helpers | DefId/type alias boundary. |
 | [`relation_request.rs`](../../crates/tsz-checker/src/query_boundaries/relation_request.rs) | Stable API | `RelationRequest`, `RelationKind`, and relation policy descriptor enums | Request vocabulary re-exported by `assignability.rs` and executed by `execute_relation`. |
 | [`relation_types.rs`](../../crates/tsz-checker/src/query_boundaries/relation_types.rs) | Stable API | relation failure/property classification data types | Shared result/failure vocabulary. |
+| [`shape_predicates.rs`](../../crates/tsz-checker/src/query_boundaries/shape_predicates.rs) | Stable API | boolean structural classification (`is_*`/`has_*`) over `TypeId` | Carved out of `common.rs` (#8225 paydown); one solver query per fact. |
 | [`spread.rs`](../../crates/tsz-checker/src/query_boundaries/spread.rs) | Compatibility shim | spread type construction helpers | Thin construction wrappers for spread handling. |
 | [`type_checking.rs`](../../crates/tsz-checker/src/query_boundaries/type_checking.rs) | Compatibility shim | constructor/function classification | Older checker-facing wrapper surface. |
 | [`type_checking_utilities.rs`](../../crates/tsz-checker/src/query_boundaries/type_checking_utilities.rs) | Compatibility shim | array/index/literal/intersection classifiers | Utility wrappers; prefer narrower stable modules when adding calls. |
