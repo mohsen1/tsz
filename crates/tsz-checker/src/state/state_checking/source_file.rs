@@ -44,6 +44,11 @@ impl CheckerState<'_> {
     /// exactly the ref a use-site `typeof Symbol.iterator` resolves to — the two
     /// `UniqueSymbol` type ids are then identical. The registry is a field of the
     /// per-file `type_env`, so the seed runs per file.
+    ///
+    /// `SymbolConstructor` carries a call signature, so it resolves to a
+    /// `Callable` type; its members are read from the callable/object shape when
+    /// `collect_properties` (which reports a bare callable as `NonObject`) does
+    /// not surface them, so the seed is not silently skipped.
     fn seed_well_known_symbol_names(&mut self) {
         let Some(symbol_ctor_sym) =
             crate::types_domain::queries::lib_resolution::resolve_name_to_lib_symbol(
@@ -80,14 +85,35 @@ impl CheckerState<'_> {
                 .types
                 .store_display_alias(symbol_ctor_resolved, symbol_ctor_type);
         }
-        let tsz_solver::objects::PropertyCollectionResult::Properties { properties, .. } =
-            tsz_solver::objects::collect_properties(
-                symbol_ctor_resolved,
+        // `SymbolConstructor` declares a call signature
+        // (`(description?: string | number): symbol`), so it resolves to a
+        // `Callable` type whose members `collect_properties` reports as
+        // `NonObject` — leaving the registry empty and defeating the whole
+        // pre-pass. Read the members from whichever representation actually
+        // carries them: the merged `collect_properties` result when it is
+        // object-shaped (it also folds heritage/intersection), otherwise the
+        // callable or object shape's own property list.
+        let members = match tsz_solver::objects::collect_properties(
+            symbol_ctor_resolved,
+            self.ctx.types,
+            &self.ctx,
+        ) {
+            tsz_solver::objects::PropertyCollectionResult::Properties { properties, .. } => {
+                properties
+            }
+            _ => crate::query_boundaries::common::callable_shape_for_type(
                 self.ctx.types,
-                &self.ctx,
+                symbol_ctor_resolved,
             )
-        else {
-            return;
+            .map(|shape| shape.properties.clone())
+            .or_else(|| {
+                crate::query_boundaries::common::object_shape_for_type(
+                    self.ctx.types,
+                    symbol_ctor_resolved,
+                )
+                .map(|shape| shape.properties.clone())
+            })
+            .unwrap_or_default(),
         };
         // A well-known member is typed `unique symbol`; its property type carries
         // the same `UniqueSymbol(ref)` a use-site `typeof Symbol.<name>` resolves
@@ -95,7 +121,7 @@ impl CheckerState<'_> {
         // object-shape key. Ordinary members and augmented plain-`symbol` members
         // carry no unique-symbol ref and are skipped, matching tsc treating them
         // as ordinary named members rather than well-known symbols.
-        let registrations: Vec<(String, tsz_solver::SymbolRef)> = properties
+        let registrations: Vec<(String, tsz_solver::SymbolRef)> = members
             .iter()
             .filter_map(|prop| {
                 let name = self.ctx.types.resolve_atom_ref(prop.name);
