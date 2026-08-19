@@ -1585,13 +1585,9 @@ impl CheckerState<'_> {
                 let name_node = self.ctx.arena.get(data.name)?;
                 let ident = self.ctx.arena.get_identifier(name_node)?;
                 let atom = self.ctx.types.intern_string(ident.escaped_text.as_ref());
-                Some(tsz_solver::TypeParamInfo {
-                    name: atom,
-                    constraint: None,
-                    default: None,
-                    is_const: false,
-                    origin: tsz_solver::TypeParamOrigin::User,
-                })
+                Some(class_property_query::js_class_type_param_info(
+                    atom, None, None, false,
+                ))
             })
             .collect()
     }

@@ -178,13 +178,15 @@ pub(crate) fn is_type_parameter_or_intersection_with_type_parameter(
     tsz_solver::type_queries::is_type_parameter_or_intersection_with_type_parameter(db, type_id)
 }
 
-/// Check if a type is a deferred (type-parameter-mentioning) indexed access,
-/// or an intersection carrying one. Display-policy sibling of the query above.
-pub(crate) fn is_deferred_indexed_access_or_intersection_with_one(
+/// Deferred generic operand that relates to a union via its base constraint
+/// (`T[K]`, `keyof T`, a conditional, or an intersection carrying one).
+/// Constraint-relative sibling of the query above, used by the nullable-union
+/// display policy.
+pub(crate) fn is_deferred_constraint_relative_operand(
     db: &dyn TypeDatabase,
     type_id: TypeId,
 ) -> bool {
-    tsz_solver::type_queries::is_deferred_indexed_access_or_intersection_with_one(db, type_id)
+    tsz_solver::type_queries::is_deferred_constraint_relative_operand(db, type_id)
 }
 
 /// Check if a type represents an unresolved inference result (error, contains

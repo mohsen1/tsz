@@ -14,7 +14,7 @@ use crate::relations::subtype::explain_union_order::reorder_union_members_nullis
 use crate::type_queries::data::get_object_symbol;
 use crate::types::{
     IntrinsicKind, LiteralValue, ObjectShape, ObjectShapeId, PropertyInfo, TupleElement,
-    TupleListId, TypeId, Visibility,
+    TupleListId, TypeData, TypeId, Visibility,
 };
 use crate::utils;
 use crate::visitor::is_type_parameter;
@@ -464,6 +464,26 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // { [K in keyof Foo]-?: Foo[K] }) which needs further evaluation to a concrete
         // object type so property enumeration can generate TS2739/TS2741 diagnostics.
         //
+        // A deferred indexed-access source (`T[K]` where the base and/or key
+        // still carry a free type parameter) has no concrete identity for
+        // `evaluate_type` below to reduce to — the evaluator walks the
+        // parameter's *constraint* to decide the boolean relation (e.g.
+        // `TBox[KKey]` reduces through `TBox`'s `{ a: number }` constraint to
+        // `number`), which is correct for the yes/no check but not an
+        // identity tsc ever shows: tsc keeps the source spelled `T[K]` at the
+        // diagnostic head and only unfolds the constraint in the elaboration
+        // chain beneath it (`TBox[KKey]` -> `TBox[keyof TBox]` -> ... ->
+        // `TBox[string]`, never collapsing all the way to `number`). Surface
+        // the bare deferred pair here, before `evaluate_type` can substitute
+        // the evaluated identity into the reason, so the diagnostic head at
+        // least matches tsc's (the deeper constraint-walk elaboration lines
+        // are a separate, larger piece of work — tracked in #17718).
+        if let Some(reason) =
+            self.explain_deferred_index_access_source_identity(source, target, resolved_source)
+        {
+            return Some(reason);
+        }
+
         // Preserve the pre-evaluation source union for member elaboration. tsc
         // applies `UnionReduction.Literal` to written/annotation unions: it absorbs
         // literals into their primitive but never drops a member merely because it
@@ -1270,6 +1290,47 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             target_type: resolved_target,
             constraint_type: resolved_constraint,
             nested_reason: Box::new(nested),
+        })
+    }
+
+    /// Guard a deferred indexed-access source (`T[K]` where the object and/or
+    /// key operand still carries a free type parameter) against
+    /// `evaluate_type` substituting an unrelated concrete identity into the
+    /// failure reason.
+    ///
+    /// The structural rule: `T[K]` has no concrete identity of its own while
+    /// `T`/`K` remain type parameters — `evaluate_type` walks `T`'s
+    /// constraint to answer the boolean relation (e.g. `TBox[KKey]` reduces
+    /// through `TBox`'s `{ a: number }` constraint to `number`), which is the
+    /// right thing for the yes/no check but not an identity tsc ever
+    /// displays. tsc keeps the source spelled `T[K]` at the diagnostic head
+    /// and only unfolds the constraint one step at a time in the elaboration
+    /// chain beneath it. Surfacing the bare deferred pair here — before the
+    /// caller's `evaluate_type` call can replace it — matches tsc's head
+    /// line; the deeper constraint-walk elaboration (`T[K]` ->
+    /// `T[keyof T]` -> the distributed key union -> ...) is a separate,
+    /// larger piece of work (#17718).
+    ///
+    /// Mirrors [`Self::resolve_concrete_index_access_for_display`]'s own
+    /// bail condition in the printer, so the relation-explain and
+    /// display-time guards agree on what counts as "deferred".
+    fn explain_deferred_index_access_source_identity(
+        &self,
+        source: TypeId,
+        target: TypeId,
+        resolved_source: TypeId,
+    ) -> Option<SubtypeFailureReason> {
+        let TypeData::IndexAccess(obj, idx) = self.interner.lookup(resolved_source)? else {
+            return None;
+        };
+        if !crate::type_queries::contains_type_parameters_db(self.interner, obj)
+            && !crate::type_queries::contains_type_parameters_db(self.interner, idx)
+        {
+            return None;
+        }
+        Some(SubtypeFailureReason::TypeMismatch {
+            source_type: source,
+            target_type: target,
         })
     }
 
