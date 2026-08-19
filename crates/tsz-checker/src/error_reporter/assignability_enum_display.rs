@@ -72,6 +72,12 @@ impl<'a> CheckerState<'a> {
             .iter()
             .any(|&member| enum_query::enum_member_like_parent_symbol(&self.ctx, member).is_none());
 
+        // tsc's `formatUnionTypes` renders the nullish intrinsics at the tail
+        // (`Duo | null | undefined`), while the interner's canonical member
+        // order puts them first (smallest type ids). The membership queries
+        // above are order-insensitive; only this render walk needs tsc's order.
+        let members = tsz_solver::reorder_union_members_nullish_last(&members);
+
         for &member in &members {
             if has_non_enum_member
                 && let Some(enum_sym) =
