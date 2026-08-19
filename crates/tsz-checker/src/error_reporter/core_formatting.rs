@@ -1317,6 +1317,7 @@ impl<'a> CheckerState<'a> {
         // one — so the full declared union is kept (see the classifier's doc).
         if query_common::is_deferred_constraint_relative_operand(
             self.ctx.types.as_type_database(),
+            &self.ctx.definition_store,
             other,
         ) {
             return None;

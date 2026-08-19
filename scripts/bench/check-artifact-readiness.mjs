@@ -4,7 +4,9 @@
  *
  * Exit codes:
  *   0 — artifact present, all required rows included
- *   1 — artifact present, one or more required rows are missing, the
+ *   1 — artifact present, one or more required rows are missing, the required
+ *       corpus collapsed (present but not one required-measured row is green, or
+ *       fewer than the --require-corpus-health floor), the
  *       --require-green release gate found non-green required rows, the
  *       --require-clean-metadata gate found artifact metadata warnings,
  *       --require-application-compat found missing/incomplete benchmark_set:"required"
@@ -24,7 +26,7 @@
  * is absent (exit 2) so callers reliably get machine-readable status in all cases.
  *
  * Usage:
- *   node scripts/bench/check-artifact-readiness.mjs [--json] [--require-green] [--require-clean-metadata] [--require-application-compat] [--require-green-project-timing-pairs] [--require-required-coverage] [--require-project-timing-pairs[=<n>]] [--expect-source-commit=<sha>] [--require-source-current] <artifact.json>
+ *   node scripts/bench/check-artifact-readiness.mjs [--json] [--require-green] [--require-clean-metadata] [--require-application-compat] [--require-green-project-timing-pairs] [--require-required-coverage] [--require-corpus-health[=<minGreen>]] [--require-project-timing-pairs[=<n>]] [--expect-source-commit=<sha>] [--require-source-current] <artifact.json>
  */
 
 import fs from "node:fs";
@@ -77,6 +79,23 @@ const REQUIRED_MEASURED_ROWS = REQUIRED_PROJECT_ROWS.filter(
     PROJECT_ROWS_BY_NAME[name]?.category !== "application",
 );
 const REQUIRED_MEASURED_ROW_SET = new Set(REQUIRED_MEASURED_ROWS);
+
+// Corpus-collapse floor (#17561, point 4). The readiness gate historically
+// blocked only on *missing* required rows, so a run where every required row is
+// PRESENT but errored (state "red"/"yellow"/"gray") passed as ready — a whole
+// all-`error` corpus published reading "ok" (2026-08-15, a fixture tag-object
+// pin bug erroring every fetched row). This floor closes that hole: a
+// publishable dataset must contain at least one fully green required-measured
+// row. It is unconditional (like the missing-row and duplicate-row guards) and
+// freeze-proof — the trivially-compiling utility and locally-generated rows
+// (utility-types, vite-vanilla-ts-app, nextjs-fresh-app, ...) always land green
+// in any non-catastrophic run, so this never fires in steady state where some
+// external rows legitimately error behind open compiler issues (#16055 zod,
+// #14101 large-ts-repo). --require-corpus-health=<n> raises the floor above 1
+// for a caller that wants to block a partial collapse too; that threshold is an
+// outward-facing policy choice left to the caller rather than baked in here.
+const DEFAULT_MIN_GREEN_CORPUS_FLOOR = 1;
+
 const APPLICATION_PROJECT_ROWS = PROJECT_ROW_DEFINITIONS
   .filter((row) => row.category === "application")
   .map((row) => row.name);
@@ -123,6 +142,9 @@ function parseArgs(rawArgs) {
     requireGreenProjectTimingPairs: false,
     requireRequiredCoverage: false,
     requireSourceCurrent: false,
+    // The zero-green collapse floor is always enforced (DEFAULT_MIN_GREEN_CORPUS_FLOOR);
+    // --require-corpus-health[=<n>] only ever raises it, never lowers it.
+    corpusHealthMinGreen: DEFAULT_MIN_GREEN_CORPUS_FLOOR,
     requiredProjectTimingPairs: 0,
     expectedSourceCommit: process.env.TSZ_BENCH_EXPECT_SOURCE_COMMIT ?? null,
     filePath: null,
@@ -142,6 +164,20 @@ function parseArgs(rawArgs) {
       options.requireGreenProjectTimingPairs = true;
     } else if (arg === "--require-required-coverage") {
       options.requireRequiredCoverage = true;
+    } else if (arg === "--require-corpus-health") {
+      // Bare flag keeps the default floor; a following integer raises it. The
+      // floor can only be raised, never lowered (Math.max), so the unconditional
+      // zero-green collapse guard always holds.
+      const next = rawArgs[i + 1] ?? "";
+      if (/^\d+$/.test(next)) {
+        options.corpusHealthMinGreen = Math.max(DEFAULT_MIN_GREEN_CORPUS_FLOOR, Number(next));
+        i += 1;
+      }
+    } else if (arg.startsWith("--require-corpus-health=")) {
+      const value = Number(arg.slice("--require-corpus-health=".length));
+      if (Number.isFinite(value)) {
+        options.corpusHealthMinGreen = Math.max(DEFAULT_MIN_GREEN_CORPUS_FLOOR, value);
+      }
     } else if (arg === "--require-source-current") {
       options.requireSourceCurrent = true;
     } else if (arg === "--require-project-timing-pairs") {
@@ -175,6 +211,7 @@ const {
   requireGreenProjectTimingPairs,
   requireRequiredCoverage,
   requireSourceCurrent,
+  corpusHealthMinGreen,
   requiredProjectTimingPairs: rawRequiredProjectTimingPairs,
   expectedSourceCommit: rawExpectedSourceCommit,
   filePath,
@@ -344,6 +381,25 @@ function analyzeSourceFreshness(artifact, expectedCommit) {
   };
 }
 
+// Corpus-health summary over the required-measured rows (#17561, point 4).
+// `collapsed` is the always-enforced floor: present rows, but not one is green.
+// The counts are surfaced in the JSON/markdown so a consumer can see a degraded
+// (but not collapsed) dataset — e.g. several external rows erroring behind open
+// compiler issues — even when it still publishes. `byState` is the state
+// partition analyzeArtifact already computes, reused here rather than re-scanned.
+function buildCorpusHealth(measured, byState) {
+  return {
+    measured,
+    green: byState.green.length,
+    errored: byState.red.length,
+    yellow: byState.yellow.length,
+    gray: byState.gray.length,
+    missing: byState.missing.length,
+    errored_rows: byState.red.map((r) => r.name),
+    collapsed: measured > 0 && byState.green.length === 0,
+  };
+}
+
 function analyzeArtifact(artifact, expectedCommit) {
   const byName = new Map();
   const duplicateCounts = new Map();
@@ -461,8 +517,19 @@ function analyzeArtifact(artifact, expectedCommit) {
     run_status: artifact?.run_status ?? null,
   };
 
+  // Partition the required-measured rows by state once; both the corpus-health
+  // summary and the state buckets below read from it.
+  const byState = {
+    missing: rows.filter((r) => r.state === "missing"),
+    red: rows.filter((r) => r.state === "red"),
+    yellow: rows.filter((r) => r.state === "yellow"),
+    gray: rows.filter((r) => r.state === "gray"),
+    green: rows.filter((r) => r.state === "green"),
+  };
+
   return {
     requiredCoverage,
+    corpusHealth: buildCorpusHealth(rows.length, byState),
     measurementProfile: measurementProfileStatus(artifact),
     validationWarnings: analyzeValidationWarnings(artifact),
     sourceFreshness: analyzeSourceFreshness(artifact, expectedCommit),
@@ -477,15 +544,12 @@ function analyzeArtifact(artifact, expectedCommit) {
     greenTimedRowsMissingTimingPairs,
     blockingTimedRowsMissingTimingPairs,
     advisoryTimedRowsMissingTimingPairs,
-    successfulProjectTimingPairs: rows.filter((row) => (
-      row.state === "green" &&
-      hasSuccessfulTimingPair(row)
-    )),
-    missing: rows.filter((r) => r.state === "missing"),
-    red: rows.filter((r) => r.state === "red"),
-    yellow: rows.filter((r) => r.state === "yellow"),
-    gray: rows.filter((r) => r.state === "gray"),
-    green: rows.filter((r) => r.state === "green"),
+    successfulProjectTimingPairs: byState.green.filter((row) => hasSuccessfulTimingPair(row)),
+    missing: byState.missing,
+    red: byState.red,
+    yellow: byState.yellow,
+    gray: byState.gray,
+    green: byState.green,
     duplicates: rows.filter((r) => r.duplicate_count > 1),
   };
 }
@@ -504,6 +568,7 @@ function buildJson({
   parseError,
   artifact,
   requiredCoverage,
+  corpusHealth,
   measurementProfile,
   validationWarnings,
   sourceFreshness,
@@ -561,6 +626,11 @@ function buildJson({
     // own merge-stamped status (`partial` when the merge saw the same gap). Null
     // only on the artifact-absent path, alongside `measurement_profile` below.
     required_coverage: requiredCoverage ?? null,
+    // Corpus-health verdict (#17561, point 4): the required-measured green/errored
+    // split, so a consumer can see a degraded dataset and the gh-pages publish
+    // gate can refuse a collapsed one (corpus_health.collapsed). Null only on the
+    // artifact-absent path.
+    corpus_health: corpusHealth ?? null,
     required_row_count: rows?.length ?? REQUIRED_MEASURED_ROWS.length,
     successful_project_timing_pairs: successfulProjectTimingPairs?.length ?? 0,
     required_project_timing_pairs: requiredProjectTimingPairs,
@@ -719,6 +789,7 @@ function artifactAge(generatedAt) {
 function buildReport({
   artifact,
   requiredCoverage,
+  corpusHealth,
   measurementProfile,
   validationWarnings,
   sourceFreshness,
@@ -769,6 +840,7 @@ function buildReport({
     `| Binary target CPU | ${profile.rust_target_cpu ? `\`${profile.rust_target_cpu}\`` : "—"} |`,
     `| Required rows | ${rows.length} |`,
     `| Required-set coverage | ${requiredCoverage.present}/${requiredCoverage.declared} declared present${requiredCoverage.missing ? ` (${requiredCoverage.missing} absent)` : ""}${requiredCoverage.run_status ? ` · run status: ${requiredCoverage.run_status}` : ""} |`,
+    `| Corpus health | ${corpusHealth.green}/${corpusHealth.measured} required-measured green${corpusHealth.errored ? `, ${corpusHealth.errored} errored` : ""}${corpusHealth.collapsed ? " · ⛔ COLLAPSED (0 green)" : ""} |`,
     `| Successful project timing pairs | ${successfulProjectTimingPairs.length} |`,
     `| Green perf-timed rows missing timing | ${greenTimedRowsMissingTimingPairs.length} |`,
     `| Application compatibility rows | ${applicationRows.length - applicationMissing.length}/${applicationRows.length} present, ${applicationIncomplete.length} incomplete |`,
@@ -786,6 +858,25 @@ function buildReport({
   if (missing.length > 0) {
     lines.push(`### 🚫 Missing required rows (${missing.length})`, "");
     for (const r of missing) lines.push(`- \`${r.name}\``);
+    lines.push("");
+  }
+
+  if (corpusHealth.collapsed || corpusHealth.errored > 0) {
+    lines.push(
+      ...(corpusHealth.collapsed
+        ? [
+            `### ⛔ Required corpus collapsed (0/${corpusHealth.measured} green)`,
+            "",
+            "Every required-measured row is present but non-green — a publishable dataset must carry at least one green required row. This is the whole-corpus failure that let an all-`error` run publish reading \"ok\" (#17561).",
+          ]
+        : [
+            `### ❌ Errored required rows (${corpusHealth.errored})`,
+            "",
+            `${corpusHealth.green}/${corpusHealth.measured} required-measured rows are green; the following errored (advisory unless below the --require-corpus-health floor):`,
+          ]),
+      "",
+    );
+    for (const name of corpusHealth.errored_rows) lines.push(`- \`${name}\``);
     lines.push("");
   }
 
@@ -915,6 +1006,7 @@ if (artifactAbsent || parseError) {
         parseError,
         artifact: null,
         requiredCoverage: null,
+        corpusHealth: null,
         measurementProfile: null,
         sourceFreshness: null,
         rows: null,
@@ -943,6 +1035,7 @@ if (artifactAbsent || parseError) {
 const analysis = analyzeArtifact(artifact, expectedSourceCommit);
 const {
   requiredCoverage,
+  corpusHealth,
   measurementProfile,
   validationWarnings,
   sourceFreshness,
@@ -974,6 +1067,7 @@ if (jsonOutput) {
       parseError: null,
       artifact,
       requiredCoverage,
+      corpusHealth,
       measurementProfile,
       validationWarnings,
       sourceFreshness,
@@ -1011,6 +1105,25 @@ if (missing.length > 0 || duplicates.length > 0) {
         missing.map((r) => r.name).join(", ") + "\n",
     );
   }
+  process.exit(1);
+}
+
+// Corpus-collapse floor (#17561, point 4): unconditional, in the same class as
+// the missing-row guard above. A required-measured corpus that is PRESENT but
+// carries fewer green rows than the floor (default 1) is structurally
+// unpublishable — the all-`error` run that read "ok" on 2026-08-15, where every
+// required row errored on a fixture-pin bug yet nothing blocked because the gate
+// only counted *missing* rows. --require-corpus-health=<n> raises the floor
+// above 1; the default floor never fires in a healthy run (see the constant).
+if (corpusHealth.measured > 0 && corpusHealth.green < corpusHealthMinGreen) {
+  const detail = corpusHealth.errored_rows.length > 0
+    ? ` (errored: ${corpusHealth.errored_rows.join(", ")})`
+    : "";
+  process.stderr.write(
+    `bench-artifact-readiness: required corpus health below floor — ` +
+      `${corpusHealth.green}/${corpusHealth.measured} required-measured row(s) green, ` +
+      `floor ${corpusHealthMinGreen}${detail}\n`,
+  );
   process.exit(1);
 }
 

@@ -43,8 +43,8 @@ assert.match(
 
 assert.match(
   workflow,
-  /artifact_ready_for_pages\(\)[\s\S]+application_compatibility\.required == true[\s\S]+blocking_application_compatibility_gaps == 0[\s\S]+blocking_project_timing_pair_gaps == 0[\s\S]+successful_project_timing_pairs >= \.required_project_timing_pairs/,
-  "Pages deploy should require benchmark readiness JSON with no blocking (required) application-compat or project timing-pair gaps before using merged artifacts; canary application gaps are advisory",
+  /artifact_ready_for_pages\(\)[\s\S]+application_compatibility\.required == true[\s\S]+blocking_application_compatibility_gaps == 0[\s\S]+blocking_project_timing_pair_gaps == 0[\s\S]+successful_project_timing_pairs >= \.required_project_timing_pairs[\s\S]+\(\.corpus_health\.collapsed \/\/ false\) == false/,
+  "Pages deploy should require benchmark readiness JSON with no blocking (required) application-compat or project timing-pair gaps and a non-collapsed required corpus before using merged artifacts; canary application gaps are advisory",
 );
 
 assert.match(

@@ -362,6 +362,99 @@ impl<'a> CheckerState<'a> {
             })
     }
 
+    /// The check-time (unwidened) parameter type that the TS2345 head display
+    /// restores for a generic call argument, when it differs from the
+    /// relation's final (widened) instantiated parameter.
+    ///
+    /// `generic_call_parameter_alias_display` renders the head against the raw
+    /// signature with the callback's return-position type parameter replaced by
+    /// a LATER literal argument's type: `m(1, function (a) { return '' }, 1)`
+    /// against `m<T, U>(x: T, cb: (a: T) => U, y: U)` displays the parameter as
+    /// `(a: number) => 1` even though the stored instantiation widened `U` to
+    /// `number`. tsc runs the whole argument relation against that unwidened
+    /// check-time instantiation, so the nested elaboration must derive from the
+    /// same pair the head shows (issue #17686). This rebuilds that restored
+    /// parameter at the type level — same raw signature, same replacement map,
+    /// instantiated instead of string-substituted — for the emission sink to
+    /// re-derive the failure reason against. `None` when no later-literal
+    /// restore applies (the displayed and related parameters already agree).
+    pub(crate) fn later_literal_restored_param_type_for_argument(
+        &mut self,
+        param_type: TypeId,
+        arg_idx: NodeIndex,
+    ) -> Option<TypeId> {
+        let parent_idx = self.ctx.arena.get_extended(arg_idx)?.parent;
+        let parent = self.ctx.arena.get(parent_idx)?;
+        let (callee_expr, args, has_explicit_type_args): (NodeIndex, &[NodeIndex], bool) =
+            match parent.kind {
+                k if k == syntax_kind_ext::CALL_EXPRESSION
+                    || k == syntax_kind_ext::NEW_EXPRESSION =>
+                {
+                    let call = self.ctx.arena.get_call_expr(parent)?;
+                    let args = call.arguments.as_ref()?;
+                    let has_explicit_type_args = call
+                        .type_arguments
+                        .as_ref()
+                        .is_some_and(|type_args| !type_args.nodes.is_empty());
+                    (call.expression, &args.nodes, has_explicit_type_args)
+                }
+                _ => return None,
+            };
+        // An explicit type-argument list fixes every type parameter before
+        // inference, so the head display (`generic_call_parameter_alias_display`)
+        // renders the fixed instantiation, not the later argument's literal
+        // (#17745). Mirror that gate here so the re-derived elaboration never
+        // restores a literal the head does not.
+        if has_explicit_type_args {
+            return None;
+        }
+        let arg_index = args.iter().position(|&candidate| candidate == arg_idx)?;
+        let callee_type = self.get_type_of_node(callee_expr);
+        let raw_sig = crate::query_boundaries::checkers::call::get_contextual_signature_for_arity(
+            self.ctx.types,
+            callee_type,
+            args.len(),
+        )?;
+        let raw_param_type = raw_sig
+            .params
+            .get(arg_index)
+            .map(|param| param.type_id)
+            .or_else(|| {
+                let last = raw_sig.params.last()?;
+                last.rest.then_some(last.type_id)
+            })?;
+        if !query_common::contains_type_parameters(self.ctx.types, raw_param_type) {
+            return None;
+        }
+        let callback_return_tp = self.raw_callback_return_type_param_name(raw_param_type)?;
+        let restored = self.later_literal_argument_replacement_for_type_param(
+            &raw_sig,
+            args,
+            arg_index,
+            callback_return_tp,
+        )?;
+        let mut replacements = FxHashMap::default();
+        self.collect_type_param_display_replacements(raw_param_type, param_type, &mut replacements);
+        replacements.insert(callback_return_tp, restored);
+        let mut subst =
+            crate::query_boundaries::generic_instantiation::signature_domain_substitution(
+                &raw_sig.type_params,
+            );
+        for tp in &raw_sig.type_params {
+            if let Some(&replacement) = replacements.get(&tp.name) {
+                subst.insert(tp.name, replacement);
+            }
+        }
+        let instantiated = query_common::instantiate_type(self.ctx.types, raw_param_type, &subst);
+        // A leftover free type parameter (no replacement recovered for it)
+        // would turn the re-derived relation into a bare-type-parameter check;
+        // stand down and keep the original reason pair.
+        if query_common::contains_type_parameters(self.ctx.types, instantiated) {
+            return None;
+        }
+        (instantiated != param_type).then_some(instantiated)
+    }
+
     pub(in crate::error_reporter::call_errors) fn instantiated_call_parameter_display(
         &mut self,
         arg_idx: NodeIndex,
@@ -1776,6 +1869,32 @@ impl<'a> CheckerState<'a> {
                 return "boolean".to_string();
             }
             return display;
+        }
+
+        // A FRESH object-literal argument failing a UNION parameter renders
+        // its TS2345 head role-based, exactly like the TS2322 head after the
+        // fresh-literal union fold (#17721): each property keeps its literal
+        // when the contextual (target) property type carries a literal of the
+        // same primitive base and widens otherwise (tsc renders the checked
+        // fresh type, so `{ p: 1, q: 8 }` against `{ p: 1; q: 4 } | { p: 2;
+        // q: 8 }` shows `{ p: 1; q: 8; }`). The unconditional argument
+        // widening below would erase every literal to its primitive base.
+        // Non-union parameters keep the widening pipeline — its
+        // literal-surface rewrite already matches tsc there, and the
+        // role-based formatter over-widens intersection-wrapped sources.
+        if self.ctx.types.get_display_properties(arg_type).is_some() {
+            let evaluated_param = self.evaluate_type_for_assignability(param_type);
+            if crate::query_boundaries::diagnostics::union_members(self.ctx.types, evaluated_param)
+                .is_some()
+            {
+                return self.format_type_for_diagnostic_role(
+                    arg_type,
+                    crate::error_reporter::type_display_policy::DiagnosticTypeDisplayRole::AssignmentSource {
+                        target: param_type,
+                        anchor_idx: arg_idx,
+                    },
+                );
+            }
         }
 
         let mut display_type = if param_type == TypeId::NEVER {

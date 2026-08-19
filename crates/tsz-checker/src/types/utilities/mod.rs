@@ -19,4 +19,5 @@ pub(crate) mod return_type;
 pub(crate) mod return_type_any_assertion;
 pub(crate) mod return_type_noinfer_widening;
 pub(crate) mod return_type_nullish;
+pub(crate) mod return_type_widening;
 pub(crate) mod widening;
