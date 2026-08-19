@@ -940,6 +940,120 @@ var widths: number[] = elements.map(function (e) {
         );
     }
 
+    /// Characterization guard for #16308: a *user* interface that extends a lib
+    /// generic (`interface IObservableArray<T> extends Array<T>`), reached from a
+    /// *different* file through a re-export barrel cycle (mobx's `internal.ts`
+    /// shape), must keep every inherited `Array` member visible at the cross-file
+    /// use site — `tsc` is clean. The underlying defect is a raw-`SymbolId`
+    /// `symbol_types` collision across arena binders (#14344/#14921): a homonym
+    /// arena's degraded, member-less `Array` is handed to the interface's
+    /// heritage merge, dropping `map`/`slice`/`length`/`forEach` (false TS2339)
+    /// while the interface's own members still resolve. The fix resolves a
+    /// lib-global heritage base through the name-keyed canonical lib path.
+    ///
+    /// The *deterministic* witness that fails pre-fix is the mobx project row
+    /// (10 diagnostics -> 0); the exact `SymbolId` collision is order/scale
+    /// dependent and does not reduce to a unit-test-sized program (the issue's
+    /// own reduction attempts confirmed this), so this multi-arena case is kept
+    /// as a coarse guard: it holds on both sides today but catches any broader
+    /// regression that drops inherited lib-generic members across files. Uses the
+    /// multi-file (real multi-arena) driver — the in-process single-checker path
+    /// shares binders and would not exercise the cross-arena delegation at all.
+    #[test]
+    fn user_interface_extends_lib_generic_keeps_inherited_members_across_barrel_cycle() {
+        // Two user interfaces (distinct binder names, per the anti-hardcoding
+        // gate) that each extend a lib generic, declared in separate files and
+        // reached only through the `internal.ts` re-export barrel — plus a fan
+        // of decoy modules and consumers so the program allocates enough
+        // cross-arena symbols to exercise the raw-`SymbolId` `symbol_types`
+        // collision (#14344/#14921) that dropped the inherited members.
+        let mut files: Vec<(String, String)> = vec![(
+            "helper.ts".to_string(),
+            "export function shared_helper(): unknown { return {}; }\n".to_string(),
+        )];
+        let mut barrel = String::from("export * from \"./helper\";\n");
+
+        let interfaces = [
+            ("IObservableArray", "observablearray", "mx"),
+            ("BespokeArray", "bespokearray", "zz"),
+        ];
+        for (decl_name, file_stem, prefix) in interfaces {
+            files.push((
+                format!("{file_stem}.ts"),
+                format!(
+                    "import {{ shared_helper }} from \"./internal\";\n\
+                     export interface {decl_name}<T = any> extends Array<T> {{\n\
+                     \x20   {prefix}_extra(): T;\n\
+                     }}\n\
+                     export function {prefix}_make<T>(): {decl_name}<T> {{ return shared_helper() as any; }}\n"
+                ),
+            ));
+            barrel.push_str(&format!("export * from \"./{file_stem}\";\n"));
+
+            // Several consuming files per interface, each in its own arena,
+            // exercising the inherited members after a cross-file import.
+            for tag in ["one", "two", "three"] {
+                let consumer = format!("consumer_{prefix}_{tag}");
+                files.push((
+                    format!("{consumer}.ts"),
+                    format!(
+                        "import {{ {decl_name} }} from \"./internal\";\n\
+                         export function {consumer}(a: {decl_name}<number>): number {{\n\
+                         \x20   const mapped = a.map((x) => x + 1);\n\
+                         \x20   a.slice(0, 1);\n\
+                         \x20   a.forEach((x) => void x);\n\
+                         \x20   return a.length + mapped.length;\n\
+                         }}\n"
+                    ),
+                ));
+                barrel.push_str(&format!("export * from \"./{consumer}\";\n"));
+            }
+        }
+
+        // Decoy modules that also cycle back through the barrel. The count is
+        // load-bearing: the raw-`SymbolId` collision only surfaces once the
+        // program allocates enough cross-arena symbols, so keep it generous.
+        const DECOY_MODULES: usize = 24;
+        for idx in 0..DECOY_MODULES {
+            let name = format!("mod_{idx}");
+            files.push((
+                format!("{name}.ts"),
+                format!(
+                    "import {{ shared_helper }} from \"./internal\";\n\
+                     export const val_{idx} = {idx};\n\
+                     export interface If_{idx} {{ m_{idx}(): number; }}\n\
+                     export function fn_{idx}() {{ return shared_helper(); }}\n"
+                ),
+            ));
+            barrel.push_str(&format!("export * from \"./{name}\";\n"));
+        }
+        files.push(("internal.ts".to_string(), barrel));
+
+        let file_refs: Vec<(&str, &str)> = files
+            .iter()
+            .map(|(name, src)| (name.as_str(), src.as_str()))
+            .collect();
+        let diagnostics = collect_es2015_default_lib_diagnostics_multifile(&file_refs);
+
+        let inherited_member_failures: Vec<_> = diagnostics
+            .iter()
+            .filter(|diag| {
+                diag.code == diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE
+                    && (diag.message_text.contains("IObservableArray")
+                        || diag.message_text.contains("BespokeArray"))
+                    && ["map", "slice", "forEach", "length"]
+                        .iter()
+                        .any(|member| diag.message_text.contains(&format!("Property '{member}'")))
+            })
+            .collect();
+
+        assert!(
+            inherited_member_failures.is_empty(),
+            "inherited Array members must resolve cross-file through the barrel cycle (#16308), \
+             got: {inherited_member_failures:?}; all: {diagnostics:?}"
+        );
+    }
+
     #[test]
     fn collect_diagnostics_respects_skip_default_lib_check_for_global_node_merge() {
         let dir = tempfile::TempDir::new().expect("temp dir");
