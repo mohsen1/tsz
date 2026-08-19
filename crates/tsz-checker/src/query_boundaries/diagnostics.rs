@@ -1324,6 +1324,16 @@ pub(crate) fn display_widen_for_redeclaration(db: &dyn TypeDatabase, type_id: Ty
     tsz_solver::operations::widening::display_widen_for_redeclaration(db, type_id)
 }
 
+/// tsc's `formatUnionTypes` render order: nullish intrinsics move to the tail
+/// (`T | null | undefined`), while the interner's canonical member order puts
+/// them first (smallest type ids).
+///
+/// For checker-side diagnostic reconstructions that join a member list
+/// themselves instead of going through the solver's `format_union`.
+pub(crate) fn reorder_union_members_nullish_last(members: &[TypeId]) -> Vec<TypeId> {
+    tsz_solver::reorder_union_members_nullish_last(members)
+}
+
 /// Policy selecting which literal annotation kinds
 /// [`widen_object_property_literals_for_display`] rewrites.
 pub(crate) use tsz_solver::operations::widening::AnnotationLiteralWideningPolicy;
