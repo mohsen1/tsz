@@ -436,6 +436,21 @@ impl<'a> CheckerState<'a> {
         self.finalize_pair_display_for_diagnostic(display_source, target, source_str, target_str)
     }
 
+    /// Whether `source` is a deferred, constraint-relative property source
+    /// (`T[K]`, `keyof T`, a conditional, or a generic alias application still
+    /// deferred through its arguments) — the operand class whose diagnostic leaf
+    /// keeps the as-written operand and walks its constraint. Every renderer that
+    /// makes that decision (the property-drill leaf, the dotted-path collapse,
+    /// and the call-argument delegation just below) asks through here, so the
+    /// solver classifier is reached from one checker seam.
+    pub(crate) fn is_deferred_constraint_relative_source(&self, source: TypeId) -> bool {
+        crate::query_boundaries::common::is_deferred_constraint_relative_operand(
+            self.ctx.types.as_type_database(),
+            &self.ctx.definition_store,
+            source,
+        )
+    }
+
     pub(crate) fn related_from_failure_reason(
         &mut self,
         reason: &tsz_solver::SubtypeFailureReason,
@@ -622,9 +637,19 @@ impl<'a> CheckerState<'a> {
                 // failures keep the established hand-rolled shape below (no
                 // structural drill to recover), so those high-traffic chains are
                 // byte-identical to today.
+                // A deferred, constraint-relative property source (`T[K]`,
+                // `keyof T`, a conditional) is *also* deeper than the hand-rolled
+                // leaf pair: tsc keeps the as-written operand and then walks its
+                // constraint one step per line (`TRow[KCol]` -> `TRow[keyof TRow]`
+                // -> distributed union -> first member). That walk lives on the
+                // direct-assignment (`TS2322`) renderer's property-drill leaf, so
+                // delegate the same way the structural-drill case does — the
+                // call-argument (`TS2345`) chain then carries the identical walk
+                // instead of truncating to the leaf pair.
                 if nested_reason
                     .as_deref()
                     .is_some_and(Self::property_nested_reason_needs_full_drill)
+                    || self.is_deferred_constraint_relative_source(*source_property_type)
                 {
                     return Some(self.reanchored_container_related(
                         reason, source, target, anchor_idx, start, length,
