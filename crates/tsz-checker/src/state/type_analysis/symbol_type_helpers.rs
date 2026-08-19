@@ -301,6 +301,7 @@ impl<'a> CheckerState<'a> {
         }
 
         let declarations = symbol.declarations.clone();
+        let root_name = symbol.escaped_name.clone();
         let mut overloads = Vec::new();
         let mut implementation_sig = None;
 
@@ -329,12 +330,23 @@ impl<'a> CheckerState<'a> {
         }
 
         if !overloads.is_empty() {
-            return Some(call_only_callable_type(self.ctx.types, overloads));
+            let overload_type = call_only_callable_type(self.ctx.types, overloads);
+            return Some(
+                self.augment_provisional_callable_type_with_expando_function_members(
+                    &root_name,
+                    sym_id,
+                    overload_type,
+                ),
+            );
         }
 
         let sig = implementation_sig?;
         let func_type = function_type_from_call_signature(self.ctx.types, &sig, false);
-        Some(func_type)
+        Some(
+            self.augment_provisional_callable_type_with_expando_function_members(
+                &root_name, sym_id, func_type,
+            ),
+        )
     }
 
     /// Provisional self-reference type for a circular `const`/`let`/`var` bound

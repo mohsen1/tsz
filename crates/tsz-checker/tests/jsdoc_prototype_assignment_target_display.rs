@@ -138,13 +138,18 @@ a.first = 10
         true,
     );
 
-    // The static chained assignment `A.s = A.t = function g(m) { ... this.x }`
-    // binds `this` to `typeof A`, so `this.x` reports TS2339 against `typeof A`.
+    // TypeScript 7 dropped TS6-era constructor-function `this` inference: the
+    // static chained assignment `A.s = A.t = function g(m) { ... this.x }`
+    // binds `this` to `A`'s structural merged shape (call signature plus its
+    // own static expando members `s`/`t`), not `typeof A` (#17654).
     assert!(
         diags.iter().any(|(code, message)| {
-            *code == 2339 && message == "Property 'x' does not exist on type 'typeof A'."
+            *code == 2339
+                && message
+                    == "Property 'x' does not exist on type '{ (): any; s: (m?: any) => any; t: (m?: any) => any; }'."
         }),
-        "static chained assignment should type `this` as typeof A; got: {diags:?}"
+        "static chained assignment should type `this` as A's merged expando shape, \
+         not typeof A; got: {diags:?}"
     );
     // TypeScript 7: `new A()` is `any` (TS7009), so the `a.y(...)`/`a.z(...)`
     // instance calls are unchecked — no `'z' does not exist` diagnostic.
