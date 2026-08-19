@@ -236,6 +236,9 @@ path = "tests/variadic_tuple_spread_arity_ts2556_tests.rs"
 name = "variadic_tuple_spread_element_type_tests"
 path = "tests/variadic_tuple_spread_element_type_tests.rs"
 [[test]]
+name = "variadic_tuple_readonly_concat_instantiation_tests"
+path = "tests/variadic_tuple_readonly_concat_instantiation_tests.rs"
+[[test]]
 name = "variadic_tuple_rest_aggregate_display_tests"
 path = "tests/variadic_tuple_rest_aggregate_display_tests.rs"
 [[test]]

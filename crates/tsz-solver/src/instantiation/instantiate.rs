@@ -495,6 +495,28 @@ impl<'a> TypeInstantiator<'a> {
         }
     }
 
+    /// The inner tuple-element list for a spread operand that is a fixed-length
+    /// tuple, unwrapping a single `readonly [...]` wrapper.
+    ///
+    /// A `readonly [...]` tuple spread (`...A` with `A = readonly [1, 2]`) is
+    /// stored as `ReadonlyType(Tuple)`, so a bare `TypeData::Tuple` match would
+    /// miss it and leave the whole readonly tuple as one rest element — two such
+    /// operands then wrongly collapse to a single `...(A | B)[]` rest during
+    /// `merge_adjacent_rest_arrays`. tsc flattens the fixed elements of both,
+    /// dropping the container's readonly-ness (a mutable spread target keeps only
+    /// each element's own type). An unbounded `readonly T[]` must stay a rest
+    /// element, so only `Tuple` — never `Array` — is unwrapped here.
+    fn spread_tuple_list(&self, type_id: TypeId) -> Option<TupleListId> {
+        match self.interner.lookup(type_id) {
+            Some(TypeData::Tuple(inner)) => Some(inner),
+            Some(TypeData::ReadonlyType(inner)) => match self.interner.lookup(inner) {
+                Some(TypeData::Tuple(list)) => Some(list),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
     /// Check if a type is array-or-tuple-like, handling:
     /// - Direct Array types
     /// - Tuple types
@@ -1139,10 +1161,13 @@ impl<'a> TypeInstantiator<'a> {
                         changed = true;
                     }
                     if e.rest {
-                        // Check if the instantiated type is a tuple — if so,
-                        // flatten its elements into the parent tuple.
-                        if let Some(TypeData::Tuple(inner_elems)) = self.interner.lookup(inst_type)
-                        {
+                        // Check if the instantiated type is a fixed-length tuple —
+                        // if so, flatten its elements into the parent tuple. This
+                        // unwraps a `readonly [...]` spread operand
+                        // (`ReadonlyType(Tuple)`) as well as a bare tuple; an
+                        // unbounded `readonly T[]` is intentionally left as a rest
+                        // element (see `spread_tuple_list`).
+                        if let Some(inner_elems) = self.spread_tuple_list(inst_type) {
                             let inner = self.interner.tuple_list(inner_elems);
                             let represented_after =
                                 represented_len.saturating_add(inner.len());
