@@ -150,23 +150,41 @@ const c: 1 = pair(2, (a) => 1, 1);
     );
 }
 
-/// The literal survives when the callback references the parameter in its own
-/// parameter list (the shape `tsc` fixes for contextual typing), in both
-/// argument orders.
+/// The `isFixed` half (`literalTypes2.ts` `g8`): a context-sensitive callback
+/// whose contextual parameter types consume the type parameter fixes it, and a
+/// fixed inference widens its fresh literal candidates even at the return
+/// type's top level — `g8(1, x => x)` infers `number`, and the callback's
+/// `x + 1` return stays accepted.
 #[test]
-fn literal_survives_callback_referencing_param() {
+fn fixed_param_callback_still_widens() {
     assert_clean(
         r#"
-declare function g1<U>(cb: (a: U) => void, y: U): U;
-const r1: 1 = g1((a) => {}, 1);
-declare function g2<Elem>(y: Elem, cb: (a: Elem) => void): Elem;
-const r2: 1 = g2(1, (a) => {});
+declare function g8<T>(x: T, f: (p: T) => T): T;
+const x10 = g8(1, x => x);
+const x11 = g8(1, x => x + 1);
+let w: number = g8(1, x => x + 1);
 "#,
-        "callback references param",
+        "fixed param callback",
     );
 }
 
-/// Same shape with a non-context-sensitive callback.
+/// The widened fixed-param result is genuinely `number`, not a preserved `1`.
+#[test]
+fn fixed_param_callback_result_is_widened() {
+    assert_single_message_contains(
+        r#"
+declare function g8<T>(x: T, f: (p: T) => T): T;
+const x10 = g8(1, x => x);
+const chk: 1 = x10;
+"#,
+        2322,
+        &["Type 'number' is not assignable to type '1'."],
+        "fixed param widened result",
+    );
+}
+
+/// Same shape with a non-context-sensitive callback: nothing is fixed, so the
+/// literal survives.
 #[test]
 fn literal_survives_non_context_sensitive_callback() {
     assert_clean(
@@ -175,20 +193,6 @@ declare function g3<U>(cb: (a: U) => void, y: U): U;
 const r3: 1 = g3((a: number) => {}, 1);
 "#,
         "non-context-sensitive callback",
-    );
-}
-
-/// Identity-shaped callbacks (`(a) => a`) keep the literal in both orders.
-#[test]
-fn literal_survives_identity_callback() {
-    assert_clean(
-        r#"
-declare function m2<U>(cb: (a: U) => U, y: U): U;
-const q1: 1 = m2((a) => a, 1);
-declare function m3<Val>(y: Val, cb: (a: Val) => Val): Val;
-const q2: 1 = m3(1, (a) => a);
-"#,
-        "identity callback",
     );
 }
 

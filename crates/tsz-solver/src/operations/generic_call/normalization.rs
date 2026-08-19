@@ -385,16 +385,80 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     /// argument relation run against a widened instantiation the reported
     /// signature display never showed.
     ///
-    /// Not modeled: tsc's `inference.isFixed` re-widening and the runtime
-    /// `topLevel` candidate-provenance bit (cleared by intersection-member and
-    /// similar contributions). Array-element provenance is handled by the
-    /// callers' `all_candidates_from_array_elements` guards.
+    /// tsc's `isFixed` half: a parameter consumed by a context-sensitive
+    /// argument's contextual PARAMETER types is fixed when that argument is
+    /// contextually typed (`g8<T>(x: T, f: (p: T) => T)` called with
+    /// `x => x + 1` fixes `T`), and a fixed inference widens its fresh literal
+    /// candidates even at the return type's top level — `literalTypes2.ts`
+    /// pins `g8(1, x => x)` inferring `number`. A parameter only in the
+    /// callback's RETURN position is never fixed this way (the callback's
+    /// check consumes contextual parameter types; its return is an inference
+    /// source), which is exactly why the #17686 witness keeps `U := 1`.
+    ///
+    /// Not modeled: the runtime `topLevel` candidate-provenance bit (cleared
+    /// by intersection-member and similar contributions), and the
+    /// contextual-return pinning that lets tsc keep a literal even for a
+    /// fixed parameter when the call's contextual type spells it
+    /// (`const q: 1 = m2((a) => a, 1)` — a known residual). Array-element
+    /// provenance is handled by the callers'
+    /// `all_candidates_from_array_elements` guards.
     pub(super) fn type_param_preserves_inferred_literal(
         &mut self,
         func: &FunctionShape,
+        arg_types: &[TypeId],
         tp_name: tsz_common::Atom,
     ) -> bool {
         self.type_param_at_top_level_through_aliases(func.return_type, tp_name)
+            && !self.type_param_fixed_by_context_sensitive_arg(func, arg_types, tp_name)
+    }
+
+    /// Whether checking some context-sensitive argument fixes `tp_name`: the
+    /// argument's declared parameter type has a contextual signature whose own
+    /// parameter (or `this`) types reference the type parameter. Mirrors the
+    /// fixing tsc performs when instantiating a contextual signature to type a
+    /// context-sensitive function argument's parameters.
+    fn type_param_fixed_by_context_sensitive_arg(
+        &mut self,
+        func: &FunctionShape,
+        arg_types: &[TypeId],
+        tp_name: tsz_common::Atom,
+    ) -> bool {
+        let db = self.interner.as_type_database();
+        arg_types.iter().enumerate().any(|(i, &arg_type)| {
+            // A generic call is re-resolved several times; in the pass whose
+            // result feeds the diagnostic the callback argument has already
+            // been checked and its final type is no longer contextually
+            // sensitive. The per-arg unannotated-callback-parameter mask
+            // (#17282) is captured from the source and stable across passes,
+            // so it recognizes the argument in every pass.
+            let sensitive = self.is_contextually_sensitive(arg_type)
+                || self
+                    .arg_callback_param_unannotated
+                    .get(i)
+                    .is_some_and(|mask| !mask.is_empty());
+            if !sensitive {
+                return false;
+            }
+            // Map the argument to its declared parameter (trailing args fold
+            // into a rest parameter's slot).
+            let Some(param) = func.params.get(i).or_else(|| {
+                func.params
+                    .last()
+                    .filter(|last| last.rest && i >= func.params.len())
+            }) else {
+                return false;
+            };
+            let Some(shape) = Self::get_contextual_signature_cached(self.interner, param.type_id)
+            else {
+                return false;
+            };
+            shape
+                .params
+                .iter()
+                .map(|p| p.type_id)
+                .chain(shape.this_type)
+                .any(|ty| crate::visitor::contains_type_parameter_named(db, ty, tp_name))
+        })
     }
 
     /// Whether `ty` is — or, for a top-level alias application such as
