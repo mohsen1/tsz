@@ -470,3 +470,57 @@ fn concrete_indexed_access_member_source_still_collapses() {
         "concrete indexed-access member source must still collapse, got: {msg}"
     );
 }
+
+/// The property-drill leaf of a *generic-base* indexed access (both operands
+/// still carry a free type parameter) must keep the deferred `T[K]` identity
+/// at its own pair, not the constraint-evaluated concrete type: tsc never
+/// shows `Type 'number' is not assignable to type 'string'.` here — it keeps
+/// `Type 'TBox[KKey]' is not assignable to type 'string | undefined'.` (see
+/// #17718 witness 1; the deeper constraint-walk elaboration beneath this line
+/// is a separate residual, not asserted here).
+#[test]
+fn deferred_generic_index_access_member_source_keeps_pair_identity() {
+    let msg = message_with_chain(
+        "function dig<TBox extends { a: number }, KKey extends keyof TBox>(x: { m: TBox[KKey] }) {\n  const y: { m: string | undefined } = x;\n}\n",
+        2322,
+    );
+    assert!(
+        msg.contains("Type 'TBox[KKey]' is not assignable to type 'string | undefined'."),
+        "deferred generic-base indexed-access member source must keep its own identity, got: {msg}"
+    );
+    assert!(
+        !msg.contains("'number'") && !msg.contains("'string'.\n"),
+        "must not leak the constraint-evaluated concrete pair, got: {msg}"
+    );
+}
+
+/// Same rule, renamed binders (anti-hardcoding: the behavior is structural,
+/// not name-driven) and a TS2345 argument position instead of TS2322.
+#[test]
+fn deferred_generic_index_access_member_source_keeps_pair_identity_renamed_ts2345() {
+    let msg = message_with_chain(
+        "declare function gulp(v: { n: string | undefined }): void;\nfunction pipe<TRow extends { z: number }, KCol extends keyof TRow>(x: { n: TRow[KCol] }) {\n  gulp(x);\n}\n",
+        2345,
+    );
+    assert!(
+        msg.contains("Type 'TRow[KCol]' is not assignable to type 'string | undefined'."),
+        "renamed binders / TS2345 must keep the deferred pair identity too, got: {msg}"
+    );
+}
+
+/// Negative control: a *concrete-base, generic-index* member source
+/// (`Obj[KP]`) is also deferred — the constraint drill only concretizes
+/// `Obj`, not the still-generic key — and keeps the full pair at the
+/// property-drill leaf too, matching the existing top-level behavior
+/// (`concrete_base_generic_index_head_keeps_full_union`).
+#[test]
+fn concrete_base_generic_index_member_source_keeps_pair_identity() {
+    let msg = message_with_chain(
+        "interface Obj { a: number; b: number }\nfunction idx<KP extends keyof Obj>(x: { m: Obj[KP] }) {\n  const y: { m: string | undefined } = x;\n}\n",
+        2322,
+    );
+    assert!(
+        msg.contains("Type 'Obj[KP]' is not assignable to type 'string | undefined'."),
+        "concrete-base generic-index member source must keep its own identity, got: {msg}"
+    );
+}
