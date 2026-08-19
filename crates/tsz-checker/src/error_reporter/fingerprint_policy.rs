@@ -1122,8 +1122,33 @@ impl<'a> CheckerState<'a> {
             tsz_solver::SubtypeFailureReason::UnionSourceMismatch {
                 member_type,
                 target_type,
+                nested_reason,
                 ..
-            } => (*member_type, *target_type),
+            } => {
+                // The member line renders the pair the solver actually
+                // related: a sole-real-member nullable target explains the
+                // member against the reduced member (tsc `getBestMatchingType`
+                // re-relates there), recorded in the nested leaf's own types
+                // (`Type 'boolean' is not assignable to type 'string'.` under
+                // a `string | undefined` target). Every other producer
+                // explains the member against the whole target, so the leaf
+                // target equals `target_type` and the display is unchanged.
+                match nested_reason.as_ref() {
+                    tsz_solver::SubtypeFailureReason::TypeMismatch {
+                        source_type: leaf_source,
+                        target_type: leaf_target,
+                    }
+                    | tsz_solver::SubtypeFailureReason::IntrinsicTypeMismatch {
+                        source_type: leaf_source,
+                        target_type: leaf_target,
+                    }
+                    | tsz_solver::SubtypeFailureReason::LiteralTypeMismatch {
+                        source_type: leaf_source,
+                        target_type: leaf_target,
+                    } => (*leaf_source, *leaf_target),
+                    _ => (*member_type, *target_type),
+                }
+            }
             tsz_solver::SubtypeFailureReason::ConditionalBranchMismatch {
                 branch_source,
                 branch_target,

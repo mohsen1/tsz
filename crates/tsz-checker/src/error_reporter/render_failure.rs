@@ -23,6 +23,7 @@ mod render_failure_missing_property_base_class;
 #[path = "render_failure_property_helpers.rs"]
 mod render_failure_property_helpers;
 mod type_mismatch;
+mod union_source_mismatch;
 mod union_target_member_frame;
 
 /// Depth at which the shared property-type-mismatch renderer
