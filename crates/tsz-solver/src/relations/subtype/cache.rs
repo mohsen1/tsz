@@ -1070,16 +1070,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 // cross-alias relation, silencing its structural rejection via
                 // measured variance (#17614); only the general variance
                 // measurement requires unambiguous provenance.
-                let base_def = |c: &Self, app_id| {
-                    let app = c.interner.type_application(app_id);
-                    lazy_def_id(c.interner, app.base).map(|def| c.resolver.canonical_def_id(def))
-                };
-                let channels_agree = |c: &Self, a: Option<_>, b: Option<_>| match (a, b) {
-                    (Some(a), Some(b)) => {
-                        a == b || base_def(c, a).is_some_and(|d| Some(d) == base_def(c, b))
-                    }
-                    _ => true,
-                };
                 let t_real = application_id(self.interner, target);
                 let t_display = t_real.or_else(|| {
                     self.interner
@@ -1091,8 +1081,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                         .get_application_eval_origin(target)
                         .and_then(|origin| application_id(self.interner, origin))
                 });
-                let provenance_unambiguous = channels_agree(self, s_app_id_for_variance, s_origin)
-                    && channels_agree(self, t_display, t_origin);
+                let provenance_unambiguous = self
+                    .recovered_provenance_channels_agree(s_app_id_for_variance, s_origin)
+                    && self.recovered_provenance_channels_agree(t_display, t_origin);
                 let s_candidates = [s_app_id_for_variance, s_origin];
                 let mut vr = None;
                 for s_app_id in s_candidates.into_iter().flatten() {

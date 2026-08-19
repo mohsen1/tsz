@@ -3010,5 +3010,9 @@ name = "object_literal_property_source_domain_widening_tests"
 path = "tests/object_literal_property_source_domain_widening_tests.rs"
 
 [[test]]
+name = "union_same_base_application_assignability_tests"
+path = "tests/union_same_base_application_assignability_tests.rs"
+
+[[test]]
 name = "js_object_literal_receiver_display_tests"
 path = "tests/js_object_literal_receiver_display_tests.rs"
