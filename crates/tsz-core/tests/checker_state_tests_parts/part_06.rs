@@ -1444,8 +1444,12 @@ var e: typeof E;
 }
 
 #[test]
-fn test_variable_redeclaration_enum_object_literal_no_2403() {
-    // Ensure enum value redeclaration with structural type does not trigger TS2403.
+fn test_variable_redeclaration_enum_object_literal_emits_2403() {
+    // `var e = E1` establishes type `typeof E1` (the enum object type, whose
+    // members are the nominal enum-member types). A subsequent `var e: { A:
+    // number; ...; [n: number]: string }` differs — its properties are plain
+    // `number`, not the enum member types — so tsc reports one TS2403. The
+    // third declaration (`var e: typeof E1`) matches the first and stays quiet.
     let source = r#"
 enum E1 {
     A,
