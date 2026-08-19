@@ -1086,6 +1086,26 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             },
         };
 
+        // An alias base that merely forwards to another application —
+        // declared-order, permuted (`type FlipRow<X, Y> = PairRow<Y, X>`), or
+        // repeated parameters — decomposes as the application it forwards to.
+        // Without the hop, `PairRow<A, B>` against a `FlipRow<string, number>`
+        // context reads as differing bases and falls to the cross-base
+        // positional fallback below, which pairs the tracked parameters
+        // through the PERMUTED spelling (`A := string`): that misbinds the
+        // lone-arm case, and in an ambiguous union it manufactures agreement
+        // with a like-spelled direct arm, pinning what tsc keeps ambiguous.
+        let app_info = app_info.map(|((source_base, source_args), (target_base, target_args))| {
+            if source_base == target_base {
+                ((source_base, source_args), (target_base, target_args))
+            } else {
+                (
+                    self.hop_alias_forwarded_application(source_base, source_args),
+                    self.hop_alias_forwarded_application(target_base, target_args),
+                )
+            }
+        });
+
         if let Some(((source_base, source_args), (target_base, mut target_args))) = app_info {
             // When same base but different arg counts (e.g., Box<void, B> vs Box<void>
             // where B has a default), try to pad with defaults from type params first.
