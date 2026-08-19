@@ -203,3 +203,262 @@ const t: T = { a: 9, b: 7 };
         "numeric source against string-literal target should widen, got: {messages:?}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Fresh-literal union fold (#17721): tsc's `hasExcessProperties` reports a
+// FRESH object literal's failing property directly beneath the TS2322 head —
+// `Types of property 'X' are incompatible.` with the property relation's own
+// chain below and NO `Type 'S' is not assignable to type '<member>'.` member
+// frame. The checked member set is the discriminant-matched constituent
+// (first-DECLARED discriminant decides), else every object-like member. A
+// non-fresh source skips that phase and keeps the member frame. All
+// expectations oracle-pinned against typescript@7.0.2 via
+// `scripts/conformance/oracle.sh` (--strict).
+// ---------------------------------------------------------------------------
+
+fn chain_texts(source: &str, code: u32) -> (String, Vec<(u8, String)>) {
+    let diags = check_source_diagnostics(source);
+    let diag = diags
+        .iter()
+        .find(|d| d.code == code)
+        .unwrap_or_else(|| panic!("expected a TS{code} diagnostic, got: {diags:?}"));
+    (
+        diag.message_text.clone(),
+        diag.related_information
+            .iter()
+            .map(|info| (info.depth, info.message_text.clone()))
+            .collect(),
+    )
+}
+
+#[test]
+fn numeric_fold_drills_matched_arm_without_member_frame() {
+    let (head, chain) = chain_texts(
+        r#"
+type R = { p: 1; q: 2 } | { p: 3; q: 4 };
+const r: R = { p: 1, q: 4 };
+"#,
+        2322,
+    );
+    assert!(
+        head.contains("Type '{ p: 1; q: 4; }' is not assignable to type 'R'."),
+        "head should keep literal properties, got: {head}"
+    );
+    assert_eq!(
+        chain,
+        vec![
+            (0, "Types of property 'q' are incompatible.".to_string()),
+            (1, "Type '4' is not assignable to type '2'.".to_string()),
+        ],
+        "fold should drill the discriminant-matched arm's property with no member frame"
+    );
+}
+
+#[test]
+fn first_declared_discriminant_decides_matched_arm() {
+    // The numeric property is declared FIRST, so it is the discriminant that
+    // narrows (tsc iterates `getPropertiesOfType` in declaration order); the
+    // later string property is the reported mismatch — even though the string
+    // property alone would have narrowed to the other arm.
+    let (_, chain) = chain_texts(
+        r#"
+type Mix = { zeta: 1; alpha: "x" } | { zeta: 2; alpha: "y" };
+const mx: Mix = { zeta: 1, alpha: "y" };
+"#,
+        2322,
+    );
+    assert_eq!(
+        chain,
+        vec![
+            (0, "Types of property 'alpha' are incompatible.".to_string()),
+            (
+                1,
+                "Type '\"y\"' is not assignable to type '\"x\"'.".to_string()
+            ),
+        ],
+        "first-declared discriminant (zeta) must pick the arm; alpha is the mismatch"
+    );
+
+    // Reversed declaration order flips which property discriminates.
+    let (_, chain) = chain_texts(
+        r#"
+type Mix = { alpha: 1; zeta: "x" } | { alpha: 2; zeta: "y" };
+const mx: Mix = { alpha: 1, zeta: "y" };
+"#,
+        2322,
+    );
+    assert_eq!(
+        chain,
+        vec![
+            (0, "Types of property 'zeta' are incompatible.".to_string()),
+            (
+                1,
+                "Type '\"y\"' is not assignable to type '\"x\"'.".to_string()
+            ),
+        ],
+    );
+}
+
+#[test]
+fn all_boolean_literal_union_fold() {
+    let (head, chain) = chain_texts(
+        r#"
+type F = { on: true; off: false } | { on: false; off: true };
+const ff: F = { on: true, off: true };
+"#,
+        2322,
+    );
+    assert!(
+        head.contains("Type '{ on: true; off: true; }' is not assignable to type 'F'."),
+        "boolean literal head preserved, got: {head}"
+    );
+    assert_eq!(
+        chain,
+        vec![
+            (0, "Types of property 'off' are incompatible.".to_string()),
+            (
+                1,
+                "Type 'true' is not assignable to type 'false'.".to_string()
+            ),
+        ],
+    );
+}
+
+#[test]
+fn all_bigint_literal_union_fold() {
+    let (head, chain) = chain_texts(
+        r#"
+type B = { amt: 1n; lim: 2n } | { amt: 3n; lim: 4n };
+const bg: B = { amt: 1n, lim: 4n };
+"#,
+        2322,
+    );
+    assert!(
+        head.contains("Type '{ amt: 1n; lim: 4n; }' is not assignable to type 'B'."),
+        "bigint literal head preserved, got: {head}"
+    );
+    assert_eq!(
+        chain,
+        vec![
+            (0, "Types of property 'lim' are incompatible.".to_string()),
+            (1, "Type '4n' is not assignable to type '2n'.".to_string()),
+        ],
+    );
+}
+
+#[test]
+fn interface_arm_union_fold() {
+    let (_, chain) = chain_texts(
+        r#"
+interface ArmA { sel: 1; val: 2 }
+interface ArmB { sel: 3; val: 4 }
+const ri: ArmA | ArmB = { sel: 1, val: 4 };
+"#,
+        2322,
+    );
+    assert_eq!(
+        chain,
+        vec![
+            (0, "Types of property 'val' are incompatible.".to_string()),
+            (1, "Type '4' is not assignable to type '2'.".to_string()),
+        ],
+        "named (interface) arms fold exactly like anonymous ones"
+    );
+}
+
+#[test]
+fn non_fresh_source_keeps_member_frame() {
+    // Negative control: a non-fresh source skips tsc's excess-property phase
+    // and keeps the best-member frame beneath the head.
+    let (_, chain) = chain_texts(
+        r#"
+type R = { p: 1; q: 2 } | { p: 3; q: 4 };
+declare const s: { p: 1; q: 4 };
+const r: R = s;
+"#,
+        2322,
+    );
+    assert_eq!(
+        chain,
+        vec![
+            (
+                0,
+                "Type '{ p: 1; q: 4; }' is not assignable to type '{ p: 1; q: 2; }'.".to_string()
+            ),
+            (1, "Types of property 'q' are incompatible.".to_string()),
+            (2, "Type '4' is not assignable to type '2'.".to_string()),
+        ],
+        "non-fresh sources keep the member frame"
+    );
+}
+
+#[test]
+fn satisfies_fold_no_member_frame() {
+    let (head, chain) = chain_texts(
+        r#"
+type R = { p: 1; q: 2 } | { p: 3; q: 4 };
+const r = { p: 1, q: 4 } satisfies R;
+"#,
+        1360,
+    );
+    assert!(
+        head.contains("Type '{ p: 1; q: 4; }' does not satisfy the expected type 'R'."),
+        "satisfies head preserved, got: {head}"
+    );
+    assert_eq!(
+        chain,
+        vec![
+            (0, "Types of property 'q' are incompatible.".to_string()),
+            (1, "Type '4' is not assignable to type '2'.".to_string()),
+        ],
+    );
+}
+
+#[test]
+fn no_discriminant_match_keeps_property_elaboration() {
+    // When no arm matches the written discriminant value, tsc's per-property
+    // expression elaboration anchors at the property node against the
+    // distributed value union — the fold never fires.
+    let messages = ts2322_messages(
+        r#"
+type R = { p: 1; q: 2 } | { p: 3; q: 4 };
+const r: R = { p: 5, q: 2 };
+"#,
+    );
+    assert_eq!(
+        messages,
+        vec!["Type '5' is not assignable to type '1 | 3'.".to_string()],
+        "no-match case keeps the property-anchored elaboration"
+    );
+}
+
+#[test]
+fn primitive_valued_property_widens_in_fold_head() {
+    // `mappedTypeIndexedAccess.ts` shape: the union arms type `value` as PLAIN
+    // primitives (string / number), so the fresh source's `value: 3` widens to
+    // `number` in the head, while the literal-typed `key` keeps `"foo"` — the
+    // per-property same-base rule, not a whole-object preservation.
+    let (head, chain) = chain_texts(
+        r#"
+type Pairs<T> = { [K in keyof T]: { key: K; value: T[K] } };
+type Pair<T> = Pairs<T>[keyof T];
+type FooBar = { foo: string; bar: number };
+let pair: Pair<FooBar> = { key: "foo", value: 3 };
+"#,
+        2322,
+    );
+    assert!(
+        head.contains("Type '{ key: \"foo\"; value: number; }' is not assignable"),
+        "primitive-typed property widens, literal-typed key stays, got: {head}"
+    );
+    assert_eq!(
+        chain,
+        vec![
+            (0, "Types of property 'value' are incompatible.".to_string()),
+            (
+                1,
+                "Type 'number' is not assignable to type 'string'.".to_string()
+            ),
+        ],
+    );
+}

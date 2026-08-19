@@ -36,7 +36,122 @@ impl<'a> CheckerState<'a> {
         else {
             return false;
         };
-        self.keyof_operand_yields_concrete_literal_keyset(operand)
+        if self.keyof_operand_yields_concrete_literal_keyset(operand) {
+            return true;
+        }
+        // A generic-dependent operand — its own structure or, for an alias
+        // reference, its resolved body carries type parameters — makes the
+        // `keyof` deferred: tsc answers the literal-context question from the
+        // constraint of the as-written index type
+        // (`typeCouldHaveTopLevelSingletonTypes`), and a deferred key set is
+        // not a literal context even when the partially evaluated keys happen
+        // to be all-unit (`keyRemappingKeyofResult.ts`: evaluation drops the
+        // deferred remapped member, but tsc still widens the source at the
+        // head). Keep the widening default rather than trust that lossy
+        // evaluation.
+        if self.keyof_display_operand_is_generic_dependent(operand) {
+            return false;
+        }
+        // Operands whose shape is not directly visible — enum types and enum
+        // namespaces (`keyof typeof E` excludes the implicit numeric index),
+        // `typeof x` queries, and class instance references — are judged by
+        // the evaluated key set itself: a finite unit-literal set is a
+        // literal context regardless of how the operand was spelled.
+        let evaluated = self.evaluate_type_for_assignability(ty);
+        evaluated != ty
+            && crate::query_boundaries::diagnostics::is_finite_unit_literal_keyset(
+                self.ctx.types.as_type_database(),
+                evaluated,
+            )
+    }
+
+    /// True when a `keyof` operand is generic-dependent: the operand itself —
+    /// or, for a type-alias reference, its resolved body — structurally
+    /// contains type parameters (or `infer` placeholders), so its key set
+    /// cannot be statically enumerated and the `keyof` stays deferred.
+    fn keyof_display_operand_is_generic_dependent(&mut self, operand: TypeId) -> bool {
+        let db = self.ctx.types.as_type_database();
+        if crate::query_boundaries::containment_queries::contains_type_parameters(db, operand) {
+            return true;
+        }
+        let Some(def_id) =
+            crate::query_boundaries::diagnostics::lazy_def_id(self.ctx.types, operand)
+        else {
+            return false;
+        };
+        let body = self.ctx.type_env.borrow().get_def(def_id).or_else(|| {
+            self.ctx
+                .definition_store
+                .get(def_id)
+                .and_then(|def| def.body)
+        });
+        let Some(body) = body else {
+            return false;
+        };
+        // A key-remapping mapped type (`{ [P in C as N]: V }`) always
+        // structurally contains its own bound type parameter `P` inside the
+        // `as`-clause `N` (and often `V`), so a whole-body containment check
+        // reports "generic" even for a fully concrete remap over a concrete
+        // constraint `C`. tsc's own gate (mirrored by the solver's
+        // `evaluate_keyof_inner`, which tests `contains_type_parameters_db`
+        // on `mapped.constraint` alone) looks only at the iteration
+        // constraint: every key is statically enumerable as soon as `C` is
+        // concrete, regardless of what `P` appears in.
+        if let Some((_, mapped)) = crate::query_boundaries::diagnostics::mapped_type(db, body)
+            && mapped.name_type.is_some()
+        {
+            return self.keyof_mapped_constraint_is_generic_dependent(mapped.constraint);
+        }
+        crate::query_boundaries::containment_queries::contains_type_parameters(db, body)
+    }
+
+    /// True when a mapped type's iteration constraint `C` (from `[P in C]`)
+    /// is generic-dependent. The constraint is typically a bare `keyof Name`
+    /// reference (`TypeData::Lazy`/`KeyOf` wrapping an alias), which never
+    /// structurally contains a `TypeParameter` node itself even when the
+    /// alias body it names does (`type Base = { ... } & U`); evaluating the
+    /// constraint first resolves through that alias reference so the check
+    /// sees `U`, matching what the solver's own evaluation-order gate sees.
+    fn keyof_mapped_constraint_is_generic_dependent(&mut self, constraint: TypeId) -> bool {
+        let evaluated = self.evaluate_type_for_assignability(constraint);
+        crate::query_boundaries::containment_queries::contains_type_parameters(
+            self.ctx.types.as_type_database(),
+            evaluated,
+        )
+    }
+
+    /// True when a `keyof` operand resolves — directly, or through a
+    /// non-generic type-alias reference — to a key-remapping mapped type
+    /// (`{ [P in C as N]: V }`) whose iteration constraint `C` is concrete
+    /// (no type parameters). Such a `keyof` evaluates fully to its literal
+    /// key union in the pinned oracle, unlike a named interface/class
+    /// operand (which keeps the `keyof Name` spelling) or a
+    /// generic-dependent remap (which stays deferred and widens the source).
+    fn keyof_operand_is_concrete_remapped_mapped_type(&mut self, operand: TypeId) -> bool {
+        let db = self.ctx.types.as_type_database();
+        let body = if crate::query_boundaries::diagnostics::mapped_type(db, operand).is_some() {
+            operand
+        } else {
+            let Some(def_id) =
+                crate::query_boundaries::diagnostics::lazy_def_id(self.ctx.types, operand)
+            else {
+                return false;
+            };
+            let Some(body) = self.ctx.type_env.borrow().get_def(def_id).or_else(|| {
+                self.ctx
+                    .definition_store
+                    .get(def_id)
+                    .and_then(|def| def.body)
+            }) else {
+                return false;
+            };
+            body
+        };
+        let Some((_, mapped)) = crate::query_boundaries::diagnostics::mapped_type(db, body) else {
+            return false;
+        };
+        mapped.name_type.is_some()
+            && !self.keyof_mapped_constraint_is_generic_dependent(mapped.constraint)
     }
 
     /// True when the `X` in `keyof X` reduces to a finite literal key set: a plain
@@ -134,6 +249,51 @@ impl<'a> CheckerState<'a> {
             .and_then(|def_id| self.keyof_type_alias_definition_display(def_id))
     }
 
+    /// Whether a `keyof` operand is *value-derived* (`keyof typeof x`): a
+    /// `typeof` query or enum type structurally (solver classifier), or an
+    /// object shape whose declaring symbol is a value — an enum or namespace
+    /// symbol — rather than a type declaration (interface/class keep the
+    /// `keyof Name` spelling).
+    pub(in crate::error_reporter) fn keyof_display_operand_is_value_derived(
+        &self,
+        operand: TypeId,
+    ) -> bool {
+        crate::query_boundaries::diagnostics::keyof_operand_is_value_derived(
+            self.ctx.types.as_type_database(),
+            operand,
+        ) || crate::query_boundaries::diagnostics::object_shape_for_type(self.ctx.types, operand)
+            .and_then(|shape| shape.symbol)
+            .and_then(|sym_id| self.ctx.binder.get_symbol(sym_id))
+            .is_some_and(|symbol| {
+                symbol.has_any_flags(
+                    tsz_binder::symbol_flags::ENUM | tsz_binder::symbol_flags::VALUE_MODULE,
+                )
+            })
+    }
+
+    /// The reduced key-union display for a `keyof` type whose operand is
+    /// value-derived, or `None` when the operand is a named type reference or
+    /// the `keyof` does not reduce. `ty` is the `KeyOf` type and `operand` its
+    /// inner type.
+    pub(in crate::error_reporter) fn value_derived_keyof_reduced_display(
+        &mut self,
+        ty: TypeId,
+        operand: TypeId,
+    ) -> Option<String> {
+        if !self.keyof_display_operand_is_value_derived(operand) {
+            return None;
+        }
+        let evaluated = self.evaluate_type_with_env(ty);
+        if evaluated == ty
+            || evaluated == TypeId::ERROR
+            || crate::query_boundaries::diagnostics::keyof_inner_type(self.ctx.types, evaluated)
+                .is_some()
+        {
+            return None;
+        }
+        Some(self.format_type_for_assignability_message(evaluated))
+    }
+
     pub(crate) fn keyof_type_alias_definition_display(
         &mut self,
         def_id: tsz_solver::def::DefId,
@@ -142,8 +302,49 @@ impl<'a> CheckerState<'a> {
         if def.kind != tsz_solver::def::DefKind::TypeAlias || !def.type_params.is_empty() {
             return None;
         }
-        let body = def.body?;
+        let direct_body = def.body?;
+        // An alias chain (`type K2 = K1; type K1 = keyof ...`) peels
+        // transparently to the `keyof` body of the terminal alias.
+        let body =
+            if crate::query_boundaries::diagnostics::keyof_inner_type(self.ctx.types, direct_body)
+                .is_some()
+            {
+                direct_body
+            } else {
+                crate::query_boundaries::diagnostics::keyof_alias_display_body(
+                    self.ctx.types.as_type_database(),
+                    &self.ctx.definition_store,
+                    direct_body,
+                )?
+            };
         let inner = crate::query_boundaries::diagnostics::keyof_inner_type(self.ctx.types, body)?;
+        // A value-derived operand (`keyof typeof E` — enum, enum namespace, or
+        // object value) renders as its evaluated key union in the pinned
+        // typescript@7.0.2 oracle, never as `keyof E` or the alias name; only
+        // a named *type* operand (`keyof I`, interface/class) keeps the
+        // `keyof` spelling.
+        if self.keyof_display_operand_is_value_derived(inner) {
+            let evaluated = self.evaluate_type_for_assignability(body);
+            // Rendered through the literal-key path (not the type formatter)
+            // so a global `union -> keyof Name` display alias on the reduced
+            // union cannot repaint it back to the `keyof` spelling.
+            if let Some(display) = self.finite_literal_keyset_display(evaluated) {
+                return Some(display);
+            }
+            return None;
+        }
+        // A key-remapping mapped-type alias (`type CPruned = { [P in C as N]:
+        // V }`) with a concrete iteration constraint `C` evaluates fully in
+        // the pinned oracle, unlike a named interface/class operand (which
+        // keeps the `keyof Name` spelling below) or a generic-dependent remap
+        // (still deferred; excluded by the constraint check here mirroring
+        // the solver's own `evaluate_keyof_inner` gate).
+        if self.keyof_operand_is_concrete_remapped_mapped_type(inner) {
+            let evaluated = self.evaluate_type_for_assignability(body);
+            if let Some(display) = self.finite_literal_keyset_display(evaluated) {
+                return Some(display);
+            }
+        }
         if let Some(alias_name) = self.lookup_type_alias_name_for_display(inner) {
             return Some(format!("keyof {alias_name}"));
         }

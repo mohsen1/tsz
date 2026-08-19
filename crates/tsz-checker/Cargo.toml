@@ -209,6 +209,9 @@ path = "tests/recursive_generic_interface_application_display_tests.rs"
 name = "export_default_interface_type_import_tests"
 path = "tests/export_default_interface_type_import_tests.rs"
 [[test]]
+name = "export_default_class_self_constraint_regression_tests"
+path = "tests/export_default_class_self_constraint_regression_tests.rs"
+[[test]]
 name = "default_imported_generic_alias_assertion_tests"
 path = "tests/default_imported_generic_alias_assertion_tests.rs"
 [[test]]
@@ -1344,6 +1347,9 @@ path = "tests/keyof_well_known_symbol_key_tests.rs"
 name = "keyof_class_unique_symbol_key_tests"
 path = "tests/keyof_class_unique_symbol_key_tests.rs"
 [[test]]
+name = "keyof_typeof_alias_body_reduction_tests"
+path = "tests/keyof_typeof_alias_body_reduction_tests.rs"
+[[test]]
 name = "partial_self_argument_diagnostic_tests"
 path = "tests/partial_self_argument_diagnostic_tests.rs"
 [[test]]
@@ -1965,6 +1971,9 @@ path = "tests/ts2352_paren_alias_display_tests.rs"
 [[test]]
 name = "generic_inference_ordering_tests"
 path = "tests/generic_inference_ordering_tests.rs"
+[[test]]
+name = "generic_call_fixed_type_param_head_display_tests"
+path = "tests/generic_call_fixed_type_param_head_display_tests.rs"
 [[test]]
 name = "jsx_generic_spread_deferred_conditional_tests"
 path = "tests/jsx_generic_spread_deferred_conditional_tests.rs"

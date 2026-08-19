@@ -337,6 +337,95 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Emit a deferred, constraint-relative source's leaf pair and the
+    /// constraint-walk elaboration `tsc` renders beneath it.
+    ///
+    /// `tsc` keeps the as-written operand and the full nullable-union target on
+    /// the first line (`TBox[KKey]` vs `string | undefined`), then walks the
+    /// operand's constraint one step per line
+    /// ([`indexed_access_constraint_display_walk`]), collapsing the target to
+    /// its single real member only once a walk step reaches a concrete source
+    /// (`number` vs `string`) — a deferred or union step keeps the full union.
+    /// `base_depth` is the elaboration depth of the leaf pair line.
+    ///
+    /// [`indexed_access_constraint_display_walk`]: crate::query_boundaries::common::indexed_access_constraint_display_walk
+    pub(super) fn push_deferred_constraint_walk(
+        &mut self,
+        diag: &mut Diagnostic,
+        source: TypeId,
+        target: TypeId,
+        base_depth: u32,
+    ) {
+        // The as-written operand renders verbatim with the full nullable union
+        // (its deferred form defers its relation to the constraint), so its
+        // strip decision must NOT resolve it — `Obj[KP]` would otherwise reduce
+        // to its constraint `number` and collapse the union prematurely.
+        self.push_constraint_walk_line(diag, source, target, base_depth, false);
+        let steps = crate::query_boundaries::common::indexed_access_constraint_display_walk(
+            self.ctx.types.as_type_database(),
+            source,
+            target,
+        );
+        for (i, step) in steps.iter().enumerate() {
+            let depth = base_depth + 1 + i as u32;
+            // Only a CONCRETE walk step (its object resolved from a real type)
+            // collapses the target to its single real member; a still-deferred
+            // generic-base step keeps the full nullable union, so it must not be
+            // resolved for the strip decision.
+            self.push_constraint_walk_line(diag, step.type_id, target, depth, step.concrete);
+        }
+    }
+
+    /// Push one `Type 'S' is not assignable to type 'T'.` line for a constraint
+    /// walk, rendering `target` in full for a union or deferred source and
+    /// collapsed to its single real member for a concrete source (mirroring
+    /// `tsc`'s `getBestMatchingType` at the concrete leaf only). `resolve_strip`
+    /// resolves the source through the checker's resolver before the strip
+    /// decision — set for a concrete walk step (where `Obj[keyof Obj]` reduces to
+    /// `number`) but not for a still-deferred step or the verbatim as-written
+    /// operand. This resolution is the checker's job by contract, not a patch:
+    /// the solver flags the step `concrete`, and `DefId -> TypeId` resolution of
+    /// a `Lazy` object base is owned by the checker's `TypeEnvironment`, so the
+    /// solver deliberately leaves the final reduction to this call.
+    fn push_constraint_walk_line(
+        &mut self,
+        diag: &mut Diagnostic,
+        source: TypeId,
+        target: TypeId,
+        depth: u32,
+        resolve_strip: bool,
+    ) {
+        // The nullish-strip decision must see the source the reader sees: a
+        // resolved concrete-base access (`Obj[keyof Obj]` -> `number`) collapses
+        // the target to its single real member; a still-deferred access or a
+        // union keeps the full nullable union.
+        let strip_source = if resolve_strip {
+            self.evaluate_type_for_assignability(source)
+        } else {
+            source
+        };
+        let display_target =
+            if crate::query_boundaries::common::union_members(self.ctx.types, strip_source)
+                .is_some()
+            {
+                target
+            } else {
+                self.strip_nullish_for_assignability_display(target, strip_source)
+                    .unwrap_or(target)
+            };
+        let source_str = self.format_type_for_assignability_message(source);
+        let target_str = self.format_type_for_assignability_message(display_target);
+        let line = format_message(
+            diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+            &[&source_str, &target_str],
+        );
+        diag.push_elaboration(
+            line,
+            diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+            depth,
+        );
+    }
+
     pub(super) fn render_property_type_mismatch(
         &mut self,
         reason: &tsz_solver::SubtypeFailureReason,
@@ -387,8 +476,38 @@ impl<'a> CheckerState<'a> {
         }
 
         if depth == 0 {
-            let (source_str, target_str) =
+            let (mut source_str, target_str) =
                 self.format_top_level_assignability_message_types_at(source, target, idx);
+            // A fresh object-literal source failing a UNION target (the
+            // fresh-literal fold's domain) renders its head role-based, like
+            // the plain type-mismatch head: each property keeps its literal
+            // exactly when the contextual (target) property type carries a
+            // literal of the same primitive base, and widens otherwise (tsc
+            // renders the checked fresh type, so `{ key: "foo", value: 3 }`
+            // against `{ key: "foo"; value: string; } | …` shows
+            // `{ key: "foo"; value: number; }`). The raw type format would
+            // leak every display-property literal verbatim. Non-union targets
+            // keep the existing head pipeline: its literal-surface rewrite
+            // already preserves correctly there, and the role-based formatter
+            // over-widens intersection-wrapped and satisfies-carried sources
+            // (errorMessagesIntersectionTypes02,
+            // typeSatisfaction_vacuousIntersectionOfContextualTypes).
+            let evaluated_target = self.evaluate_type_for_assignability(target);
+            if self.ctx.types.get_display_properties(source).is_some()
+                && crate::query_boundaries::diagnostics::union_members(
+                    self.ctx.types,
+                    evaluated_target,
+                )
+                .is_some()
+            {
+                source_str = self.format_type_for_diagnostic_role(
+                    source,
+                    crate::error_reporter::type_display_policy::DiagnosticTypeDisplayRole::AssignmentSource {
+                        target,
+                        anchor_idx: idx,
+                    },
+                );
+            }
             let outer_is_structural = {
                 let eval_source = self.evaluate_type_for_assignability(source);
                 let eval_target = self.evaluate_type_for_assignability(target);
@@ -560,25 +679,20 @@ impl<'a> CheckerState<'a> {
             // A property source that defers to its base constraint (a deferred
             // indexed access `T[K]`, a bare `keyof T`, or a conditional) keeps
             // the written operand and the *full* nullable-union target at the
-            // leaf pair: tsc renders the as-written relation (`TBox[KKey]` vs
-            // `string | undefined`) and then walks the constraint, never the
+            // leaf pair, then walks the constraint one step per line — never the
             // best-matching-member collapse (`... vs string`) that the solver's
-            // evaluated nested reason carries. Emit the raw pair and stop — the
-            // deeper constraint walk is separate elaboration tsz does not
-            // synthesize, and emitting the collapsed member here would be wrong.
+            // evaluated nested reason carries. Render the as-written relation
+            // (`TBox[KKey]` vs `string | undefined`) and the constraint-walk
+            // elaboration tsc emits beneath it; the solver's collapsed nested
+            // reason is discarded here because it would show the wrong pair.
             if crate::query_boundaries::common::is_deferred_constraint_relative_operand(
                 self.ctx.types.as_type_database(),
                 source_property_type,
             ) {
-                let source_str = self.format_type_for_assignability_message(source_property_type);
-                let target_str = self.format_type_for_assignability_message(target_property_type);
-                let leaf = format_message(
-                    diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                    &[&source_str, &target_str],
-                );
-                diag.push_elaboration(
-                    leaf,
-                    diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                self.push_deferred_constraint_walk(
+                    &mut diag,
+                    source_property_type,
+                    target_property_type,
                     depth + 1,
                 );
                 return diag;

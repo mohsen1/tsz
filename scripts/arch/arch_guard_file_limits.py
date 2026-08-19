@@ -25,7 +25,8 @@ from arch_guard_shared import (
 # `is_*`/`has_*` structural predicates and `contains_*`/`collect_*`/`walk_*`
 # traversal queries moved to `shape_predicates` and `containment_queries`
 # (parent #8225).
-QUERY_BOUNDARY_COMMON_LINE_BASELINE = 1140
+# Ratcheted 1140 -> 1139: #17738 removed one delegation line after the pin.
+QUERY_BOUNDARY_COMMON_LINE_BASELINE = 1139
 
 # Temporary green-campaign headroom for #14351. The live baseline remains
 # explicit; this reserve lets urgent parity PRs land while #8225 follow-up

@@ -168,3 +168,148 @@ fn ts17013_not_emitted_for_new_target_in_function_body() {
         "No TS17013 for new.target in a function body: {diagnostics:?}",
     );
 }
+
+/// When a new-expression argument is a context-sensitive callback with a
+/// BLOCK body whose return type fails against the constructor parameter, tsc
+/// reports TS2345 at the argument level (return reason as elaboration) instead
+/// of drilling an inner TS2322 — `checkTypeRelatedToAndOptionallyElaborate`
+/// only elaborates concise bodies. The call-expression path already followed
+/// this rule via `callback_prefers_argument_level_return_mismatch`; the
+/// new-expression result arm must apply the same gate (oracle: tsc 7.0.2,
+/// strict and non-strict).
+fn assert_single_argument_level_ts2345(source: &str) {
+    let diagnostics = check_source_diagnostics(source);
+    let ts2345_count = diagnostics
+        .iter()
+        .filter(|d| {
+            d.code == diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE
+        })
+        .count();
+    let ts2322_count = diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .count();
+    assert_eq!(
+        ts2345_count, 1,
+        "block-body callback mismatch must surface exactly one argument-level TS2345: {diagnostics:?}",
+    );
+    assert_eq!(
+        ts2322_count, 0,
+        "no TS2322 may leak for a block-body callback argument mismatch: {diagnostics:?}",
+    );
+}
+
+#[test]
+fn new_block_body_function_callback_mismatch_is_ts2345_nongeneric() {
+    assert_single_argument_level_ts2345(
+        r#"
+class Gadget {
+    constructor(cb: (x: number) => number) {}
+}
+new Gadget(function (a) { return ''; });
+"#,
+    );
+}
+
+#[test]
+fn new_block_body_arrow_callback_mismatch_is_ts2345_explicit_type_args() {
+    assert_single_argument_level_ts2345(
+        r#"
+class Crate2<TA, TB> {
+    constructor(a: TA, cb: (x: TA) => TB, b: TB) {}
+}
+new Crate2<number, number>(1, (a) => { return ''; }, 1);
+"#,
+    );
+}
+
+#[test]
+fn new_block_body_function_callback_mismatch_is_ts2345_inferred_type_args() {
+    assert_single_argument_level_ts2345(
+        r#"
+class Sack<E1, E2> {
+    constructor(a: E1, cb: (x: E1) => E2, b: E2) {}
+}
+new Sack(1, function (item) { return ''; }, 1);
+"#,
+    );
+}
+
+/// Renamed-binder twin of the explicit-type-args witness: the rule must not
+/// depend on class/parameter spellings.
+#[test]
+fn new_block_body_callback_mismatch_is_ts2345_renamed_binders() {
+    assert_single_argument_level_ts2345(
+        r#"
+class Zug<Q, R> {
+    constructor(erste: Q, wandler: (wert: Q) => R, letzte: R) {}
+}
+new Zug<string, string>('a', function (wert) { return 0; }, 'b');
+"#,
+    );
+}
+
+/// Negative control: a CONCISE arrow body elaborates to a TS2322 on the
+/// returned expression itself (tsc drills concise bodies), so the
+/// argument-level promotion must not fire.
+#[test]
+fn new_concise_arrow_body_mismatch_keeps_expression_level_ts2322() {
+    let source = r#"
+class Kite<M, N> {
+    constructor(a: M, cb: (x: M) => N, b: N) {}
+}
+new Kite<number, number>(1, (a) => '', 1);
+"#;
+    let diagnostics = check_source_diagnostics(source);
+    let ts2322_count = diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .count();
+    let ts2345_count = diagnostics
+        .iter()
+        .filter(|d| {
+            d.code == diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE
+        })
+        .count();
+    assert_eq!(
+        ts2322_count, 1,
+        "concise arrow body keeps the expression-level TS2322: {diagnostics:?}",
+    );
+    assert_eq!(
+        ts2345_count, 0,
+        "concise arrow body must not also promote an argument-level TS2345: {diagnostics:?}",
+    );
+}
+
+/// Negative control: object-literal arguments keep their per-property TS2322
+/// elaboration; the block-body gate must not swallow it.
+#[test]
+fn new_object_literal_argument_keeps_elaborated_ts2322() {
+    let source = r#"
+class Opts2 {
+    constructor(o: { a: number }) {}
+}
+new Opts2({ a: '' });
+"#;
+    let diagnostics = check_source_diagnostics(source);
+    let ts2322_count = diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .count();
+    assert_eq!(
+        ts2322_count, 1,
+        "object-literal argument keeps the elaborated TS2322: {diagnostics:?}",
+    );
+}
+
+/// Guard: the call-expression twin of the fixed witness stays on the
+/// argument-level TS2345 path.
+#[test]
+fn call_block_body_function_callback_mismatch_stays_ts2345() {
+    assert_single_argument_level_ts2345(
+        r#"
+declare function fabrik<K1, K2>(a: K1, cb: (x: K1) => K2, b: K2): void;
+fabrik<number, number>(1, function (a) { return ''; }, 1);
+"#,
+    );
+}

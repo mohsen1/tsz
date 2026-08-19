@@ -170,6 +170,198 @@ pub fn reduce_index_access_to_base_constraint(db: &dyn TypeDatabase, type_id: Ty
     }
 }
 
+/// Ordered constraint-walk display steps for a deferred, constraint-relative
+/// source in a failed nullable-union assignability elaboration, mirroring
+/// `tsc`'s `reportRelationError` recursion through `getConstraintOfType`.
+///
+/// `tsc` renders the as-written operand first (`TBox[KKey]`), then walks its
+/// constraint one step at a time — substituting a type-parameter index with
+/// its declared constraint (`TBox[keyof TBox]`), expanding a deferred `keyof`
+/// to its `string | number | symbol` base key space and distributing the index
+/// union (`TBox[string] | TBox[number] | TBox[symbol]`), and finally drilling a
+/// distributed union source to its first member not among the target's real
+/// members (`TBox[string]`). A concrete object short-circuits the entire walk
+/// to the resolved value type in a single step (`Obj[KP]` -> `number`).
+///
+/// Returns the steps STRICTLY AFTER `source` (each distinct from those already
+/// emitted), terminating at the leaf. The caller renders `source` itself; this
+/// supplies the elaboration lines beneath it. Empty when `source` has no
+/// further constraint to display.
+///
+/// `target` only selects the first failing member when a step distributes to a
+/// union (its nullish-stripped real members are the ones a source member may
+/// legitimately match). This is display-only: the assignability relation itself
+/// always runs against the full, unwalked types.
+pub fn indexed_access_constraint_display_walk(
+    db: &dyn TypeDatabase,
+    source: TypeId,
+    target: TypeId,
+) -> Vec<ConstraintWalkStep> {
+    let mut steps: Vec<ConstraintWalkStep> = Vec::new();
+    let mut cur = source;
+    // A deferred constraint walk is short (index -> keyof -> distribute ->
+    // member is the deepest `tsc` emits); the cap is a non-termination backstop.
+    for _ in 0..8 {
+        let Some(next) = constraint_walk_step(db, cur, target) else {
+            break;
+        };
+        if next == source || steps.iter().any(|s| s.type_id == next) {
+            break;
+        }
+        // A concrete step (an intrinsic, or a concrete-base access the caller's
+        // resolver renders as its value type, e.g. `Obj[keyof Obj]` -> `number`)
+        // collapses the nullable target to its single real member and terminates
+        // the walk; a generic-base access or a distributed union keeps the full
+        // union and the walk continues.
+        let concrete = is_walk_terminal(db, next);
+        steps.push(ConstraintWalkStep {
+            type_id: next,
+            concrete,
+        });
+        if concrete {
+            break;
+        }
+        cur = next;
+    }
+    steps
+}
+
+/// One constraint-walk display step: the intermediate type `tsc` renders, and
+/// whether it is a concrete leaf (which collapses a nullable target to its
+/// single real member) versus a still-deferred generic form (which keeps the
+/// full union).
+#[derive(Debug, Clone, Copy)]
+pub struct ConstraintWalkStep {
+    pub type_id: TypeId,
+    pub concrete: bool,
+}
+
+/// Whether a walk step is the terminal leaf: an intrinsic, a concrete-base
+/// indexed access (which the caller's resolver reduces to its value type), or
+/// any other non-instantiable type. A generic-base access or a distributed
+/// union is NOT terminal — the walk continues through its constraint / members.
+fn is_walk_terminal(db: &dyn TypeDatabase, ty: TypeId) -> bool {
+    if ty.is_intrinsic() {
+        return true;
+    }
+    match db.lookup(ty) {
+        Some(TypeData::IndexAccess(obj, _)) => {
+            !matches!(db.lookup(obj), Some(TypeData::TypeParameter(_)))
+        }
+        Some(TypeData::Union(_) | TypeData::KeyOf(_)) => false,
+        _ => true,
+    }
+}
+
+/// One constraint-walk step from `cur`: drill a distributed union to its first
+/// failing member, expand a bare `keyof`, or walk an indexed access's
+/// index/object constraint. `None` when `cur` has no further step.
+fn constraint_walk_step(db: &dyn TypeDatabase, cur: TypeId, target: TypeId) -> Option<TypeId> {
+    if cur.is_intrinsic() {
+        return None;
+    }
+    match db.lookup(cur)? {
+        // A distributed (or intrinsic-key) union source drills to its first
+        // member that is not among the target's real (nullish-stripped)
+        // members — `tsc` reports the first union constituent that fails.
+        TypeData::Union(list) => {
+            let members = db.type_list(list);
+            let reals = nullish_real_members(db, target);
+            members
+                .iter()
+                .copied()
+                .find(|m| !reals.contains(m))
+                .or_else(|| members.first().copied())
+        }
+        // An indexed access walks its index (then its object) constraint. A
+        // bare `keyof X` source is deliberately NOT expanded here: its base key
+        // space `string | number | symbol` renders through the `PropertyKey`
+        // display alias, which does not match `tsc`'s expanded form — that
+        // surface is left to a separate printer-alias fix. Inside an indexed
+        // access the same key space is distributed per-member
+        // (`T[string] | T[number] | T[symbol]`), which never reaches the alias.
+        TypeData::IndexAccess(obj, idx) => index_access_walk_step(db, obj, idx),
+        _ => None,
+    }
+}
+
+/// `getConstraintFromIndexedAccess`: simplify the index one step, else the
+/// object, building the resulting access the way `getIndexedAccessType` would.
+fn index_access_walk_step(db: &dyn TypeDatabase, obj: TypeId, idx: TypeId) -> Option<TypeId> {
+    if let Some(index_constraint) = one_step_constraint(db, idx)
+        && index_constraint != idx
+    {
+        return Some(build_index_access_step(db, obj, index_constraint));
+    }
+    if let Some(object_constraint) = one_step_constraint(db, obj)
+        && object_constraint != obj
+    {
+        let access = evaluate_index_access(db, object_constraint, idx);
+        // The object's constraint has no member at this index (`{ a: number }`
+        // has no `[string]`), so `tsc`'s `getConstraintFromIndexedAccess`
+        // returns nothing and the walk stops — do not leak the `any`/error
+        // that a missing member evaluates to as a spurious walk line.
+        if !matches!(
+            access,
+            TypeId::ANY | TypeId::ERROR | TypeId::UNKNOWN | TypeId::NEVER
+        ) && access != obj
+        {
+            return Some(access);
+        }
+    }
+    None
+}
+
+/// One step of `getConstraintOfType` for the index/object of a deferred access:
+/// a type parameter yields its declared constraint; a deferred `keyof` yields
+/// its `string | number | symbol` base key space. Everything else has no
+/// further single-step constraint here.
+fn one_step_constraint(db: &dyn TypeDatabase, ty: TypeId) -> Option<TypeId> {
+    get_type_parameter_constraint(db, ty).or_else(|| {
+        matches!(db.lookup(ty), Some(TypeData::KeyOf(_)))
+            .then(|| db.union3(TypeId::STRING, TypeId::NUMBER, TypeId::SYMBOL))
+    })
+}
+
+/// Build `obj[index_constraint]` the way `tsc`'s `getIndexedAccessType` would
+/// for display: a generic (type-parameter) object stays deferred and
+/// distributes a union index into a union of accesses; a concrete object
+/// resolves the access to its value type.
+fn build_index_access_step(db: &dyn TypeDatabase, obj: TypeId, index_constraint: TypeId) -> TypeId {
+    let obj_is_generic = matches!(db.lookup(obj), Some(TypeData::TypeParameter(_)));
+    if obj_is_generic {
+        if let Some(TypeData::Union(list)) = db.lookup(index_constraint) {
+            let accesses: Vec<TypeId> = db
+                .type_list(list)
+                .iter()
+                .map(|&m| db.index_access(obj, m))
+                .collect();
+            return db.union(accesses);
+        }
+        return db.index_access(obj, index_constraint);
+    }
+    // Concrete object: resolve the access to its value type. `evaluate_type`
+    // over the built access simplifies both a deferred `keyof` index and the
+    // resulting member lookup (`Obj[keyof Obj]` -> `number`), where the
+    // narrower `evaluate_index_access` would leave the access deferred when the
+    // index still needs its own evaluation.
+    evaluate_type(db, db.index_access(obj, index_constraint))
+}
+
+/// The real (non-`null`/`undefined`) members of a possibly-nullable target, or
+/// the target itself when it is not a union.
+fn nullish_real_members(db: &dyn TypeDatabase, target: TypeId) -> Vec<TypeId> {
+    match db.lookup(target) {
+        Some(TypeData::Union(list)) => db
+            .type_list(list)
+            .iter()
+            .copied()
+            .filter(|&m| m != TypeId::NULL && m != TypeId::UNDEFINED)
+            .collect(),
+        _ => vec![target],
+    }
+}
+
 /// Compute the default constraint of a deferred conditional type, mirroring
 /// tsc's `getDefaultConstraintOfConditionalType`: the union of the inferred
 /// true-branch type and the false-branch type.
