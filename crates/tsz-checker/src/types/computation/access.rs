@@ -880,11 +880,7 @@ impl<'a> CheckerState<'a> {
         // here — the concrete resolution is only valid once `T` is
         // instantiated — so this fast path is skipped for exactly the
         // configuration the deferred cases exist to handle.
-        let object_is_generic_receiver = crate::query_boundaries::common::is_type_parameter(
-            self.ctx.types,
-            pre_resolution_object_type,
-        ) && self.is_generic_index_type(index_type);
-        let union_keys = if object_is_generic_receiver {
+        let union_keys = if is_generic_receiver && self.is_generic_index_type(index_type) {
             None
         } else {
             self.get_literal_key_union_from_type(index_type)
