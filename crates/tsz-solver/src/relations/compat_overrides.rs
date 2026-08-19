@@ -972,9 +972,20 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         // Without this, recursive method types can appear identical through a
         // bivariant path that hits a cycle (CycleDetected = True) even when the
         // forward structural check correctly rejects the types.
+        //
+        // `identity_relation` makes nested enum comparisons strictly nominal (an
+        // `Enum(DefId, _)` is identical only to the same enum, not to the
+        // primitive it merely admits under assignability). It is scoped to this
+        // redeclaration bidirectional check rather than set inside
+        // `with_identity_check_mode`, because that helper is also reached by
+        // contextual/generic inference paths whose enum admissions must stay
+        // intact.
+        let saved_identity_relation = self.subtype.identity_relation;
+        self.subtype.identity_relation = true;
         let (fwd, bwd) = self
             .subtype
             .with_identity_check_mode(|sub| (sub.is_subtype_of(a, b), sub.is_subtype_of(b, a)));
+        self.subtype.identity_relation = saved_identity_relation;
         tracing::trace!(
             a = a.0,
             b = b.0,
