@@ -59,6 +59,33 @@ export default class Widget {
     );
 }
 
+#[test]
+fn export_default_class_value_position_member_type_is_concrete_in_harness() {
+    // Root-cause witness for the #17743 fix in `compute_class_symbol_type`:
+    // without it, the local `export default class` declaration is rejected on
+    // this entry path (no stable owner index, and the class NODE's symbol is
+    // the default-export binding), so the class VALUE computes to a degraded
+    // top type and member reads through `new` silently type as that top type
+    // — a false NEGATIVE: the wrong assignment below produced no TS2322. The
+    // consumer-side `is_incomplete_class_type` deferral cannot catch this
+    // (no constraint is involved); only computing the real constructor type
+    // does. Binder names differ from the constraint rows above on purpose.
+    let diagnostics = check_source_diagnostics(
+        r#"
+export default class Parcel {
+  readonly weight!: number;
+}
+const w: string = new Parcel().weight;
+"#,
+    );
+    assert!(
+        diagnostics.iter().any(|d| d.code == 2322),
+        "reading a number member off `new <default-exported class>()` and assigning it to \
+         `string` must report TS2322 (the class value must not degrade to a top type on \
+         the direct-CheckerState path): {diagnostics:#?}"
+    );
+}
+
 fn multi_file_clean(files: &[(&str, &str)], entry: &str) -> Vec<Diagnostic> {
     let libs = load_lib_files(&["es5.d.ts", "es2015.core.d.ts"]);
     check_multi_file_with_libs_stamped(files, entry, strict_checker_options(), &libs)
@@ -146,15 +173,17 @@ export default class Frame<Init = any> {
 //
 // #17629 fixed this family through the CLI driver, but the direct-`CheckerState`
 // harness (`check_source_diagnostics` / `check_source`) still reproduced the
-// pre-#17629 TS2344: on this entry path the deferred class self-reference
-// `Lazy(class def)` collapses to `unknown` under `evaluate_type_for_assignability`
-// (the instance type is not yet published in `symbol_instance_types`), and the
-// generic-constraint check judged that `unknown` as a resolved, constraint-failing
-// type instead of an unbuilt self-reference. #17743 fixes it in shared checker
-// wiring: `is_incomplete_class_type` now recognises a class-def `Lazy` that only
-// degrades to `unknown`/`any`/`error` as incomplete, so the constraint validator
-// defers it exactly like the CLI, and the genuine-violation control below stays
-// red (the class's real instance, once resolved, still fails a missing member).
+// pre-#17629 TS2344. Two cooperating fixes closed it in shared checker wiring:
+// `is_incomplete_class_type` recognises a class-def `Lazy` that only degrades
+// to `unknown`/`any`/`error` as incomplete, so the constraint validator defers
+// it exactly like the CLI; and `compute_class_symbol_type`'s local-declaration
+// predicate routes its node-symbol alternative through the shared
+// `class_self_reference_symbol` rule (#17629 rule 1) — for `export default
+// class` the class NODE's symbol is the default-export binding, never the
+// `CLASS`-flagged symbol under computation, so without that mapping (and
+// without a `global_symbol_file_index`, which this harness never wires) the
+// class computed to a degraded type in the first place. The genuine-violation
+// control above stays red (the real instance still fails a missing member).
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -176,6 +205,7 @@ export default class Envelope {
 }
 
 #[test]
+
 fn export_default_nongeneric_class_instance_function_expression_property_with_self_constraint_is_clean()
  {
     let diagnostics = check_source_diagnostics(
@@ -192,7 +222,7 @@ export default class Frame {
     assert!(
         diagnostics.is_empty(),
         "instance function-expression property on a NON-generic `export default class` must \
-         not raise TS2344 (harness-only divergence #17743): {diagnostics:#?}"
+         not raise TS2344 through the direct-CheckerState harness path (#17743): {diagnostics:#?}"
     );
 }
 

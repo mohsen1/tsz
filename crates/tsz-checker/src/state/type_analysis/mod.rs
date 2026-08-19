@@ -5,6 +5,7 @@ mod circular_export_ownership;
 mod circular_partial_ctor;
 pub(crate) mod computed;
 mod computed_alias;
+mod computed_class_symbol;
 mod computed_commonjs;
 pub(crate) mod computed_helpers;
 mod computed_helpers_binding;

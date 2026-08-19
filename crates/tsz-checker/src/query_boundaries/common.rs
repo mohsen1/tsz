@@ -829,20 +829,6 @@ pub(crate) fn get_base_constraint_of_type(db: &dyn TypeDatabase, type_id: TypeId
     tsz_solver::type_queries::get_base_constraint_of_type(db, type_id)
 }
 
-pub(crate) use tsz_solver::type_queries::ConstraintWalkStep;
-
-/// Ordered constraint-walk display steps beneath a deferred, constraint-relative
-/// source in a nullable-union assignability elaboration (`TBox[KKey]` ->
-/// `TBox[keyof TBox]` -> `TBox[string] | TBox[number] | TBox[symbol]` ->
-/// `TBox[string]`; `Obj[KP]` -> `number`). See the solver query for the rule.
-pub(crate) fn indexed_access_constraint_display_walk(
-    db: &dyn TypeDatabase,
-    source: TypeId,
-    target: TypeId,
-) -> Vec<ConstraintWalkStep> {
-    tsz_solver::type_queries::indexed_access_constraint_display_walk(db, source, target)
-}
-
 pub(crate) fn get_call_signatures(
     db: &dyn TypeDatabase,
     type_id: TypeId,

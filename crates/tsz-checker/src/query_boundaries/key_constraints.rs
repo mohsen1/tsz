@@ -119,12 +119,26 @@ where
     }
     if let Some(param_info) = super::common::type_param_info(db, index_type)
         && let Some(constraint) = param_info.constraint
-        && let Some(keyof_inner) = super::common::keyof_inner_type(db, constraint)
     {
-        return same_type_param_identity(db, keyof_inner, type_param)
-            || super::common::type_param_info(db, type_param)
-                .and_then(|param| param.constraint)
-                .is_some_and(|constraint| same_type_param_identity(db, constraint, keyof_inner));
+        if let Some(keyof_inner) = super::common::keyof_inner_type(db, constraint) {
+            return same_type_param_identity(db, keyof_inner, type_param)
+                || super::common::type_param_info(db, type_param)
+                    .and_then(|param| param.constraint)
+                    .is_some_and(|constraint| {
+                        same_type_param_identity(db, constraint, keyof_inner)
+                    });
+        }
+        // `K extends keyof T`'s constraint may already have been reduced to its
+        // evaluated key union at K's declaration site when T's own constraint
+        // was concrete (`get_keyof_type` eagerly evaluates `keyof` there), so
+        // the syntactic `KeyOf(T)` shape checked above no longer exists on
+        // `constraint`. Recognize that reduced form structurally instead: it is
+        // exactly what evaluating `keyof T` produces right now.
+        let deferred_keyof = db.keyof(type_param);
+        let evaluated_keyof = evaluate(deferred_keyof);
+        if evaluated_keyof != deferred_keyof && evaluate(constraint) == evaluated_keyof {
+            return true;
+        }
     }
     false
 }

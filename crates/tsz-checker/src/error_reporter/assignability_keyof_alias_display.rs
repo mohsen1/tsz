@@ -355,6 +355,25 @@ impl<'a> CheckerState<'a> {
         {
             return Some(format!("keyof {}", symbol.escaped_name));
         }
+        // `object_shape_for_type` does not unwrap `TypeData::Lazy(DefId)` — an
+        // interface/class operand that is still deferred (kept unresolved so the
+        // `keyof` itself stays deferred for display, e.g. a signature parameter
+        // type built from `symbol_types.rs`'s `preserve_deferred_keyof`) has no
+        // object shape to read a symbol from yet, but its `DefId` already carries
+        // the declared name.
+        if let Some(def_id) =
+            crate::query_boundaries::diagnostics::lazy_def_id(self.ctx.types, inner)
+            && let Some(def) = self.ctx.definition_store.get(def_id)
+            && matches!(
+                def.kind,
+                tsz_solver::def::DefKind::Interface | tsz_solver::def::DefKind::Class
+            )
+        {
+            return Some(format!(
+                "keyof {}",
+                self.ctx.types.resolve_atom_ref(def.name)
+            ));
+        }
         None
     }
 

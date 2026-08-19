@@ -204,17 +204,14 @@ const x: K = "zz";
 }
 
 #[test]
-fn interface_alias_keyof_call_argument_known_residual_renders_reduced_union() {
-    // KNOWN RESIDUAL: the pinned 7.0.2 oracle keeps the `keyof I` spelling
-    // here (`...parameter of type 'keyof I'.`). tsz renders the reduced key
-    // union because the parameter annotation `k: K` is evaluated to the
-    // interned union when the signature is built, so by diagnostic time the
-    // param type carries no `keyof` provenance to recover — and re-spelling a
-    // bare literal union from a coincidental alias would repaint user-written
-    // unions (the per-occurrence alias-identity residual already tracked on
-    // the board). Fixing this needs the signature to preserve the written
-    // alias reference, not a display-side patch. This pin asserts the current
-    // behavior so a deliberate fix flips it consciously.
+fn interface_alias_keyof_call_argument_keeps_keyof_spelling() {
+    // The parameter annotation `k: K` keeps the deferred `keyof I` type all
+    // the way to diagnostic display (`symbol_types.rs`'s
+    // `preserve_deferred_keyof` already avoids reducing it at signature-build
+    // time). The display gateway's named-operand fallback just didn't unwrap
+    // a still-deferred interface/class operand reference, so it fell through
+    // to a reduced-key-union display: fixed in
+    // `keyof_type_alias_definition_display`.
     expect_code_with(
         r#"
 interface I { a: number; c?: string }
@@ -223,7 +220,7 @@ declare function f(k: K): void;
 f("zz");
 "#,
         2345,
-        r#"Argument of type '"zz"' is not assignable to parameter of type '"a" | "c"'."#,
+        r#"Argument of type '"zz"' is not assignable to parameter of type 'keyof I'."#,
     );
 }
 

@@ -648,6 +648,17 @@ pub struct SubtypeChecker<'a, R: TypeResolver = NoopResolver> {
     /// point differ (e.g., `IPromise2<W, U>` vs `Promise2<any, W>`).
     /// Used by `are_types_identical_for_redeclaration` for TS2403 identity checks.
     pub identity_cycle_check: bool,
+    /// When `true`, the checker is running tsc's `isTypeIdenticalTo` relation
+    /// for a variable redeclaration (`are_types_identical_for_redeclaration`)
+    /// rather than assignability or plain subtyping. Set only around that
+    /// bidirectional check, so it never perturbs inference or contextual typing.
+    /// Combined with `in_property_check`, it makes a *nested* enum-member
+    /// property nominally distinct from the primitive it merely admits under
+    /// assignability (`{ A: number }` is not identical to `{ A: E.A }`, even
+    /// though `number` is assignable to a numeric enum member). The top-level
+    /// whole-type enum case is handled separately by the enum short-circuit in
+    /// `are_types_identical_for_redeclaration`.
+    pub identity_relation: bool,
     /// Cache for `evaluate_type` results within this `SubtypeChecker`'s lifetime.
     /// This prevents O(n²) behavior when the same type (e.g., a large union) is
     /// evaluated multiple times across different subtype checks.
@@ -868,6 +879,7 @@ impl<'a> SubtypeChecker<'a, NoopResolver> {
             assume_related_on_cycle: true,
             assume_related_on_depth: true,
             identity_cycle_check: false,
+            identity_relation: false,
             bypass_evaluation: false,
             max_depth: MAX_SUBTYPE_DEPTH,
             erase_generics: true,
@@ -931,6 +943,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             assume_related_on_cycle: true,
             assume_related_on_depth: true,
             identity_cycle_check: false,
+            identity_relation: false,
             bypass_evaluation: false,
             max_depth: MAX_SUBTYPE_DEPTH,
             erase_generics: true,
