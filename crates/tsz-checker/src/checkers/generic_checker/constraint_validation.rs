@@ -1625,6 +1625,7 @@ impl CheckerState<'_> {
                             .type_arg_constraint_relation_outcome(base_for_check, inst_constraint)
                             .related
                             || is_incomplete_class_type(self, base_for_check)
+                            || is_incomplete_class_type(self, base) // deferred class Lazy (#17743)
                             || self.base_union_members_satisfy_constraint(
                                 base_for_check,
                                 inst_constraint,

@@ -1039,6 +1039,10 @@ mod ts2339_js_this_function_name_display_tests;
 mod ts2339_private_access_via_constructor_type_tests;
 #[path = "tests/ts2341_private_access_via_type_param_constraint_tests.rs"]
 mod ts2341_private_access_via_type_param_constraint_tests;
+#[path = "tests/ts2345_fresh_literal_union_argument_head_display_tests.rs"]
+mod ts2345_fresh_literal_union_argument_head_display_tests;
+#[path = "tests/ts2345_generic_call_concrete_alias_parameter_display_tests.rs"]
+mod ts2345_generic_call_concrete_alias_parameter_display_tests;
 #[path = "tests/ts2345_private_brand_argument_elaboration_tests.rs"]
 mod ts2345_private_brand_argument_elaboration_tests;
 #[path = "tests/ts2345_unknown_argument_assignability_tests.rs"]
