@@ -3016,3 +3016,7 @@ path = "tests/union_same_base_application_assignability_tests.rs"
 [[test]]
 name = "js_object_literal_receiver_display_tests"
 path = "tests/js_object_literal_receiver_display_tests.rs"
+
+[[test]]
+name = "overloaded_method_override_ts2416_count_tests"
+path = "tests/overloaded_method_override_ts2416_count_tests.rs"
