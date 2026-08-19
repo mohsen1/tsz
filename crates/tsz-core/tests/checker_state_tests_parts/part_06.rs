@@ -1444,8 +1444,16 @@ var e: typeof E;
 }
 
 #[test]
-fn test_variable_redeclaration_enum_object_literal_no_2403() {
-    // Ensure enum value redeclaration with structural type does not trigger TS2403.
+fn test_variable_redeclaration_enum_typeof_vs_structural_reports_2403() {
+    // `typeof E1` (the enum-constructor object) carries member properties typed
+    // as the nominal enum members (`Enum(memberA, number)`), not plain `number`.
+    // A hand-written annotation with the same layout but `number`-typed members
+    // is therefore NOT redeclaration-identical to `typeof E1` under tsc's
+    // `isTypeIdenticalTo` — an enum type is strictly nominal and never identical
+    // to a non-enum type, even when their value domains coincide. tsc reports
+    // TS2403 here; tsz must too (regression fence for #17707). The offending
+    // declaration is the structural annotation, which differs from the enum
+    // object established by `var e = E1`.
     let source = r#"
 enum E1 {
     A,
@@ -1485,7 +1493,99 @@ var e: typeof E1;
 
     assert_eq!(
         error_2403_count, 1,
-        "Expected 1 error 2403 for third variable declaration (matching tsc), got: {codes:?}"
+        "Expected 1 error 2403 for the structural annotation that diverges from `typeof E1` (matching tsc), got: {codes:?}"
+    );
+}
+
+/// Same divergence as above with renamed binders: the rule keys on nominal
+/// enum-ness, never on identifier text, so a differently-named enum and members
+/// must still report exactly one TS2403 (#17707 anti-hardcoding adjacent case).
+#[test]
+fn test_variable_redeclaration_enum_typeof_vs_structural_renamed_binders_reports_2403() {
+    let source = r#"
+enum Zqx {
+    Wv,
+    Mn,
+    Pt
+}
+
+var q = Zqx;
+var q: {
+    readonly Wv: number;
+    readonly Mn: number;
+    readonly Pt: number;
+    readonly [n: number]: string;
+};
+var q: typeof Zqx;
+"#;
+
+    let (parser, root) = parse_test_source(source);
+
+    let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    setup_lib_contexts(&mut checker);
+    checker.check_source_file(root);
+
+    let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
+    let error_2403_count = codes.iter().filter(|&&c| c == 2403).count();
+
+    assert_eq!(
+        error_2403_count, 1,
+        "Expected 1 error 2403 for renamed-binder enum/structural divergence, got: {codes:?}"
+    );
+}
+
+/// Positive control: redeclaring `typeof E1` against itself (or against the
+/// inferred `var e = E1` enum object) is genuinely identical, so no TS2403.
+/// This guards against the identity-relation enum rule over-rejecting when both
+/// sides truly resolve to the same enum-constructor object (#17707).
+#[test]
+fn test_variable_redeclaration_enum_typeof_matches_typeof_no_2403() {
+    let source = r#"
+enum E1 {
+    A,
+    B,
+    C
+}
+
+var e = E1;
+var e: typeof E1;
+var e: typeof E1;
+"#;
+
+    let (parser, root) = parse_test_source(source);
+
+    let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    setup_lib_contexts(&mut checker);
+    checker.check_source_file(root);
+
+    let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
+    let error_2403_count = codes.iter().filter(|&&c| c == 2403).count();
+
+    assert_eq!(
+        error_2403_count, 0,
+        "Expected no error 2403 when all declarations resolve to `typeof E1`, got: {codes:?}"
     );
 }
 

@@ -82,14 +82,34 @@ impl<R: TypeResolver> SubtypeChecker<'_, R> {
             return Some(SubtypeResult::False);
         }
 
+        // Exactly one side is an enum below (the both-enum case already
+        // returned above). Under tsc's identity relation (`isTypeIdenticalTo`,
+        // used for TS2403 redeclaration), an enum type is strictly nominal: it
+        // is never identical to a non-enum type, even when their value domains
+        // coincide (a numeric enum member vs `number`). tsc's one-sided
+        // `number` <: numeric-enum-member admission (`isSimpleTypeRelatedTo`)
+        // used by the two structural fallthroughs is an *assignability* quirk,
+        // not an identity property, so it must not leak into the identity
+        // relation. This mirrors the top-level `enum_redeclaration_check` rule
+        // ("one enum, one non-enum → not identical") for the case where the
+        // enum is nested inside an object property (e.g. `typeof E`'s member
+        // `A: Enum(memberA, number)` vs a hand-written `A: number`), which
+        // reaches the relation only through this per-property recursion.
+
         // Source is Enum, Target is not - check structural member type
         if let Some((_s_def_id, s_members)) = enum_components(self.interner, source) {
+            if self.identity_relation {
+                return Some(SubtypeResult::False);
+            }
             return Some(self.check_subtype(s_members, target));
         }
 
         // Target is Enum, Source is not - Rule #7, tsc's numeric-member
         // admission, and the structural member fallthrough.
         if enum_components(self.interner, target).is_some() {
+            if self.identity_relation {
+                return Some(SubtypeResult::False);
+            }
             return Some(self.check_non_enum_source_to_enum_target(source, target));
         }
 

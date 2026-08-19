@@ -648,6 +648,15 @@ pub struct SubtypeChecker<'a, R: TypeResolver = NoopResolver> {
     /// point differ (e.g., `IPromise2<W, U>` vs `Promise2<any, W>`).
     /// Used by `are_types_identical_for_redeclaration` for TS2403 identity checks.
     pub identity_cycle_check: bool,
+    /// When `true`, the checker is running tsc's `identity` relation
+    /// (`isTypeIdenticalTo`), used for TS2403 redeclaration and conditional-type
+    /// identity. The identity relation is strictly nominal for enums: an enum
+    /// type is never identical to a non-enum type even when their value domains
+    /// coincide (e.g. a numeric enum member vs `number`). tsc's one-sided
+    /// `number` <: numeric-enum-member admission (`isSimpleTypeRelatedTo`) is an
+    /// *assignability* quirk and must not leak into identity. Set and restored by
+    /// [`with_identity_check_mode`](Self::with_identity_check_mode).
+    pub identity_relation: bool,
     /// Cache for `evaluate_type` results within this `SubtypeChecker`'s lifetime.
     /// This prevents O(n²) behavior when the same type (e.g., a large union) is
     /// evaluated multiple times across different subtype checks.
@@ -868,6 +877,7 @@ impl<'a> SubtypeChecker<'a, NoopResolver> {
             assume_related_on_cycle: true,
             assume_related_on_depth: true,
             identity_cycle_check: false,
+            identity_relation: false,
             bypass_evaluation: false,
             max_depth: MAX_SUBTYPE_DEPTH,
             erase_generics: true,
@@ -931,6 +941,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             assume_related_on_cycle: true,
             assume_related_on_depth: true,
             identity_cycle_check: false,
+            identity_relation: false,
             bypass_evaluation: false,
             max_depth: MAX_SUBTYPE_DEPTH,
             erase_generics: true,
@@ -1284,22 +1295,25 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// identity checking (TS2403 and related redeclaration/identity paths).
     ///
     /// Temporarily sets `any_propagation = TopLevelOnly`, enables
-    /// `identity_cycle_check`, disables method bivariance, and forces
-    /// `strict_function_types = true` — matching tsc's strict bidirectional
-    /// structural equality. All four flags are restored on return, even if
-    /// `f` returns early.
+    /// `identity_cycle_check` and `identity_relation`, disables method
+    /// bivariance, and forces `strict_function_types = true` — matching tsc's
+    /// strict bidirectional structural equality. All five flags are restored on
+    /// return, even if `f` returns early.
     pub fn with_identity_check_mode<T>(&mut self, f: impl FnOnce(&mut Self) -> T) -> T {
         let saved_any_mode = self.any_propagation;
         let saved_identity_cycle = self.identity_cycle_check;
+        let saved_identity_relation = self.identity_relation;
         let saved_method_bivariance = self.disable_method_bivariance;
         let saved_strict_fn = self.strict_function_types;
         self.any_propagation = AnyPropagationMode::TopLevelOnly;
         self.identity_cycle_check = true;
+        self.identity_relation = true;
         self.disable_method_bivariance = true;
         self.strict_function_types = true;
         let result = f(self);
         self.any_propagation = saved_any_mode;
         self.identity_cycle_check = saved_identity_cycle;
+        self.identity_relation = saved_identity_relation;
         self.disable_method_bivariance = saved_method_bivariance;
         self.strict_function_types = saved_strict_fn;
         result
