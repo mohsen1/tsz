@@ -276,7 +276,11 @@ tsz-checker::generic_call_assignment_flow_tests::colliding_generic_terminals_kee
 # property's read must use the last assignment textually *before* the read
 # instead. Routed ordered reads through the already-existing position-bounded
 # `current_file_commonjs_prior_named_export_type` helper.
-tsz-checker::raw_builder_return_context_inference_tests::different_base_and_ambiguous_union_do_not_pin_the_tag
+# 2026-08-19 shrink (no generation bump — removals are always allowed): the
+# raw_builder_return_context_inference_tests::different_base_and_ambiguous_union_do_not_pin_the_tag
+# row now passes — the ambiguous same-base-union return context no longer pins
+# the tag's parameter (constraint-walker ReturnType union-arm combination; see
+# the PR that removed this row for the mechanism and the oracle matrix).
 # 2026-08-17 shrink (no generation bump — removals are always allowed): the two
 # tsz-cli::driver_tests rows below now pass on main @ 026b8458 — verified with a
 # direct per-test run (`cargo nextest run -p tsz-cli --lib -E
