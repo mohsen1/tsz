@@ -598,6 +598,7 @@ impl<'a> CheckerState<'a> {
             // synthesize, and emitting the collapsed member here would be wrong.
             if crate::query_boundaries::common::is_deferred_constraint_relative_operand(
                 self.ctx.types.as_type_database(),
+                &self.ctx.definition_store,
                 source_property_type,
             ) {
                 let source_str = self.format_type_for_assignability_message(source_property_type);

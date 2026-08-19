@@ -595,3 +595,94 @@ fn concrete_base_generic_index_member_source_keeps_pair_identity() {
         "concrete-base generic-index member source must keep its own identity, got: {msg}"
     );
 }
+
+// =====================================================================
+// Generic-alias application over a deferred indexed access (#17718 witness 3).
+// =====================================================================
+
+/// A generic alias whose body is a bare indexed access over its own type
+/// parameters (`type Pluck<TSrc, KSel extends keyof TSrc> = TSrc[KSel]`)
+/// carries the same deferred-relation behavior as the bare body when the
+/// application's arguments are themselves still generic: tsc keeps the full
+/// declared target union on the head line, drilling one level deeper before
+/// it collapses. tsz previously ignored the alias wrapper entirely and
+/// collapsed at the head.
+#[test]
+fn generic_alias_application_of_deferred_indexed_access_keeps_full_union() {
+    let msg = message(
+        r#"
+type Pluck<TSrc, KSel extends keyof TSrc> = TSrc[KSel];
+function alias2<TSrc, KSel extends keyof TSrc>(x: Pluck<TSrc, KSel>) {
+  const y: string | undefined = x;
+}
+"#,
+        2322,
+    );
+    assert!(
+        msg.contains("'string | undefined'"),
+        "generic alias application of a deferred indexed access must keep the full union, got: {msg}"
+    );
+}
+
+/// Negative control: once every type argument the alias's body indexes with
+/// is concrete, the application evaluates like a bare concrete indexed
+/// access and still collapses.
+#[test]
+fn concrete_alias_instantiation_of_indexed_access_still_collapses() {
+    let msg = message(
+        r#"
+type Pluck<TSrc, KSel extends keyof TSrc> = TSrc[KSel];
+interface Bag { one: number; two: number }
+function alias2(x: Pluck<Bag, "one">) {
+  const y: string | undefined = x;
+}
+"#,
+        2322,
+    );
+    assert!(
+        !msg.contains("| undefined"),
+        "fully concrete alias instantiation must collapse like a bare indexed access, got: {msg}"
+    );
+}
+
+/// Anti-hardcoding: a differently-named alias and differently-named enclosing
+/// type parameters must behave identically — the match is positional against
+/// the alias's own declared parameters, not by name.
+#[test]
+fn renamed_binder_generic_alias_application_keeps_full_union() {
+    let msg = message(
+        r#"
+type Grab<A, B extends keyof A> = A[B];
+function alias3<Src, Sel extends keyof Src>(x: Grab<Src, Sel>) {
+  const y: string | undefined = x;
+}
+"#,
+        2322,
+    );
+    assert!(
+        msg.contains("'string | undefined'"),
+        "renamed-binder generic alias application must keep the full union, got: {msg}"
+    );
+}
+
+/// Only one of the two application arguments is still generic (the object
+/// side resolved to a concrete interface, the index side stays an unresolved
+/// type parameter): the result is still a deferred indexed access, matching
+/// the pre-existing bare-`Obj[K]`-with-generic-index rule.
+#[test]
+fn partially_generic_alias_application_keeps_full_union() {
+    let msg = message(
+        r#"
+type Pluck<TSrc, KSel extends keyof TSrc> = TSrc[KSel];
+interface Bag { one: number; two: number }
+function alias4<KSel extends keyof Bag>(x: Pluck<Bag, KSel>) {
+  const y: string | undefined = x;
+}
+"#,
+        2322,
+    );
+    assert!(
+        msg.contains("'string | undefined'"),
+        "partially generic alias application must keep the full union, got: {msg}"
+    );
+}
