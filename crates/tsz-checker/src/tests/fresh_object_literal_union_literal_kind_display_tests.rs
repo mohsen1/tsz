@@ -387,3 +387,34 @@ const r: R = { p: 5, q: 2 };
         "no-match case keeps the property-anchored elaboration"
     );
 }
+
+#[test]
+fn primitive_valued_property_widens_in_fold_head() {
+    // `mappedTypeIndexedAccess.ts` shape: the union arms type `value` as PLAIN
+    // primitives (string / number), so the fresh source's `value: 3` widens to
+    // `number` in the head, while the literal-typed `key` keeps `"foo"` — the
+    // per-property same-base rule, not a whole-object preservation.
+    let (head, chain) = chain_texts(
+        r#"
+type Pairs<T> = { [K in keyof T]: { key: K; value: T[K] } };
+type Pair<T> = Pairs<T>[keyof T];
+type FooBar = { foo: string; bar: number };
+let pair: Pair<FooBar> = { key: "foo", value: 3 };
+"#,
+        2322,
+    );
+    assert!(
+        head.contains("Type '{ key: \"foo\"; value: number; }' is not assignable"),
+        "primitive-typed property widens, literal-typed key stays, got: {head}"
+    );
+    assert_eq!(
+        chain,
+        vec![
+            (0, "Types of property 'value' are incompatible.".to_string()),
+            (
+                1,
+                "Type 'number' is not assignable to type 'string'.".to_string()
+            ),
+        ],
+    );
+}
