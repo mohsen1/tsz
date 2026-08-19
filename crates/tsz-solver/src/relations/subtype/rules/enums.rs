@@ -82,14 +82,43 @@ impl<R: TypeResolver> SubtypeChecker<'_, R> {
             return Some(SubtypeResult::False);
         }
 
+        // Reaching here, at most one side is an enum (the both-enum case
+        // returned above).
+        let source_enum = enum_components(self.interner, source);
+        let target_enum = enum_components(self.interner, target);
+
+        // Under tsc's `isTypeIdenticalTo` (the redeclaration identity relation),
+        // an enum-typed object *property* is nominally distinct from a plain
+        // primitive property: `typeof E`'s members are `Enum(DefId, _)` types,
+        // and `{ A: number }` is not identical to `{ A: E.A }` even though
+        // `number` is *assignable* to a numeric enum member. The one-sided
+        // admissions below (`E.A <: number`, `number <: E.A`) model that
+        // asymmetric assignability rule and would otherwise let the two property
+        // types look identical, dropping TS2403 for
+        // `var e: typeof E; var e: { A: number; ...; [n: number]: string };`.
+        //
+        // Scope this to *nested* property comparisons (`in_property_check`)
+        // within the identity relation. The top-level whole-type case
+        // (`var a: number; var a: E`) is owned by the top-level enum check in
+        // `are_types_identical_for_redeclaration`, which already applies the
+        // user-enum nominal rule and stays deliberately permissive for enum
+        // types minted by generic inference — matching tsc, which reports no
+        // redeclaration conflict there.
+        if self.identity_relation
+            && self.in_property_check
+            && (source_enum.is_some() || target_enum.is_some())
+        {
+            return Some(SubtypeResult::False);
+        }
+
         // Source is Enum, Target is not - check structural member type
-        if let Some((_s_def_id, s_members)) = enum_components(self.interner, source) {
+        if let Some((_s_def_id, s_members)) = source_enum {
             return Some(self.check_subtype(s_members, target));
         }
 
         // Target is Enum, Source is not - Rule #7, tsc's numeric-member
         // admission, and the structural member fallthrough.
-        if enum_components(self.interner, target).is_some() {
+        if target_enum.is_some() {
             return Some(self.check_non_enum_source_to_enum_target(source, target));
         }
 

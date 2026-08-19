@@ -4,8 +4,15 @@ use std::fs;
 fn type_analysis_env_merges_use_deferred_helpers() {
     let cross_file = fs::read_to_string("src/state/type_analysis/cross_file_env_merge.rs")
         .expect("failed to read cross_file_env_merge.rs");
-    let enum_member = fs::read_to_string("src/state/type_analysis/computed_helpers_binding.rs")
-        .expect("failed to read computed_helpers_binding.rs");
+    let enum_member = {
+        let mut merged = fs::read_to_string("src/state/type_analysis/computed_helpers_binding.rs")
+            .expect("failed to read computed_helpers_binding.rs");
+        merged.push_str(
+            &fs::read_to_string("src/state/type_analysis/computed_class_symbol.rs")
+                .expect("failed to read computed_class_symbol.rs"),
+        );
+        merged
+    };
 
     for forbidden in [
         "type_env.try_borrow_mut",
