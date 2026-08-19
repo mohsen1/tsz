@@ -236,8 +236,14 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             // 'a'` -> `never`); a forbidden argument then reaches a `never`
             // parameter and is rejected (TS2345). Inference from a nested position
             // (callback return, array element, …) still widens.
-            if self.type_param_preserves_inferred_literal(func, tp.name) {
-                infer_ctx.mark_top_level_in_return_type_unfixed(var);
+            if self.type_param_at_top_level_through_aliases(func.return_type, tp.name) {
+                // Structural half of tsc's `isTypeParameterAtTopLevelInReturnType`,
+                // consumed by the runtime literal-widening gate together with the
+                // contextually-fixed set recorded after Round 1 below.
+                infer_ctx.mark_top_level_in_return_type(var);
+                if self.type_param_preserves_inferred_literal(func, tp.name) {
+                    infer_ctx.mark_top_level_in_return_type_unfixed(var);
+                }
             }
         }
 
@@ -1614,6 +1620,41 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             && !deferred_arg_covers_return_var
         {
             infer_ctx.add_candidate(var, ctx_type, crate::types::InferencePriority::ReturnType);
+        }
+
+        // tsc contextually types a context-sensitive callback argument through
+        // the inference context's *fixing* mapper: every type parameter the
+        // callback's contextual parameter types mention becomes
+        // `inference.isFixed`, and a fixed inference widens its fresh literal
+        // candidates even at the return type's top level
+        // (`getCovariantInference`'s `widenLiteralTypes` gate). Record those
+        // variables before Round-1 fixing so `resolve_from_candidates` can
+        // distinguish them from return-position-only variables, whose literal
+        // candidates tsc keeps.
+        for (i, &arg_type) in arg_types.iter().enumerate() {
+            if !self.is_contextually_sensitive(arg_type) {
+                continue;
+            }
+            let Some(target_type) =
+                self.param_type_for_arg_index(&instantiated_params, i, arg_types.len())
+            else {
+                continue;
+            };
+            let Some(shape) = Self::get_contextual_signature_cached(self.interner, target_type)
+            else {
+                continue;
+            };
+            for callback_param in &shape.params {
+                placeholder_visited.clear();
+                for var in self.collect_placeholder_vars_in_type(
+                    callback_param.type_id,
+                    &var_map,
+                    &mut placeholder_probe_map,
+                    &mut placeholder_visited,
+                ) {
+                    infer_ctx.mark_contextually_fixed(var);
+                }
+            }
         }
 
         // === Fixing: Resolve variables with enough information ===

@@ -326,6 +326,7 @@ impl<'a> InferenceContext<'a> {
                     dc,
                     dc_preserves_literals,
                     skip_literal_widening,
+                    self.root_preserves_return_position_literals(root),
                     spread_rest_mode,
                 );
                 // (TypeParameter filtering already done above)
@@ -467,6 +468,7 @@ impl<'a> InferenceContext<'a> {
             dc,
             dc_preserves_literals,
             skip_literal_widening,
+            self.root_preserves_return_position_literals(root),
             spread_rest_mode,
         ))
     }
@@ -524,6 +526,7 @@ impl<'a> InferenceContext<'a> {
                             dc,
                             dc_preserves_literals,
                             skip_literal_widening,
+                            self.root_preserves_return_position_literals(root),
                             spread_rest_mode,
                         );
                         if !contra_candidates.is_empty() {
