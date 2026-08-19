@@ -45,6 +45,32 @@ impl<R: TypeResolver> SubtypeChecker<'_, R> {
         reason
     }
 
+    /// Refine a failing `boolean` union-source member to its failing literal
+    /// half.
+    ///
+    /// tsc's `booleanType` is a primitive union of the two boolean literals,
+    /// so its union-source walk (`eachTypeRelatedToType`) relates `false` and
+    /// `true` separately: the reported witness is the first failing literal
+    /// constituent (`Type 'false' is not assignable to type 'true'.`), and
+    /// display-side literal generalization (`reportRelationError`) widens it
+    /// back to `boolean` only when the target holds no top-level singleton
+    /// types. tsz interns `boolean` as a single intrinsic, so the walk refines
+    /// the witness here; the checker's display generalization owns the
+    /// widening. Callers gate this to genuine multi-member sources — a bare
+    /// `boolean` source is a primitive union in tsc, whose walk never reports
+    /// per constituent, so its witness stays `boolean`.
+    fn boolean_member_failing_half(&mut self, member: TypeId, resolved_target: TypeId) -> TypeId {
+        if self.resolve_lazy_type(member) != TypeId::BOOLEAN {
+            return member;
+        }
+        for half in [TypeId::BOOLEAN_FALSE, TypeId::BOOLEAN_TRUE] {
+            if !self.check_subtype(half, resolved_target).is_true() {
+                return half;
+            }
+        }
+        member
+    }
+
     /// Explain a failed relation whose `resolved_target` is a union. Always
     /// returns a reason; the caller has already established the union shape.
     pub(super) fn explain_union_target_failure(
@@ -161,7 +187,17 @@ impl<R: TypeResolver> SubtypeChecker<'_, R> {
                         }
                         break;
                     }
-                    if let Some(reason) = self.explain_failure_guarded(source_member, sole_member) {
+                    // A failing `boolean` member in a genuine union walk
+                    // explains through its failing literal half, as tsc's
+                    // constituent walk does (`Type 'false' is not assignable
+                    // to type 'true'.`); the display layer widens the literal
+                    // back to `boolean` against singleton-free targets.
+                    let witness = if source_members.len() > 1 {
+                        self.boolean_member_failing_half(source_member, resolved_target)
+                    } else {
+                        source_member
+                    };
+                    if let Some(reason) = self.explain_failure_guarded(witness, sole_member) {
                         let promote = match &reason {
                             // Object/array source missing a required property:
                             // surface the missing-property reason directly
@@ -208,7 +244,7 @@ impl<R: TypeResolver> SubtypeChecker<'_, R> {
                             return Some(self.wrap_union_source_member_reason(
                                 source,
                                 target,
-                                source_member,
+                                witness,
                                 &source_members,
                                 reason,
                             ));
@@ -283,6 +319,37 @@ impl<R: TypeResolver> SubtypeChecker<'_, R> {
                         nested_reason: Box::new(reason),
                     });
                 }
+            }
+        }
+
+        // Genuine multi-member union source with no best-matching target
+        // member: tsc's union-source walk (`eachTypeRelatedToType`) still
+        // reports the first failing constituent against the whole union
+        // target (`Type 'string | boolean' is not assignable to type
+        // 'number | true'.` -> `Type 'false' is not assignable to type
+        // 'number | true'.`) instead of stopping at the bare union head.
+        // tsc gates that walk off for primitive unions (`boolean`, an enum
+        // type), which tsz never resolves to a multi-member list here, so
+        // the `len() > 1` gate matches tsc's `!(source.flags & Primitive)`.
+        if source_members.len() > 1 {
+            for &source_member in &source_members {
+                if source_member == source {
+                    // Defensive: avoid re-explaining a degenerate union.
+                    continue;
+                }
+                if self.check_subtype(source_member, resolved_target).is_true() {
+                    continue;
+                }
+                let witness = self.boolean_member_failing_half(source_member, resolved_target);
+                return Some(SubtypeFailureReason::UnionSourceMismatch {
+                    source_type: source,
+                    target_type: target,
+                    member_type: witness,
+                    nested_reason: Box::new(SubtypeFailureReason::TypeMismatch {
+                        source_type: witness,
+                        target_type: target,
+                    }),
+                });
             }
         }
 

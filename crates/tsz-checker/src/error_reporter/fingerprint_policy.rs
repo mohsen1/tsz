@@ -1161,8 +1161,14 @@ impl<'a> CheckerState<'a> {
             } => (*constraint_type, *target_type),
             _ => return None,
         };
+        // tsc runs `reportRelationError` on every relation line, so the
+        // member leaf generalizes its literal source the same way the TS2322
+        // renderer does (`"x"` -> `string`, `false` -> `boolean`) whenever the
+        // leaf target holds no top-level singleton types.
+        let display_source =
+            self.generalize_nested_relation_source_for_display(child_source, child_target);
         let member_str = self.format_type_for_diagnostic_role(
-            child_source,
+            display_source,
             DiagnosticTypeDisplayRole::DefaultDiagnostic,
         );
         let target_str = self.format_type_for_diagnostic_role(
