@@ -21,7 +21,11 @@ from arch_guard_shared import (
 # instantiation, parameter-list transformation, and redeclaration-widening
 # helpers moved to `generic_instantiation`, `signature_building`, and
 # `widening` (parent #8225).
-QUERY_BOUNDARY_COMMON_LINE_BASELINE = 1740
+# Ratcheted 1740 -> 1140 by the shape-predicate / containment-query paydown:
+# `is_*`/`has_*` structural predicates and `contains_*`/`collect_*`/`walk_*`
+# traversal queries moved to `shape_predicates` and `containment_queries`
+# (parent #8225).
+QUERY_BOUNDARY_COMMON_LINE_BASELINE = 1140
 
 # Temporary green-campaign headroom for #14351. The live baseline remains
 # explicit; this reserve lets urgent parity PRs land while #8225 follow-up
