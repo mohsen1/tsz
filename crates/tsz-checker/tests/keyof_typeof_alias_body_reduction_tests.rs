@@ -162,6 +162,72 @@ f("A");
 }
 
 #[test]
+fn interface_alias_keyof_target_keeps_keyof_spelling_and_literal_source() {
+    // Named type operand: the oracle keeps the `keyof I` spelling AND the
+    // literal source (`"zz"`, not widened `string`).
+    expect_code_with(
+        r#"
+interface I { a: number; c?: string }
+type K = keyof I;
+const x: K = "zz";
+"#,
+        2322,
+        r#"Type '"zz"' is not assignable to type 'keyof I'."#,
+    );
+}
+
+#[test]
+fn inline_interface_keyof_target_control() {
+    // Positive control: inline `keyof I` annotation — same oracle output as
+    // the alias-mediated spelling above.
+    expect_code_with(
+        r#"
+interface I { a: number; c?: string }
+const x: keyof I = "zz";
+"#,
+        2322,
+        r#"Type '"zz"' is not assignable to type 'keyof I'."#,
+    );
+}
+
+#[test]
+fn class_alias_keyof_target_keeps_keyof_spelling_and_literal_source() {
+    expect_code_with(
+        r#"
+class C { m() {} n = 1 }
+type K = keyof C;
+const x: K = "zz";
+"#,
+        2322,
+        r#"Type '"zz"' is not assignable to type 'keyof C'."#,
+    );
+}
+
+#[test]
+fn interface_alias_keyof_call_argument_known_residual_renders_reduced_union() {
+    // KNOWN RESIDUAL: the pinned 7.0.2 oracle keeps the `keyof I` spelling
+    // here (`...parameter of type 'keyof I'.`). tsz renders the reduced key
+    // union because the parameter annotation `k: K` is evaluated to the
+    // interned union when the signature is built, so by diagnostic time the
+    // param type carries no `keyof` provenance to recover — and re-spelling a
+    // bare literal union from a coincidental alias would repaint user-written
+    // unions (the per-occurrence alias-identity residual already tracked on
+    // the board). Fixing this needs the signature to preserve the written
+    // alias reference, not a display-side patch. This pin asserts the current
+    // behavior so a deliberate fix flips it consciously.
+    expect_code_with(
+        r#"
+interface I { a: number; c?: string }
+type K = keyof I;
+declare function f(k: K): void;
+f("zz");
+"#,
+        2345,
+        r#"Argument of type '"zz"' is not assignable to parameter of type '"a" | "c"'."#,
+    );
+}
+
+#[test]
 fn enum_alias_use_before_enum_declaration_reduces() {
     // Hoisting order: the alias and its use precede the enum declaration in
     // source order, so nothing has walked the enum before the alias body is

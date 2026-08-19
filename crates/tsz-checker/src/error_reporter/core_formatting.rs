@@ -371,6 +371,13 @@ impl<'a> CheckerState<'a> {
                 return format!("keyof {param_name}");
             }
 
+            // A value-derived operand (`keyof typeof E`) renders as its
+            // evaluated key union, never `keyof E` (named *type* operands
+            // take the alias/symbol spelling branches below).
+            if let Some(display) = self.value_derived_keyof_reduced_display(ty, keyof_inner) {
+                return display;
+            }
+
             if let Some(alias_name) = self.lookup_type_alias_name_for_display(keyof_inner) {
                 return format!("keyof {alias_name}");
             }

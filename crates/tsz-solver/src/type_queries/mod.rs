@@ -65,8 +65,9 @@ pub use classifiers::{
     get_application_lazy_def_id, get_conditional_type_id, get_keyof_type, get_lazy_def_id,
     get_mapped_type_id, get_type_query_symbol_ref, indexed_access_self_keyof,
     is_compound_this_relative_surface_type, is_deferred_lazy_or_indexed_access,
-    is_deferred_type_operation, is_distributive_conditional_with_deferred_check, is_indexed_access,
-    is_only_false_or_never,
+    is_deferred_type_operation, is_distributive_conditional_with_deferred_check,
+    is_finite_unit_literal_keyset, is_indexed_access, is_only_false_or_never,
+    keyof_operand_is_value_derived,
 };
 pub use conditional_infer_alias::*;
 // `get_def_id` is an alias for `get_lazy_def_id` (identical semantics).
