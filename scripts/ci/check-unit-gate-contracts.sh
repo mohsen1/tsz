@@ -27,6 +27,11 @@ python3 scripts/ci/test_check_known_failures_growth.py
 python3 scripts/ci/test_unit_nextest.py
 python3 scripts/ci/test_full_ci_unit_gate.py
 node scripts/ci/test-known-failures-check.mjs
+node scripts/ci/test-nextest-overrides.mjs
+# Fail loudly, in this fast lane, when a nextest slow-timeout override filter no
+# longer matches any test (a rename/move silently orphaning a heavy test's
+# override — the recurring #17675 / #17203 failure mode).
+node scripts/ci/check-nextest-overrides.mjs
 python3 scripts/ci/check-test-file-reachability.py
 python3 scripts/ci/test_check_test_file_reachability.py
 python3 scripts/ci/test_check_emit_regression_set.py

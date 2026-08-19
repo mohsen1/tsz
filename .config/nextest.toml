@@ -19,6 +19,17 @@ retries = 0
 # Use all available cores
 test-threads = "num-cpus"
 
+# Heavy-test overrides below are guarded (#17675, part 3):
+#   * scripts/ci/check-nextest-overrides.mjs runs in the per-merge fast lane and
+#     fails if any literal `test(NAME)` filter here matches no test in the tree
+#     (a rename/move that silently orphaned an override).
+#   * scripts/ci/known-failures-check.mjs classifies a nextest timeout in the
+#     nightly unit lane distinctly: it tells the author to ADD a slow-timeout
+#     override here, never to baseline the (correct) test, and warns when a
+#     still-passing test already exceeds the 30s base period without an override.
+# So a new correct-but-heavy test belongs in one of these blocks, not in
+# scripts/ci/known-failures.txt.
+#
 # Global default-lib merge validation (#17675). Merging a user global interface
 # into a lib type (e.g. `Node.kind`) forces a correct-but-large post-merge
 # recheck of the affected default-lib subgraph — for a DOM merge, nearly all of
