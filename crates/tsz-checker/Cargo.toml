@@ -1479,6 +1479,9 @@ path = "tests/program_context_tests.rs"
 name = "generic_call_inference_tests"
 path = "tests/generic_call_inference_tests.rs"
 [[test]]
+name = "generic_call_outer_param_name_collision_tests"
+path = "tests/generic_call_outer_param_name_collision_tests.rs"
+[[test]]
 name = "generic_param_source_apparent_type_inference_tests"
 path = "tests/generic_param_source_apparent_type_inference_tests.rs"
 [[test]]
