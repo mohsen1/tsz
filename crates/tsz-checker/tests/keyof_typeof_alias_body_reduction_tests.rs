@@ -7,7 +7,12 @@
 //! only happened on the inline annotation walk), so the target never became
 //! a reduced literal union: the source literal widened and the diagnostic
 //! rendered the deferred form. Every expectation here is oracle-pinned
-//! against `tsc` (6.0.2) on the same source.
+//! against the repo's pinned oracle, `typescript@7.0.2` via
+//! `scripts/conformance/oracle.sh` (`--singleThreaded --stableTypeOrdering
+//! true`, the exact invocation the conformance cache scores). 7.0.2 renders
+//! these key unions in sorted member order, not declaration order — the 6.0
+//! line disagrees, so never re-derive these strings from a container-global
+//! 6.0 `tsc`.
 
 use tsz_checker::context::CheckerOptions;
 use tsz_checker::test_utils::check_source;
@@ -50,7 +55,7 @@ type K = keyof typeof Color;
 const bad: K = "nope";
 "#,
         2322,
-        r#"Type '"nope"' is not assignable to type '"Red" | "Green"'."#,
+        r#"Type '"nope"' is not assignable to type '"Green" | "Red"'."#,
     );
 }
 
@@ -99,7 +104,7 @@ type K2 = K1;
 const bad: K2 = "nope";
 "#,
         2322,
-        r#"Type '"nope"' is not assignable to type '"Up" | "Down"'."#,
+        r#"Type '"nope"' is not assignable to type '"Down" | "Up"'."#,
     );
 }
 
@@ -126,7 +131,7 @@ enum Color { Red, Green }
 const bad: keyof typeof Color = "nope";
 "#,
         2322,
-        r#"Type '"nope"' is not assignable to type '"Red" | "Green"'."#,
+        r#"Type '"nope"' is not assignable to type '"Green" | "Red"'."#,
     );
 }
 
