@@ -691,6 +691,8 @@ mod member_modifier_placement_grammar_tests;
 mod member_name_source_quote_fidelity_tests;
 #[path = "tests/merged_interface_constraint_relation_routing_arch_tests.rs"]
 mod merged_interface_constraint_relation_routing_arch_tests;
+#[path = "tests/merged_interface_construct_overload_order_tests.rs"]
+mod merged_interface_construct_overload_order_tests;
 #[path = "tests/merged_interface_overload_order_tests.rs"]
 mod merged_interface_overload_order_tests;
 #[path = "tests/merged_interface_reference_flat_missing_tests.rs"]
