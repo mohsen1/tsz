@@ -651,19 +651,119 @@ fn concrete_receiver_literal_key_expression_access_still_resolves_eagerly() {
 
 /// Same rule, renamed binders (anti-hardcoding: the behavior is structural,
 /// not name-driven), TS2345 argument position. The argument-drill renderer is a
-/// separate "no source elaboration" path, so it keeps the as-written pair but
-/// does NOT synthesize the constraint walk yet — a documented residual, distinct
-/// from the declaration-position (TS2322) walk fenced above. tsc would emit the
-/// full `TRow[keyof TRow]` -> distribute -> `TRow[string]` chain here too.
+/// separate "no source elaboration" path that used to keep only the as-written
+/// pair; it now routes a deferred, constraint-relative property source through
+/// the same shared property-drill leaf the declaration-position (TS2322) walk
+/// hangs on, so the full `TRow[keyof TRow]` -> distribute -> `TRow[string]`
+/// chain renders here too (byte-identical to tsc, modulo the leading
+/// indentation the helper strips). A `{ z: number }` base constraint does not
+/// change the walk (`keyof TRow` still expands to its key space, not `"z"`).
 #[test]
 fn deferred_generic_index_access_member_source_keeps_pair_identity_renamed_ts2345() {
     let msg = message_with_chain(
         "declare function gulp(v: { n: string | undefined }): void;\nfunction pipe<TRow extends { z: number }, KCol extends keyof TRow>(x: { n: TRow[KCol] }) {\n  gulp(x);\n}\n",
         2345,
     );
-    assert!(
-        msg.contains("Type 'TRow[KCol]' is not assignable to type 'string | undefined'."),
-        "renamed binders / TS2345 must keep the deferred pair identity, got: {msg}"
+    assert_eq!(
+        msg,
+        "Argument of type '{ n: TRow[KCol]; }' is not assignable to parameter of type '{ n: string | undefined; }'.\n\
+         Types of property 'n' are incompatible.\n\
+         Type 'TRow[KCol]' is not assignable to type 'string | undefined'.\n\
+         Type 'TRow[keyof TRow]' is not assignable to type 'string | undefined'.\n\
+         Type 'TRow[string] | TRow[number] | TRow[symbol]' is not assignable to type 'string | undefined'.\n\
+         Type 'TRow[string]' is not assignable to type 'string | undefined'.",
+    );
+}
+
+/// TS2345 argument, concrete-base generic index (`Obj[KP]`): the walk
+/// concretizes the object in a single step to the resolved value type `number`,
+/// and the target collapses to its single real member `string`. Companion to the
+/// generic-base argument walk above, exercising the concrete short-circuit on
+/// the argument surface.
+#[test]
+fn concrete_base_argument_member_drill_walks_to_resolved_value_type_ts2345() {
+    let msg = message_with_chain(
+        "interface Obj { a: number; b: number }\ndeclare function sink(v: { m: string | undefined }): void;\nfunction idx<KP extends keyof Obj>(x: { m: Obj[KP] }) {\n  sink(x);\n}\n",
+        2345,
+    );
+    assert_eq!(
+        msg,
+        "Argument of type '{ m: Obj[KP]; }' is not assignable to parameter of type '{ m: string | undefined; }'.\n\
+         Types of property 'm' are incompatible.\n\
+         Type 'Obj[KP]' is not assignable to type 'string | undefined'.\n\
+         Type 'number' is not assignable to type 'string'.",
+    );
+}
+
+/// Nested dotted-path drill (`{ outer: { m: T[K] } }`): tsc collapses the
+/// two-link property run into a single `The types of 'outer.m' are incompatible
+/// between these types.` header and then walks the deferred constraint one step
+/// per line beneath it — the same walk the single-property leaf synthesizes. The
+/// dotted-path collapse funnels its folded leaf through the shared
+/// `push_property_chain_leaf`, so the walk hangs there too.
+#[test]
+fn nested_dotted_path_member_drill_emits_full_constraint_walk() {
+    let msg = message_with_chain(
+        "function dig<TBox, KKey extends keyof TBox>(x: { outer: { m: TBox[KKey] } }) {\n  const y: { outer: { m: string | undefined } } = x;\n}\n",
+        2322,
+    );
+    assert_eq!(
+        msg,
+        "Type '{ outer: { m: TBox[KKey]; }; }' is not assignable to type '{ outer: { m: string | undefined; }; }'.\n\
+         The types of 'outer.m' are incompatible between these types.\n\
+         Type 'TBox[KKey]' is not assignable to type 'string | undefined'.\n\
+         Type 'TBox[keyof TBox]' is not assignable to type 'string | undefined'.\n\
+         Type 'TBox[string] | TBox[number] | TBox[symbol]' is not assignable to type 'string | undefined'.\n\
+         Type 'TBox[string]' is not assignable to type 'string | undefined'.",
+    );
+}
+
+/// Nested dotted-path drill, concrete base (`{ outer: { m: Obj[KP] } }`): the
+/// folded-leaf walk concretizes `Obj` in a single step to `number` and collapses
+/// the target to `string`, mirroring the concrete short-circuit on the
+/// single-property and argument surfaces.
+#[test]
+fn nested_dotted_path_concrete_base_member_drill_walks_to_resolved_value_type() {
+    let msg = message_with_chain(
+        "interface Obj { a: number; b: number }\nfunction idx<KP extends keyof Obj>(x: { outer: { m: Obj[KP] } }) {\n  const y: { outer: { m: string | undefined } } = x;\n}\n",
+        2322,
+    );
+    assert_eq!(
+        msg,
+        "Type '{ outer: { m: Obj[KP]; }; }' is not assignable to type '{ outer: { m: string | undefined; }; }'.\n\
+         The types of 'outer.m' are incompatible between these types.\n\
+         Type 'Obj[KP]' is not assignable to type 'string | undefined'.\n\
+         Type 'number' is not assignable to type 'string'.",
+    );
+}
+
+/// A bare `keyof T` source keeps ONLY its leaf line on the argument and
+/// dotted-path surfaces too (the walk is intentionally empty for it — the
+/// `string | number | symbol` key space renders through the `PropertyKey`
+/// display alias, a separate printer residual). This pins that the newly-wired
+/// surfaces do not diverge from the single-property leaf's bare-`keyof`
+/// behavior.
+#[test]
+fn keyof_argument_and_dotted_path_sources_keep_leaf_without_walk() {
+    let arg = message_with_chain(
+        "declare function sink(v: { m: string | undefined }): void;\nfunction fold<TObj>(box: { m: keyof TObj }) {\n  sink(box);\n}\n",
+        2345,
+    );
+    assert_eq!(
+        arg,
+        "Argument of type '{ m: keyof TObj; }' is not assignable to parameter of type '{ m: string | undefined; }'.\n\
+         Types of property 'm' are incompatible.\n\
+         Type 'keyof TObj' is not assignable to type 'string | undefined'.",
+    );
+    let dotted = message_with_chain(
+        "function fold<TObj>(box: { outer: { m: keyof TObj } }) {\n  const sink: { outer: { m: string | undefined } } = box;\n}\n",
+        2322,
+    );
+    assert_eq!(
+        dotted,
+        "Type '{ outer: { m: keyof TObj; }; }' is not assignable to type '{ outer: { m: string | undefined; }; }'.\n\
+         The types of 'outer.m' are incompatible between these types.\n\
+         Type 'keyof TObj' is not assignable to type 'string | undefined'.",
     );
 }
 
