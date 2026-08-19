@@ -192,8 +192,8 @@ impl<'a> CheckerState<'a> {
         // Only the *implicit* requirement is ambient gated. The explicit-`override`
         // diagnostics (TS4112/TS4113) are reported in ambient contexts too, and they do
         // not consult this flag.
-        let no_implicit_override =
-            self.ctx.no_implicit_override() && !self.ctx.is_ambient_declaration(class_idx);
+        let class_in_ambient_context = self.ctx.is_ambient_declaration(class_idx);
+        let no_implicit_override = self.ctx.no_implicit_override() && !class_in_ambient_context;
 
         // Find base class from heritage clauses (extends, not implements)
         // If there are no heritage clauses, we still need to check for
@@ -717,7 +717,17 @@ impl<'a> CheckerState<'a> {
             // can skip the type compatibility check for them later.  We do NOT
             // skip the entire loop iteration because override / accessor / kind
             // mismatch checks still need to run for bodyless method declarations.
-            let is_overload_signature = is_method && {
+            //
+            // A bodiless method declaration is an overload *signature* only when
+            // an implementation declaration can exist to carry the compat check.
+            // In an ambient context (`declare class`, classes inside
+            // `declare namespace`/`declare module`, any `.d.ts`) and for
+            // `abstract` methods there is no implementation: the single bodiless
+            // declaration IS the method, and tsc reports TS2416/TS2417 against
+            // it directly. Multi-declaration overload sets are handled by the
+            // combined-shape path (`check_overloaded_method_compat`) before this
+            // flag is consulted, so it only governs singleton declarations.
+            let is_overload_signature = is_method && !class_in_ambient_context && !is_abstract && {
                 self.ctx
                     .arena
                     .get(member_idx)
