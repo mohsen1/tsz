@@ -2244,6 +2244,9 @@ path = "tests/nominal_application_call_suppression_tests.rs"
 name = "bare_alias_display_tests"
 path = "tests/bare_alias_display_tests.rs"
 [[test]]
+name = "enum_alias_underlying_display_tests"
+path = "tests/enum_alias_underlying_display_tests.rs"
+[[test]]
 name = "string_mapping_alias_display_tests"
 path = "tests/string_mapping_alias_display_tests.rs"
 [[test]]
