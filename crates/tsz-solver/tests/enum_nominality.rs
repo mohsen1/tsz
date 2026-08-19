@@ -258,10 +258,13 @@ fn test_enum_member_assignable_to_number_structural() {
     );
 }
 
-/// Test that number is NOT assignable to enum type in Solver layer.
-/// Note: The Checker layer implements Rule #7 (numeric enums) with `is_numeric_enum`.
+/// Test that number IS assignable to a numeric-valued enum member.
+/// tsc `isSimpleTypeRelatedTo`: `number` relates to any enum member whose
+/// value is numeric (`t & NumberLiteral && t & EnumLiteral`) — the admission
+/// is keyed on the member's value domain, not on registered numeric-enum
+/// context (a heterogeneous enum's numeric member admits `number` too).
 #[test]
-fn test_number_not_assignable_to_enum_member() {
+fn test_number_assignable_to_numeric_enum_member() {
     let interner = TypeInterner::new();
     let mut checker = CompatChecker::new(&interner);
 
@@ -270,10 +273,26 @@ fn test_number_not_assignable_to_enum_member() {
 
     let enum_member = interner.intern(TypeData::Enum(enum_def, literal_zero));
 
-    // In the Solver layer without is_numeric_enum context,
-    // number is NOT assignable to enum types
+    assert!(
+        checker.is_assignable(TypeId::NUMBER, enum_member),
+        "Number should be assignable to a numeric-valued enum member (tsc isSimpleTypeRelatedTo)"
+    );
+}
+
+/// Negative control: a string-valued enum member never admits `number`
+/// (and raw strings stay rejected elsewhere — string enums are opaque).
+#[test]
+fn test_number_not_assignable_to_string_enum_member() {
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    let enum_def = DefId(42);
+    let literal_str = interner.literal_string("x");
+
+    let enum_member = interner.intern(TypeData::Enum(enum_def, literal_str));
+
     assert!(
         !checker.is_assignable(TypeId::NUMBER, enum_member),
-        "Number should NOT be assignable to enum member without numeric enum context"
+        "Number should NOT be assignable to a string-valued enum member"
     );
 }

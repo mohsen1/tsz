@@ -862,6 +862,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     }
                 }
             }
+            // An intrinsic source against an `Enum` target is owned by the
+            // enum-target rule (`rules/enums.rs`), not this arm's early False.
+            if enum_components(self.interner, target).is_some() {
+                return self.check_non_enum_source_to_enum_target(source, target);
+            }
             // When target is an unevaluated IndexAccess (e.g., Obj[K] where K is a
             // type parameter), don't return False early. The IndexAccess fallback
             // (check_generic_index_access_subtype) after the visitor dispatch can
