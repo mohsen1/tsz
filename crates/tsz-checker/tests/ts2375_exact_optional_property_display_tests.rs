@@ -10,11 +10,11 @@
 //! types even with `exactOptionalPropertyTypes: true`. Fixed by
 //! `with_exact_optional_property_types(bool)` on `TypeFormatter`.
 
-use crate::context::CheckerOptions;
-use crate::diagnostics::Diagnostic;
+use tsz_checker::CheckerOptions;
+use tsz_checker::diagnostics::Diagnostic;
 
 fn check_with_options(source: &str, options: CheckerOptions) -> Vec<(u32, String)> {
-    crate::test_utils::check_with_options(source, options)
+    tsz_checker::test_utils::check_with_options(source, options)
         .into_iter()
         .map(|d| (d.code, d.message_text))
         .collect()
@@ -24,7 +24,7 @@ fn check_with_options(source: &str, options: CheckerOptions) -> Vec<(u32, String
 /// `exactOptionalPropertyTypes`. The `(code, message_text)` projection used by
 /// most tests is derived from this so the option set lives in one place.
 fn full_strict_exact_optional(source: &str) -> Vec<Diagnostic> {
-    crate::test_utils::check_with_options(
+    tsz_checker::test_utils::check_with_options(
         source,
         CheckerOptions {
             strict: true,

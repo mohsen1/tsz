@@ -2536,6 +2536,9 @@ path = "tests/diagnostic_index_suppression_tests.rs"
 name = "ts2379_exact_optional_argument_tests"
 path = "tests/ts2379_exact_optional_argument_tests.rs"
 [[test]]
+name = "ts2375_exact_optional_property_display_tests"
+path = "tests/ts2375_exact_optional_property_display_tests.rs"
+[[test]]
 name = "type_literal_method_overload_tests"
 path = "tests/type_literal_method_overload_tests.rs"
 [[test]]
