@@ -92,8 +92,16 @@ export {};
 }
 
 /// Mixed remap: some keys stay literal (conditionally remapped to themselves),
-/// some collapse to `string`. The literal property keeps precise typing while
-/// the collapsed keys feed the index signature.
+/// some collapse to `string`. The literal `keep` property's value type
+/// (`number`) must itself satisfy the synthesized string index signature's
+/// value type (`string`, contributed only by the `drop` arm) — it does not,
+/// so `tsc` reports the mapped type's own property/index-signature conflict
+/// as a `TS2322` on the *assignment*, oracle-verified against
+/// `/opt/node22/bin/tsc` (6.0.2, `--strict`):
+/// `Property 'keep' is incompatible with index signature. Type 'number' is
+/// not assignable to type 'string'.` This is not the false positive #14791
+/// guards against — it is a genuine incompatibility between the mapped
+/// type's literal member and its own synthesized index signature.
 #[test]
 fn mixed_literal_and_primitive_remap() {
     let codes = check(
@@ -106,13 +114,9 @@ export {};
     );
     assert_eq!(
         count(&codes, 2322),
-        0,
-        "mixed remap assigns cleanly: {codes:?}"
-    );
-    assert_eq!(
-        count(&codes, 2353),
-        0,
-        "mixed remap suppresses excess: {codes:?}"
+        1,
+        "keep's value type (number) is incompatible with the synthesized \
+         string index signature's value type (string): {codes:?}"
     );
 }
 
