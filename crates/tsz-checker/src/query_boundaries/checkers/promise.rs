@@ -232,6 +232,7 @@ pub(crate) fn thenable_signature_surfaces(
             return_type: shape.return_type,
             type_predicate: shape.type_predicate,
             is_method: shape.is_method,
+            declaration_group: 0,
         });
     }
 

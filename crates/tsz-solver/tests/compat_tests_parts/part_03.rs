@@ -18,6 +18,7 @@ fn test_private_brand_callable_with_brand() {
             type_predicate: None,
             type_params: Vec::new(),
             is_method: false,
+            declaration_group: 0,
         }],
         properties: vec![PropertyInfo::new(brand1, TypeId::NEVER)],
         ..Default::default()
@@ -34,6 +35,7 @@ fn test_private_brand_callable_with_brand() {
             type_predicate: None,
             type_params: Vec::new(),
             is_method: false,
+            declaration_group: 0,
         }],
         properties: vec![PropertyInfo::new(brand2, TypeId::NEVER)],
         ..Default::default()
@@ -845,6 +847,7 @@ fn test_generic_callable_return_type_mismatch_compat_layer() {
             return_type: s_array,
             type_predicate: None,
             is_method: false,
+            declaration_group: 0,
         }],
         construct_signatures: vec![],
         properties: vec![],
@@ -872,6 +875,7 @@ fn test_generic_callable_return_type_mismatch_compat_layer() {
             return_type: t_type,
             type_predicate: None,
             is_method: false,
+            declaration_group: 0,
         }],
         construct_signatures: vec![],
         properties: vec![],
@@ -1071,6 +1075,7 @@ fn test_explain_function_to_callable_with_properties_produces_missing_properties
             this_type: None,
             type_predicate: None,
             is_method: false,
+            declaration_group: 0,
         }],
         construct_signatures: vec![CallSignature {
             params: vec![],
@@ -1079,6 +1084,7 @@ fn test_explain_function_to_callable_with_properties_produces_missing_properties
             this_type: None,
             type_predicate: None,
             is_method: false,
+            declaration_group: 0,
         }],
         properties: vec![
             PropertyInfo::new(is_array, TypeId::BOOLEAN),

@@ -545,6 +545,7 @@ fn test_variance_indexed_access_skips_callable_method_signature_param() {
             return_type: TypeId::VOID,
             type_predicate: None,
             is_method: true,
+            declaration_group: 0,
         }],
         construct_signatures: Vec::new(),
         properties: Vec::new(),
@@ -1072,6 +1073,7 @@ fn test_variance_callable_call_signatures() {
             return_type: TypeId::STRING,
             type_predicate: None,
             is_method: false,
+            declaration_group: 0,
         }],
         construct_signatures: Vec::new(),
         properties: Vec::new(),
@@ -1104,6 +1106,7 @@ fn test_variance_callable_return_type() {
             return_type: t_param,
             type_predicate: None,
             is_method: false,
+            declaration_group: 0,
         }],
         construct_signatures: Vec::new(),
         properties: Vec::new(),
@@ -1137,6 +1140,7 @@ fn test_variance_callable_with_properties() {
             return_type: TypeId::VOID,
             type_predicate: None,
             is_method: false,
+            declaration_group: 0,
         }],
         construct_signatures: Vec::new(),
         properties: vec![PropertyInfo::readonly(prop_atom, t_param)],
@@ -1675,6 +1679,7 @@ fn test_variance_merged_promise_like_overloads_is_covariant() {
         return_type: TypeId::ANY,
         type_predicate: None,
         is_method: true,
+        declaration_group: 0,
     };
     let user_then_sig = CallSignature {
         type_params: Vec::new(),
@@ -1688,6 +1693,7 @@ fn test_variance_merged_promise_like_overloads_is_covariant() {
         return_type: TypeId::ANY,
         type_predicate: None,
         is_method: true,
+        declaration_group: 0,
     };
 
     let then_callable = interner.callable(CallableShape {

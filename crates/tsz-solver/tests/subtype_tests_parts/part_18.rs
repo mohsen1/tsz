@@ -582,6 +582,7 @@ fn call_signature(params: Vec<ParamInfo>) -> CallSignature {
         return_type: TypeId::VOID,
         type_predicate: None,
         is_method: false,
+        declaration_group: 0,
     }
 }
 

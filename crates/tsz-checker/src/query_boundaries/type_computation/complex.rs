@@ -107,6 +107,7 @@ pub(crate) fn shallow_js_method_callable_type(
             return_type,
             type_predicate: None,
             is_method: true,
+            declaration_group: 0,
         }],
         construct_signatures: Vec::new(),
         properties: Vec::new(),

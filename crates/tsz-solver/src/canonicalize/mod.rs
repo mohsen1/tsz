@@ -1045,6 +1045,7 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
             return_type: c_return_type,
             type_predicate: c_type_predicate,
             is_method: sig.is_method,
+            declaration_group: sig.declaration_group,
         }
     }
 

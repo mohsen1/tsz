@@ -40,6 +40,7 @@ pub(crate) fn synthetic_this_method_callable(
             return_type,
             type_predicate: None,
             is_method: true,
+            declaration_group: 0,
         }],
         construct_signatures: Vec::new(),
         properties: Vec::new(),

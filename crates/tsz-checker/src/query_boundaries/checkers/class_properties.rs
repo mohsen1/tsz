@@ -131,6 +131,7 @@ pub(crate) fn js_class_method_callable_type(db: &dyn TypeDatabase) -> TypeId {
             return_type: TypeId::ANY,
             type_predicate: None,
             is_method: true,
+            declaration_group: 0,
         }],
         construct_signatures: Vec::new(),
         properties: Vec::new(),

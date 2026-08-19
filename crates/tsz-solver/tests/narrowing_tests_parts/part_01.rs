@@ -195,6 +195,7 @@ fn test_narrow_by_instanceof_collapsed_any_predicate_falls_back_to_generic_const
             return_type: box_t,
             type_predicate: None,
             is_method: false,
+            declaration_group: 0,
         }],
         properties: vec![PropertyInfo::method(has_instance_atom, has_instance_fn)],
         ..CallableShape::default()

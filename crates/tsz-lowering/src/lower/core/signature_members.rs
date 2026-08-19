@@ -131,12 +131,14 @@ impl<'a> TypeLowering<'a> {
             if let Some(sig) = self.arena.get_signature(member) {
                 match member.kind {
                     k if k == syntax_kind_ext::CALL_SIGNATURE => {
-                        parts.call_signatures.push(self.lower_call_signature(sig));
+                        let mut signature = self.lower_call_signature(sig);
+                        signature.declaration_group = parts.current_declaration_group();
+                        parts.call_signatures.push(signature);
                     }
                     k if k == syntax_kind_ext::CONSTRUCT_SIGNATURE => {
-                        parts
-                            .construct_signatures
-                            .push(self.lower_call_signature(sig));
+                        let mut signature = self.lower_call_signature(sig);
+                        signature.declaration_group = parts.current_declaration_group();
+                        parts.construct_signatures.push(signature);
                     }
                     k if k == syntax_kind_ext::METHOD_SIGNATURE => {
                         if self.is_wide_symbol_computed_name(sig.name) {
@@ -531,6 +533,7 @@ impl<'a> TypeLowering<'a> {
             return_type,
             type_predicate,
             is_method: false,
+            declaration_group: 0,
         }
     }
 

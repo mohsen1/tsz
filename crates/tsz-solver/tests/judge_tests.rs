@@ -1385,6 +1385,7 @@ fn test_classify_callable_overloaded() {
                 return_type: TypeId::STRING,
                 type_predicate: None,
                 is_method: false,
+                declaration_group: 0,
             },
             CallSignature {
                 type_params: Vec::new(),
@@ -1398,6 +1399,7 @@ fn test_classify_callable_overloaded() {
                 return_type: TypeId::NUMBER,
                 type_predicate: None,
                 is_method: false,
+                declaration_group: 0,
             },
         ],
         construct_signatures: Vec::new(),

@@ -27,6 +27,7 @@ fn exposes_property_access_boundary_queries() {
             return_type: TypeId::STRING,
             type_predicate: None,
             is_method: false,
+            declaration_group: 0,
         }],
         construct_signatures: vec![],
         properties: vec![],

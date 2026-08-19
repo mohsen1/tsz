@@ -22,6 +22,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     return_type: shape.return_type,
                     type_predicate: shape.type_predicate,
                     is_method: shape.is_method,
+                    declaration_group: 0,
                 }]
             }
             Some(TypeData::Callable(shape_id)) => {

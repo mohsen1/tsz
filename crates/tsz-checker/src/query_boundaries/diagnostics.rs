@@ -448,6 +448,7 @@ pub(crate) fn instantiate_call_signature_for_display(
         return_type: instantiate_type(db, sig.return_type, &subst),
         type_predicate: sig.type_predicate,
         is_method: sig.is_method,
+        declaration_group: sig.declaration_group,
     })
 }
 

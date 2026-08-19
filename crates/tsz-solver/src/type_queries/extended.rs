@@ -745,6 +745,7 @@ pub fn classify_for_call_signatures(db: &dyn TypeDatabase, type_id: TypeId) -> C
                 type_params: function.type_params.clone(),
                 type_predicate: function.type_predicate,
                 is_method: function.is_method,
+                declaration_group: 0,
             };
             CallSignaturesKind::MultipleSignatures(vec![signature])
         }
@@ -772,6 +773,7 @@ pub fn classify_for_call_signatures(db: &dyn TypeDatabase, type_id: TypeId) -> C
                             type_params: function.type_params.clone(),
                             type_predicate: function.type_predicate,
                             is_method: function.is_method,
+                            declaration_group: 0,
                         });
                     }
                     _ => continue,
@@ -1761,6 +1763,7 @@ mod tests {
             return_type: TypeId(8), // boolean
             type_predicate: None,
             is_method: true,
+            declaration_group: 0,
         };
 
         let sig2 = CallSignature {
@@ -1781,6 +1784,7 @@ mod tests {
             return_type: TypeId(8),
             type_predicate: None,
             is_method: true,
+            declaration_group: 0,
         };
 
         let mut sigs = vec![sig1.clone(), sig2];
@@ -1817,6 +1821,7 @@ mod tests {
             return_type: TypeId(8),
             type_predicate: None,
             is_method: true,
+            declaration_group: 0,
         };
 
         let sig2 = CallSignature {
@@ -1837,6 +1842,7 @@ mod tests {
             return_type: TypeId(8),
             type_predicate: None,
             is_method: true,
+            declaration_group: 0,
         };
 
         let mut sigs = vec![sig1, sig2];
@@ -1863,6 +1869,7 @@ mod tests {
             return_type: TypeId(8),
             type_predicate: None,
             is_method: false,
+            declaration_group: 0,
         };
 
         let sig2 = CallSignature {
@@ -1877,6 +1884,7 @@ mod tests {
             return_type: TypeId(8),
             type_predicate: None,
             is_method: false,
+            declaration_group: 0,
         };
 
         let mut sigs = vec![sig1, sig2];

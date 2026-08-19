@@ -485,6 +485,7 @@ impl<'a> CheckerState<'a> {
             return_type: TypeId::ANY,
             type_predicate: None,
             is_method: false,
+            declaration_group: 0,
         }
     }
 
