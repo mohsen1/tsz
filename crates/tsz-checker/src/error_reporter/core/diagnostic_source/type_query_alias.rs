@@ -486,11 +486,21 @@ impl<'a> CheckerState<'a> {
     ///   ([`type_alias_displayed_as_underlying`]: computed conditional /
     ///   indexed-access / `keyof` bodies, bare enum / interface / class
     ///   references, intrinsic singletons);
-    /// - a bare alias-to-alias forwarding body (`type Outer = Inner`) — `tsc`
-    ///   resolves the reference through the chain and stamps the *inner*
-    ///   alias (oracle-pinned: `Inner`), owned by the chain-following paths;
     /// - an alias whose body does not resolve to the exact displayed target
     ///   type, so a narrowed or unrelated target can never be repainted.
+    ///
+    /// A bare alias-to-alias forwarding body (`type Outer = Inner`) is
+    /// **chased**, not declined: resolving a reference to an alias whose own
+    /// body is itself just a bare (argument-less) reference to another alias
+    /// never builds a new `Type` in tsc — it returns exactly the referenced
+    /// alias's own `Type` object, `aliasSymbol` and all (oracle-pinned:
+    /// `type Outer = Inner` written at the use site renders `Inner`, even
+    /// through several forwarding hops). Chasing the *syntactic* chain here
+    /// matters because the alternative — falling through to the global
+    /// `type_to_def` reverse map — is first-writer-wins per interned
+    /// `TypeId` and can land on an unrelated alias (or a lib alias like
+    /// `PropertyKey`) that merely happens to share the same structural
+    /// content, not the one actually written in the forwarding chain.
     ///
     /// [`type_alias_displayed_as_underlying`]: crate::query_boundaries::assignability_alias_display::type_alias_displayed_as_underlying
     pub(in crate::error_reporter) fn written_alias_reference_target_display(
@@ -510,31 +520,38 @@ impl<'a> CheckerState<'a> {
             }
             // An alias whose own declared RHS is a reference to another name
             // (`type Outer = Inner`, `type BoxNum = Box[number]`,
-            // `type Foo2 = Id[{...}]`) inherits that name's display policy,
-            // which the established chain/application-aware paths already
-            // implement: tsc splits the application family itself (`BoxNum`
-            // keeps the alias, the recursive mapped `Id[{...}]` of
+            // `type Foo2 = Id[{...}]`) either forwards (bare, no type
+            // arguments — chased below to the terminal alias tsc actually
+            // stamps) or applies (type arguments present — the established
+            // application-aware paths already implement tsc's split there:
+            // `BoxNum` keeps the alias, the recursive mapped `Id[{...}]` of
             // `deeplyNestedMappedTypes.ts` renders the substituted
-            // application), so repainting from here regressed the latter.
-            // Only an alias that declares its shape in place (union, object,
-            // array, tuple, function, ...) is this gate's collapse family.
-            // The declaration walk mirrors `annotation_type_query_alias_def_id`.
+            // application; repainting an application reference from here
+            // regressed the latter, so it still declines outright). The
+            // declaration walk mirrors `annotation_type_query_alias_def_id`.
             let sym_id = self
                 .ctx
                 .binder
                 .resolve_identifier(arena, type_ref.type_name)?;
             let symbol = self.ctx.binder.get_symbol(sym_id)?;
-            let rhs_is_reference = symbol.declarations.iter().any(|&decl_idx| {
-                arena
-                    .get(decl_idx)
-                    .and_then(|decl_node| arena.get_type_alias(decl_node))
-                    .and_then(|alias| arena.get(alias.type_node))
-                    .is_some_and(|rhs| rhs.kind == syntax_kind_ext::TYPE_REFERENCE)
+            let rhs_reference = symbol.declarations.iter().find_map(|&decl_idx| {
+                let decl_node = arena.get(decl_idx)?;
+                let alias = arena.get_type_alias(decl_node)?;
+                let rhs = arena.get(alias.type_node)?;
+                (rhs.kind == syntax_kind_ext::TYPE_REFERENCE)
+                    .then(|| arena.get_type_ref(rhs))
+                    .flatten()
             });
-            if rhs_is_reference {
-                return None;
+            if let Some(rhs_ref) = rhs_reference {
+                if rhs_ref.type_arguments.is_some() {
+                    return None;
+                }
+                let self_def_id =
+                    self.annotation_type_reference_alias_def_id(arena, annotation_idx)?;
+                self.terminal_forwarding_alias_def_id(arena, self_def_id)
+            } else {
+                self.annotation_type_reference_alias_def_id(arena, annotation_idx)?
             }
-            self.annotation_type_reference_alias_def_id(arena, annotation_idx)?
         };
         let alias_name = {
             let def = self.ctx.definition_store.get(def_id)?;
@@ -575,6 +592,94 @@ impl<'a> CheckerState<'a> {
             return None;
         }
         Some(self.ctx.types.resolve_atom(alias_name))
+    }
+
+    /// Follows a bare (argument-less) alias-to-alias reference chain
+    /// (`type Outer = Inner;`, possibly several hops deep) from `def_id`'s
+    /// own declaration to the terminal alias `tsc` actually stamps.
+    ///
+    /// Each hop re-derives the *syntactic* RHS from the alias symbol's own
+    /// declaration nodes — mirroring the first-hop walk in
+    /// [`Self::written_alias_reference_target_display`] — rather than
+    /// consulting the global `type_to_def` reverse map, which is
+    /// first-writer-wins per interned `TypeId` and can land on an unrelated
+    /// alias (or a lib alias like `PropertyKey`) that merely happens to
+    /// share the same structural content.
+    ///
+    /// Stops (returns `def_id` unchanged, on the first hop, or the last
+    /// resolved def on a later one) at an alias whose RHS is not a bare
+    /// non-generic reference to another type alias — a structural body
+    /// (union, object, ...) or an application (`Box[number]`) both
+    /// terminate the walk, since an application already has its own
+    /// established display policy. Also stops, defensively, when a hop
+    /// cannot be resolved (a cross-file declaration this walk's single-arena
+    /// lookup cannot follow, a symbol that lost its `TYPE_ALIAS` flag, a
+    /// missing definition-store entry) or when a bound on the chain length
+    /// is hit, so a malformed or pathological chain degrades to "keep the
+    /// last alias resolved" rather than panicking or looping.
+    fn terminal_forwarding_alias_def_id(
+        &self,
+        arena: &tsz_parser::NodeArena,
+        mut def_id: tsz_solver::def::DefId,
+    ) -> tsz_solver::def::DefId {
+        for _ in 0..16 {
+            let Some(def) = self.ctx.definition_store.get(def_id) else {
+                break;
+            };
+            let Some(symbol_id) = def.symbol_id else {
+                break;
+            };
+            let Some(symbol) = self.ctx.binder.get_symbol(tsz_binder::SymbolId(symbol_id)) else {
+                break;
+            };
+            let next_name_node = symbol.declarations.iter().find_map(|&decl_idx| {
+                let decl_node = arena.get(decl_idx)?;
+                let alias = arena.get_type_alias(decl_node)?;
+                let rhs = arena.get(alias.type_node)?;
+                if rhs.kind != syntax_kind_ext::TYPE_REFERENCE {
+                    return None;
+                }
+                let rhs_ref = arena.get_type_ref(rhs)?;
+                if rhs_ref.type_arguments.is_some() {
+                    return None;
+                }
+                Some(rhs_ref.type_name)
+            });
+            let Some(next_name_node) = next_name_node else {
+                break;
+            };
+            let Some(next_sym_id) = self.ctx.binder.resolve_identifier(arena, next_name_node)
+            else {
+                break;
+            };
+            let Some(next_symbol) = self.ctx.binder.get_symbol(next_sym_id) else {
+                break;
+            };
+            if !next_symbol.has_any_flags(tsz_binder::symbol_flags::TYPE_ALIAS) {
+                break;
+            }
+            let name_atom = self.ctx.types.intern_string(&next_symbol.escaped_name);
+            let Some(next_def_id) = self
+                .ctx
+                .definition_store
+                .find_defs_by_name(name_atom)
+                .and_then(|defs| {
+                    defs.into_iter().find(|candidate| {
+                        self.ctx.definition_store.get(*candidate).is_some_and(|nd| {
+                            nd.kind == tsz_solver::def::DefKind::TypeAlias
+                                && (nd.symbol_id == Some(next_sym_id.0) || nd.name == name_atom)
+                        })
+                    })
+                })
+            else {
+                break;
+            };
+            if next_def_id == def_id {
+                break;
+            }
+            def_id = next_def_id;
+        }
+        def_id
     }
 
     fn declared_source_type_annotation_node(&self, expr_idx: NodeIndex) -> Option<NodeIndex> {
