@@ -10,6 +10,30 @@ use super::{
 use crate::caches::db::{TypeApplicationEvalCache, TypeCompilerOptions};
 
 impl TypeApplicationEvalCache for QueryCache<'_> {
+    // Provisional class-instance registry (#16055): shared on the interner so
+    // every database view observes the same registrations.
+    fn provisional_class_instance(
+        &self,
+        type_id: TypeId,
+    ) -> Option<(DefId, std::sync::Arc<[crate::types::TypeParamInfo]>)> {
+        self.interner.provisional_class_instance(type_id)
+    }
+
+    fn register_provisional_class_instance(
+        &self,
+        type_id: TypeId,
+        def_id: DefId,
+        params: std::sync::Arc<[crate::types::TypeParamInfo]>,
+    ) {
+        self.interner
+            .register_provisional_class_instance(type_id, def_id, params);
+    }
+
+    fn unregister_provisional_class_instances_for_def(&self, def_id: DefId) {
+        self.interner
+            .unregister_provisional_class_instances_for_def(def_id);
+    }
+
     // #14345: delegate the project-wide instantiation cache to the interner
     // so query_db=Some passes share the same table the query_db=None callers read.
     fn lookup_proto_instantiation_cache(

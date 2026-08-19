@@ -23,6 +23,7 @@ mod render_failure_missing_property_base_class;
 #[path = "render_failure_property_helpers.rs"]
 mod render_failure_property_helpers;
 mod type_mismatch;
+mod union_target_member_frame;
 
 /// Depth at which the shared property-type-mismatch renderer
 /// ([`CheckerState::render_property_type_mismatch`]) stops recursing into a
@@ -1089,14 +1090,32 @@ impl<'a> CheckerState<'a> {
                 target_type,
                 member_type,
                 nested_reason,
-            } => self.render_parent_with_child_relation(
-                &rctx,
-                *source_type,
-                *target_type,
-                *source_type,
-                *member_type,
-                nested_reason.as_ref(),
-            ),
+            } => match nested_reason.as_ref() {
+                // A missing required property folds directly beneath the union
+                // head (`Property 'x' is missing …` already names the member),
+                // exactly like tsc's flattened form.
+                SubtypeFailureReason::MissingProperty { .. }
+                | SubtypeFailureReason::MissingProperties { .. } => self
+                    .render_parent_with_child_relation(
+                        &rctx,
+                        *source_type,
+                        *target_type,
+                        *source_type,
+                        *member_type,
+                        nested_reason.as_ref(),
+                    ),
+                // Any other member failure elaborates beneath the member frame
+                // `Type 'S' is not assignable to type '<member>'.` — tsc's
+                // `getBestMatchingType` re-runs the relation against the best
+                // member with errors enabled.
+                _ => self.render_union_target_member_frame_mismatch(
+                    &rctx,
+                    *source_type,
+                    *target_type,
+                    *member_type,
+                    nested_reason.as_ref(),
+                ),
+            },
             SubtypeFailureReason::ConditionalBranchMismatch {
                 source_type,
                 target_type,

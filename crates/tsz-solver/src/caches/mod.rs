@@ -1,6 +1,7 @@
 mod application_eval_index;
 pub(crate) mod db;
 mod db_base_traits;
+mod db_interner_application_eval;
 mod dependency_index;
 pub(crate) mod display_provenance;
 mod eval_dependency_index;

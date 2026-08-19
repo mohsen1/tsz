@@ -133,6 +133,17 @@ impl CheckerContext<'_> {
 
     /// Register a class instance type in **both** type environments.
     pub fn register_class_instance_in_envs(&self, def_id: DefId, instance_type: TypeId) {
+        // Publishing an instance that is not itself this def's registered
+        // provisional snapshot closes the class's provisional window (#16055):
+        // from here on, `C[args]` evaluates and instantiates against the
+        // completed identity. A mid-window registration of the snapshot itself
+        // (the early prescan publication) keeps the window open.
+        match self.types.provisional_class_instance(instance_type) {
+            Some((def, _)) if def == def_id => {}
+            _ => self
+                .types
+                .unregister_provisional_class_instances_for_def(def_id),
+        }
         self.register_in_envs(DeferredFlowEnvWrite::InsertClassInstance {
             def_id,
             instance_type,

@@ -20,6 +20,7 @@ pub(crate) mod explain_merged_interface;
 pub(crate) mod explain_tuple;
 pub(crate) mod explain_union_discriminant;
 pub(crate) mod explain_union_order;
+pub(crate) mod explain_union_target;
 pub(crate) mod helpers;
 pub(crate) mod overlap;
 pub(crate) mod rules;
