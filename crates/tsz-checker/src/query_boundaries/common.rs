@@ -890,10 +890,6 @@ pub(crate) fn string_literal_value(
     tsz_solver::type_queries::get_string_literal_value(db, type_id)
 }
 
-pub(crate) fn type_contains_string_literal(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    tsz_solver::type_queries::type_contains_string_literal(db, type_id)
-}
-
 // ── Number literal value extraction ──
 
 pub(crate) fn number_literal_value(db: &dyn TypeDatabase, type_id: TypeId) -> Option<f64> {

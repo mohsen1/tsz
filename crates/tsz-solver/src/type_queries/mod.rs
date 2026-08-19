@@ -89,7 +89,7 @@ pub use extended::{
     is_number_literal, is_object_with_index_type, is_string_like_type, is_string_literal,
     is_type_or_base_identical, key_matches_number_index, key_matches_string_index,
     source_is_or_base_identical_to_fixed, string_like_type_for_type, type_contains_string_literal,
-    widen_literal_to_primitive,
+    type_contains_unit_literal, widen_literal_to_primitive,
 };
 pub use extended_constructors::{
     AbstractClassCheckKind, AbstractConstructorAnchor, BaseInstanceMergeKind, ClassDeclTypeKind,

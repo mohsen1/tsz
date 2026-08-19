@@ -1803,13 +1803,6 @@ impl<'a> CheckerState<'a> {
         Some(format!("{{ {}; }}", parts.join("; ")))
     }
 
-    /// Check if a type contains string literal types (directly or as union members).
-    /// Used to determine whether an object literal property should display its
-    /// literal value (for discriminated union contexts) or the widened type.
-    pub(in crate::error_reporter) fn type_contains_string_literal(&self, type_id: TypeId) -> bool {
-        crate::query_boundaries::common::type_contains_string_literal(self.ctx.types, type_id)
-    }
-
     /// True when `type_id` is — or, recursively, has a union member that is — a
     /// unit literal type whose widened primitive base equals `primitive_base`
     /// (one of `string` / `number` / `boolean` / `bigint`).
