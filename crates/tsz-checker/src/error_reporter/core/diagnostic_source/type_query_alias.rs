@@ -554,9 +554,14 @@ impl<'a> CheckerState<'a> {
         }
         let body = self.ctx.definition_store.get_body(def_id)?;
         // A bare alias-to-alias forwarding body: tsc renders the alias the
-        // chain resolves to, not the forwarding name written here.
-        if crate::query_boundaries::common::lazy_def_id(self.ctx.types.as_type_database(), body)
-            .and_then(|next| self.ctx.definition_store.get_kind(next))
+        // chain resolves to, not the forwarding name written here. (Routed
+        // through the diagnostics boundary re-export — a direct `common::`
+        // reference here would grow the #8225 quarantine counter.)
+        if crate::query_boundaries::diagnostics::lazy_def_id(
+            self.ctx.types.as_type_database(),
+            body,
+        )
+        .and_then(|next| self.ctx.definition_store.get_kind(next))
             == Some(tsz_solver::def::DefKind::TypeAlias)
         {
             return None;
