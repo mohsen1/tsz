@@ -1944,6 +1944,13 @@ impl<'a> TypeResolver for CheckerContext<'a> {
 
     fn get_enum_namespace_type(&self, def_id: DefId) -> Option<TypeId> {
         let sym_id = self.def_to_symbol_id(def_id)?;
-        self.enum_namespace_types.get(&sym_id).copied()
+        let found = self.enum_namespace_types.get(&sym_id).copied();
+        tracing::trace!(
+            def_id = def_id.0,
+            sym_id = sym_id.0,
+            found = found.map(|t| t.0),
+            "ctx_get_enum_namespace_type"
+        );
+        found
     }
 }
