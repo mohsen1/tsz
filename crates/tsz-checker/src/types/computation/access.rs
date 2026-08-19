@@ -868,7 +868,23 @@ impl<'a> CheckerState<'a> {
             }
             return TypeId::ANY;
         }
-        let union_keys = self.get_literal_key_union_from_type(index_type);
+        // When the receiver is itself a still-generic type parameter and the
+        // index is a generic-derived key (a bare type parameter, `keyof S`,
+        // etc.), the deferred-`IndexAccess(T, K)`-preserving cases below (see
+        // the `unwrap_or_else` closure past this point) own the result. Deriving
+        // literal keys here would walk K's *constraint* (e.g. `K extends keyof
+        // T` reduces to `"p" | "q"` once T's own constraint is concrete) and
+        // eagerly resolve each key against the object, collapsing `T[K]` to the
+        // constraint-level property union (e.g. `number`) before the expression
+        // is ever seen as generic. tsc keeps the expression type as `T[K]`
+        // here — the concrete resolution is only valid once `T` is
+        // instantiated — so this fast path is skipped for exactly the
+        // configuration the deferred cases exist to handle.
+        let union_keys = if is_generic_receiver && self.is_generic_index_type(index_type) {
+            None
+        } else {
+            self.get_literal_key_union_from_type(index_type)
+        };
         if result_type.is_none()
             && literal_index.is_none()
             && let Some((string_keys, number_keys)) = union_keys
