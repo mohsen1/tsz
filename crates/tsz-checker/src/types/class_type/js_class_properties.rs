@@ -1548,7 +1548,48 @@ impl CheckerState<'_> {
             .class_instance_type_cache
             .borrow_mut()
             .insert(class_idx, result);
+        // Register the snapshot as the class's provisional instance (#16055):
+        // while the class is still building, application evaluation keeps
+        // `C[args]` opaque instead of materializing method placeholders into
+        // durable composites. Publication of the completed instance clears the
+        // registration (`register_class_instance_in_envs`).
+        if let Some(sym_id) = class_sym {
+            let params = self.declared_class_type_param_stubs(class);
+            if !params.is_empty() {
+                let def_id = self.ctx.get_or_create_def_id(sym_id);
+                self.ctx
+                    .types
+                    .register_provisional_class_instance(result, def_id, params.into());
+            }
+        }
         result
+    }
+
+    /// Name-only [`tsz_solver::TypeParamInfo`] stubs for a class's declared
+    /// type parameters, read directly from the AST. Emits no diagnostics and
+    /// pushes no scope — suitable for identity bookkeeping (the provisional
+    /// class-instance registry) where only the parameter names and their
+    /// declared order matter.
+    fn declared_class_type_param_stubs(
+        &mut self,
+        class: &tsz_parser::parser::node::ClassData,
+    ) -> Vec<tsz_solver::TypeParamInfo> {
+        let Some(ref list) = class.type_parameters else {
+            return Vec::new();
+        };
+        list.nodes
+            .iter()
+            .filter_map(|&param_idx| {
+                let node = self.ctx.arena.get(param_idx)?;
+                let data = self.ctx.arena.get_type_parameter(node)?;
+                let name_node = self.ctx.arena.get(data.name)?;
+                let ident = self.ctx.arena.get_identifier(name_node)?;
+                let atom = self.ctx.types.intern_string(ident.escaped_text.as_ref());
+                Some(class_property_query::js_class_type_param_info(
+                    atom, None, None, false,
+                ))
+            })
+            .collect()
     }
 }
 

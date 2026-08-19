@@ -21,6 +21,7 @@ struct OverloadCompatCtx<'a> {
     member_name: &'a str,
     member_type: TypeId,
     member_name_idx: NodeIndex,
+    class_name_idx: NodeIndex,
     is_static: bool,
     derived_class_name: &'a str,
     base_class_name: &'a str,
@@ -28,7 +29,24 @@ struct OverloadCompatCtx<'a> {
     base_chain_summary: &'a ClassChainSummary,
     derived_overloads: &'a rustc_hash::FxHashMap<String, TypeId>,
     substitution: &'a TypeSubstitution,
-    overload_compat_checked: &'a mut rustc_hash::FxHashSet<(String, bool)>,
+    overload_compat_checked: &'a mut rustc_hash::FxHashMap<(String, bool), OverloadCompatDecision>,
+}
+
+/// Cached outcome of the combined-`CallableShape` override-compat comparison for
+/// one overloaded method name. Computed once per name, then reused at every
+/// declaration of that name so TS2416 anchors per declaration (matching tsc)
+/// without re-running the relation.
+#[derive(Clone, Copy)]
+enum OverloadCompatDecision {
+    /// Combined shapes are compatible (or comparison was skipped, e.g. `any`):
+    /// no TS2416 for any declaration of the name.
+    Compatible,
+    /// Combined shapes mismatch: emit TS2416 at each declaration, elaborated
+    /// with these resolved combined types (never the per-node signature).
+    Mismatch {
+        resolved_member_type: TypeId,
+        resolved_base_type: TypeId,
+    },
 }
 
 /// Format a property name for error messages.
@@ -192,8 +210,8 @@ impl<'a> CheckerState<'a> {
         // Only the *implicit* requirement is ambient gated. The explicit-`override`
         // diagnostics (TS4112/TS4113) are reported in ambient contexts too, and they do
         // not consult this flag.
-        let no_implicit_override =
-            self.ctx.no_implicit_override() && !self.ctx.is_ambient_declaration(class_idx);
+        let class_in_ambient_context = self.ctx.is_ambient_declaration(class_idx);
+        let no_implicit_override = self.ctx.no_implicit_override() && !class_in_ambient_context;
 
         // Find base class from heritage clauses (extends, not implements)
         // If there are no heritage clauses, we still need to check for
@@ -654,8 +672,10 @@ impl<'a> CheckerState<'a> {
         // and falsely flag it; instead we compare the combined CallableShapes.
         let (derived_instance_method_overloads, derived_static_method_overloads) =
             self.build_class_method_overload_types(class_data);
-        let mut overload_compat_checked: rustc_hash::FxHashSet<(String, bool)> =
-            rustc_hash::FxHashSet::default();
+        let mut overload_compat_checked: rustc_hash::FxHashMap<
+            (String, bool),
+            OverloadCompatDecision,
+        > = rustc_hash::FxHashMap::default();
 
         // When the derived class declares BOTH a getter and a setter for the
         // same name+static-ness, tsc treats them as one accessor pair whose
@@ -717,7 +737,17 @@ impl<'a> CheckerState<'a> {
             // can skip the type compatibility check for them later.  We do NOT
             // skip the entire loop iteration because override / accessor / kind
             // mismatch checks still need to run for bodyless method declarations.
-            let is_overload_signature = is_method && {
+            //
+            // A bodiless method declaration is an overload *signature* only when
+            // an implementation declaration can exist to carry the compat check.
+            // In an ambient context (`declare class`, classes inside
+            // `declare namespace`/`declare module`, any `.d.ts`) and for
+            // `abstract` methods there is no implementation: the single bodiless
+            // declaration IS the method, and tsc reports TS2416/TS2417 against
+            // it directly. Multi-declaration overload sets are handled by the
+            // combined-shape path (`check_overloaded_method_compat`) before this
+            // flag is consulted, so it only governs singleton declarations.
+            let is_overload_signature = is_method && !class_in_ambient_context && !is_abstract && {
                 self.ctx
                     .arena
                     .get(member_idx)
@@ -1121,6 +1151,7 @@ impl<'a> CheckerState<'a> {
                     member_name: &member_name,
                     member_type,
                     member_name_idx,
+                    class_name_idx: class_data.name,
                     is_static,
                     derived_class_name: &derived_class_name,
                     base_class_name: &base_class_name,
@@ -1319,13 +1350,20 @@ impl<'a> CheckerState<'a> {
     /// (the overload sigs, or — when no bodyless overload sigs exist — the
     /// single implementation signature). Returns `true` if the method was
     /// recognized as overloaded and handled here, so the per-node compat
-    /// check should be skipped for every declaration of this name in the
+    /// check should be skipped for this declaration of the name in the
     /// derived class.
+    ///
+    /// The combined-shape comparison runs once per name and is cached; the
+    /// diagnostic itself is emitted at *every* declaration of the name (each
+    /// overload signature and the implementation), matching tsc, which anchors
+    /// TS2416 once per declaration rather than once per name. The elaboration
+    /// always uses the combined resolved types, never the per-node signature.
     fn check_overloaded_method_compat(&mut self, ctx: OverloadCompatCtx<'_>) -> bool {
         let OverloadCompatCtx {
             member_name,
             member_type,
             member_name_idx,
+            class_name_idx,
             is_static,
             derived_class_name,
             base_class_name,
@@ -1342,27 +1380,61 @@ impl<'a> CheckerState<'a> {
         if derived_overload_type.is_none() && base_overload_type.is_none() {
             return false;
         }
-        if !overload_compat_checked.insert((member_name.to_string(), is_static)) {
+
+        let decision = match overload_compat_checked.get(&(member_name.to_string(), is_static)) {
+            Some(cached) => *cached,
+            None => {
+                let derived_combined = derived_overload_type.unwrap_or(member_type);
+                let base_combined = base_overload_type.unwrap_or(base_info.type_id);
+                let base_combined = instantiate_type(self.ctx.types, base_combined, substitution);
+                let resolved_member_type = self.resolve_type_query_type(derived_combined);
+                let resolved_base_type = self.resolve_type_query_type(base_combined);
+                let decision = if resolved_member_type == TypeId::ANY
+                    || resolved_base_type == TypeId::ANY
+                    || !should_report_member_type_mismatch_bivariant(
+                        self,
+                        resolved_member_type,
+                        resolved_base_type,
+                        member_name_idx,
+                    ) {
+                    OverloadCompatDecision::Compatible
+                } else {
+                    OverloadCompatDecision::Mismatch {
+                        resolved_member_type,
+                        resolved_base_type,
+                    }
+                };
+                overload_compat_checked.insert((member_name.to_string(), is_static), decision);
+                decision
+            }
+        };
+
+        let OverloadCompatDecision::Mismatch {
+            resolved_member_type,
+            resolved_base_type,
+        } = decision
+        else {
+            return true;
+        };
+
+        if is_static {
+            // TS2417: the static side is a single whole-type check anchored at
+            // the derived class name (mirrors the non-overloaded static path).
+            // Every declaration of the name anchors at the same class-name node,
+            // so the `(start, code)` diagnostic dedup collapses the overload set
+            // into the single TS2417 tsc emits.
+            self.error_at_node(
+                class_name_idx,
+                &format!(
+                    "Class static side 'typeof {derived_class_name}' incorrectly extends base class static side 'typeof {base_class_name}'."
+                ),
+                diagnostic_codes::CLASS_STATIC_SIDE_INCORRECTLY_EXTENDS_BASE_CLASS_STATIC_SIDE,
+            );
             return true;
         }
 
-        let derived_combined = derived_overload_type.unwrap_or(member_type);
-        let base_combined = base_overload_type.unwrap_or(base_info.type_id);
-        let base_combined = instantiate_type(self.ctx.types, base_combined, substitution);
-        let resolved_member_type = self.resolve_type_query_type(derived_combined);
-        let resolved_base_type = self.resolve_type_query_type(base_combined);
-        if resolved_member_type == TypeId::ANY
-            || resolved_base_type == TypeId::ANY
-            || !should_report_member_type_mismatch_bivariant(
-                self,
-                resolved_member_type,
-                resolved_base_type,
-                member_name_idx,
-            )
-        {
-            return true;
-        }
-
+        // TS2416: instance side anchors once per declaration of the name (each
+        // overload signature and the implementation), matching tsc.
         let display_name = format_property_name_for_diagnostic(member_name);
         let base_class_display_name = base_class_name_for_diagnostic(base_class_name);
         self.error_at_node(

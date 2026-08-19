@@ -1890,6 +1890,7 @@ fn test_property_access_callable_members() {
         return_type: TypeId::VOID,
         type_predicate: None,
         is_method: false,
+        declaration_group: 0,
     };
     let callable = interner.callable(CallableShape {
         symbol: None,

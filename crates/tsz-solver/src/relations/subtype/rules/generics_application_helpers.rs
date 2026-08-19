@@ -3,7 +3,7 @@ use super::args_contain_type_parameters;
 use crate::def::DefId;
 use crate::diagnostics::SubtypeFailureReason;
 use crate::types::{TypeApplication, TypeApplicationId, TypeData, TypeId, Variance};
-use crate::visitor::{application_id, object_shape_id, object_with_index_shape_id};
+use crate::visitor::{application_id, lazy_def_id, object_shape_id, object_with_index_shape_id};
 use rustc_hash::FxHashSet;
 use smallvec::SmallVec;
 use std::sync::Arc;
@@ -743,7 +743,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         Some(SubtypeResult::True)
     }
 
-    pub(super) fn application_base_def_id(&self, base: TypeId) -> Option<DefId> {
+    pub(in crate::relations::subtype) fn application_base_def_id(
+        &self,
+        base: TypeId,
+    ) -> Option<DefId> {
         if base.is_intrinsic() {
             return None;
         }
@@ -1131,11 +1134,42 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     ) -> Option<SubtypeFailureReason> {
         // Callers may pass raw (lazy) references or already-resolved types;
         // resolve lazy aliases so a `Lazy(DefId)` wrapping an application is
-        // recognised, while leaving direct applications untouched.
+        // recognised, while leaving direct applications untouched. A side
+        // whose application identity was erased by checker evaluation is
+        // recovered through its display/eval-origin provenance channels —
+        // tsc's relation never loses the reference (`source.target ===
+        // target.target` still holds for instantiated references), so an
+        // evaluated instantiation must still drill its type argument here
+        // instead of falling into the property walk.
         let resolved_source = self.resolve_lazy_type(source);
         let resolved_target = self.resolve_lazy_type(target);
-        let s_app_id = application_id(self.interner, resolved_source)?;
-        let t_app_id = application_id(self.interner, resolved_target)?;
+        let mut s_ty = if application_id(self.interner, resolved_source).is_some() {
+            resolved_source
+        } else {
+            self.explain_provenance_application(resolved_source)?
+        };
+        let mut t_ty = if application_id(self.interner, resolved_target).is_some() {
+            resolved_target
+        } else {
+            self.explain_provenance_application(resolved_target)?
+        };
+
+        let same_base = |checker: &Self, s: TypeId, t: TypeId| {
+            let s_app = application_id(checker.interner, s);
+            let t_app = application_id(checker.interner, t);
+            match (s_app, t_app) {
+                (Some(s_app), Some(t_app)) => {
+                    checker.interner.type_application(s_app).base
+                        == checker.interner.type_application(t_app).base
+                }
+                _ => false,
+            }
+        };
+        if !same_base(self, s_ty, t_ty) {
+            (s_ty, t_ty) = self.align_application_bases(s_ty, t_ty)?;
+        }
+        let s_app_id = application_id(self.interner, s_ty)?;
+        let t_app_id = application_id(self.interner, t_ty)?;
         let s_app = self.interner.type_application(s_app_id);
         let t_app = self.interner.type_application(t_app_id);
 
@@ -1223,5 +1257,204 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         None
+    }
+
+    /// Application identity for explanation, recovered from the
+    /// display-alias / eval-origin provenance channels when checker
+    /// evaluation erased the `Application` head.
+    ///
+    /// Explanation-only: the relation verdict is already decided when this
+    /// runs, so recovery can only change which elaboration frames render,
+    /// never the outcome. Gated on the two channels agreeing on the
+    /// operand's generic identity (#17614): byte-identical twin aliases
+    /// intern instantiations to one `TypeId`, and a lone channel can name
+    /// the wrong alias for such a shared shape.
+    fn explain_provenance_application(&self, ty: TypeId) -> Option<TypeId> {
+        let display = self.interner.get_display_alias(ty);
+        let origin = self.interner.get_application_eval_origin(ty);
+        let display_app = display.and_then(|alias| application_id(self.interner, alias));
+        let origin_app = origin.and_then(|origin| application_id(self.interner, origin));
+        if !self.recovered_provenance_channels_agree(display_app, origin_app) {
+            return None;
+        }
+        match (display_app, origin_app) {
+            (Some(_), _) => display,
+            (None, Some(_)) => origin,
+            (None, None) => None,
+        }
+    }
+
+    /// Canonical definition of `ty`'s generic application base, for
+    /// explanation-side same-reference matching. Follows the same identity
+    /// recovery as [`Self::explain_same_generic_type_arguments`]: a direct
+    /// (or lazily aliased) application reads its base; an evaluated
+    /// instantiation recovers it through the agreeing provenance channels.
+    pub(crate) fn explain_application_base_def(&mut self, ty: TypeId) -> Option<DefId> {
+        let resolved = self.resolve_lazy_type(ty);
+        let app_ty = if application_id(self.interner, resolved).is_some() {
+            resolved
+        } else {
+            self.explain_provenance_application(resolved)?
+        };
+        let app_id = application_id(self.interner, app_ty)?;
+        let base = self.interner.type_application(app_id).base;
+        let def = self.application_base_def_id(base)?;
+        Some(self.resolver.canonical_def_id(def))
+    }
+
+    /// Substitute an alias application's body once WITHOUT evaluating the
+    /// result — [`Self::try_expand_application_type`] evaluates, which
+    /// erases the underlying application the base-alignment walk is looking
+    /// for (`type Row<P> = RawBuilder<P>`: the walk needs
+    /// `RawBuilder<string>`, not its structural expansion).
+    fn instantiate_alias_application_body(&mut self, app_id: TypeApplicationId) -> Option<TypeId> {
+        use crate::instantiation::instantiate::TypeSubstitution;
+        let app = self.interner.type_application(app_id);
+        let def_id = self.application_base_def_id(app.base)?;
+        let type_params = self.resolver.get_lazy_type_params(def_id)?;
+        let body = self.resolver.resolve_lazy(def_id, self.interner)?;
+        let substitution = TypeSubstitution::from_args(self.interner, &type_params, &app.args);
+        Some(crate::instantiation::instantiate::instantiate_type_cached(
+            self.interner,
+            self.query_db,
+            body,
+            &substitution,
+        ))
+    }
+
+    /// Whether two canonical application-base definitions name the same
+    /// generic reference, treating a forwarding alias (`type Row<P> =
+    /// RawBuilder<P>`) as its underlying base in either direction — tsc's
+    /// `source.target === target.target` holds across alias spellings
+    /// because instantiated references keep the underlying interface as
+    /// their `target`.
+    pub(crate) fn application_base_defs_match(&self, a: DefId, b: DefId) -> bool {
+        a == b || self.alias_body_chain_reaches(a, b) || self.alias_body_chain_reaches(b, a)
+    }
+
+    /// Hop forwarding-alias application bases (`type Row<P> = RawBuilder<P>`)
+    /// until both sides name the same base, so an alias-spelled
+    /// instantiation drills its differing type argument exactly like its
+    /// underlying reference. Each hop substitutes one alias body
+    /// ([`Self::instantiate_alias_application_body`]); a body that is not
+    /// itself an application stops that side's walk. Bounded, and only alias
+    /// bases hop, so a genuine cross-base pair still declines the argument
+    /// drill.
+    fn align_application_bases(&mut self, s_ty: TypeId, t_ty: TypeId) -> Option<(TypeId, TypeId)> {
+        const MAX_ALIAS_HOPS: usize = 8;
+        let base_of = |checker: &Self, ty: TypeId| -> Option<TypeId> {
+            let app_id = application_id(checker.interner, ty)?;
+            Some(checker.interner.type_application(app_id).base)
+        };
+        let is_alias_base = |checker: &Self, base: TypeId| -> bool {
+            checker.application_base_def_id(base).is_some_and(|def| {
+                matches!(
+                    checker.resolver.get_def_kind(def),
+                    Some(crate::def::DefKind::TypeAlias)
+                )
+            })
+        };
+        let mut sides = [s_ty, t_ty];
+        for _ in 0..MAX_ALIAS_HOPS {
+            let s_base = base_of(self, sides[0])?;
+            let t_base = base_of(self, sides[1])?;
+            if s_base == t_base {
+                return Some((sides[0], sides[1]));
+            }
+            let mut progressed = false;
+            for (idx, base) in [(0, s_base), (1, t_base)] {
+                if !is_alias_base(self, base) {
+                    continue;
+                }
+                let ty = sides[idx];
+                let app_id = application_id(self.interner, ty)?;
+                if let Some(expanded) = self.instantiate_alias_application_body(app_id)
+                    && application_id(self.interner, expanded).is_some()
+                    && expanded != ty
+                {
+                    sides[idx] = expanded;
+                    progressed = true;
+                    break;
+                }
+            }
+            if !progressed {
+                return None;
+            }
+        }
+        None
+    }
+}
+
+impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
+    /// Whether two provenance channels of one provenance-recovered operand
+    /// (its display-alias and application-eval-origin applications) agree on
+    /// the operand's generic identity, for the #17614 ambiguity guard in the
+    /// pre-evaluation variance fast path.
+    ///
+    /// Channels agree when either is absent, when they are the same
+    /// application, or when their bases resolve to the same canonical
+    /// definition. A base-definition DISAGREEMENT is still agreement — not a
+    /// #17614 twin-alias weld — when one base is a transparent alias whose
+    /// registered body reaches the other base through `Lazy`/`Application`
+    /// heads (`AsyncR<T> = Promise<OK<T>>`: display names `AsyncR`, eval
+    /// origin names the underlying `Promise`; both truthfully describe the
+    /// same value, and gating general variance on their mismatch is what
+    /// produced the false TS2416 on `any`-instantiated override returns,
+    /// issue #17630). Byte-identical twin aliases never satisfy the walk:
+    /// each twin's body is its own structural type (mapped/object), not a
+    /// reference to the other definition, so the weld stays refused. The
+    /// walk is a bounded pure lookup (`get_def_raw_body`), so an
+    /// unregistered body simply keeps the pair gated.
+    pub(crate) fn recovered_provenance_channels_agree(
+        &self,
+        a: Option<TypeApplicationId>,
+        b: Option<TypeApplicationId>,
+    ) -> bool {
+        let (Some(a), Some(b)) = (a, b) else {
+            return true;
+        };
+        if a == b {
+            return true;
+        }
+        let canonical_base = |app_id: TypeApplicationId| {
+            let app = self.interner.type_application(app_id);
+            lazy_def_id(self.interner, app.base).map(|def| self.resolver.canonical_def_id(def))
+        };
+        match (canonical_base(a), canonical_base(b)) {
+            (Some(da), Some(db)) => {
+                da == db
+                    || self.alias_body_chain_reaches(da, db)
+                    || self.alias_body_chain_reaches(db, da)
+            }
+            _ => false,
+        }
+    }
+
+    /// Whether following `from`'s registered raw body through
+    /// `Lazy`/`Application` heads reaches the definition `to` within a
+    /// bounded number of alias hops.
+    fn alias_body_chain_reaches(&self, from: DefId, to: DefId) -> bool {
+        let mut current = from;
+        for _ in 0..8 {
+            if current == to {
+                return true;
+            }
+            let Some(body) = self.resolver.get_def_raw_body(current, self.interner) else {
+                return false;
+            };
+            let next = match self.interner.lookup(body) {
+                Some(TypeData::Lazy(def)) => def,
+                Some(TypeData::Application(body_app_id)) => {
+                    let app = self.interner.type_application(body_app_id);
+                    match lazy_def_id(self.interner, app.base) {
+                        Some(def) => def,
+                        None => return false,
+                    }
+                }
+                _ => return false,
+            };
+            current = self.resolver.canonical_def_id(next);
+        }
+        false
     }
 }

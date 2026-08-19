@@ -1121,6 +1121,94 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     // so structural decomposition can extract inference candidates.
                     member_visited.clear();
                     if self.type_contains_placeholder(source, var_map, &mut member_visited) {
+                        // Return-context combination: when the placeholder-bearing
+                        // source is an `Application` and MULTIPLE non-nullish arms
+                        // are applications of the SAME base with the same arity,
+                        // `tsc` infers one candidate per arm at `ReturnType`
+                        // priority and COMBINES them into a union
+                        // (`PriorityImpliesCombination` in `inferToMultipleTypes` /
+                        // `getCovariantInference`), so a genuinely ambiguous
+                        // contextual union like `RawBuilder<string> |
+                        // RawBuilder<number>` resolves the tag's parameter to
+                        // `string | number` and the return assignability check
+                        // then fails (TS2322). Constraining per-arm instead
+                        // records one upper bound per arm, and the multi-bound
+                        // intersection fallback (`string & number` ≡ `never`)
+                        // satisfies every arm, silently accepting the ambiguity.
+                        // Merge the matching arms into one per-position-union
+                        // application and constrain once. Contravariant routing
+                        // keeps the per-arm walk: `tsc` intersects contra
+                        // candidates, which the existing multi-bound path models.
+                        if priority == crate::types::InferencePriority::ReturnType
+                            && !ctx.collects_contra_candidates()
+                            && ctx.parameter_recovery_mode
+                                != ParameterRecoveryMode::StandaloneReverse
+                            && let Some(TypeData::Application(_)) = self.interner.lookup(source)
+                        {
+                            // Aliases are transparent to tsc's inference on BOTH
+                            // sides of the scan: an alias arm (`type StrRow =
+                            // RawBuilder<string>`, arm `StrRow` or `Row<string>`
+                            // via `type Row<T> = RawBuilder<T>`) merges with
+                            // direct arms, and a tag declared to return the
+                            // alias application (`Row<Tagged>`) merges against
+                            // direct `RawBuilder<...>` arms. Try the as-written
+                            // source view first, then the evaluated one.
+                            let source_views = self.transparent_application_views(source);
+                            trace!(
+                                ?source,
+                                views = source_views.len(),
+                                members = t_members.len(),
+                                "return-context union merge scan"
+                            );
+                            for (s_base, s_args) in source_views {
+                                let s_args_len = s_args.len();
+                                let mut merged_member_args: Vec<Vec<TypeId>> =
+                                    vec![Vec::new(); s_args_len];
+                                let mut merged_member_count = 0usize;
+                                let mut unmerged_members: Vec<TypeId> = Vec::new();
+                                for &member in t_members.iter() {
+                                    if is_nullish(member) {
+                                        continue;
+                                    }
+                                    if let Some(m_args) =
+                                        self.union_arm_merge_args(member, s_base, s_args_len)
+                                    {
+                                        for (i, &arg) in m_args.iter().enumerate() {
+                                            merged_member_args[i].push(arg);
+                                        }
+                                        merged_member_count += 1;
+                                    } else {
+                                        unmerged_members.push(member);
+                                    }
+                                }
+                                if merged_member_count > 1 {
+                                    let merged_args: Vec<TypeId> = merged_member_args
+                                        .iter()
+                                        .map(|args| self.interner.union_from_slice(args))
+                                        .collect();
+                                    let merged = self.interner.application(s_base, merged_args);
+                                    // For the evaluated source view, constrain the
+                                    // aligned application form so the same-base
+                                    // walk seeds the placeholder directly; for the
+                                    // as-written view this re-interns to `source`
+                                    // itself.
+                                    let aligned_source = self.interner.application(s_base, s_args);
+                                    self.constrain_types(
+                                        ctx,
+                                        var_map,
+                                        aligned_source,
+                                        merged,
+                                        priority,
+                                    );
+                                    for member in unmerged_members {
+                                        self.constrain_types(
+                                            ctx, var_map, source, member, priority,
+                                        );
+                                    }
+                                    return;
+                                }
+                            }
+                        }
                         for &member in t_members.iter() {
                             if !is_nullish(member) {
                                 self.constrain_types(ctx, var_map, source, member, priority);

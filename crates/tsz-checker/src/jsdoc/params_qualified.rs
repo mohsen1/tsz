@@ -212,6 +212,157 @@ impl<'a> CheckerState<'a> {
         }
         None
     }
+
+    /// TS2694 for a qualified JSDoc type name `root.a.b(.c…)` whose root is a
+    /// namespace-import alias, namespace, or module and one of whose
+    /// **non-terminal** qualifier segments resolves to a value-only export
+    /// member (or does not resolve as a type-space entity at all).
+    ///
+    /// Every qualifier segment of a qualified type name must have
+    /// namespace/type meaning: for `import * as s from './mod'` where
+    /// `exports.n = {}` makes `n` a plain value, the type reference `s.n.K`
+    /// cannot qualify `.K` off the value `n`, so tsc reports TS2694
+    /// "Namespace '\"mod\"' has no exported member 'n'." anchored at the failing
+    /// segment (`n`). This is distinct from
+    /// `validate_jsdoc_param_namespace_member_errors`, which only covers a
+    /// *missing* member off a namespace root recognized by
+    /// `is_jsdoc_namespace_root` (which excludes namespace-import aliases). A
+    /// terminal segment used with type meaning (`s.Classic`, a class) stays
+    /// clean here — only intermediate qualifiers are checked. Returns true when
+    /// it emitted.
+    pub(crate) fn report_jsdoc_param_qualified_value_only_qualifier(
+        &mut self,
+        type_expr: &str,
+        comment_start: u32,
+        type_expr_offset: usize,
+    ) -> bool {
+        let trimmed = type_expr.trim();
+        if !Self::jsdoc_type_expr_is_plain_qualified_name(trimmed) {
+            return false;
+        }
+        let segments: Vec<&str> = trimmed.split('.').collect();
+        // Need a root plus at least one non-terminal qualifier and a terminal
+        // segment (`root.a.b`). A two-segment `root.a` has no intermediate
+        // qualifier to reject.
+        if segments.len() < 3 {
+            return false;
+        }
+        let root = segments[0];
+        if !self.jsdoc_qualified_root_is_namespace_or_alias(root) {
+            return false;
+        }
+        // A qualified `@typedef` declares a real dotted type reachable by name
+        // even through a value-ish root; it is never the "value used as a
+        // qualifier" case.
+        if self.resolve_global_jsdoc_typedef_info(trimmed).is_some() {
+            return false;
+        }
+
+        // Walk the non-terminal qualifier segments left to right. `byte_offset`
+        // tracks the position of each segment inside `trimmed` for anchoring.
+        let mut byte_offset = root.len();
+        for i in 1..segments.len() - 1 {
+            byte_offset += 1; // skip the '.' preceding this segment
+            let seg = segments[i];
+            let seg_start = byte_offset;
+            byte_offset += seg.len();
+
+            let prefix = segments[..=i].join(".");
+            let resolved = self.resolve_jsdoc_entity_name_symbol(&prefix);
+            let is_valid_qualifier = resolved
+                .is_some_and(|sym_id| self.jsdoc_symbol_is_type_qualifier_container(sym_id));
+            if is_valid_qualifier {
+                continue;
+            }
+            // A resolvable value-only member, or a segment that does not resolve
+            // to any type-space entity, cannot host `.{next}` — report the
+            // TS2694 anchored at that segment. Requiring a real namespace/alias
+            // root above keeps this off shapes some other resolver would
+            // legitimately accept. `resolved_qualifier` names the segments
+            // resolved before `seg` (empty when `seg` is the first member).
+            let resolved_qualifier: Vec<&str> = segments[1..i].to_vec();
+            let namespace_display =
+                self.jsdoc_qualified_root_namespace_display(root, &resolved_qualifier);
+            let message =
+                format!("Namespace '{namespace_display}' has no exported member '{seg}'.");
+            let start = self
+                .ctx
+                .arena
+                .source_files
+                .first()
+                .and_then(|source_file| {
+                    let source_text = source_file.text.as_ref();
+                    source_text
+                        .find(&format!("@param {{{trimmed}}}"))
+                        .map(|offset| offset + "@param {".len() + seg_start)
+                })
+                .map(|offset| offset as u32)
+                .unwrap_or(comment_start + type_expr_offset as u32 + seg_start as u32);
+            let length = seg.len() as u32;
+            let already_reported = self.ctx.diagnostics.iter().any(|diagnostic| {
+                diagnostic.code == 2694
+                    && diagnostic.start == start
+                    && diagnostic.length == length
+                    && diagnostic.message_text == message
+            });
+            if !already_reported {
+                self.error_at_position(start, length, &message, 2694);
+            }
+            return true;
+        }
+        false
+    }
+
+    /// Whether a symbol resolved for a qualified JSDoc type segment can host a
+    /// further `.member` in type position — a namespace/module, enum, class,
+    /// interface, or type alias. A plain value member (property, variable,
+    /// object literal) cannot.
+    fn jsdoc_symbol_is_type_qualifier_container(&self, sym_id: tsz_binder::SymbolId) -> bool {
+        use tsz_binder::symbol_flags;
+        let container_flags = symbol_flags::NAMESPACE_MODULE
+            | symbol_flags::VALUE_MODULE
+            | symbol_flags::ENUM
+            | symbol_flags::CLASS
+            | symbol_flags::INTERFACE
+            | symbol_flags::TYPE_ALIAS;
+        self.get_cross_file_symbol(sym_id)
+            .or_else(|| self.ctx.binder.get_symbol(sym_id))
+            .is_some_and(|symbol| symbol.has_any_flags(container_flags))
+    }
+
+    /// Display name of the namespace a qualified JSDoc type name roots at, for
+    /// the TS2694 message. An import alias (`import * as s from './mod'`) is
+    /// named by its resolved module (`"mod"`), matching tsc and the
+    /// `import(...)`/`typeof import(...)` JSDoc paths; a plain in-file namespace
+    /// is named by its own dotted path.
+    fn jsdoc_qualified_root_namespace_display(
+        &mut self,
+        root: &str,
+        resolved_qualifier: &[&str],
+    ) -> String {
+        if let Some(module_specifier) = self
+            .ctx
+            .binder
+            .file_locals
+            .get(root)
+            .and_then(|sym_id| self.ctx.binder.get_symbol(sym_id))
+            .and_then(|symbol| symbol.import_module().map(str::to_string))
+        {
+            let module_path = self
+                .resolved_import_type_module_path(&module_specifier, None)
+                .unwrap_or_else(|| self.imported_namespace_display_module_name(&module_specifier));
+            return self.jsdoc_import_namespace_display(
+                &module_specifier,
+                &module_path,
+                resolved_qualifier,
+            );
+        }
+        if resolved_qualifier.is_empty() {
+            root.to_string()
+        } else {
+            format!("{root}.{}", resolved_qualifier.join("."))
+        }
+    }
 }
 
 #[cfg(test)]

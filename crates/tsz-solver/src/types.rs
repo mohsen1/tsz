@@ -12,6 +12,7 @@ use tsz_common::interner::Atom;
 /// Hand-maintained `PartialEq`/`Eq`/`Hash` impls for the interned shape types
 /// (`PropertyInfo`, `IndexSignature`, `ObjectShape`, `CallableShape`), with
 /// per-field identity decisions made explicit via exhaustive destructuring.
+mod call_signature_impl;
 mod relation_cache;
 mod shape_identity;
 mod spread_literal;
@@ -1266,20 +1267,11 @@ pub struct CallSignature {
     /// Whether this call signature is from a method (uses bivariant parameter checking).
     /// Methods in TypeScript are intentionally bivariant for compatibility reasons.
     pub is_method: bool,
-}
-
-impl CallSignature {
-    /// Create a simple call signature with params and return type.
-    pub const fn new(params: Vec<ParamInfo>, return_type: TypeId) -> Self {
-        Self {
-            type_params: Vec::new(),
-            params,
-            this_type: None,
-            return_type,
-            type_predicate: None,
-            is_method: false,
-        }
-    }
+    /// 0-based merged-declaration group (tsc `signature.declaration.parent`):
+    /// overload resolution tries later groups first (`reorderCandidates`)
+    /// while display keeps stored order; `0` means "not from a merged set".
+    /// See `crate::type_queries::data::reorder_overload_candidates`.
+    pub declaration_group: u32,
 }
 
 /// Callable type with multiple overloaded call signatures

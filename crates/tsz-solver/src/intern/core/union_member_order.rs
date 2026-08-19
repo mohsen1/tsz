@@ -161,6 +161,7 @@ impl TypeInterner {
             builtin_key,
             rank,
             lazy_or_enum_defid,
+            alloc_order: self.lookup_alloc_order(id),
             raw: id.0,
         }
     }
@@ -190,7 +191,8 @@ impl TypeInterner {
     ///
     /// This is the lookup-free equivalent of `compare_application_component`:
     /// builtin-key bucket first, then `TypeData` rank, then `DefId` for
-    /// `Lazy`/`Enum`, then the raw `TypeId` as a stable tiebreak.
+    /// `Lazy`/`Enum`, then allocation order, then the raw `TypeId` as a final
+    /// stable tiebreak.
     fn compare_app_component_key(a: &AppComponentKey, b: &AppComponentKey) -> std::cmp::Ordering {
         use std::cmp::Ordering;
 
@@ -216,6 +218,24 @@ impl TypeInterner {
                     return cmp;
                 }
             }
+        }
+
+        // Raw `TypeId`s are sharded (shard index interleaved with a per-shard
+        // local counter), so two components interned back-to-back can land in
+        // different shards and compare in an order that has nothing to do with
+        // when they were actually created. `alloc_order` is a single global
+        // counter recorded at intern time — prefer it, matching
+        // `compare_cached_members`'s own allocation-order fallback, and only
+        // fall through to the raw id when neither component has one (e.g. a
+        // declaration-scoped type interned via `intern_fresh`).
+        let alloc_cmp = match (a.alloc_order, b.alloc_order) {
+            (Some(oa), Some(ob)) => oa.cmp(&ob),
+            (Some(_), None) => Ordering::Less,
+            (None, Some(_)) => Ordering::Greater,
+            (None, None) => Ordering::Equal,
+        };
+        if alloc_cmp != Ordering::Equal {
+            return alloc_cmp;
         }
 
         a.raw.cmp(&b.raw)

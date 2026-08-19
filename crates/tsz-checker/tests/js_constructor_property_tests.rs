@@ -1406,14 +1406,27 @@ a.first = 10
         diagnostics.iter().any(|(code, _)| *code == 7009),
         "expected TS7009 for `new A()` on a non-constructor function; got: {diagnostics:?}"
     );
-    // The static chained assignment `A.s = A.t = function g(m) { ... this.x }`
-    // binds `this` to `typeof A` (the constructor object), so `this.x` reports
-    // TS2339 against `typeof A`.
+    // TypeScript 7 dropped TS6-era constructor-function `this` inference: the
+    // static chained assignment `A.s = A.t = function g(m) { ... this.x }`
+    // binds `this` to `A`'s structural merged shape (call signature plus its
+    // own static expando members `s`/`t`), not `typeof A` (#17654) — `x` is
+    // an INSTANCE property from `this.x` inside `A`'s own body, so it never
+    // appears in that static-side shape either.
     assert!(
         diagnostics.iter().any(|(code, message)| {
-            *code == 2339 && message.contains("Property 'x' does not exist on type 'typeof A'")
+            *code == 2339
+                && message.contains("Property 'x' does not exist on type '{ (): any; s: ")
+                && message.contains("t: ")
         }),
-        "static chained assignment function body should bind this to typeof A; got: {diagnostics:?}"
+        "static chained assignment function body should bind this to A's merged \
+         expando shape, not typeof A; got: {diagnostics:?}"
+    );
+    assert!(
+        !diagnostics
+            .iter()
+            .any(|(_, message)| message.contains("typeof A")),
+        "TypeScript 7 dropped the `typeof A` `this` receiver display for a \
+         plain FUNCTION owner; got: {diagnostics:?}"
     );
     assert!(
         !diagnostics.iter().any(|(code, message)| {
@@ -1514,5 +1527,34 @@ r.anything;
         diagnostics.iter().all(|(code, _)| *code != 2345),
         "plain infinite self-recursion must not spuriously mismatch call argument types; \
          got: {diagnostics:?}"
+    );
+}
+
+/// `this` inside a function assigned to a plain FUNCTION owner's property
+/// binds to the owner's structural merged shape, not `typeof <owner>`
+/// (dropped TS6-era constructor-function inference) and not the assigned
+/// function's own bare signature (#17654). tsc types the receiver as the
+/// owner's callable-plus-expando shape, oracle-verified against
+/// `typescript@7.0.2`.
+#[test]
+fn test_js_function_owner_property_assignment_this_binds_to_merged_expando_shape() {
+    let source = r#"
+function fn() {}
+fn.m = function C() { this.w; };
+"#;
+    let diagnostics = check_js(source);
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2339 && message.contains("does not exist on type '{ (): any; m: () => any; }'")
+        }),
+        "single-assignment function-owner `this` should bind to the owner's \
+         merged expando shape, not `typeof fn`; got: {diagnostics:?}"
+    );
+    assert!(
+        !diagnostics
+            .iter()
+            .any(|(_, message)| message.contains("typeof fn")),
+        "TypeScript 7 dropped TS6-era `typeof <name>` `this` receiver display \
+         for a plain FUNCTION owner; got: {diagnostics:?}"
     );
 }

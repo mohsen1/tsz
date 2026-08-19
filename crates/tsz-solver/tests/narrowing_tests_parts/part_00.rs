@@ -1018,19 +1018,15 @@ fn test_narrow_by_typeof_object_excludes_function() {
 fn test_narrow_by_typeof_function_includes_callable() {
     let interner = TypeInterner::new();
 
-    let sig = CallSignature {
-        type_params: vec![],
-        params: vec![ParamInfo {
+    let sig = CallSignature::new(
+        vec![ParamInfo {
             name: Some(interner.intern_string("x")),
             type_id: TypeId::NUMBER,
             optional: false,
             rest: false,
         }],
-        this_type: None,
-        return_type: TypeId::STRING,
-        type_predicate: None,
-        is_method: false,
-    };
+        TypeId::STRING,
+    );
     let callable = interner.callable(CallableShape {
         symbol: None,
         is_abstract: false,
@@ -1370,17 +1366,16 @@ fn test_call_signature_with_type_predicate() {
 
     // Overload: (x: any): x is number
     let sig = CallSignature {
-        type_params: vec![],
-        params: vec![ParamInfo::required(x_name, TypeId::ANY)],
-        this_type: None,
-        return_type: TypeId::BOOLEAN,
         type_predicate: Some(TypePredicate {
             asserts: false,
             target: TypePredicateTarget::Identifier(x_name),
             type_id: Some(TypeId::NUMBER),
             parameter_index: None,
         }),
-        is_method: false,
+        ..CallSignature::new(
+            vec![ParamInfo::required(x_name, TypeId::ANY)],
+            TypeId::BOOLEAN,
+        )
     };
 
     assert!(sig.type_predicate.is_some());

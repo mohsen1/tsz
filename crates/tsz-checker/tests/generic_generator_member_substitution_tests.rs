@@ -117,6 +117,85 @@ fn generic_async_generator_next_value_substitutes_receiver_type_args() {
     );
 }
 
+/// Reversed declaration order of the binders must not change the result: the
+/// substitution keys off the receiver's argument positions, not the enclosing
+/// function's declaration order.
+#[test]
+fn generic_generator_reversed_binder_order_still_errors() {
+    let lib_files = load_default_lib_files();
+    if lib_files.is_empty() {
+        return;
+    }
+    let diags = diagnostics(
+        "export function take<R, Y>(g: Generator<Y, R>): boolean { return g.next().value; }",
+        ScriptTarget::ES2015,
+        &lib_files,
+    );
+    let ts2322: Vec<&(u32, String)> = diags.iter().filter(|(code, _)| *code == 2322).collect();
+    assert!(
+        !ts2322.is_empty(),
+        "reversed binder order must still report TS2322, got: {diags:?}",
+    );
+    assert!(
+        ts2322
+            .iter()
+            .any(|(_, msg)| msg.contains("R | Y") && !msg.contains("TReturn")),
+        "TS2322 source must be the substituted union, got: {ts2322:?}",
+    );
+}
+
+/// The base `Iterator` interface (its own lib file, same cross-arena shape)
+/// must substitute identically; renamed binders prove no name coupling.
+#[test]
+fn generic_iterator_next_value_genuine_mismatch_errors() {
+    let lib_files = load_default_lib_files();
+    if lib_files.is_empty() {
+        return;
+    }
+    let diags = diagnostics(
+        "export function take<A, B>(it: Iterator<A, B>): boolean { return it.next().value; }",
+        ScriptTarget::ES2015,
+        &lib_files,
+    );
+    let ts2322: Vec<&(u32, String)> = diags.iter().filter(|(code, _)| *code == 2322).collect();
+    assert!(
+        !ts2322.is_empty(),
+        "Iterator<A, B>.next().value against boolean must report TS2322, got: {diags:?}",
+    );
+    assert!(
+        ts2322
+            .iter()
+            .any(|(_, msg)| msg.contains("A | B") && !msg.contains("TReturn")),
+        "TS2322 source must be the substituted `A | B`, got: {ts2322:?}",
+    );
+}
+
+/// `AsyncGenerator` negative control: the awaited `.next()` result's `value`
+/// must carry the substituted union, so a wrong annotation still errors.
+#[test]
+fn generic_async_generator_genuine_mismatch_still_errors() {
+    let lib_files = load_default_lib_files();
+    if lib_files.is_empty() {
+        return;
+    }
+    let diags = diagnostics(
+        "export async function take<Y, R>(g: AsyncGenerator<Y, R>): Promise<boolean> { return (await g.next()).value; }",
+        ScriptTarget::ESNext,
+        &lib_files,
+    );
+    let ts2322: Vec<&(u32, String)> = diags.iter().filter(|(code, _)| *code == 2322).collect();
+    assert!(
+        !ts2322.is_empty(),
+        "AsyncGenerator<Y, R> awaited next().value against boolean must report TS2322, got: {diags:?}",
+    );
+    assert!(
+        ts2322
+            .iter()
+            .any(|(_, msg)| msg.contains("R | Y") && !msg.contains("TReturn")),
+        "TS2322 source must be the substituted union, got: {ts2322:?}",
+    );
+}
+
 /// Negative control: a genuinely wrong annotation must still report TS2322, and
 /// the diagnostic must show the *substituted* `Y | R` source (proving the
 /// member type was instantiated), not the leaked `T | TReturn`.
@@ -136,10 +215,13 @@ fn generic_generator_genuine_mismatch_still_errors_with_substituted_source() {
         !ts2322.is_empty(),
         "assigning Generator<Y, R>.next().value to boolean must report TS2322, got: {diags:?}",
     );
+    // tsc 7.0.2 renders the substituted union as `R | Y` on this fixture
+    // (`Type 'R | Y' is not assignable to type 'boolean'.`), so pin that
+    // exact spelling rather than an order the oracle never prints.
     assert!(
         ts2322
             .iter()
-            .any(|(_, msg)| msg.contains("Y | R") && !msg.contains("TReturn")),
-        "TS2322 source must be the substituted `Y | R`, not the leaked `T | TReturn`, got: {ts2322:?}",
+            .any(|(_, msg)| msg.contains("R | Y") && !msg.contains("TReturn")),
+        "TS2322 source must be the substituted `R | Y`, not the leaked `T | TReturn`, got: {ts2322:?}",
     );
 }

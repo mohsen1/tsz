@@ -178,6 +178,21 @@ fn complete_contextual_type_param_plan(
             !common::contains_type_parameters(db, mapped)
                 && !common::contains_infer_types(db, mapped)
         }) {
+            // The callee's own binding for this name is already concrete, but
+            // `request.type_id` (the contextual type being completed) may
+            // still contain an unrelated type parameter that merely shares
+            // this name -- e.g. a tuple element carrying an *outer* generic
+            // function's own type parameter (`Kind<F, R, A>` inferred as
+            // `[A_outer, B_outer]`, then destructured against a callee whose
+            // own declared type parameters happen to also be named `A`/`B`).
+            // Substitutions are name-keyed (see the shadowing note below), so
+            // applying the callee's concrete binding here would silently
+            // overwrite that outer occurrence instead of leaving it for the
+            // enclosing signature to resolve. Drop the binding in that case
+            // rather than applying it.
+            if common::contains_type_parameter_named(db, request.type_id, tp.name) {
+                plan.substitution.remove(tp.name);
+            }
             continue;
         }
         // A round-1 candidate may legitimately mention a type parameter of an
@@ -225,6 +240,30 @@ fn complete_contextual_type_param_plan(
                 .is_some_and(|mapped| common::contains_type_parameter_named(db, mapped, tp.name))
         {
             plan.substitution.remove(tp.name);
+            continue;
+        }
+        // Name-keyed capture guard: the contextual type handed to this pass was
+        // already instantiated once with the round-1 candidates, so an
+        // occurrence of `tp.name` inside it may belong to an *enclosing*
+        // signature's parameter that a different callee parameter's candidate
+        // legitimately introduced (`map<F, R, A, B>(self: Kind<F, R, A>, f:
+        // (a: A) => B)` called inside `use<F, R, A, B>` infers `A := B_outer`;
+        // the callee's own `B` is still unfixed). Substitutions are name-keyed,
+        // so defaulting the unfixed `B` here would rewrite the foreign
+        // `B_outer` occurrence to `unknown` as well — a tsz-only false
+        // positive; `tsc` keeps the outer parameter. When any *other*
+        // parameter's round-1 candidate mentions this name, leave the name
+        // unbound instead of capturing it.
+        let name_introduced_by_other_candidate = request.type_params.iter().any(|other| {
+            other.name != tp.name
+                && request
+                    .current_substitution
+                    .get(other.name)
+                    .is_some_and(|candidate| {
+                        common::contains_type_parameter_named(db, candidate, tp.name)
+                    })
+        });
+        if name_introduced_by_other_candidate {
             continue;
         }
         let replacement = tp.default.or(tp.constraint).unwrap_or(TypeId::UNKNOWN);

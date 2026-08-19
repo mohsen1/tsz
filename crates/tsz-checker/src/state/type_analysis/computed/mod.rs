@@ -1429,19 +1429,13 @@ impl<'a> CheckerState<'a> {
             // Impl signature is never an externally visible call signature.
             // Body-less decls are the overloads; JSDoc `@overload` substitutes
             // only when zero body-less decls exist across all declarations.
-            let mut overloads = Vec::new();
-            let mut implementation_decl = NodeIndex::NONE;
-
-            for &decl_idx in &declarations {
-                let Some(func) = self.ctx.arena.get_function_at(decl_idx) else {
-                    continue;
-                };
-                if func.body.is_none() {
-                    overloads.push(self.call_signature_from_function(func, decl_idx));
-                } else {
-                    implementation_decl = decl_idx;
-                }
-            }
+            // Collection merges bodiless declarations from every program file
+            // re-declaring the symbol and stamps tsc's `reorderCandidates`
+            // declaration-group boundaries (`signature.declaration.parent`,
+            // forward program order) so call resolution tries later groups
+            // first while stored/display order stays forward.
+            let (mut overloads, implementation_decl) =
+                self.merged_function_overload_signatures(sym_id, &declarations);
 
             if overloads.is_empty()
                 && let Some(impl_func) = self.ctx.arena.get_function_at(implementation_decl)
@@ -1905,35 +1899,11 @@ impl<'a> CheckerState<'a> {
                 //  - Same NodeIndex collision (has_cross_file_same_index): decl IS in
                 //    local arena, but declaration_arenas has additional non-local arenas
                 if has_out_of_arena_decl || has_cross_file_same_index {
-                    for &decl_idx in declarations.iter() {
-                        let Some(arenas) =
-                            self.ctx.binder.declaration_arenas.get(&(sym_id, decl_idx))
-                        else {
-                            continue;
-                        };
-                        for arena in arenas.iter() {
-                            // Skip the local arena — already lowered above
-                            if std::ptr::eq(arena.as_ref(), self.ctx.arena) {
-                                continue;
-                            }
-                            if let Some(node) = arena.get(decl_idx)
-                                && arena.get_interface(node).is_some()
-                            {
-                                let cross_type =
-                                    self.lower_cross_file_interface_decl(arena, decl_idx, sym_id);
-                                if cross_type != TypeId::ERROR {
-                                    // With no local declarations the local
-                                    // lowering above is ERROR; the first
-                                    // cross-file lowering becomes the base.
-                                    interface_type = if interface_type == TypeId::ERROR {
-                                        cross_type
-                                    } else {
-                                        self.merge_interface_types(interface_type, cross_type)
-                                    };
-                                }
-                            }
-                        }
-                    }
+                    interface_type = self.merge_cross_file_interface_declarations(
+                        sym_id,
+                        &declarations,
+                        interface_type,
+                    );
                 }
 
                 let mut interface_type = if needs_local_heritage_merge {

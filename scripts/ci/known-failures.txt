@@ -229,8 +229,42 @@
 # colliding_generic_terminals row below is the separate #15983
 # SymbolId-collision family and still fails.
 tsz-checker::generic_call_assignment_flow_tests::colliding_generic_terminals_keep_flow_diagnostics_clean_across_file_orders
-tsz-checker::generic_generator_member_substitution_tests::generic_generator_genuine_mismatch_still_errors_with_substituted_source
-tsz-checker::issue_14123_repro_tests::issue_14123_alias_array_infer_reports_mismatch
+# 2026-08-18 shrink (no generation bump — removals are always allowed): the
+# generic_generator_member_substitution_tests::generic_generator_genuine_mismatch_still_errors_with_substituted_source
+# row now passes — fixed, not incidental. The env-aware property-access
+# post-query pass expanded a generic application receiver with the raw
+# `evaluate_application_type`, which cannot substitute a cross-arena lib
+# interface whose type-parameter push collided with the current file arena
+# (pushed params disagree in arity with the application args, so the shared
+# evaluator's substitution is a no-op); the unsubstituted lib params were then
+# default-filled, so `Generator<Y, R>.next()` typed as
+# `IteratorResult<unknown, any>` and `.value` degraded to `any` — a false
+# negative. Routed the expansion through
+# `evaluate_application_type_for_property_access`, whose arena-collision
+# recovery re-instantiates the identical body with the symbol's canonical
+# parameters. Oracle-confirmed byte-identical against typescript@7.0.2 on
+# Generator/Iterator/AsyncGenerator negative controls plus the positive
+# control; the existing negative-control assertion was re-pinned from
+# `Y | R` to the oracle's actual `R | Y` rendering. Verified with a full
+# per-target run (`cargo test -p tsz-checker --test
+# generic_generator_member_substitution_tests`, 8/8 passed incl. 3 new
+# adjacent-matrix tests) and a two-sided `compare-to-parent.sh` conformance
+# run recorded in the PR.
+# 2026-08-18 shrink (no generation bump — removals are always allowed): the
+# issue_14123_repro_tests::issue_14123_alias_array_infer_reports_mismatch row
+# is delisted by fixing the HARNESS-ARTIFACT the r3 adjudication named (top of
+# this file): the suite's recursion unwraps through a lib generic (`Promise`),
+# and the plain `check_source_with_libs` harness cannot unify a lib generic's
+# base declaration across the user and lib arenas (#16125), so the alias
+# application stayed an unevaluated self-application in relation position and
+# the mismatch fixture lost its TS2322 (every target except `never` was
+# silently accepted). The suite now routes through the production-faithful
+# `check_source_with_libs_shared_def_store` construction; the previously
+# failing fixture reports exactly one TS2322 whose source side renders the
+# converged `{ id: 0; }` fixpoint, oracle-exact. No production code changed.
+# Verified with a per-target run: `cargo test -p tsz-checker --test
+# issue_14123_repro_tests` — 8/8 passed (was 6/7; +1 new primitive-target
+# adjacent witness, also oracle-verified), including both TS2589 safety nets.
 # 2026-08-18 shrink (no generation bump — removals are always allowed): the two
 # js_export_surface_tests::part_01 rows below now pass — verified with a direct
 # per-target run (`cargo test -p tsz-checker --test js_export_surface_tests`),
@@ -242,8 +276,11 @@ tsz-checker::issue_14123_repro_tests::issue_14123_alias_array_infer_reports_mism
 # property's read must use the last assignment textually *before* the read
 # instead. Routed ordered reads through the already-existing position-bounded
 # `current_file_commonjs_prior_named_export_type` helper.
-tsz-checker::nonnull_contextual_type_arg_inference_tests::contextual_return_can_refine_transparent_wrapper_inference
-tsz-checker::raw_builder_return_context_inference_tests::different_base_and_ambiguous_union_do_not_pin_the_tag
+# 2026-08-19 shrink (no generation bump — removals are always allowed): the
+# raw_builder_return_context_inference_tests::different_base_and_ambiguous_union_do_not_pin_the_tag
+# row now passes — the ambiguous same-base-union return context no longer pins
+# the tag's parameter (constraint-walker ReturnType union-arm combination; see
+# the PR that removed this row for the mechanism and the oracle matrix).
 # 2026-08-17 shrink (no generation bump — removals are always allowed): the two
 # tsz-cli::driver_tests rows below now pass on main @ 026b8458 — verified with a
 # direct per-test run (`cargo nextest run -p tsz-cli --lib -E

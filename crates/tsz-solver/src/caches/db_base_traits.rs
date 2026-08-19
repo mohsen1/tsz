@@ -1,5 +1,7 @@
 use super::db::TypeDatabase;
-use crate::types::{TypeData, TypeId};
+use crate::def::DefId;
+use crate::types::{TypeData, TypeId, TypeParamInfo};
+use std::sync::Arc;
 
 /// Redundant-supertype reduction of an intersection type, for diagnostic
 /// DISPLAY only. It does not change any interned identity — in particular it
@@ -379,4 +381,224 @@ pub trait JsSignatureDisplaySource {
         &self,
         id: crate::types::FunctionShapeId,
     ) -> Option<std::sync::Arc<[bool]>>;
+}
+
+/// Per-file cache hooks for evaluated generic applications.
+///
+/// The application-eval cache is keyed by `(DefId, args,
+/// no_unchecked_indexed_access, exact_optional_property_types)`. Use it only
+/// from authoritative full-resolver contexts; limited/noop resolvers can skip
+/// fallback behavior that is part of recursive and inference parity. Keeping
+/// this separate from [`TypeDatabase`] avoids growing the storage interface.
+pub trait TypeApplicationEvalCache {
+    /// Project-wide (#14345) instantiation result lookup. Default `None`.
+    fn lookup_proto_instantiation_cache(
+        &self,
+        _key: &crate::caches::instantiation_cache::InstantiationCacheKey,
+    ) -> Option<TypeId> {
+        None
+    }
+
+    /// Project-wide (#14345) instantiation result store. Default no-op.
+    fn insert_proto_instantiation_cache(
+        &self,
+        _key: crate::caches::instantiation_cache::InstantiationCacheKey,
+        _result: TypeId,
+    ) {
+    }
+
+    /// Look up a shared cache entry for evaluated generic applications.
+    ///
+    /// The default returns `None` so raw `TypeInterner` backends and tests opt
+    /// out.
+    fn lookup_application_eval_cache(
+        &self,
+        _def_id: DefId,
+        _args: &[TypeId],
+        _no_unchecked_indexed_access: bool,
+    ) -> Option<TypeId> {
+        None
+    }
+
+    /// Store an evaluated generic application result in the shared per-file
+    /// cache. The default is a no-op so non-cache backends opt out.
+    fn insert_application_eval_cache(
+        &self,
+        _def_id: DefId,
+        _args: &[TypeId],
+        _no_unchecked_indexed_access: bool,
+        _result: TypeId,
+    ) {
+    }
+
+    /// Whether `type_id` is a registered provisional (mid-build) class
+    /// instance snapshot (#16055; semantics in
+    /// `intern/core/interner/provisional_registry.rs`). Default `None`.
+    fn provisional_class_instance(
+        &self,
+        _type_id: TypeId,
+    ) -> Option<(DefId, Arc<[TypeParamInfo]>)> {
+        None
+    }
+
+    /// Register `type_id` as the provisional class-instance snapshot of
+    /// `def_id` (#16055). Default no-op.
+    fn register_provisional_class_instance(
+        &self,
+        _type_id: TypeId,
+        _def_id: DefId,
+        _params: Arc<[TypeParamInfo]>,
+    ) {
+    }
+
+    /// Drop every provisional class-instance registration for `def_id` —
+    /// called when the class publishes its completed instance. Default no-op.
+    fn unregister_provisional_class_instances_for_def(&self, _def_id: DefId) {}
+
+    /// Drop every cached eval-family entry that depends on `def_id`.
+    ///
+    /// This includes application-eval entries keyed by the def directly or by
+    /// lazy refs in their args/results, ordinary eval-memo entries whose key or
+    /// result closure mentions the def, and closed-eval entries with the same
+    /// dependency. The concrete `QueryCache` implementation also invalidates
+    /// shared eval-family entries when a shared cache is attached.
+    ///
+    /// Called when a definition body is (re)registered with different
+    /// content: results computed under the previous body (or before any body
+    /// existed) are stale and must be recomputed on the next query. The
+    /// default is a no-op so raw `TypeInterner` backends and tests opt out.
+    fn invalidate_application_eval_cache_for_def(&self, _def_id: DefId) {}
+
+    /// Look up a persisted evaluation memo entry for `type_id`.
+    ///
+    /// Backed by the same per-file (plus shared cross-file) eval cache that
+    /// `evaluate_type_with_options` consults at its top-level boundary; this
+    /// hook lets a *plain* evaluator (`NoopResolver`, default mode flags)
+    /// read those entries at nested nodes too, instead of re-walking
+    /// subtrees an earlier evaluator in the same file scope already
+    /// evaluated (issue #13097). Every stored entry is a clean
+    /// (limit-untainted) result keyed by
+    /// `(TypeId, no_unchecked_indexed_access, exact_optional_property_types)`
+    /// and written only from plain evaluators, so serving it at a nested
+    /// node is the same semantic operation the top-level boundary already
+    /// performs. Default returns `None` so raw `TypeInterner` backends and
+    /// tests opt out.
+    fn lookup_eval_memo(
+        &self,
+        _type_id: TypeId,
+        _no_unchecked_indexed_access: bool,
+    ) -> Option<TypeId> {
+        None
+    }
+
+    /// Store a clean evaluation result in the persistent eval memo.
+    ///
+    /// Write-through counterpart of [`Self::lookup_eval_memo`], called from
+    /// a plain evaluator's memo insert when the entry's evaluation window
+    /// saw no limit event (the per-entry taint discrimination of issue
+    /// #13241) and no union-complexity overflow. First write wins, matching
+    /// the boundary drain's `or_insert`. Default is a no-op.
+    fn insert_eval_memo(
+        &self,
+        _type_id: TypeId,
+        _no_unchecked_indexed_access: bool,
+        _result: TypeId,
+    ) {
+    }
+
+    /// Look up a cached evaluation result for a *closed* type (one with no free
+    /// type parameters, `this`, `infer`, or type-query operands).
+    ///
+    /// Evaluating a closed type is resolver-independent and deterministic per
+    /// interner, so the result can be memoized project-wide and reused across
+    /// the many fresh `TypeEvaluator` instances created during instantiation
+    /// (`evaluate_index_access`, `evaluate_keyof`, …). The key is keyed by the
+    /// `TypeId` plus both option flags, which can change `T[K]` results.
+    /// Default returns `None` so non-cache backends opt out.
+    fn lookup_closed_eval_cache(
+        &self,
+        _type_id: TypeId,
+        _no_unchecked_indexed_access: bool,
+    ) -> Option<TypeId> {
+        None
+    }
+
+    /// Store an evaluation result for a closed type. Default is a no-op.
+    fn insert_closed_eval_cache(
+        &self,
+        _type_id: TypeId,
+        _no_unchecked_indexed_access: bool,
+        _result: TypeId,
+    ) {
+    }
+
+    /// Look up a cached *conditional-branch* subtype verdict — whether
+    /// `check <: extends` for the purpose of selecting a conditional type's
+    /// branch (issues #8356 / #13097).
+    ///
+    /// This is a distinct relation from plain subtyping: the conditional
+    /// branch probe applies tsc's conditional-only fast paths (the global
+    /// `Function` intrinsic satisfying a callable target; primitives never
+    /// extending `Function`), so its verdict must never be served from — or
+    /// stored into — the ordinary subtype relation cache. Only *definitive*
+    /// verdicts (`Holds`/`Fails`) that consumed no unregistered `Lazy` body,
+    /// took no depth bail, and tripped no recursion/iteration limit are
+    /// persisted, so a stored verdict is stable for `(check, extends,
+    /// no_unchecked_indexed_access, exact_optional_property_types)` across the
+    /// fresh `TypeEvaluator` instances instantiation spins up. Default returns
+    /// `None` so non-cache backends opt out.
+    fn lookup_conditional_branch_verdict(
+        &self,
+        _check: TypeId,
+        _extends: TypeId,
+        _no_unchecked_indexed_access: bool,
+        _exact_optional_property_types: bool,
+    ) -> Option<bool> {
+        None
+    }
+
+    /// Store a definitive conditional-branch subtype verdict. Default is a
+    /// no-op. See [`Self::lookup_conditional_branch_verdict`] for the stability
+    /// gates the caller must enforce before publishing.
+    fn insert_conditional_branch_verdict(
+        &self,
+        _check: TypeId,
+        _extends: TypeId,
+        _no_unchecked_indexed_access: bool,
+        _exact_optional_property_types: bool,
+        _verdict: bool,
+    ) {
+    }
+
+    /// Look up a cached result for tsc's permissive-instantiation
+    /// false-branch gate (`getConditionalType`).
+    ///
+    /// The key is the original `(check, extends)` pair plus both compiler
+    /// option bits. The caller must publish only when the helper's instantiated
+    /// permissive relation was certified by the conditional-branch verdict cache
+    /// and the surrounding evaluation request stayed stable. Default returns
+    /// `None` so raw-interner backends opt out.
+    fn lookup_permissive_false_branch_verdict(
+        &self,
+        _check: TypeId,
+        _extends: TypeId,
+        _no_unchecked_indexed_access: bool,
+        _exact_optional_property_types: bool,
+    ) -> Option<bool> {
+        None
+    }
+
+    /// Store a cached result for tsc's permissive-instantiation false-branch
+    /// gate. Default is a no-op. See
+    /// [`Self::lookup_permissive_false_branch_verdict`] for the required
+    /// publication gates.
+    fn insert_permissive_false_branch_verdict(
+        &self,
+        _check: TypeId,
+        _extends: TypeId,
+        _no_unchecked_indexed_access: bool,
+        _exact_optional_property_types: bool,
+        _verdict: bool,
+    ) {
+    }
 }

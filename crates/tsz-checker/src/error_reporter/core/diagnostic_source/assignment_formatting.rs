@@ -699,23 +699,12 @@ impl<'a> CheckerState<'a> {
                 return self.format_type_for_assignability_message(source);
             }
             let preserve_literal_surface = self.target_preserves_literal_surface(target);
-            if expr_type != TypeId::ERROR
-                && let Some(annotation_text) =
-                    self.declared_diagnostic_source_annotation_text(expr_idx)
-            {
-                let expr_enum_symbol = self
-                    .enum_symbol_from_enumish_type(expr_display_type)
-                    .or_else(|| self.enum_symbol_from_enumish_type(source));
-                let target_enum_symbol = self.enum_symbol_from_enumish_type(target);
-                if expr_enum_symbol.is_some()
-                    && expr_enum_symbol == target_enum_symbol
-                    && !annotation_text.contains(" | ")
-                    && !annotation_text.contains(" & ")
-                    && !annotation_text.contains('<')
-                {
-                    return self.format_declared_annotation_for_diagnostic(&annotation_text);
-                }
-            }
+            // NOTE: an enum-ish source is never repainted from its annotation
+            // text. tsc renders enum types and members through `typeToString`,
+            // which neither namespace-qualifies (`P.Q.S` prints `Q.S`) nor
+            // shows an alias spelling (`type MA = Mode.A` prints `Mode.A`);
+            // `should_prefer_declared_source_annotation_display` below refuses
+            // enum-ish sources for the same reason.
             if expr_type != TypeId::ERROR
                 && let Some(annotation_text) =
                     self.declared_diagnostic_source_annotation_text(expr_idx)
@@ -1012,6 +1001,19 @@ impl<'a> CheckerState<'a> {
             )
         {
             return self.format_type_for_assignability_message(display_target);
+        }
+        // A longhand primitive-keyword union target annotation
+        // (`string | number`) carries no `aliasSymbol`, so tsc renders it by its
+        // members rather than repainting it with a coincidentally-shaped alias
+        // reached through the reverse type-to-def lookup (#16610) — the target
+        // mirror of the source-side guard. Gated on `display_target == target`
+        // like the annotation-derived branches below, so the nullish strip above
+        // keeps precedence (`string | undefined` against a non-nullish source
+        // renders `string`, matching tsc's single-survivor collapse).
+        if display_target == target
+            && let Some(display) = self.longhand_primitive_union_target_display(anchor_idx, target)
+        {
+            return display;
         }
         if display_target == target
             && let Some(display) =

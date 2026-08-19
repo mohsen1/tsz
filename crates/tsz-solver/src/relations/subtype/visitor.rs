@@ -529,6 +529,7 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
                         return_type: function.return_type,
                         type_predicate: function.type_predicate,
                         is_method: function.is_method,
+                        declaration_group: 0,
                     };
                     if function.is_constructor {
                         construct_signatures.push(signature);

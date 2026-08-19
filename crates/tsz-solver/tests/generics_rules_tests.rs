@@ -1923,6 +1923,7 @@ fn test_evaluated_callable_assignable_to_all_any_application_via_display_alias()
         this_type: None,
         type_predicate: None,
         is_method: false,
+        declaration_group: 0,
     };
     let evaluated_callable = interner.callable(CallableShape {
         call_signatures: vec![sig],

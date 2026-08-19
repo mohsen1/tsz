@@ -588,52 +588,15 @@ impl<'a> CheckerState<'a> {
             if let Some(display) = self.js_prototype_object_literal_receiver_display(receiver) {
                 return Some(display);
             }
-            // Outside prototype literals, retain the real enclosing
-            // class/constructor instance fallback.
-            if let Some(owner) = self
-                .find_enclosing_non_arrow_function(receiver)
-                .and_then(|func_idx| self.find_assignment_lhs_for_rhs(func_idx))
-                .and_then(|lhs_idx| {
-                    let lhs_node = self.ctx.arena.get(lhs_idx)?;
-                    if lhs_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-                        && lhs_node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
-                    {
-                        return None;
-                    }
-                    let access = self.ctx.arena.get_access_expr(lhs_node)?;
-                    // `X.prototype = { ... }`: naming the LHS owner prints
-                    // `typeof X` where tsc names the literal.
-                    if self
-                        .ctx
-                        .arena
-                        .get_identifier_at(access.name_or_argument)
-                        .is_some_and(|ident| ident.escaped_text == "prototype")
-                    {
-                        return None;
-                    }
-                    let receiver_node = self.ctx.arena.get(access.expression)?;
-                    if receiver_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-                        || receiver_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
-                    {
-                        return None;
-                    }
-                    let sym_id =
-                        self.resolve_identifier_symbol(access.expression)
-                            .or_else(|| {
-                                self.expression_text(access.expression)
-                                    .and_then(|text| self.ctx.binder.file_locals.get(text.as_str()))
-                            })?;
-                    let symbol = self.ctx.binder.get_symbol(sym_id)?;
-                    self.ctx
-                        .arena
-                        .get(symbol.value_declaration)
-                        .is_some_and(|decl| decl.is_function_like())
-                        .then(|| self.expression_text(access.expression))
-                        .flatten()
-                })
-            {
-                return Some(format!("typeof {owner}"));
-            }
+            // Outside prototype literals, retain the real enclosing CLASS
+            // static-side fallback only. TypeScript 7 dropped TS6-era
+            // constructor-function inference: a plain FUNCTION owner (with
+            // or without a `@constructor` tag or a `this.x = ...` body) no
+            // longer renders as `typeof <name>` here — its receiver is the
+            // owner's real structural merged shape, which the type-based
+            // formatter below already prints correctly once the semantic
+            // `this` type carries the expando members (#17654). Only a real
+            // `class` owner's static side keeps the `typeof K` display.
             if let Some(owner) = self
                 .find_enclosing_non_arrow_function(receiver)
                 .and_then(|func_idx| self.find_assignment_lhs_for_rhs(func_idx))
@@ -664,9 +627,7 @@ impl<'a> CheckerState<'a> {
                         .resolve_identifier_symbol(lhs_access.expression)
                         .or_else(|| self.resolve_qualified_symbol(lhs_access.expression))?;
                     let owner_symbol = self.ctx.binder.get_symbol(owner_sym)?;
-                    if owner_symbol.has_any_flags(
-                        tsz_binder::symbol_flags::FUNCTION | tsz_binder::symbol_flags::CLASS,
-                    ) {
+                    if owner_symbol.has_any_flags(tsz_binder::symbol_flags::CLASS) {
                         Some(format!("typeof {owner_text}"))
                     } else {
                         None
@@ -675,39 +636,19 @@ impl<'a> CheckerState<'a> {
             {
                 return Some(owner);
             }
-            // Fallback: a top-level (or nested) JS function with expando
-            // assignments uses the function's own name as the apparent type
-            // for `this`. tsc displays `Property 'X' does not exist on type
-            // 'fn-name'` rather than the inferred expando object shape.
-            //
-            // Suppress the fallback when the function has an explicit JSDoc
-            // `@type` annotation that gives it a callable type — the user
-            // typed the function so the apparent `this` is whatever the
-            // annotation declares (e.g. `(this: Foo) => void`), not the
-            // function's own name.
-            let func_idx = self.find_enclosing_non_arrow_function(receiver)?;
-            if self
-                .jsdoc_callable_type_annotation_for_node(func_idx)
-                .is_some()
-                || self
-                    .get_jsdoc_for_function(func_idx)
-                    .is_some_and(|jsdoc| Self::jsdoc_contains_tag(&jsdoc, "this"))
-            {
-                return None;
-            }
-            let func_node = self.ctx.arena.get(func_idx)?;
-            if func_node.kind != tsz_parser::parser::syntax_kind_ext::FUNCTION_DECLARATION
-                && func_node.kind != tsz_parser::parser::syntax_kind_ext::FUNCTION_EXPRESSION
-            {
-                return None;
-            }
-            let func_data = self.ctx.arena.get_function(func_node)?;
-            let name_node = self.ctx.arena.get(func_data.name)?;
-            return self
-                .ctx
-                .arena
-                .get_identifier(name_node)
-                .map(|ident| ident.escaped_text.to_string());
+            // No function-name fallback: TypeScript 7 never renders the
+            // enclosing function's own name as the apparent type of `this`
+            // (that was TS6 constructor-function inference, which TS7
+            // dropped). When `this` has a contextual receiver — e.g. the
+            // base object of an `x.y = function C() { ... }` assignment —
+            // the diagnostic displays that receiver's actual type (`{}`,
+            // `{ a: number; }`, ...) exactly like an anonymous function
+            // expression; a bare named function's `this` is implicit `any`
+            // (TS2683) and never reaches TS2339 display at all. Verified
+            // against typescript@7.0.2 for the named/anonymous function
+            // expression, function declaration, `@constructor`-tagged, and
+            // expando-function shapes.
+            return None;
         }
         if receiver_node.kind != SyntaxKind::Identifier as u16 {
             return None;
@@ -978,27 +919,15 @@ impl<'a> CheckerState<'a> {
             }
             return self.format_type_for_assignability_message(constraint);
         }
-        if self.is_js_file()
-            && let Some(receiver) = self.access_receiver_for_diagnostic_node(idx)
-            && let Some(receiver_node) = self.ctx.arena.get(receiver)
-            && receiver_node.kind == SyntaxKind::Identifier as u16
-            && let Some(ident) = self.ctx.arena.get_identifier(receiver_node)
-            && let Some(shape) =
-                crate::query_boundaries::common::object_shape_for_type(self.ctx.types, type_id)
-            && shape.symbol.is_none()
-            && self
-                .resolve_identifier_symbol(receiver)
-                .and_then(|sym_id| self.ctx.binder.get_symbol(sym_id))
-                .and_then(|symbol| self.ctx.arena.get(symbol.value_declaration))
-                .and_then(|decl_node| self.ctx.arena.get_variable_declaration(decl_node))
-                .is_some_and(|decl| {
-                    self.ctx.arena.get(decl.initializer).is_some_and(|init| {
-                        init.kind == tsz_parser::parser::syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
-                    })
-                })
-        {
-            return format!("typeof {}", ident.escaped_text);
-        }
+        // A JS local initialized with an object literal displays its
+        // structural widened shape in TS2339 (`{ a: number; }` for
+        // `const o = { a: 1 }`), for reads and writes alike — never
+        // `typeof o`. TypeScript 7 reserves `typeof X` receiver displays
+        // for class/enum/namespace value sides; even a self-referential
+        // object literal prints structurally (`{ self: ...; }`).
+        // Oracle-verified against typescript@7.0.2 (#17622), so no
+        // object-literal-initializer carve-out belongs here: fall through
+        // to the type-based formatter.
         let diagnostic_receiver = self.access_receiver_for_diagnostic_node(idx);
         let is_direct_element_access_diagnostic = self
             .ctx

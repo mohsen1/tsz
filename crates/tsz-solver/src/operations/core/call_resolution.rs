@@ -1581,7 +1581,18 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // Snapshot incoming generic-instantiation params so a *failed* overload attempt's `cache_generic_result` `unknown[]` params can't leak into the winner/caller; a generic winner re-populates them (#14963).
         let saved_instantiated_params = self.last_instantiated_params.clone();
 
-        for sig in &callable.call_signatures {
+        // Candidate order follows tsc's `reorderCandidates`: later
+        // merged-declaration groups first, specialized (literal-param)
+        // signatures hoisted. The shape's stored order stays as-declared for
+        // display; only the resolution attempt order changes.
+        let reordered = crate::type_queries::data::reordered_overload_candidates_if_needed(
+            self.interner,
+            &callable.call_signatures,
+        );
+        let candidate_signatures: &[CallSignature] =
+            reordered.as_deref().unwrap_or(&callable.call_signatures);
+
+        for sig in candidate_signatures {
             self.last_instantiated_params
                 .clone_from(&saved_instantiated_params);
             // Convert CallSignature to FunctionShape

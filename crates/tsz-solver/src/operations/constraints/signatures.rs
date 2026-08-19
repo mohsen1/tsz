@@ -600,6 +600,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             return_type: instantiate_type(self.interner, sig.return_type, &sub),
             type_predicate: sig.type_predicate,
             is_method: sig.is_method,
+            declaration_group: sig.declaration_group,
         }
     }
 

@@ -119,6 +119,7 @@ fn test_contextual_callable_signature() {
         return_type: TypeId::NUMBER,
         type_predicate: None,
         is_method: false,
+        declaration_group: 0,
     };
 
     let callable = interner.callable(CallableShape {
@@ -153,6 +154,7 @@ fn test_contextual_callable_overload_union() {
         return_type: TypeId::NUMBER,
         type_predicate: None,
         is_method: false,
+        declaration_group: 0,
     };
 
     let call_sig_b = CallSignature {
@@ -175,6 +177,7 @@ fn test_contextual_callable_overload_union() {
         return_type: TypeId::STRING,
         type_predicate: None,
         is_method: false,
+        declaration_group: 0,
     };
 
     let callable = interner.callable(CallableShape {
@@ -219,6 +222,7 @@ fn test_contextual_callable_overload_by_arity() {
         return_type: TypeId::VOID,
         type_predicate: None,
         is_method: false,
+        declaration_group: 0,
     };
 
     let call_sig_b = CallSignature {
@@ -241,6 +245,7 @@ fn test_contextual_callable_overload_by_arity() {
         return_type: TypeId::VOID,
         type_predicate: None,
         is_method: false,
+        declaration_group: 0,
     };
 
     let callable = interner.callable(CallableShape {
@@ -1240,6 +1245,7 @@ fn test_contextual_callable_overload_no_implicit_any_false() {
         return_type: TypeId::NUMBER,
         type_predicate: None,
         is_method: false,
+        declaration_group: 0,
     };
 
     let call_sig_b = CallSignature {
@@ -1254,6 +1260,7 @@ fn test_contextual_callable_overload_no_implicit_any_false() {
         return_type: TypeId::STRING,
         type_predicate: None,
         is_method: false,
+        declaration_group: 0,
     };
 
     let callable = interner.callable(CallableShape {

@@ -23,6 +23,7 @@ fn test_callable_same_signature() {
         return_type: TypeId::NUMBER,
         type_predicate: None,
         is_method: false,
+        declaration_group: 0,
     };
 
     let source = interner.callable(CallableShape {
@@ -63,6 +64,7 @@ fn test_callable_more_overloads() {
         return_type: TypeId::NUMBER,
         type_predicate: None,
         is_method: false,
+        declaration_group: 0,
     };
 
     let sig2 = CallSignature {
@@ -77,6 +79,7 @@ fn test_callable_more_overloads() {
         return_type: TypeId::STRING,
         type_predicate: None,
         is_method: false,
+        declaration_group: 0,
     };
 
     let source = interner.callable(CallableShape {
@@ -117,6 +120,7 @@ fn test_callable_missing_overload() {
         return_type: TypeId::NUMBER,
         type_predicate: None,
         is_method: false,
+        declaration_group: 0,
     };
 
     let sig2 = CallSignature {
@@ -131,6 +135,7 @@ fn test_callable_missing_overload() {
         return_type: TypeId::STRING,
         type_predicate: None,
         is_method: false,
+        declaration_group: 0,
     };
 
     let source = interner.callable(CallableShape {
@@ -171,6 +176,7 @@ fn test_callable_with_construct() {
         return_type: obj_type,
         type_predicate: None,
         is_method: false,
+        declaration_group: 0,
     };
 
     let source = interner.callable(CallableShape {
@@ -222,6 +228,7 @@ fn test_construct_sig_literal_params_are_contravariant_not_bivariant() {
             return_type: obj,
             type_predicate: None,
             is_method: false,
+            declaration_group: 0,
         }],
         properties: vec![],
         ..Default::default()
@@ -244,6 +251,7 @@ fn test_construct_sig_literal_params_are_contravariant_not_bivariant() {
             return_type: obj,
             type_predicate: None,
             is_method: false,
+            declaration_group: 0,
         }],
         properties: vec![],
         ..Default::default()
@@ -271,6 +279,7 @@ fn test_callable_covariant_return() {
         return_type: hello,
         type_predicate: None,
         is_method: false,
+        declaration_group: 0,
     };
 
     let target_sig = CallSignature {
@@ -280,6 +289,7 @@ fn test_callable_covariant_return() {
         return_type: TypeId::STRING,
         type_predicate: None,
         is_method: false,
+        declaration_group: 0,
     };
 
     let source = interner.callable(CallableShape {
@@ -338,6 +348,7 @@ fn test_function_to_callable() {
             return_type: TypeId::NUMBER,
             type_predicate: None,
             is_method: false,
+            declaration_group: 0,
         }],
         construct_signatures: vec![],
         properties: vec![],
@@ -368,6 +379,7 @@ fn test_callable_to_function() {
             return_type: TypeId::NUMBER,
             type_predicate: None,
             is_method: false,
+            declaration_group: 0,
         }],
         construct_signatures: vec![],
         properties: vec![],
@@ -407,6 +419,7 @@ fn test_callable_with_properties() {
             return_type: TypeId::VOID,
             type_predicate: None,
             is_method: false,
+            declaration_group: 0,
         }],
         construct_signatures: vec![],
         properties: vec![PropertyInfo::new(
@@ -426,6 +439,7 @@ fn test_callable_with_properties() {
             return_type: TypeId::VOID,
             type_predicate: None,
             is_method: false,
+            declaration_group: 0,
         }],
         construct_signatures: vec![],
         properties: vec![PropertyInfo::new(
@@ -453,6 +467,7 @@ fn test_callable_missing_property() {
             return_type: TypeId::VOID,
             type_predicate: None,
             is_method: false,
+            declaration_group: 0,
         }],
         construct_signatures: vec![],
         properties: vec![],
@@ -469,6 +484,7 @@ fn test_callable_missing_property() {
             return_type: TypeId::VOID,
             type_predicate: None,
             is_method: false,
+            declaration_group: 0,
         }],
         construct_signatures: vec![],
         properties: vec![PropertyInfo::new(
@@ -502,6 +518,7 @@ fn test_overload_signature_exact_match() {
         return_type: TypeId::NUMBER,
         type_predicate: None,
         is_method: false,
+        declaration_group: 0,
     };
 
     let sig_number_to_string = CallSignature {
@@ -516,6 +533,7 @@ fn test_overload_signature_exact_match() {
         return_type: TypeId::STRING,
         type_predicate: None,
         is_method: false,
+        declaration_group: 0,
     };
 
     let overloaded = interner.callable(CallableShape {
@@ -558,6 +576,7 @@ fn test_overload_signature_order_priority() {
         return_type: special_return,
         type_predicate: None,
         is_method: false,
+        declaration_group: 0,
     };
 
     let general_return = interner.literal_string("matched-general");
@@ -573,6 +592,7 @@ fn test_overload_signature_order_priority() {
         return_type: general_return,
         type_predicate: None,
         is_method: false,
+        declaration_group: 0,
     };
 
     let overloaded = interner.callable(CallableShape {
@@ -608,6 +628,7 @@ fn test_overload_multiple_arities() {
         return_type: TypeId::VOID,
         type_predicate: None,
         is_method: false,
+        declaration_group: 0,
     };
 
     let sig_1 = CallSignature {
@@ -622,6 +643,7 @@ fn test_overload_multiple_arities() {
         return_type: TypeId::NUMBER,
         type_predicate: None,
         is_method: false,
+        declaration_group: 0,
     };
 
     let sig_2 = CallSignature {
@@ -644,6 +666,7 @@ fn test_overload_multiple_arities() {
         return_type: TypeId::BOOLEAN,
         type_predicate: None,
         is_method: false,
+        declaration_group: 0,
     };
 
     let overloaded = interner.callable(CallableShape {
@@ -722,6 +745,7 @@ fn test_generic_overload_simple() {
         return_type: t_param,
         type_predicate: None,
         is_method: false,
+        declaration_group: 0,
     };
 
     let generic_fn = interner.callable(CallableShape {
@@ -782,6 +806,7 @@ fn test_generic_overload_with_constraint() {
         return_type: keyof_t,
         type_predicate: None,
         is_method: false,
+        declaration_group: 0,
     };
 
     let generic_fn = interner.callable(CallableShape {
@@ -877,6 +902,7 @@ fn test_generic_overload_multiple_type_params() {
         return_type: tuple_return,
         type_predicate: None,
         is_method: false,
+        declaration_group: 0,
     };
 
     let generic_fn = interner.callable(CallableShape {
@@ -920,6 +946,7 @@ fn test_optional_param_overload_matching() {
         return_type: TypeId::NUMBER,
         type_predicate: None,
         is_method: false,
+        declaration_group: 0,
     };
 
     let sig_optional = CallSignature {
@@ -942,6 +969,7 @@ fn test_optional_param_overload_matching() {
         return_type: TypeId::STRING,
         type_predicate: None,
         is_method: false,
+        declaration_group: 0,
     };
 
     let overloaded = interner.callable(CallableShape {
@@ -999,6 +1027,7 @@ fn test_all_optional_params_overload() {
         return_type: TypeId::VOID,
         type_predicate: None,
         is_method: false,
+        declaration_group: 0,
     };
 
     let fn_with_optional = interner.callable(CallableShape {
@@ -1017,6 +1046,7 @@ fn test_all_optional_params_overload() {
         return_type: TypeId::VOID,
         type_predicate: None,
         is_method: false,
+        declaration_group: 0,
     };
 
     let no_params = interner.callable(CallableShape {
@@ -1059,6 +1089,7 @@ fn test_optional_and_rest_param_overload() {
         return_type: TypeId::VOID,
         type_predicate: None,
         is_method: false,
+        declaration_group: 0,
     };
 
     let fn_with_rest = interner.callable(CallableShape {
@@ -1082,6 +1113,7 @@ fn test_optional_and_rest_param_overload() {
         return_type: TypeId::VOID,
         type_predicate: None,
         is_method: false,
+        declaration_group: 0,
     };
 
     let single_param = interner.callable(CallableShape {
@@ -1146,6 +1178,7 @@ fn test_contextual_instantiation_generic_call_signature_with_rest_target() {
             return_type: b_type,
             type_predicate: None,
             is_method: false,
+            declaration_group: 0,
         }],
         construct_signatures: vec![],
         properties: vec![],
@@ -1167,6 +1200,7 @@ fn test_contextual_instantiation_generic_call_signature_with_rest_target() {
             return_type: TypeId::STRING,
             type_predicate: None,
             is_method: false,
+            declaration_group: 0,
         }],
         construct_signatures: vec![],
         properties: vec![],
@@ -1387,6 +1421,7 @@ fn test_contextual_instantiation_callable_to_generic_function_target() {
             return_type: TypeId::VOID,
             type_predicate: None,
             is_method: false,
+            declaration_group: 0,
         }],
         construct_signatures: vec![],
         properties: vec![],
@@ -1473,6 +1508,7 @@ fn test_contextual_instantiation_generic_function_to_callable_target() {
             return_type: placeholder,
             type_predicate: None,
             is_method: false,
+            declaration_group: 0,
         }],
         construct_signatures: vec![],
         properties: vec![],
@@ -1511,6 +1547,7 @@ fn test_nongeneric_construct_sig_not_assignable_to_generic_target() {
             return_type: my_class,
             type_predicate: None,
             is_method: false,
+            declaration_group: 0,
         }],
         properties: vec![],
         ..Default::default()
@@ -1542,6 +1579,7 @@ fn test_nongeneric_construct_sig_not_assignable_to_generic_target() {
             return_type: t_type,
             type_predicate: None,
             is_method: false,
+            declaration_group: 0,
         }],
         properties: vec![],
         ..Default::default()
@@ -1614,6 +1652,7 @@ fn test_nongeneric_construct_sig_nested_callback_not_assignable_to_generic_targe
             return_type: source_return,
             type_predicate: None,
             is_method: false,
+            declaration_group: 0,
         }],
         properties: vec![],
         ..Default::default()
@@ -1687,6 +1726,7 @@ fn test_nongeneric_construct_sig_nested_callback_not_assignable_to_generic_targe
             return_type: target_return,
             type_predicate: None,
             is_method: false,
+            declaration_group: 0,
         }],
         properties: vec![],
         ..Default::default()
@@ -1725,6 +1765,7 @@ fn test_generic_callable_return_type_mismatch_not_assignable() {
             return_type: s_array,
             type_predicate: None,
             is_method: false,
+            declaration_group: 0,
         }],
         construct_signatures: vec![],
         properties: vec![],
@@ -1752,6 +1793,7 @@ fn test_generic_callable_return_type_mismatch_not_assignable() {
             return_type: t_type,
             type_predicate: None,
             is_method: false,
+            declaration_group: 0,
         }],
         construct_signatures: vec![],
         properties: vec![],

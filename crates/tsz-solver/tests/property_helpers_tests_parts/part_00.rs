@@ -1677,6 +1677,7 @@ fn test_callable_with_properties() {
             this_type: None,
             type_predicate: None,
             is_method: false,
+            declaration_group: 0,
         }],
         construct_signatures: vec![],
         properties: vec![PropertyInfo::new(version, TypeId::STRING)],

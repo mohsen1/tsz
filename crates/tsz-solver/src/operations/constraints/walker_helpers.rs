@@ -141,7 +141,201 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         )
     }
 
-    pub(super) fn application_bases_share_declaration(
+    /// Recover the `(base, args)` application views of a type for the
+    /// same-base union merge scan (`tsc`'s `PriorityImpliesCombination`
+    /// family).
+    ///
+    /// Aliases are transparent to `tsc`'s inference, so a `Lazy` alias arm
+    /// (`type StrRow = RawBuilder<string>`) must decompose exactly like the
+    /// as-written application, and an application whose base is itself an
+    /// alias of the source's base (`type Row<T> = RawBuilder<T>`, arm
+    /// `Row<string>` — or the tag's own declared return `Row<Tagged>`) must
+    /// merge with direct `RawBuilder<...>` arms. Recovery follows the same
+    /// chain `return_context.rs` uses for contextual returns: take the
+    /// structural application directly, then evaluate once and take the
+    /// application from the evaluated form or its display-alias
+    /// back-reference (the baked-object case). Up to two views come back —
+    /// as-written first, evaluated second — so callers prefer the direct
+    /// spelling and still match through the alias hop.
+    pub(crate) fn transparent_application_views(
+        &mut self,
+        type_id: TypeId,
+    ) -> smallvec::SmallVec<[(TypeId, Vec<TypeId>); 2]> {
+        let mut views = smallvec::SmallVec::new();
+        let db = self.interner.as_type_database();
+        if let Some(info) = crate::type_queries::get_application_info(db, type_id) {
+            views.push(info);
+        }
+        if let Some(info) = self.recovered_application_view(type_id)
+            && !views.contains(&info)
+        {
+            views.push(info);
+        }
+        views
+    }
+
+    /// The recovered half of `transparent_application_views`.
+    ///
+    /// Route 1 (baked forms): the display-alias back-reference, then the
+    /// checker's evaluation taken structurally or through its own
+    /// back-reference. Route 2 (as-written alias forms the evaluator leaves
+    /// untouched): walk `Lazy` alias bodies to an application, then hop
+    /// parameter-passthrough alias bases (`type Row<T> = RawBuilder<T>`) to
+    /// the declaration they forward to. Both walks are fuel-bounded.
+    fn recovered_application_view(&mut self, type_id: TypeId) -> Option<(TypeId, Vec<TypeId>)> {
+        let db = self.interner.as_type_database();
+        let mut info = self
+            .interner
+            .get_display_alias(type_id)
+            .and_then(|alias| crate::type_queries::get_application_info(db, alias));
+        if info.is_none()
+            && matches!(
+                self.interner.lookup(type_id),
+                Some(TypeData::Lazy(_) | TypeData::Application(_))
+            )
+        {
+            let evaluated = self.checker.evaluate_type(type_id);
+            if evaluated != type_id {
+                let db = self.interner.as_type_database();
+                info = crate::type_queries::get_application_info(db, evaluated).or_else(|| {
+                    self.interner
+                        .get_display_alias(evaluated)
+                        .and_then(|alias| crate::type_queries::get_application_info(db, alias))
+                });
+            }
+        }
+        if info.is_none() {
+            // Walk non-generic alias bodies (`type StrRow2 = StrRow`) to an
+            // application form.
+            let db = self.interner.as_type_database();
+            let resolver = self
+                .checker
+                .type_resolver()
+                .unwrap_or_else(|| self.interner.as_type_resolver());
+            let mut current = type_id;
+            for _ in 0..4 {
+                if let Some(found) = crate::type_queries::get_application_info(db, current) {
+                    info = Some(found);
+                    break;
+                }
+                let Some(TypeData::Lazy(def_id)) = self.interner.lookup(current) else {
+                    break;
+                };
+                let Some(body) = resolver.resolve_lazy(def_id, db) else {
+                    break;
+                };
+                if body == current {
+                    break;
+                }
+                current = body;
+            }
+        }
+        let (base, args) = info?;
+        // Hop alias bases that forward to another application so `Row<X>`
+        // compares as `RawBuilder<X>` and `Flip<X, Y>` as `Pair<Y, X>`.
+        Some(self.hop_alias_forwarded_application(base, args))
+    }
+
+    /// Iteratively rewrite an application view through alias bases that merely
+    /// forward to another application, composing the argument remap at each
+    /// hop (`alias_forwarded_application`). Identity when the base is not such
+    /// an alias; the hop count is fuel-bounded like the other alias walks.
+    pub(crate) fn hop_alias_forwarded_application(
+        &self,
+        mut base: TypeId,
+        mut args: Vec<TypeId>,
+    ) -> (TypeId, Vec<TypeId>) {
+        for _ in 0..4 {
+            let Some((next_base, next_args)) = self.alias_forwarded_application(base, &args) else {
+                break;
+            };
+            base = next_base;
+            args = next_args;
+        }
+        (base, args)
+    }
+
+    /// If `base` names a generic alias whose body is an application over the
+    /// alias's own type parameters, return the body's base together with the
+    /// outer arguments carried into the body's argument positions.
+    ///
+    /// The declared-order passthrough (`type Row<T> = RawBuilder<T>`) keeps
+    /// the outer arguments as written. Otherwise every body argument must be
+    /// one of the alias's own parameters — matched by binder identity, so a
+    /// shadowing outer binder with the same name cannot alias in — and the
+    /// outer argument list must supply every parameter; permutation
+    /// (`type Flip<A, B> = Pair<B, A>`) and repetition
+    /// (`type Dup<T> = Pair<T, T>`) then remap positionally. A body argument
+    /// that is any other type shape (including a compound mentioning a
+    /// parameter, like `T[]`) declines the hop rather than risking a wrong
+    /// alignment.
+    fn alias_forwarded_application(
+        &self,
+        base: TypeId,
+        args: &[TypeId],
+    ) -> Option<(TypeId, Vec<TypeId>)> {
+        let Some(TypeData::Lazy(def_id)) = self.interner.lookup(base) else {
+            return None;
+        };
+        let db = self.interner.as_type_database();
+        let resolver = self
+            .checker
+            .type_resolver()
+            .unwrap_or_else(|| self.interner.as_type_resolver());
+        let params = resolver.get_lazy_type_params(def_id)?;
+        if params.is_empty() {
+            return None;
+        }
+        let body = resolver.resolve_lazy(def_id, db)?;
+        let (body_base, body_args) = crate::type_queries::get_application_info(db, body)?;
+        let declared_order = body_args.len() == params.len()
+            && body_args.iter().zip(params.iter()).all(|(&arg, param)| {
+                matches!(
+                    self.interner.lookup(arg),
+                    Some(TypeData::TypeParameter(tp)) if tp.is_same_binder(*param)
+                )
+            });
+        if declared_order {
+            return Some((body_base, args.to_vec()));
+        }
+        if args.len() != params.len() {
+            return None;
+        }
+        let mut mapped = Vec::with_capacity(body_args.len());
+        for &body_arg in &body_args {
+            let Some(TypeData::TypeParameter(tp)) = self.interner.lookup(body_arg) else {
+                return None;
+            };
+            let position = params.iter().position(|param| tp.is_same_binder(*param))?;
+            mapped.push(args[position]);
+        }
+        Some((body_base, mapped))
+    }
+
+    /// Match one union arm against the merge scan's source application view,
+    /// evaluating the arm only when its as-written form does not already
+    /// match. Returns the arm's aligned type arguments on a match.
+    pub(super) fn union_arm_merge_args(
+        &mut self,
+        member: TypeId,
+        s_base: TypeId,
+        s_args_len: usize,
+    ) -> Option<Vec<TypeId>> {
+        let db = self.interner.as_type_database();
+        if let Some((base, args)) = crate::type_queries::get_application_info(db, member)
+            && args.len() == s_args_len
+            && self.application_bases_share_declaration(base, s_base)
+        {
+            return Some(args);
+        }
+        let (base, args) = self.recovered_application_view(member)?;
+        if args.len() == s_args_len && self.application_bases_share_declaration(base, s_base) {
+            return Some(args);
+        }
+        None
+    }
+
+    pub(crate) fn application_bases_share_declaration(
         &self,
         source_base: TypeId,
         target_base: TypeId,

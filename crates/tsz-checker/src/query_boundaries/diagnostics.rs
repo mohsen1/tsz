@@ -44,6 +44,18 @@ pub(crate) use super::index_signature::{IndexKind, has_index_signature};
 pub(crate) use tsz_solver::type_queries::AssignmentNumericDisplayChildren;
 pub(crate) use tsz_solver::type_queries::is_this_type;
 
+/// `true` when the type is — or has a union member that is — a string, number,
+/// boolean, or bigint unit literal. The domain-agnostic counterpart of the
+/// string-only `string_literal_value` surface, used by assignment-diagnostic
+/// display to decide whether a fresh source literal should be preserved
+/// verbatim against a contextual target that carries a matching literal
+/// (mirroring tsc's `isLiteralOfContextualType`). Owned by the diagnostics
+/// boundary because only `error_reporter/` presentation code consults it
+/// (issue #12947).
+pub(crate) fn type_contains_unit_literal(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::type_queries::type_contains_unit_literal(db, type_id)
+}
+
 /// Resolve the binder symbol backing an object type, for diagnostic
 /// elaboration (spelling suggestions, missing-property anchors). Used only by
 /// `error_reporter/` presentation code, so it is owned by the diagnostics
@@ -448,6 +460,7 @@ pub(crate) fn instantiate_call_signature_for_display(
         return_type: instantiate_type(db, sig.return_type, &subst),
         type_predicate: sig.type_predicate,
         is_method: sig.is_method,
+        declaration_group: sig.declaration_group,
     })
 }
 
@@ -1309,6 +1322,16 @@ pub(crate) fn get_base_constraint_for_display(db: &dyn TypeDatabase, type_id: Ty
 /// compound shapes.
 pub(crate) fn display_widen_for_redeclaration(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
     tsz_solver::operations::widening::display_widen_for_redeclaration(db, type_id)
+}
+
+/// tsc's `formatUnionTypes` render order: nullish intrinsics move to the tail
+/// (`T | null | undefined`), while the interner's canonical member order puts
+/// them first (smallest type ids).
+///
+/// For checker-side diagnostic reconstructions that join a member list
+/// themselves instead of going through the solver's `format_union`.
+pub(crate) fn reorder_union_members_nullish_last(members: &[TypeId]) -> Vec<TypeId> {
+    tsz_solver::reorder_union_members_nullish_last(members)
 }
 
 /// Policy selecting which literal annotation kinds

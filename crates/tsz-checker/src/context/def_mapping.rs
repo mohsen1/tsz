@@ -1038,8 +1038,9 @@ impl CheckerContext<'_> {
     /// the shared `DefId`, so only a constructor-shaped body is flagged.
     pub(crate) fn is_class_value_side_body(&self, def_id: DefId, body: TypeId) -> bool {
         self.definition_store.get_kind(def_id) == Some(tsz_solver::def::DefKind::Class)
-            && crate::query_boundaries::common::callable_shape_for_type(self.types, body)
-                .is_some_and(|shape| !shape.construct_signatures.is_empty())
+            && crate::query_boundaries::checkers::constructor::has_construct_signatures(
+                self.types, body,
+            )
     }
 
     /// Look up the `SymbolId` for a `DefId` (reverse mapping).

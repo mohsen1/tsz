@@ -1791,8 +1791,26 @@ impl<'a> CheckerState<'a> {
                     // `current` is still `module_name`'s own top-level
                     // namespace type, which is unconditionally registered
                     // too — keeps using the export=-target naming below.
+                    //
+                    // `namespace_import_export_property_type` also tags every
+                    // ordinary nested-namespace property (`export namespace
+                    // bar {}` reached without crossing modules) with the SAME
+                    // `module_name` it was called with — not just genuine
+                    // cross-module redirects — so this owner lookup alone
+                    // cannot distinguish "bar came from another module" from
+                    // "bar is a plain nested namespace one level down inside
+                    // `module_name` itself". Only treat it as a cross-module
+                    // redirect when the registered owner differs from
+                    // `module_name`'s own display form; a same-module nested
+                    // namespace under an `export =` target falls through to
+                    // the named-target branch below, which renders the
+                    // target's own symbol name plus the resolved-segment
+                    // chain (`N.M`), matching `tsc`.
+                    let current_module_display =
+                        self.imported_namespace_display_module_name(&module_name);
                     if let Some(last) = resolved_segments.last()
                         && let Some(owner_module) = self.ctx.namespace_module_names.get(&current)
+                        && owner_module.as_str() != current_module_display.as_str()
                     {
                         let namespace_name = format!(
                             "\"{}\".{last}",

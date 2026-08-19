@@ -309,7 +309,7 @@ pub use diagnostics::format::tracing_helpers::{RelationDisplay, TypeDisplay};
 pub use diagnostics::format::{
     TypeFormatter, application_reduces_to_displayable_shape,
     empty_object_display_alias_is_marker_render, format_excess_property_name,
-    type_alias_displayed_as_underlying,
+    reorder_union_members_nullish_last, type_alias_displayed_as_underlying,
 };
 pub use diagnostics::reduce::deep_reduce_for_display;
 pub use diagnostics::{
@@ -526,6 +526,9 @@ mod narrowing_discriminant_tests;
 #[cfg(test)]
 #[path = "../tests/numeric_keyof_tests.rs"]
 mod numeric_keyof_tests;
+#[cfg(test)]
+#[path = "../tests/overload_reorder_tests.rs"]
+mod overload_reorder_tests;
 #[cfg(test)]
 #[path = "../tests/primitive_mapped_index_subtype_tests.rs"]
 mod primitive_mapped_index_subtype_tests;

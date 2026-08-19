@@ -24,6 +24,7 @@ fn make_callable_with_construct_sig(
             return_type,
             type_predicate: None,
             is_method: false,
+            declaration_group: 0,
         }],
         properties: vec![],
         string_index: None,
@@ -48,6 +49,7 @@ fn make_callable_with_call_sig(interner: &TypeInterner, return_type: TypeId) -> 
             return_type,
             type_predicate: None,
             is_method: false,
+            declaration_group: 0,
         }],
         construct_signatures: vec![],
         properties: vec![],
@@ -346,6 +348,7 @@ fn test_construct_return_type_for_type() {
             return_type: TypeId::BOOLEAN,
             type_predicate: None,
             is_method: false,
+            declaration_group: 0,
         }],
         properties: vec![],
         string_index: None,
@@ -421,6 +424,7 @@ fn test_is_constructor_like_type() {
             return_type: TypeId::OBJECT,
             type_predicate: None,
             is_method: false,
+            declaration_group: 0,
         }],
         properties: vec![],
         string_index: None,
@@ -502,22 +506,8 @@ fn test_get_overload_call_signatures() {
     // Callable with 2 overloads → Some
     let overloaded = interner.callable(CallableShape {
         call_signatures: vec![
-            CallSignature {
-                type_params: vec![],
-                params: vec![],
-                this_type: None,
-                return_type: TypeId::STRING,
-                type_predicate: None,
-                is_method: false,
-            },
-            CallSignature {
-                type_params: vec![],
-                params: vec![],
-                this_type: None,
-                return_type: TypeId::NUMBER,
-                type_predicate: None,
-                is_method: false,
-            },
+            CallSignature::new(vec![], TypeId::STRING),
+            CallSignature::new(vec![], TypeId::NUMBER),
         ],
         construct_signatures: vec![],
         properties: vec![],
@@ -532,14 +522,7 @@ fn test_get_overload_call_signatures() {
 
     // Callable with 1 signature → None (not overloaded)
     let single = interner.callable(CallableShape {
-        call_signatures: vec![CallSignature {
-            type_params: vec![],
-            params: vec![],
-            this_type: None,
-            return_type: TypeId::VOID,
-            type_predicate: None,
-            is_method: false,
-        }],
+        call_signatures: vec![CallSignature::new(vec![], TypeId::VOID)],
         construct_signatures: vec![],
         properties: vec![],
         string_index: None,

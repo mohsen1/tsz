@@ -19,8 +19,33 @@ retries = 0
 # Use all available cores
 test-threads = "num-cpus"
 
+# Heavy-test overrides below are guarded (#17675, part 3):
+#   * scripts/ci/check-nextest-overrides.mjs runs in the per-merge fast lane and
+#     fails if any literal `test(NAME)` filter here matches no test in the tree
+#     (a rename/move that silently orphaned an override).
+#   * scripts/ci/known-failures-check.mjs classifies a nextest timeout in the
+#     nightly unit lane distinctly: it tells the author to ADD a slow-timeout
+#     override here, never to baseline the (correct) test, and warns when a
+#     still-passing test already exceeds the 30s base period without an override.
+# So a new correct-but-heavy test belongs in one of these blocks, not in
+# scripts/ci/known-failures.txt.
+#
+# Global default-lib merge validation (#17675). Merging a user global interface
+# into a lib type (e.g. `Node.kind`) forces a correct-but-large post-merge
+# recheck of the affected default-lib subgraph — for a DOM merge, nearly all of
+# lib.dom.d.ts. Measured solo on an idle 4-core box: 113.7s and >240s
+# respectively, the latter blowing even the 120s x 2 shared default-lib window.
+# The recheck's residual cost is tracked for profiling under #17675; this window
+# keeps the nightly unit lane green so it does not mask unrelated regressions.
+# (The report's third test, `skip_lib_check_skips_default_lib_recheck...`, is now
+# O(ms) and needs no override: `skipLibCheck` skips the recheck outright.)
 [[profile.default.overrides]]
-filter = 'test(compile_contextually_typed_jsx_attribute2_react16_fixture_has_no_ts7006) | test(compile_jsx_call_elaboration_check_no_crash1_react16_fixture_reports_ts2322) | test(compile_related_index_react16_fixture_reports_only_distinct_key_ts2322) | test(compile_jsdoc_type_reference_to_ambient_value_keeps_construct_signature) | test(test_divergent_accessor_read_keeps_getter_surface_without_ts2339) | test(test_ts2536_with_lib_mismatched_keyof_source) | test(default_lib_validation) | test(collect_diagnostics_reports_default_lib_breakage) | test(compile_document_create_element_overload_augmentation_no_false_ts2430)'
+filter = 'test(global_lib_merge_keeps_one_element_identity_for_array_callbacks) | test(collect_diagnostics_reports_default_lib_breakage_from_global_node_merge)'
+slow-timeout = { period = "180s", terminate-after = 2 }
+threads-required = "num-test-threads"
+
+[[profile.default.overrides]]
+filter = 'test(compile_contextually_typed_jsx_attribute2_react16_fixture_has_no_ts7006) | test(compile_jsx_call_elaboration_check_no_crash1_react16_fixture_reports_ts2322) | test(compile_related_index_react16_fixture_reports_only_distinct_key_ts2322) | test(compile_jsdoc_type_reference_to_ambient_value_keeps_construct_signature) | test(test_divergent_accessor_read_keeps_getter_surface_without_ts2339) | test(test_ts2536_with_lib_mismatched_keyof_source) | test(default_lib_validation) | test(compile_document_create_element_overload_augmentation_no_false_ts2430)'
 slow-timeout = { period = "120s", terminate-after = 2 }
 
 [[profile.default.overrides]]

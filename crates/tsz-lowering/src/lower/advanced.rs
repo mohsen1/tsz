@@ -1196,6 +1196,7 @@ impl TypeLowering<'_> {
             return_type,
             type_predicate,
             is_method: false,
+            declaration_group: 0,
         };
 
         // Create a Callable shape with construct_signatures

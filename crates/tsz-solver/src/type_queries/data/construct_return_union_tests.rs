@@ -23,6 +23,7 @@ fn construct_sig(type_params: Vec<TypeParamInfo>, return_type: TypeId) -> CallSi
         return_type,
         type_predicate: None,
         is_method: false,
+        declaration_group: 0,
     }
 }
 

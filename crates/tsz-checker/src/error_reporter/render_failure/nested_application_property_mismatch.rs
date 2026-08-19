@@ -124,7 +124,7 @@ impl<'a> CheckerState<'a> {
             || structural_display_type(self.ctx.types, target_eval)
     }
 
-    const fn nested_reason_is_plain_type_mismatch(
+    pub(super) const fn nested_reason_is_plain_type_mismatch(
         reason: &tsz_solver::SubtypeFailureReason,
     ) -> bool {
         matches!(
@@ -133,6 +133,30 @@ impl<'a> CheckerState<'a> {
                 | tsz_solver::SubtypeFailureReason::IntrinsicTypeMismatch { .. }
                 | tsz_solver::SubtypeFailureReason::LiteralTypeMismatch { .. }
                 | tsz_solver::SubtypeFailureReason::ErrorType { .. }
+        )
+    }
+
+    /// Whether a property's nested failure reason needs the explicit
+    /// `Type 'S' is not assignable to type 'T'.` relation frame over the
+    /// declared property-type pair before it drills.
+    ///
+    /// tsc's chain under `Types of property 'p' are incompatible.` always
+    /// begins with the property-pair relation line; the header-led structural
+    /// reasons (tuple element/arity, index-signature) lead with their own
+    /// specialized line instead, so the frame must be supplied here — the
+    /// same split [`Self::union_member_nested_needs_header`] applies for
+    /// union-member frames. Plain leaves double as the pair line themselves,
+    /// union reasons self-head with the pair, a nested property link is
+    /// path-compressed, and a member return failure collapses to the TS2201
+    /// form with no pair frame, so all of those stay outside this set.
+    const fn property_pair_frame_needed(reason: &tsz_solver::SubtypeFailureReason) -> bool {
+        matches!(
+            reason,
+            tsz_solver::SubtypeFailureReason::TupleElementTypeMismatch { .. }
+                | tsz_solver::SubtypeFailureReason::TupleVariadicPositionMismatch { .. }
+                | tsz_solver::SubtypeFailureReason::TupleElementMismatch { .. }
+                | tsz_solver::SubtypeFailureReason::TupleArityMismatch(_)
+                | tsz_solver::SubtypeFailureReason::IndexSignatureMismatch { .. }
         )
     }
 
@@ -282,6 +306,24 @@ impl<'a> CheckerState<'a> {
         depth: u32,
     ) {
         if let Some(leaf) = leaf {
+            // A header-led leaf (tuple element/arity, index-signature) does
+            // not begin with the deepest property pair's relation line, so
+            // supply it before drilling — tsc renders
+            // `The types of 'a.b' are incompatible between these types.` ->
+            // `Type '[boolean]' is not assignable to type '[string]'.` ->
+            // the specialized drill.
+            if Self::property_pair_frame_needed(leaf) {
+                let message = self.element_mismatch_message(leaf_src, leaf_tgt);
+                diag.push_elaboration(
+                    message,
+                    diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                    depth,
+                );
+                let (s, t) = Self::nested_failure_display_types(leaf, leaf_src, leaf_tgt);
+                let leaf_diag = self.render_failure_reason(leaf, s, t, idx, depth + 1);
+                Self::push_nested_chain(diag, leaf_diag, depth + 1);
+                return;
+            }
             let (s, t) = Self::nested_failure_display_types(leaf, leaf_src, leaf_tgt);
             let leaf_diag = self.render_failure_reason(leaf, s, t, idx, depth);
             Self::push_nested_chain(diag, leaf_diag, depth);
@@ -466,9 +508,13 @@ impl<'a> CheckerState<'a> {
             // A union-source leaf still terminates a collapsible property run:
             // tsc folds `o.a` into one line and renders the union/member chain
             // beneath it. It is not "plain" for the type-argument fast path, so
-            // keep that predicate separate here.
+            // keep that predicate separate here. Header-led leaves (tuple,
+            // index-signature) also fold — tsc renders the dotted path, then
+            // the deepest pair's relation line, then the specialized drill
+            // (`push_property_chain_leaf` supplies that pair frame).
             let leaf_is_collapsible = leaf.is_none_or(|reason| {
                 Self::nested_reason_is_plain_type_mismatch(reason)
+                    || Self::property_pair_frame_needed(reason)
                     || matches!(
                         reason,
                         tsz_solver::SubtypeFailureReason::UnionSourceMismatch { .. }
@@ -511,7 +557,60 @@ impl<'a> CheckerState<'a> {
                 diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
             );
             diag.push_elaboration_in_span(start, length, detail, reason.diagnostic_code(), 0);
+            // A property source that defers to its base constraint (a deferred
+            // indexed access `T[K]`, a bare `keyof T`, or a conditional) keeps
+            // the written operand and the *full* nullable-union target at the
+            // leaf pair: tsc renders the as-written relation (`TBox[KKey]` vs
+            // `string | undefined`) and then walks the constraint, never the
+            // best-matching-member collapse (`... vs string`) that the solver's
+            // evaluated nested reason carries. Emit the raw pair and stop — the
+            // deeper constraint walk is separate elaboration tsz does not
+            // synthesize, and emitting the collapsed member here would be wrong.
+            if crate::query_boundaries::common::is_deferred_constraint_relative_operand(
+                self.ctx.types.as_type_database(),
+                source_property_type,
+            ) {
+                let source_str = self.format_type_for_assignability_message(source_property_type);
+                let target_str = self.format_type_for_assignability_message(target_property_type);
+                let leaf = format_message(
+                    diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                    &[&source_str, &target_str],
+                );
+                diag.push_elaboration(
+                    leaf,
+                    diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                    depth + 1,
+                );
+                return diag;
+            }
             if let Some(nested) = nested_reason {
+                // A header-led nested reason (tuple element/arity,
+                // index-signature) leads with its specialized line, not the
+                // property-pair relation line tsc keeps beneath the property
+                // header — supply the pair frame, then drill one deeper.
+                if Self::property_pair_frame_needed(nested) {
+                    let frame =
+                        self.element_mismatch_message(source_property_type, target_property_type);
+                    diag.push_elaboration(
+                        frame,
+                        diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                        depth + 1,
+                    );
+                    let (nested_source, nested_target) = Self::nested_failure_display_types(
+                        nested,
+                        source_property_type,
+                        target_property_type,
+                    );
+                    let nested_diag = self.render_failure_reason(
+                        nested,
+                        nested_source,
+                        nested_target,
+                        idx,
+                        depth + 2,
+                    );
+                    Self::push_nested_chain(&mut diag, nested_diag, depth + 2);
+                    return diag;
+                }
                 let (nested_source, nested_target) = Self::nested_failure_display_types(
                     nested,
                     source_property_type,
@@ -542,6 +641,31 @@ impl<'a> CheckerState<'a> {
         if let Some(nested) = nested_reason
             && depth < super::PROPERTY_MISMATCH_RENDER_DEPTH_CAP
         {
+            // Same pair-frame rule as the top-level path above: a header-led
+            // nested reason drills beneath the explicit property-pair line.
+            if Self::property_pair_frame_needed(nested) {
+                let frame =
+                    self.element_mismatch_message(source_property_type, target_property_type);
+                diag.push_elaboration(
+                    frame,
+                    diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                    depth + 1,
+                );
+                let (nested_source, nested_target) = Self::nested_failure_display_types(
+                    nested,
+                    source_property_type,
+                    target_property_type,
+                );
+                let nested_diag = self.render_failure_reason(
+                    nested,
+                    nested_source,
+                    nested_target,
+                    idx,
+                    depth + 2,
+                );
+                Self::push_nested_chain(&mut diag, nested_diag, depth + 2);
+                return diag;
+            }
             let (nested_source, nested_target) = Self::nested_failure_display_types(
                 nested,
                 source_property_type,
@@ -1091,13 +1215,32 @@ impl<'a> CheckerState<'a> {
                     depth,
                 );
             } else {
-                let nested_diag = self.render_failure_reason(
+                let mut nested_diag = self.render_failure_reason(
                     nested_reason,
                     nested_source,
                     nested_target,
                     idx,
                     depth + 1,
                 );
+                // `push_nested_chain` renumbers only the nested headline to
+                // this line's child position (`depth`). The union-source
+                // renderer places the headline's own children at `depth + 2`
+                // (its member header sits at `ctx.depth + 1`), which would
+                // leave a skipped indent level beneath the renumbered
+                // headline — pull exactly that shape up one level. A nested
+                // same-generic drill (`Wrap` of `Wrap`) and the other arms
+                // already place children at `depth + 1`, so shifting them
+                // would flatten a genuinely nested chain into siblings.
+                if matches!(
+                    nested_reason,
+                    tsz_solver::SubtypeFailureReason::UnionSourceMismatch { .. }
+                ) {
+                    nested_diag.related_information = nested_diag
+                        .related_information
+                        .into_iter()
+                        .map(|related| related.with_depth_shift(-1))
+                        .collect();
+                }
                 Self::push_nested_chain(&mut diag, nested_diag, depth);
             }
         }
@@ -1133,239 +1276,6 @@ impl<'a> CheckerState<'a> {
                 | tsz_solver::SubtypeFailureReason::IndexSignatureMismatch { .. }
                 | tsz_solver::SubtypeFailureReason::ReturnTypeMismatch { .. }
         )
-    }
-
-    /// Display a single failing union constituent honoring the source
-    /// annotation's provenance: an inline `{ ... }` constituent (an anonymous
-    /// composite the user wrote directly) shows its structural shape, while a
-    /// named reference keeps its name. Falls back to the ordinary diagnostic
-    /// display when the source expression carries no anonymous-composite
-    /// annotation. See issue #16513.
-    fn union_source_member_display(
-        &mut self,
-        anchor_idx: tsz_parser::parser::NodeIndex,
-        member: TypeId,
-    ) -> String {
-        self.anonymous_composite_annotation_source_display(anchor_idx, member)
-            .unwrap_or_else(|| self.format_type_diagnostic(member))
-    }
-
-    /// Render a depth-0 plain-leaf union-source mismatch (`Type 'A | B' is not
-    /// assignable to type 'T'.` -> `Type '<failing member>' is not assignable to
-    /// type 'T'.`), displaying the failing constituent with the source
-    /// annotation's provenance so an inline `{ ... }` constituent shows its
-    /// structural shape rather than a coincidentally same-shaped alias reached
-    /// through the reverse type-to-def lookup. See issue #16513.
-    ///
-    /// Only invoked at chain depth 0 (the primary assignment diagnostic). The
-    /// `member_type` is the solver's selected failing constituent; the solver
-    /// already walks the union in source order (#16523 reorders enum slots by
-    /// declaration), so this path corrects only the member *display*, not the
-    /// selection.
-    ///
-    /// The outer-line + generalize + `push_elaboration_in_span` scaffolding
-    /// mirrors the depth-0 plain-leaf branch of
-    /// [`Self::render_parent_with_child_relation`] — the two must stay in
-    /// lockstep. The sole divergence is `union_source_member_display` (annotation
-    /// provenance) in place of that renderer's plain `format_type_diagnostic`.
-    fn render_union_source_plain_leaf_member(
-        &mut self,
-        ctx: &RenderContext,
-        target_type: TypeId,
-        member_type: TypeId,
-    ) -> Diagnostic {
-        let mut diag = self.render_type_mismatch(ctx);
-        // The leaf generalizes the same way as the outer line (tsc runs
-        // `reportRelationError` on every relation line): an all-unit member
-        // widens to its base against a non-singleton target.
-        let display_member =
-            self.generalize_nested_relation_source_for_display(member_type, target_type);
-        let member_str = self.union_source_member_display(ctx.idx, display_member);
-        let target_str = self.format_type_diagnostic(target_type);
-        diag.push_elaboration_in_span(
-            ctx.start,
-            ctx.length,
-            format_message(
-                diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                &[&member_str, &target_str],
-            ),
-            diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-            0,
-        );
-        diag
-    }
-
-    /// Render a union-source mismatch: a union type that is not assignable to
-    /// the target because one of its members fails.
-    ///
-    /// tsc keeps the root mismatch visible by elaborating the first failing
-    /// member directly beneath the union-to-target line:
-    ///
-    /// ```text
-    /// Type 'A | B' is not assignable to type 'T'.
-    ///   Type 'B' is not assignable to type 'T'.
-    /// ```
-    ///
-    /// When the member fails for a *structural* reason (a tuple element type
-    /// mismatch or an object property-type mismatch) tsc emits the member-type
-    /// header explicitly and then drills into the structural detail:
-    ///
-    /// ```text
-    /// Type 'A | B' is not assignable to type 'T'.
-    ///   Type 'B' is not assignable to type 'T'.
-    ///     Type at position 0 in source is not compatible with type at position 0 in target.
-    ///       Type 'number' is not assignable to type 'string'.
-    /// ```
-    ///
-    /// The structural renderers omit that header at depth >= 1 (they lead with
-    /// `Type at position N …` / `Types of property 'p' …`), so this path emits
-    /// it before recursing. Self-heading members (leaf relations, missing
-    /// property summaries) carry the member line themselves and are delegated
-    /// to [`Self::render_parent_with_child_relation`].
-    pub(super) fn render_union_source_mismatch(
-        &mut self,
-        ctx: &RenderContext,
-        source_type: TypeId,
-        target_type: TypeId,
-        member_type: TypeId,
-        nested_reason: &tsz_solver::SubtypeFailureReason,
-    ) -> Diagnostic {
-        // A whole-constituent (plain-leaf) rejection carries no member-specific
-        // structure — its nested reason is just `member <: target`. An inline
-        // `{ ... }` constituent has no `aliasSymbol`, but the reverse
-        // type-to-def lookup repaints it with a coincidentally same-shaped alias
-        // declared elsewhere in the file (`{ m: number }` -> `U`). Render the
-        // failing member honoring the source annotation's provenance instead.
-        // Scoped to depth-0 plain-leaf: a structural or nested member failure
-        // binds its `nested_reason` to a specific member and self-heads its own
-        // line, so it keeps the established rendering. See issue #16513.
-        if ctx.depth == 0 && Self::nested_reason_is_plain_type_mismatch(nested_reason) {
-            return self.render_union_source_plain_leaf_member(ctx, target_type, member_type);
-        }
-        if !Self::union_member_nested_needs_header(nested_reason) {
-            return self.render_parent_with_child_relation(
-                ctx,
-                source_type,
-                target_type,
-                member_type,
-                target_type,
-                nested_reason,
-            );
-        }
-
-        let depth = ctx.depth;
-        // The member keeps its own alias (`C` stays `C`); the target keeps the
-        // diagnostic alias the rest of the chain uses (`A`), matching tsc for
-        // object/interface targets. (tsc additionally expands a *tuple* target
-        // alias to its structural form here, but tsz's shared formatter follows
-        // the tuple's lazy display alias; the chain shape, positions, and leaf
-        // relation are otherwise identical.) Format the target once; it heads
-        // both the (deep) outer union line and the member header below.
-        let target_str = self.format_type_diagnostic(target_type);
-
-        // Outer union line. At depth 0 it is the primary diagnostic, which
-        // reuses `render_type_mismatch` so the full union/alias surface is
-        // preserved; deeper, format the union/target pair structurally.
-        let mut diag = if depth == 0 {
-            self.render_type_mismatch(ctx)
-        } else {
-            // Nested union line: generalize an all-unit union source to its
-            // base (tsc `reportRelationError` / `getBaseTypeOfLiteralTypeUnion`).
-            let display_source =
-                self.generalize_nested_relation_source_for_display(source_type, target_type);
-            let source_str = self.format_type_diagnostic(display_source);
-            let base = format_message(
-                diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                &[&source_str, &target_str],
-            );
-            Diagnostic::error(
-                ctx.file_name.clone(),
-                ctx.start,
-                ctx.length,
-                base,
-                diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-            )
-        };
-
-        if depth >= 5 {
-            return diag;
-        }
-
-        // The member header sits one indent beneath the union line; the
-        // structural drill sits one level beneath the header. At depth 0 the
-        // union line is the (un-indented) primary, so its first child is at
-        // related-depth 0.
-        let header_depth = if depth == 0 { 0 } else { depth + 1 };
-        let drill_depth = header_depth + 1;
-
-        let display_member =
-            self.generalize_nested_relation_source_for_display(member_type, target_type);
-        let member_str = self.format_type_diagnostic_for_union_member(source_type, display_member);
-        diag.push_elaboration_in_span(
-            ctx.start,
-            ctx.length,
-            format_message(
-                diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                &[&member_str, &target_str],
-            ),
-            diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-            header_depth,
-        );
-
-        // A union member that is a function failing on its *return* type drills
-        // straight into the return relation beneath the member header, with no
-        // intermediate `Return type 'X' is not assignable to 'Y'.` frame — `tsc`
-        // relates the return types directly:
-        //
-        // ```text
-        //   Type '(x: string) => string' is not assignable to type 'Target'.
-        //     Type 'string' is not assignable to type 'number'.
-        // ```
-        //
-        // Rendering the `ReturnTypeMismatch` reason itself would emit the
-        // `Return type …` frame (a non-`tsc` line at depth >= 1), so recurse into
-        // the carried return relation instead.
-        if let tsz_solver::SubtypeFailureReason::ReturnTypeMismatch {
-            source_return,
-            target_return,
-            nested_reason: inner,
-        } = nested_reason
-        {
-            // When the return relation has no structured sub-reason, drill it as
-            // a plain leaf so both arms render the return types through the same
-            // path (`render_failure_reason` → `render_type_mismatch`).
-            let leaf;
-            let return_reason = match inner.as_deref() {
-                Some(inner) => inner,
-                None => {
-                    leaf = tsz_solver::SubtypeFailureReason::TypeMismatch {
-                        source_type: *source_return,
-                        target_type: *target_return,
-                    };
-                    &leaf
-                }
-            };
-            let return_diag = self.render_failure_reason(
-                return_reason,
-                *source_return,
-                *target_return,
-                ctx.idx,
-                drill_depth,
-            );
-            Self::push_nested_chain(&mut diag, return_diag, drill_depth);
-            return diag;
-        }
-
-        let nested_diag = self.render_failure_reason(
-            nested_reason,
-            member_type,
-            target_type,
-            ctx.idx,
-            drill_depth,
-        );
-        Self::push_nested_chain(&mut diag, nested_diag, drill_depth);
-
-        diag
     }
 
     /// Render an outer `Type 'S' is not assignable to type 'T'.` line and

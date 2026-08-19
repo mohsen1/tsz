@@ -370,6 +370,7 @@ impl<C: AssignabilityChecker> CallEvaluator<'_, C> {
             return_type: self.interner.union2(left.return_type, right.return_type),
             type_predicate: None,
             is_method: left.is_method || right.is_method,
+            declaration_group: 0,
         }
     }
 }

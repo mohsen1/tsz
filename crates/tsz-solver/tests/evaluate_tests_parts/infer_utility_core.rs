@@ -278,6 +278,7 @@ fn test_return_type_overloaded_function() {
                 return_type: TypeId::NUMBER,
                 type_predicate: None,
                 is_method: false,
+                declaration_group: 0,
             },
             CallSignature {
                 type_params: Vec::new(),
@@ -291,6 +292,7 @@ fn test_return_type_overloaded_function() {
                 return_type: TypeId::BOOLEAN,
                 type_predicate: None,
                 is_method: false,
+                declaration_group: 0,
             },
         ],
         construct_signatures: Vec::new(),
@@ -696,6 +698,7 @@ fn test_constructor_parameters_callable_construct_signature() {
             return_type: TypeId::OBJECT,
             type_predicate: None,
             is_method: false,
+            declaration_group: 0,
         }],
         properties: Vec::new(),
         string_index: None,
@@ -761,6 +764,7 @@ fn test_constructor_parameters_callable_construct_signature_with_properties() {
             return_type: TypeId::OBJECT,
             type_predicate: None,
             is_method: false,
+            declaration_group: 0,
         }],
         properties: vec![PropertyInfo::new(
             interner.intern_string("prototype"),

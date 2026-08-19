@@ -424,6 +424,7 @@ fn evaluate_application_class_uses_construct_signature_return_type() {
         return_type: instance_shape,
         type_predicate: None,
         is_method: false,
+        declaration_group: 0,
     };
     let class_body = interner.callable(CallableShape {
         symbol: None,
@@ -485,6 +486,7 @@ fn evaluate_application_class_result_dropping_declared_nominal_symbol_stays_opaq
         return_type: degraded_instance,
         type_predicate: None,
         is_method: false,
+        declaration_group: 0,
     };
     let class_body = interner.callable(CallableShape {
         symbol: Some(class_symbol),
@@ -539,6 +541,7 @@ fn evaluate_application_class_result_dropping_declared_nominal_symbol_stays_opaq
         return_type: degraded_instance,
         type_predicate: None,
         is_method: false,
+        declaration_group: 0,
     };
     let class_body = interner.callable(CallableShape {
         symbol: Some(class_symbol),
@@ -596,6 +599,7 @@ fn evaluate_application_class_result_keeping_declared_nominal_symbol_resolves_no
         return_type: instance_shape,
         type_predicate: None,
         is_method: false,
+        declaration_group: 0,
     };
     let class_body = interner.callable(CallableShape {
         symbol: Some(class_symbol),

@@ -705,6 +705,7 @@ fn test_function_intrinsic_accepts_callable() {
             return_type: TypeId::NUMBER,
             type_predicate: None,
             is_method: false,
+            declaration_group: 0,
         }],
         construct_signatures: Vec::new(),
         properties: Vec::new(),

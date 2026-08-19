@@ -580,6 +580,7 @@ pub(crate) const fn class_construct_signature(
         return_type,
         type_predicate,
         is_method,
+        declaration_group: 0,
     }
 }
 

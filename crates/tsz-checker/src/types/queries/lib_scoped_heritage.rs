@@ -103,6 +103,7 @@ impl<'a> CheckerState<'a> {
                 return_type,
                 type_predicate: None,
                 is_method: false,
+                declaration_group: 0,
             };
             return Some(self.ctx.types.factory().callable(CallableShape {
                 call_signatures: Vec::new(),

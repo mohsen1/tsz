@@ -65,6 +65,7 @@ pub(crate) const fn flow_call_signature(
         return_type,
         type_predicate: None,
         is_method: false,
+        declaration_group: 0,
     }
 }
 
