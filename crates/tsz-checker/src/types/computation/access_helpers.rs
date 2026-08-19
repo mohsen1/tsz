@@ -1093,26 +1093,53 @@ impl<'a> CheckerState<'a> {
     /// member value types (#17718 witness 2, oracle-verified via
     /// `scripts/conformance/oracle.sh` vs pinned typescript@7.0.2).
     ///
-    /// Additionally gated on the receiver carrying no type parameter at all
-    /// (unlike the write-side sibling): `evaluate_type_with_env` is a no-op
-    /// on a generic application whose type argument stays unresolved (e.g.
-    /// `Mapped5<K>` indexed by `keyof Mapped5<K>` inside a function generic
-    /// over `K`), so the write-side predicate alone would also fire there and
-    /// pre-empt the mapped-type-aware `remapped_mapped_index_access_result`
-    /// resolution — which already answers that case correctly — with an
-    /// unevaluated shell the relation can't recognize as satisfying its own
-    /// filtered-key constraint (false TS2322 on the `f5` witness in
-    /// `mapped_indexed_access_diagnostic_tests::remapped_mapped_type_constraint_indexed_access_diagnostics_match_tsc_surface`).
+    /// Gated on two conditions beyond the write-side sibling:
+    ///
+    /// 1. The receiver carries no type parameter at all: `evaluate_type_with_env`
+    ///    is a no-op on a generic application whose type argument stays
+    ///    unresolved (e.g. `Mapped5<K>` indexed by `keyof Mapped5<K>` inside a
+    ///    function generic over `K`), so the write-side predicate alone would
+    ///    also fire there and pre-empt the mapped-type-aware
+    ///    `remapped_mapped_index_access_result` resolution — which already
+    ///    answers that case correctly — with an unevaluated shell the relation
+    ///    can't recognize as satisfying its own filtered-key constraint (false
+    ///    TS2322 on the `f5` witness in
+    ///    `mapped_indexed_access_diagnostic_tests::remapped_mapped_type_constraint_indexed_access_diagnostics_match_tsc_surface`).
+    /// 2. The receiver exposes no string/number index signature: a solver-level
+    ///    `evaluate_type_with_env(IndexAccess(receiver, index))` has no access
+    ///    to the checker's `noUncheckedIndexedAccess` compiler-option state, so
+    ///    it can't append the `| undefined` marker tsc's own index-signature
+    ///    read path adds under NUIA. Deferring for such a receiver silently
+    ///    drops that marker and swallows a real TS2322 (caught by
+    ///    `nuia_any_index_emits_ts2322_tests::nuia_generic_key_read_still_emits_ts2322_against_strict_slot`
+    ///    — `{ a: string; b: string; [key: string]: string }` read through a
+    ///    generic key). NUIA only ever affects index-signature-derived reads,
+    ///    never a plain named-property `keyof` read, so excluding receivers
+    ///    with an applicable index signature keeps witness 2's own target
+    ///    (`interface Bag { one: number; two: number }`, no index signature)
+    ///    unaffected.
     pub(crate) fn concrete_receiver_read_target_should_preserve_indexed_access(
         &mut self,
         receiver: TypeId,
         index_type: TypeId,
     ) -> bool {
-        !crate::query_boundaries::containment_queries::contains_type_parameters(
+        if crate::query_boundaries::containment_queries::contains_type_parameters(
             self.ctx.types,
             receiver,
-        ) && self
-            .concrete_receiver_write_target_should_preserve_indexed_access(receiver, index_type)
+        ) {
+            return false;
+        }
+        let evaluated_receiver = self.evaluate_type_with_env(receiver);
+        if evaluated_receiver == TypeId::ERROR {
+            return false;
+        }
+        if crate::query_boundaries::index_signature::has_string_or_number_index_signature(
+            self.ctx.types,
+            evaluated_receiver,
+        ) {
+            return false;
+        }
+        self.index_resolves_to_keyof_of_receiver(index_type, evaluated_receiver)
     }
 
     fn index_resolves_to_keyof_of_receiver(
