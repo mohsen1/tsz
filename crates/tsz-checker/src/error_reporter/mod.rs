@@ -35,7 +35,6 @@ mod core_alias_display;
 mod core_formatting;
 pub(crate) mod display_budget;
 mod emitters;
-mod enum_nominal_name_display;
 mod expected_type_from_property;
 mod expected_type_from_return;
 mod fingerprint_policy;
