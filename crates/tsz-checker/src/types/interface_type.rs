@@ -1005,6 +1005,59 @@ impl<'a> CheckerState<'a> {
                         base_class_params = Some(instance_params);
                     }
 
+                    // A lib-global heritage base (`Array`, `ReadonlyArray`,
+                    // `Promise`, `Map`, …) reaches this site with `base_sym_id`
+                    // carrying a raw numeric `SymbolId` that collides across arena
+                    // binders (#14344 / #14921 — the `globalThis.Array` -> `btoa`
+                    // id-collision family). `get_type_of_symbol` caches the resolved
+                    // type by that raw `SymbolId`, so a homonym symbol in a different
+                    // arena can clobber the canonical lib entry, degrading the base
+                    // to a member-less shape whose numeric-index signature and
+                    // inherited methods are gone. When the interface is then
+                    // re-materialised in a *consuming* arena (mobx's `internal.ts`
+                    // barrel cycle), every inherited `Array` member is dropped and a
+                    // false `TS2339` fires on `map` / `slice` / `length` / … while
+                    // the interface's own members still resolve (#16308).
+                    //
+                    // Resolve a lib global through the name-keyed, declaration- and
+                    // augmentation-merging canonical lib path instead. It is keyed by
+                    // the interned type name (identical across every arena), merges
+                    // all `interface Array` declaration groups plus any user
+                    // `declare global` augmentations, and is order-independent — so
+                    // the base is the same complete type regardless of which arena
+                    // triggered materialisation.
+                    // `sym_id_is_actual_or_cloned_lib_global_type_named` gates this on
+                    // genuine lib-global provenance (binder `lib_symbol_ids` / the
+                    // actual lib-context symbol), so a user-declared interface — even
+                    // one sharing a builtin's name — keeps the `get_type_of_symbol`
+                    // path below.
+                    //
+                    // Scoped to a *user* derived interface. A lib interface extending
+                    // another lib interface (`HTMLElement extends Element`, the DOM
+                    // heritage graph) is deliberately kept deferred by the lazy
+                    // lib-heritage rework (#13933/#13935/#13936) — forcing
+                    // `resolve_lib_type_by_name` there would eagerly materialise the
+                    // whole DOM closure and regress the lazy-receiver ratchets. The
+                    // cross-arena `SymbolId` collision that motivates this canonical
+                    // resolution only bites when a user interface in one arena extends
+                    // a lib global reached through a re-export cycle, so restricting
+                    // to a non-lib derived symbol keeps the lib-heritage laziness
+                    // intact while still fixing #16308.
+                    if base_type.is_none()
+                        && !self.ctx.lib_contexts.is_empty()
+                        && current_sym
+                            .is_some_and(|sym| !self.ctx.binder.lib_symbol_ids.contains(&sym))
+                        && self.ctx.sym_id_is_actual_or_cloned_lib_global_type_named(
+                            base_sym_id,
+                            &base_symbol_name,
+                        )
+                        && let Some(lib_type) = self.resolve_lib_type_by_name(&base_symbol_name)
+                        && lib_type != TypeId::ERROR
+                        && lib_type != TypeId::UNKNOWN
+                    {
+                        base_type = Some(lib_type);
+                    }
+
                     // For interfaces/type aliases, resolve through symbol type
                     if base_type.is_none() {
                         let resolved = self.get_type_of_symbol(base_sym_id);

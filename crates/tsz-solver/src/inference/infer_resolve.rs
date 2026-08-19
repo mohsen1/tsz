@@ -668,6 +668,14 @@ impl<'a> InferenceContext<'a> {
         spread_rest_mode: Option<crate::inference::spread_rest_literals::SpreadRestLiteralMode>,
     ) -> TypeId {
         let filtered = self.filter_candidates_by_priority(candidates);
+        tracing::trace!(
+            candidates = ?candidates
+                .iter()
+                .map(|c| (c.type_id, c.priority, c.is_fresh_literal, c.from_object_property, c.from_top_level_naked))
+                .collect::<Vec<_>>(),
+            filtered = filtered.len(),
+            "resolve_from_candidates"
+        );
         if filtered.is_empty() {
             return TypeId::UNKNOWN;
         }
@@ -840,7 +848,18 @@ impl<'a> InferenceContext<'a> {
                 .iter()
                 .map(|&ty| {
                     if should_widen {
-                        crate::operations::widening::widen_literal_type(self.interner, ty)
+                        let widened =
+                            crate::operations::widening::widen_literal_type(self.interner, ty);
+                        if widened == ty {
+                            // tsc's `getWidenedLiteralType` also widens an enum
+                            // member literal to its parent enum type under the
+                            // same freshness gate (`E1.X` -> `E1`), which
+                            // `widen_literal_type` does not model because it
+                            // has no resolver for the member -> parent link.
+                            self.widen_enum_member_to_parent(ty).unwrap_or(ty)
+                        } else {
+                            widened
+                        }
                     } else {
                         ty
                     }
@@ -900,6 +919,7 @@ impl<'a> InferenceContext<'a> {
                 has_array_element_candidate,
                 all_from_top_level_naked,
                 all_from_array_element,
+                all_from_object_properties,
             )
         };
         // When candidates come from index signature inference (e.g., inferring T from
@@ -1307,6 +1327,105 @@ impl<'a> InferenceContext<'a> {
         // and unions of literals (e.g., "hello" | 42 → string | number).
         // This matches tsc's getWidenedLiteralType called from getInferredType.
         crate::operations::widening::widen_literal_type(self.interner, type_id)
+    }
+
+    /// Whether the covariant candidate list for `var` mixes distinct
+    /// `InferencePriority` levels. When it does, priority filtering during
+    /// resolution dropped some candidates (e.g. a source-function-return
+    /// candidate recorded at `ReturnType` losing to a naked argument at
+    /// `NakedTypeVariable`), so the resolved type may not correspond to the
+    /// LEFTMOST candidate that tsc's `getCommonSupertype` `reduceLeft` keeps.
+    pub fn has_mixed_priority_candidates(&mut self, var: InferenceVar) -> bool {
+        let root = self.table.find(var);
+        let info = self.table.probe_value(root);
+        let mut priorities = info.candidates.iter().map(|candidate| candidate.priority);
+        let Some(first) = priorities.next() else {
+            return false;
+        };
+        priorities.any(|priority| priority != first)
+    }
+
+    /// Parent enum `DefId` for an enum member def, consulting the inference
+    /// resolver first and falling back to the shared `DefinitionStore`. The
+    /// generic-call inference context's resolver is the `QueryCache`, which
+    /// has no binder symbol scope, so its `get_enum_parent_def_id` is always
+    /// `None`; the store carries the same program-wide member -> parent edges
+    /// the display layer reads.
+    pub(super) fn enum_parent_def_for_inference(
+        &self,
+        def_id: crate::def::DefId,
+    ) -> Option<crate::def::DefId> {
+        if let Some(resolver) = self.resolver
+            && let Some(parent) = resolver.get_enum_parent_def_id(def_id)
+        {
+            return Some(parent);
+        }
+        self.query_db?
+            .definition_store_for_inference()?
+            .get_enum_parent(def_id)
+    }
+
+    /// Base enum identity for an enum-branded inference candidate: a member's
+    /// parent enum def, or a whole enum's own def. Returns `None` for
+    /// non-enum candidates and for a member-shaped def with no parent edge
+    /// (a type-position member ref stabilized as its own def is
+    /// indistinguishable from a sibling member, so callers must keep the
+    /// order-independent union fallback rather than risk splitting one
+    /// enum's members).
+    pub(super) fn enum_candidate_base_def(&self, ty: TypeId) -> Option<crate::def::DefId> {
+        if ty.is_intrinsic() {
+            return None;
+        }
+        let Some(TypeData::Enum(def_id, _)) = self.interner.lookup(ty) else {
+            return None;
+        };
+        if let Some(parent) = self.enum_parent_def_for_inference(def_id) {
+            return Some(parent);
+        }
+        let is_whole_enum_decl = self
+            .query_db
+            .and_then(|db| db.definition_store_for_inference())
+            .and_then(|store| store.get(def_id))
+            .is_some_and(|info| !info.enum_members.is_empty());
+        tracing::trace!(
+            ?def_id,
+            has_query_db = self.query_db.is_some(),
+            has_store = self
+                .query_db
+                .and_then(|db| db.definition_store_for_inference())
+                .is_some(),
+            is_whole_enum_decl,
+            "enum_candidate_base_def: no parent edge"
+        );
+        is_whole_enum_decl.then_some(def_id)
+    }
+
+    /// Widen an enum member literal type to its parent enum type
+    /// (`E1.X` -> `E1`), mirroring the enum arm of tsc's
+    /// `getWidenedLiteralType`. Returns `None` when the type is not an enum
+    /// member (including whole-enum types, which have no parent) or when the
+    /// member -> parent link cannot be resolved.
+    fn widen_enum_member_to_parent(&self, type_id: TypeId) -> Option<TypeId> {
+        if type_id.is_intrinsic() {
+            return None;
+        }
+        let Some(TypeData::Enum(def_id, _)) = self.interner.lookup(type_id) else {
+            return None;
+        };
+        let parent_def = self.enum_parent_def_for_inference(def_id)?;
+        if let Some(resolver) = self.resolver
+            && let Some(parent_ty) = resolver.resolve_lazy(parent_def, self.interner)
+        {
+            return Some(parent_ty);
+        }
+        if let Some(body) = self
+            .query_db
+            .and_then(|db| db.definition_store_for_inference())
+            .and_then(|store| store.get_body(parent_def))
+        {
+            return Some(body);
+        }
+        Some(self.interner.lazy(parent_def))
     }
 
     // =========================================================================

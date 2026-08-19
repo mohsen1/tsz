@@ -599,3 +599,39 @@ pub fn is_deferred_type_operation(db: &dyn TypeDatabase, type_id: TypeId) -> boo
         Some(TypeData::IndexAccess(_, _) | TypeData::Conditional(_))
     )
 }
+
+/// Check if `type_id` is a deferred generic operand whose relation to a union
+/// *defers to its base constraint* rather than walking the union's
+/// constituents — a type-parameter-mentioning indexed access (`T[K]`), a bare
+/// `keyof T`, or a distributive conditional — or an intersection carrying one
+/// such member.
+///
+/// `tsc` never enters the best-matching-member re-report
+/// (`typeRelatedToSomeType`/`getBestMatchingType`) that collapses a
+/// single-survivor nullable union in diagnostics for these operands, so their
+/// pair keeps the full declared union. A fully concrete operand carries no type
+/// parameter, is evaluated before display, and does not qualify. This is the
+/// constraint-relative sibling of
+/// `is_type_parameter_or_intersection_with_type_parameter`, covering the
+/// deferred type operations that guard omits.
+pub fn is_deferred_constraint_relative_operand(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
+    let is_deferred = |t: TypeId| {
+        super::contains_type_parameters_db(db, t)
+            && matches!(
+                db.lookup(t),
+                Some(TypeData::IndexAccess(_, _) | TypeData::KeyOf(_) | TypeData::Conditional(_))
+            )
+    };
+    if is_deferred(type_id) {
+        return true;
+    }
+    match db.lookup(type_id) {
+        Some(TypeData::Intersection(list_id)) => {
+            db.type_list(list_id).iter().any(|&m| is_deferred(m))
+        }
+        _ => false,
+    }
+}

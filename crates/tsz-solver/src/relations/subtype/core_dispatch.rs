@@ -76,128 +76,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             }
         }
 
-        // Primitive-to-boxed-wrapper assignability: `string -> String`, `number -> Number`, etc.
-        // Must run BEFORE apparent_primitive_shape_for_type which would do a structural
-        // comparison that fails (the apparent shape of `string` doesn't structurally match `String`).
-        if let Some(s_kind) = intrinsic_kind(self.interner, source)
-            && let Some(kind) = boxable_intrinsic_kind(s_kind)
-            && union_list_id(self.interner, target).is_none()
-            && self.is_target_boxed_type(target, kind)
-        {
-            return SubtypeResult::True;
-        }
-
-        // Also handle string/number/boolean literals -> boxed wrapper
-        if let Some(lit) = literal_value(self.interner, source) {
-            let kind = match lit {
-                LiteralValue::String(_) => Some(IntrinsicKind::String),
-                LiteralValue::Number(_) => Some(IntrinsicKind::Number),
-                LiteralValue::Boolean(_) => Some(IntrinsicKind::Boolean),
-                LiteralValue::BigInt(_) => Some(IntrinsicKind::Bigint),
-            };
-            if let Some(kind) = kind
-                && union_list_id(self.interner, target).is_none()
-                && self.is_target_boxed_type(target, kind)
-            {
-                return SubtypeResult::True;
-            }
-        }
-
-        if let Some(shape) = self.apparent_primitive_shape_for_type(source) {
-            // A deferred mapped target may be structurally a pure index-signature
-            // object — e.g. `{ [P in any]: V }` (the shape of `Record<any, V>` /
-            // `Record<PropertyKey, V>`) is equivalent to
-            // `{ [k: string]: V; [k: number]: V }`. Such a target is never
-            // expanded eagerly during evaluation (to keep error-message display
-            // stable), so `object_with_index_shape_id` reports `None` for it and
-            // the relation would otherwise fall through to the boxed-wrapper
-            // fallback below, wrongly accepting a primitive against a pure index
-            // signature (a primitive has no index signature; tsc rejects it).
-            // Expand it here so the pure-index guard in the
-            // `object_with_index_shape_id` arm owns the decision, exactly as it
-            // does for the written-out `{ [k: string]: V }` form.
-            let target = self.expand_mapped_target_for_shape(target);
-            if let Some(t_shape_id) = object_shape_id(self.interner, target) {
-                let t_shape = self.interner.object_shape(t_shape_id);
-                // Reset `in_intersection_member_check` for apparent primitive structural
-                // comparison. When called from within a target intersection member loop,
-                // the flag suppresses weak type checks. But the apparent-primitive
-                // comparison is a fresh structural query — the String wrapper shape
-                // should NOT bypass weak type detection when checked against weak types.
-                let saved_inter_check = self.in_intersection_member_check;
-                self.in_intersection_member_check = false;
-                let result =
-                    self.check_object_subtype(&shape, None, Some(source), &t_shape, Some(target));
-                self.in_intersection_member_check = saved_inter_check;
-                if result.is_true() {
-                    return result;
-                }
-                // Fallback: the hardcoded apparent shape may lack user-augmented members
-                // (e.g., `interface Number extends ICloneable { }`), or missing iterable
-                // interfaces (e.g., string <: Iterable<string>). Check the registered
-                // boxed type which includes merged heritage from global augmentations.
-                // Use apparent_primitive_kind to also handle literals (e.g., "test" <: Iterable<string>).
-                if let Some(kind) = self.apparent_primitive_kind(source)
-                    && union_list_id(self.interner, target).is_none()
-                    && self.is_boxed_primitive_subtype(kind, target)
-                {
-                    return SubtypeResult::True;
-                }
-                return result;
-            }
-            if let Some(t_shape_id) = object_with_index_shape_id(self.interner, target) {
-                let t_shape = self.interner.object_shape(t_shape_id);
-                let source_kind = self.apparent_primitive_kind(source);
-                let has_string_index = t_shape.string_index.is_some();
-                let has_number_index = t_shape.number_index.is_some();
-                let allow_indexed_structural = !has_string_index
-                    && (!has_number_index || source_kind == Some(IntrinsicKind::String));
-                if !allow_indexed_structural {
-                    // Primitives must NOT be assignable to pure index-signature
-                    // types (e.g., `string` to `{ [index: string]: any }`), even
-                    // though their boxed wrappers would be structurally compatible.
-                    // Only allow the boxed fallback when the target has named
-                    // properties (a mixed interface, not a pure index type).
-                    if !t_shape.properties.is_empty()
-                        && let Some(s_kind) = source_kind
-                        && self.is_boxed_primitive_subtype(s_kind, target)
-                    {
-                        return SubtypeResult::True;
-                    }
-                    return SubtypeResult::False;
-                }
-                let result = self.check_object_with_index_subtype(
-                    &shape,
-                    None,
-                    Some(source),
-                    &t_shape,
-                    Some(target),
-                );
-                if result.is_true() {
-                    return result;
-                }
-                // Boxed fallback is safe here (no properties guard needed):
-                // structural matching was already attempted above.
-                if let Some(kind) = self.apparent_primitive_kind(source)
-                    && self.is_boxed_primitive_subtype(kind, target)
-                {
-                    return SubtypeResult::True;
-                }
-                return result;
-            }
-            // Target is not a plain object/indexed-object (e.g., it's a generic
-            // Application like `Iterable<string>`). The hardcoded apparent shape
-            // can't match these. Fall back to the registered boxed type which
-            // includes all heritage (e.g., String implements Iterable<string>).
-            // Guard: skip for `object` type — primitives must NOT be subtypes of
-            // `object` even though their boxed wrappers (Number, String, etc.) are.
-            if target != TypeId::OBJECT
-                && union_list_id(self.interner, target).is_none()
-                && let Some(kind) = self.apparent_primitive_kind(source)
-                && self.is_boxed_primitive_subtype(kind, target)
-            {
-                return SubtypeResult::True;
-            }
+        // Boxed-wrapper and apparent-primitive-shape relations for a primitive
+        // or literal source. Extracted to `core_dispatch_primitive.rs`; must stay
+        // at this position in the ordered guard chain (before the conditional-type
+        // guards below).
+        if let Some(result) = self.primitive_boxed_relation(source, target) {
+            return result;
         }
 
         if let Some(source_cond_id) = conditional_type_id(self.interner, source) {
@@ -862,6 +746,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     }
                 }
             }
+            // An intrinsic source against an `Enum` target is owned by the
+            // enum-target rule (`rules/enums.rs`), not this arm's early False.
+            if enum_components(self.interner, target).is_some() {
+                return self.check_non_enum_source_to_enum_target(source, target);
+            }
             // When target is an unevaluated IndexAccess (e.g., Obj[K] where K is a
             // type parameter), don't return False early. The IndexAccess fallback
             // (check_generic_index_access_subtype) after the visitor dispatch can
@@ -1448,76 +1337,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return self.check_source_to_mapped_expansion(source, target, mapped_id);
         }
 
-        // =======================================================================
-        // ENUM TYPE CHECKING (Nominal Identity)
-        // =======================================================================
-        // Enums are nominal types - two different enums with the same member types
-        // are NOT compatible. Enum(DefId, MemberType) preserves both:
-        // - DefId: For nominal identity (E1 != E2)
-        // - MemberType: For structural assignability to primitives (E1 <: number)
-        // =======================================================================
-
-        if let (Some((s_def_id, _s_members)), Some((t_def_id, _t_members))) = (
-            enum_components(self.interner, source),
-            enum_components(self.interner, target),
-        ) {
-            // Cross-module import barrels can give the same enum (or member)
-            // declaration two distinct `DefId`s (the declaring file's key and an
-            // import-alias key reached via a re-export). They denote the same
-            // nominal enum, so compare through `defs_are_equivalent` (which
-            // canonicalizes alias-forwarding and falls back to `SymbolId`)
-            // instead of raw `DefId` equality. Raw `==` here makes the narrowing
-            // subtype check (`E.MEMBER <: E`) fail whenever the discriminant
-            // property type and the literal member were reached through
-            // different module paths, collapsing the receiver to `never` (the
-            // mobx `IDerivationState_` cross-file enum cascade).
-            let same_def = self.resolver.defs_are_equivalent(s_def_id, t_def_id);
-
-            if same_def
-                && source != target
-                && crate::type_queries::is_literal_enum_member(self.interner, source)
-                && crate::type_queries::is_literal_enum_member(self.interner, target)
-            {
-                return SubtypeResult::False;
-            }
-
-            // Enum to Enum: Nominal check - definitions must match
-            if same_def {
-                return SubtypeResult::True;
-            }
-
-            // Check for member-to-parent relationship (e.g., E.A -> E)
-            // If source is a member of the target enum, it is a subtype
-            if self
-                .resolver
-                .get_enum_parent_def_id(s_def_id)
-                .is_some_and(|parent| self.resolver.defs_are_equivalent(parent, t_def_id))
-            {
-                // Source is a member of target enum
-                // Only allow if target is the full enum type (not a different member)
-                if self.resolver.is_enum_type(target, self.interner) {
-                    return SubtypeResult::True;
-                }
-            }
-
-            // Different enums are NOT compatible (nominal typing)
-            return SubtypeResult::False;
-        }
-
-        // Source is Enum, Target is not - check structural member type
-        if let Some((_s_def_id, s_members)) = enum_components(self.interner, source) {
-            return self.check_subtype(s_members, target);
-        }
-
-        // Target is Enum, Source is not - check Rule #7 first, then structural member type
-        if let Some((t_def_id, t_members)) = enum_components(self.interner, target) {
-            // Rule #7: number is assignable to numeric enums
-            if source == TypeId::NUMBER && self.resolver.is_numeric_enum(t_def_id) {
-                return SubtypeResult::True;
-            }
-            // For number literals, fall through to structural check against t_members
-            // so that only actual enum member values (e.g., 0|1|2) are accepted
-            return self.check_subtype(source, t_members);
+        // Enum relations (nominal identity + structural member values) live in
+        // `rules/enums.rs`; `None` means neither side is an enum.
+        if let Some(result) = self.check_enum_relations(source, target) {
+            return result;
         }
 
         // =======================================================================

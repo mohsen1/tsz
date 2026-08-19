@@ -1,5 +1,6 @@
 use crate::query_boundaries::common::{self, LiteralTypeKind, TypeSubstitution};
 use crate::query_boundaries::type_computation::complex as type_query;
+use crate::query_boundaries::type_parameter_identity;
 use crate::state::CheckerState;
 use tsz_solver::TypeId;
 
@@ -47,7 +48,11 @@ impl<'a> CheckerState<'a> {
         // application (`new <T>(...): Box<T>`) — keeps tsc's normal widened
         // inference result, which this function's constraint-based check below
         // (T extends string, etc.) already covers for the constrained case.
-        if common::is_type_parameter_at_top_level(self.ctx.types, return_type, info.name) {
+        if type_parameter_identity::is_type_parameter_at_top_level(
+            self.ctx.types,
+            return_type,
+            info.name,
+        ) {
             return true;
         }
         let Some(constraint) = info.constraint else {

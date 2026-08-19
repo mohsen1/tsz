@@ -33,6 +33,9 @@ mod conditional_alias_display;
 mod core;
 mod core_alias_display;
 mod core_formatting;
+// Property-inspection probes split out of `core_formatting` to keep that shard
+// under the §19 file-size cap; they answer structural questions, not display ones.
+mod core_formatting_property_probes;
 pub(crate) mod display_budget;
 mod emitters;
 mod expected_type_from_property;

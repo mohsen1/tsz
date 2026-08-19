@@ -86,6 +86,27 @@ impl<'a> CheckerState<'a> {
         )
     }
 
+    /// Structural display for an assignment **target** whose declared type was
+    /// written as a longhand primitive-keyword union (`string | number`,
+    /// `string | number | symbol`). The target mirror of
+    /// [`Self::longhand_primitive_union_source_display`]; the two differ only in
+    /// which side of the assignment supplies the annotation node.
+    ///
+    /// Returns `None` for a written-through alias reference (`: Zed`), which is
+    /// a `TYPE_REFERENCE` rather than a longhand union, so an annotation that
+    /// really did name an alias keeps that name.
+    pub(in crate::error_reporter) fn longhand_primitive_union_target_display(
+        &mut self,
+        anchor_idx: NodeIndex,
+        target: TypeId,
+    ) -> Option<String> {
+        self.annotation_gated_structural_target_display(
+            anchor_idx,
+            target,
+            Self::annotation_is_longhand_primitive_keyword_union,
+        )
+    }
+
     /// Structural display for an assignment **source** whose declared type
     /// annotation node satisfies `annotation_matches` — an inline shape that
     /// carries no `aliasSymbol` and so should render by its structure rather than

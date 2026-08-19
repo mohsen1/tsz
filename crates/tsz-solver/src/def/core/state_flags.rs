@@ -9,7 +9,7 @@
 //!
 //! [`DefinitionStore`]: super::DefinitionStore
 
-use super::{DefDashSet, DefId};
+use super::{DefDashMap, DefDashSet, DefId};
 use crate::types::TypeId;
 
 /// Cross-checker flag sets keyed by definition or alias-body identity.
@@ -55,6 +55,16 @@ pub(crate) struct DefStateFlags {
     /// interns to the same shape as a directly-written `type T = [a, b, c]`,
     /// which `tsc` *does* display by name.
     tuple_spread_flattened_alias_defs: DefDashSet<DefId>,
+
+    /// Non-generic type-alias `DefId`s whose declared body is a *bare*
+    /// (argument-free) type reference resolving to a non-generic interface or
+    /// class declaration, mapped to that declaration's `DefId`. `tsc` attaches
+    /// no `aliasSymbol` to the declaration's shared nominal type, so
+    /// diagnostics render the declaration's own name (`type IA = Iface`
+    /// renders `Iface`). Keyed per alias def because the resolved body may
+    /// flatten to the declaration's structural shape, which no longer records
+    /// which reference produced it.
+    bare_nominal_ref_alias_defs: DefDashMap<DefId, DefId>,
 }
 
 impl DefStateFlags {
@@ -140,6 +150,22 @@ impl DefStateFlags {
             && self.tuple_spread_flattened_alias_defs.contains(&id)
     }
 
+    /// Record a non-generic alias whose declared body is a bare reference to
+    /// the non-generic interface/class declaration `target`.
+    pub(crate) fn record_bare_nominal_ref_alias(&self, alias: DefId, target: DefId) {
+        self.bare_nominal_ref_alias_defs.insert(alias, target);
+    }
+
+    /// The interface/class declaration recorded for `alias` via
+    /// [`Self::record_bare_nominal_ref_alias`], if any.
+    #[inline]
+    pub(crate) fn bare_nominal_ref_alias_target(&self, alias: DefId) -> Option<DefId> {
+        if self.bare_nominal_ref_alias_defs.is_empty() {
+            return None;
+        }
+        self.bare_nominal_ref_alias_defs.get(&alias).map(|r| *r)
+    }
+
     /// Reset the alias-body flag sets. The poison / publish / circular sets are
     /// intentionally retained, matching the historical [`DefinitionStore::clear`].
     ///
@@ -148,5 +174,6 @@ impl DefStateFlags {
         self.computed_alias_bodies.clear();
         self.directly_named_alias_bodies.clear();
         self.tuple_spread_flattened_alias_defs.clear();
+        self.bare_nominal_ref_alias_defs.clear();
     }
 }

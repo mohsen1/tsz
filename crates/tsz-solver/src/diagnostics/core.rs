@@ -402,21 +402,24 @@ pub enum SubtypeFailureReason {
         nested_reason: Box<Self>,
     },
     /// A source is not assignable to a union **target** because it fails to
-    /// match any member, and the best-matching member fails through a missing
-    /// required property.
+    /// match any member; the best-matching member's own failure is carried for
+    /// elaboration.
     ///
-    /// tsc relates an object literal / source against a union by selecting the
-    /// best-matching constituent (`getBestMatchingType` -> `findMostOverlappyType`:
-    /// the member sharing the most property-name keys with the source, ties
-    /// broken by the *last* such member) and elaborates the failure against it.
-    /// The top-level line stays `Type 'S' is not assignable to type 'U'.`, and
-    /// the best member's `Property 'x' is missing in type 'S' but required in
-    /// type '<member>'.` line (or the multi-property TS2739 form) is carried in
-    /// `nested_reason` and rendered one level deeper — instead of stopping at
-    /// the bare union-to-target line.
+    /// tsc relates an object source against a union by selecting the
+    /// best-matching constituent (`getBestMatchingType`: a written unit
+    /// discriminant first, then `findMostOverlappyType` — the member sharing
+    /// the most property-name keys with the source, ties broken by the *last*
+    /// such member) and re-runs the failed relation against it with errors
+    /// enabled. The top-level line stays `Type 'S' is not assignable to type
+    /// 'U'.`; beneath it, a missing required property folds directly
+    /// (`Property 'x' is missing in type 'S' but required in type '<member>'.`
+    /// or the multi-property TS2739 form), while any other failure elaborates
+    /// under a `Type 'S' is not assignable to type '<member>'.` member frame
+    /// followed by the member relation's own drill (`Types of property 'm'
+    /// are incompatible.` …) — instead of stopping at the bare union line.
     ///
     /// `member_type` is the best-matching union member; `nested_reason` is the
-    /// missing-property failure of `source_type` against that member.
+    /// failure of `source_type` against that member.
     UnionTargetMismatch {
         source_type: TypeId,
         target_type: TypeId,

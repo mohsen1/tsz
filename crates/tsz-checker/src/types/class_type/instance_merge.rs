@@ -731,6 +731,16 @@ impl CheckerState<'_> {
             // Only remove from global set if we inserted it ourselves
             if did_insert_into_global_set {
                 self.ctx.class_instance_resolution_set.remove(&sym_id);
+                // The instance build window is closed: drop any provisional
+                // class-instance registrations (#16055), including the corner
+                // where a fields-only class interns its completed instance to
+                // the same `TypeId` as the snapshot (publication-keyed
+                // deregistration alone would keep that window open forever).
+                self.ctx
+                    .types
+                    .unregister_provisional_class_instances_for_def(
+                        self.ctx.get_or_create_def_id(sym_id),
+                    );
             }
         }
         // Keep class lookup working for structurally unbranded derived instances.

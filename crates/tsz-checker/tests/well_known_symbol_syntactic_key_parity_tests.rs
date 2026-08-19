@@ -298,3 +298,94 @@ export const a: typeof Symbol.iterator = Symbol.asyncIterator;
          tsc; got: {codes:?}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// #17720 — type-position `M[typeof Symbol.iterator]` on a well-known-symbol
+// METHOD member.
+//
+// The property-form row above (`indexed_access_by_a_well_known_symbol_type_...`)
+// warmed the name<->ref registry as a side effect of evaluating its own
+// property-form alias, which masked a distinct residual: a well-known symbol is
+// denoted by SEVERAL distinct `SymbolRef`s across the pipeline (the lib
+// `SymbolConstructor` member ref the eager seed records, the ref a use-site
+// `typeof Symbol.iterator` resolves to, and the ref recovered from an
+// interface's own computed-name expression). The forward `name -> ref` registry
+// keeps only one ref per name (last write wins), so a later registration for
+// one spelling CLOBBERED the seed's use-site ref and the reverse `ref -> name`
+// lookup then missed for a ref that legitimately denotes the same symbol. The
+// property-form path happened to re-register the use-site ref last and so
+// recovered; the method-form path never did, leaving the member unresolved and
+// firing a spurious TS2538. The registry now accumulates every ref per name in
+// a reverse map (`ref -> name` is a true function), so the reverse lookup
+// recognizes the name regardless of registration order and spelling.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn type_position_indexed_access_by_a_well_known_symbol_method_member_resolves() {
+    // tsc 6.0.2 / 7.0.2: exit 0 — `M[typeof Symbol.iterator]` is `() => number`.
+    // In ISOLATION (no property-form alias earlier in the file to warm the
+    // registry), so the method member must resolve on its own.
+    let codes = diagnostic_codes(
+        r#"
+interface M { [Symbol.iterator](): number }
+type VM = M[typeof Symbol.iterator];
+export const bm: () => number = null as any as VM;
+"#,
+    );
+    assert!(
+        codes.is_empty(),
+        "a type-position indexed access keyed by a well-known symbol on a METHOD \
+         member must resolve the member and stay clean like tsc; got: {codes:?}"
+    );
+}
+
+#[test]
+fn class_and_generic_well_known_symbol_method_members_resolve() {
+    // Adjacency: a class method form and a generic interface method form, both
+    // clean in tsc, both previously firing the same spurious TS2538.
+    let codes = diagnostic_codes(
+        r#"
+class C { [Symbol.iterator](): number { return 1; } }
+type VC = C[typeof Symbol.iterator];
+export const bc: () => number = null as any as VC;
+
+interface G<X> { [Symbol.iterator](): X }
+type VG = G<string>[typeof Symbol.iterator];
+export const bg: () => string = null as any as VG;
+"#,
+    );
+    assert!(
+        codes.is_empty(),
+        "class and generic well-known-symbol method members must resolve in \
+         type position like tsc; got: {codes:?}"
+    );
+}
+
+#[test]
+fn missing_well_known_symbol_key_reports_ts2339_not_ts2538() {
+    // tsc 6.0.2 / 7.0.2: a well-known-symbol key the object lacks is a *named*
+    // member miss — a single TS2339 ("Property '[Symbol.asyncIterator]' does not
+    // exist"), never TS2538. tsz previously double-emitted TS2339 + TS2538 for
+    // both the property and method forms of the containing member; the
+    // concrete-index guard now defers a well-known named key to the
+    // resolver-aware TS2339 path instead of emitting a spurious TS2538.
+    for member in ["[Symbol.iterator]: number", "[Symbol.iterator](): number"] {
+        let source = format!(
+            r#"
+interface I {{ {member} }}
+type T = I[typeof Symbol.asyncIterator];
+"#,
+        );
+        let codes = diagnostic_codes(&source);
+        assert!(
+            codes.contains(&2339),
+            "a missing well-known-symbol key must report TS2339; member `{member}`, \
+             got: {codes:?}"
+        );
+        assert!(
+            !codes.contains(&2538),
+            "a missing well-known-symbol NAMED key must not also report the \
+             spurious TS2538; member `{member}`, got: {codes:?}"
+        );
+    }
+}

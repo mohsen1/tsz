@@ -40,6 +40,13 @@ pub(in crate::intern::core) struct AppComponentKey {
     /// Raw `DefId` for `Lazy`/`Enum` components; `None` otherwise. Only consulted
     /// when both components share the same rank, mirroring the resolving path.
     pub(in crate::intern::core) lazy_or_enum_defid: Option<u32>,
+    /// Global allocation order of the component (`TypeInterner::lookup_alloc_order`),
+    /// consulted before the raw `TypeId` tiebreak. Raw `TypeId`s are sharded
+    /// (`shard_idx` interleaved with a per-shard local index), so two components
+    /// interned back-to-back can land in different shards and get numerically
+    /// unordered raw ids; `alloc_order` is a single global counter and reflects
+    /// true creation order, matching `CachedUnionMember`'s own fallback.
+    pub(in crate::intern::core) alloc_order: Option<u32>,
     /// Raw `TypeId` of the component, used as the final stable tiebreak.
     pub(in crate::intern::core) raw: u32,
 }
