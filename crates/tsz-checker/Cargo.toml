@@ -191,6 +191,9 @@ path = "tests/return_context_identity_wrapper_literal_tests.rs"
 name = "raw_builder_return_context_inference_tests"
 path = "tests/raw_builder_return_context_inference_tests.rs"
 [[test]]
+name = "permuted_alias_return_context_inference_tests"
+path = "tests/permuted_alias_return_context_inference_tests.rs"
+[[test]]
 name = "nested_generic_union_callback_return_tests"
 path = "tests/nested_generic_union_callback_return_tests.rs"
 [[test]]
