@@ -219,6 +219,146 @@ function ambiguous(): RawBuilder<string> | RawBuilder<number> {{
 }
 
 #[test]
+fn three_arm_ambiguous_union_reports_the_return_mismatch() {
+    let source = format!(
+        r#"{PRELUDE}
+function threeArm(): RawBuilder<string> | RawBuilder<number> | RawBuilder<boolean[]> {{
+  return sql``
+}}
+"#
+    );
+    let diagnostics = check_source_diagnostics(&source);
+    let codes: Vec<_> = diagnostics
+        .iter()
+        .map(|diagnostic| diagnostic.code)
+        .collect();
+    assert_eq!(
+        codes,
+        vec![2322],
+        "unexpected diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn ambiguous_union_with_nullish_arm_still_reports_the_return_mismatch() {
+    let source = format!(
+        r#"{PRELUDE}
+function withUndef(): RawBuilder<string> | RawBuilder<number> | undefined {{
+  return sql``
+}}
+"#
+    );
+    let diagnostics = check_source_diagnostics(&source);
+    let codes: Vec<_> = diagnostics
+        .iter()
+        .map(|diagnostic| diagnostic.code)
+        .collect();
+    assert_eq!(
+        codes,
+        vec![2322],
+        "unexpected diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn single_matching_arm_with_null_still_infers_from_that_arm() {
+    assert_clean(
+        r#"
+function oneArmNull(): RawBuilder<string> | null {
+  return sql``
+}
+"#,
+        "single same-base arm plus null keeps inferring from the arm",
+    );
+}
+
+#[test]
+fn mixed_base_union_infers_from_the_matching_arm_only() {
+    assert_clean(
+        r#"
+interface OtherBuilder<T> { readonly other: T }
+function mixedBase(): RawBuilder<string> | OtherBuilder<number> {
+  return sql``
+}
+"#,
+        "one same-base arm plus a different-base arm stays unambiguous",
+    );
+}
+
+#[test]
+fn agreeing_alias_arms_do_not_report() {
+    assert_clean(
+        r#"
+type AliasedRaw = RawBuilder<string>
+function agreeing(): AliasedRaw | RawBuilder<string> {
+  return sql``
+}
+"#,
+        "arms that agree on the argument stay clean",
+    );
+}
+
+#[test]
+fn argument_evidence_outranks_ambiguous_union_context() {
+    assert_clean(
+        r#"
+const picked: RawBuilder<string> | RawBuilder<number> = fromValue(123)
+"#,
+        "a concrete argument decides the parameter; the ambiguous context does not",
+    );
+}
+
+#[test]
+fn renamed_binders_ambiguous_union_reports_the_return_mismatch() {
+    let source = format!(
+        r#"{PRELUDE}
+interface CrateRow<Payload> {{
+  readonly slot: Payload | undefined
+  readonly sealed: true
+}}
+interface StampTag {{
+  <Mark = unknown>(parts: TemplateStringsArray, ...values: unknown[]): CrateRow<Mark>
+}}
+declare const stamp: StampTag
+function pickCrate(): CrateRow<string> | CrateRow<number> {{
+  return stamp``
+}}
+"#
+    );
+    let diagnostics = check_source_diagnostics(&source);
+    let codes: Vec<_> = diagnostics
+        .iter()
+        .map(|diagnostic| diagnostic.code)
+        .collect();
+    assert_eq!(
+        codes,
+        vec![2322],
+        "unexpected diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn ordinary_zero_evidence_call_against_ambiguous_union_reports() {
+    let source = format!(
+        r#"{PRELUDE}
+function viaCall(): RawBuilder<string> | RawBuilder<number> {{
+  return rawCall()
+}}
+"#
+    );
+    let diagnostics = check_source_diagnostics(&source);
+    let codes: Vec<_> = diagnostics
+        .iter()
+        .map(|diagnostic| diagnostic.code)
+        .collect();
+    assert_eq!(
+        codes,
+        vec![2322],
+        "unexpected diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn nested_promise_catch_generic_does_not_escape_into_outer_result() {
     assert_clean(
         r#"

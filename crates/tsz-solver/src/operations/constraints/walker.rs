@@ -1121,6 +1121,72 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     // so structural decomposition can extract inference candidates.
                     member_visited.clear();
                     if self.type_contains_placeholder(source, var_map, &mut member_visited) {
+                        // Return-context combination: when the placeholder-bearing
+                        // source is an `Application` and MULTIPLE non-nullish arms
+                        // are applications of the SAME base with the same arity,
+                        // `tsc` infers one candidate per arm at `ReturnType`
+                        // priority and COMBINES them into a union
+                        // (`PriorityImpliesCombination` in `inferToMultipleTypes` /
+                        // `getCovariantInference`), so a genuinely ambiguous
+                        // contextual union like `RawBuilder<string> |
+                        // RawBuilder<number>` resolves the tag's parameter to
+                        // `string | number` and the return assignability check
+                        // then fails (TS2322). Constraining per-arm instead
+                        // records one upper bound per arm, and the multi-bound
+                        // intersection fallback (`string & number` ≡ `never`)
+                        // satisfies every arm, silently accepting the ambiguity.
+                        // Merge the matching arms into one per-position-union
+                        // application and constrain once. Contravariant routing
+                        // keeps the per-arm walk: `tsc` intersects contra
+                        // candidates, which the existing multi-bound path models.
+                        if priority == crate::types::InferencePriority::ReturnType
+                            && !ctx.collects_contra_candidates()
+                            && ctx.parameter_recovery_mode
+                                != ParameterRecoveryMode::StandaloneReverse
+                            && let Some(TypeData::Application(s_app_id)) =
+                                self.interner.lookup(source)
+                        {
+                            let s_app = self.interner.type_application(s_app_id);
+                            let s_base = s_app.base;
+                            let s_args_len = s_app.args.len();
+                            let mut merged_member_args: Vec<Vec<TypeId>> =
+                                vec![Vec::new(); s_args_len];
+                            let mut merged_member_count = 0usize;
+                            let mut unmerged_members: Vec<TypeId> = Vec::new();
+                            for &member in t_members.iter() {
+                                if is_nullish(member) {
+                                    continue;
+                                }
+                                if let Some(TypeData::Application(m_app_id)) =
+                                    self.interner.lookup(member)
+                                {
+                                    let m_app = self.interner.type_application(m_app_id);
+                                    if m_app.args.len() == s_args_len
+                                        && self
+                                            .application_bases_share_declaration(m_app.base, s_base)
+                                    {
+                                        for (i, &arg) in m_app.args.iter().enumerate() {
+                                            merged_member_args[i].push(arg);
+                                        }
+                                        merged_member_count += 1;
+                                        continue;
+                                    }
+                                }
+                                unmerged_members.push(member);
+                            }
+                            if merged_member_count > 1 {
+                                let merged_args: Vec<TypeId> = merged_member_args
+                                    .iter()
+                                    .map(|args| self.interner.union_from_slice(args))
+                                    .collect();
+                                let merged = self.interner.application(s_base, merged_args);
+                                self.constrain_types(ctx, var_map, source, merged, priority);
+                                for member in unmerged_members {
+                                    self.constrain_types(ctx, var_map, source, member, priority);
+                                }
+                                return;
+                            }
+                        }
                         for &member in t_members.iter() {
                             if !is_nullish(member) {
                                 self.constrain_types(ctx, var_map, source, member, priority);
