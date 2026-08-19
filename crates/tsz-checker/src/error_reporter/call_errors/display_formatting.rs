@@ -385,14 +385,29 @@ impl<'a> CheckerState<'a> {
     ) -> Option<TypeId> {
         let parent_idx = self.ctx.arena.get_extended(arg_idx)?.parent;
         let parent = self.ctx.arena.get(parent_idx)?;
-        let (callee_expr, args): (NodeIndex, &[NodeIndex]) = match parent.kind {
-            k if k == syntax_kind_ext::CALL_EXPRESSION || k == syntax_kind_ext::NEW_EXPRESSION => {
-                let call = self.ctx.arena.get_call_expr(parent)?;
-                let args = call.arguments.as_ref()?;
-                (call.expression, &args.nodes)
-            }
-            _ => return None,
-        };
+        let (callee_expr, args, has_explicit_type_args): (NodeIndex, &[NodeIndex], bool) =
+            match parent.kind {
+                k if k == syntax_kind_ext::CALL_EXPRESSION
+                    || k == syntax_kind_ext::NEW_EXPRESSION =>
+                {
+                    let call = self.ctx.arena.get_call_expr(parent)?;
+                    let args = call.arguments.as_ref()?;
+                    let has_explicit_type_args = call
+                        .type_arguments
+                        .as_ref()
+                        .is_some_and(|type_args| !type_args.nodes.is_empty());
+                    (call.expression, &args.nodes, has_explicit_type_args)
+                }
+                _ => return None,
+            };
+        // An explicit type-argument list fixes every type parameter before
+        // inference, so the head display (`generic_call_parameter_alias_display`)
+        // renders the fixed instantiation, not the later argument's literal
+        // (#17745). Mirror that gate here so the re-derived elaboration never
+        // restores a literal the head does not.
+        if has_explicit_type_args {
+            return None;
+        }
         let arg_index = args.iter().position(|&candidate| candidate == arg_idx)?;
         let callee_type = self.get_type_of_node(callee_expr);
         let raw_sig = crate::query_boundaries::checkers::call::get_contextual_signature_for_arity(
