@@ -3069,3 +3069,7 @@ path = "tests/union_target_property_mismatch_elaboration_tests.rs"
 [[test]]
 name = "property_pair_relation_frame_tests"
 path = "tests/property_pair_relation_frame_tests.rs"
+
+[[test]]
+name = "union_source_boolean_witness_tests"
+path = "tests/union_source_boolean_witness_tests.rs"
