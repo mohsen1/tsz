@@ -803,10 +803,28 @@ pub(crate) fn generic_deferred_source_keeps_spelling_against_generic_target(
     source: TypeId,
     target: TypeId,
 ) -> bool {
-    super::common::contains_type_parameters(db, source)
-        && super::common::contains_type_parameters(db, target)
+    if !super::common::contains_type_parameters(db, source) {
+        return false;
+    }
+    // A bare indexed-access source whose OBJECT is itself still a free type
+    // parameter (`T[K]` where `T` is the enclosing generic's own,
+    // uninstantiated parameter) has no computable value without knowing both
+    // the object and the key at instantiation time, so tsc keeps `T[K]`'s
+    // written spelling on the diagnostic head regardless of whether the
+    // target is itself generic (see #17718 witness 2). This is narrower than
+    // "any indexed-access source": when the object is already CONCRETE (a
+    // closed interface/class) and only the index is generic, tsc collapses
+    // to the resolved value union at the head against a concrete target —
+    // the oracle-pinned TS2345 concrete-base-generic-index family is exactly
+    // that case — so such sources fall through to the existing
+    // generic-target gate below unchanged.
+    if let Some((object, _index)) = super::common::index_access_types(db, source)
+        && super::common::is_type_parameter(db, object)
+    {
+        return true;
+    }
+    super::common::contains_type_parameters(db, target)
         && (super::common::is_conditional_type(db, source)
-            || super::common::is_index_access_type(db, source)
             || alias_application_body_reduces_through_conditional_or_indexed(
                 db,
                 definitions,
