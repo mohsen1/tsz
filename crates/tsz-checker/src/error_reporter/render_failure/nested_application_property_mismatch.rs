@@ -1197,16 +1197,24 @@ impl<'a> CheckerState<'a> {
                     depth + 1,
                 );
                 // `push_nested_chain` renumbers only the nested headline to
-                // this line's child position (`depth`); the nested render
-                // placed the headline's own children at `depth + 2`, which
-                // would leave a skipped indent level beneath it. Pull the
-                // nested children up one level so the drill sits directly
-                // beneath the renumbered headline.
-                nested_diag.related_information = nested_diag
-                    .related_information
-                    .into_iter()
-                    .map(|related| related.with_depth_shift(-1))
-                    .collect();
+                // this line's child position (`depth`). The union-source
+                // renderer places the headline's own children at `depth + 2`
+                // (its member header sits at `ctx.depth + 1`), which would
+                // leave a skipped indent level beneath the renumbered
+                // headline — pull exactly that shape up one level. A nested
+                // same-generic drill (`Wrap` of `Wrap`) and the other arms
+                // already place children at `depth + 1`, so shifting them
+                // would flatten a genuinely nested chain into siblings.
+                if matches!(
+                    nested_reason,
+                    tsz_solver::SubtypeFailureReason::UnionSourceMismatch { .. }
+                ) {
+                    nested_diag.related_information = nested_diag
+                        .related_information
+                        .into_iter()
+                        .map(|related| related.with_depth_shift(-1))
+                        .collect();
+                }
                 Self::push_nested_chain(&mut diag, nested_diag, depth);
             }
         }

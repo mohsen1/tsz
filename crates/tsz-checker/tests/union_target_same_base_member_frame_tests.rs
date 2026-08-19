@@ -304,6 +304,64 @@ const t: StrRow | NumRow | undefined = r
     );
 }
 
+// --- Nested same-generic drill: one indent level per layer ------------------
+
+#[test]
+fn nested_same_generic_argument_drill_keeps_per_layer_nesting() {
+    // Depth guard for the union-source drill pull-up: a doubly-wrapped
+    // same-generic pair drills one indent level per layer — the inner pair
+    // line is a CHILD of the outer, never its sibling.
+    assert_exact_chain(
+        r#"
+interface Crate<Held> { readonly held: Held }
+declare const doubled: Crate<Crate<string>>
+const want: Crate<Crate<number>> = doubled
+"#,
+        2322,
+        &[
+            (
+                0,
+                "Type 'Crate<Crate<string>>' is not assignable to type 'Crate<Crate<number>>'.",
+            ),
+            (
+                1,
+                "Type 'Crate<string>' is not assignable to type 'Crate<number>'.",
+            ),
+            (2, "Type 'string' is not assignable to type 'number'."),
+        ],
+    );
+}
+
+#[test]
+fn nested_same_generic_union_argument_composes_both_drill_shapes() {
+    // The inner layer's failing argument is itself a union: the nested
+    // same-generic drill (no depth pull-up) composes with the union-source
+    // drill (pulled up one level) into one contiguous chain.
+    assert_exact_chain(
+        r#"
+interface Crate<Held> { readonly held: Held }
+declare const mixedDeep: Crate<Crate<string | number>>
+const wantDeep: Crate<Crate<number>> = mixedDeep
+"#,
+        2322,
+        &[
+            (
+                0,
+                "Type 'Crate<Crate<string | number>>' is not assignable to type 'Crate<Crate<number>>'.",
+            ),
+            (
+                1,
+                "Type 'Crate<string | number>' is not assignable to type 'Crate<number>'.",
+            ),
+            (
+                2,
+                "Type 'string | number' is not assignable to type 'number'.",
+            ),
+            (3, "Type 'string' is not assignable to type 'number'."),
+        ],
+    );
+}
+
 // --- Negative controls -----------------------------------------------------
 
 #[test]
