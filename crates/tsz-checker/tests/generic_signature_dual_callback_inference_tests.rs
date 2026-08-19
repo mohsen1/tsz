@@ -211,3 +211,78 @@ var n: number | string = f(2);
         );
     }
 }
+
+/// Negative control for the retry-inference restoration (#17761): callbacks
+/// with NO parameters are not context-sensitive, so `tsc` takes their fresh
+/// literal returns as genuine inference candidates, widens them at
+/// inference time, pins the parameter from the first (`number`), and reports
+/// the second body against it — in both modes. The restoration in the
+/// generic-call retry must not resurrect these literals: their widened form
+/// is the real candidate.
+#[test]
+fn zero_param_callbacks_keep_widened_candidates_and_report_ts2322() {
+    for strict in [true, false] {
+        let diags = check_with(
+            r#"
+declare function bar<T>(a: () => T, b: () => T): T;
+var x = bar(() => 1, () => '');
+"#,
+            strict,
+        );
+        assert_eq!(
+            diags.len(),
+            1,
+            "zero-param control (strict: {strict}): expected exactly one diagnostic, got: {:#?}",
+            messages(&diags)
+        );
+        assert_eq!(diags[0].code, 2322, "zero-param control (strict: {strict})");
+        assert!(
+            diags[0]
+                .message_text
+                .contains("Type 'string' is not assignable to type 'number'."),
+            "zero-param control (strict: {strict}): got: {:#?}",
+            messages(&diags)
+        );
+    }
+}
+
+/// The same dual context-sensitive shape routed through a construct
+/// signature: a generic class whose constructor takes the two callbacks.
+#[test]
+fn new_expression_dual_unannotated_callbacks_stay_clean() {
+    assert_clean_both_modes(
+        r#"
+declare class Box<V> { constructor(a: (v: V) => V, b: (v: V) => V); }
+var boxed = new Box((v) => 3, (v) => 'x');
+"#,
+        "new-expression dual unannotated callbacks",
+    );
+}
+
+/// A fresh enum-member return contribution widens to its parent enum through
+/// `widen_enum_member_type` rather than the primitive literal widener; the
+/// retry restoration must recognize that artifact the same way.
+#[test]
+fn enum_member_and_string_callbacks_stay_clean() {
+    assert_clean_both_modes(
+        r#"
+enum Shade { Light, Dark }
+declare function mix<S>(a: (v: S) => S, b: (v: S) => S): S;
+var tone = mix((v) => Shade.Light, (v) => 'soft');
+"#,
+        "enum-member and string callbacks",
+    );
+}
+
+/// Same-base-kind fresh literals in both callbacks: nothing conflicts, and
+/// the call stays clean whether or not the contributions widen.
+#[test]
+fn same_kind_literal_callbacks_stay_clean() {
+    assert_clean_both_modes(
+        r#"
+declare function join<W>(a: (v: W) => W, b: (v: W) => W): W;
+var same = join((v) => 1, (v) => 2);
+"#,
+        "same-kind literal callbacks",
+    );
+}

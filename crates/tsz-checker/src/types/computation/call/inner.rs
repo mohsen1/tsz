@@ -1313,8 +1313,73 @@ impl<'a> CheckerState<'a> {
                 .copied()
                 .any(|arg_idx| self.is_callback_like_argument(arg_idx));
 
+            // tsc types a context-sensitive callback's body against the fixed
+            // instantiation, widening a fresh literal return the instantiated
+            // contextual return no longer pins — but it never re-infers from
+            // that widened result: the instantiation is already fixed. This
+            // retry re-resolves the call with the refreshed argument types, so
+            // a callback return that changed ONLY by that literal widening must
+            // contribute its original (unwidened) return to the re-inference.
+            // Otherwise the second inference degrades the instantiation the
+            // first resolution already proved consistent: `foo((x) => 1,
+            // (x) => '')` against `foo<T>(a: (x: T) => T, b: (x: T) => T)`
+            // resolves `T = number | string`, but re-inferring from the
+            // retyped `number`/`string` returns collapses `T` to `number` and
+            // manufactures a TS2322 tsc does not emit (#17761).
+            let mut retry_inference_arg_types = refreshed_arg_types.clone();
+            for (i, retry_arg) in retry_inference_arg_types.iter_mut().enumerate() {
+                let Some(&arg_idx) = args.get(i) else {
+                    continue;
+                };
+                // Only a CONTEXT-SENSITIVE callback qualifies: tsc fixes the
+                // type parameters its contextual typing references and discards
+                // its return candidates, so only there is the widened retype an
+                // inference artifact. A non-sensitive callback's return
+                // (`bar(() => 1, () => '')`) is a genuine candidate tsc also
+                // takes — its widened form must keep flowing to the solver.
+                if !self.is_callback_like_argument(arg_idx)
+                    || !is_contextually_sensitive(self, arg_idx)
+                {
+                    continue;
+                }
+                let Some(&pre_retry_arg) = generic_inference_arg_types.get(i) else {
+                    continue;
+                };
+                let Some(pre_shape) =
+                    common::function_shape_for_type(self.ctx.types, pre_retry_arg)
+                else {
+                    continue;
+                };
+                let Some(new_shape) = common::function_shape_for_type(self.ctx.types, *retry_arg)
+                else {
+                    continue;
+                };
+                if new_shape.return_type == pre_shape.return_type {
+                    continue;
+                }
+                let mut widened_pre = crate::query_boundaries::common::widen_literal_type(
+                    self.ctx.types,
+                    pre_shape.return_type,
+                );
+                if widened_pre == pre_shape.return_type {
+                    widened_pre = self.widen_enum_member_type(pre_shape.return_type);
+                }
+                if widened_pre != pre_shape.return_type && new_shape.return_type == widened_pre {
+                    *retry_arg =
+                        crate::query_boundaries::construct_signatures::function_type_with_return_replaced(
+                            self.ctx.types,
+                            new_shape.as_ref(),
+                            pre_shape.return_type,
+                        );
+                }
+            }
+
             let (retry_generic_arg_types, retry_sanitized) = self
-                .sanitize_generic_inference_arg_types(call.expression, args, &refreshed_arg_types);
+                .sanitize_generic_inference_arg_types(
+                    call.expression,
+                    args,
+                    &retry_inference_arg_types,
+                );
             let retry_arg_source_markers =
                 self.call_arg_source_type_annotation_markers(args, retry_generic_arg_types.len());
             let retry_arg_readonly_markers = self
