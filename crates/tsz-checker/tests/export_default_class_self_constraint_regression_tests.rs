@@ -91,10 +91,9 @@ export default class Envelope<Init = any> {
 fn export_default_generic_class_instance_function_expression_property_with_self_constraint_is_clean()
  {
     // Row 6 of the #17570 matrix (function-expression form), likewise
-    // guarded on a generic class. The `<T = any>` axis is important: the
-    // non-generic-class variant is still broken (see the two `#[ignore]`d
-    // rows below), so keeping this row's shape distinct from those pins
-    // exactly which slice is fixed today.
+    // guarded on a generic class. The `<T = any>` axis is kept distinct from
+    // the non-generic rows below (fixed via #17743) because the two shapes
+    // resolve through different deferral paths (#17619 vs #17629/#17743).
     let diagnostics = check_source_diagnostics(
         r#"
 type TagOf<Sub extends { readonly tag: unknown }> = Sub["tag"];
@@ -114,35 +113,21 @@ export default class Frame<Init = any> {
 }
 
 // ---------------------------------------------------------------------------
-// #17743 — harness-only divergence on the last two rows.
-//
-// A non-generic `export default class` (no `<T>` on the class itself) whose
-// instance-property carries a function *expression* (arrow or `function`)
-// with a self-referential type-parameter constraint was the last unresolved
-// #17570 slice; #17629 fixed it, and the production CLI is clean on both
-// shapes (verified 2026-08-19: `tsz --noEmit`, with and without
-// `--strict --target es2015`, dev build at this branch's merge with main).
-//
-// But THIS harness (`check_source_diagnostics` / `check_source`, which
-// builds a `CheckerState` directly instead of going through the CLI driver)
-// still reproduces the pre-#17629 TS2344 — under default AND strict checker
-// options, so the axis is the entry path, not strictness. #17629's fix has
-// four cooperating rules (class-flagged-symbol `Lazy` minting, no
-// constructor-shaped body for a type-position class `Lazy` across three
-// resolution paths); whichever of them the direct-`CheckerState` wiring
-// skips is tracked as #17743.
-//
-// These two rows are `#[ignore]`d so the harness gap is not a merge blocker,
-// but their presence is a machine-readable TODO — when #17743 is fixed,
-// dropping the `#[ignore]`s doubles as the delisting step, and the rows then
-// fence the full family end to end through this entry path too.
+// #17743 — the two rows below were harness-only divergences: the CLI was
+// clean (fixed by #17629), but this direct-`CheckerState` harness still
+// reported the pre-#17629 TS2344. Root cause: without a
+// `global_symbol_file_index`, `compute_class_symbol_type`'s local-declaration
+// predicate could not accept an `export default class` (the class NODE's
+// symbol is the default-export binding, never the `CLASS`-flagged symbol
+// under computation), so the class computed to a degraded type and the
+// deferred self-reference resolved through it. Fixed by routing the
+// node-symbol alternative through the shared `class_self_reference_symbol`
+// rule (#17629 rule 1); these rows now fence the family end to end through
+// this entry path too.
 // ---------------------------------------------------------------------------
 
 #[test]
-#[ignore = "#17743 harness-only divergence: the CLI is clean (fixed by #17629), but the \
-    direct-CheckerState harness path still reports the pre-#17629 TS2344 on a non-generic \
-    `export default class` + instance arrow property. Drop `#[ignore]` when #17743 is fixed."]
-fn export_default_nongeneric_class_instance_arrow_property_with_self_constraint_is_clean_ignored() {
+fn export_default_nongeneric_class_instance_arrow_property_with_self_constraint_is_clean() {
     let diagnostics = check_source_diagnostics(
         r#"
 type PayloadOf<Ref extends { readonly payload: unknown }> = Ref["payload"];
@@ -155,15 +140,34 @@ export default class Envelope {
     assert!(
         diagnostics.is_empty(),
         "instance arrow property on a NON-generic `export default class` must not raise \
-         TS2344 (harness-only divergence #17743): {diagnostics:#?}"
+         TS2344 through the direct-CheckerState harness path (#17743): {diagnostics:#?}"
     );
 }
 
 #[test]
-#[ignore = "#17743 harness-only divergence: the CLI is clean (fixed by #17629), but the \
-    direct-CheckerState harness path still reports the pre-#17629 TS2344 on a non-generic \
-    `export default class` + instance function-expression property."]
-fn export_default_nongeneric_class_instance_function_expression_property_with_self_constraint_is_clean_ignored()
+fn export_default_nongeneric_class_genuine_violation_keeps_ts2344_in_harness() {
+    // Negative control for the #17743 fix: a constraint the class genuinely
+    // violates (no `payload` member) must keep its real TS2344 through this
+    // same direct-`CheckerState` entry path — the fix only lets the local
+    // class declaration be recognized, it does not disable the check.
+    let diagnostics = check_source_diagnostics(
+        r#"
+type PayloadOf<Ref extends { readonly payload: unknown }> = Ref["payload"];
+export default class Envelope {
+  readonly other!: number;
+  wrap = <Ref extends Envelope>(build: (n: number) => PayloadOf<Ref>): Ref => null as any;
+}
+"#,
+    );
+    assert!(
+        diagnostics.iter().any(|d| d.code == 2344),
+        "a genuinely violated self-referential constraint must still report TS2344 through \
+         the harness path: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn export_default_nongeneric_class_instance_function_expression_property_with_self_constraint_is_clean()
  {
     let diagnostics = check_source_diagnostics(
         r#"
@@ -179,7 +183,7 @@ export default class Frame {
     assert!(
         diagnostics.is_empty(),
         "instance function-expression property on a NON-generic `export default class` must \
-         not raise TS2344 (harness-only divergence #17743): {diagnostics:#?}"
+         not raise TS2344 through the direct-CheckerState harness path (#17743): {diagnostics:#?}"
     );
 }
 
