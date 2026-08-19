@@ -567,6 +567,88 @@ fn deferred_generic_index_access_member_source_keeps_pair_identity() {
     );
 }
 
+/// Expression-typed indexed access on a *concrete* receiver (`bag[k]`, not a
+/// declared `Bag[KSel]` annotation) keeps the deferred `Bag[KSel]` identity —
+/// mirrors `concrete_base_generic_index_head_keeps_full_union` above but for
+/// the EXPRESSION form (#17718 witness 2). Before this fix the element-access
+/// expression's own type eagerly resolved to the union of member value types,
+/// so the pair collapsed to `Type 'number' is not assignable to type 'string
+/// | undefined'.`. Oracle-verified (typescript@7.0.2) head: `Type 'Bag[KSel]'
+/// is not assignable to type 'string | undefined'.`; the oracle's deeper
+/// constraint-walk elaboration line (`Type 'number' is not assignable to type
+/// 'string'.`) is the same documented residual as witness 1's drill leaf
+/// (#17718) and not asserted here.
+#[test]
+fn concrete_receiver_expression_indexed_access_keeps_full_union() {
+    let msg = message(
+        "interface Bag { one: number; two: number }\nfunction pick<KSel extends keyof Bag>(x: Bag, k: KSel) {\n  const y: string | undefined = x[k];\n}\n",
+        2322,
+    );
+    assert_eq!(
+        msg, "Type 'Bag[KSel]' is not assignable to type 'string | undefined'.",
+        "concrete-receiver expression-typed indexed access must keep the deferred pair, got: {msg}"
+    );
+}
+
+/// Same rule, TS2345 argument position.
+#[test]
+fn concrete_receiver_expression_indexed_access_argument_keeps_full_union() {
+    let msg = message(
+        "interface Bag { one: number; two: number }\ndeclare function eat(v: string | undefined): void;\nfunction pick<KSel extends keyof Bag>(x: Bag, k: KSel) {\n  eat(x[k]);\n}\n",
+        2345,
+    );
+    assert_eq!(
+        msg,
+        "Argument of type 'Bag[KSel]' is not assignable to parameter of type 'string | undefined'.",
+        "concrete-receiver expression-typed indexed access argument must keep the deferred pair, got: {msg}"
+    );
+}
+
+/// Renamed binders (anti-hardcoding: the behavior is structural, not
+/// name-driven) and a `| null` target instead of `| undefined`.
+#[test]
+fn concrete_receiver_expression_indexed_access_renamed_binders_null_variant() {
+    let msg = message(
+        "interface Wares { p: number; q: number }\nfunction grab<KW extends keyof Wares>(goods: Wares, key: KW) {\n  const y: string | null = goods[key];\n}\n",
+        2322,
+    );
+    assert_eq!(
+        msg, "Type 'Wares[KW]' is not assignable to type 'string | null'.",
+        "renamed-binder concrete-receiver expression indexed access must keep the deferred pair, got: {msg}"
+    );
+}
+
+/// Negative control: a genuinely generic receiver (`x: T`) still goes through
+/// the type-parameter deferral path unaffected — the new concrete-receiver
+/// branch must not fire when the receiver is itself a type parameter.
+#[test]
+fn generic_receiver_expression_indexed_access_still_defers_via_type_param_path() {
+    let msg = message_with_chain(
+        "function pick<T, K extends keyof T>(x: T, k: K) {\n  const y: string | undefined = x[k];\n}\n",
+        2322,
+    );
+    assert_eq!(
+        msg, "Type 'T[K]' is not assignable to type 'string | undefined'.",
+        "generic-receiver expression indexed access must keep its own (unrelated) deferral path, got: {msg}"
+    );
+}
+
+/// Negative control: a literal-key expression access on a concrete receiver
+/// (`bag["one"]`, not a generic index) must still resolve eagerly — the new
+/// branch is gated on the index being generic, not merely absent from the
+/// existing `is_index_access_type(raw_object_type)` case.
+#[test]
+fn concrete_receiver_literal_key_expression_access_still_resolves_eagerly() {
+    let msg = message(
+        "interface Bag { one: number; two: number }\nfunction pick(x: Bag) {\n  const y: string | undefined = x[\"one\"];\n}\n",
+        2322,
+    );
+    assert_eq!(
+        msg, "Type 'number' is not assignable to type 'string'.",
+        "literal-key element access on a concrete receiver must still resolve eagerly, got: {msg}"
+    );
+}
+
 /// Same rule, renamed binders (anti-hardcoding: the behavior is structural,
 /// not name-driven), TS2345 argument position. The argument-drill renderer is a
 /// separate "no source elaboration" path that used to keep only the as-written
@@ -875,4 +957,49 @@ fn concrete_base_member_drill_walks_to_resolved_value_type() {
          Type 'Obj[KP]' is not assignable to type 'string | undefined'.\n\
          Type 'number' is not assignable to type 'string'.",
     );
+}
+
+/// #17718 witness 2: a plain expression-level `x[k]` access on a still-generic
+/// receiver (`T extends Wares`, `K extends keyof T`) keeps the deferred
+/// `T[K]` pair on the TS2322 head, matching tsc's oracle output for this
+/// witness. tsz previously eagerly resolved through `K`'s (already-reduced)
+/// `keyof T` constraint to `Wares`'s concrete property union, rendering
+/// `number` instead of `T[K]`.
+#[test]
+fn expression_indexed_access_generic_receiver_keeps_deferred_pair() {
+    let msg = message_with_chain(
+        "interface Wares { p: number; q: number }\nfunction pick<T extends Wares, K extends keyof T>(x: T, k: K) {\n  const y: string | undefined = x[k];\n}\n",
+        2322,
+    );
+    assert_eq!(
+        msg,
+        "Type 'T[K]' is not assignable to type 'string | undefined'."
+    );
+}
+
+/// Same structural shape with renamed binders (anti-hardcoding): the
+/// behavior is structural, not tied to the `T`/`K`/`Wares` spelling.
+#[test]
+fn expression_indexed_access_generic_receiver_keeps_deferred_pair_renamed_binders() {
+    let msg = message_with_chain(
+        "interface Bag { a: number; b: number }\nfunction grab<TSrc extends Bag, KSel extends keyof TSrc>(obj: TSrc, sel: KSel) {\n  const out: string | undefined = obj[sel];\n}\n",
+        2322,
+    );
+    assert_eq!(
+        msg,
+        "Type 'TSrc[KSel]' is not assignable to type 'string | undefined'."
+    );
+}
+
+/// Negative control: when the receiver is already CONCRETE (not a type
+/// parameter), the index-derived-from-constraint fast path must still
+/// eagerly resolve to the concrete property union — this fix only defers
+/// resolution when the receiver itself remains generic.
+#[test]
+fn expression_indexed_access_concrete_receiver_still_resolves_eagerly() {
+    let msg = message_with_chain(
+        "interface Wares3 { p: number; q: number }\nfunction pick3<K extends keyof Wares3>(x: Wares3, k: K) {\n  const y: string = x[k];\n}\n",
+        2322,
+    );
+    assert_eq!(msg, "Type 'number' is not assignable to type 'string'.");
 }

@@ -19,11 +19,12 @@
 //!    aggregation (`return_contribution_is_widenable`).
 //!
 //! The inference-time half of `tsc`'s `widenLiteralTypes` gate (`inference.
-//! topLevel && (isFixed || !isTypeParameterAtTopLevelInReturnType)`) is NOT
-//! generalized here: tsz stores one inference value for both the round-2
-//! check and the final result, so the static generalization tried on PR
-//! #17693 regressed 7 conformance rows. The two `#[ignore]`d fences below pin
-//! the remaining false-positive slice as living TODOs.
+//! topLevel && (isFixed || !isTypeParameterAtTopLevelInReturnType)`) is not
+//! generalized wholesale — the static generalization tried on PR #17693
+//! regressed 7 conformance rows. #17710 fixes the contextual slice of it:
+//! when the call's contextual type pins a return-position parameter to a
+//! widenable literal, that candidate is not widened (matching the caller's
+//! demand), which is what the previously-`#[ignore]`d fences below cover.
 //!
 //! All expectations below are oracle-pinned against the pinned conformance
 //! oracle (`typescript@7.0.2`, `--strict`).
@@ -150,16 +151,13 @@ var out = apply(1, function (v) { return '' }, 1);
 /// The literal survives a mixed direct/callback signature into a
 /// literal-typed binding.
 ///
-/// Living TODO (`#[ignore]`d): tsc keeps `U := 1` because the check-time
-/// round-2 instantiation is never widened; tsz stores one value for both the
-/// round-2 check and the final result, and main's inference-time widening of
-/// fresh literal candidates (`resolve_from_candidates`) produces `number`
-/// here — a TS2322 false positive. Fixing this needs the check-time/final
-/// split (or type-level literal freshness) documented on #17686/#17693;
-/// the static gate generalization tried there regressed 7 conformance rows.
-/// Drop the `#[ignore]` when that lands.
+/// Fixed by #17710: the literal contextual type (`const c: 1 = …`) seeds a
+/// `ReturnType`-priority inference for the return-position parameter `U` and
+/// suppresses literal widening for that candidate (mirroring `tsc`'s
+/// `getCovariantInference` gate, which does not widen a fresh literal a
+/// caller pins), so `U := 1` survives to the assignment instead of widening
+/// to `number`.
 #[test]
-#[ignore]
 fn literal_survives_mixed_callback_signature() {
     assert_clean(
         r#"
@@ -206,11 +204,10 @@ const chk: 1 = x10;
 /// Same shape with a non-context-sensitive callback: nothing is fixed, so the
 /// literal survives.
 ///
-/// Living TODO (`#[ignore]`d): same check-time/final split as
-/// `literal_survives_mixed_callback_signature` above — tsz widens `U` at
-/// inference time and reports a TS2322 false positive tsc does not have.
+/// Fixed by #17710 (same mechanism as `literal_survives_mixed_callback_signature`):
+/// the literal contextual type on the call pins `U` at the top level of the
+/// return type, so the inferred `U := 1` is not widened.
 #[test]
-#[ignore]
 fn literal_survives_non_context_sensitive_callback() {
     assert_clean(
         r#"
