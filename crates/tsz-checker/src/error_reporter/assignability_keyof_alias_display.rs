@@ -39,6 +39,19 @@ impl<'a> CheckerState<'a> {
         if self.keyof_operand_yields_concrete_literal_keyset(operand) {
             return true;
         }
+        // A generic-dependent operand — its own structure or, for an alias
+        // reference, its resolved body carries type parameters — makes the
+        // `keyof` deferred: tsc answers the literal-context question from the
+        // constraint of the as-written index type
+        // (`typeCouldHaveTopLevelSingletonTypes`), and a deferred key set is
+        // not a literal context even when the partially evaluated keys happen
+        // to be all-unit (`keyRemappingKeyofResult.ts`: evaluation drops the
+        // deferred remapped member, but tsc still widens the source at the
+        // head). Keep the widening default rather than trust that lossy
+        // evaluation.
+        if self.keyof_display_operand_is_generic_dependent(operand) {
+            return false;
+        }
         // Operands whose shape is not directly visible — enum types and enum
         // namespaces (`keyof typeof E` excludes the implicit numeric index),
         // `typeof x` queries, and class instance references — are judged by
@@ -50,6 +63,31 @@ impl<'a> CheckerState<'a> {
                 self.ctx.types.as_type_database(),
                 evaluated,
             )
+    }
+
+    /// True when a `keyof` operand is generic-dependent: the operand itself —
+    /// or, for a type-alias reference, its resolved body — structurally
+    /// contains type parameters (or `infer` placeholders), so its key set
+    /// cannot be statically enumerated and the `keyof` stays deferred.
+    fn keyof_display_operand_is_generic_dependent(&self, operand: TypeId) -> bool {
+        let db = self.ctx.types.as_type_database();
+        if crate::query_boundaries::containment_queries::contains_type_parameters(db, operand) {
+            return true;
+        }
+        let Some(def_id) =
+            crate::query_boundaries::diagnostics::lazy_def_id(self.ctx.types, operand)
+        else {
+            return false;
+        };
+        let body = self.ctx.type_env.borrow().get_def(def_id).or_else(|| {
+            self.ctx
+                .definition_store
+                .get(def_id)
+                .and_then(|def| def.body)
+        });
+        body.is_some_and(|body| {
+            crate::query_boundaries::containment_queries::contains_type_parameters(db, body)
+        })
     }
 
     /// True when the `X` in `keyof X` reduces to a finite literal key set: a plain

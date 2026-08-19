@@ -242,3 +242,75 @@ enum Later { First, Second }
         r#"Type '"nope"' is not assignable to type '"First" | "Second"'."#,
     );
 }
+
+#[test]
+fn generic_mapped_remap_alias_keyof_target_widens_source_keeps_keyof_spelling() {
+    // The operand is a mapped type with key remapping over a
+    // generic-dependent source (`keyof (Base & U)`), so the key set is
+    // deferred. The 7.0.2 oracle widens the assignment-source literal at the
+    // head and keeps the `keyof` spelling (`keyRemappingKeyofResult.ts`) —
+    // the partially evaluated key set must NOT be treated as a literal
+    // context even though its visible members are all unit types.
+    expect_code_with(
+        r#"
+type Rec<K2 extends keyof any, V> = { [Q in K2]: V };
+function fx<U>() {
+    type Base = { [k: string]: any, alpha: any, beta: any } & U;
+    type Pruned = { [P in keyof Base as {} extends Rec<P, any> ? never : P]: any };
+    type Keys = keyof Pruned;
+    let v: Keys;
+    v = "other";
+}
+"#,
+        2322,
+        r#"Type 'string' is not assignable to type 'keyof Pruned'."#,
+    );
+}
+
+#[test]
+fn distributive_generic_mapped_remap_alias_keyof_target_widens_source() {
+    // Same deferred-key-set rule through a distributive remapping conditional
+    // (`getIndexType`'s other branch in the tsc original).
+    expect_code_with(
+        r#"
+type Rec<K2 extends keyof any, V> = { [Q in K2]: V };
+function gx<W>() {
+    type Base2 = { [k: string]: any, gamma: any } & W;
+    type NonIdx<Q extends keyof any> = {} extends Rec<Q, any> ? never : Q;
+    type DistNonIdx<Q extends keyof any> = Q extends unknown ? NonIdx<Q> : never;
+    type Pruned2 = { [P in keyof Base2 as DistNonIdx<P>]: any };
+    type Keys2 = keyof Pruned2;
+    let w: Keys2;
+    w = "whatever";
+}
+"#,
+        2322,
+        r#"Type 'string' is not assignable to type 'keyof Pruned2'."#,
+    );
+}
+
+#[test]
+fn concrete_mapped_remap_alias_known_residual_keeps_deferred_keyof_spelling() {
+    // KNOWN RESIDUAL (pre-existing on main, reproduced unchanged by this
+    // branch): for a CONCRETE mapped type with key remapping the 7.0.2 oracle
+    // evaluates fully and renders
+    //   Type '"other"' is not assignable to type '"alpha" | "beta"'.
+    // tsz leaves the alias body as the raw mapped type, so the target keeps
+    // the `keyof CPruned` spelling and the source widens. Fixing this needs
+    // the mapped-type alias body to evaluate (or the display gate to consult
+    // the evaluated keyset for concrete mapped operands) — a deliberate
+    // follow-up; this pin asserts the current behavior so that fix flips it
+    // consciously.
+    expect_code_with(
+        r#"
+type Rec<K2 extends keyof any, V> = { [Q in K2]: V };
+type CBase = { [k: string]: any, alpha: any, beta: any };
+type CPruned = { [P in keyof CBase as {} extends Rec<P, any> ? never : P]: any };
+type CKeys = keyof CPruned;
+declare let c: CKeys;
+c = "other";
+"#,
+        2322,
+        r#"Type 'string' is not assignable to type 'keyof CPruned'."#,
+    );
+}
