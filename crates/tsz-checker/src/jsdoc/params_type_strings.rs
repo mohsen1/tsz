@@ -141,6 +141,11 @@ impl<'a> CheckerState<'a> {
                 comment_start,
                 type_expr_offset,
             );
+            self.report_jsdoc_param_qualified_value_only_qualifier(
+                &effective_type_expr,
+                comment_start,
+                type_expr_offset,
+            );
         }
 
         // Empty generic type parameter list inside the braces, e.g.
