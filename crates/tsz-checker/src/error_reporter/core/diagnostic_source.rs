@@ -662,6 +662,14 @@ impl<'a> CheckerState<'a> {
         if self.declared_source_annotation_names_type_query_alias(expr_idx) {
             return false;
         }
+        // tsc renders enum types and members through `typeToString`, never the
+        // annotation spelling: `P.Q.S` prints `Q.S`, and `type MA = Mode.A`
+        // prints `Mode.A` (an enum member type is a shared singleton carrying
+        // no `aliasSymbol`). Preferring the written annotation would paint the
+        // namespace/alias spelling back over the bare enum naming.
+        if self.enum_symbol_from_enumish_type(expr_type).is_some() {
+            return false;
+        }
         // A computed-body alias carries no `aliasSymbol` in tsc, so its source is
         // rendered structurally, never by name. Scalar bodies already expand (the
         // index-signature gate below returns `false`), but tuple/array bodies slip
@@ -1484,17 +1492,12 @@ impl<'a> CheckerState<'a> {
         if self.source_identifier_narrowed_from_unknown_or_any(expr_idx, expr_display_type) {
             return None;
         }
-        if let Some(annotation_text) = self.declared_diagnostic_source_annotation_text(expr_idx)
-            && let Some(declared_enum_symbol) = self
-                .enum_symbol_from_enumish_type(declared_type)
-                .or_else(|| self.enum_symbol_from_enumish_type(expr_display_type))
-            && Some(declared_enum_symbol) == self.enum_symbol_from_enumish_type(target)
-            && !annotation_text.contains(" | ")
-            && !annotation_text.contains(" & ")
-            && !annotation_text.contains('<')
-        {
-            return Some(self.format_declared_annotation_for_diagnostic(&annotation_text));
-        }
+        // NOTE: an enum-ish declared identifier must NOT repaint from its
+        // annotation text. tsc renders enum types and members through
+        // `typeToString`, which never namespace-qualifies (`Q`, `Q.S`) and
+        // never shows an alias spelling (`type MA = Mode.A` prints `Mode.A` —
+        // enum member types are shared singletons carrying no `aliasSymbol`).
+        // The annotation spelling (`P.Q.S`, `MA`) diverges from both.
         let expr_enum_display_type = if self
             .enum_symbol_from_enumish_type(expr_display_type)
             .is_some()

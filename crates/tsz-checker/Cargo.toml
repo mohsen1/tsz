@@ -3024,3 +3024,7 @@ path = "tests/overloaded_method_override_ts2416_count_tests.rs"
 [[test]]
 name = "enum_discriminant_union_assignability_tests"
 path = "tests/enum_discriminant_union_assignability_tests.rs"
+
+[[test]]
+name = "enum_name_display_qualification_tests"
+path = "tests/enum_name_display_qualification_tests.rs"

@@ -69,6 +69,12 @@ impl<'a> CheckerState<'a> {
             let display_source = self.generalize_nested_relation_source_for_display(source, target);
             self.format_nested_assignment_source_type_for_diagnostic(display_source, target, idx)
         };
+        // tsc `reportRelationError`: a generalized enum-ish source against a
+        // non-singleton-capable target renders with `UseFullyQualifiedType`
+        // (`P.Q`); every other enum display in the message stays bare (`Q`).
+        if let Some(display) = self.generalized_enum_source_qualified_display(source, target) {
+            source_str = display;
+        }
         let mut target_str = if depth == 0 {
             self.format_top_level_assignability_message_types_at(source, target, idx)
                 .1
