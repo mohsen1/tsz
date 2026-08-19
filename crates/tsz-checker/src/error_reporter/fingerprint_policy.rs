@@ -622,9 +622,23 @@ impl<'a> CheckerState<'a> {
                 // failures keep the established hand-rolled shape below (no
                 // structural drill to recover), so those high-traffic chains are
                 // byte-identical to today.
+                //
+                // A deferred, constraint-relative source property (`T[K]`, a
+                // bare `keyof T`, or a conditional) has no structural
+                // `nested_reason` of its own — the mismatch is a plain pair at
+                // the property leaf — so it falls through the check above even
+                // though it needs the SAME constraint-walk elaboration the
+                // direct-assignment (TS2322) surface already gets through
+                // `render_property_type_mismatch`. Delegate here too so the
+                // call-argument (TS2345) chain matches (#17751, #17718 family).
                 if nested_reason
                     .as_deref()
                     .is_some_and(Self::property_nested_reason_needs_full_drill)
+                    || crate::query_boundaries::shape_predicates::is_deferred_constraint_relative_operand(
+                        self.ctx.types.as_type_database(),
+                        &self.ctx.definition_store,
+                        *source_property_type,
+                    )
                 {
                     return Some(self.reanchored_container_related(
                         reason, source, target, anchor_idx, start, length,

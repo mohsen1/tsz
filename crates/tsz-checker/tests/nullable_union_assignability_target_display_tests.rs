@@ -568,20 +568,77 @@ fn deferred_generic_index_access_member_source_keeps_pair_identity() {
 }
 
 /// Same rule, renamed binders (anti-hardcoding: the behavior is structural,
-/// not name-driven), TS2345 argument position. The argument-drill renderer is a
-/// separate "no source elaboration" path, so it keeps the as-written pair but
-/// does NOT synthesize the constraint walk yet — a documented residual, distinct
-/// from the declaration-position (TS2322) walk fenced above. tsc would emit the
-/// full `TRow[keyof TRow]` -> distribute -> `TRow[string]` chain here too.
+/// not name-driven), TS2345 argument position. The argument-drill renderer is
+/// a separate "no source elaboration" path that used to keep the as-written
+/// pair without the constraint walk (#17751); it now delegates to the same
+/// `render_property_type_mismatch` gateway the declaration-position (TS2322)
+/// walk above uses, so the chain — and the "Argument of type" head tsc gives
+/// TS2345 — matches byte-for-byte apart from that head wording.
 #[test]
 fn deferred_generic_index_access_member_source_keeps_pair_identity_renamed_ts2345() {
     let msg = message_with_chain(
         "declare function gulp(v: { n: string | undefined }): void;\nfunction pipe<TRow extends { z: number }, KCol extends keyof TRow>(x: { n: TRow[KCol] }) {\n  gulp(x);\n}\n",
         2345,
     );
-    assert!(
-        msg.contains("Type 'TRow[KCol]' is not assignable to type 'string | undefined'."),
-        "renamed binders / TS2345 must keep the deferred pair identity, got: {msg}"
+    assert_eq!(
+        msg,
+        "Argument of type '{ n: TRow[KCol]; }' is not assignable to parameter of type '{ n: string | undefined; }'.\n\
+         Types of property 'n' are incompatible.\n\
+         Type 'TRow[KCol]' is not assignable to type 'string | undefined'.\n\
+         Type 'TRow[keyof TRow]' is not assignable to type 'string | undefined'.\n\
+         Type 'TRow[string] | TRow[number] | TRow[symbol]' is not assignable to type 'string | undefined'.\n\
+         Type 'TRow[string]' is not assignable to type 'string | undefined'.",
+    );
+}
+
+/// The second #17751 surface: a two-level dotted property path collapses
+/// through `peel_plain_property_chain` / `push_property_chain_leaf`, which
+/// used to stop at the bare leaf pair without the constraint walk. It now
+/// checks the same deferred-constraint classifier before dispatching on the
+/// (absent) structural leaf reason, so the walk appears beneath the
+/// collapsed `The types of 'outer.m' are incompatible…` line too.
+#[test]
+fn deferred_generic_index_access_nested_dotted_path_keeps_constraint_walk() {
+    let msg = message_with_chain(
+        "function digDeep<TBox extends { a: number }, KKey extends keyof TBox>(x: { outer: { m: TBox[KKey] } }) {\n  const y: { outer: { m: string | undefined } } = x;\n}\n",
+        2322,
+    );
+    assert_eq!(
+        msg,
+        "Type '{ outer: { m: TBox[KKey]; }; }' is not assignable to type '{ outer: { m: string | undefined; }; }'.\n\
+         The types of 'outer.m' are incompatible between these types.\n\
+         Type 'TBox[KKey]' is not assignable to type 'string | undefined'.\n\
+         Type 'TBox[keyof TBox]' is not assignable to type 'string | undefined'.\n\
+         Type 'TBox[string] | TBox[number] | TBox[symbol]' is not assignable to type 'string | undefined'.\n\
+         Type 'TBox[string]' is not assignable to type 'string | undefined'.",
+    );
+}
+
+/// Same nested dotted-path rule at TS2345 argument position.
+///
+/// Known residual, pre-existing and out of scope for #17751 (oracle-checked
+/// via `scripts/conformance/oracle.sh` and confirmed a genuine tsz/tsc
+/// divergence, not a rendering choice this PR makes): the parameter header's
+/// inner `{ m: string | undefined }` drops the trailing `;` that both the
+/// oracle and the TS2322 target header above carry (`{ m: string |
+/// undefined; }`). This is the call-argument `CallParameter` display role's
+/// nested single-member object formatting, entirely upstream of the
+/// elaboration chain this PR adds beneath the head — pinning the actual
+/// current text here rather than masking it.
+#[test]
+fn deferred_generic_index_access_nested_dotted_path_keeps_constraint_walk_ts2345() {
+    let msg = message_with_chain(
+        "declare function sink(v: { outer: { m: string | undefined } }): void;\nfunction digDeepArg<TBox extends { a: number }, KKey extends keyof TBox>(x: { outer: { m: TBox[KKey] } }) {\n  sink(x);\n}\n",
+        2345,
+    );
+    assert_eq!(
+        msg,
+        "Argument of type '{ outer: { m: TBox[KKey]; }; }' is not assignable to parameter of type '{ outer: { m: string | undefined }; }'.\n\
+         The types of 'outer.m' are incompatible between these types.\n\
+         Type 'TBox[KKey]' is not assignable to type 'string | undefined'.\n\
+         Type 'TBox[keyof TBox]' is not assignable to type 'string | undefined'.\n\
+         Type 'TBox[string] | TBox[number] | TBox[symbol]' is not assignable to type 'string | undefined'.\n\
+         Type 'TBox[string]' is not assignable to type 'string | undefined'.",
     );
 }
 

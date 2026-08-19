@@ -305,6 +305,22 @@ impl<'a> CheckerState<'a> {
         idx: tsz_parser::parser::NodeIndex,
         depth: u32,
     ) {
+        // A deferred, constraint-relative leaf source (`T[K]`, a bare `keyof
+        // T`, or a conditional) has no structural leaf reason of its own — it
+        // is a plain pair mismatch — so it would otherwise fall to the bare
+        // `Type 'S' is not assignable to type 'T'.` line below. tsc walks the
+        // operand's constraint one step per elaboration line here too, the
+        // same rule the single-property-deep call site already applies;
+        // check this before the `leaf` dispatch so a nested dotted-path drill
+        // (`{ outer: { m: T[K] } }`) gets the same walk (#17751).
+        if crate::query_boundaries::shape_predicates::is_deferred_constraint_relative_operand(
+            self.ctx.types.as_type_database(),
+            &self.ctx.definition_store,
+            leaf_src,
+        ) {
+            self.push_deferred_constraint_walk(diag, leaf_src, leaf_tgt, depth);
+            return;
+        }
         if let Some(leaf) = leaf {
             // A header-led leaf (tuple element/arity, index-signature) does
             // not begin with the deepest property pair's relation line, so
