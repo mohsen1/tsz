@@ -208,6 +208,9 @@ withTempDir((dir) => {
   assert.equal(result.status, 0, `all-green artifact should exit 0, got:\n${result.stderr}`);
   const parsed = JSON.parse(result.stdout.trim());
   assert.equal(parsed.all_required_rows_green, true, "all-green JSON should mark release gate ready");
+  assert.equal(parsed.corpus_health.collapsed, false, "all-green corpus is not collapsed");
+  assert.equal(parsed.corpus_health.green, REQUIRED_PROJECT_ROWS.length, "corpus_health counts every green row");
+  assert.equal(parsed.corpus_health.errored, 0, "all-green corpus reports zero errored rows");
   assert.equal(parsed.metadata_clean, true, "all-green artifact should be metadata-clean");
   assert.equal(parsed.metadata_warnings_total, 0, "all-green artifact should not report metadata warnings");
   assert.deepEqual(parsed.non_green_required_rows, [], "all-green JSON should not report non-green rows");
@@ -466,13 +469,15 @@ withTempDir((dir) => {
 console.log("✅ red row present in artifact exits 0 (not missing)");
 
 // ---------------------------------------------------------------------------
-// Test: --require-project-timing-pairs fails an otherwise complete artifact
-// when every project row crashed before timing.
+// Test: --require-project-timing-pairs fails an otherwise green artifact when
+// no green row recorded a tsz/tsgo timing pair. The rows stay green-compat (so
+// the corpus-collapse floor does not fire — that is exercised separately below)
+// but carry no timing, isolating the timing-pair gate.
 // ---------------------------------------------------------------------------
 withTempDir((dir) => {
   const file = path.join(dir, "bench.json");
   const rows = REQUIRED_PROJECT_ROWS.map((name) =>
-    makeRow(name, "red", { errorStatus: "tsz error; tsc ok", tsz_ms: null, tsgo_ms: null, winner: "error" }),
+    makeRow(name, "green", { tsz_ms: null, tsgo_ms: null, winner: "error" }),
   );
   writeJson(file, makeArtifact(rows));
   const result = run(file, ["--json", "--require-project-timing-pairs=1"]);
@@ -480,9 +485,99 @@ withTempDir((dir) => {
   const parsed = JSON.parse(result.stdout.trim());
   assert.equal(parsed.successful_project_timing_pairs, 0, "JSON should show zero successful project timings");
   assert.equal(parsed.required_project_timing_pairs, 1, "JSON should include the requested timing-pair floor");
+  assert.equal(parsed.corpus_health.collapsed, false, "green-untimed corpus is not collapsed");
   assert.match(result.stderr, /0 successful project timing pair\(s\); required 1/);
 });
-console.log("✅ --require-project-timing-pairs fails all-crashed project artifacts");
+console.log("✅ --require-project-timing-pairs fails green-but-untimed project artifacts");
+
+// ---------------------------------------------------------------------------
+// Test: corpus collapse (#17561, point 4) — a required corpus that is fully
+// PRESENT but carries zero green rows must fail unconditionally, even with no
+// gate flags. This is the all-`error` run that read "ok" on 2026-08-15, where
+// the gate only counted missing rows and every present-but-errored row slipped
+// through.
+// ---------------------------------------------------------------------------
+withTempDir((dir) => {
+  const file = path.join(dir, "bench.json");
+  const rows = REQUIRED_PROJECT_ROWS.map((name) =>
+    makeRow(name, "red", { errorStatus: "tsz error; tsc ok", tsz_ms: null, tsgo_ms: null, winner: "error" }),
+  );
+  writeJson(file, makeArtifact(rows));
+  const result = run(file, ["--json"]);
+  assert.equal(result.status, 1, `all-errored corpus must fail even with no gate flags, got:\n${result.stderr}`);
+  const parsed = JSON.parse(result.stdout.trim());
+  assert.equal(parsed.corpus_health.collapsed, true, "all-errored corpus is collapsed");
+  assert.equal(parsed.corpus_health.green, 0, "collapsed corpus has zero green rows");
+  assert.equal(
+    parsed.corpus_health.errored,
+    REQUIRED_PROJECT_ROWS.length,
+    "collapsed corpus reports every required-measured row as errored",
+  );
+  assert.equal(
+    parsed.corpus_health.measured,
+    REQUIRED_PROJECT_ROWS.length,
+    "corpus_health.measured counts every required-measured row",
+  );
+  assert.match(result.stderr, /required corpus health below floor — 0\//);
+  // In --json mode the markdown report is written to stderr, not stdout.
+  assert.match(result.stderr, /Required corpus collapsed/, "markdown surfaces the collapse section");
+});
+console.log("✅ corpus collapse fails an all-errored present corpus unconditionally");
+
+// ---------------------------------------------------------------------------
+// Test: steady state preserved — a corpus with some rows erroring behind open
+// compiler issues (e.g. zod #16055, large-ts-repo #14101) but a green majority
+// is NOT collapsed and still publishes. The collapse floor must never freeze a
+// partially-degraded but healthy dataset.
+// ---------------------------------------------------------------------------
+withTempDir((dir) => {
+  const file = path.join(dir, "bench.json");
+  const rows = REQUIRED_PROJECT_ROWS.map((name, i) =>
+    i < 2
+      ? makeRow(name, "red", { errorStatus: "tsz error; tsc ok", tsz_ms: null, tsgo_ms: null, winner: "error" })
+      : makeRow(name, "green"),
+  );
+  writeJson(file, makeArtifact(rows));
+  const result = run(file, ["--json"]);
+  assert.equal(result.status, 0, `degraded-but-green-majority corpus should publish, got:\n${result.stderr}`);
+  const parsed = JSON.parse(result.stdout.trim());
+  assert.equal(parsed.corpus_health.collapsed, false, "green-majority corpus is not collapsed");
+  assert.equal(parsed.corpus_health.errored, 2, "corpus_health reports the two errored rows");
+  assert.equal(
+    parsed.corpus_health.green,
+    REQUIRED_PROJECT_ROWS.length - 2,
+    "corpus_health reports the green majority",
+  );
+});
+console.log("✅ corpus collapse tolerates a degraded but green-majority corpus");
+
+// ---------------------------------------------------------------------------
+// Test: --require-corpus-health=<n> raises the floor above the default 1, so a
+// partial collapse (green present, but fewer than the floor) blocks; a corpus
+// meeting the floor passes. This is the opt-in policy knob; the default gate
+// only enforces the freeze-proof floor of 1.
+// ---------------------------------------------------------------------------
+withTempDir((dir) => {
+  const file = path.join(dir, "bench.json");
+  // Exactly two green rows, the rest errored.
+  const rows = REQUIRED_PROJECT_ROWS.map((name, i) =>
+    i < 2
+      ? makeRow(name, "green")
+      : makeRow(name, "red", { errorStatus: "tsz error; tsc ok", tsz_ms: null, tsgo_ms: null, winner: "error" }),
+  );
+  writeJson(file, makeArtifact(rows));
+
+  const below = run(file, ["--json", "--require-corpus-health=3"]);
+  assert.equal(below.status, 1, "two green rows must fail a floor of three");
+  assert.match(below.stderr, /required corpus health below floor — 2\/.*floor 3/);
+  const belowParsed = JSON.parse(below.stdout.trim());
+  assert.equal(belowParsed.corpus_health.collapsed, false, "two green rows are not a zero-green collapse");
+  assert.equal(belowParsed.corpus_health.green, 2, "JSON reports two green rows");
+
+  const meets = run(file, ["--json", "--require-corpus-health=2"]);
+  assert.equal(meets.status, 0, `two green rows must meet a floor of two, got:\n${meets.stderr}`);
+});
+console.log("✅ --require-corpus-health raises the green floor above the default");
 
 // ---------------------------------------------------------------------------
 // Test: --require-application-compat surfaces absent application compatibility
