@@ -1,4 +1,5 @@
 //! Type formatting and diagnostic anchor helpers for error reporter.
+use crate::query_boundaries::common as query_common;
 use crate::query_boundaries::diagnostics as diagnostic_query;
 use crate::state::{CheckerState, MemberAccessLevel};
 use tsz_parser::parser::node::NodeAccess;
@@ -1286,6 +1287,21 @@ impl<'a> CheckerState<'a> {
                 .iter()
                 .any(|&m| m == TypeId::NULL || m == TypeId::UNDEFINED)
         {
+            return None;
+        }
+        // tsc never collapses the nullish members when the OTHER side is a
+        // type parameter (or an intersection carrying one), constrained or
+        // not: a generic operand's relation to a union defers to its
+        // constraint instead of walking the union's constituents, so the
+        // message keeps the full declared union (`Q` vs `string | undefined`
+        // stays `string | undefined`; a constrained param drills its
+        // *constraint* against the stripped member one level deeper).
+        // Concrete operands keep the collapse (`number` vs
+        // `string | undefined` renders `string`).
+        if query_common::is_type_parameter_or_intersection_with_type_parameter(
+            self.ctx.types.as_type_database(),
+            other,
+        ) {
             return None;
         }
         // When `other` is a generic type (type parameter or intersection of type
