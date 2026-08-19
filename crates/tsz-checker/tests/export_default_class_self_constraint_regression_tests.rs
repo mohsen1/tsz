@@ -114,36 +114,34 @@ export default class Frame<Init = any> {
 }
 
 // ---------------------------------------------------------------------------
-// #17570 residual — the last unresolved slice.
+// #17743 — harness-only divergence on the last two rows.
 //
 // A non-generic `export default class` (no `<T>` on the class itself) whose
 // instance-property carries a function *expression* (arrow or `function`)
-// with a self-referential type-parameter constraint still raises a spurious
-// `TS2344`. Every other axis is clean:
-//   - class has its own `<T>` param  → clean (the two rows above)
-//   - `class X {}` + `export default X;` (plain class, default *of a name*) → clean
-//   - instance *annotation* (`go: <R extends Schema>(...) => R = null as any`)  → clean
-//   - `static` arrow property               → clean (fixed by #17589)
-//   - static/instance *method*              → clean (methods defer body typing)
+// with a self-referential type-parameter constraint was the last unresolved
+// #17570 slice; #17629 fixed it, and the production CLI is clean on both
+// shapes (verified 2026-08-19: `tsz --noEmit`, with and without
+// `--strict --target es2015`, dev build at this branch's merge with main).
 //
-// So the trigger is a three-way conjunction: (a) `export default class`
-// declaration, (b) *instance* property whose initializer is a function
-// expression, (c) *no* class-level type parameter to force the resolver
-// through the deferred-generic path.
+// But THIS harness (`check_source_diagnostics` / `check_source`, which
+// builds a `CheckerState` directly instead of going through the CLI driver)
+// still reproduces the pre-#17629 TS2344 — under default AND strict checker
+// options, so the axis is the entry path, not strictness. #17629's fix has
+// four cooperating rules (class-flagged-symbol `Lazy` minting, no
+// constructor-shaped body for a type-position class `Lazy` across three
+// resolution paths); whichever of them the direct-`CheckerState` wiring
+// skips is tracked as #17743.
 //
-// The reopened `#17570` comment (2026-08-18T06:28Z) called this out as
-// unfenced ("this now has no fence"). These two rows are marked `#[ignore]`
-// so their failure is not a merge blocker but their presence is a machine-
-// readable TODO — dropping the `#[ignore]` when the fix lands doubles as
-// the delisting step. The fix belongs at the checker's instance-shape
-// build for a `Lazy`-self-reentrant class-type constraint validation, not
-// at the diagnostic sink; the naive analog of #17589 was already shown not
-// to transfer (see the same comment thread's negative result).
+// These two rows are `#[ignore]`d so the harness gap is not a merge blocker,
+// but their presence is a machine-readable TODO — when #17743 is fixed,
+// dropping the `#[ignore]`s doubles as the delisting step, and the rows then
+// fence the full family end to end through this entry path too.
 // ---------------------------------------------------------------------------
 
 #[test]
-#[ignore = "unresolved #17570 residual: non-generic `export default class` + instance arrow \
-    property + self-referential type-parameter constraint. Drop `#[ignore]` when fixed."]
+#[ignore = "#17743 harness-only divergence: the CLI is clean (fixed by #17629), but the \
+    direct-CheckerState harness path still reports the pre-#17629 TS2344 on a non-generic \
+    `export default class` + instance arrow property. Drop `#[ignore]` when #17743 is fixed."]
 fn export_default_nongeneric_class_instance_arrow_property_with_self_constraint_is_clean_ignored() {
     let diagnostics = check_source_diagnostics(
         r#"
@@ -157,13 +155,14 @@ export default class Envelope {
     assert!(
         diagnostics.is_empty(),
         "instance arrow property on a NON-generic `export default class` must not raise \
-         TS2344 (residual #17570): {diagnostics:#?}"
+         TS2344 (harness-only divergence #17743): {diagnostics:#?}"
     );
 }
 
 #[test]
-#[ignore = "unresolved #17570 residual: non-generic `export default class` + instance \
-    function-expression property + self-referential type-parameter constraint."]
+#[ignore = "#17743 harness-only divergence: the CLI is clean (fixed by #17629), but the \
+    direct-CheckerState harness path still reports the pre-#17629 TS2344 on a non-generic \
+    `export default class` + instance function-expression property."]
 fn export_default_nongeneric_class_instance_function_expression_property_with_self_constraint_is_clean_ignored()
  {
     let diagnostics = check_source_diagnostics(
@@ -180,7 +179,7 @@ export default class Frame {
     assert!(
         diagnostics.is_empty(),
         "instance function-expression property on a NON-generic `export default class` must \
-         not raise TS2344 (residual #17570): {diagnostics:#?}"
+         not raise TS2344 (harness-only divergence #17743): {diagnostics:#?}"
     );
 }
 
