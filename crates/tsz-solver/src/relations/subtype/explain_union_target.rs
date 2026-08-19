@@ -123,7 +123,16 @@ impl<R: TypeResolver> SubtypeChecker<'_, R> {
                             | SubtypeFailureReason::LiteralTypeMismatch { .. } => {
                                 !self.is_object_like(source_member)
                             }
-                            _ => false,
+                            // Object source with a structural drill reason (a
+                            // property-type mismatch, an index-signature
+                            // failure, …): tsc elaborates against the sole
+                            // real member exactly as if the target were `T`
+                            // alone — the head display already folds the
+                            // nullish members away, so a member frame here
+                            // would duplicate the head line. Promote the
+                            // member's own reason; the best-member wrap below
+                            // stays for genuine multi-member unions.
+                            _ => self.is_object_like(source_member),
                         };
                         if promote {
                             return Some(reason);

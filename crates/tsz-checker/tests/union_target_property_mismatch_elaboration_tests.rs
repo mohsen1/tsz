@@ -395,6 +395,35 @@ const z: { m: string; v: string } | { m: number; w: number } = { m: b, v: "x" };
     );
 }
 
+/// A sole-real-member nullable union (`T | null`) folds the member's own
+/// structural reason directly beneath the head — no member frame — because
+/// tsc elaborates exactly as if the target were `T` alone (the head display
+/// already drops the nullish members).
+#[test]
+fn sole_real_member_nullable_union_folds_without_frame() {
+    let diags = diagnostics(
+        r#"
+declare const src: { m: boolean; v: string };
+const z: { m: string; v: string } | null = src;
+"#,
+    );
+    assert_chain_contains(
+        &diags,
+        2322,
+        &[
+            (0, "Types of property 'm' are incompatible"),
+            (1, "Type 'boolean' is not assignable to type 'string'"),
+        ],
+    );
+    let chain = chain_of(&diags, 2322);
+    assert!(
+        !chain
+            .iter()
+            .any(|(_, text)| text.contains("is not assignable to type '{ m: string; v: string; }'")),
+        "sole-real-member nullable target must fold without a member frame; got {chain:?}"
+    );
+}
+
 /// Clean control: a source matching one arm produces no diagnostic at all.
 #[test]
 fn assignable_source_stays_clean() {
