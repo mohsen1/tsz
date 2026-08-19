@@ -396,6 +396,15 @@ impl<'a> CheckerState<'a> {
     ) -> String {
         let direct_param_display = self.format_type_diagnostic(param_type);
 
+        // A parameter typed through a non-generic `keyof` alias
+        // (`type K = keyof typeof E; declare function f(k: K)`) renders per
+        // the keyof alias display policy: a value-derived operand shows the
+        // reduced key union, a named type operand shows the `keyof I`
+        // spelling — never the alias name `K`.
+        if let Some(display) = self.keyof_type_alias_body_display(param_type) {
+            return display;
+        }
+
         // A generic call that clamps an un-inferable type parameter to its
         // constraint reports the argument against the canonical primitive key
         // union (`string | number | symbol`), which borrows `PropertyKey`'s

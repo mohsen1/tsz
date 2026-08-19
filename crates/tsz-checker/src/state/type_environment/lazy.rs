@@ -42,6 +42,11 @@ impl CheckerState<'_> {
             if cached.depth_exceeded {
                 self.ctx.depth_exceeded.set(true);
             }
+            tracing::trace!(
+                input = type_id.0,
+                result = cached.result.0,
+                "env_eval_cache_hit"
+            );
             return cached.result;
         }
 
@@ -133,6 +138,9 @@ impl CheckerState<'_> {
 
         let mut depth_exceeded = false;
         let first_pass_silent_bailed;
+        // Whether the first pass observed an unresolved def anywhere (the raw
+        // solver flag, before the no-progress/opaque-root gating below).
+        let first_pass_tainted;
         // Whether the first pass's result is an unresolved-def artifact that must
         // not be persisted (the solver's flag, masked by the active backstop).
         let first_pass_poisoned;
@@ -167,8 +175,20 @@ impl CheckerState<'_> {
                 self.ctx.depth_exceeded.set(true);
             }
             first_pass_silent_bailed = eval_result.silent_depth_bailed;
-            first_pass_poisoned =
-                backstop_active && eval_result.unresolved_def_seen && eval_result.result == type_id;
+            first_pass_tainted = eval_result.unresolved_def_seen;
+            // A tainted result whose root is still a deferred `keyof` is the
+            // same registration-window artifact as the opaque no-progress case:
+            // lowering `keyof (typeof E)` to `keyof Enum(def)` is "progress" on
+            // the operand, but the root never reduced because the enum's
+            // namespace object was not yet registered (a type alias body is
+            // evaluated before the enum symbol's type is computed). Persisting
+            // it would permanently shadow the reduction available after the
+            // def registers, so gate it out of the cache alongside the
+            // `result == input` artifact.
+            first_pass_poisoned = backstop_active
+                && eval_result.unresolved_def_seen
+                && (eval_result.result == type_id
+                    || query::keyof_inner_type(self.ctx.types, eval_result.result).is_some());
             // Persist intermediate evaluation results to the shared cache. The
             // helper skips entries whose result contains unbound `infer` types
             // or type queries; the top-level poisoned root is gated below.
@@ -207,6 +227,13 @@ impl CheckerState<'_> {
         // `CheckerContext` resolver pass, which recovers the def by name and
         // expands the now-registered body. Without both, property access reports
         // false `TS2339` on inherited (and own) members.
+        tracing::trace!(
+            input = type_id.0,
+            result = result.0,
+            tainted = first_pass_tainted,
+            poisoned = first_pass_poisoned,
+            "env_eval_first_pass"
+        );
         let result_has_unresolved_application =
             crate::query_boundaries::spread::contains_unresolved_application(
                 self.ctx.types,
@@ -245,7 +272,17 @@ impl CheckerState<'_> {
                 // conditionals whose extends-type is still an Application
                 // (e.g. Pick/Readonly not yet expandable by TypeEnvironment).
                 || (result != type_id
-                    && contains_conditional_with_application_extends(self.ctx.types, result)));
+                    && contains_conditional_with_application_extends(self.ctx.types, result))
+                // A `keyof` root left deferred *while an unresolved def was
+                // observed* is a registration-window artifact (e.g. an alias
+                // body's `keyof typeof Enum` evaluated before the enum's
+                // namespace object registered). The CheckerContext resolver can
+                // compute the referenced symbol's type on the fly, so retry.
+                // A clean deferred `keyof` (e.g. `keyof T` over a type
+                // parameter) stays first-pass-final.
+                || (first_pass_tainted
+                    && query::keyof_inner_type(self.ctx.types, result).is_some()));
+        tracing::trace!(needs_resolver_pass, "env_eval_second_pass_gate");
         let (final_result, final_poisoned) = if needs_resolver_pass {
             // Recompute the speed-only seed/persist gate after the first pass:
             // persisting first-pass intermediates can push the cache over the
@@ -289,10 +326,17 @@ impl CheckerState<'_> {
             };
             let second_pass_poisoned = backstop_active
                 && eval_result.unresolved_def_seen
-                && eval_result.result == second_pass_input;
+                && (eval_result.result == second_pass_input
+                    || query::keyof_inner_type(self.ctx.types, eval_result.result).is_some());
             if second_pass_seed_persist {
                 self.persist_eval_cache_entries(eval_result.cache_entries);
             }
+            tracing::trace!(
+                input = second_pass_input.0,
+                result = eval_result.result.0,
+                tainted = eval_result.unresolved_def_seen,
+                "env_eval_second_pass"
+            );
             // When the resolver pass makes no progress (`result == type_id`),
             // `final_result` is the first pass's value, so its taint governs;
             // otherwise the resolver pass produced the value and its own flag

@@ -102,7 +102,8 @@ jobs:
               .application_compatibility.required == true and
               .blocking_application_compatibility_gaps == 0 and
               .blocking_project_timing_pair_gaps == 0 and
-              .successful_project_timing_pairs >= .required_project_timing_pairs
+              .successful_project_timing_pairs >= .required_project_timing_pairs and
+              ((.corpus_health.collapsed // false) == false)
             ' "${tmpdir}/artifact/bench-results-readiness.json" >/dev/null; then
               rm -rf "${tmpdir}"
               return 1
@@ -256,7 +257,8 @@ jobs:
               .application_compatibility.required == true and
               .blocking_application_compatibility_gaps == 0 and
               .blocking_project_timing_pair_gaps == 0 and
-              .successful_project_timing_pairs >= .required_project_timing_pairs
+              .successful_project_timing_pairs >= .required_project_timing_pairs and
+              ((.corpus_health.collapsed // false) == false)
             ' "${tmpdir}/artifact/bench-results-readiness.json" >/dev/null; then
               rm -rf "${tmpdir}"
               return 1

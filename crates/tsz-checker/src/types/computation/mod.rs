@@ -48,6 +48,7 @@ pub(crate) mod complex_constructors;
 mod complex_contextual_application;
 mod complex_contextual_new;
 pub(crate) mod complex_js_constructor;
+mod complex_new_arg_mismatch;
 pub(crate) mod complex_new_target;
 pub(crate) mod contextual;
 pub(crate) mod delete_optionality;

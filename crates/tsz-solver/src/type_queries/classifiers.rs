@@ -409,6 +409,56 @@ pub fn get_keyof_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> 
     }
 }
 
+/// Whether a `keyof` operand is *value-derived* — the type of a value rather
+/// than a named type reference: a `typeof` query (`keyof typeof x`), an enum
+/// type, an enum namespace object, or an anonymous object shape with no
+/// declaring symbol.
+///
+/// tsc computes `keyof` over such an operand eagerly, so its diagnostics
+/// render the reduced literal key union and keep a literal source un-widened
+/// against it. `keyof` over a *named type* operand (interface/class) keeps
+/// the written `keyof Name` spelling instead (verified against the pinned
+/// typescript@7.0.2 oracle; see
+/// `keyof_typeof_alias_body_reduction_tests.rs`).
+pub fn keyof_operand_is_value_derived(db: &dyn TypeDatabase, operand: TypeId) -> bool {
+    if operand.is_intrinsic() {
+        return false;
+    }
+    match db.lookup(operand) {
+        Some(TypeData::TypeQuery(_) | TypeData::Enum(_, _)) => true,
+        Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
+            let shape = db.object_shape(shape_id);
+            shape
+                .flags
+                .contains(crate::types::ObjectFlags::ENUM_NAMESPACE)
+                || shape.symbol.is_none()
+        }
+        _ => false,
+    }
+}
+
+/// Whether `ty` is a finite unit-literal key set: a single unit type
+/// (string/number literal, unique symbol, enum member) or a union made only
+/// of unit types. This is the shape a concrete `keyof` reduces to when the
+/// operand has no string/number index signature, and it is the literal
+/// context that keeps an assignment-source literal un-widened in
+/// diagnostics.
+pub fn is_finite_unit_literal_keyset(db: &dyn TypeDatabase, ty: TypeId) -> bool {
+    if ty.is_intrinsic() {
+        return false;
+    }
+    match db.lookup(ty) {
+        Some(TypeData::Union(list_id)) => {
+            let members = db.type_list(list_id);
+            !members.is_empty()
+                && members
+                    .iter()
+                    .all(|&member| crate::type_queries::is_unit_type(db, member))
+        }
+        _ => crate::type_queries::is_unit_type(db, ty),
+    }
+}
+
 // =============================================================================
 // Interface Merge Type Classification
 // =============================================================================
