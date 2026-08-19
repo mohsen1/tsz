@@ -1786,6 +1786,15 @@ impl<'a> CheckerState<'a> {
                         },
                     )
                 };
+                // tsc `reportRelationError`: a generalized enum-ish source
+                // against a non-singleton-capable target renders with
+                // `UseFullyQualifiedType` (`P.Q`); every other enum display
+                // stays bare (`Q`).
+                if let Some(display) =
+                    self.generalized_enum_source_qualified_display(source, target)
+                {
+                    source_str = display;
+                }
                 let mut target_str = self.format_assignability_type_for_message(target, source);
                 if let Some(display) = self
                     .object_literal_property_literal_union_alias_target_display(
