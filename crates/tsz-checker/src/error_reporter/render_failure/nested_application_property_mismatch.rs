@@ -387,8 +387,38 @@ impl<'a> CheckerState<'a> {
         }
 
         if depth == 0 {
-            let (source_str, target_str) =
+            let (mut source_str, target_str) =
                 self.format_top_level_assignability_message_types_at(source, target, idx);
+            // A fresh object-literal source failing a UNION target (the
+            // fresh-literal fold's domain) renders its head role-based, like
+            // the plain type-mismatch head: each property keeps its literal
+            // exactly when the contextual (target) property type carries a
+            // literal of the same primitive base, and widens otherwise (tsc
+            // renders the checked fresh type, so `{ key: "foo", value: 3 }`
+            // against `{ key: "foo"; value: string; } | …` shows
+            // `{ key: "foo"; value: number; }`). The raw type format would
+            // leak every display-property literal verbatim. Non-union targets
+            // keep the existing head pipeline: its literal-surface rewrite
+            // already preserves correctly there, and the role-based formatter
+            // over-widens intersection-wrapped and satisfies-carried sources
+            // (errorMessagesIntersectionTypes02,
+            // typeSatisfaction_vacuousIntersectionOfContextualTypes).
+            let evaluated_target = self.evaluate_type_for_assignability(target);
+            if self.ctx.types.get_display_properties(source).is_some()
+                && crate::query_boundaries::diagnostics::union_members(
+                    self.ctx.types,
+                    evaluated_target,
+                )
+                .is_some()
+            {
+                source_str = self.format_type_for_diagnostic_role(
+                    source,
+                    crate::error_reporter::type_display_policy::DiagnosticTypeDisplayRole::AssignmentSource {
+                        target,
+                        anchor_idx: idx,
+                    },
+                );
+            }
             let outer_is_structural = {
                 let eval_source = self.evaluate_type_for_assignability(source);
                 let eval_target = self.evaluate_type_for_assignability(target);

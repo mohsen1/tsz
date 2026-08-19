@@ -117,12 +117,19 @@ impl<R: TypeResolver> SubtypeChecker<'_, R> {
     /// `isDiscriminantProperty` — and the source's own value for it is likewise
     /// a unit. Members are narrowed by relating the source value to each
     /// member's value; a single survivor is the match.
-    fn union_discriminant_matched_member(
+    pub(super) fn union_discriminant_matched_member(
         &mut self,
         source: TypeId,
         members: &[TypeId],
     ) -> Option<TypeId> {
-        let source_names = self.object_like_property_names(source);
+        // tsc iterates the source's properties in DECLARATION order
+        // (`getPropertiesOfType` via `findDiscriminantProperties`), so when two
+        // properties both qualify as discriminants and narrow to different
+        // members, the first-declared one decides. The interned shape stores
+        // name-sorted properties; restore declaration order from
+        // `PropertyInfo::declaration_order` (0 = unrecorded, kept after the
+        // recorded ones in stored order).
+        let source_names = self.object_like_property_names_in_declaration_order(source);
         if source_names.is_empty() {
             return None;
         }
@@ -181,7 +188,11 @@ impl<R: TypeResolver> SubtypeChecker<'_, R> {
     /// Returns `None` when the property is absent. Used to compare a source
     /// object's written discriminant value against each union member's own
     /// value for that key.
-    fn discriminant_property_type(&mut self, type_id: TypeId, name: Atom) -> Option<TypeId> {
+    pub(super) fn discriminant_property_type(
+        &mut self,
+        type_id: TypeId,
+        name: Atom,
+    ) -> Option<TypeId> {
         use crate::type_queries::data::get_intersection_members;
 
         let resolved = self.apparent_type_for_keys(type_id);
