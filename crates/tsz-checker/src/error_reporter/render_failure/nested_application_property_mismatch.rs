@@ -364,7 +364,7 @@ impl<'a> CheckerState<'a> {
     /// (`number` vs `string`) — a deferred or union step keeps the full union.
     /// `base_depth` is the elaboration depth of the leaf pair line.
     ///
-    /// [`indexed_access_constraint_display_walk`]: crate::query_boundaries::common::indexed_access_constraint_display_walk
+    /// [`indexed_access_constraint_display_walk`]: crate::query_boundaries::diagnostics::indexed_access_constraint_display_walk
     pub(super) fn push_deferred_constraint_walk(
         &mut self,
         diag: &mut Diagnostic,
@@ -377,7 +377,7 @@ impl<'a> CheckerState<'a> {
         // strip decision must NOT resolve it — `Obj[KP]` would otherwise reduce
         // to its constraint `number` and collapse the union prematurely.
         self.push_constraint_walk_line(diag, source, target, base_depth, false);
-        let steps = crate::query_boundaries::common::indexed_access_constraint_display_walk(
+        let steps = crate::query_boundaries::diagnostics::indexed_access_constraint_display_walk(
             self.ctx.types.as_type_database(),
             source,
             target,

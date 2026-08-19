@@ -833,3 +833,48 @@ fn concrete_base_member_drill_walks_to_resolved_value_type() {
          Type 'number' is not assignable to type 'string'.",
     );
 }
+
+/// #17718 witness 2: a plain expression-level `x[k]` access on a still-generic
+/// receiver (`T extends Wares`, `K extends keyof T`) keeps the deferred
+/// `T[K]` pair on the TS2322 head, matching tsc's oracle output for this
+/// witness. tsz previously eagerly resolved through `K`'s (already-reduced)
+/// `keyof T` constraint to `Wares`'s concrete property union, rendering
+/// `number` instead of `T[K]`.
+#[test]
+fn expression_indexed_access_generic_receiver_keeps_deferred_pair() {
+    let msg = message_with_chain(
+        "interface Wares { p: number; q: number }\nfunction pick<T extends Wares, K extends keyof T>(x: T, k: K) {\n  const y: string | undefined = x[k];\n}\n",
+        2322,
+    );
+    assert_eq!(
+        msg,
+        "Type 'T[K]' is not assignable to type 'string | undefined'."
+    );
+}
+
+/// Same structural shape with renamed binders (anti-hardcoding): the
+/// behavior is structural, not tied to the `T`/`K`/`Wares` spelling.
+#[test]
+fn expression_indexed_access_generic_receiver_keeps_deferred_pair_renamed_binders() {
+    let msg = message_with_chain(
+        "interface Bag { a: number; b: number }\nfunction grab<TSrc extends Bag, KSel extends keyof TSrc>(obj: TSrc, sel: KSel) {\n  const out: string | undefined = obj[sel];\n}\n",
+        2322,
+    );
+    assert_eq!(
+        msg,
+        "Type 'TSrc[KSel]' is not assignable to type 'string | undefined'."
+    );
+}
+
+/// Negative control: when the receiver is already CONCRETE (not a type
+/// parameter), the index-derived-from-constraint fast path must still
+/// eagerly resolve to the concrete property union — this fix only defers
+/// resolution when the receiver itself remains generic.
+#[test]
+fn expression_indexed_access_concrete_receiver_still_resolves_eagerly() {
+    let msg = message_with_chain(
+        "interface Wares3 { p: number; q: number }\nfunction pick3<K extends keyof Wares3>(x: Wares3, k: K) {\n  const y: string = x[k];\n}\n",
+        2322,
+    );
+    assert_eq!(msg, "Type 'number' is not assignable to type 'string'.");
+}
