@@ -460,17 +460,6 @@ pub(crate) fn type_param_info(
     tsz_solver::type_param_info(db, type_id)
 }
 
-/// Whether `param_name` occurs as a naked (unwrapped) type at the top level of
-/// `ty` — e.g. directly, or as a union/intersection/conditional-branch member.
-/// Does not look inside a generic application (`Box<T>` does not count).
-pub(crate) fn is_type_parameter_at_top_level(
-    db: &dyn TypeDatabase,
-    ty: TypeId,
-    param_name: tsz_common::interner::Atom,
-) -> bool {
-    tsz_solver::visitor::is_type_parameter_at_top_level(db, ty, param_name)
-}
-
 // ── Type unwrapping / widening wrappers ──
 
 /// Unwrap `ReadonlyType` or `NoInfer` wrappers, returning the inner type if present.
