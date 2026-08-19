@@ -14,9 +14,37 @@ use crate::def::resolver::TypeResolver;
 use crate::diagnostics::SubtypeFailureReason;
 use crate::relations::subtype::SubtypeChecker;
 use crate::types::TypeId;
-use crate::visitor::{application_id, union_list_id};
+use crate::visitor::{application_id, is_type_parameter, union_list_id};
 
 impl<R: TypeResolver> SubtypeChecker<'_, R> {
+    /// Wrap a promoted sole-real-member failure in
+    /// [`SubtypeFailureReason::UnionSourceMismatch`] when the source is itself
+    /// a union, so the relation-pair frame survives past the promotion.
+    ///
+    /// tsc's chain for a union-vs-union failure keeps the pair line before the
+    /// member's own elaboration (`Type 'boolean | undefined' is not assignable
+    /// to type 'string | undefined'.` -> `Type 'boolean' is not assignable to
+    /// type 'string'.`). A single-member source has no such frame — its head
+    /// line already names the pair — so the promoted reason returns bare.
+    fn wrap_union_source_member_reason(
+        &self,
+        source: TypeId,
+        target: TypeId,
+        member_type: TypeId,
+        source_members: &[TypeId],
+        reason: SubtypeFailureReason,
+    ) -> SubtypeFailureReason {
+        if source_members.len() > 1 {
+            return SubtypeFailureReason::UnionSourceMismatch {
+                source_type: source,
+                target_type: target,
+                member_type,
+                nested_reason: Box::new(reason),
+            };
+        }
+        reason
+    }
+
     /// Explain a failed relation whose `resolved_target` is a union. Always
     /// returns a reason; the caller has already established the union shape.
     pub(super) fn explain_union_target_failure(
@@ -97,16 +125,52 @@ impl<R: TypeResolver> SubtypeChecker<'_, R> {
             let mut non_nullish = members.iter().copied().filter(|m| !m.is_nullish());
             if let (Some(sole_member), None) = (non_nullish.next(), non_nullish.next()) {
                 for &source_member in &source_members {
-                    if self.check_subtype(source_member, sole_member).is_true() {
+                    // tsc's union-source walk (`eachTypeRelatedToType`) only
+                    // reports a member that fails against the WHOLE union
+                    // target, so a nullish source member absorbed by the
+                    // target's own nullish members is never the witness
+                    // (`undefined` <: `T | undefined` — the failing member of
+                    // `{ a: boolean } | undefined` vs `{ a: string } |
+                    // undefined` is the object arm, not `undefined`).
+                    if self.check_subtype(source_member, resolved_target).is_true() {
                         continue;
+                    }
+                    // A type-parameter member has no best-matching target
+                    // member (tsc's `getBestMatchingType` finds none), so its
+                    // failure is explained against the full union target:
+                    // `Type 'Q' is not assignable to type 'string |
+                    // undefined'.`, drilling through the declared constraint
+                    // when one exists, never against the reduced sole member.
+                    if is_type_parameter(self.interner, self.resolve_lazy_type(source_member)) {
+                        if let Some(reason) =
+                            self.explain_failure_guarded(source_member, resolved_target)
+                        {
+                            return Some(self.wrap_union_source_member_reason(
+                                source,
+                                target,
+                                source_member,
+                                &source_members,
+                                reason,
+                            ));
+                        }
+                        break;
                     }
                     if let Some(reason) = self.explain_failure_guarded(source_member, sole_member) {
                         let promote = match &reason {
                             // Object/array source missing a required property:
                             // surface the missing-property reason directly
                             // (TS2741 / TS2739 / TS2345).
+                            //
+                            // Tuple sources drill the member relation the same
+                            // way (`Type '[boolean]' is not assignable to type
+                            // '[string]'.` beneath the union pair line), so
+                            // they promote with the missing-property family.
                             SubtypeFailureReason::MissingProperty { .. }
-                            | SubtypeFailureReason::MissingProperties { .. } => true,
+                            | SubtypeFailureReason::MissingProperties { .. }
+                            | SubtypeFailureReason::TupleElementTypeMismatch { .. }
+                            | SubtypeFailureReason::TupleVariadicPositionMismatch { .. }
+                            | SubtypeFailureReason::TupleElementMismatch { .. }
+                            | SubtypeFailureReason::TupleArityMismatch(_) => true,
                             // Scalar source (a primitive / string-literal property
                             // value): tsc elaborates `S` against the sole real member
                             // `T` directly instead of a `NoUnionMemberMatches` over
@@ -135,7 +199,13 @@ impl<R: TypeResolver> SubtypeChecker<'_, R> {
                             _ => self.is_object_like(source_member),
                         };
                         if promote {
-                            return Some(reason);
+                            return Some(self.wrap_union_source_member_reason(
+                                source,
+                                target,
+                                source_member,
+                                &source_members,
+                                reason,
+                            ));
                         }
                     }
                 }

@@ -3052,3 +3052,7 @@ path = "tests/provisional_class_instance_window_tests.rs"
 [[test]]
 name = "union_target_property_mismatch_elaboration_tests"
 path = "tests/union_target_property_mismatch_elaboration_tests.rs"
+
+[[test]]
+name = "property_pair_relation_frame_tests"
+path = "tests/property_pair_relation_frame_tests.rs"
