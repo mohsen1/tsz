@@ -157,7 +157,19 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         let mut first_this_mismatch: Option<(TypeId, TypeId)> = None; // (expected, actual)
         let mut all_this_mismatches_identical = true;
 
-        for sig in &shape.construct_signatures {
+        // Candidate order follows tsc's `reorderCandidates`, exactly as in
+        // `resolve_callable_call`: construct signatures from a later
+        // merged-declaration group are tried first and specialized
+        // (literal-param) signatures are hoisted. The shape's stored order
+        // stays as-declared for display; only the attempt order changes.
+        let reordered = crate::type_queries::data::reordered_overload_candidates_if_needed(
+            self.interner,
+            &shape.construct_signatures,
+        );
+        let candidate_signatures: &[crate::types::CallSignature] =
+            reordered.as_deref().unwrap_or(&shape.construct_signatures);
+
+        for sig in candidate_signatures {
             let func = FunctionShape {
                 params: sig.params.clone(),
                 this_type: sig.this_type,

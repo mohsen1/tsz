@@ -1854,6 +1854,7 @@ fn test_callable_shadowed_type_param_no_cache_leak() {
         return_type: TypeId::VOID,
         type_predicate: None,
         is_method: true,
+        declaration_group: 0,
     };
 
     // bar<T>(t: T, u: U) — shadows class T with its own T
@@ -1877,6 +1878,7 @@ fn test_callable_shadowed_type_param_no_cache_leak() {
         return_type: TypeId::VOID,
         type_predicate: None,
         is_method: true,
+        declaration_group: 0,
     };
 
     // Callable with both signatures. bar is listed first to trigger the bug:

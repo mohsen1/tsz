@@ -109,6 +109,7 @@ fn substitute_call_signature_db(
         return_type,
         type_predicate,
         is_method: sig.is_method,
+        declaration_group: sig.declaration_group,
     };
     (rebuilt, changed)
 }
@@ -684,6 +685,7 @@ mod tests {
                 return_type: t_param,
                 type_predicate: None,
                 is_method: false,
+                declaration_group: 0,
             }],
             construct_signatures: vec![],
             properties: vec![],
@@ -707,6 +709,7 @@ mod tests {
                 return_type: TypeId::STRING,
                 type_predicate: None,
                 is_method: false,
+                declaration_group: 0,
             }],
             construct_signatures: vec![],
             properties: vec![],

@@ -42,6 +42,7 @@ pub(crate) fn construct_signatures_for_type(
         return_type: shape.return_type,
         type_predicate: shape.type_predicate,
         is_method: shape.is_method,
+        declaration_group: 0,
     }])
 }
 
@@ -112,6 +113,7 @@ pub(crate) fn call_signature_from_function_shape(
         return_type: shape.return_type,
         type_predicate: shape.type_predicate,
         is_method,
+        declaration_group: 0,
     }
 }
 

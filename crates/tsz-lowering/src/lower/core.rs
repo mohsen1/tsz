@@ -227,6 +227,11 @@ impl ObjectTypeParts {
         self.pass_local_counter = 1;
     }
 
+    /// 0-based merged-declaration pass, stamped into `declaration_group`.
+    pub(super) const fn current_declaration_group(&self) -> u32 {
+        self.current_pass_base / Self::DECL_ORDER_STRIDE
+    }
+
     /// Get the next `declaration_order` value for a property being added in
     /// the current declaration pass.
     pub(super) const fn next_declaration_order(&mut self) -> u32 {
@@ -312,6 +317,8 @@ impl ObjectTypeParts {
     ) {
         use indexmap::map::Entry;
 
+        let mut signature = signature;
+        signature.declaration_group = self.current_declaration_group();
         let next_order = self.current_pass_base + self.pass_local_counter;
         match self.properties.entry(name) {
             Entry::Vacant(entry) => {
@@ -651,11 +658,9 @@ impl<'a> TypeLowering<'a> {
                 })
         };
 
-        // Process declarations in FORWARD (lib-load / source) order: TypeScript 7
-        // preserves declaration order for merged-interface overload sets, so an
-        // earlier declaration's overloads render before a later declaration's
-        // (e.g. Array.toLocaleString renders the es5 `(): string` overload before
-        // the es2015.core `(locales, options): string` overload).
+        // FORWARD (lib-load / source) order: tsc renders merged overload sets
+        // in declaration order; resolution priority (later group first) comes
+        // from the `declaration_group` stamp, not from storage order.
         let num_declarations = declarations.len();
         for (forward_decl_index, (decl_idx, decl_arena)) in declarations.iter().enumerate() {
             // Set the declaration pass base so that properties from earlier
@@ -1973,11 +1978,8 @@ impl<'a> TypeLowering<'a> {
         let saved_type_param_scopes = self.type_param_scopes.borrow().clone();
         *self.type_param_scopes.borrow_mut() = Vec::new();
 
-        // Process declarations in FORWARD (source) order: TypeScript 7 preserves
-        // declaration order for merged-interface overload sets, so an earlier
-        // interface declaration's overloads render before a later one's. This
-        // matches the multi-arena path in
-        // `lower_merged_interface_declarations_with_symbol`.
+        // FORWARD (source) order, matching the multi-arena path above: storage
+        // keeps declaration order; `declaration_group` carries resolution priority.
         for (forward_decl_index, &decl_idx) in declarations.iter().enumerate() {
             parts.set_declaration_pass(forward_decl_index);
 
@@ -2001,10 +2003,8 @@ impl<'a> TypeLowering<'a> {
 
         *self.type_param_scopes.borrow_mut() = saved_type_param_scopes;
 
-        // Assign declaration_order in FORWARD declaration order for diagnostics.
-        // The reverse iteration above is needed for overload resolution priority,
-        // but TS2740 "missing properties" messages should list properties in the
-        // order they first appear across declarations (earliest declaration first).
+        // Assign declaration_order in FORWARD declaration order so TS2740
+        // "missing properties" lists follow first appearance across declarations.
         self.assign_forward_declaration_order(&mut parts, declarations.iter().copied());
 
         (

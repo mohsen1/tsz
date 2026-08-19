@@ -50,6 +50,7 @@ impl<'a> TypeInstantiator<'a> {
             return_type,
             type_predicate: type_predicate.or(sig.type_predicate),
             is_method: sig.is_method,
+            declaration_group: sig.declaration_group,
         })
     }
 

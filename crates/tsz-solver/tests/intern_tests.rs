@@ -448,19 +448,15 @@ fn test_interner_intersection_callable_vs_object_disjoint_property() {
 
     let a_name = interner.intern_string("a");
     let callable = interner.callable(CallableShape {
-        call_signatures: vec![CallSignature {
-            type_params: vec![],
-            params: vec![ParamInfo {
+        call_signatures: vec![CallSignature::new(
+            vec![ParamInfo {
                 name: Some(interner.intern_string("x")),
                 type_id: TypeId::STRING,
                 optional: false,
                 rest: false,
             }],
-            this_type: None,
-            return_type: TypeId::NUMBER,
-            type_predicate: None,
-            is_method: false,
-        }],
+            TypeId::NUMBER,
+        )],
         construct_signatures: vec![],
         properties: vec![PropertyInfo::new(a_name, interner.literal_string(""))],
         ..Default::default()
@@ -484,19 +480,15 @@ fn test_interner_intersection_callable_vs_object_compatible_property() {
 
     let a_name = interner.intern_string("a");
     let callable = interner.callable(CallableShape {
-        call_signatures: vec![CallSignature {
-            type_params: vec![],
-            params: vec![ParamInfo {
+        call_signatures: vec![CallSignature::new(
+            vec![ParamInfo {
                 name: Some(interner.intern_string("x")),
                 type_id: TypeId::STRING,
                 optional: false,
                 rest: false,
             }],
-            this_type: None,
-            return_type: TypeId::NUMBER,
-            type_predicate: None,
-            is_method: false,
-        }],
+            TypeId::NUMBER,
+        )],
         construct_signatures: vec![],
         properties: vec![PropertyInfo::new(a_name, TypeId::STRING)],
         ..Default::default()

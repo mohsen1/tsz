@@ -956,7 +956,8 @@ impl<'a> CheckerState<'a> {
         }
         if let Some((base, args)) = common::application_info(self.ctx.types, source)
             && args.len() == 1
-            && self.return_context_application_base_is_lib_utility_wrapper(base)
+            && (self.return_context_application_base_is_lib_utility_wrapper(base)
+                || self.return_context_application_base_is_identity_mapped_wrapper(base))
         {
             return self.contextual_return_type_specializes_wrapped_params(
                 args[0],
@@ -1155,6 +1156,22 @@ impl<'a> CheckerState<'a> {
             "Awaited" => self.is_standard_or_conditional_awaited_alias(symbol_id, symbol),
             _ => false,
         }
+    }
+
+    /// A single-argument application whose base resolves to an *identity
+    /// homomorphic* mapped type — `{ [P in keyof T]: T[P] }` under any
+    /// readonly/optional modifiers — is a transparent wrapper for
+    /// return-context specialization, exactly like the lib `Readonly<T>`:
+    /// reverse mapped-type inference can determine `T` from any contextual
+    /// object/array/tuple source, so the contextual return type must not be
+    /// suppressed in favor of argument-only inference. Structural (via
+    /// `classify_identity_mapped`), so user-authored `Readonly`-alikes behave
+    /// like the lib alias regardless of their names.
+    fn return_context_application_base_is_identity_mapped_wrapper(&mut self, base: TypeId) -> bool {
+        let body = self.resolve_lazy_type(base);
+        common::mapped_type_id(self.ctx.types, body)
+            .and_then(|mapped_id| common::classify_identity_mapped(self.ctx.types, mapped_id))
+            .is_some()
     }
 
     pub(crate) fn sensitive_callback_placeholder_should_skip_round1_inference(

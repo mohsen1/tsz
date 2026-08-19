@@ -23,6 +23,8 @@ mod accessor_inherited_completeness_tests;
 mod accessor_this_parameter_pairing_tests;
 #[path = "tests/alias_application_display_retention_tests.rs"]
 mod alias_application_display_retention_tests;
+#[path = "tests/ambient_class_override_type_compat_tests.rs"]
+mod ambient_class_override_type_compat_tests;
 #[path = "tests/ambient_declare_async_modifier_tests.rs"]
 mod ambient_declare_async_modifier_tests;
 #[path = "tests/ambient_declare_async_static_modifier_tests.rs"]
@@ -689,6 +691,10 @@ mod member_modifier_placement_grammar_tests;
 mod member_name_source_quote_fidelity_tests;
 #[path = "tests/merged_interface_constraint_relation_routing_arch_tests.rs"]
 mod merged_interface_constraint_relation_routing_arch_tests;
+#[path = "tests/merged_interface_construct_order_tests.rs"]
+mod merged_interface_construct_order_tests;
+#[path = "tests/merged_interface_overload_order_tests.rs"]
+mod merged_interface_overload_order_tests;
 #[path = "tests/merged_interface_reference_flat_missing_tests.rs"]
 mod merged_interface_reference_flat_missing_tests;
 #[path = "tests/method_return_type_elaboration_tests.rs"]

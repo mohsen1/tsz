@@ -677,28 +677,49 @@ impl<'a> CheckerState<'a> {
         {
             return false;
         }
-        source_shape.properties.iter().any(|prop| {
-            let name = self.ctx.types.resolve_atom(prop.name);
-            if let Some(number_idx) = &target_shape.number_index
-                && tsz_solver::utils::is_numeric_literal_name(name.as_ref())
-                && !self.is_assignable_to(prop.type_id, number_idx.value_type)
-            {
-                return true;
-            }
-            if let Some(string_idx) = &target_shape.string_index
-                && !prop.is_symbol_named
-                && !self.is_assignable_to(prop.type_id, string_idx.value_type)
-            {
-                return true;
-            }
-            if let Some(symbol_idx) = &target_shape.symbol_index
-                && prop.is_symbol_named
-                && !self.is_assignable_to(prop.type_id, symbol_idx.value_type)
-            {
-                return true;
-            }
-            false
-        })
+        let prop_pairs: Vec<(TypeId, bool, Atom)> = source_shape
+            .properties
+            .iter()
+            .map(|prop| (prop.type_id, prop.is_symbol_named, prop.name))
+            .collect();
+        prop_pairs
+            .into_iter()
+            .any(|(prop_type, is_symbol_named, prop_name)| {
+                // Probe with the freshness-widened value: this gate exists to
+                // defer to the relation's own `TS2322`, and the relation strips
+                // freshness from nested property values, so a nested literal
+                // that fails ONLY by excess property must not trip the deferral
+                // (the relation passes and nothing would ever be reported —
+                // the excess checker's drill-in owns that report, #17623).
+                let widened_prop_type =
+                    crate::query_boundaries::common::widen_freshness(self.ctx.types, prop_type);
+                let name = self.ctx.types.resolve_atom(prop_name);
+                if let Some(number_idx) = &target_shape.number_index
+                    && tsz_solver::utils::is_numeric_literal_name(name.as_ref())
+                    && !self
+                        .diagnostic_relation_outcome(widened_prop_type, number_idx.value_type)
+                        .related
+                {
+                    return true;
+                }
+                if let Some(string_idx) = &target_shape.string_index
+                    && !is_symbol_named
+                    && !self
+                        .diagnostic_relation_outcome(widened_prop_type, string_idx.value_type)
+                        .related
+                {
+                    return true;
+                }
+                if let Some(symbol_idx) = &target_shape.symbol_index
+                    && is_symbol_named
+                    && !self
+                        .diagnostic_relation_outcome(widened_prop_type, symbol_idx.value_type)
+                        .related
+                {
+                    return true;
+                }
+                false
+            })
     }
 
     pub(crate) fn check_object_literal_named_property_values_against_any_target(

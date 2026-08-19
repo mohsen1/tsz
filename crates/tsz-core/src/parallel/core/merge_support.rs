@@ -617,6 +617,16 @@ pub(super) const fn can_merge_symbols_cross_file(existing_flags: u32, new_flags:
         return true;
     }
 
+    // Function can merge with function: cross-file global function declarations
+    // form one overload set, exactly like the same-file rule in
+    // `BinderState::can_merge_flags` (tsc's `FunctionExcludes` does not
+    // exclude `Function`). Bodiless declarations merge into one overload
+    // list; duplicate implementations surface through the checker's
+    // duplicate-implementation checks on the merged declaration set.
+    if (existing_flags & symbol_flags::FUNCTION) != 0 && (new_flags & symbol_flags::FUNCTION) != 0 {
+        return true;
+    }
+
     // Variable can merge with variable cross-file (so we can detect and report cross-file redeclarations of let/const)
     if (existing_flags & symbol_flags::VARIABLE) != 0 && (new_flags & symbol_flags::VARIABLE) != 0 {
         return true;

@@ -826,6 +826,7 @@ fn test_function_and_callable_extractors() {
             return_type: TypeId::STRING,
             type_predicate: None,
             is_method: false,
+            declaration_group: 0,
         }],
         construct_signatures: Vec::new(),
         properties: Vec::new(),

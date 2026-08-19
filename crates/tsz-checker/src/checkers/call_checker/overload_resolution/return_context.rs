@@ -314,6 +314,7 @@ impl<'a> CheckerState<'a> {
                     parameter_index: predicate.parameter_index,
                 }),
             is_method: sig.is_method,
+            declaration_group: sig.declaration_group,
         }
     }
 

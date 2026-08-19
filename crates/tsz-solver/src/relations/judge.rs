@@ -914,6 +914,7 @@ impl<'a> DefaultJudge<'a> {
                     return_type: shape.return_type,
                     type_predicate: shape.type_predicate,
                     is_method: shape.is_method,
+                    declaration_group: 0,
                 }])
             }
             TypeData::Callable(callable_id) => {
@@ -945,6 +946,7 @@ impl<'a> DefaultJudge<'a> {
                     return_type: shape.return_type,
                     type_predicate: shape.type_predicate,
                     is_method: false,
+                    declaration_group: 0,
                 }])
             }
             TypeData::Callable(callable_id) => {

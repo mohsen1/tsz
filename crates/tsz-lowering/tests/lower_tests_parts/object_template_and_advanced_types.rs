@@ -793,10 +793,13 @@ fn find_interface_declarations(arena: &NodeArena, name: &str) -> Vec<NodeIndex> 
     decls
 }
 
-/// TypeScript 7 preserves declaration order for merged-interface method overloads:
-/// an earlier declaration's overload renders before a later declaration's. Verified
-/// against `tsc` 7.0.2: two `interface Foo { bar(...) }` declarations merge to
-/// `{ (x: string): string; (x: number): number; }` (first declaration first).
+/// TypeScript 7 preserves declaration order for merged-interface method
+/// overloads in the STORED/DISPLAYED signature list: an earlier declaration's
+/// overload renders before a later declaration's (verified against `tsc`
+/// 7.0.2 rendering). Call RESOLUTION tries the later declaration group first
+/// via the `declaration_group` stamp + the solver's transient
+/// `reorder_overload_candidates` (tsc `reorderCandidates`); see
+/// `merged_interface_overload_group_stamps` below.
 #[test]
 fn test_merged_interface_method_overloads_declaration_order() {
     // Two interface declarations for Foo, each with a method bar(...)
@@ -877,6 +880,59 @@ interface Foo {
         }
         _ => panic!("Expected Object or Callable type, got {type_data:?}"),
     }
+}
+
+/// Each merged declaration pass stamps its 0-based index into
+/// `CallSignature::declaration_group`, so overload resolution can try later
+/// declaration groups first (tsc `reorderCandidates`) while the stored order
+/// above stays in source order for display.
+#[test]
+fn merged_interface_overload_group_stamps() {
+    let source = r#"
+interface Widget {
+    poke(x: string): string;
+}
+interface Widget {
+    poke(x: number): number;
+}
+"#;
+    let arena = parse_and_take_arena(source);
+    let interner = TypeInterner::new();
+    let lowering = TypeLowering::new(&arena, &interner);
+
+    let decls = find_interface_declarations(&arena, "Widget");
+    assert_eq!(decls.len(), 2, "Should find 2 interface declarations");
+
+    let type_id = lowering.lower_interface_declarations(&decls);
+    let type_data = interner.lookup(type_id).expect("Type should exist");
+    let groups: Vec<u32> = match type_data {
+        TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id) => {
+            let shape = interner.object_shape(shape_id);
+            let poke_prop = shape
+                .properties
+                .iter()
+                .find(|p| interner.resolve_atom(p.name) == "poke")
+                .expect("Should have poke property");
+            match interner
+                .lookup(poke_prop.type_id)
+                .expect("poke type should exist")
+            {
+                TypeData::Callable(callable_shape_id) => interner
+                    .callable_shape(callable_shape_id)
+                    .call_signatures
+                    .iter()
+                    .map(|sig| sig.declaration_group)
+                    .collect(),
+                other => panic!("Expected Callable type for poke, got {other:?}"),
+            }
+        }
+        other => panic!("Expected Object type, got {other:?}"),
+    };
+    assert_eq!(
+        groups,
+        vec![0, 1],
+        "each declaration pass stamps its forward index as the group"
+    );
 }
 
 // =============================================================================

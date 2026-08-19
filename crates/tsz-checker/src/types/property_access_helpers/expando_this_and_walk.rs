@@ -347,6 +347,96 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Provisional (structural-only) type of one expando member of `root_name`,
+    /// used while `sym_id` itself is mid-resolution (on the circular-reference
+    /// guard in [`crate::state::type_analysis::symbol_type_helpers::CheckerState::provisional_circular_function_symbol_type`]).
+    ///
+    /// A member whose RHS is a function expression/declaration/arrow gets its
+    /// signature built directly from the declaration (`call_signature_from_function`)
+    /// — the same structural extraction `tsc` uses for a function's own type,
+    /// independent of checking its body for diagnostics. This breaks the cycle
+    /// for `root.member = function () { this.other }`: resolving `this`'s
+    /// owner type while checking `member`'s own body must not re-enter
+    /// checking that same body. A non-function-valued member is left out of
+    /// this transient shape; the fully augmented type (via
+    /// `augment_callable_type_with_expandos`) overwrites this provisional
+    /// entry once `sym_id`'s resolution completes.
+    pub(crate) fn provisional_expando_property_signature_type(
+        &mut self,
+        sym_id: tsz_binder::SymbolId,
+        root_name: &str,
+        property_name: &str,
+    ) -> Option<TypeId> {
+        let expected_key = format!("{root_name}.{property_name}");
+        let walk_root = self.expando_assignment_walk_root(sym_id);
+        let mut collected: Vec<(u32, TypeId)> = Vec::new();
+        for stmt_idx in self.expando_walk_statements(walk_root) {
+            self.collect_expando_property_provisional_signature(
+                stmt_idx,
+                &expected_key,
+                &mut collected,
+            );
+        }
+        if collected.is_empty() {
+            return None;
+        }
+        collected.sort_unstable_by_key(|&(pos, _)| pos);
+        let mut types: Vec<TypeId> = collected.into_iter().map(|(_, ty)| ty).collect();
+        types.dedup();
+        Some(if types.len() == 1 {
+            types[0]
+        } else {
+            self.ctx.types.factory().union_from_slice(&types)
+        })
+    }
+
+    fn collect_expando_property_provisional_signature(
+        &mut self,
+        idx: NodeIndex,
+        expected_key: &str,
+        collected: &mut Vec<(u32, TypeId)>,
+    ) {
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return;
+        };
+
+        if self.is_scope_owner_kind(node.kind) || node.kind == syntax_kind_ext::CLASS_DECLARATION {
+            return;
+        }
+        if node.kind == syntax_kind_ext::BLOCK
+            && let Some(root_name) = expected_key.split('.').next()
+            && self.block_shadows_expando_root(idx, root_name)
+        {
+            return;
+        }
+
+        if node.kind == syntax_kind_ext::BINARY_EXPRESSION
+            && let Some(binary) = self.ctx.arena.get_binary_expr(node)
+            && binary.operator_token == SyntaxKind::EqualsToken as u16
+            && self
+                .expando_assignment_access_key(binary.left)
+                .is_some_and(|key| key == expected_key)
+        {
+            let rhs_idx = self.terminal_expando_assignment_rhs(binary.right);
+            if let Some(rhs_node) = self.ctx.arena.get(rhs_idx)
+                && let Some(func) = self.ctx.arena.get_function(rhs_node)
+            {
+                let sig = self.call_signature_from_function(func, rhs_idx);
+                let func_type =
+                    crate::query_boundaries::construct_signatures::function_type_from_call_signature(
+                        self.ctx.types,
+                        &sig,
+                        false,
+                    );
+                collected.push((node.pos, func_type));
+            }
+        }
+
+        for child_idx in self.ctx.arena.get_children(idx) {
+            self.collect_expando_property_provisional_signature(child_idx, expected_key, collected);
+        }
+    }
+
     fn terminal_expando_assignment_rhs(&self, idx: NodeIndex) -> NodeIndex {
         let idx = self.ctx.arena.skip_parenthesized(idx);
         if let Some(node) = self.ctx.arena.get(idx)

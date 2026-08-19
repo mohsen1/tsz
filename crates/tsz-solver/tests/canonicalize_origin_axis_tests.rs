@@ -201,6 +201,7 @@ fn bound_type_param_origin_alpha_equivalent_call_signature() {
             return_type: pref,
             type_predicate: None,
             is_method: false,
+            declaration_group: 0,
         };
         interner.callable(CallableShape {
             call_signatures: vec![sig],

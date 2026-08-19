@@ -1686,6 +1686,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return_type: instantiated_return,
             type_predicate: s_sig.type_predicate,
             is_method: s_sig.is_method,
+            declaration_group: s_sig.declaration_group,
         };
 
         // Check if instantiated signature is compatible with target

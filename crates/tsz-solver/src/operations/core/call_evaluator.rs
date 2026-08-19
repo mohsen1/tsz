@@ -700,6 +700,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         return_type: func.return_type,
                         type_predicate: func.type_predicate,
                         is_method: func.is_method,
+                        declaration_group: 0,
                     };
                     result.push((i, vec![sig]));
                 }
@@ -913,6 +914,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         return_type: union_return,
                         type_predicate: None,
                         is_method: sig.is_method,
+                        declaration_group: 0,
                     });
                 }
             }

@@ -1722,6 +1722,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 this_type,
                 type_predicate,
                 is_method: sig.is_method,
+                declaration_group: sig.declaration_group,
             })
         }
 

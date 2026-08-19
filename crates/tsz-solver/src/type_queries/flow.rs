@@ -1763,6 +1763,7 @@ mod tests {
                 return_type: box_t,
                 type_predicate: None,
                 is_method: false,
+                declaration_group: 0,
             }],
             properties: vec![],
             string_index: None,
@@ -1907,6 +1908,7 @@ mod tests {
                 return_type: box_t,
                 type_predicate: None,
                 is_method: false,
+                declaration_group: 0,
             }],
             properties: vec![PropertyInfo {
                 name: has_instance_atom,

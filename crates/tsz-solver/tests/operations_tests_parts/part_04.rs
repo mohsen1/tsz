@@ -1641,6 +1641,7 @@ fn test_array_constructor_rest_mismatch_keeps_nullable_fallback_array() {
                 return_type: interner.array(TypeId::ANY),
                 type_predicate: None,
                 is_method: false,
+                declaration_group: 0,
             },
             CallSignature {
                 type_params: vec![t_param],
@@ -1654,6 +1655,7 @@ fn test_array_constructor_rest_mismatch_keeps_nullable_fallback_array() {
                 return_type: array_t,
                 type_predicate: None,
                 is_method: false,
+                declaration_group: 0,
             },
             CallSignature {
                 type_params: vec![t_param],
@@ -1667,6 +1669,7 @@ fn test_array_constructor_rest_mismatch_keeps_nullable_fallback_array() {
                 return_type: array_t,
                 type_predicate: None,
                 is_method: false,
+                declaration_group: 0,
             },
         ],
         properties: Vec::new(),

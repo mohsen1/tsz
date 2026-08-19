@@ -1260,6 +1260,7 @@ fn callable_with_overloads() {
         return_type: TypeId::VOID,
         type_predicate: None,
         is_method: false,
+        declaration_group: 0,
     };
     let sig2 = CallSignature {
         type_params: vec![],
@@ -1268,6 +1269,7 @@ fn callable_with_overloads() {
         return_type: TypeId::VOID,
         type_predicate: None,
         is_method: false,
+        declaration_group: 0,
     };
     let c = i.callable(CallableShape {
         call_signatures: vec![sig1, sig2],

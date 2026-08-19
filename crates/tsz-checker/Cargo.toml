@@ -2076,6 +2076,9 @@ path = "tests/typeof_function_generic_alias_narrowing_tests.rs"
 name = "discriminant_literal_reference_narrowing_tests"
 path = "tests/discriminant_literal_reference_narrowing_tests.rs"
 [[test]]
+name = "discriminated_union_tuple_nullable_element_tests"
+path = "tests/discriminated_union_tuple_nullable_element_tests.rs"
+[[test]]
 name = "unique_symbol_discriminant_narrowing_tests"
 path = "tests/unique_symbol_discriminant_narrowing_tests.rs"
 [[test]]
@@ -3011,3 +3014,23 @@ path = "tests/map_constructor_tuple_element_supertype_order_tests.rs"
 [[test]]
 name = "object_literal_property_source_domain_widening_tests"
 path = "tests/object_literal_property_source_domain_widening_tests.rs"
+
+[[test]]
+name = "union_same_base_application_assignability_tests"
+path = "tests/union_same_base_application_assignability_tests.rs"
+
+[[test]]
+name = "js_object_literal_receiver_display_tests"
+path = "tests/js_object_literal_receiver_display_tests.rs"
+
+[[test]]
+name = "overloaded_method_override_ts2416_count_tests"
+path = "tests/overloaded_method_override_ts2416_count_tests.rs"
+
+[[test]]
+name = "enum_discriminant_union_assignability_tests"
+path = "tests/enum_discriminant_union_assignability_tests.rs"
+
+[[test]]
+name = "number_to_enum_member_assignability_tests"
+path = "tests/number_to_enum_member_assignability_tests.rs"

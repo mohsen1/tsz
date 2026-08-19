@@ -726,6 +726,7 @@ impl TypeInterner {
                         return_type: func.return_type,
                         type_predicate: func.type_predicate,
                         is_method: func.is_method,
+                        declaration_group: 0,
                     };
                     if func.is_constructor {
                         construct_signatures.push(signature);
