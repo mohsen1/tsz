@@ -769,9 +769,23 @@ impl<'a> TypeResolver for CheckerContext<'a> {
 
     /// See [`CheckerContext::note_provisional_class_value`]: moved when a
     /// mid-resolution class partial was served, so evaluators skip persisting
-    /// results computed across it (issue #16055).
+    /// results computed across it (issue #16055). Folds in both env-side
+    /// provisional epochs, mirroring `resolver_generation`, so a serve
+    /// observed by either environment also taints evaluations running against
+    /// this resolver.
     fn provisional_value_epoch(&self) -> u64 {
-        self.provisional_class_value_epoch.get()
+        let env_epoch = self
+            .type_env
+            .try_borrow()
+            .map_or(0, |env| TypeResolver::provisional_value_epoch(&*env));
+        let environment_epoch = self
+            .type_environment
+            .try_borrow()
+            .map_or(0, |env| TypeResolver::provisional_value_epoch(&*env));
+        self.provisional_class_value_epoch
+            .get()
+            .wrapping_add(env_epoch)
+            .wrapping_add(environment_epoch)
     }
 
     /// Resolve a symbol reference to its cached type (deprecated).

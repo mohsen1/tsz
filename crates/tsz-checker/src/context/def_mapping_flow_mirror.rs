@@ -30,9 +30,15 @@ impl CheckerContext<'_> {
     /// Mirror a class instance type into the flow-analyzer env **only**,
     /// deferring on a borrow race.
     pub fn mirror_class_instance_in_type_environment(&self, def_id: DefId, instance_type: TypeId) {
+        // See `register_class_instance_in_envs` for the provisional rule
+        // (issue #16055).
+        let provisional = self
+            .def_to_symbol_id(def_id)
+            .is_some_and(|sym| self.class_instance_resolution_set.contains(&sym));
         self.mirror_to_flow_env(DeferredFlowEnvWrite::InsertClassInstance {
             def_id,
             instance_type,
+            provisional,
         });
     }
 

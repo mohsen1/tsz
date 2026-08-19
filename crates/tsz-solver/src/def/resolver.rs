@@ -766,6 +766,15 @@ pub struct TypeEnvironment {
     verified_interface_extends: FxHashMap<u32, DefId>,
     /// Reverse map: instance `TypeId` → class `DefId` (for nominal instanceof narrowing).
     instance_type_to_class: FxHashMap<u32, DefId>,
+    /// Class `DefId`s whose registered instance body is a *mid-resolution
+    /// partial* (a prescan/rough shape published so self-references resolve
+    /// during the class's own build). Serving one from `resolve_lazy` bumps
+    /// `provisional_epoch` so evaluations skip `TypeId`-keyed cache writes
+    /// (issue #16055); the final publication clears the mark.
+    provisional_defs: FxHashSet<u32>,
+    /// Monotone count of provisional-def serves; see
+    /// [`TypeResolver::provisional_value_epoch`].
+    provisional_epoch: std::cell::Cell<u64>,
     /// Shared `DefinitionStore` for fallback lookups (e.g., `DefKind` when `def_kinds`
     /// map wasn't populated due to `RefCell` borrow conflicts during recursive resolution).
     definition_store: Option<Arc<DefinitionStore>>,
@@ -826,6 +835,8 @@ impl TypeEnvironment {
             class_extends: FxHashMap::default(),
             verified_interface_extends: FxHashMap::default(),
             instance_type_to_class: FxHashMap::default(),
+            provisional_defs: FxHashSet::default(),
+            provisional_epoch: std::cell::Cell::new(0),
             definition_store: None,
             this_type: None,
             unresolved_name_resolutions: FxHashMap::default(),
@@ -1086,6 +1097,20 @@ impl TypeEnvironment {
     /// the shared `class_to_instance` slot so cross-file consumers can
     /// resolve `Lazy(class_def_id)` in type position without their own
     /// `class_instance_types` cache being warm.
+    /// Mark `def_id`'s registered body/instance as a mid-resolution partial:
+    /// until [`Self::clear_def_provisional`] runs, every `resolve_lazy` serve
+    /// of this def bumps the provisional epoch so overlapping evaluations
+    /// skip their `TypeId`-keyed cache writes (issue #16055).
+    pub fn mark_def_provisional(&mut self, def_id: DefId) {
+        self.provisional_defs.insert(def_id.0);
+    }
+
+    /// Clear a [`Self::mark_def_provisional`] mark once the def's final body
+    /// or instance type is registered.
+    pub fn clear_def_provisional(&mut self, def_id: DefId) {
+        self.provisional_defs.remove(&def_id.0);
+    }
+
     pub fn insert_class_instance_type(&mut self, def_id: DefId, instance_type: TypeId) {
         self.class_instance_types.insert(def_id.0, instance_type);
         // Reverse map: allow looking up which class a resolved instance type came from.
@@ -1622,6 +1647,13 @@ impl TypeResolver for TypeEnvironment {
         self.generation()
     }
 
+    /// Moved whenever `resolve_lazy` serves a def marked provisional (its
+    /// registered body is a mid-resolution class partial); see
+    /// [`TypeEnvironment::mark_def_provisional`] (issue #16055).
+    fn provisional_value_epoch(&self) -> u64 {
+        self.provisional_epoch.get()
+    }
+
     fn canonical_def_id(&self, def_id: DefId) -> DefId {
         self.definition_store
             .as_ref()
@@ -1682,6 +1714,13 @@ impl TypeResolver for TypeEnvironment {
     }
 
     fn resolve_lazy(&self, def_id: DefId, interner: &dyn TypeDatabase) -> Option<TypeId> {
+        // Serving a def whose registered body is a mid-resolution partial:
+        // move the provisional epoch so overlapping evaluations skip their
+        // `TypeId`-keyed cache writes (issue #16055).
+        if !self.provisional_defs.is_empty() && self.provisional_defs.contains(&def_id.0) {
+            self.provisional_epoch
+                .set(self.provisional_epoch.get().wrapping_add(1));
+        }
         let augment = |def_id, ty| {
             self.definition_store.as_ref().map_or(ty, |store| {
                 store.module_augmented_body_or_current(def_id, ty, interner)

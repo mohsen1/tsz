@@ -40,9 +40,15 @@ pub enum DeferredFlowEnvWrite {
         variances: Option<Arc<[tsz_solver::type_handles::Variance]>>,
     },
     /// `insert_class_instance_type` — register a class instance type.
+    /// `provisional` is true when the class was still mid-resolution at
+    /// registration time, so the body is a prescan/rough partial: the env
+    /// marks the def provisional and `resolve_lazy` serves of it taint
+    /// overlapping evaluations until the final registration clears the mark
+    /// (issue #16055).
     InsertClassInstance {
         def_id: DefId,
         instance_type: TypeId,
+        provisional: bool,
     },
     /// `insert_class_instance_type` when absent — merge a child env snapshot
     /// without overwriting parent metadata.
@@ -179,7 +185,15 @@ impl DeferredFlowEnvWrite {
             Self::InsertClassInstance {
                 def_id,
                 instance_type,
-            } => env.insert_class_instance_type(*def_id, *instance_type),
+                provisional,
+            } => {
+                env.insert_class_instance_type(*def_id, *instance_type);
+                if *provisional {
+                    env.mark_def_provisional(*def_id);
+                } else {
+                    env.clear_def_provisional(*def_id);
+                }
+            }
             Self::InsertClassInstanceIfMissing {
                 def_id,
                 instance_type,

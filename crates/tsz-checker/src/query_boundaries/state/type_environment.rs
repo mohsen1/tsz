@@ -848,6 +848,10 @@ impl tsz_solver::relations::subtype::TypeResolver for CheckerDeclarationCycleHos
     fn def_to_symbol_id(&self, def_id: tsz_solver::DefId) -> Option<tsz_binder::SymbolId> {
         self.state.ctx.def_to_symbol_id(def_id)
     }
+
+    fn provisional_value_epoch(&self) -> u64 {
+        tsz_solver::relations::subtype::TypeResolver::provisional_value_epoch(&self.state.ctx)
+    }
 }
 
 impl tsz_solver::type_queries::DeclarationTypeCycleHost for CheckerDeclarationCycleHost<'_, '_> {

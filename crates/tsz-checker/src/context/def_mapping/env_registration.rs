@@ -133,9 +133,18 @@ impl CheckerContext<'_> {
 
     /// Register a class instance type in **both** type environments.
     pub fn register_class_instance_in_envs(&self, def_id: DefId, instance_type: TypeId) {
+        // A registration made while the class is still mid-resolution carries
+        // a prescan/rough partial body: mark the def provisional so env
+        // `resolve_lazy` serves of it taint overlapping evaluations, and let
+        // the final (post-resolution) registration clear the mark
+        // (issue #16055).
+        let provisional = self
+            .def_to_symbol_id(def_id)
+            .is_some_and(|sym| self.class_instance_resolution_set.contains(&sym));
         self.register_in_envs(DeferredFlowEnvWrite::InsertClassInstance {
             def_id,
             instance_type,
+            provisional,
         });
     }
 
