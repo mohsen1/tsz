@@ -495,6 +495,17 @@ impl<'a> CheckerState<'a> {
                 let last = raw_sig.params.last()?;
                 last.rest.then_some((last.type_id, true))
             })?;
+        // Instantiation is the identity on a parameter type that mentions none
+        // of the signature's type parameters: tsc renders the written form
+        // (alias reference included) in the TS2345 target, so the
+        // alias-preserving fallback owns the display. Mirrors the same guard
+        // in `generic_call_parameter_alias_display`.
+        if !crate::query_boundaries::common::contains_type_parameters(
+            self.ctx.types,
+            raw_param_type,
+        ) {
+            return None;
+        }
         if param_is_rest && self.rest_tuple_parameter_reports_per_position(raw_param_type) {
             return None;
         }
