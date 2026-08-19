@@ -1401,6 +1401,32 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(super) fn format_qualified_enum_name_for_message(&mut self, ty: TypeId) -> Option<String> {
+        // tsc's default `typeToString` never namespace-qualifies an enum:
+        // `namespace P { export enum Q {} }` renders `Q`, and a member renders
+        // `Q.R`. The namespace-qualified spelling (`P.Q`) appears only through
+        // `getTypeNameForErrorDisplay` (`TypeFormatFlags.UseFullyQualifiedType`),
+        // which `reportRelationError` applies to a *generalized* literal-ish
+        // source — see `format_fully_qualified_enum_name_for_message`.
+        self.format_enum_name_for_message_internal(ty, false)
+    }
+
+    /// tsc `getTypeNameForErrorDisplay`: the enum naming with
+    /// `UseFullyQualifiedType`, i.e. qualified through enclosing
+    /// namespace/module declarations (`P.Q`). Reserved for the generalized
+    /// relation-source display; every other message path uses the bare
+    /// [`Self::format_qualified_enum_name_for_message`] spelling.
+    pub(super) fn format_fully_qualified_enum_name_for_message(
+        &mut self,
+        ty: TypeId,
+    ) -> Option<String> {
+        self.format_enum_name_for_message_internal(ty, true)
+    }
+
+    fn format_enum_name_for_message_internal(
+        &mut self,
+        ty: TypeId,
+        fully_qualified: bool,
+    ) -> Option<String> {
         // Accept both the evaluated `Enum` data and a still-deferred
         // `Lazy(DefId)` member ref (a type-position `E.X` annotation is
         // stabilized as a def whose binder symbol carries `ENUM_MEMBER`).
@@ -1456,6 +1482,9 @@ impl<'a> CheckerState<'a> {
         // must not be renamed by the enum machinery.
         if enum_data_def.is_none() && !symbol.has_any_flags(tsz_binder::symbol_flags::ENUM) {
             return None;
+        }
+        if !fully_qualified {
+            return Some(symbol.escaped_name.clone());
         }
         let mut parts = vec![symbol.escaped_name.clone()];
         let decl_idx = symbol.primary_declaration()?;

@@ -2199,6 +2199,9 @@ path = "tests/string_literal_module_export_name_grammar_tests.rs"
 name = "jsdoc_tag_boundary_tests"
 path = "tests/jsdoc_tag_boundary_tests.rs"
 [[test]]
+name = "jsdoc_namespace_import_value_member_ts2694_tests"
+path = "tests/jsdoc_namespace_import_value_member_ts2694_tests.rs"
+[[test]]
 name = "jsdoc_import_multiline_tests"
 path = "tests/jsdoc_import_multiline_tests.rs"
 [[test]]
@@ -3030,3 +3033,11 @@ path = "tests/overloaded_method_override_ts2416_count_tests.rs"
 [[test]]
 name = "enum_discriminant_union_assignability_tests"
 path = "tests/enum_discriminant_union_assignability_tests.rs"
+
+[[test]]
+name = "enum_name_display_qualification_tests"
+path = "tests/enum_name_display_qualification_tests.rs"
+
+[[test]]
+name = "number_to_enum_member_assignability_tests"
+path = "tests/number_to_enum_member_assignability_tests.rs"

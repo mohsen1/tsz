@@ -404,6 +404,14 @@ impl<'a> CheckerState<'a> {
             arg_str = self.format_type_for_assignability_message(widened);
             arg_display_type = Some(widened);
         }
+        // tsc `reportRelationError`: a generalized enum-ish argument against a
+        // non-singleton-capable parameter renders with `UseFullyQualifiedType`
+        // (`P.Q`); every other enum display stays bare (`Q`).
+        if let Some(display) = self.generalized_enum_source_qualified_display(arg_type, param_type)
+        {
+            arg_str = display;
+            arg_display_type = Some(self.widen_enum_member_type(arg_type));
+        }
         // Widen a fresh boolean-literal array source (`true[]`/`false[]`) to
         // `boolean[]` against a `boolean` parameter. The decision is structural;
         // the output string is plain rendering (no rendered-text decision, §25).

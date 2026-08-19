@@ -266,6 +266,230 @@ impl CheckerState<'_> {
         lowering.lower_interface_declarations_with_symbol(&[decl_idx], sym_id)
     }
 
+    /// Lower one bodiless cross-file function declaration into a call
+    /// signature.
+    ///
+    /// The function-symbol analog of [`Self::lower_cross_file_interface_decl`]:
+    /// when one function symbol has bodiless declarations in multiple program
+    /// files, each foreign declaration's signature is lowered against its own
+    /// source arena while identifiers resolve by name through the current
+    /// binder's merged `file_locals`. Bodiless declarations only — an
+    /// implementation signature is never an externally visible overload, and a
+    /// body would require inference this path deliberately avoids.
+    fn lower_cross_file_function_overload_signature(
+        &self,
+        arena: &std::sync::Arc<tsz_parser::parser::node::NodeArena>,
+        decl_idx: NodeIndex,
+    ) -> Option<tsz_solver::CallSignature> {
+        use crate::query_boundaries::type_predicates::is_compiler_managed_type;
+        use tsz_lowering::TypeLowering;
+
+        let arena_ref: &tsz_parser::parser::node::NodeArena = arena.as_ref();
+        let lib_binders = self.get_lib_binders();
+
+        let cross_type_resolver = |node_idx: NodeIndex| -> Option<u32> {
+            let node = arena_ref.get(node_idx)?;
+            let ident = arena_ref.get_identifier(node)?;
+            let name = ident.escaped_text.as_str();
+            if is_compiler_managed_type(name) {
+                return None;
+            }
+            let sym = self.ctx.binder.file_locals.get(name)?;
+            let symbol = self.ctx.binder.get_symbol_with_libs(sym, &lib_binders)?;
+            if symbol.has_any_flags(symbol_flags::TYPE) {
+                return Some(sym.0);
+            }
+            None
+        };
+
+        let cross_def_id_resolver = |node_idx: NodeIndex| -> Option<tsz_solver::def::DefId> {
+            let node = arena_ref.get(node_idx)?;
+            let ident = arena_ref.get_identifier(node)?;
+            let name = ident.escaped_text.as_str();
+            if is_compiler_managed_type(name) {
+                return None;
+            }
+            let sym = self.ctx.binder.file_locals.get(name)?;
+            let symbol = self.ctx.binder.get_symbol_with_libs(sym, &lib_binders)?;
+            if symbol.has_any_flags(symbol_flags::TYPE) {
+                Some(self.ctx.get_or_create_def_id(sym))
+            } else {
+                None
+            }
+        };
+
+        let cross_value_resolver = |node_idx: NodeIndex| -> Option<u32> {
+            let node = arena_ref.get(node_idx)?;
+            let ident = arena_ref.get_identifier(node)?;
+            let name = ident.escaped_text.as_str();
+            let sym = self.ctx.binder.file_locals.get(name)?;
+            let symbol = self.ctx.binder.get_symbol_with_libs(sym, &lib_binders)?;
+            if (symbol.flags & (symbol_flags::VALUE | symbol_flags::ALIAS)) != 0 {
+                Some(sym.0)
+            } else {
+                None
+            }
+        };
+
+        let type_param_bindings = self.get_type_param_bindings();
+        let lowering = TypeLowering::with_hybrid_resolver(
+            arena_ref,
+            self.ctx.types,
+            &cross_type_resolver,
+            &cross_def_id_resolver,
+            &cross_value_resolver,
+        )
+        .with_nonstrict_nullish_union_reduction(self.ctx.compiler_options.strict_null_checks)
+        .with_type_param_bindings(type_param_bindings);
+
+        let function_type = lowering.lower_signature_from_declaration(decl_idx, None);
+        if function_type == TypeId::ERROR {
+            return None;
+        }
+        let shape = crate::query_boundaries::type_computation::complex::get_function_shape(
+            self.ctx.types,
+            function_type,
+        )?;
+        Some(
+            crate::query_boundaries::construct_signatures::call_signature_from_function_shape(
+                (*shape).clone(),
+                false,
+            ),
+        )
+    }
+
+    /// Collect a function symbol's externally visible overload signatures with
+    /// tsc's `reorderCandidates` declaration-group boundaries stamped, merging
+    /// bodiless declarations from every program file that re-declares the
+    /// symbol.
+    ///
+    /// tsc keys a signature's declaration group on `signature.declaration
+    /// .parent`: same-parent declarations (one `SourceFile`, one module block)
+    /// form one group in source order, and groups fold in forward program
+    /// order. The stored order stays forward — display renders merged sets in
+    /// declaration order — while the solver's overload reorder tries later
+    /// groups first at call sites. Any foreign declaration living in a lib or
+    /// otherwise unregistered arena keeps the legacy local-only overload set
+    /// (lib augmentation order is owned by the lib resolution paths).
+    ///
+    /// Returns the merged overload list plus the local implementation
+    /// declaration (the last bodied local declaration, `NONE` when absent),
+    /// mirroring what the local-only collection previously produced.
+    pub(crate) fn merged_function_overload_signatures(
+        &mut self,
+        sym_id: SymbolId,
+        declarations: &[NodeIndex],
+    ) -> (Vec<tsz_solver::CallSignature>, NodeIndex) {
+        // Origin of one bodiless signature: program-file order, then the
+        // declaration parent node that delimits its group within that file.
+        struct OverloadOrigin {
+            file_order: usize,
+            parent: NodeIndex,
+            signature: tsz_solver::CallSignature,
+        }
+
+        // Foreign bodiless declarations first (immutable borrows only): the
+        // owning `Arc` is cloned so signature building below can take `&mut
+        // self`.
+        let mut cross_decls: Vec<(
+            usize,
+            std::sync::Arc<tsz_parser::parser::NodeArena>,
+            NodeIndex,
+        )> = Vec::new();
+        let mut has_unordered_cross_decl = false;
+        for &decl_idx in declarations {
+            let Some(arenas) = self.ctx.binder.declaration_arenas.get(&(sym_id, decl_idx)) else {
+                continue;
+            };
+            for arena in arenas.iter() {
+                if arena.as_ref().shares_node_storage_with(self.ctx.arena) {
+                    continue;
+                }
+                let Some(func) = arena.get_function_at(decl_idx) else {
+                    continue;
+                };
+                if func.body.is_some() {
+                    continue;
+                }
+                let file_order = self.ctx.all_arenas.as_ref().and_then(|all| {
+                    all.iter()
+                        .position(|candidate| std::sync::Arc::ptr_eq(candidate, arena))
+                });
+                match file_order {
+                    Some(order) => {
+                        cross_decls.push((order, std::sync::Arc::clone(arena), decl_idx));
+                    }
+                    None => has_unordered_cross_decl = true,
+                }
+            }
+        }
+        if has_unordered_cross_decl {
+            cross_decls.clear();
+        }
+
+        let mut entries: Vec<OverloadOrigin> = Vec::new();
+        let mut implementation_decl = NodeIndex::NONE;
+        for &decl_idx in declarations {
+            // A declaration index recorded for a foreign arena can collide
+            // with an unrelated node in the local arena; binder provenance
+            // decides locality, not index validity.
+            if !self
+                .ctx
+                .declaration_is_local_to_current_arena(sym_id, decl_idx)
+            {
+                continue;
+            }
+            let Some(func) = self.ctx.arena.get_function_at(decl_idx) else {
+                continue;
+            };
+            if func.body.is_none() {
+                let signature = self.call_signature_from_function(func, decl_idx);
+                entries.push(OverloadOrigin {
+                    file_order: self.ctx.current_file_idx,
+                    parent: self
+                        .ctx
+                        .arena
+                        .parent_of(decl_idx)
+                        .unwrap_or(NodeIndex::NONE),
+                    signature,
+                });
+            } else {
+                implementation_decl = decl_idx;
+            }
+        }
+
+        for (file_order, arena, decl_idx) in &cross_decls {
+            let Some(signature) =
+                self.lower_cross_file_function_overload_signature(arena, *decl_idx)
+            else {
+                continue;
+            };
+            entries.push(OverloadOrigin {
+                file_order: *file_order,
+                parent: arena.parent_of(*decl_idx).unwrap_or(NodeIndex::NONE),
+                signature,
+            });
+        }
+
+        // Stable: same-file declarations keep binder declaration order.
+        entries.sort_by_key(|entry| entry.file_order);
+
+        let mut overloads = Vec::with_capacity(entries.len());
+        let mut group: u32 = 0;
+        let mut last_key: Option<(usize, NodeIndex)> = None;
+        for entry in entries {
+            let key = (entry.file_order, entry.parent);
+            if last_key.is_some() && last_key != Some(key) {
+                group += 1;
+            }
+            last_key = Some(key);
+            let mut signature = entry.signature;
+            signature.declaration_group = group;
+            overloads.push(signature);
+        }
+        (overloads, implementation_decl)
+    }
+
     /// Resolve a cross-file interface's heritage-base name in the binder scope of
     /// the arena that owns the `extends` clause, registering the owning file index
     /// so downstream `get_type_of_symbol` / `get_type_params_for_symbol` take the

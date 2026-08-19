@@ -818,6 +818,10 @@ impl SubtypeCheckerCacheStatistics {
 mod core_dispatch;
 // Function-apparent shape construction + the global-`Function` "second opinion",
 // split from `core_dispatch` to keep that shard under the §19 file-size cap.
+// Primitive-to-boxed-wrapper + apparent-primitive-shape relations, split from
+// `core_dispatch` to keep that shard under the §19 file-size cap.
+#[path = "core_dispatch_primitive.rs"]
+mod core_dispatch_primitive;
 #[path = "function_apparent.rs"]
 mod function_apparent;
 

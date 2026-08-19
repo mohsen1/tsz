@@ -699,23 +699,12 @@ impl<'a> CheckerState<'a> {
                 return self.format_type_for_assignability_message(source);
             }
             let preserve_literal_surface = self.target_preserves_literal_surface(target);
-            if expr_type != TypeId::ERROR
-                && let Some(annotation_text) =
-                    self.declared_diagnostic_source_annotation_text(expr_idx)
-            {
-                let expr_enum_symbol = self
-                    .enum_symbol_from_enumish_type(expr_display_type)
-                    .or_else(|| self.enum_symbol_from_enumish_type(source));
-                let target_enum_symbol = self.enum_symbol_from_enumish_type(target);
-                if expr_enum_symbol.is_some()
-                    && expr_enum_symbol == target_enum_symbol
-                    && !annotation_text.contains(" | ")
-                    && !annotation_text.contains(" & ")
-                    && !annotation_text.contains('<')
-                {
-                    return self.format_declared_annotation_for_diagnostic(&annotation_text);
-                }
-            }
+            // NOTE: an enum-ish source is never repainted from its annotation
+            // text. tsc renders enum types and members through `typeToString`,
+            // which neither namespace-qualifies (`P.Q.S` prints `Q.S`) nor
+            // shows an alias spelling (`type MA = Mode.A` prints `Mode.A`);
+            // `should_prefer_declared_source_annotation_display` below refuses
+            // enum-ish sources for the same reason.
             if expr_type != TypeId::ERROR
                 && let Some(annotation_text) =
                     self.declared_diagnostic_source_annotation_text(expr_idx)
