@@ -1969,6 +1969,9 @@ path = "tests/ts2352_paren_alias_display_tests.rs"
 name = "generic_inference_ordering_tests"
 path = "tests/generic_inference_ordering_tests.rs"
 [[test]]
+name = "generic_call_fixed_type_param_head_display_tests"
+path = "tests/generic_call_fixed_type_param_head_display_tests.rs"
+[[test]]
 name = "jsx_generic_spread_deferred_conditional_tests"
 path = "tests/jsx_generic_spread_deferred_conditional_tests.rs"
 [[test]]
