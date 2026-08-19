@@ -273,3 +273,110 @@ const m: number = Schema.prototype.mark;
             "`Schema.prototype.mark` must type as the instance member; got: {diagnostics:#?}"
         );
     }
+
+    // ------------------------------------------------------------------
+    // Import-cycle alias to a cross-file generic function keeps its call
+    // signature for flow narrowing (#17625).
+    //
+    // Structural rule: when a `reduce`/assignment RHS is a call whose callee is
+    // an import alias to a cross-file generic function, the flow generic-call
+    // gate must resolve the callee through the alias target's stable *checked*
+    // signature and, when that signature is not yet computed (import cycles make
+    // "check the provider first" impossible), fail closed to the on-demand
+    // forcing retry. It must never accept the alias's own on-demand `Lazy(DefId)`
+    // — whose body, minted mid-cycle before the target is typed, degrades to a
+    // non-callable object — because that non-lazy-but-wrong callee type silently
+    // defeats the retry and leaves a false, conservative "possibly undefined".
+    //
+    // This is a multi-arena (CLI-driver) regression: the single-checker in-process
+    // harness shares all binders and never exercises the cross-arena delegation
+    // that produced the degraded alias body, so it passes even unfixed. Only the
+    // real multi-file driver reproduces it.
+    //
+    // The `maybe` row is the negative control: an alias to a genuinely
+    // `T | undefined`-returning function must STILL keep `table` possibly
+    // undefined (TS18048), proving the gate computes the real return type rather
+    // than blanket-suppressing the diagnostic. Binder names vary across rows so no
+    // fix keyed to a spelling can satisfy it.
+    #[test]
+    fn import_cycle_alias_to_cross_file_generic_function_narrows_reduce_result() {
+        let lib_files = tsz::checker::test_utils::load_lib_files(&["es5.d.ts", "es2015.core.d.ts"]);
+        assert!(
+            lib_files.len() >= 2,
+            "es5.d.ts and es2015.core.d.ts must be available for this regression"
+        );
+        let options = resolved_options_for_es2015_strict_test();
+
+        // `util` declares the imported factory and imports `Row` back from
+        // `consumer` (the cycle); `consumer` imports the factory and calls it in a
+        // `reduce` accumulator. `expect_ts18048` is the negative control: a
+        // genuinely `T | undefined` factory must keep the accumulator possibly
+        // undefined, while a non-null factory must leave the whole program
+        // tsc-clean (not merely TS18048-free — guards against trading one false
+        // positive for another).
+        let run = |case: &str, util_fn: &str, factory_decl: &str, call: &str, expect_ts18048: bool| {
+            let util = format!(
+                "import type {{ Row }} from \"./consumer.js\";\n{factory_decl}\n\
+                 export function tail(rows: Row[]): Row | undefined {{ return rows[0]; }}\n"
+            );
+            let consumer = format!(
+                "import {{ {util_fn} }} from \"./util.js\";\n\
+                 export interface Row {{\n  readonly name: string;\n  readonly cols: {{ readonly n: string }}[];\n}}\n\
+                 interface Raw {{ readonly tn: string; readonly cn: string; }}\n\
+                 export function gather(items: Raw[]): Row[] {{\n\
+                 \x20 return items.reduce<Row[]>((acc, it) => {{\n\
+                 \x20   let r = acc.find((c) => c.name === it.tn);\n\
+                 \x20   if (!r) {{ r = {call}; acc.push(r as Row); }}\n\
+                 \x20   r.cols.push({{ n: it.cn }});\n\
+                 \x20   return acc;\n\
+                 \x20 }}, []);\n\
+                 }}\n"
+            );
+            let diagnostics = collect_test_diagnostics_with_lib_files_and_options(
+                &[
+                    ("/consumer.ts", consumer.as_str()),
+                    ("/util.ts", util.as_str()),
+                ],
+                &lib_files,
+                &options,
+            );
+            if expect_ts18048 {
+                assert!(
+                    diagnostics.iter().any(|d| d.code == 18048),
+                    "[{case}] a genuinely `T | undefined` factory must keep the reduce \
+                     accumulator possibly-undefined (TS18048); got: {diagnostics:#?}"
+                );
+            } else {
+                assert!(
+                    diagnostics.is_empty(),
+                    "[{case}] an import-cycle alias to a non-null generic factory must \
+                     leave the program tsc-clean; got: {diagnostics:#?}"
+                );
+            }
+        };
+
+        // Non-null generic factory (`Readonly<T>`): the accumulator narrows.
+        run(
+            "freeze",
+            "freeze",
+            "export function freeze<T>(value: T): Readonly<T> { return value; }",
+            "freeze({ name: it.tn, cols: [] })",
+            false,
+        );
+        // Renamed binder + arrow form: still clean (fix is structural, not spelling-keyed).
+        run(
+            "wrap-arrow",
+            "wrap",
+            "export const wrap = <U>(value: U): Readonly<U> => value;",
+            "wrap({ name: it.tn, cols: [] })",
+            false,
+        );
+        // Negative control: a genuinely nullable factory keeps possibly-undefined.
+        run(
+            "maybe",
+            "maybe",
+            "export function maybe<T>(value: T): T | undefined { return value; }",
+            "maybe({ name: it.tn, cols: [] })",
+            true,
+        );
+    }

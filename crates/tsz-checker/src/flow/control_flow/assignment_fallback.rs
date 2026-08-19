@@ -8,9 +8,10 @@ use super::FlowAnalyzer;
 use crate::query_boundaries::flow_analysis::{
     PropertyAccessResult, TypeSubstitution, call_signatures_for_type,
     construct_signatures_for_type, contains_free_type_parameters, flow_call_signature,
-    flow_property, function_return_type, get_application_info, get_lazy_def_id, instantiate_type,
-    is_promise_like_type, literal_value, optional_flow_property, union_members_for_type,
-    unwrap_promise_type_argument, widen_literal_to_primitive,
+    flow_property, function_return_type, get_application_info, get_lazy_def_id,
+    has_call_signatures, instantiate_type, is_promise_like_type, literal_value,
+    optional_flow_property, union_members_for_type, unwrap_promise_type_argument,
+    widen_literal_to_primitive,
 };
 use crate::query_boundaries::operator_wrappers::is_equality_comparison_operator;
 use crate::types_domain::queries::lib_resolution::{
@@ -545,6 +546,31 @@ impl<'a> FlowAnalyzer<'a> {
             self.record_unresolved_import_callee(callee);
             return None;
         };
+        // A callee that resolved to a *non-callable* type, whose local binding is
+        // an import alias, is a mid-cycle degraded stand-in: `fallback_type_for_reference`
+        // mints the alias's own on-demand `Lazy(DefId)` whose body, computed before
+        // the target function has been typed (import cycles make "check the provider
+        // first" impossible), collapses to a plain object with no call signature.
+        // That non-lazy-but-wrong type passes the `is_unresolved_lazy_type` filter
+        // above, so without this guard the gate would feed it to the solver, get no
+        // return type, and leave the conservative (possibly-undefined) union as a
+        // false positive — while the on-demand forcing retry never fires because the
+        // callee looked "resolved". `record_unresolved_import_callee` records only an
+        // alias callee (returning whether it did), so a non-alias non-callable callee
+        // falls through to the solver gate unchanged; an alias one bails to the retry,
+        // which forces the alias's real signature and re-runs narrowing once (#17625).
+        // The cheap no-signature test short-circuits before the scope-walking alias
+        // lookup, so the common callable path pays nothing.
+        if !has_call_signatures(self.interner.as_type_database(), callee_type)
+            && self.record_unresolved_import_callee(callee)
+        {
+            tracing::trace!(
+                callee = callee.0,
+                callee_type = callee_type.0,
+                "generic-call fallback: import-alias callee resolved to a non-callable stand-in, recording retry request"
+            );
+            return None;
+        }
         tracing::trace!(
             callee = callee.0,
             callee_type = callee_type.0,
@@ -932,22 +958,24 @@ impl<'a> FlowAnalyzer<'a> {
 
     /// Record a call-fallback callee whose local binding is an import alias so
     /// the `&mut` orchestration layer (`check_flow_usage`) can force the
-    /// alias's type on demand and re-run flow narrowing once.
+    /// alias's type on demand and re-run flow narrowing once. Returns whether
+    /// the callee was an alias (and therefore recorded) — callers gate an early
+    /// bail on this so a non-alias callee is left to fall through unchanged.
     ///
     /// Only the CURRENT binder's local symbol is recorded: raw foreign
     /// `SymbolId`s collide across per-file binders and must never be handed to
     /// `get_type_of_symbol` on this checker. Non-alias callees are ignored —
     /// a local declaration's type is already recoverable syntactically, so a
     /// miss there is a genuine (unrecoverable) fallback failure.
-    fn record_unresolved_import_callee(&self, callee: NodeIndex) {
+    fn record_unresolved_import_callee(&self, callee: NodeIndex) -> bool {
         let Some(ctx) = self.checker_context else {
-            return;
+            return false;
         };
         let Some(local_sym) = self.binder.get_node_symbol(callee).or_else(|| {
             self.binder
                 .resolve_identifier_with_filter(self.arena, callee, &[], |_| true)
         }) else {
-            return;
+            return false;
         };
         let is_alias = self
             .binder
@@ -959,6 +987,7 @@ impl<'a> FlowAnalyzer<'a> {
                 .borrow_mut()
                 .insert(local_sym);
         }
+        is_alias
     }
 
     /// Resolve a declaration's declared type from its syntactic type annotation.

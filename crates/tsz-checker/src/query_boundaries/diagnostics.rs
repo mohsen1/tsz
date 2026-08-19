@@ -44,6 +44,18 @@ pub(crate) use super::index_signature::{IndexKind, has_index_signature};
 pub(crate) use tsz_solver::type_queries::AssignmentNumericDisplayChildren;
 pub(crate) use tsz_solver::type_queries::is_this_type;
 
+/// `true` when the type is — or has a union member that is — a string, number,
+/// boolean, or bigint unit literal. The domain-agnostic counterpart of the
+/// string-only `string_literal_value` surface, used by assignment-diagnostic
+/// display to decide whether a fresh source literal should be preserved
+/// verbatim against a contextual target that carries a matching literal
+/// (mirroring tsc's `isLiteralOfContextualType`). Owned by the diagnostics
+/// boundary because only `error_reporter/` presentation code consults it
+/// (issue #12947).
+pub(crate) fn type_contains_unit_literal(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::type_queries::type_contains_unit_literal(db, type_id)
+}
+
 /// Resolve the binder symbol backing an object type, for diagnostic
 /// elaboration (spelling suggestions, missing-property anchors). Used only by
 /// `error_reporter/` presentation code, so it is owned by the diagnostics
@@ -655,6 +667,45 @@ pub(crate) fn indexed_access_alias_body(
 /// Returns true if `ty` is still a deferred form after display reduction.
 pub(crate) fn is_unresolved_for_display(db: &dyn TypeDatabase, ty: TypeId) -> bool {
     tsz_solver::type_queries::is_deferred_lazy_or_indexed_access(db, ty)
+}
+
+/// For a non-generic type alias whose body is (or transparently chains to) a
+/// `keyof` type (`type K = keyof I`, `type K = keyof typeof E`,
+/// `type K2 = K1`), return the `keyof` body. The bounded peel guards against
+/// pathological alias cycles.
+pub(crate) fn keyof_alias_display_body(
+    db: &dyn TypeDatabase,
+    def_store: &DefinitionStore,
+    ty: TypeId,
+) -> Option<TypeId> {
+    let mut current = ty;
+    for _ in 0..4 {
+        let def_id = tsz_solver::type_queries::get_lazy_def_id(db, current)?;
+        let def = def_store.get(def_id)?;
+        if def.kind != DefKind::TypeAlias || !def.type_params.is_empty() {
+            return None;
+        }
+        let body = def.body?;
+        if tsz_solver::type_queries::get_keyof_type(db, body).is_some() {
+            return Some(body);
+        }
+        current = body;
+    }
+    None
+}
+
+/// Whether a `keyof` operand is value-derived (`keyof typeof x`, enum /
+/// enum-namespace / anonymous object operand) rather than a named type
+/// reference. See the solver classifier for the structural rule.
+pub(crate) fn keyof_operand_is_value_derived(db: &dyn TypeDatabase, operand: TypeId) -> bool {
+    tsz_solver::type_queries::keyof_operand_is_value_derived(db, operand)
+}
+
+/// Whether `ty` is a finite unit-literal key set (a unit type or a union of
+/// unit types) — the reduced shape of a concrete `keyof` that provides a
+/// literal display context.
+pub(crate) fn is_finite_unit_literal_keyset(db: &dyn TypeDatabase, ty: TypeId) -> bool {
+    tsz_solver::type_queries::is_finite_unit_literal_keyset(db, ty)
 }
 
 pub(crate) fn type_may_display_iterator_protocol(db: &dyn TypeDatabase, type_id: TypeId) -> bool {

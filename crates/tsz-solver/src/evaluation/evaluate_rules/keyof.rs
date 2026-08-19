@@ -865,8 +865,21 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 // typeof Enum gives { Up: E.Up, Down: E.Down }, keyof gives "Up" | "Down"
                 TypeData::Enum(def_id, _member_type) => {
                     if let Some(ns_type) = self.resolver().get_enum_namespace_type(def_id) {
+                        tracing::trace!(
+                            def_id = def_id.0,
+                            ns_type = ns_type.0,
+                            "keyof_enum_ns_hit"
+                        );
                         self.recurse_keyof(ns_type)
                     } else {
+                        tracing::trace!(def_id = def_id.0, "keyof_enum_ns_miss");
+                        // The namespace object is registered when the checker
+                        // computes the enum symbol's type; a miss here is a
+                        // registration-window artifact, not a stable function
+                        // of `operand` (same class as the `Lazy` bail above).
+                        // Keep the deferred form out of the persistent caches
+                        // so a later evaluation reduces to the key set.
+                        self.mark_unresolved_def_seen();
                         self.interner().keyof(operand)
                     }
                 }

@@ -631,6 +631,34 @@ pub fn type_contains_string_literal(db: &dyn TypeDatabase, type_id: TypeId) -> b
     }
 }
 
+/// Check if a type contains a *unit literal* of any domain — a string, number,
+/// boolean, or bigint literal — directly or as a union member.
+///
+/// This is the domain-agnostic counterpart of [`type_contains_string_literal`]:
+/// where that helper recognizes only `"x"`-shaped members, this one treats every
+/// scalar `TypeData::Literal` — `1`, `1n`, and the `true`/`false` singletons — as
+/// literal surface. It is used by the assignment-diagnostic display gate that
+/// decides whether a fresh source literal should be preserved verbatim against a
+/// contextual target that carries a matching literal (mirroring tsc's
+/// `isLiteralOfContextualType`), so numeric- and bigint-literal union targets
+/// keep the source literal exactly as string-literal ones already do.
+pub fn type_contains_unit_literal(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    // A scalar unit literal — including the intrinsic `true`/`false` singletons,
+    // which `is_literal_type` recognizes ahead of its intrinsic fast-path — is a
+    // literal surface directly. Only unions need the per-member recursion; plain
+    // `boolean` and every other intrinsic are correctly excluded.
+    if crate::is_literal_type(db, type_id) {
+        return true;
+    }
+    match db.lookup(type_id) {
+        Some(TypeData::Union(members)) => db
+            .type_list(members)
+            .iter()
+            .any(|m| type_contains_unit_literal(db, *m)),
+        _ => false,
+    }
+}
+
 /// Convert a literal type to its JavaScript string representation.
 ///
 /// This mirrors how TypeScript stringifies values in template literal evaluation:
