@@ -31,7 +31,47 @@ pub(crate) use tsz_solver::{
 };
 
 pub(crate) use super::construct_signatures::construct_signatures_for_type;
+pub(crate) use super::containment_queries::{
+    collect_all_types, collect_lazy_def_ids, collect_referenced_types, collect_type_queries,
+    constraint_references_type_param_in_resolution_path, contains_application_in_structure,
+    contains_conditional_type, contains_current_infer_placeholder, contains_error_type,
+    contains_error_type_in_args, contains_file_relative_content, contains_free_type_parameters,
+    contains_generic_indexed_access_surface, contains_generic_type_parameters,
+    contains_index_access_type, contains_infer_types, contains_keyof_type,
+    contains_lazy_or_recursive, contains_never_type, contains_this_type, contains_type_by_id,
+    contains_type_parameter_named, contains_type_parameters, has_deferred_conditional_member,
+    references_any_type_param_named, return_type_is_unresolved, type_contains_string_literal,
+    type_contains_undefined, union_of_bare_lazy_def_ids, walk_referenced_types,
+};
 pub(crate) use super::generic_instantiation::{instantiate_generic, instantiate_type};
+pub(crate) use super::shape_predicates::{
+    are_same_base_literal_kind, has_call_signatures, has_construct_signatures, has_function_shape,
+    has_late_bound_members, has_nonpublic_property, has_property_by_str, is_array_or_tuple_type,
+    is_array_type, is_bare_infer_placeholder, is_bigint_type, is_boolean_type, is_callable_type,
+    is_conditional_type, is_constructor_like_type,
+    is_deferred_indexed_access_or_intersection_with_one, is_definitely_nullish,
+    is_distributive_conditional_with_deferred_check, is_empty_object_type, is_enum_type,
+    is_error_type, is_evaluable_meta_type, is_fresh_object_type, is_function_type,
+    is_generic_application, is_generic_application_with_type_params, is_generic_mapped_application,
+    is_generic_mapped_type, is_generic_type, is_genuine_error_type,
+    is_homomorphic_mapped_type_context, is_index_access_type, is_intersection_type, is_keyof_type,
+    is_lazy_type, is_literal_or_primitive_or_compound_of_those, is_literal_type,
+    is_literal_type_through_type_constraints, is_mapped_type,
+    is_mapped_type_with_readonly_modifier, is_merged_intersection_object, is_module_namespace_type,
+    is_nullish_type, is_number_literal, is_number_type, is_object_like_type,
+    is_object_or_mapped_type, is_only_null_or_undefined, is_plain_object_type, is_primitive_type,
+    is_readonly_tuple_fixed_element, is_spread_marker_tuple, is_string_intrinsic_type,
+    is_string_literal, is_string_type, is_structurally_deferred_type, is_symbol_or_unique_symbol,
+    is_symbol_type, is_template_literal_type, is_this_type, is_tuple_like_type, is_tuple_type,
+    is_type_deeply_any, is_type_parameter, is_type_parameter_like,
+    is_type_parameter_or_intersection_with_type_parameter, is_type_query_type, is_union_type,
+    is_unique_symbol_type, is_unit_type, is_unresolved_inference_result,
+    is_valid_mapped_type_key_type, is_widening_primitive_intrinsic,
+    mapped_type_is_deferred_generic, numeric_literal_index_valid_for_object,
+    type_has_displayable_name, type_has_readonly_members, type_id_is_known_to_db,
+    type_parameter_has_conditional_constraint, type_parameter_has_mapped_constraint,
+    union_contains_tuple,
+};
 pub(crate) use super::type_rewrite::replace_type_queries_and_lazies_with;
 
 pub(crate) fn callable_shape_for_type(
@@ -45,10 +85,6 @@ pub(crate) fn classify_for_traversal(db: &dyn TypeDatabase, type_id: TypeId) -> 
     tsz_solver::type_queries::classify_for_traversal(db, type_id)
 }
 
-pub(crate) fn has_function_shape(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    tsz_solver::type_queries::get_function_shape(db, type_id).is_some()
-}
-
 /// Members of a union type, or `None` if `type_id` is not a union.
 ///
 /// Returns a [`TypeIdList`] — a zero-copy shared view over the interned
@@ -60,90 +96,11 @@ pub(crate) fn union_members(db: &dyn TypeDatabase, type_id: TypeId) -> Option<Ty
     tsz_solver::type_queries::get_union_members(db, type_id)
 }
 
-pub(crate) fn is_type_parameter_like(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    tsz_solver::type_queries::is_type_parameter_like(db, type_id)
-}
-
-pub(crate) fn is_unique_symbol_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    tsz_solver::type_queries::is_unique_symbol_type(db, type_id)
-}
-
-pub(crate) fn is_keyof_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    tsz_solver::type_queries::is_keyof_type(db, type_id)
-}
-pub(crate) fn contains_keyof_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    tsz_solver::type_queries::contains_keyof_type(db, type_id)
-}
-pub(crate) fn is_index_access_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    tsz_solver::type_queries::is_index_access_type(db, type_id)
-}
-pub(crate) fn contains_type_parameters(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    tsz_solver::visitor::contains_type_parameters(db, type_id)
-}
-
-pub(crate) fn contains_generic_indexed_access_surface(
-    db: &dyn TypeDatabase,
-    type_id: TypeId,
-) -> bool {
-    tsz_solver::type_queries::contains_generic_indexed_access_surface(db, type_id)
-}
-
-pub(crate) fn contains_free_type_parameters(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    tsz_solver::type_queries::contains_free_type_parameters_db(db, type_id)
-}
-
-pub(crate) fn contains_generic_type_parameters(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    tsz_solver::type_queries::contains_generic_type_parameters_db(db, type_id)
-}
-
-pub(crate) fn contains_file_relative_content(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    tsz_solver::type_queries::contains_file_relative_content_db(db, type_id)
-}
-
 /// Current value of the solver's unresolved-`Lazy` taint counter. Snapshot it
 /// around a proof computation to detect a dependency on a def body that was
 /// not yet registered; such proofs must not be published program-wide.
 pub(crate) fn lazy_resolve_failure_count() -> u64 {
     tsz_solver::relations::subtype::lazy_resolve_failure_count()
-}
-
-pub(crate) fn contains_lazy_or_recursive(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    tsz_solver::type_queries::contains_lazy_or_recursive_db(db, type_id)
-}
-
-pub(crate) fn contains_application_in_structure(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    tsz_solver::type_queries::contains_application_in_structure(db, type_id)
-}
-
-pub(crate) fn is_type_deeply_any(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    tsz_solver::type_queries::is_type_deeply_any(db, type_id)
-}
-
-pub(crate) fn has_property_by_str(db: &dyn TypeDatabase, type_id: TypeId, name: &str) -> bool {
-    tsz_solver::type_queries::type_has_property_by_str(db, type_id, name)
-}
-
-pub(crate) fn has_nonpublic_property(db: &dyn TypeDatabase, type_id: TypeId, name: &str) -> bool {
-    tsz_solver::type_queries::has_nonpublic_property(db, type_id, name)
-}
-
-pub(crate) fn contains_error_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    tsz_solver::type_queries::contains_error_type_db(db, type_id)
-}
-
-/// Like `contains_error_type`, but also detects `TypeId::ERROR` nested in
-/// Application arguments. The visitor checks the error sentinel before the
-/// intrinsic fast path, which is needed for manually-lowered overload types.
-pub(crate) fn contains_error_type_in_args(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    tsz_solver::visitor::contains_error_type(db, type_id)
-}
-
-pub(crate) fn contains_never_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    tsz_solver::type_queries::contains_never_type_db(db, type_id)
-}
-
-pub(crate) fn is_string_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    tsz_solver::type_queries::is_string_type(db, type_id)
 }
 
 pub(crate) fn lazy_def_id(
@@ -165,10 +122,6 @@ pub(crate) fn mapped_type_id(
     type_id: TypeId,
 ) -> Option<tsz_solver::MappedTypeId> {
     tsz_solver::type_queries::get_mapped_type_id(db, type_id)
-}
-
-pub(crate) fn has_construct_signatures(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    tsz_solver::type_queries::has_construct_signatures(db, type_id)
 }
 
 pub(crate) fn type_parameter_default(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
@@ -213,101 +166,6 @@ pub(crate) fn free_type_params_named<S: std::hash::BuildHasher>(
     tsz_solver::computation::free_type_params_named(db, roots, names)
 }
 
-/// Check if a type parameter has a constraint that contains a conditional type.
-/// This is used to suppress false-positive TS2339 errors when accessing properties
-/// on generic conditional types like `Parameters<T>["length"]` where the property
-/// may exist on the resolved conditional type but we can't determine it until
-/// the type parameter is instantiated.
-pub(crate) fn type_parameter_has_conditional_constraint(
-    db: &dyn TypeDatabase,
-    type_id: TypeId,
-) -> bool {
-    tsz_solver::type_queries::type_parameter_has_conditional_constraint_db(db, type_id)
-}
-
-/// Check if a type parameter has a constraint that contains a generic mapped type.
-/// This is used to suppress false-positive TS2339 errors when accessing properties
-/// on type parameters with mapped type constraints like `T extends { [K in keyof U]: V }`
-/// where U is another type parameter. The mapped type cannot be fully resolved until
-/// U is instantiated.
-pub(crate) fn type_parameter_has_mapped_constraint(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    tsz_solver::type_queries::type_parameter_has_mapped_constraint_db(db, type_id)
-}
-
-/// Recursively check if a type contains a conditional type along a projection
-/// path (union/intersection members, generic application arguments, indexed
-/// access components). See `shape_contains_conditional_type_db` for scope.
-pub(crate) fn contains_conditional_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    tsz_solver::type_queries::shape_contains_conditional_type_db(db, type_id)
-}
-
-pub(crate) fn is_mapped_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    tsz_solver::type_queries::is_mapped_type(db, type_id)
-}
-
-/// `true` when `type_id` is an anonymous object/object-with-index/mapped shape
-/// — i.e. a structural object body whose apparent type is itself.
-pub(crate) fn is_object_or_mapped_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    tsz_solver::type_queries::is_object_or_mapped_type(db, type_id)
-}
-
-/// Check if a type is a generic application type with type parameters in its arguments.
-/// For example, `Options<State, Actions>` where `State` or `Actions` are type parameters.
-pub(crate) fn is_generic_application_with_type_params(
-    db: &dyn TypeDatabase,
-    type_id: TypeId,
-) -> bool {
-    if let Some(app) = tsz_solver::type_queries::get_type_application(db, type_id) {
-        // Check if any type argument contains type parameters
-        return app
-            .args
-            .iter()
-            .any(|&arg| contains_type_parameters(db, arg));
-    }
-    false
-}
-
-/// Check whether an application's aliased body is a generic mapped type after
-/// substituting the application's type arguments.
-pub(crate) fn is_generic_mapped_application<R: TypeResolver>(
-    db: &dyn QueryDatabase,
-    resolver: &R,
-    type_id: TypeId,
-) -> bool {
-    tsz_solver::type_queries::is_generic_mapped_application_db(db, resolver, type_id)
-}
-
-/// Check if a type contains type parameters that require instantiation,
-/// but correctly handles mapped types by only checking their constraint and
-/// `name_type` (not the template, which always contains the iteration variable).
-///
-/// Use this instead of raw `contains_type_parameters` when deciding whether
-/// to suppress TS2339 — a fully-instantiated mapped type like
-/// `{ [P in "a" | "b"]: Foo[P] }` does NOT need suppression even though its
-/// template technically contains `P`.
-pub(crate) fn has_unresolved_type_parameters(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    if let Some(_mapped) = tsz_solver::type_queries::get_mapped_type(db, type_id) {
-        // For mapped types, only check constraint and name_type.
-        // The template always contains the iteration variable which is not "unresolved".
-        is_generic_mapped_type(db, type_id)
-    } else {
-        tsz_solver::visitor::contains_type_parameters(db, type_id)
-    }
-}
-
-/// Check if a type is a *generic* mapped type — one whose key constraint still
-/// contains type parameters (e.g., `{ [K in keyof T]: ... }` where T is unresolved).
-/// Mapped types with concrete key types (like `Partial<ConcreteType>`) return false
-/// because they resolve to object types with statically known members.
-/// This matches tsc's `isGenericMappedType`.
-pub(crate) fn is_generic_mapped_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    tsz_solver::type_queries::is_generic_mapped_type_db(db, type_id)
-}
-
-pub(crate) fn is_generic_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    tsz_solver::type_queries::is_generic_type(db, type_id)
-}
-
 pub(crate) fn tuple_elements(db: &dyn TypeDatabase, type_id: TypeId) -> Option<Vec<TupleElement>> {
     tsz_solver::type_queries::get_tuple_elements(db, type_id)
 }
@@ -335,43 +193,6 @@ pub(crate) fn array_element_type(db: &dyn TypeDatabase, type_id: TypeId) -> Opti
 /// for the allocation rationale.
 pub(crate) fn intersection_members(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeIdList> {
     tsz_solver::type_queries::get_intersection_members(db, type_id)
-}
-
-pub(crate) fn is_unit_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    tsz_solver::type_queries::is_unit_type(db, type_id)
-}
-
-pub(crate) fn is_empty_object_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    tsz_solver::is_empty_object_type(db, type_id)
-}
-
-/// True for the wide, non-nullable primitive intrinsics (`string`, `number`,
-/// `boolean`, `bigint`, `symbol`) — the ones whose `T & {}` brand is identity.
-pub(crate) fn is_widening_primitive_intrinsic(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    tsz_solver::is_widening_primitive_intrinsic(db, type_id)
-}
-
-/// True when a type would render with a user-visible name (interface, class,
-/// type alias, type parameter, application, lazy ref, intrinsic, etc.). False
-/// for anonymous structural shapes like `{ p: number; q: string; }`. Used by
-/// diagnostic display to decide whether to keep `keyof <name>` form or fall
-/// back to the evaluated key union.
-pub(crate) fn type_has_displayable_name(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    if let Some(shape) = object_shape_for_type(db, type_id) {
-        if shape.symbol.is_some() {
-            return true;
-        }
-        return db.get_display_alias(type_id).is_some();
-    }
-    db.lookup(type_id).is_some()
-}
-
-pub(crate) fn type_id_is_known_to_db(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    type_id.is_intrinsic() || type_id.is_error() || db.lookup(type_id).is_some()
-}
-
-pub(crate) fn is_symbol_or_unique_symbol(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    tsz_solver::type_queries::is_symbol_or_unique_symbol(db, type_id)
 }
 
 pub(crate) fn unwrap_readonly(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
@@ -414,20 +235,6 @@ pub(crate) fn stringify_literal_type(db: &dyn TypeDatabase, type_id: TypeId) -> 
 
 // ── Visitor wrappers ──
 
-pub(crate) fn collect_referenced_types(
-    db: &dyn TypeDatabase,
-    type_id: TypeId,
-) -> rustc_hash::FxHashSet<TypeId> {
-    tsz_solver::visitor::collect_referenced_types(db, type_id)
-}
-
-pub(crate) fn collect_enum_def_ids(
-    db: &dyn TypeDatabase,
-    type_id: TypeId,
-) -> Vec<tsz_solver::def::DefId> {
-    tsz_solver::visitor::collect_enum_def_ids(db, type_id)
-}
-
 // ── Type construction wrappers ──
 
 /// Create `type_id | undefined`. Used for optional chain call results.
@@ -440,18 +247,6 @@ pub(crate) fn intersection_or_single(db: &dyn TypeDatabase, types: Vec<TypeId>) 
 }
 
 // ── Union / classifier wrappers ──
-
-pub(crate) fn is_union_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    tsz_solver::is_union_type(db, type_id)
-}
-
-pub(crate) fn contains_infer_types(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    tsz_solver::type_queries::contains_infer_types_db(db, type_id)
-}
-
-pub(crate) fn contains_current_infer_placeholder(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    tsz_solver::type_queries::contains_current_infer_placeholder_db(db, type_id)
-}
 
 pub(crate) fn type_param_info(
     db: &dyn TypeDatabase,
@@ -485,37 +280,6 @@ pub(crate) fn rest_argument_element_type(db: &dyn TypeDatabase, type_id: TypeId)
     tsz_solver::computation::rest_argument_element_type(db, type_id)
 }
 
-/// Check if a type transitively references any type parameter whose name is in the given set.
-pub(crate) fn references_any_type_param_named(
-    db: &dyn TypeDatabase,
-    type_id: TypeId,
-    names: &rustc_hash::FxHashSet<tsz_common::interner::Atom>,
-) -> bool {
-    tsz_solver::references_any_type_param_named(db, type_id, names)
-}
-
-/// Check if a type transitively contains a type parameter with the given name.
-pub(crate) fn contains_type_parameter_named(
-    db: &dyn TypeDatabase,
-    type_id: TypeId,
-    name: tsz_common::interner::Atom,
-) -> bool {
-    tsz_solver::contains_type_parameter_named(db, type_id, name)
-}
-
-/// Check if a type transitively contains a specific `TypeId`.
-pub(crate) fn contains_type_by_id(db: &dyn TypeDatabase, type_id: TypeId, target: TypeId) -> bool {
-    tsz_solver::contains_type_by_id(db, type_id, target)
-}
-
-/// Whether a generic call's resolved return type is still *unresolved* — it
-/// mentions a type parameter, an `infer` placeholder, or `unknown`.
-pub(crate) fn return_type_is_unresolved(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    contains_type_parameters(db, type_id)
-        || contains_infer_types(db, type_id)
-        || contains_type_by_id(db, type_id, TypeId::UNKNOWN)
-}
-
 // ── Call-related query wrappers ──
 
 /// Get the full function shape for a type, if it is a Function type.
@@ -529,23 +293,6 @@ pub(crate) fn function_shape_for_type(
     tsz_solver::type_queries::get_function_shape(db, type_id)
 }
 
-/// Check if a type is callable (has call signatures or is a function).
-pub(crate) fn is_callable_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    tsz_solver::type_queries::is_callable_type(db, type_id)
-}
-
-/// Check if a type is a type parameter at the top level, or an intersection
-/// containing a type parameter member.
-///
-/// Used by generic call inference to decide whether excess property checking
-/// should be skipped for a parameter position.
-pub(crate) fn is_type_parameter_or_intersection_with_type_parameter(
-    db: &dyn TypeDatabase,
-    type_id: TypeId,
-) -> bool {
-    tsz_solver::type_queries::is_type_parameter_or_intersection_with_type_parameter(db, type_id)
-}
-
 /// Check if both types are application (generic instantiation) types and the
 /// parameter type contains type parameters, indicating the parameter should be
 /// preserved without evaluation during generic inference.
@@ -555,12 +302,6 @@ pub(crate) fn should_preserve_application_for_inference(
     arg_type: TypeId,
 ) -> bool {
     tsz_solver::type_queries::should_preserve_application_for_inference(db, param_type, arg_type)
-}
-
-/// Check if a type represents an unresolved inference result (error, contains
-/// infer types, or transitively references error).
-pub(crate) fn is_unresolved_inference_result(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    tsz_solver::type_queries::is_unresolved_inference_result(db, type_id)
 }
 
 /// Unpack a tuple rest parameter into individual positional parameters.
@@ -627,31 +368,6 @@ pub(crate) fn enum_def_id(
     tsz_solver::type_queries::get_enum_def_id(db, type_id)
 }
 
-/// Check whether a mapped type has a `readonly` modifier applied.
-pub(crate) fn is_mapped_type_with_readonly_modifier(
-    db: &dyn TypeDatabase,
-    type_id: TypeId,
-) -> bool {
-    tsz_solver::operations::property::is_mapped_type_with_readonly_modifier(db, type_id)
-}
-
-/// Check whether a tuple element at a fixed position is readonly.
-pub(crate) fn is_readonly_tuple_fixed_element(
-    db: &dyn TypeDatabase,
-    type_id: TypeId,
-    prop_name: &str,
-) -> bool {
-    tsz_solver::operations::property::is_readonly_tuple_fixed_element(db, type_id, prop_name)
-}
-
-/// Check if a type is a plain object type (properties only, no index signatures).
-///
-/// Returns `true` for `TypeData::Object` but not `TypeData::ObjectWithIndex`.
-/// Used to choose between `factory.object()` and `factory.object_with_index()`.
-pub(crate) fn is_plain_object_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    tsz_solver::object_shape_id(db, type_id).is_some()
-}
-
 /// Get application info (base type + type arguments) for a type application.
 pub(crate) fn application_info(
     db: &dyn TypeDatabase,
@@ -669,11 +385,6 @@ pub(crate) fn classify_literal_type(db: &dyn TypeDatabase, type_id: TypeId) -> L
     tsz_solver::type_queries::extended::classify_literal_type(db, type_id)
 }
 
-/// Check if a type is a generic type application.
-pub(crate) fn is_generic_application(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    tsz_solver::query::is_generic_application(db, type_id)
-}
-
 // ── Literal/type extraction wrappers ──
 
 pub(crate) use tsz_solver::LiteralValue;
@@ -688,22 +399,7 @@ pub(crate) fn widen_literal_type(db: &dyn TypeDatabase, type_id: TypeId) -> Type
     widening::widen_literal_type(db, type_id)
 }
 
-/// Check if a type is a template literal type.
-pub(crate) fn is_template_literal_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    tsz_solver::type_queries::is_template_literal_type(db, type_id)
-}
-
-/// Check if a type is a string intrinsic type (Uppercase, Lowercase, Capitalize, Uncapitalize).
-pub(crate) fn is_string_intrinsic_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    tsz_solver::string_intrinsic_components(db, type_id).is_some()
-}
-
 // ── Contextual/operation wrappers ──
-
-/// Check whether a type is a "fresh" object literal type (for excess property checking).
-pub(crate) fn is_fresh_object_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    tsz_solver::relations::freshness::is_fresh_object_type(db, type_id)
-}
 
 /// Widen "fresh" object literal types to remove freshness tracking.
 pub(crate) fn widen_freshness(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
@@ -722,14 +418,6 @@ pub(crate) fn get_iterator_info(
     tsz_solver::operations::get_iterator_info(db, type_id, is_async)
 }
 
-/// Collect all types recursively reachable from a root type.
-pub(crate) fn collect_all_types(
-    db: &dyn TypeDatabase,
-    type_id: TypeId,
-) -> rustc_hash::FxHashSet<TypeId> {
-    tsz_solver::visitor::collect_all_types(db, type_id)
-}
-
 // ── Data-layer query wrappers ──
 // These wrap `tsz_solver::type_queries::data::` functions to keep the
 // internal data-access module out of checker code.
@@ -740,11 +428,6 @@ pub(crate) fn object_symbol(
     type_id: TypeId,
 ) -> Option<tsz_binder::SymbolId> {
     tsz_solver::type_queries::data::get_object_symbol(db, type_id)
-}
-
-/// Check if a type is constructor-like (has construct signatures or is a constructor function).
-pub(crate) fn is_constructor_like_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    tsz_solver::type_queries::data::is_constructor_like_type(db, type_id)
 }
 
 /// Get the enum member's underlying value type (e.g., for `Enum.Member` → its literal type).
@@ -807,25 +490,7 @@ pub(crate) fn find_matching_property(
 
 // ── This-type query ──
 
-pub(crate) fn is_this_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    tsz_solver::type_queries::is_this_type(db, type_id)
-}
-
-pub(crate) fn is_infer_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    tsz_solver::type_queries::is_infer_type(db, type_id)
-}
-
 // ── Conditional type query ──
-
-pub(crate) fn is_conditional_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    tsz_solver::type_queries::is_conditional_type(db, type_id)
-}
-
-pub(crate) fn is_evaluable_meta_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    is_conditional_type(db, type_id)
-        || is_index_access_type(db, type_id)
-        || is_keyof_type(db, type_id)
-}
 
 // ── Type parameter constraint query ──
 
@@ -881,10 +546,6 @@ pub(crate) fn string_literal_value(
     tsz_solver::type_queries::get_string_literal_value(db, type_id)
 }
 
-pub(crate) fn type_contains_string_literal(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    tsz_solver::type_queries::type_contains_string_literal(db, type_id)
-}
-
 // ── Number literal value extraction ──
 
 pub(crate) fn number_literal_value(db: &dyn TypeDatabase, type_id: TypeId) -> Option<f64> {
@@ -892,10 +553,6 @@ pub(crate) fn number_literal_value(db: &dyn TypeDatabase, type_id: TypeId) -> Op
 }
 
 // ── Same base literal kind comparison ──
-
-pub(crate) fn are_same_base_literal_kind(db: &dyn TypeDatabase, a: TypeId, b: TypeId) -> bool {
-    tsz_solver::type_queries::are_same_base_literal_kind(db, a, b)
-}
 
 pub(crate) fn widen_literal_to_primitive(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
     tsz_solver::type_queries::widen_literal_to_primitive(db, type_id)
@@ -919,16 +576,6 @@ pub(crate) fn classify_for_literal_value(
     type_id: TypeId,
 ) -> LiteralValueKind {
     tsz_solver::type_queries::classify_for_literal_value(db, type_id)
-}
-
-/// Check if a type is a valid mapped type key constraint (keyof, string, number,
-/// symbol, union of these, or a type parameter with such a constraint).
-pub(crate) fn is_valid_mapped_type_key_type(
-    db: &dyn tsz_solver::construction::QueryDatabase,
-    type_id: TypeId,
-) -> bool {
-    let evaluator = tsz_solver::operations::BinaryOpEvaluator::new(db);
-    evaluator.is_valid_mapped_type_key_type(type_id)
 }
 
 /// Information about an indexed access type (e.g., `T[K]`).
@@ -1055,50 +702,6 @@ pub(crate) fn get_merged_object_shape_for_type(
     })
 }
 
-/// Returns `true` if `type_id` is a union or intersection whose members are
-/// all primitive intrinsics or literal types.
-pub(crate) fn is_primitive_or_literal_compound(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    tsz_solver::type_queries::is_primitive_or_literal_compound(db, type_id)
-}
-
-/// Returns `true` if `type_id` is itself a literal/primitive, or a union or
-/// intersection composed entirely of literal/primitive members.
-///
-/// Used for diagnostic display: when a generic type-alias application reduces
-/// to such a "terminal" form (e.g. `KeysExtendedBy<M, number>` reducing to
-/// `"b"`), tsc drops the alias name and shows the resolved literal/primitive
-/// in error messages. Object/interface results keep the alias form.
-pub(crate) fn is_literal_or_primitive_or_compound_of_those(
-    db: &dyn TypeDatabase,
-    type_id: TypeId,
-) -> bool {
-    tsz_solver::type_queries::is_literal_or_primitive_or_compound_of_those(db, type_id)
-}
-
-pub(crate) fn is_array_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    tsz_solver::is_array_type(db, type_id)
-}
-
-pub(crate) fn is_tuple_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    tsz_solver::is_tuple_type(db, type_id)
-}
-
-pub(crate) fn is_intersection_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    tsz_solver::is_intersection_type(db, type_id)
-}
-
-pub(crate) fn is_merged_intersection_object(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    tsz_solver::is_merged_intersection_object(db, type_id)
-}
-
-pub(crate) fn has_call_signatures(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    tsz_solver::type_queries::has_call_signatures(db, type_id)
-}
-
-pub(crate) fn is_type_query_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    tsz_solver::is_type_query_type(db, type_id)
-}
-
 pub(crate) fn needs_evaluation_for_merge(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::type_queries::needs_evaluation_for_merge(db, type_id)
 }
@@ -1124,10 +727,6 @@ pub(crate) fn find_property_by_str(
 
 pub(crate) fn array_applicable_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
     tsz_solver::type_queries::get_array_applicable_type(db, type_id)
-}
-
-pub(crate) fn is_only_null_or_undefined(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    tsz_solver::type_queries::is_only_null_or_undefined(db, type_id)
 }
 
 pub(crate) fn homomorphic_mapped_source(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
@@ -1331,72 +930,8 @@ pub(crate) fn get_type_query_symbol_ref(
     tsz_solver::type_queries::get_type_query_symbol_ref(db, type_id)
 }
 
-pub(crate) fn is_array_or_tuple_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    tsz_solver::type_queries::is_array_or_tuple_type(db, type_id)
-}
-
-pub(crate) fn is_bare_infer_placeholder(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    tsz_solver::type_queries::is_bare_infer_placeholder_db(db, type_id)
-}
-
-pub(crate) fn is_boolean_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    tsz_solver::type_queries::is_boolean_type(db, type_id)
-}
-
-pub(crate) fn is_bigint_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    tsz_solver::type_queries::is_bigint_type(db, type_id)
-}
-
-pub(crate) fn is_homomorphic_mapped_type_context(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    tsz_solver::type_queries::is_homomorphic_mapped_type_context(db, type_id)
-}
-
-pub(crate) fn is_literal_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    tsz_solver::type_queries::is_literal_type(db, type_id)
-}
-
-pub(crate) fn is_number_literal(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    tsz_solver::type_queries::is_number_literal(db, type_id)
-}
-
-pub(crate) fn is_number_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    tsz_solver::type_queries::is_number_type(db, type_id)
-}
-
-pub(crate) fn is_spread_marker_tuple(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    tsz_solver::type_queries::is_spread_marker_tuple(db, type_id)
-}
-
-pub(crate) fn is_symbol_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    tsz_solver::type_queries::is_symbol_type(db, type_id)
-}
-
-pub(crate) fn is_tuple_like_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    tsz_solver::type_queries::is_tuple_like_type(db, type_id)
-}
-
-pub(crate) fn is_type_parameter(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    tsz_solver::type_queries::is_type_parameter(db, type_id)
-}
-
 pub(crate) fn keyof_object_properties(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
     tsz_solver::type_queries::keyof_object_properties(db, type_id)
-}
-
-pub(crate) fn numeric_literal_index_valid_for_object(
-    db: &dyn TypeDatabase,
-    index_type: TypeId,
-    object_type: TypeId,
-) -> bool {
-    tsz_solver::type_queries::numeric_literal_index_valid_for_object(db, index_type, object_type)
-}
-
-pub(crate) fn type_has_readonly_members(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    tsz_solver::type_queries::type_has_readonly_members(db, type_id)
-}
-
-pub(crate) fn union_contains_tuple(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    tsz_solver::type_queries::union_contains_tuple(db, type_id)
 }
 
 #[allow(unused_imports)]
@@ -1417,43 +952,6 @@ pub(crate) fn get_conditional_type_id(
     type_id: TypeId,
 ) -> Option<tsz_solver::ConditionalTypeId> {
     tsz_solver::type_queries::get_conditional_type_id(db, type_id)
-}
-
-pub(crate) fn collect_lazy_def_ids(
-    db: &dyn TypeDatabase,
-    root: TypeId,
-) -> Vec<tsz_solver::def::DefId> {
-    tsz_solver::visitor::collect_lazy_def_ids(db, root)
-}
-
-pub(crate) fn contains_lazy_def_id(
-    db: &dyn TypeDatabase,
-    root: TypeId,
-    target_def_id: tsz_solver::def::DefId,
-) -> bool {
-    tsz_solver::visitor::contains_lazy_def_id(db, root, target_def_id)
-}
-
-/// If `root` is a (possibly nested) union of intrinsics and *bare*
-/// `Lazy(DefId)` references with no other structure, return the de-duplicated
-/// referenced `DefId`s; otherwise `None`. See
-/// [`tsz_solver::visitor::union_of_bare_lazy_def_ids`].
-pub(crate) fn union_of_bare_lazy_def_ids(
-    db: &dyn TypeDatabase,
-    root: TypeId,
-) -> Option<Vec<tsz_solver::def::DefId>> {
-    tsz_solver::visitor::union_of_bare_lazy_def_ids(db, root)
-}
-
-pub(crate) fn collect_type_queries(
-    db: &dyn TypeDatabase,
-    root: TypeId,
-) -> Vec<tsz_solver::SymbolRef> {
-    tsz_solver::visitor::collect_type_queries(db, root)
-}
-
-pub(crate) fn is_string_literal(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    tsz_solver::type_queries::is_string_literal(db, type_id)
 }
 
 pub(crate) fn callable_shape_id(
@@ -1510,46 +1008,11 @@ pub(crate) fn unique_symbol_ref(
     tsz_solver::visitor::unique_symbol_ref(db, type_id)
 }
 
-pub(crate) fn is_object_like_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    tsz_solver::visitor::is_object_like_type(db, type_id)
-}
-
-pub(crate) fn is_enum_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    tsz_solver::visitor::is_enum_type(db, type_id)
-}
-
-pub(crate) fn is_lazy_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    tsz_solver::visitor::is_lazy_type(db, type_id)
-}
-
-pub(crate) fn is_primitive_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    tsz_solver::visitor::is_primitive_type(db, type_id)
-}
-
-pub(crate) fn is_literal_type_through_type_constraints(
-    db: &dyn TypeDatabase,
-    type_id: TypeId,
-) -> bool {
-    tsz_solver::visitor::is_literal_type_through_type_constraints(db, type_id)
-}
-
-pub(crate) fn has_late_bound_members(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    tsz_solver::visitor::has_late_bound_members(db, type_id)
-}
-
 pub(crate) fn object_with_index_shape_id(
     db: &dyn TypeDatabase,
     type_id: TypeId,
 ) -> Option<tsz_solver::ObjectShapeId> {
     tsz_solver::visitor::object_with_index_shape_id(db, type_id)
-}
-
-pub(crate) fn contains_type_parameter_named_shallow(
-    db: &dyn TypeDatabase,
-    type_id: TypeId,
-    name: tsz_common::interner::Atom,
-) -> bool {
-    tsz_solver::visitor::contains_type_parameter_named_shallow(db, type_id, name)
 }
 
 pub(crate) fn no_infer_inner_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
@@ -1569,27 +1032,12 @@ pub(crate) fn type_query_symbol(
     tsz_solver::visitor::type_query_symbol(db, type_id)
 }
 
-pub(crate) fn walk_referenced_types<F>(db: &dyn TypeDatabase, type_id: TypeId, visitor: F)
-where
-    F: FnMut(TypeId),
-{
-    tsz_solver::visitor::walk_referenced_types(db, type_id, visitor)
-}
-
-pub(crate) fn is_function_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    tsz_solver::visitor::is_function_type(db, type_id)
-}
-
 pub(crate) fn remove_undefined(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
     tsz_solver::narrowing::remove_undefined(db, type_id)
 }
 
 pub(crate) fn remove_nullish(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
     tsz_solver::narrowing::remove_nullish(db, type_id)
-}
-
-pub(crate) fn contains_this_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    tsz_solver::contains_this_type(db, type_id)
 }
 
 pub(crate) fn function_shape_id(
@@ -1612,36 +1060,6 @@ pub(crate) fn string_intrinsic_components(
     type_id: TypeId,
 ) -> Option<(tsz_solver::StringIntrinsicKind, TypeId)> {
     tsz_solver::string_intrinsic_components(db, type_id)
-}
-
-pub(crate) fn is_error_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    tsz_solver::is_error_type(db, type_id)
-}
-
-/// Like [`is_error_type`] but does NOT treat a display-preserving
-/// `UnresolvedTypeName` as an error.
-///
-/// Used where a *genuine* internal `error` sentinel (the cycle/fuel sentinel
-/// `TypeId::ERROR` / `TypeData::Error`) must be distinguished from a deferrable
-/// cross-file reference that simply has not been bound yet.
-pub(crate) fn is_genuine_error_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    tsz_solver::is_genuine_error_type(db, type_id)
-}
-
-pub(crate) fn is_module_namespace_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    tsz_solver::is_module_namespace_type(db, type_id)
-}
-
-pub(crate) fn is_nullish_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    tsz_solver::narrowing::is_nullish_type(db, type_id)
-}
-
-pub(crate) fn is_structurally_deferred_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    tsz_solver::is_structurally_deferred_type(db, type_id)
-}
-
-pub(crate) fn type_contains_undefined(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    tsz_solver::narrowing::type_contains_undefined(db, type_id)
 }
 
 pub(crate) fn instantiate_function_with_type_args(
@@ -1705,18 +1123,6 @@ pub(crate) fn resolve_default_type_args(
     tsz_solver::resolve_default_type_args(db, type_params)
 }
 
-pub(crate) fn constraint_references_type_param_in_resolution_path(
-    db: &dyn TypeDatabase,
-    type_id: TypeId,
-    param_name: tsz_common::interner::Atom,
-) -> bool {
-    tsz_solver::constraint_references_type_param_in_resolution_path(db, type_id, param_name)
-}
-
-pub(crate) fn has_deferred_conditional_member(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    tsz_solver::has_deferred_conditional_member(db, type_id)
-}
-
 pub(crate) use super::operator_wrappers::{
     is_assignment_operator, is_compound_assignment_operator,
     is_logical_compound_assignment_operator, map_compound_assignment_to_binary,
@@ -1726,28 +1132,9 @@ pub(crate) fn format_excess_property_name(name: &str) -> std::borrow::Cow<'_, st
     tsz_solver::format_excess_property_name(name)
 }
 
-pub(crate) fn is_distributive_conditional_with_deferred_check(
-    db: &dyn TypeDatabase,
-    type_id: TypeId,
-) -> bool {
-    tsz_solver::type_queries::is_distributive_conditional_with_deferred_check(db, type_id)
-}
-
 pub(crate) fn classify_identity_mapped(
     db: &dyn TypeDatabase,
     mapped_id: tsz_solver::MappedTypeId,
 ) -> Option<tsz_solver::type_queries::mapped::IdentityMappedInfo> {
     tsz_solver::type_queries::classify_identity_mapped(db, mapped_id)
-}
-
-pub(crate) fn contains_index_access_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    tsz_solver::type_queries::contains_index_access_type(db, type_id)
-}
-
-pub(crate) fn mapped_type_is_deferred_generic(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    tsz_solver::type_queries::mapped_type_is_deferred_generic(db, type_id)
-}
-
-pub(crate) fn is_definitely_nullish(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    tsz_solver::narrowing::is_definitely_nullish(db, type_id)
 }

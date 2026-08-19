@@ -76,7 +76,8 @@ impl<'a> CheckerState<'a> {
         // (`Duo | null | undefined`), while the interner's canonical member
         // order puts them first (smallest type ids). The membership queries
         // above are order-insensitive; only this render walk needs tsc's order.
-        let members = tsz_solver::reorder_union_members_nullish_last(&members);
+        let members =
+            crate::query_boundaries::diagnostics::reorder_union_members_nullish_last(&members);
 
         for &member in &members {
             if has_non_enum_member
