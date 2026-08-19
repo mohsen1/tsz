@@ -93,6 +93,100 @@ impl CheckerState<'_> {
         }
     }
 
+    /// Merge an interface symbol's cross-file declaration groups into the
+    /// locally lowered `interface_type`.
+    ///
+    /// tsc resolves a merged interface's calls with the LATER declaration
+    /// group's signatures tried first (`reorderCandidates`) while display
+    /// keeps forward order; a merge that always puts the checking file's
+    /// group first bakes in whichever file computed the symbol type first
+    /// (#17646 cross-file follow-up). So when every cross-arena declaration
+    /// belongs to a program file, the groups (local + cross) are merged in
+    /// forward program order with `declaration_group` stamps that let call
+    /// resolution try later groups first. Any lib/unknown arena in the set
+    /// keeps the legacy local-first merge (the lib augmentation order is
+    /// owned by the lib resolution paths, not this loop).
+    pub(crate) fn merge_cross_file_interface_declarations(
+        &mut self,
+        sym_id: SymbolId,
+        declarations: &[NodeIndex],
+        interface_type: TypeId,
+    ) -> TypeId {
+        let mut interface_type = interface_type;
+        let mut cross_decls: Vec<(std::sync::Arc<tsz_parser::parser::NodeArena>, NodeIndex)> =
+            Vec::new();
+        for &decl_idx in declarations {
+            let Some(arenas) = self.ctx.binder.declaration_arenas.get(&(sym_id, decl_idx)) else {
+                continue;
+            };
+            for arena in arenas.iter() {
+                // Skip the local arena — already lowered by the caller.
+                if std::ptr::eq(arena.as_ref(), self.ctx.arena) {
+                    continue;
+                }
+                if let Some(node) = arena.get(decl_idx)
+                    && arena.get_interface(node).is_some()
+                {
+                    cross_decls.push((std::sync::Arc::clone(arena), decl_idx));
+                }
+            }
+        }
+        // Program-file position of each cross arena; `None` means a lib or
+        // otherwise unregistered arena.
+        let cross_file_orders: Vec<Option<usize>> = cross_decls
+            .iter()
+            .map(|(arena, _)| {
+                self.ctx.all_arenas.as_ref().and_then(|all| {
+                    all.iter()
+                        .position(|candidate| std::sync::Arc::ptr_eq(candidate, arena))
+                })
+            })
+            .collect();
+        if !cross_decls.is_empty() && cross_file_orders.iter().all(Option::is_some) {
+            // All declaration groups belong to program files: merge them in
+            // forward program order, stamping each later file's
+            // `declaration_group` above the earlier ones so overload
+            // resolution tries later groups first.
+            let mut blocks: Vec<(usize, TypeId)> = Vec::new();
+            if interface_type != TypeId::ERROR {
+                blocks.push((self.ctx.current_file_idx, interface_type));
+            }
+            for ((arena, decl_idx), file_order) in cross_decls.iter().zip(&cross_file_orders) {
+                let cross_type = self.lower_cross_file_interface_decl(arena, *decl_idx, sym_id);
+                if cross_type != TypeId::ERROR
+                    && let Some(order) = file_order
+                {
+                    blocks.push((*order, cross_type));
+                }
+            }
+            // Stable: same-file re-opens keep binder declaration order.
+            blocks.sort_by_key(|&(order, _)| order);
+            let mut merged = TypeId::ERROR;
+            for (_, block) in blocks {
+                merged = if merged == TypeId::ERROR {
+                    block
+                } else {
+                    self.merge_interface_types_cross_file_declaration(merged, block)
+                };
+            }
+            merged
+        } else {
+            for (arena, decl_idx) in &cross_decls {
+                let cross_type = self.lower_cross_file_interface_decl(arena, *decl_idx, sym_id);
+                if cross_type != TypeId::ERROR {
+                    // With no local declarations the local lowering is ERROR;
+                    // the first cross-file lowering becomes the base.
+                    interface_type = if interface_type == TypeId::ERROR {
+                        cross_type
+                    } else {
+                        self.merge_interface_types(interface_type, cross_type)
+                    };
+                }
+            }
+            interface_type
+        }
+    }
+
     /// Lower a single interface declaration from a cross-file arena.
     ///
     /// When an interface is declared across multiple files (e.g., global script
