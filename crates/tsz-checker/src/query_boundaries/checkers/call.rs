@@ -473,7 +473,12 @@ pub(crate) fn get_construct_signature(
     type_id: TypeId,
     arg_count: usize,
 ) -> Option<FunctionShape> {
-    let sigs = tsz_solver::type_queries::get_construct_signatures(db, type_id)?;
+    let stored = tsz_solver::type_queries::get_construct_signatures(db, type_id)?;
+    // Candidate preference follows tsc's `reorderCandidates` resolution order
+    // (later merged-declaration group first, specialized signatures hoisted)
+    // so the contextual/generic signature picked here agrees with the overload
+    // `resolve_callable_new` actually selects.
+    let sigs = tsz_solver::type_queries::reorder_overload_candidates(db, &stored);
     let signature_accepts_arg_count = |params: &[tsz_solver::ParamInfo], count: usize| {
         let required_count = params.iter().filter(|p| !p.optional).count();
         let has_rest = params.iter().any(|p| p.rest);

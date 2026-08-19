@@ -6,6 +6,7 @@
 //! - `intrinsic_object`: Unified `Object`/`{}`/`object` trifecta matrix
 //! - `intrinsics`: Primitive/intrinsic type compatibility
 //! - `literals`: Literal types and template literal matching
+//! - `enums`: Enum nominal identity and member-value relations
 //! - `unions`: Union and intersection type logic
 //! - `tuples`: Array and tuple compatibility
 //! - `objects`: Object property matching and index signatures

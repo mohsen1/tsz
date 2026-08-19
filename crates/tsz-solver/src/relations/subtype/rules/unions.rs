@@ -513,7 +513,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let mut candidate_targets: Option<Vec<bool>> = None;
 
         for &(prop_name, source_prop_type) in &disc_props {
-            let source_values = get_discriminant_values(self.interner, source_prop_type);
+            let source_values =
+                get_discriminant_values(self.interner, self.resolver, source_prop_type);
             match DiscriminantCombinationState::for_count(source_values.len()) {
                 DiscriminantCombinationState::Continue => {}
                 DiscriminantCombinationState::LimitExceeded => return SubtypeResult::False,
@@ -572,7 +573,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // Narrowing by only `kind` leaves `value` too wide; we must narrow both.
         let disc_values: Vec<smallvec::SmallVec<[TypeId; 4]>> = disc_props
             .iter()
-            .map(|&(_, source_prop_type)| get_discriminant_values(self.interner, source_prop_type))
+            .map(|&(_, source_prop_type)| {
+                get_discriminant_values(self.interner, self.resolver, source_prop_type)
+            })
             .collect();
 
         // Check total combinations don't exceed limit
@@ -665,7 +668,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let mut disc_positions = Vec::new();
         let mut disc_values = Vec::new();
         for (index, source_elem) in source_elems.iter().enumerate() {
-            let values = get_discriminant_values(self.interner, source_elem.type_id);
+            let values = get_discriminant_values(self.interner, self.resolver, source_elem.type_id);
             if values.len() <= 1 {
                 continue;
             }
@@ -770,10 +773,12 @@ fn get_type_constituents(
 /// Type parameters are resolved to their constraints before extracting values, so that
 /// `T extends "a" | "b"` yields `["a", "b"]` rather than `[T]`. Without this, objects
 /// like `{ k: T }` would fail the per-value discriminant check against `{ k: "a" } | { k: "b" }`.
-/// Unions containing type parameters (e.g., `T | E.A`) are flattened by resolving each
-/// type parameter member to its constraint values.
-fn get_discriminant_values(
+/// A whole-enum type yields its nominal member types (`Mode` → `[Mode.A, Mode.B]`),
+/// matching tsc's model of an enum type as the union of its member types.
+/// Union constituents are expanded recursively (e.g. `T | E.A`, `Mode | undefined`).
+fn get_discriminant_values<R: TypeResolver>(
     db: &dyn TypeDatabase,
+    resolver: &R,
     type_id: TypeId,
 ) -> smallvec::SmallVec<[TypeId; 4]> {
     // Special case: boolean is equivalent to true | false for discriminated union matching
@@ -781,34 +786,60 @@ fn get_discriminant_values(
         return smallvec::smallvec![TypeId::BOOLEAN_TRUE, TypeId::BOOLEAN_FALSE];
     }
 
+    // Resolve `Lazy(DefId)` first: a source property typed by a semantic
+    // reference (e.g. `m: Mode` stored as `Lazy(Mode)`) is opaque to the
+    // enum/union extractors below and would otherwise surface as one opaque
+    // "value" that matches no member-typed arm (#17643).
+    if let Some(def_id) = lazy_def_id(db, type_id)
+        && let Some(resolved) = resolver.resolve_lazy(def_id, db)
+        && resolved != type_id
+    {
+        return get_discriminant_values(db, resolver, resolved);
+    }
+
     // Resolve type parameters to their constraints for discriminant matching.
     // e.g., T extends "a" | "b" → use "a" | "b" as discriminant values.
     if let Some(info) = type_param_info(db, type_id)
         && let Some(constraint) = info.constraint
     {
-        return get_discriminant_values(db, constraint);
+        return get_discriminant_values(db, resolver, constraint);
     }
 
-    // Expand enum types to their structural member values.
-    // e.g., enum E { A, B } → Enum(def, 0 | 1) → [0, 1]
-    // This allows discriminated union matching against E.A | E.B targets,
-    // since 0 <: Enum(E.A_def, 0) succeeds via structural enum subtyping.
-    if let Some((_def_id, structural_type)) = enum_components(db, type_id) {
-        return get_discriminant_values(db, structural_type);
+    // Expand a whole-enum type to one NOMINAL value per member literal.
+    // tsc models an enum type as the union of its member types, so the
+    // discriminant constituents of `{ m: Mode }` are `Mode.A | Mode.B` and
+    // the narrowed source keeps matching member-typed arms like
+    // `{ m: Mode.A }`. Each structural member literal is wrapped back into
+    // the source enum's nominal domain (`Enum(parent, lit_i)`, the same
+    // shape control-flow narrowing mints): bare literals would erase the
+    // source enum's identity and wrongly match ANOTHER enum's member-typed
+    // arms. An enum MEMBER type is already a single unit value.
+    if let Some((def_id, structural_type)) = enum_components(db, type_id) {
+        if resolver.get_enum_parent_def_id(def_id).is_some() {
+            return smallvec::smallvec![type_id];
+        }
+        let literals = get_type_constituents(db, structural_type);
+        if literals.len() <= 1 {
+            return smallvec::smallvec![type_id];
+        }
+        return literals
+            .iter()
+            .map(|&lit| db.enum_type(def_id, lit))
+            .collect();
     }
 
     let constituents = get_type_constituents(db, type_id);
 
-    // Expand unions containing type parameters by resolving each member.
-    // e.g., T | E.A where T extends E → expand T to its constraint values.
-    if constituents.len() > 1
-        && constituents
-            .iter()
-            .any(|c| type_param_info(db, *c).is_some())
-    {
+    // Expand each union constituent recursively: type parameters resolve to
+    // their constraint values, whole enums to their member types, and
+    // `boolean` to `true | false` — tsc's union constituents are already
+    // expanded at this granularity (e.g. `Mode | undefined` is
+    // `Mode.A | Mode.B | undefined`). Constituents with no expansion
+    // return themselves, so plain unions are unchanged.
+    if constituents.len() > 1 {
         let mut result = smallvec::SmallVec::new();
         for &c in &constituents {
-            result.extend(get_discriminant_values(db, c));
+            result.extend(get_discriminant_values(db, resolver, c));
         }
         return result;
     }
