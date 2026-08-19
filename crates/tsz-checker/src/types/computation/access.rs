@@ -638,6 +638,25 @@ impl<'a> CheckerState<'a> {
                 .index_access(pre_resolution_object_type, index_type);
         }
 
+        // Same shape, READ context (#17718 witness 2): see
+        // `concrete_receiver_read_target_should_preserve_indexed_access`. Must
+        // run before the literal-key-union fast path a few lines down, which
+        // would otherwise eagerly resolve the constrained index's `keyof`
+        // constraint to its concrete key literals first.
+        if !skip_flow_narrowing
+            && !is_generic_receiver
+            && self.concrete_receiver_read_target_should_preserve_indexed_access(
+                pre_resolution_object_type,
+                index_type,
+            )
+        {
+            return self
+                .ctx
+                .types
+                .factory()
+                .index_access(pre_resolution_object_type, index_type);
+        }
+
         if let Some(result) = self.element_access_const_enum_and_negative_index_guard(
             access.expression,
             access.name_or_argument,
@@ -1386,6 +1405,21 @@ impl<'a> CheckerState<'a> {
             use_index_signature_check = false;
         }
 
+        // Concrete receiver read (`bag[k]` where `bag: Bag`, `k: KSel extends
+        // keyof Bag`): tsc keeps the deferred `Bag[KSel]` identity as the
+        // expression's type rather than eagerly resolving to the union of
+        // member value types (oracle-verified via `scripts/conformance/oracle.sh`
+        // vs pinned typescript@7.0.2, #17718 witness 2). Without this, the
+        // element-access expression's reported type collapses to the resolved
+        // member type before any diagnostic ever sees the indexed-access pair,
+        // so downstream assignability display can't recover `Bag[KSel]` no
+        // matter how the pair itself is rendered. `raw_object_type` is already
+        // concrete here (not a type parameter, otherwise the branch above or
+        // the type-parameter fallback below would have matched first), so this
+        // only fires for the sibling case: a concrete receiver indexed by a key
+        // generic over that exact receiver's own `keyof`.
+        // Companion to `concrete_receiver_write_target_should_preserve_indexed_access`,
+        // which covers the same shape for the write-target side.
         let mut result_type = result_type.unwrap_or_else(|| {
             if crate::query_boundaries::common::is_type_parameter(
                 self.ctx.types,

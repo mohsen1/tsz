@@ -1086,6 +1086,33 @@ impl<'a> CheckerState<'a> {
         self.index_resolves_to_keyof_of_receiver(index_type, evaluated_receiver)
     }
 
+    /// READ-side companion to `concrete_receiver_write_target_should_preserve_indexed_access`:
+    /// `bag[k]` where `bag: Bag` (concrete, no type parameters) and `k: KSel
+    /// extends keyof Bag` keeps the deferred `Bag[KSel]` identity as the
+    /// expression's own type instead of eagerly resolving to the union of
+    /// member value types (#17718 witness 2, oracle-verified via
+    /// `scripts/conformance/oracle.sh` vs pinned typescript@7.0.2).
+    ///
+    /// Additionally gated on the receiver carrying no type parameter at all
+    /// (unlike the write-side sibling): `evaluate_type_with_env` is a no-op
+    /// on a generic application whose type argument stays unresolved (e.g.
+    /// `Mapped5<K>` indexed by `keyof Mapped5<K>` inside a function generic
+    /// over `K`), so the write-side predicate alone would also fire there and
+    /// pre-empt the mapped-type-aware `remapped_mapped_index_access_result`
+    /// resolution — which already answers that case correctly — with an
+    /// unevaluated shell the relation can't recognize as satisfying its own
+    /// filtered-key constraint (false TS2322 on the `f5` witness in
+    /// `mapped_indexed_access_diagnostic_tests::remapped_mapped_type_constraint_indexed_access_diagnostics_match_tsc_surface`).
+    pub(crate) fn concrete_receiver_read_target_should_preserve_indexed_access(
+        &mut self,
+        receiver: TypeId,
+        index_type: TypeId,
+    ) -> bool {
+        !crate::query_boundaries::common::contains_type_parameters(self.ctx.types, receiver)
+            && self
+                .concrete_receiver_write_target_should_preserve_indexed_access(receiver, index_type)
+    }
+
     fn index_resolves_to_keyof_of_receiver(
         &mut self,
         index_type: TypeId,
