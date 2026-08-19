@@ -546,15 +546,6 @@ pub(crate) fn is_type_parameter_or_intersection_with_type_parameter(
     tsz_solver::type_queries::is_type_parameter_or_intersection_with_type_parameter(db, type_id)
 }
 
-/// Check if a type is a deferred (type-parameter-mentioning) indexed access,
-/// or an intersection carrying one. Display-policy sibling of the query above.
-pub(crate) fn is_deferred_indexed_access_or_intersection_with_one(
-    db: &dyn TypeDatabase,
-    type_id: TypeId,
-) -> bool {
-    tsz_solver::type_queries::is_deferred_indexed_access_or_intersection_with_one(db, type_id)
-}
-
 /// Check if both types are application (generic instantiation) types and the
 /// parameter type contains type parameters, indicating the parameter should be
 /// preserved without evaluation during generic inference.
