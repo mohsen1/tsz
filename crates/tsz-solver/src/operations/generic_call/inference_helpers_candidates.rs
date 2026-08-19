@@ -187,26 +187,49 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     }
 
     /// Returns `true` when the lower bounds contain literal types from different
-    /// primitive families (e.g., a string literal and a number literal). This indicates
-    /// heterogeneous candidates that tsc would NOT merge into a union.
+    /// primitive families (e.g., a string literal and a number literal), or enum
+    /// members of different enums. This indicates heterogeneous candidates that
+    /// tsc would NOT merge into a union.
     pub(super) fn has_conflicting_literal_bases(&self, lower_bounds: &[TypeId]) -> bool {
         // Direct-parameter inference should keep the leftmost candidate when
         // fresh candidates disagree on primitive base. That preserves TypeScript's
         // first-wins behavior for cases like `bar<T>(x: T, y: T); bar(1, "")`,
         // where `T` should settle on `number` and the second argument should
         // still produce TS2345 instead of broadening the call to `number | string`.
-        let mut seen_base: Option<TypeId> = None;
+        //
+        // Enum-branded bases are tracked as their own class, and they only
+        // conflict in a PURE enum set: when the candidates mix enum members
+        // with plain numeric literals, tsc's widening turns the literals into
+        // `number` and its `reduceLeft` keeps that as the common supertype
+        // (every numeric enum member is assignable to it), so
+        // `foo1<T extends Number>(...a: T[])` called `foo1(1, 2, 3, E1.a,
+        // E.b)` is clean even across two enums
+        // (`destructuringParameterDeclaration3ES5/ES6`; treating the mix as a
+        // conflict fixed `T = 1` and produced spurious TS2345s, PR #17680
+        // review round 2). Cross-enum conflicts therefore fire only when no
+        // primitive-based candidate is present.
+        let mut seen_primitive_base: Option<TypeId> = None;
+        let mut primitive_conflict = false;
+        let mut seen_enum_base: Option<TypeId> = None;
+        let mut enum_conflict = false;
         for &ty in lower_bounds {
-            let base = self.primitive_base_of(ty);
-            if let Some(b) = base {
-                match seen_base {
-                    None => seen_base = Some(b),
-                    Some(prev) if prev != b => return true,
-                    _ => {}
-                }
+            let Some(base) = self.primitive_base_of(ty) else {
+                continue;
+            };
+            let (slot, conflict) = if !ty.is_intrinsic()
+                && matches!(self.interner.lookup(ty), Some(TypeData::Enum(..)))
+            {
+                (&mut seen_enum_base, &mut enum_conflict)
+            } else {
+                (&mut seen_primitive_base, &mut primitive_conflict)
+            };
+            match slot {
+                None => *slot = Some(base),
+                Some(prev) if *prev != base => *conflict = true,
+                _ => {}
             }
         }
-        false
+        primitive_conflict || (enum_conflict && seen_primitive_base.is_none())
     }
 
     /// Returns the primitive base TypeId for a type if it's a literal or primitive,

@@ -263,6 +263,33 @@ shape({ baz: Droite.G, bar: Gauche.G });
     }
 }
 
+/// MIXED literal + enum-member candidate sets must keep the union/merge
+/// path: tsc widens the literals to `number` and `reduceLeft` keeps that as
+/// the common supertype, so these calls are clean even across two enums
+/// (`destructuringParameterDeclaration3ES5/ES6` — review round 2 on this
+/// PR caught a spurious `'2' is not assignable to '1'` here when the
+/// cross-class conflict fixed `T` to the leftmost literal).
+#[test]
+fn mixed_literal_and_enum_rest_candidates_stay_clean() {
+    assert_clean(
+        r#"
+enum Ea { a, b }
+function fn1<T extends Number>(...items: T[]) { }
+fn1(1, 2, 3, Ea.a);
+"#,
+        "literals + one enum member under a Number constraint",
+    );
+    assert_clean(
+        r#"
+enum Ea { a, b }
+enum Eb { a, b }
+function fn1<T extends Number>(...items: T[]) { }
+fn1(1, 2, 3, Eb.a, Ea.b);
+"#,
+        "literals + members of two different enums under a Number constraint",
+    );
+}
+
 // NOTE: the primitive analog of the mixed-priority shape
 // (`pick({ w: x => x, r: () => 0 }, s: string)` — tsc fixes `T = number` and
 // reports TS2345 on `s`) is deliberately NOT pinned here. The finalize
