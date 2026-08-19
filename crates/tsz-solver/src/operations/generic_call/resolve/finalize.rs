@@ -693,10 +693,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                                 // element) or for a parameter not at the return's top level
                                 // is widened to its primitive, as before.
                                 let db = self.interner.as_type_database();
-                                let preserve = self.type_param_preserves_inferred_literal(
-                                    func, arg_types, tp.name,
-                                ) && !infer_ctx
-                                    .all_candidates_from_array_elements(var);
+                                let preserve = self
+                                    .type_param_preserves_inferred_literal(func, tp.name)
+                                    && !infer_ctx.all_candidates_from_array_elements(var);
                                 if preserve {
                                     ty
                                 } else {

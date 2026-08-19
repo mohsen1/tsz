@@ -587,14 +587,34 @@ impl<'a> CheckerState<'a> {
             .into_iter()
             .collect::<Vec<_>>();
 
-        let request = if let Some(reason) = analysis.failure_reason {
+        // tsc runs the whole argument relation against the check-time
+        // instantiation, so when the head display restored a later literal
+        // argument's type for the callback's return-position type parameter
+        // (`generic_call_parameter_alias_display` rendering `(a: number) => 1`
+        // while the env stores the widened `(a: number) => number`), the
+        // nested elaboration must derive from that same restored pair — not
+        // from the widened relation pair (issue #17686). Re-derive the failure
+        // reason against the restored parameter; keep the original pair when
+        // the restored relation does not fail (the restore was display-only
+        // sugar and the widened mismatch is the real one).
+        let mut reason_pair = (analysis.failure_reason, param_type);
+        if reason_pair.0.is_some()
+            && let Some(restored) =
+                self.later_literal_restored_param_type_for_argument(param_type, idx)
+        {
+            let restored_analysis = self.analyze_assignability_failure(arg_type, restored);
+            if let Some(restored_reason) = restored_analysis.failure_reason {
+                reason_pair = (Some(restored_reason), restored);
+            }
+        }
+        let request = if let Some(reason) = reason_pair.0 {
             DiagnosticRenderRequest::with_failure_reason(
                 DiagnosticAnchorKind::Exact,
                 code,
                 message,
                 reason,
                 arg_type,
-                param_type,
+                reason_pair.1,
             )
         } else {
             DiagnosticRenderRequest::simple(DiagnosticAnchorKind::Exact, code, message)

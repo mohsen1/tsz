@@ -236,7 +236,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             // 'a'` -> `never`); a forbidden argument then reaches a `never`
             // parameter and is rejected (TS2345). Inference from a nested position
             // (callback return, array element, …) still widens.
-            if self.type_param_preserves_inferred_literal(func, arg_types, tp.name) {
+            if self.type_param_preserves_inferred_literal(func, tp.name) {
                 infer_ctx.mark_top_level_in_return_type_unfixed(var);
             }
         }
