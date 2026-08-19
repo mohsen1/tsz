@@ -654,17 +654,28 @@ pub fn is_deferred_type_operation(db: &dyn TypeDatabase, type_id: TypeId) -> boo
 /// *defers to its base constraint* rather than walking the union's
 /// constituents — a type-parameter-mentioning indexed access (`T[K]`), a bare
 /// `keyof T`, or a distributive conditional — or an intersection carrying one
-/// such member.
+/// such member. Also true for a generic application of an alias whose
+/// declared body is a bare indexed access over the alias's own two type
+/// parameters (`type Pluck<TSrc, KSel extends keyof TSrc> = TSrc[KSel]` used
+/// at `Pluck<TSrc, KSel>`), *when the application's actual arguments in the
+/// object/index positions still mention a type parameter* — the alias's own
+/// declared body always mentions its own parameters, so this checks the
+/// caller's substituted arguments, not the unsubstituted body, to avoid
+/// treating a fully concrete instantiation (`Pluck<Bag, "one">`) as deferred.
 ///
 /// `tsc` never enters the best-matching-member re-report
 /// (`typeRelatedToSomeType`/`getBestMatchingType`) that collapses a
 /// single-survivor nullable union in diagnostics for these operands, so their
-/// pair keeps the full declared union. A fully concrete operand carries no type
-/// parameter, is evaluated before display, and does not qualify. This is the
+/// pair keeps the full declared union. A fully concrete operand (or alias of
+/// one) evaluates before display and does not qualify. This is the
 /// constraint-relative sibling of
 /// `is_type_parameter_or_intersection_with_type_parameter`, covering the
 /// deferred type operations that guard omits.
-pub fn is_deferred_constraint_relative_operand(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+pub fn is_deferred_constraint_relative_operand(
+    db: &dyn TypeDatabase,
+    definitions: &crate::def::DefinitionStore,
+    type_id: TypeId,
+) -> bool {
     if type_id.is_intrinsic() {
         return false;
     }
@@ -680,8 +691,67 @@ pub fn is_deferred_constraint_relative_operand(db: &dyn TypeDatabase, type_id: T
     }
     match db.lookup(type_id) {
         Some(TypeData::Intersection(list_id)) => {
-            db.type_list(list_id).iter().any(|&m| is_deferred(m))
+            if db.type_list(list_id).iter().any(|&m| is_deferred(m)) {
+                return true;
+            }
         }
-        _ => false,
+        Some(TypeData::Application(_))
+            if generic_alias_application_hides_deferred_indexed_access(
+                db,
+                definitions,
+                type_id,
+            ) =>
+        {
+            return true;
+        }
+        _ => {}
     }
+    false
+}
+
+/// Backing helper for the `Application` arm of
+/// [`is_deferred_constraint_relative_operand`]: hops a generic alias
+/// `Application` to its declared body, and — only when that body is a bare
+/// `IndexAccess` over the alias's own two type parameters (positionally, the
+/// common `type Alias<A, B> = A[B]` shape) — checks whether the
+/// application's actual arguments at those positions still mention a type
+/// parameter. Declines (returns `false`) for any other body shape rather
+/// than risking a wrong substitution.
+fn generic_alias_application_hides_deferred_indexed_access(
+    db: &dyn TypeDatabase,
+    definitions: &crate::def::DefinitionStore,
+    type_id: TypeId,
+) -> bool {
+    let Some(def_id) = get_application_lazy_def_id(db, type_id) else {
+        return false;
+    };
+    let Some((_, args)) = super::get_application_info(db, type_id) else {
+        return false;
+    };
+    let Some(def) = definitions.get(def_id) else {
+        return false;
+    };
+    if def.kind != crate::def::DefKind::TypeAlias {
+        return false;
+    }
+    let Some(body) = def.body else {
+        return false;
+    };
+    let Some(TypeData::IndexAccess(obj_param, idx_param)) = db.lookup(body) else {
+        return false;
+    };
+    let substituted = |operand: TypeId| -> TypeId {
+        let Some(TypeData::TypeParameter(tp)) = db.lookup(operand) else {
+            return operand;
+        };
+        def.type_params
+            .iter()
+            .position(|param| tp.is_same_binder(*param))
+            .and_then(|position| args.get(position).copied())
+            .unwrap_or(operand)
+    };
+    let substituted_obj = substituted(obj_param);
+    let substituted_idx = substituted(idx_param);
+    super::contains_type_parameters_db(db, substituted_obj)
+        || super::contains_type_parameters_db(db, substituted_idx)
 }

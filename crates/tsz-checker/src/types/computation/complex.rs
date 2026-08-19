@@ -1869,29 +1869,14 @@ impl<'a> CheckerState<'a> {
                                 fallback_return,
                             );
                     }
-                    // Check if this is a weak union violation or excess property case
-                    // In these cases, TypeScript shows TS2353 (excess property) instead of TS2322
-                    // We should skip the TS2322 error regardless of check_excess_properties flag
-                    if !self.should_suppress_weak_key_arg_mismatch(
+                    self.report_new_expression_argument_mismatch(
                         new_expr.expression,
                         args,
                         index,
                         actual,
-                    ) {
-                        // Try to elaborate object/array literal arguments into
-                        // per-property/element TS2322 errors before falling back
-                        // to a blanket TS2345 on the whole argument. This mirrors
-                        // the elaboration logic in the regular call result handler.
-                        let elaborated = if self.argument_supports_literal_elaboration(arg_idx) {
-                            self.try_elaborate_object_literal_arg_error(arg_idx, expected)
-                        } else {
-                            false
-                        };
-                        if !elaborated {
-                            let _ =
-                                self.check_argument_assignable_or_report(actual, expected, arg_idx);
-                        }
-                    }
+                        expected,
+                        arg_idx,
+                    );
                 }
                 if let Some(contextual_type) = contextual_type
                     && self.constructor_mismatch_recovery_matches_contextual_return(

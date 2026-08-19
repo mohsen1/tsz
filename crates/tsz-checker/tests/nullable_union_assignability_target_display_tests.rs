@@ -543,30 +543,36 @@ fn concrete_indexed_access_member_source_still_collapses() {
 }
 
 /// The property-drill leaf of a *generic-base* indexed access (both operands
-/// still carry a free type parameter) must keep the deferred `T[K]` identity
-/// at its own pair, not the constraint-evaluated concrete type: tsc never
-/// shows `Type 'number' is not assignable to type 'string'.` here — it keeps
-/// `Type 'TBox[KKey]' is not assignable to type 'string | undefined'.` (see
-/// #17718 witness 1; the deeper constraint-walk elaboration beneath this line
-/// is a separate residual, not asserted here).
+/// still carry a free type parameter) keeps the deferred `T[K]` identity at its
+/// own pair, then walks the constraint one step per line — the base constraint
+/// `{ a: number }` on `TBox` does not change the walk (`keyof TBox` still
+/// expands to its `string | number | symbol` key space, not `"a"`), so this is
+/// byte-identical to the unconstrained witness. tsc never collapses to a
+/// concrete `number` here; `TBox[string]` stays deferred and keeps the full
+/// nullable union to the leaf.
 #[test]
 fn deferred_generic_index_access_member_source_keeps_pair_identity() {
     let msg = message_with_chain(
         "function dig<TBox extends { a: number }, KKey extends keyof TBox>(x: { m: TBox[KKey] }) {\n  const y: { m: string | undefined } = x;\n}\n",
         2322,
     );
-    assert!(
-        msg.contains("Type 'TBox[KKey]' is not assignable to type 'string | undefined'."),
-        "deferred generic-base indexed-access member source must keep its own identity, got: {msg}"
-    );
-    assert!(
-        !msg.contains("'number'") && !msg.contains("'string'.\n"),
-        "must not leak the constraint-evaluated concrete pair, got: {msg}"
+    assert_eq!(
+        msg,
+        "Type '{ m: TBox[KKey]; }' is not assignable to type '{ m: string | undefined; }'.\n\
+         Types of property 'm' are incompatible.\n\
+         Type 'TBox[KKey]' is not assignable to type 'string | undefined'.\n\
+         Type 'TBox[keyof TBox]' is not assignable to type 'string | undefined'.\n\
+         Type 'TBox[string] | TBox[number] | TBox[symbol]' is not assignable to type 'string | undefined'.\n\
+         Type 'TBox[string]' is not assignable to type 'string | undefined'.",
     );
 }
 
 /// Same rule, renamed binders (anti-hardcoding: the behavior is structural,
-/// not name-driven) and a TS2345 argument position instead of TS2322.
+/// not name-driven), TS2345 argument position. The argument-drill renderer is a
+/// separate "no source elaboration" path, so it keeps the as-written pair but
+/// does NOT synthesize the constraint walk yet — a documented residual, distinct
+/// from the declaration-position (TS2322) walk fenced above. tsc would emit the
+/// full `TRow[keyof TRow]` -> distribute -> `TRow[string]` chain here too.
 #[test]
 fn deferred_generic_index_access_member_source_keeps_pair_identity_renamed_ts2345() {
     let msg = message_with_chain(
@@ -575,7 +581,7 @@ fn deferred_generic_index_access_member_source_keeps_pair_identity_renamed_ts234
     );
     assert!(
         msg.contains("Type 'TRow[KCol]' is not assignable to type 'string | undefined'."),
-        "renamed binders / TS2345 must keep the deferred pair identity too, got: {msg}"
+        "renamed binders / TS2345 must keep the deferred pair identity, got: {msg}"
     );
 }
 
@@ -593,5 +599,180 @@ fn concrete_base_generic_index_member_source_keeps_pair_identity() {
     assert!(
         msg.contains("Type 'Obj[KP]' is not assignable to type 'string | undefined'."),
         "concrete-base generic-index member source must keep its own identity, got: {msg}"
+    );
+}
+
+// =====================================================================
+// Generic-alias application over a deferred indexed access (#17718 witness 3).
+// =====================================================================
+
+/// A generic alias whose body is a bare indexed access over its own type
+/// parameters (`type Pluck<TSrc, KSel extends keyof TSrc> = TSrc[KSel]`)
+/// carries the same deferred-relation behavior as the bare body when the
+/// application's arguments are themselves still generic: tsc keeps the full
+/// declared target union on the head line, drilling one level deeper before
+/// it collapses. tsz previously ignored the alias wrapper entirely and
+/// collapsed at the head.
+#[test]
+fn generic_alias_application_of_deferred_indexed_access_keeps_full_union() {
+    let msg = message(
+        r#"
+type Pluck<TSrc, KSel extends keyof TSrc> = TSrc[KSel];
+function alias2<TSrc, KSel extends keyof TSrc>(x: Pluck<TSrc, KSel>) {
+  const y: string | undefined = x;
+}
+"#,
+        2322,
+    );
+    assert!(
+        msg.contains("'string | undefined'"),
+        "generic alias application of a deferred indexed access must keep the full union, got: {msg}"
+    );
+}
+
+/// Negative control: once every type argument the alias's body indexes with
+/// is concrete, the application evaluates like a bare concrete indexed
+/// access and still collapses.
+#[test]
+fn concrete_alias_instantiation_of_indexed_access_still_collapses() {
+    let msg = message(
+        r#"
+type Pluck<TSrc, KSel extends keyof TSrc> = TSrc[KSel];
+interface Bag { one: number; two: number }
+function alias2(x: Pluck<Bag, "one">) {
+  const y: string | undefined = x;
+}
+"#,
+        2322,
+    );
+    assert!(
+        !msg.contains("| undefined"),
+        "fully concrete alias instantiation must collapse like a bare indexed access, got: {msg}"
+    );
+}
+
+/// Anti-hardcoding: a differently-named alias and differently-named enclosing
+/// type parameters must behave identically — the match is positional against
+/// the alias's own declared parameters, not by name.
+#[test]
+fn renamed_binder_generic_alias_application_keeps_full_union() {
+    let msg = message(
+        r#"
+type Grab<A, B extends keyof A> = A[B];
+function alias3<Src, Sel extends keyof Src>(x: Grab<Src, Sel>) {
+  const y: string | undefined = x;
+}
+"#,
+        2322,
+    );
+    assert!(
+        msg.contains("'string | undefined'"),
+        "renamed-binder generic alias application must keep the full union, got: {msg}"
+    );
+}
+
+/// Only one of the two application arguments is still generic (the object
+/// side resolved to a concrete interface, the index side stays an unresolved
+/// type parameter): the result is still a deferred indexed access, matching
+/// the pre-existing bare-`Obj[K]`-with-generic-index rule.
+#[test]
+fn partially_generic_alias_application_keeps_full_union() {
+    let msg = message(
+        r#"
+type Pluck<TSrc, KSel extends keyof TSrc> = TSrc[KSel];
+interface Bag { one: number; two: number }
+function alias4<KSel extends keyof Bag>(x: Pluck<Bag, KSel>) {
+  const y: string | undefined = x;
+}
+"#,
+        2322,
+    );
+    assert!(
+        msg.contains("'string | undefined'"),
+        "partially generic alias application must keep the full union, got: {msg}"
+    );
+}
+
+// =====================================================================
+// Constraint-walk elaboration (#17718 residual): tsc walks a deferred
+// constraint-relative source one step per line beneath the as-written
+// operand. Oracle-pinned against typescript@7.0.2 --strict (byte-for-byte,
+// modulo the leading indentation `message_with_chain` strips).
+// =====================================================================
+
+/// Witness 1 (generic-base member drill): `TBox[KKey]` walks
+/// `TBox[KKey]` -> `TBox[keyof TBox]` -> distributed union -> first member.
+#[test]
+fn generic_base_member_drill_emits_full_constraint_walk() {
+    let msg = message_with_chain(
+        "function dig<TBox, KKey extends keyof TBox>(x: { m: TBox[KKey] }) {\n  const y: { m: string | undefined } = x;\n}\n",
+        2322,
+    );
+    assert_eq!(
+        msg,
+        "Type '{ m: TBox[KKey]; }' is not assignable to type '{ m: string | undefined; }'.\n\
+         Types of property 'm' are incompatible.\n\
+         Type 'TBox[KKey]' is not assignable to type 'string | undefined'.\n\
+         Type 'TBox[keyof TBox]' is not assignable to type 'string | undefined'.\n\
+         Type 'TBox[string] | TBox[number] | TBox[symbol]' is not assignable to type 'string | undefined'.\n\
+         Type 'TBox[string]' is not assignable to type 'string | undefined'.",
+    );
+}
+
+/// Witness 1, `| null` target, renamed binder: the deferred leaf keeps the
+/// full `number | null` union (source stays generic through the whole walk).
+#[test]
+fn generic_base_member_drill_null_target_keeps_full_union_through_walk() {
+    let msg = message_with_chain(
+        "function dug<TBox, KKey extends keyof TBox>(x: { m: TBox[KKey] }) {\n  const y: { m: number | null } = x;\n}\n",
+        2322,
+    );
+    assert_eq!(
+        msg,
+        "Type '{ m: TBox[KKey]; }' is not assignable to type '{ m: number | null; }'.\n\
+         Types of property 'm' are incompatible.\n\
+         Type 'TBox[KKey]' is not assignable to type 'number | null'.\n\
+         Type 'TBox[keyof TBox]' is not assignable to type 'number | null'.\n\
+         Type 'TBox[string] | TBox[number] | TBox[symbol]' is not assignable to type 'number | null'.\n\
+         Type 'TBox[string]' is not assignable to type 'number | null'.",
+    );
+}
+
+/// A bare `keyof T` member-drill source keeps ONLY its as-written leaf line —
+/// the constraint walk is intentionally not synthesized for it. tsc walks
+/// `keyof TObj` -> `string | number | symbol` -> `number`, but tsz renders that
+/// key space through the `PropertyKey` display alias, so the intermediate would
+/// diverge; expanding the alias in that position is a separate printer fix. The
+/// indexed-access sources below never hit the alias (they distribute per key).
+#[test]
+fn keyof_member_drill_source_keeps_leaf_without_walk() {
+    let msg = message_with_chain(
+        "function fold<TObj>(box: { m: keyof TObj }) {\n  const sink: { m: string | undefined } = box;\n}\n",
+        2322,
+    );
+    assert_eq!(
+        msg,
+        "Type '{ m: keyof TObj; }' is not assignable to type '{ m: string | undefined; }'.\n\
+         Types of property 'm' are incompatible.\n\
+         Type 'keyof TObj' is not assignable to type 'string | undefined'.",
+    );
+}
+
+/// Concrete-base generic-index member drill: `Obj[KP]` concretizes the object
+/// in a single step to the resolved value type `number`, target collapses to
+/// `string`. (Companion to `concrete_base_generic_index_member_source_keeps_pair_identity`,
+/// which fences the as-written first line.)
+#[test]
+fn concrete_base_member_drill_walks_to_resolved_value_type() {
+    let msg = message_with_chain(
+        "interface Obj { a: number; b: number }\nfunction idx<KP extends keyof Obj>(x: { m: Obj[KP] }) {\n  const y: { m: string | undefined } = x;\n}\n",
+        2322,
+    );
+    assert_eq!(
+        msg,
+        "Type '{ m: Obj[KP]; }' is not assignable to type '{ m: string | undefined; }'.\n\
+         Types of property 'm' are incompatible.\n\
+         Type 'Obj[KP]' is not assignable to type 'string | undefined'.\n\
+         Type 'number' is not assignable to type 'string'.",
     );
 }

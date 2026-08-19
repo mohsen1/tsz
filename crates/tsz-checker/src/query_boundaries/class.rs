@@ -974,6 +974,25 @@ pub(crate) fn is_incomplete_class_type(checker: &mut CheckerState<'_>, type_id: 
             // Lazy types that haven't been resolved yet — check the resolved form
             let evaluated = checker.evaluate_type_for_assignability(type_id);
             if evaluated != type_id {
+                // A type-position `Lazy` of a `DefKind::Class` def denotes the
+                // class's INSTANCE type, which is always an object — never
+                // `unknown`/`any`/`error`. So if evaluation only degrades it to
+                // one of those, the instance type is simply not available yet on
+                // this entry path (the class self-reference resolved through the
+                // unresolved-def taint rather than `symbol_instance_types`), not
+                // a genuine resolution to a constraint-failing type. Treat it as
+                // incomplete so the deferred self-reference does not fail a
+                // constraint the real instance satisfies — mirroring, for the
+                // direct-`CheckerState` entry path, the CLI driver's deferral of
+                // an unbuilt class self-reference (#17743; #17629 family). A
+                // resolved instance (the CLI's normal case) is a real object and
+                // is unaffected.
+                if evaluated.is_any_unknown_or_error()
+                    && checker.ctx.definition_store.get_kind(def_id)
+                        == Some(tsz_solver::def::DefKind::Class)
+                {
+                    return true;
+                }
                 is_incomplete_class_type(checker, evaluated)
             } else {
                 // Can't evaluate — might be unresolvable during circular resolution

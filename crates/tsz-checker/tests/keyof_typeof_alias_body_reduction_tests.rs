@@ -290,17 +290,11 @@ function gx<W>() {
 }
 
 #[test]
-fn concrete_mapped_remap_alias_known_residual_keeps_deferred_keyof_spelling() {
-    // KNOWN RESIDUAL (pre-existing on main, reproduced unchanged by this
-    // branch): for a CONCRETE mapped type with key remapping the 7.0.2 oracle
-    // evaluates fully and renders
-    //   Type '"other"' is not assignable to type '"alpha" | "beta"'.
-    // tsz leaves the alias body as the raw mapped type, so the target keeps
-    // the `keyof CPruned` spelling and the source widens. Fixing this needs
-    // the mapped-type alias body to evaluate (or the display gate to consult
-    // the evaluated keyset for concrete mapped operands) — a deliberate
-    // follow-up; this pin asserts the current behavior so that fix flips it
-    // consciously.
+fn concrete_mapped_remap_alias_keyof_target_evaluates_to_literal_keyset() {
+    // For a CONCRETE mapped type with key remapping, the 7.0.2 oracle
+    // evaluates `keyof` fully to the literal key union — unlike the
+    // generic-dependent form (`generic_mapped_remap_alias_keyof_target_widens_source_keeps_keyof_spelling`),
+    // which stays deferred and keeps the `keyof Name` spelling.
     expect_code_with(
         r#"
 type Rec<K2 extends keyof any, V> = { [Q in K2]: V };
@@ -311,6 +305,6 @@ declare let c: CKeys;
 c = "other";
 "#,
         2322,
-        r#"Type 'string' is not assignable to type 'keyof CPruned'."#,
+        r#"Type '"other"' is not assignable to type '"alpha" | "beta"'."#,
     );
 }
