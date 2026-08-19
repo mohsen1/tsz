@@ -179,14 +179,17 @@ pub(crate) fn is_type_parameter_or_intersection_with_type_parameter(
 }
 
 /// Deferred generic operand that relates to a union via its base constraint
-/// (`T[K]`, `keyof T`, a conditional, or an intersection carrying one).
-/// Constraint-relative sibling of the query above, used by the nullable-union
-/// display policy.
+/// (`T[K]`, `keyof T`, a conditional, or an intersection carrying one), or a
+/// generic alias application whose declared body is such an indexed access
+/// over the alias's own type parameters, still deferred through the
+/// application's actual arguments. Constraint-relative sibling of the query
+/// above, used by the nullable-union display policy.
 pub(crate) fn is_deferred_constraint_relative_operand(
     db: &dyn TypeDatabase,
+    def_store: &tsz_solver::def::DefinitionStore,
     type_id: TypeId,
 ) -> bool {
-    tsz_solver::type_queries::is_deferred_constraint_relative_operand(db, type_id)
+    tsz_solver::type_queries::is_deferred_constraint_relative_operand(db, def_store, type_id)
 }
 
 /// Check if a type represents an unresolved inference result (error, contains

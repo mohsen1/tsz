@@ -687,6 +687,7 @@ impl<'a> CheckerState<'a> {
             // reason is discarded here because it would show the wrong pair.
             if crate::query_boundaries::common::is_deferred_constraint_relative_operand(
                 self.ctx.types.as_type_database(),
+                &self.ctx.definition_store,
                 source_property_type,
             ) {
                 self.push_deferred_constraint_walk(
