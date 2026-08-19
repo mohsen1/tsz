@@ -80,6 +80,23 @@ pub(crate) fn is_display_reducible_index_key(db: &dyn TypeDatabase, type_id: Typ
     tsz_solver::type_queries::extended::is_display_reducible_index_key(db, type_id)
 }
 
+pub(crate) use tsz_solver::type_queries::ConstraintWalkStep;
+
+/// Ordered constraint-walk display steps beneath a deferred, constraint-relative
+/// source in a nullable-union assignability elaboration (`TBox[KKey]` ->
+/// `TBox[keyof TBox]` -> `TBox[string] | TBox[number] | TBox[symbol]` ->
+/// `TBox[string]`; `Obj[KP]` -> `number`). Used only by the constraint-walk
+/// renderer in `error_reporter/render_failure/`, so it is owned by the
+/// diagnostics boundary rather than the catch-all `common` boundary. See the
+/// solver query for the rule.
+pub(crate) fn indexed_access_constraint_display_walk(
+    db: &dyn TypeDatabase,
+    source: TypeId,
+    target: TypeId,
+) -> Vec<ConstraintWalkStep> {
+    tsz_solver::type_queries::indexed_access_constraint_display_walk(db, source, target)
+}
+
 pub(crate) fn object_type_from_properties(
     db: &dyn TypeDatabase,
     properties: Vec<PropertyInfo>,
