@@ -20,7 +20,9 @@
 //! follow-ups; the call-signature half is fenced by
 //! `merged_interface_overload_order_tests`).
 
-use crate::test_utils::check_source_diagnostics;
+use crate::context::CheckerOptions;
+use crate::test_utils::{check_multi_file, check_source_diagnostics};
+use tsz_common::common::ModuleKind;
 
 fn error_codes(source: &str) -> Vec<u32> {
     check_source_diagnostics(source)
@@ -161,4 +163,61 @@ declare var Single: SingleCtor;
 const single: 1 = new Single("x");
 "#;
     assert_eq!(error_codes(src), Vec::<u32>::new());
+}
+
+/// The reorder holds when the merged interface is reached through a type
+/// alias wrapper, not just a direct `declare var` of the interface itself.
+#[test]
+fn later_group_wins_through_type_alias_wrapper() {
+    let src = r#"
+interface AliasCtor { new (v: string): 1; }
+interface AliasCtor { new (v: string): 2; }
+type AliasCtorAlias = AliasCtor;
+declare var AliasCtor: AliasCtorAlias;
+const picked: 2 = new AliasCtor("x");
+"#;
+    assert_eq!(error_codes(src), Vec::<u32>::new());
+}
+
+/// The `declaration_group` stamp survives generic interface instantiation:
+/// reordering a merged generic interface's plain (non-generic-signature)
+/// construct overloads still picks the later group after instantiating the
+/// interface itself with a concrete type argument.
+#[test]
+fn later_group_wins_on_instantiated_generic_interface() {
+    let src = r#"
+interface BoxCtor<T> { new (v: string): 1; }
+interface BoxCtor<T> { new (v: string): 2; }
+declare var BoxCtor: BoxCtor<number>;
+const picked: 2 = new BoxCtor("x");
+"#;
+    assert_eq!(error_codes(src), Vec::<u32>::new());
+}
+
+/// Cross-file merge: two program files each re-open the same global
+/// interface with a `new` overload. The later program file's
+/// construct-signature group must win, mirroring the call-signature
+/// cross-file fix in `merge_interface_types_cross_file_declaration`
+/// (#17658) — not whichever file happened to lower the symbol first.
+#[test]
+fn later_file_wins_for_cross_file_construct_signature_merge() {
+    let earlier = r#"
+interface FileCtor { new (v: string): 1; }
+"#;
+    let later = r#"
+interface FileCtor { new (v: string): 2; }
+declare var FileCtor: FileCtor;
+const picked: 2 = new FileCtor("x");
+"#;
+    let diags = check_multi_file(
+        &[("./a.ts", earlier), ("./b.ts", later)],
+        "./b.ts",
+        CheckerOptions {
+            module: ModuleKind::CommonJS,
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
+    let codes: Vec<u32> = diags.into_iter().map(|d| d.code).collect();
+    assert_eq!(codes, Vec::<u32>::new());
 }
