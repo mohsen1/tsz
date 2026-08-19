@@ -20,26 +20,14 @@ retries = 0
 test-threads = "num-cpus"
 
 # Global default-lib merge validation (#17675). Merging a user global interface
-# into a lib type (e.g. `Node.kind: SyntaxKind`) forces a post-merge recheck of
-# the affected default-lib interface subgraph. For a DOM merge that subgraph is
-# nearly all of lib.dom.d.ts (everything transitively extends `Node`), so the
-# recheck is a large — but correct, tsc-parity — structural pass. Measured solo
-# on an idle 4-core box (#17675): `global_lib_merge_keeps_one_element_identity`
-# 113.7s and `collect_diagnostics_reports_default_lib_breakage_from_global_node_merge`
-# >240s, the latter blowing even the 120s x 2 window it inherited from the
-# shared default-lib block below. The third test in that report,
-# `skip_lib_check_skips_default_lib_recheck_after_global_merge`, is now O(ms)
-# and needs no override: `skipLibCheck` skips the whole post-merge lib recheck
-# (its only product is lib `.d.ts` diagnostics, which `skipLibCheck` discards),
-# fixed in the same PR as this entry.
-#
-# `collect_diagnostics_reports_default_lib_breakage_from_global_node_merge`
-# previously rode the shared default-lib block below at 120s x 2 = 240s, which
-# it blew; it now lives here instead (removed from that block so only this
-# override matches it). The residual per-invocation recheck cost (pristine
-# baseline pass + per-lib check of the affected DOM subgraph, ~2x the affected
-# set) is tracked for profiling under #17675; this window keeps the nightly
-# unit lane green so it does not mask unrelated regressions.
+# into a lib type (e.g. `Node.kind`) forces a correct-but-large post-merge
+# recheck of the affected default-lib subgraph — for a DOM merge, nearly all of
+# lib.dom.d.ts. Measured solo on an idle 4-core box: 113.7s and >240s
+# respectively, the latter blowing even the 120s x 2 shared default-lib window.
+# The recheck's residual cost is tracked for profiling under #17675; this window
+# keeps the nightly unit lane green so it does not mask unrelated regressions.
+# (The report's third test, `skip_lib_check_skips_default_lib_recheck...`, is now
+# O(ms) and needs no override: `skipLibCheck` skips the recheck outright.)
 [[profile.default.overrides]]
 filter = 'test(global_lib_merge_keeps_one_element_identity_for_array_callbacks) | test(collect_diagnostics_reports_default_lib_breakage_from_global_node_merge)'
 slow-timeout = { period = "180s", terminate-after = 2 }
