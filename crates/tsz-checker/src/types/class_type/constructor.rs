@@ -1307,8 +1307,12 @@ impl<'a> CheckerState<'a> {
                 // and overwriting the real instance with it corrupts a
                 // self-referencing `new C()` (see `has_complete_instance` above).
                 if !has_complete_instance {
-                    installed_partial_instance =
-                        self.install_ctor_provisional_instance(class, member_count, sym_id);
+                    installed_partial_instance = self.install_ctor_provisional_instance(
+                        class,
+                        member_count,
+                        sym_id,
+                        &class_type_params,
+                    );
                 }
             }
             let result = if apply_module_augmentations {
@@ -1358,14 +1362,8 @@ impl<'a> CheckerState<'a> {
         // For generic classes like `class C<T>`, the prototype is shared across all
         // instantiations, so `C.prototype` must have type `C<any>` (all type params
         // substituted with `any`), not the raw `C<T>`.
-        let prototype_type = if !class_type_params.is_empty() {
-            let any_args: Vec<TypeId> = class_type_params.iter().map(|_| TypeId::ANY).collect();
-            let substitution =
-                TypeSubstitution::from_args(self.ctx.types, &class_type_params, &any_args);
-            instantiate_type(self.ctx.types, instance_type, &substitution)
-        } else {
-            instance_type
-        };
+        let prototype_type =
+            self.class_prototype_member_type(current_sym, instance_type, &class_type_params);
         let prototype_name = self.ctx.types.intern_string("prototype");
         properties.insert(
             prototype_name,
