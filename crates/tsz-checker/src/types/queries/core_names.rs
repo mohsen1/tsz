@@ -767,6 +767,29 @@ impl<'a> CheckerState<'a> {
                 }
             }
         }
+        // The expression-type probe above can run before `Symbol.xxx`'s own type
+        // has settled to `UniqueSymbol` — e.g. while the interface whose own
+        // computed member this is (`interface M { [Symbol.iterator](): T }`) is
+        // still mid-construction — and come back empty. Prefer an existing
+        // canonical registration over reconstructing one from the raw declaration
+        // `SymbolId` below: `seed_well_known_symbol_names`'s eager pre-pass already
+        // registered every well-known member from `SymbolConstructor`'s own
+        // resolved (post-settle) type, and that ref is guaranteed to match every
+        // `typeof Symbol.xxx` use site. `resolve_well_known_symbol_ref_from_name`'s
+        // `SymbolRef(member_sym.0)` lives in a different identity space (the raw
+        // binder `SymbolId`, not `unique_symbol_ref`'s span/type-derived ref), so
+        // registering it under this canonical name would silently overwrite — and
+        // desync from — the correct seed entry, leaving every later `typeof
+        // Symbol.xxx` reverse lookup unable to find its own name back (#17720).
+        if let Some(symbol_ref) = self
+            .ctx
+            .type_env
+            .try_borrow()
+            .ok()
+            .and_then(|env| env.get_well_known_symbol_ref(name))
+        {
+            return Some(symbol_ref);
+        }
         self.resolve_well_known_symbol_ref_from_name(name)
     }
 
