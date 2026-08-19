@@ -305,6 +305,23 @@ impl<'a> CheckerState<'a> {
         idx: tsz_parser::parser::NodeIndex,
         depth: u32,
     ) {
+        // A deferred, constraint-relative leaf source (`T[K]`, `keyof T`, a
+        // conditional) keeps the as-written operand and the *full* nullable-union
+        // target at its pair, then walks the constraint one step per line — the
+        // same rule the single-property-drill leaf applies in
+        // `render_property_type_mismatch`. The dotted-path collapse
+        // (`peel_plain_property_chain`) funnels every folded run's leaf through
+        // here, so this is the shared point where the walk hangs for
+        // `{ outer: { m: T[K] } }` too. The structured leaf reason (a collapsed
+        // best-matching member) is discarded for the same reason it is at the
+        // property-drill leaf: it would render the wrong pair.
+        if crate::query_boundaries::common::is_deferred_constraint_relative_operand(
+            self.ctx.types.as_type_database(),
+            leaf_src,
+        ) {
+            self.push_deferred_constraint_walk(diag, leaf_src, leaf_tgt, depth);
+            return;
+        }
         if let Some(leaf) = leaf {
             // A header-led leaf (tuple element/arity, index-signature) does
             // not begin with the deepest property pair's relation line, so

@@ -622,9 +622,22 @@ impl<'a> CheckerState<'a> {
                 // failures keep the established hand-rolled shape below (no
                 // structural drill to recover), so those high-traffic chains are
                 // byte-identical to today.
+                // A deferred, constraint-relative property source (`T[K]`,
+                // `keyof T`, a conditional) is *also* deeper than the hand-rolled
+                // leaf pair: tsc keeps the as-written operand and then walks its
+                // constraint one step per line (`TRow[KCol]` -> `TRow[keyof TRow]`
+                // -> distributed union -> first member). That walk lives on the
+                // direct-assignment (`TS2322`) renderer's property-drill leaf, so
+                // delegate the same way the structural-drill case does — the
+                // call-argument (`TS2345`) chain then carries the identical walk
+                // instead of truncating to the leaf pair.
                 if nested_reason
                     .as_deref()
                     .is_some_and(Self::property_nested_reason_needs_full_drill)
+                    || crate::query_boundaries::common::is_deferred_constraint_relative_operand(
+                        self.ctx.types.as_type_database(),
+                        *source_property_type,
+                    )
                 {
                     return Some(self.reanchored_container_related(
                         reason, source, target, anchor_idx, start, length,
