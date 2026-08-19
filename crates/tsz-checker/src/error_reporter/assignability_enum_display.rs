@@ -5,6 +5,40 @@ use crate::state::CheckerState;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    /// tsc `reportRelationError`: when the failing source is enum-ish (a whole
+    /// enum type or an enum member, including a still-deferred `Lazy` member
+    /// ref) and the target has no top-level singleton capacity, the source is
+    /// generalized (`getBaseTypeOfLiteralType`: member -> parent enum) and
+    /// displayed with `UseFullyQualifiedType`
+    /// (`getTypeNameForErrorDisplay`) — `P.Q`, qualified through enclosing
+    /// namespaces. Against a singleton-capable target (a literal, an enum, an
+    /// enum member, or a union holding one) no generalization happens and the
+    /// default bare enum naming (`Q`, `Q.R`) applies. `never` preserves the
+    /// source verbatim.
+    pub(in crate::error_reporter) fn generalized_enum_source_qualified_display(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> Option<String> {
+        if target == TypeId::NEVER {
+            return None;
+        }
+        if crate::query_boundaries::diagnostics::relation_target_could_hold_singleton(
+            self.ctx.types,
+            &self.ctx,
+            target,
+        ) {
+            return None;
+        }
+        // `widen_enum_member_type` is tsc `getBaseTypeOfLiteralType` for the
+        // enum branch (member -> parent enum, identity otherwise). The
+        // fully-qualified formatter itself answers `None` for every
+        // non-enum-ish type — including still-deferred `Lazy` refs to
+        // interfaces/aliases — so no extra enum gate is needed here.
+        let widened = self.widen_enum_member_type(source);
+        self.format_fully_qualified_enum_name_for_message(widened)
+    }
+
     pub(super) fn format_union_with_collapsed_enum_display(
         &mut self,
         ty: TypeId,

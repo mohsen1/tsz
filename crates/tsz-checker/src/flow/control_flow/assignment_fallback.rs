@@ -969,9 +969,15 @@ impl<'a> FlowAnalyzer<'a> {
     /// not one the syntactic resolver understands (callers then keep the `Lazy`).
     pub(super) fn fallback_declared_annotation_type(&self, decl: NodeIndex) -> Option<TypeId> {
         let node = self.arena.get(decl)?;
+        let is_optional_parameter;
         let annotation = match node.kind {
-            k if k == syntax_kind_ext::PARAMETER => self.arena.get_parameter(node)?.type_annotation,
+            k if k == syntax_kind_ext::PARAMETER => {
+                let param = self.arena.get_parameter(node)?;
+                is_optional_parameter = param.question_token;
+                param.type_annotation
+            }
             k if k == syntax_kind_ext::VARIABLE_DECLARATION => {
+                is_optional_parameter = false;
                 self.arena.get_variable_declaration(node)?.type_annotation
             }
             _ => return None,
@@ -979,7 +985,28 @@ impl<'a> FlowAnalyzer<'a> {
         if annotation.is_none() {
             return None;
         }
-        self.fallback_type_from_type_node_syntax(annotation)
+        let resolved = self.fallback_type_from_type_node_syntax(annotation)?;
+        // An optional parameter (`p?: T`) reads as `T | undefined` inside the
+        // function body under strict null checks — mirroring the same
+        // `question_token` + `optional_parameter_type_with_undefined` widening
+        // `checkers/parameter_checker.rs` applies when it first computes the
+        // parameter's declared type. This syntax-only recovery path resolves
+        // just the annotation node (`T`), so without this it silently drops the
+        // implicit `undefined` member — and, because a killing-definition
+        // reassignment (`primary = fallback;`) uses this as the narrowing base,
+        // a later read loses its possibly-undefined diagnostic entirely.
+        if is_optional_parameter
+            && self.checker_context.is_some_and(|c| c.strict_null_checks())
+            && resolved != TypeId::ANY
+            && resolved != TypeId::UNKNOWN
+            && resolved != TypeId::ERROR
+        {
+            return Some(crate::query_boundaries::checkers::parameters::optional_parameter_type_with_undefined(
+                self.interner.as_type_database(),
+                resolved,
+            ));
+        }
+        Some(resolved)
     }
 
     fn fallback_declaration_type(&self, decl: NodeIndex) -> Option<TypeId> {

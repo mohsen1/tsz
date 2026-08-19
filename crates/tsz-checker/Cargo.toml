@@ -236,6 +236,9 @@ path = "tests/variadic_tuple_spread_arity_ts2556_tests.rs"
 name = "variadic_tuple_spread_element_type_tests"
 path = "tests/variadic_tuple_spread_element_type_tests.rs"
 [[test]]
+name = "variadic_tuple_readonly_concat_instantiation_tests"
+path = "tests/variadic_tuple_readonly_concat_instantiation_tests.rs"
+[[test]]
 name = "variadic_tuple_rest_aggregate_display_tests"
 path = "tests/variadic_tuple_rest_aggregate_display_tests.rs"
 [[test]]
@@ -2453,6 +2456,9 @@ path = "tests/array_mutation_unrelated_narrowing_tests.rs"
 [[test]]
 name = "array_mutation_same_array_join_narrowing_tests"
 path = "tests/array_mutation_same_array_join_narrowing_tests.rs"
+[[test]]
+name = "optional_parameter_reassignment_declared_type_recovery_tests"
+path = "tests/optional_parameter_reassignment_declared_type_recovery_tests.rs"
 
 [[test]]
 name = "public_package_unique_symbol_emit_tests"
@@ -3032,9 +3038,17 @@ name = "enum_discriminant_union_assignability_tests"
 path = "tests/enum_discriminant_union_assignability_tests.rs"
 
 [[test]]
+name = "enum_name_display_qualification_tests"
+path = "tests/enum_name_display_qualification_tests.rs"
+
+[[test]]
 name = "number_to_enum_member_assignability_tests"
 path = "tests/number_to_enum_member_assignability_tests.rs"
 
 [[test]]
 name = "provisional_class_instance_window_tests"
 path = "tests/provisional_class_instance_window_tests.rs"
+
+[[test]]
+name = "union_target_property_mismatch_elaboration_tests"
+path = "tests/union_target_property_mismatch_elaboration_tests.rs"
