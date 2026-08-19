@@ -21,6 +21,7 @@
 //! structural, not name-driven.
 
 use tsz_checker::test_utils::check_source_code_messages as get_diagnostics;
+use tsz_checker::test_utils::check_source_diagnostics;
 
 fn message(source: &str, code: u32) -> String {
     let diags = get_diagnostics(source);
@@ -29,6 +30,24 @@ fn message(source: &str, code: u32) -> String {
         .find(|(c, _)| *c == code)
         .map(|(_, m)| m.clone())
         .unwrap_or_else(|| panic!("expected TS{code}; got: {diags:?}"))
+}
+
+/// The head message of the first `TS{code}` diagnostic plus every line of its
+/// elaboration chain (`related_information`), joined with newlines, so a fence
+/// can assert on the nested leaf a member mismatch drills to.
+fn message_with_chain(source: &str, code: u32) -> String {
+    let diags = check_source_diagnostics(source);
+    let diag = diags
+        .iter()
+        .find(|d| d.code == code)
+        .unwrap_or_else(|| panic!("expected TS{code}; got: {diags:?}"));
+    let mut lines = vec![diag.message_text.clone()];
+    lines.extend(
+        diag.related_information
+            .iter()
+            .map(|related| related.message_text.clone()),
+    );
+    lines.join("\n")
 }
 
 // =====================================================================
@@ -205,5 +224,150 @@ fn argument_multi_member_keeps_full_union() {
     assert!(
         msg.contains("string | number | undefined"),
         "multi-member argument target must keep the full union, got: {msg}"
+    );
+}
+
+// =====================================================================
+// Generic (type-parameter) sources: tsc NEVER collapses the nullish
+// members against a generic source, even when a single real member
+// survives. A generic operand's relation to a union defers to its
+// constraint instead of walking the union's constituents, so the message
+// keeps the full declared union; a constrained parameter drills its
+// constraint against the *stripped* member one level deeper instead.
+// All expectations oracle-pinned against tsc 6.0.2 `--strict`.
+// =====================================================================
+
+/// Unconstrained type-parameter source at a member leaf keeps `| undefined`:
+/// `Type 'TVal' is not assignable to type 'string | undefined'.`
+#[test]
+fn unconstrained_param_member_leaf_keeps_undefined_member() {
+    let msg = message_with_chain(
+        "function fold<TVal>(box: { m: TVal }) {\n  const sink: { m: string | undefined } = box;\n}\n",
+        2322,
+    );
+    assert!(
+        msg.contains("not assignable to type 'string | undefined'"),
+        "type-param member leaf must keep the full nullable union, got: {msg}"
+    );
+}
+
+/// Same rule for `| null`, renamed binders (anti-hardcoding).
+#[test]
+fn unconstrained_param_member_leaf_keeps_null_member() {
+    let msg = message_with_chain(
+        "function grab<TValue>(x: { prop: TValue }) {\n  const y: { prop: number | null } = x;\n}\n",
+        2322,
+    );
+    assert!(
+        msg.contains("not assignable to type 'number | null'"),
+        "type-param member leaf must keep the `| null` member, got: {msg}"
+    );
+}
+
+/// Top-level (non-member) type-parameter source keeps the full union on the
+/// head line: `Type 'Item' is not assignable to type 'string | undefined'.`
+#[test]
+fn top_level_param_source_keeps_full_union() {
+    let msg = message(
+        "function pick<Item>(x: Item) {\n  const y: string | undefined = x;\n}\n",
+        2322,
+    );
+    assert!(
+        msg.contains("type 'string | undefined'"),
+        "top-level type-param source must keep the full union, got: {msg}"
+    );
+}
+
+/// A *constrained* (non-nullable) parameter still keeps the union at its own
+/// leaf — the strip belongs to the constraint drill one level deeper.
+#[test]
+fn constrained_param_member_leaf_keeps_full_union() {
+    let msg = message_with_chain(
+        "function nab<Cnt extends number>(x: { m: Cnt }) {\n  const y: { m: string | undefined } = x;\n}\n",
+        2322,
+    );
+    assert!(
+        msg.contains("not assignable to type 'string | undefined'"),
+        "constrained type-param leaf must keep the full nullable union, got: {msg}"
+    );
+}
+
+/// Intersection of two type parameters keeps the full union.
+#[test]
+fn param_intersection_member_leaf_keeps_full_union() {
+    let msg = message_with_chain(
+        "function mix<A extends number, B extends number>(x: { m: A & B }) {\n  const y: { m: string | undefined } = x;\n}\n",
+        2322,
+    );
+    assert!(
+        msg.contains("not assignable to type 'string | undefined'"),
+        "param-intersection leaf must keep the full nullable union, got: {msg}"
+    );
+}
+
+/// Intersection of a type parameter with a concrete object keeps the union.
+#[test]
+fn param_and_concrete_intersection_keeps_full_union() {
+    let msg = message_with_chain(
+        "function meld<Obj extends object>(x: { m: Obj & { a: 1 } }) {\n  const y: { m: string | undefined } = x;\n}\n",
+        2322,
+    );
+    assert!(
+        msg.contains("not assignable to type 'string | undefined'"),
+        "param-and-concrete intersection leaf must keep the full union, got: {msg}"
+    );
+}
+
+/// TS2345 argument position follows the same rule as TS2322.
+#[test]
+fn argument_position_param_source_keeps_full_union() {
+    let msg = message_with_chain(
+        "declare function sinkFn(v: { m: string | undefined }): void;\nfunction pass<Elem>(x: { m: Elem }) {\n  sinkFn(x);\n}\n",
+        2345,
+    );
+    assert!(
+        msg.contains("not assignable to type 'string | undefined'"),
+        "TS2345 type-param member leaf must keep the full union, got: {msg}"
+    );
+}
+
+/// Two-level property path (`a.b`) keeps the union at the drilled leaf.
+#[test]
+fn nested_property_path_param_leaf_keeps_full_union() {
+    let msg = message_with_chain(
+        "function dig<Leaf>(x: { a: { b: Leaf } }) {\n  const y: { a: { b: string | undefined } } = x;\n}\n",
+        2322,
+    );
+    assert!(
+        msg.contains("not assignable to type 'string | undefined'"),
+        "nested property leaf must keep the full nullable union, got: {msg}"
+    );
+}
+
+/// Positive control: a CONCRETE member source still collapses the target
+/// (`Type 'number' is not assignable to type 'string'.`).
+#[test]
+fn concrete_member_source_still_collapses() {
+    let msg = message_with_chain(
+        "function flat(x: { m: number }) {\n  const y: { m: string | undefined } = x;\n}\n",
+        2322,
+    );
+    assert!(
+        msg.contains("Type 'number' is not assignable to type 'string'."),
+        "concrete member source must still collapse the nullable target, got: {msg}"
+    );
+}
+
+/// Positive control: a literal member source collapses AND widens
+/// (`Type 'string' is not assignable to type 'number'.`).
+#[test]
+fn literal_member_source_still_collapses_and_widens() {
+    let msg = message_with_chain(
+        "function lit(x: { m: \"abc\" }) {\n  const y: { m: number | undefined } = x;\n}\n",
+        2322,
+    );
+    assert!(
+        msg.contains("Type 'string' is not assignable to type 'number'."),
+        "literal member source must still collapse and widen, got: {msg}"
     );
 }

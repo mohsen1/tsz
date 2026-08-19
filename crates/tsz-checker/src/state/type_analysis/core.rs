@@ -1811,6 +1811,7 @@ impl CheckerState<'_> {
                     result,
                     alias_is_non_generic,
                 );
+                self.mark_bare_nominal_ref_alias_def(sym_id, def_id, result, alias_is_non_generic);
                 // Also register the evaluated form of the type.
                 // Type aliases with union/intersection bodies often contain Lazy
                 // members (e.g., `type Exotic = CatDog | ManBearPig`). When these

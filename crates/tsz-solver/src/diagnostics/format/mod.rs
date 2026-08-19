@@ -29,6 +29,33 @@ pub use alias_underlying::{
     application_reduces_to_displayable_shape, type_alias_displayed_as_underlying,
 };
 pub use property_names::format_excess_property_name;
+
+/// Reorder union members for display so the nullish intrinsics render at the
+/// tail: every non-nullish member keeps its relative order, then `null`, then
+/// `undefined`.
+///
+/// This is `tsc`'s `formatUnionTypes` rule: the printer filters
+/// `TypeFlags.Nullable` constituents out of the member walk and appends
+/// `nullType` then `undefinedType` after it, so a rendered union always shows
+/// `... | null | undefined` regardless of the union's internal (type-id) or
+/// as-written member order. [`TypeFormatter::format_union`] applies the same
+/// rule internally; this shared helper is for checker-side diagnostic
+/// reconstructions that join a member list themselves instead of going
+/// through `format_union`.
+pub fn reorder_union_members_nullish_last(members: &[TypeId]) -> Vec<TypeId> {
+    let mut ordered: Vec<TypeId> = members
+        .iter()
+        .copied()
+        .filter(|&member| member != TypeId::NULL && member != TypeId::UNDEFINED)
+        .collect();
+    if members.contains(&TypeId::NULL) {
+        ordered.push(TypeId::NULL);
+    }
+    if members.contains(&TypeId::UNDEFINED) {
+        ordered.push(TypeId::UNDEFINED);
+    }
+    ordered
+}
 pub(crate) use property_names::needs_property_name_quotes;
 
 use crate::construction::TypeDatabase;

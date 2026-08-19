@@ -53,6 +53,18 @@ pub fn type_alias_displayed_as_underlying(
         if def_store.is_tuple_spread_flattened_alias(current_def) {
             return Some(body);
         }
+        // A non-generic alias whose declared body was a *bare* reference to a
+        // non-generic interface or class resolves to the declaration's shared
+        // nominal type, which never carries tsc's `aliasSymbol`, so tsc
+        // renders the declaration's own name (`type IA = Iface` renders
+        // `Iface`; `type CA = Cls` renders `Cls`). The checker records the
+        // referenced declaration at body publication because the stored body
+        // may have flattened to the declaration's structural shape (class
+        // instance types and alias chains do), erasing the reference; render
+        // the declaration's deferred ref, which formats as its name.
+        if let Some(target_def) = def_store.bare_nominal_ref_alias_target(current_def) {
+            return Some(interner.lazy(target_def));
+        }
         if crate::visitor::is_intrinsic_or_literal_type(interner, body) {
             return Some(body);
         }
@@ -105,6 +117,16 @@ pub fn type_alias_displayed_as_underlying(
                 if is_enum_or_enum_member_ref(def_store, next_def) {
                     return Some(body);
                 }
+                // A bare reference to a *non-generic* interface or class also
+                // resolves to the declaration's shared nominal type, which
+                // never carries tsc's `aliasSymbol`: `type IA = Iface` renders
+                // `Iface`, `type CA = Cls` renders `Cls`. A generic
+                // declaration (even fully defaulted, `class GC[T = string]`;
+                // `type GCA = GC`) instantiates a fresh reference that keeps
+                // the alias symbol, so those keep the alias name.
+                if is_non_generic_interface_or_class_ref(def_store, next_def) {
+                    return Some(body);
+                }
                 current_def = next_def;
             }
             // An already-evaluated enum or enum-member body (`TypeData::Enum`)
@@ -136,10 +158,6 @@ pub fn type_alias_displayed_as_underlying(
 /// body is a bare reference to one of these points at the shared nominal enum
 /// type, so it renders the declaration's own name.
 ///
-/// tsc applies the same no-`aliasSymbol` rule to bare interface and class
-/// references (`type IA = Iface` renders `Iface`), but tsz does not store
-/// those alias bodies as `Lazy` declaration refs, so extending this check to
-/// them is a separate slice.
 fn is_enum_or_enum_member_ref(def_store: &DefinitionStore, def_id: DefId) -> bool {
     if def_store.get_enum_parent(def_id).is_some() {
         return true;
@@ -147,6 +165,20 @@ fn is_enum_or_enum_member_ref(def_store: &DefinitionStore, def_id: DefId) -> boo
     def_store
         .get(def_id)
         .is_some_and(|def| def.kind == DefKind::Enum)
+}
+
+/// True when `def_id` names a *non-generic* interface or class declaration. A
+/// type alias whose body is a bare reference to one of these points at the
+/// declaration's shared nominal type — which never carries tsc's
+/// `aliasSymbol` — so the alias renders under the declaration's own name
+/// (`type IA = Iface` renders `Iface`). Generic declarations are excluded:
+/// referencing one (with explicit arguments, or bare when every parameter is
+/// defaulted) builds a fresh instantiation that keeps the alias symbol, so
+/// those aliases keep their declared name.
+fn is_non_generic_interface_or_class_ref(def_store: &DefinitionStore, def_id: DefId) -> bool {
+    def_store.get(def_id).is_some_and(|def| {
+        matches!(def.kind, DefKind::Interface | DefKind::Class) && def.type_params.is_empty()
+    })
 }
 
 /// Evaluate a computed alias body whose top-level operator never carries tsc's

@@ -242,6 +242,37 @@ pub(crate) fn alias_declaration_body_is_computed(
     }
 }
 
+/// True when a type alias declaration body is a (optionally parenthesized)
+/// *bare* type reference — a `TypeReference` node with no type arguments.
+/// The referenced declaration's kind is vetted structurally at the call site;
+/// this helper answers only the syntactic question, so an inline literal,
+/// intersection, or applied reference (`Box[string]` spelled with angle
+/// brackets) never qualifies.
+pub(crate) fn alias_declaration_body_is_bare_type_reference(
+    arena: &NodeArena,
+    decl_idx: NodeIndex,
+) -> bool {
+    let Some(decl_node) = arena.get(decl_idx) else {
+        return false;
+    };
+    let Some(type_alias) = arena.get_type_alias(decl_node) else {
+        return false;
+    };
+    let node_idx = crate::types_domain::unique_symbol_arena::unwrap_parenthesized_type(
+        arena,
+        type_alias.type_node,
+    );
+    let Some(node) = arena.get(node_idx) else {
+        return false;
+    };
+    if node.kind != syntax_kind_ext::TYPE_REFERENCE {
+        return false;
+    }
+    arena
+        .get_type_ref(node)
+        .is_some_and(|type_ref| type_ref.type_arguments.is_none())
+}
+
 /// True when a non-generic type alias declaration body is a (optionally
 /// parenthesized) tuple type literal with a top-level spread element
 /// (`type T = [...X, c]`).
