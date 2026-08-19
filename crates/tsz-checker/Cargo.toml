@@ -3038,3 +3038,7 @@ path = "tests/enum_name_display_qualification_tests.rs"
 [[test]]
 name = "number_to_enum_member_assignability_tests"
 path = "tests/number_to_enum_member_assignability_tests.rs"
+
+[[test]]
+name = "union_target_property_mismatch_elaboration_tests"
+path = "tests/union_target_property_mismatch_elaboration_tests.rs"

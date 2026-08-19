@@ -1,0 +1,209 @@
+//! Union-**target** failure explanation: best-member selection and the
+//! elaboration reason carried past the bare union head line.
+//!
+//! Extracted from `explain.rs`'s structural walk. When a relation fails
+//! against a union target, `tsc` continues the diagnostic chain past
+//! `Type 'S' is not assignable to type 'A | B'.`: an application-shaped
+//! comparison folds to a direct missing-property line, a sole-real-member
+//! nullable union promotes the member's own reason, a union source recurses
+//! per member, and a structural union selects the best-matching member
+//! (`getBestMatchingType`, see `explain_union_discriminant.rs`) whose failure
+//! is carried in [`SubtypeFailureReason::UnionTargetMismatch`].
+
+use crate::def::resolver::TypeResolver;
+use crate::diagnostics::SubtypeFailureReason;
+use crate::relations::subtype::SubtypeChecker;
+use crate::types::TypeId;
+use crate::visitor::{application_id, union_list_id};
+
+impl<R: TypeResolver> SubtypeChecker<'_, R> {
+    /// Explain a failed relation whose `resolved_target` is a union. Always
+    /// returns a reason; the caller has already established the union shape.
+    pub(super) fn explain_union_target_failure(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        resolved_source: TypeId,
+        resolved_target: TypeId,
+    ) -> Option<SubtypeFailureReason> {
+        // Prefer the original target's union members so member display keeps
+        // user-facing aliases (e.g. an identity mapped type `Mapped<B>` that
+        // structurally simplifies to `B` in `resolved_target` must still
+        // render as `Mapped<B>` in the elaboration, matching tsc). Fall back
+        // to the resolved union when the target is itself a lazy alias.
+        let members_id = union_list_id(self.interner, target)
+            .or_else(|| union_list_id(self.interner, resolved_target))
+            .expect("resolved_target is a union");
+        let members = self.interner.type_list(members_id);
+        let application_shaped_comparison = application_id(self.interner, source).is_some()
+            || application_id(self.interner, target).is_some();
+        let source_members = union_list_id(self.interner, resolved_source)
+            .map(|list_id| self.interner.type_list(list_id).as_ref().to_vec())
+            .unwrap_or_else(|| vec![resolved_source]);
+
+        // Application-shaped comparison (e.g. assigning to `Foo<X>` that
+        // resolves to a union): tsc collapses the elaboration to a direct
+        // missing-property line against the application target rather than
+        // the structural union members, so keep that first-failing-member
+        // behavior here.
+        if application_shaped_comparison {
+            for &member in members.iter() {
+                if self.check_subtype(resolved_source, member).is_true() {
+                    continue;
+                }
+                for &source_member in &source_members {
+                    if self.check_subtype(source_member, member).is_true() {
+                        continue;
+                    }
+                    let member_reason = self.explain_failure_guarded(source_member, member);
+                    let missing_property = match member_reason {
+                        Some(SubtypeFailureReason::MissingProperty { property_name, .. }) => {
+                            Some(property_name)
+                        }
+                        Some(SubtypeFailureReason::MissingProperties {
+                            property_names, ..
+                        }) => property_names.first().copied(),
+                        _ => None,
+                    };
+                    if let Some(property_name) = missing_property {
+                        return Some(SubtypeFailureReason::MissingProperty {
+                            property_name,
+                            source_type: source,
+                            target_type: target,
+                        });
+                    }
+                }
+            }
+            return Some(SubtypeFailureReason::NoUnionMemberMatches {
+                source_type: source,
+                target_union_members: members.to_vec(),
+            });
+        }
+
+        // Nullable-object target (`T | null`, `T | undefined`,
+        // `T | null | undefined`): every member other than a single
+        // object-like member is nullish. A non-nullish source (an object
+        // literal here) can never satisfy the nullish members, so tsc
+        // elaborates the failure against `T` exactly as if the target were
+        // `T` alone — a missing required property surfaces as the top-level
+        // `MissingProperty`/`MissingProperties` reason (rendered TS2741 /
+        // TS2739 in an assignment/return position, TS2345 in an argument
+        // position), not as a `UnionTargetMismatch` whose missing-property
+        // line is demoted to a child of a generic TS2322 union mismatch.
+        // Promote that reason here so the single-real-member shape matches
+        // tsc; a genuine multi-member union (`A | B`, `T | number`) keeps
+        // the union-mismatch elaboration below.
+        {
+            let mut non_nullish = members.iter().copied().filter(|m| !m.is_nullish());
+            if let (Some(sole_member), None) = (non_nullish.next(), non_nullish.next()) {
+                for &source_member in &source_members {
+                    if self.check_subtype(source_member, sole_member).is_true() {
+                        continue;
+                    }
+                    if let Some(reason) = self.explain_failure_guarded(source_member, sole_member) {
+                        let promote = match &reason {
+                            // Object/array source missing a required property:
+                            // surface the missing-property reason directly
+                            // (TS2741 / TS2739 / TS2345).
+                            SubtypeFailureReason::MissingProperty { .. }
+                            | SubtypeFailureReason::MissingProperties { .. } => true,
+                            // Scalar source (a primitive / string-literal property
+                            // value): tsc elaborates `S` against the sole real member
+                            // `T` directly instead of a `NoUnionMemberMatches` over
+                            // `[T, undefined]`. The bare reason both (a) renders the
+                            // evaluated leaf (`number`) where `T` is a still-deferred
+                            // application (e.g. the `DP<number>` value of a recursive
+                            // `DeepPartial`-style mapped type), and (b) drops the
+                            // spurious `| undefined` and "Did you mean" suggestion tsc
+                            // never shows for a sole-real-member nullable target. Object
+                            // sources are excluded so their per-property elaboration is
+                            // unaffected.
+                            SubtypeFailureReason::TypeMismatch { .. }
+                            | SubtypeFailureReason::IntrinsicTypeMismatch { .. }
+                            | SubtypeFailureReason::LiteralTypeMismatch { .. } => {
+                                !self.is_object_like(source_member)
+                            }
+                            _ => false,
+                        };
+                        if promote {
+                            return Some(reason);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Union source against a union target: tsc's union-source loop
+        // (`eachTypeRelatedToType`) runs first, so the first failing
+        // source member elaborates against the *whole* union target —
+        // member header (`Type 'M' is not assignable to type 'U'.`)
+        // followed by that member's own union-target elaboration. The
+        // best-member selection below only understands object-shaped
+        // sources, so recurse per member and wrap the composed
+        // union-target reason; any other nested shape keeps the current
+        // bare-union-line behavior.
+        if source_members.len() > 1 {
+            for &source_member in &source_members {
+                if source_member == source {
+                    // Defensive: avoid self-recursion on a degenerate union.
+                    continue;
+                }
+                if self.check_subtype(source_member, resolved_target).is_true() {
+                    continue;
+                }
+                if let Some(nested @ SubtypeFailureReason::UnionTargetMismatch { .. }) =
+                    self.explain_failure_guarded(source_member, target)
+                {
+                    return Some(SubtypeFailureReason::UnionSourceMismatch {
+                        source_type: source,
+                        target_type: target,
+                        member_type: source_member,
+                        nested_reason: Box::new(nested),
+                    });
+                }
+                break;
+            }
+        }
+
+        // Structural union target: select the best-matching member the way
+        // tsc's `getBestMatchingType` does — discriminant first, then
+        // key-overlap, and no member at all when nothing overlaps. See
+        // [`SubtypeChecker::select_union_target_best_member`].
+        let best_member: Option<TypeId> =
+            self.select_union_target_best_member(resolved_source, &members);
+
+        // Elaborate against the best member, carrying whatever failure the
+        // member relation reports. tsc's `getBestMatchingType` re-runs the
+        // failed relation against the selected member with errors enabled,
+        // so the chain continues past the union head for every failure
+        // kind: a missing required property folds directly beneath the
+        // head, and a structural failure (a property-type mismatch, an
+        // index-signature mismatch, …) elaborates beneath a
+        // `Type 'S' is not assignable to type '<member>'.` member frame —
+        // the checker's `UnionTargetMismatch` renderer owns that split.
+        // Fresh object-literal sources never reach this reason: the
+        // checker's expression elaboration
+        // (`try_elaborate_assignment_source_error`) reports at the
+        // offending property node first.
+        if let Some(member) = best_member {
+            for &source_member in &source_members {
+                if self.check_subtype(source_member, member).is_true() {
+                    continue;
+                }
+                if let Some(reason) = self.explain_failure_guarded(source_member, member) {
+                    return Some(SubtypeFailureReason::UnionTargetMismatch {
+                        source_type: source,
+                        target_type: target,
+                        member_type: member,
+                        nested_reason: Box::new(reason),
+                    });
+                }
+            }
+        }
+
+        Some(SubtypeFailureReason::NoUnionMemberMatches {
+            source_type: source,
+            target_union_members: members.to_vec(),
+        })
+    }
+}
