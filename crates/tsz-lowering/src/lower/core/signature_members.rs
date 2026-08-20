@@ -178,7 +178,8 @@ impl<'a> TypeLowering<'a> {
                                 &sig.modifiers,
                                 tsz_scanner::SyntaxKind::ReadonlyKeyword,
                             );
-                            let value_type = self.lower_type(sig.type_annotation);
+                            let value_type =
+                                self.lower_property_signature_type(sig.type_annotation);
                             parts.merge_implicit_symbol_index(value_type, readonly);
                         } else if let Some(prop) = self.lower_type_element(idx) {
                             parts.merge_property(prop);
@@ -608,11 +609,7 @@ impl<'a> TypeLowering<'a> {
         match member.kind {
             k if k == syntax_kind_ext::METHOD_SIGNATURE => Some(self.lower_method_signature(sig)),
             k if k == syntax_kind_ext::PROPERTY_SIGNATURE => {
-                let base = if sig.type_annotation.is_some() {
-                    self.lower_type(sig.type_annotation)
-                } else {
-                    TypeId::ANY
-                };
+                let base = self.lower_property_signature_type(sig.type_annotation);
                 if sig.question_token {
                     Some(self.interner.union(vec![base, TypeId::UNDEFINED]))
                 } else {
@@ -840,6 +837,27 @@ impl<'a> TypeLowering<'a> {
         true
     }
 
+    /// Lower the value type of a property signature.
+    ///
+    /// A property signature with no type annotation (`interface I { a; }`) is
+    /// *legally* implicit `any`, not a missing-annotation bug. `lower_type` maps
+    /// `NodeIndex::NONE` to `TypeId::ERROR` (the deliberate anti-any-poisoning
+    /// sentinel for genuinely-required annotations), which would then poison
+    /// every structural query that walks the containing object type — e.g.
+    /// `check_index_signature_compatibility` clears an index signature whose
+    /// value "contains an error", silently dropping an inherited index and
+    /// suppressing TS2413. Typing the member as implicit `any` at the lowering
+    /// source keeps every downstream structural decision correct. The separate
+    /// TS7008 (`noImplicitAny`) diagnostic is raised by the checker from the
+    /// annotation node and is unaffected by this choice.
+    pub(super) fn lower_property_signature_type(&self, type_annotation: NodeIndex) -> TypeId {
+        if type_annotation.is_some() {
+            self.lower_type(type_annotation)
+        } else {
+            TypeId::ANY
+        }
+    }
+
     /// Lower a type element (property signature, method signature, etc.)
     pub(super) fn lower_type_element(&self, node_idx: NodeIndex) -> Option<PropertyInfo> {
         let node = self.arena.get(node_idx)?;
@@ -859,7 +877,7 @@ impl<'a> TypeLowering<'a> {
 
             // Get visibility (for type literals, always Public)
             let visibility = self.arena.get_visibility_from_modifiers(&sig.modifiers);
-            let type_id = self.lower_type(sig.type_annotation);
+            let type_id = self.lower_property_signature_type(sig.type_annotation);
             let write_type = if readonly { TypeId::NONE } else { type_id };
 
             Some(PropertyInfo {
