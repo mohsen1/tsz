@@ -3,120 +3,27 @@
 //! These tests verify that classes with private/protected constructors
 //! cannot be instantiated from invalid scopes.
 
-use crate::checker::context::CheckerOptions;
-use crate::checker::state::CheckerState;
-use crate::test_fixtures::TestContext;
-use std::sync::Arc;
-use tsz_binder::BinderState;
-use tsz_parser::parser::ParserState;
-use tsz_solver::construction::TypeInterner;
-
-/// Workaround for TS2318 (Cannot find global type) errors in test infrastructure.
-/// Mocks the global types to bypass missing lib.d.ts issue.
-const GLOBAL_TYPE_MOCKS: &str = r#"
-interface Array<T> {}
-interface String {}
-interface Boolean {}
-interface Number {}
-interface Object {}
-interface Function {}
-interface RegExp {}
-interface IArguments {}
-"#;
+use crate::diagnostics::DiagnosticCategory;
+use crate::test_utils::check_source_diagnostics;
 
 fn test_constructor_accessibility(source: &str, expected_error_code: u32) {
-    let source = format!("{GLOBAL_TYPE_MOCKS}\n{source}");
-
-    let ctx = TestContext::new(); // This loads lib files
-
-    let mut parser = ParserState::new("test.ts".to_string(), source);
-    let root = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file_with_libs(parser.get_arena(), root, &ctx.lib_files);
-
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.ts".to_string(),
-        CheckerOptions::default(),
-    );
-
-    // Set lib contexts for global symbol resolution
-    if !ctx.lib_files.is_empty() {
-        let lib_contexts: Vec<crate::checker::context::LibContext> = ctx
-            .lib_files
-            .iter()
-            .map(|lib| crate::checker::context::LibContext {
-                arena: Arc::clone(&lib.arena),
-                binder: Arc::clone(&lib.binder),
-            })
-            .collect();
-        checker.ctx.set_lib_contexts(lib_contexts);
-    }
-
-    checker.check_source_file(root);
-
-    let error_count = checker
-        .ctx
-        .diagnostics
+    let diagnostics = check_source_diagnostics(source);
+    let error_count = diagnostics
         .iter()
         .filter(|d| d.code == expected_error_code)
         .count();
 
     assert!(
         error_count >= 1,
-        "Expected at least 1 TS{} error, got {}: {:?}",
-        expected_error_code,
-        error_count,
-        checker.ctx.diagnostics
+        "Expected at least 1 TS{expected_error_code} error, got {error_count}: {diagnostics:?}"
     );
 }
 
 fn test_no_errors(source: &str) {
-    let source = format!("{GLOBAL_TYPE_MOCKS}\n{source}");
-
-    let ctx = TestContext::new(); // This loads lib files
-
-    let mut parser = ParserState::new("test.ts".to_string(), source);
-    let root = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file_with_libs(parser.get_arena(), root, &ctx.lib_files);
-
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.ts".to_string(),
-        CheckerOptions::default(),
-    );
-
-    // Set lib contexts for global symbol resolution
-    if !ctx.lib_files.is_empty() {
-        let lib_contexts: Vec<crate::checker::context::LibContext> = ctx
-            .lib_files
-            .iter()
-            .map(|lib| crate::checker::context::LibContext {
-                arena: Arc::clone(&lib.arena),
-                binder: Arc::clone(&lib.binder),
-            })
-            .collect();
-        checker.ctx.set_lib_contexts(lib_contexts);
-    }
-
-    checker.check_source_file(root);
-
-    let errors: Vec<_> = checker
-        .ctx
-        .diagnostics
+    let diagnostics = check_source_diagnostics(source);
+    let errors: Vec<_> = diagnostics
         .iter()
-        .filter(|d| {
-            d.category == crate::checker::diagnostics::DiagnosticCategory::Error && d.code != 2318
-        })
+        .filter(|d| d.category == DiagnosticCategory::Error && d.code != 2318)
         .collect();
 
     assert!(
@@ -124,6 +31,20 @@ fn test_no_errors(source: &str) {
         "Expected no errors, got {}: {:?}",
         errors.len(),
         errors
+    );
+}
+
+fn test_no_specific_error(source: &str, forbidden_code: u32) {
+    let diagnostics = check_source_diagnostics(source);
+    let forbidden: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| d.code == forbidden_code)
+        .collect();
+
+    assert!(
+        forbidden.is_empty(),
+        "Expected no TS{forbidden_code} errors, got {}: {forbidden:?}",
+        forbidden.len(),
     );
 }
 
@@ -159,16 +80,6 @@ fn test_private_constructor_inside_class() {
     // Should pass
     test_no_errors(
         r#"
-        // Workaround: Mock global types to avoid TS2318 errors
-        interface Array<T> {}
-        interface String {}
-        interface Boolean {}
-        interface Number {}
-        interface Object {}
-        interface Function {}
-        interface RegExp {}
-        interface IArguments {}
-
         class A {
             private constructor() {}
             static create() { return new A(); }
@@ -313,56 +224,6 @@ fn test_inherited_private_constructor() {
         class C extends B {}
         "#,
         2675,
-    );
-}
-
-fn test_no_specific_error(source: &str, forbidden_code: u32) {
-    let source = format!("{GLOBAL_TYPE_MOCKS}\n{source}");
-
-    let ctx = TestContext::new();
-
-    let mut parser = ParserState::new("test.ts".to_string(), source);
-    let root = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file_with_libs(parser.get_arena(), root, &ctx.lib_files);
-
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.ts".to_string(),
-        CheckerOptions::default(),
-    );
-
-    if !ctx.lib_files.is_empty() {
-        let lib_contexts: Vec<crate::checker::context::LibContext> = ctx
-            .lib_files
-            .iter()
-            .map(|lib| crate::checker::context::LibContext {
-                arena: Arc::clone(&lib.arena),
-                binder: Arc::clone(&lib.binder),
-            })
-            .collect();
-        checker.ctx.set_lib_contexts(lib_contexts);
-    }
-
-    checker.check_source_file(root);
-
-    let forbidden: Vec<_> = checker
-        .ctx
-        .diagnostics
-        .iter()
-        .filter(|d| d.code == forbidden_code)
-        .collect();
-
-    assert!(
-        forbidden.is_empty(),
-        "Expected no TS{} errors, got {}: {:?}",
-        forbidden_code,
-        forbidden.len(),
-        forbidden
     );
 }
 
