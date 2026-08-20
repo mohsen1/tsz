@@ -6,6 +6,45 @@ use crate::state::CheckerState;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    /// The source-type display for the head line of a function/parameter
+    /// (`ParameterTypeMismatch`) assignability failure.
+    ///
+    /// - `depth > 0`: a nested property/element leaf. The outer anchor no longer
+    ///   points at the sub-expression whose type is `source`, so the structural
+    ///   formatter is used (matching the solver's `source` `TypeId`).
+    /// - `depth == 0` with a `source_display_override`: the caller anchored the
+    ///   diagnostic at a declaration *name* rather than a value expression (e.g.
+    ///   a TS2416/TS2417 member override), and supplies the structural display
+    ///   directly. The `AssignmentSource` role must not run here — for a
+    ///   method-name anchor it walks up to the method declaration and types it as
+    ///   the method's (possibly inferred) return type, collapsing `(x: T) => R`
+    ///   to `R` (`void`, `undefined`, `number`, ...).
+    /// - `depth == 0` without an override: a genuine assignment/argument
+    ///   diagnostic, whose anchor *is* the value expression, so the
+    ///   anchor-driven `AssignmentSource` role renders it.
+    pub(super) fn signature_head_source_display(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        idx: tsz_parser::parser::NodeIndex,
+        depth: u32,
+        source_display_override: Option<&str>,
+    ) -> String {
+        if depth > 0 {
+            self.format_type_for_assignability_message(source)
+        } else if let Some(display) = source_display_override {
+            display.to_string()
+        } else {
+            self.format_type_for_diagnostic_role(
+                source,
+                DiagnosticTypeDisplayRole::AssignmentSource {
+                    target,
+                    anchor_idx: idx,
+                },
+            )
+        }
+    }
+
     pub(super) fn render_type_mismatch(&mut self, ctx: &RenderContext) -> Diagnostic {
         let source = ctx.source;
         let target = ctx.target;

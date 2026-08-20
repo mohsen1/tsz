@@ -2289,6 +2289,9 @@ path = "tests/class_index_signature_modifier_grammar_tests.rs"
 name = "class_shape_cache_stability_tests"
 path = "tests/class_shape_cache_stability_tests.rs"
 [[test]]
+name = "class_override_inferred_return_display_tests"
+path = "tests/class_override_inferred_return_display_tests.rs"
+[[test]]
 name = "class_expression_implements_display_tests"
 path = "tests/class_expression_implements_display_tests.rs"
 [[test]]
