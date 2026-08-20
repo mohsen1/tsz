@@ -397,7 +397,7 @@ impl<'a> CheckerState<'a> {
         Some(self.ctx.types.lazy(def_id))
     }
 
-    pub(super) fn local_non_generic_type_alias_body_for_reference(
+    pub(crate) fn local_non_generic_type_alias_body_for_reference(
         &self,
         type_node: NodeIndex,
     ) -> Option<NodeIndex> {

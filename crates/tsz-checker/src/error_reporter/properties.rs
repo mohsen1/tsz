@@ -194,6 +194,13 @@ impl<'a> CheckerState<'a> {
         target: TypeId,
         idx: NodeIndex,
     ) -> String {
+        // The written annotation (or the written union arm the excess check
+        // narrowed to) decides alias-vs-structural display; a coincidentally
+        // shaped alias registered against the same interned `TypeId` must not
+        // repaint it. See `written_target_display.rs`.
+        if let Some(display) = self.excess_property_written_target_display(target, idx) {
+            return display;
+        }
         let inferred_display = self
             .format_pick_over_all_keys_as_keyof(target)
             .unwrap_or_else(|| self.format_excess_property_target_type(target));
@@ -1757,6 +1764,7 @@ impl<'a> CheckerState<'a> {
 }
 
 mod diagnostic_methods_tail;
+mod written_target_display;
 
 /// Match tsc's `^(?:EventTarget|Node|(?:HTML[a-zA-Z]*)?Element)$` regex used by
 /// `containerSeemsToBeEmptyDomElement` to detect DOM element-like type names.
