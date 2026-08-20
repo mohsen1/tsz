@@ -2729,6 +2729,10 @@ name = "checker_constructor_matrix_tests"
 path = "tests/checker_constructor_matrix_tests.rs"
 
 [[test]]
+name = "constraint_walk_elaboration_depth_tests"
+path = "tests/constraint_walk_elaboration_depth_tests.rs"
+
+[[test]]
 name = "construct_signature_boundary_matrix_tests"
 path = "tests/construct_signature_boundary_matrix_tests.rs"
 

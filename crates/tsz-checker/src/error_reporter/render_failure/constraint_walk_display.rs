@@ -78,6 +78,14 @@ impl<'a> CheckerState<'a> {
     /// beneath it — unlike [`Self::push_deferred_constraint_walk`], this does
     /// NOT re-render the head pair as its own elaboration line. Empty (a
     /// no-op) when `source` has no further constraint to walk.
+    ///
+    /// `base_depth` is the depth of the (already-rendered, unindented)
+    /// diagnostic head — its callers both gate on `depth == 0`, i.e. the head
+    /// is the diagnostic's own top-level `message_text`, not a related-info
+    /// entry — so the first step is the head's *first* child and belongs at
+    /// `base_depth` itself, matching every other first-child elaboration line
+    /// in this renderer. `base_depth + 1 + i` (#17797) double-counted that
+    /// first level, seeding the whole walk one level too deep.
     pub(super) fn push_deferred_constraint_walk_steps(
         &mut self,
         diag: &mut Diagnostic,
@@ -91,7 +99,7 @@ impl<'a> CheckerState<'a> {
             target,
         );
         for (i, step) in steps.iter().enumerate() {
-            let depth = base_depth + 1 + i as u32;
+            let depth = base_depth + i as u32;
             self.push_constraint_walk_line(diag, step.type_id, target, depth, step.concrete);
         }
     }
