@@ -12,6 +12,26 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    /// Count of `target`'s union members that are object-like (a plain object
+    /// shape or an object-with-index-signature shape). Returns 0 when `target`
+    /// is not a union. Mirrors the solver's
+    /// `fresh_object_literal_union_property_fold`'s `check_members` filter
+    /// (`explain_union_target.rs`), which the checker's per-property AST walk
+    /// must agree with on when tsc's excess-property union fold — rather than
+    /// `elaborateElementwise` — owns the diagnostic.
+    fn union_target_object_like_member_count(&self, target: TypeId) -> usize {
+        let Some(members) = query_common::union_members(self.ctx.types, target) else {
+            return 0;
+        };
+        members
+            .iter()
+            .filter(|&&member| {
+                query_common::object_shape_for_type(self.ctx.types, member).is_some()
+                    || query_common::object_with_index_shape_id(self.ctx.types, member).is_some()
+            })
+            .count()
+    }
+
     /// Elaborate object literal property type mismatches with TS2322.
     fn try_elaborate_object_literal_properties(
         &mut self,
@@ -82,8 +102,8 @@ impl<'a> CheckerState<'a> {
         let lazy_evaluated_param_type = self.evaluate_contextual_type(lazy_resolved_param_type);
         let assignability_param_type = self.evaluate_type_for_assignability(effective_param_type);
         let lazy_member_param_type = self.resolve_lazy_members_in_union(assignability_param_type);
-        let mut narrowed_by_discriminant = false;
-        for candidate in [
+
+        let pre_narrow_candidates = [
             effective_param_type,
             contextual_param_type,
             evaluated_param_type,
@@ -92,7 +112,9 @@ impl<'a> CheckerState<'a> {
             lazy_evaluated_param_type,
             assignability_param_type,
             lazy_member_param_type,
-        ] {
+        ];
+        let mut narrowed_by_discriminant = false;
+        for candidate in pre_narrow_candidates {
             let narrowed = self.narrow_contextual_union_via_object_literal_discriminants(
                 candidate,
                 &obj.elements.nodes,
@@ -102,6 +124,34 @@ impl<'a> CheckerState<'a> {
                 narrowed_by_discriminant = true;
                 break;
             }
+        }
+
+        // tsc's `elaborateElementwise` (this per-property AST walk) never
+        // drills into a property's own value once a discriminant has resolved
+        // a multi-member union target to one arm: `isRelatedTo`'s
+        // `hasExcessProperties` phase (checker.ts) owns that relation instead,
+        // reporting the first failing property directly beneath the head with
+        // a dotted-path fold — never a per-property AST-anchored TS2322. The
+        // solver's `fresh_object_literal_union_property_fold` plus the
+        // checker's property-chain renderer already reproduce that fold and
+        // chain for LEAF properties (the walk's own per-property loop below
+        // already happens to defer to them there); the gap is a property
+        // whose value is ITSELF an object/array literal, which the walk
+        // recurses into unconditionally, anchoring the diagnostic at the
+        // wrong (inner) node and dropping the outer union-head/dotted-path
+        // frame. Bail entirely once a discriminant has narrowed a genuinely
+        // ambiguous (2+ object-like member) union, so every failing property
+        // — leaf or nested — goes through the fold uniformly. When NO
+        // discriminant matches (every arm disagrees), tsc instead compares
+        // the property against the union of each candidate member's property
+        // type via the ordinary elementwise walk (no outer frame) — that case
+        // must keep running the loop below.
+        if narrowed_by_discriminant
+            && pre_narrow_candidates
+                .iter()
+                .any(|&candidate| self.union_target_object_like_member_count(candidate) >= 2)
+        {
+            return false;
         }
 
         // A missing required property does NOT pre-empt per-property elaboration.

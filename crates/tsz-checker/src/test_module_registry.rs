@@ -721,6 +721,8 @@ mod namespace_property_mismatch_boundary_arch_tests;
 mod narrowed_union_source_display_tests;
 #[path = "tests/narrowing_union_source_display_tests.rs"]
 mod narrowing_union_source_display_tests;
+#[path = "tests/nested_fresh_object_literal_union_elaboration_anchor_tests.rs"]
+mod nested_fresh_object_literal_union_elaboration_anchor_tests;
 #[path = "tests/nested_function_async_context_scope_tests.rs"]
 mod nested_function_async_context_scope_tests;
 #[path = "tests/nested_generic_call_return_context_baked_tests.rs"]
