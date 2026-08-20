@@ -1061,6 +1061,8 @@ mod ts2345_unknown_argument_assignability_tests;
 mod ts2353_generic_constraint_tests;
 #[path = "tests/ts2353_union_arm_excess_routing_tests.rs"]
 mod ts2353_union_arm_excess_routing_tests;
+#[path = "tests/ts2353_written_target_alias_repaint_tests.rs"]
+mod ts2353_written_target_alias_repaint_tests;
 #[path = "tests/ts2383_overload_flag_agreement_tests.rs"]
 mod ts2383_overload_flag_agreement_tests;
 #[path = "tests/ts2391_default_export_overload_group_tests.rs"]
