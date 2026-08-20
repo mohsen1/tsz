@@ -339,6 +339,68 @@ impl<'a> CheckerState<'a> {
                     Some(merged)
                 })
                 .unwrap_or(value_type);
+            // An array-literal value has neither a `literal_expression_display`
+            // nor the object-literal recursion above, so it always reached the
+            // widening fallback below and lost its element literals. tsc
+            // renders the property with its checked (contextually typed) value
+            // — `[1, 2]` against a tuple arm, `1[]` against an array arm, in
+            // the head and the missing-property elaboration alike — whenever
+            // the target's own per-property type is what typed it; only a
+            // value no target property accepted stays widened (a shape tsc
+            // anchors at the inner expression as `number[]` anyway). The
+            // acceptance test is an exact element-for-element literal match
+            // against the target property type, so a mismatched source is
+            // never repainted as its target.
+            if computed_index_kind.is_none()
+                && self
+                    .ctx
+                    .arena
+                    .get(self.ctx.arena.skip_parenthesized(value_idx))
+                    .is_some_and(|node| node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION)
+                && let Some(name) = property_name
+            {
+                let candidate_prop_types: Vec<TypeId> = if let Some(shape) = target_shape.as_ref() {
+                    shape
+                        .properties
+                        .iter()
+                        .filter(|p| p.name == name)
+                        .map(|p| p.type_id)
+                        .collect()
+                } else if let Some(members) = target
+                    .and_then(|target| diagnostic_query::union_members(self.ctx.types, target))
+                {
+                    members
+                        .iter()
+                        .filter_map(|member| {
+                            diagnostic_query::object_shape_for_type(self.ctx.types, *member)
+                        })
+                        .filter_map(|member_shape| {
+                            member_shape
+                                .properties
+                                .iter()
+                                .find(|p| p.name == name)
+                                .map(|p| p.type_id)
+                        })
+                        .collect()
+                } else {
+                    Vec::new()
+                };
+                if let Some(accepted) = candidate_prop_types.into_iter().find(|&prop_type| {
+                    self.array_literal_value_display_matches_target(value_idx, prop_type)
+                }) {
+                    // The accepted type is the target's own declared property
+                    // type: render it directly — `widen_function_like_display_type`
+                    // below would still widen its tuple element literals.
+                    let rendered = self.format_type_for_assignability_message(accepted);
+                    push_object_literal_display_member(
+                        &mut parts,
+                        &mut member_slots,
+                        property_name,
+                        format!("{display_name}: {rendered}"),
+                    );
+                    continue;
+                }
+            }
             let value_display_type = if target_accepts_literal {
                 value_display_type
             } else {
@@ -385,5 +447,126 @@ impl<'a> CheckerState<'a> {
         }
 
         Some(format!("{{ {}; }}", parts.join("; ")))
+    }
+
+    /// Whether `array_idx` is an array literal whose every element is a
+    /// literal expression (nested array literals included) exactly matching
+    /// the corresponding element type of the tuple — or the uniform element
+    /// type of the array — `target_prop` declares (`readonly` unwrapped).
+    ///
+    /// This proves the value was typed by that target property (`tsc`'s
+    /// contextual typing is what keeps the element literals in its checked
+    /// type), so the display may render the target's own property type; any
+    /// weaker test would repaint a mismatched source as its target.
+    fn array_literal_value_display_matches_target(
+        &mut self,
+        array_idx: NodeIndex,
+        target_prop: TypeId,
+    ) -> bool {
+        let unwrapped = diagnostic_query::readonly_inner_type(self.ctx.types, target_prop)
+            .unwrap_or(target_prop);
+        let array_idx = self.ctx.arena.skip_parenthesized(array_idx);
+        let elements: Vec<NodeIndex> = match self
+            .ctx
+            .arena
+            .get(array_idx)
+            .filter(|node| node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION)
+            .and_then(|node| self.ctx.arena.get_literal_expr(node))
+        {
+            Some(arr) => arr.elements.nodes.to_vec(),
+            None => return false,
+        };
+        if let Some(tuple_elems) = diagnostic_query::tuple_elements(self.ctx.types, unwrapped) {
+            tuple_elems.len() == elements.len()
+                && tuple_elems.iter().all(|e| e.is_required())
+                && elements
+                    .iter()
+                    .zip(tuple_elems.iter())
+                    .all(|(&el, elem)| self.array_element_display_matches_target(el, elem.type_id))
+        } else if let Some(elem_type) =
+            diagnostic_query::array_element_type(self.ctx.types, unwrapped)
+        {
+            // An empty source against an array (non-tuple) target stays on
+            // the widening fallback: there is no element evidence that this
+            // target typed it.
+            !elements.is_empty()
+                && elements
+                    .iter()
+                    .all(|&el| self.array_element_display_matches_target(el, elem_type))
+        } else {
+            false
+        }
+    }
+
+    /// One element of [`Self::array_literal_value_display_matches_target`]:
+    /// a literal expression whose literal type — derived from its own syntax,
+    /// because the cached node type of an element is already widened by the
+    /// time diagnostics render — is exactly `target_elem`, or a nested array
+    /// literal matching `target_elem` element-for-element.
+    fn array_element_display_matches_target(
+        &mut self,
+        element_idx: NodeIndex,
+        target_elem: TypeId,
+    ) -> bool {
+        let element_idx = self.ctx.arena.skip_parenthesized(element_idx);
+        let Some(node) = self.ctx.arena.get(element_idx) else {
+            return false;
+        };
+        if node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION {
+            return self.array_literal_value_display_matches_target(element_idx, target_elem);
+        }
+        self.array_element_literal_type_from_syntax(element_idx) == Some(target_elem)
+    }
+
+    /// The literal type a literal element expression spells: string, number
+    /// (a `-`/`+`-prefixed numeric literal included), or boolean. Any other
+    /// expression returns `None`, keeping the acceptance test conservative.
+    fn array_element_literal_type_from_syntax(&mut self, idx: NodeIndex) -> Option<TypeId> {
+        use tsz_scanner::SyntaxKind;
+        let node = self.ctx.arena.get(idx)?;
+        match node.kind {
+            k if k == SyntaxKind::StringLiteral as u16
+                || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 =>
+            {
+                let lit = self.ctx.arena.get_literal(node)?;
+                Some(diagnostic_query::display_string_literal_type(
+                    self.ctx.types,
+                    &lit.text,
+                ))
+            }
+            k if k == SyntaxKind::NumericLiteral as u16 => {
+                let lit = self.ctx.arena.get_literal(node)?;
+                let value = lit
+                    .value
+                    .or_else(|| tsz_common::numeric::parse_numeric_literal_value(&lit.text))?;
+                Some(diagnostic_query::display_number_literal_type(
+                    self.ctx.types,
+                    value,
+                ))
+            }
+            k if k == SyntaxKind::TrueKeyword as u16 => Some(TypeId::BOOLEAN_TRUE),
+            k if k == SyntaxKind::FalseKeyword as u16 => Some(TypeId::BOOLEAN_FALSE),
+            k if k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION => {
+                let unary = self.ctx.arena.get_unary_expr(node)?;
+                let negative = unary.operator == SyntaxKind::MinusToken as u16;
+                if !negative && unary.operator != SyntaxKind::PlusToken as u16 {
+                    return None;
+                }
+                let operand = self.ctx.arena.skip_parenthesized(unary.operand);
+                let operand_node = self.ctx.arena.get(operand)?;
+                if operand_node.kind != SyntaxKind::NumericLiteral as u16 {
+                    return None;
+                }
+                let lit = self.ctx.arena.get_literal(operand_node)?;
+                let value = lit
+                    .value
+                    .or_else(|| tsz_common::numeric::parse_numeric_literal_value(&lit.text))?;
+                Some(diagnostic_query::display_number_literal_type(
+                    self.ctx.types,
+                    if negative { -value } else { value },
+                ))
+            }
+            _ => None,
+        }
     }
 }

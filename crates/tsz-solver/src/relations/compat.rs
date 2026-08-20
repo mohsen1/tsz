@@ -1265,7 +1265,17 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         // with null/undefined/void, so T is NOT assignable to Object.
         // For constrained type parameters, delegate to the constraint check
         // instead of short-circuiting here.
-        if !source.is_nullable() && !self.is_type_parameter_source(source) {
+        //
+        // `TypeId::is_nullable` only matches the bare NULL/UNDEFINED/VOID
+        // intrinsics, so a union carrying one of them (`string | null`) fell
+        // through this guard and hit the fast path below, which never
+        // rejects on the nullish member (`has_conflicting_properties_with_object`
+        // checks property shape, not nullish membership) — issue #17761.
+        // `is_nullish_type` recurses into unions to match `tsc`'s
+        // `maybeTypeOfKind(source, TypeFlags.Nullable)`.
+        if !crate::narrowing::utils::is_nullish_type(self.interner, source)
+            && !self.is_type_parameter_source(source)
+        {
             let object_target = if self.is_global_object_interface_target(target) {
                 Some(target)
             } else if let Some(TypeData::Union(members_id)) = self.interner.lookup(target) {
