@@ -201,3 +201,64 @@ fn inline_object_source_renders_structurally() {
         "the coincidental alias name must not leak in the source, got: {msg}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Whitespace normalization: a written annotation echoed from source text (a
+// named-reference intersection/union, which does not reach the structural
+// `{ … } & { … }` formatter) must be re-spaced canonically like `tsc`'s
+// printer, never leaked verbatim. Binder names and spacing vary per case.
+// ---------------------------------------------------------------------------
+
+/// A named-interface intersection source written with padded `&` spacing renders
+/// `Left & Right`, not the verbatim `Left   &   Right`.
+#[test]
+fn named_intersection_source_normalizes_extra_whitespace() {
+    let msg = message(
+        "interface Left { p: number }\ninterface Right { q: number }\n\
+         const src: Left   &   Right = { p: 1, q: 2 };\nconst sink: { r: number } = src;\n",
+        2741,
+    );
+    assert!(
+        msg.contains("in type 'Left & Right'"),
+        "padded intersection spacing must normalize to 'Left & Right', got: {msg}"
+    );
+    assert!(
+        !msg.contains("Left   &"),
+        "verbatim source whitespace must not leak, got: {msg}"
+    );
+}
+
+/// A named-interface intersection in a call-argument source position normalizes
+/// its spacing too (TS2345).
+#[test]
+fn named_intersection_call_argument_source_normalizes_whitespace() {
+    let msg = message(
+        "interface One { p: number }\ninterface Two { q: number }\n\
+         declare function consume(x: number): void;\n\
+         const combined: One   &   Two = { p: 1, q: 2 };\nconsume(combined);\n",
+        2345,
+    );
+    assert!(
+        msg.contains("Argument of type 'One & Two'"),
+        "call-argument intersection source spacing must normalize, got: {msg}"
+    );
+}
+
+/// A named-interface union in a target-annotation position normalizes padded
+/// `|` spacing to `First | Second` (TS2322).
+#[test]
+fn named_union_target_normalizes_extra_whitespace() {
+    let msg = message(
+        "interface First { a: number }\ninterface Second { b: number }\n\
+         const wrong: First   |   Second = 5;\n",
+        2322,
+    );
+    assert!(
+        msg.contains("to type 'First | Second'"),
+        "padded union spacing must normalize to 'First | Second', got: {msg}"
+    );
+    assert!(
+        !msg.contains("First   |"),
+        "verbatim source whitespace must not leak, got: {msg}"
+    );
+}
