@@ -82,14 +82,21 @@ impl CheckerState<'_> {
         // application of a forwarding alias renders the frame through the
         // underlying application (`FlipRow<A, B>` heads the diagnostic;
         // `PairRow<B, A>` heads the member frame).
-        let display_source = crate::query_boundaries::assignability_alias_display::
+        let base_view = crate::query_boundaries::assignability_alias_display::
             nested_relation_source_base_application_view(
                 self.ctx.types,
                 &self.ctx.definition_store,
                 display_source,
-            )
-            .unwrap_or(display_source);
-        let frame_source = self.format_type_diagnostic(display_source);
+            );
+        // The base-view application may itself carry display provenance back
+        // to the written alias spelling (annotation-lowered sources store the
+        // full `evaluated -> base application -> written application` chain);
+        // the default formatter would chase it and repaint the spelling the
+        // frame just erased, so hop results format with the chase suppressed.
+        let frame_source = match base_view {
+            Some(base_view) => self.format_type_diagnostic_skip_application_alias_chase(base_view),
+            None => self.format_type_diagnostic(display_source),
+        };
         let frame_target = self.format_type_diagnostic(member_type);
         diag.push_elaboration_at(
             file_name,

@@ -190,6 +190,27 @@ impl<'a> CheckerState<'a> {
         formatter.format(type_id).into_owned()
     }
 
+    /// As [`Self::format_type_diagnostic`], but suppress the display-alias
+    /// chase when the aliased origin is itself an `Application` node.
+    ///
+    /// The nested-relation member frame renders a source's *underlying* base
+    /// application: `tsc` re-enters a failed union-member relation with the
+    /// source's alias erased (`getNormalizedType`), so the frame must show
+    /// `PairRow<B, A>` where the head showed `FlipRow<A, B>`. The underlying
+    /// application can itself carry display provenance back to the written
+    /// alias application (annotation-lowered sources store the full
+    /// `evaluated -> base application -> written application` chain), and the
+    /// default formatter would chase it and repaint the very spelling the
+    /// frame just erased.
+    pub fn format_type_diagnostic_skip_application_alias_chase(&self, type_id: TypeId) -> String {
+        let mut formatter = self
+            .ctx
+            .create_diagnostic_type_formatter()
+            .with_display_properties()
+            .with_skip_application_display_alias_chase();
+        formatter.format(type_id).into_owned()
+    }
+
     /// Format a type-parameter constraint for TS2344 messages. tsc strips the
     /// `aliasSymbol` from the constraint type before formatting, so the
     /// canonical primitive key union (`string | number | symbol`) is rendered
