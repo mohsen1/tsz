@@ -204,6 +204,10 @@ impl<'a> CheckerState<'a> {
                 .join(" | ")
         }
 
+        let text =
+            super::diagnostic_source::type_query_alias::normalize_declared_annotation_whitespace(
+                &text,
+            );
         let mut text = text.trim().trim_start_matches(':').trim().to_string();
         if let Some(newline) = text.find('\n') {
             text = text[..newline].trim_end().to_string();

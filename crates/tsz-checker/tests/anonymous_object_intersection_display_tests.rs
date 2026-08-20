@@ -262,3 +262,70 @@ fn named_union_target_normalizes_extra_whitespace() {
         "verbatim source whitespace must not leak, got: {msg}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Whitespace normalization, error-type-annotation echo family: when a
+// parameter's declared type resolves to a genuine error type (an unresolved
+// name reached through it), the checker cannot rebuild the annotation
+// canonically from its `TypeId` (there is no sound type to rebuild from) and
+// falls back to echoing the declared annotation's source text
+// (`sanitized_type_node_display`, `error_reporter/call_errors/
+// display_formatting_parameters.rs`). That raw-echo fallback read source text
+// directly and only trimmed the ends, leaking interior `&`/`|` padding the
+// declared-annotation family (#17788, `declared_annotation_source_text`)
+// already normalizes. Both paths now share one choke point: `sanitize_type_
+// annotation_text_for_diagnostic` itself normalizes horizontal whitespace via
+// `normalize_declared_annotation_whitespace`, so every raw-echo caller gets
+// the fix without hand-rolling it at each call site.
+// ---------------------------------------------------------------------------
+
+/// A padded union between an object-typed member and one containing an
+/// unresolved name (forcing the raw-echo fallback) normalizes to `A | B`.
+#[test]
+fn error_type_union_annotation_normalizes_extra_whitespace() {
+    let msg = message(
+        "function f(x: {a: number}   |   {b: NotDefined}) {}\nf(1);\n",
+        2345,
+    );
+    assert!(
+        msg.contains("type '{ a: number; } | { b: NotDefined; }'"),
+        "padded union spacing in the error-type echo must normalize, got: {msg}"
+    );
+    assert!(
+        !msg.contains("number; }   |"),
+        "verbatim source whitespace must not leak, got: {msg}"
+    );
+}
+
+/// Renamed binders: the same union-padding normalization holds under
+/// different identifiers (anti-hardcoding — the fix is structural, not
+/// name-driven).
+#[test]
+fn error_type_union_annotation_normalizes_whitespace_renamed_binders() {
+    let msg = message(
+        "function renamedFn(zzz: {q: string}   |   {w: MissingType}) {}\nrenamedFn(1);\n",
+        2345,
+    );
+    assert!(
+        msg.contains("type '{ q: string; } | { w: MissingType; }'"),
+        "padded union spacing must normalize under renamed binders, got: {msg}"
+    );
+}
+
+/// The intersection form (`&`) normalizes the same way, including in the
+/// elaborated per-property mismatch line beneath the head.
+#[test]
+fn error_type_intersection_annotation_normalizes_extra_whitespace() {
+    let msg = message(
+        "function h(x: {a: number}   &   {b: MissingType}) {}\nh(1);\n",
+        2345,
+    );
+    assert!(
+        msg.contains("type '{ a: number; } & { b: MissingType; }'"),
+        "padded intersection spacing in the error-type echo must normalize, got: {msg}"
+    );
+    assert!(
+        !msg.contains("number; }   &"),
+        "verbatim source whitespace must not leak, got: {msg}"
+    );
+}
