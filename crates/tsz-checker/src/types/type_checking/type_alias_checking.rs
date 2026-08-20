@@ -1514,6 +1514,14 @@ impl<'a> CheckerState<'a> {
                                     }
                                 }
                             }
+                            // TS2370: a rest parameter must be of an array type.
+                            // Method signatures in a type literal reach this general
+                            // walk (the call/construct-only fast path is handled by
+                            // `validate_signature_only_type_literal_alias_body`), so
+                            // the rest check belongs here for parity with interfaces.
+                            self.check_rest_parameter_types(
+                                sig.parameters.as_ref().map_or(&[][..], |p| &p.nodes),
+                            );
                             if sig.type_annotation != NodeIndex::NONE {
                                 check_child_type_node_in_current_scope!(self, sig.type_annotation);
                             }

@@ -1588,10 +1588,15 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
-            // In malformed signatures like `(...arg?) => {}`, TypeScript still
-            // reports TS2370 in addition to TS1047/TS7019.
-            // This is reported for function expressions, arrow functions, and
-            // function/constructor types in type alias context.
+            // An *unannotated* optional rest parameter on an arrow function or
+            // function expression is implicitly `any[]`, so there is no
+            // annotation for the array check below to inspect. tsc reports
+            // TS2370 for this implicitly-any optional form only under
+            // `noImplicitAny`. Handle it here and skip the annotated/initializer
+            // checks. Every other optional rest parameter — annotated, or on a
+            // declaration / method / interface / callable type — flows to the
+            // checks below, where the optional `| undefined` is folded into the
+            // effective type (tsc's `addOptionality`) before the array check.
             if param.question_token {
                 let parent_kind = self
                     .ctx
@@ -1605,57 +1610,14 @@ impl<'a> CheckerState<'a> {
                         || k == tsz_parser::parser::syntax_kind_ext::FUNCTION_EXPRESSION
                 });
 
-                let is_callable_type = parent_kind.is_some_and(|k| {
-                    k == tsz_parser::parser::syntax_kind_ext::FUNCTION_TYPE
-                        || k == tsz_parser::parser::syntax_kind_ext::CONSTRUCTOR_TYPE
-                });
-
-                // For arrow/function expressions: only emit TS2370 if no type annotation and no initializer
-                // For callable types in type aliases: always emit TS2370 for optional rest params
-                let should_emit = if is_callable_type {
-                    true
-                } else if is_arrow_or_expr {
-                    // An unannotated rest param on an arrow/function expression is
-                    // implicitly `any[]` — a valid array type — so TS2370 only fires
-                    // under noImplicitAny (tsc reports the implicit-any/rest grammar
-                    // separately otherwise). Gate to match.
-                    self.ctx.no_implicit_any()
-                        && param.type_annotation.is_none()
-                        && param.initializer.is_none()
-                } else {
-                    false
-                };
-
-                if should_emit {
-                    // For callable types, report at the parameter position (includes the ...)
-                    // to match tsc's error position behavior. Use error_at_position directly
-                    // because error_at_node would normalize to the name node.
-                    if is_callable_type {
-                        if let Some(pn) = self.ctx.arena.get(param_idx) {
-                            // Report at the ... token position (param node start)
-                            // Use name's length to get correct span length
-                            if let Some(name_node) = self.ctx.arena.get(param.name) {
-                                let length = name_node.end.saturating_sub(pn.pos);
-                                self.error_at_position(
-                                    pn.pos,
-                                    length,
-                                    "A rest parameter must be of an array type.",
-                                    diagnostic_codes::A_REST_PARAMETER_MUST_BE_OF_AN_ARRAY_TYPE,
-                                );
-                            }
-                        }
-                    } else {
+                if is_arrow_or_expr && param.type_annotation.is_none() {
+                    if param.initializer.is_none() && self.ctx.no_implicit_any() {
                         self.error_at_node(
                             param.name,
                             "A rest parameter must be of an array type.",
                             diagnostic_codes::A_REST_PARAMETER_MUST_BE_OF_AN_ARRAY_TYPE,
                         );
                     }
-                }
-
-                // For callable types, we've handled TS2370; continue to skip the normal array check.
-                // For arrow/expr, continue only if we emitted or if there's no type annotation.
-                if is_callable_type || (is_arrow_or_expr && param.type_annotation.is_none()) {
                     continue;
                 }
             }
@@ -1674,33 +1636,63 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
 
+                // An optional rest parameter's effective (symbol) type includes
+                // `| undefined` under strictNullChecks, exactly as tsc's
+                // `addOptionality`: `...a?: number[]` has type
+                // `number[] | undefined`, which is not an array type, so tsc
+                // reports TS2370. `...a?: any` stays `any` (returned above) and
+                // is accepted; `...a?: any[]` becomes `any[] | undefined` and is
+                // rejected, matching tsc. Non-optional rest params keep the
+                // declared type unchanged.
+                let optional_adds_undefined = param.question_token
+                    && self.ctx.strict_null_checks()
+                    && !crate::query_boundaries::common::type_contains_undefined(
+                        self.ctx.types,
+                        declared_type,
+                    );
+
                 // For deferred generic types (Application/Conditional containing
                 // type parameters), skip the array-like check. These can't be fully
                 // resolved at declaration time and tsc defers the check. Examples:
                 //   ...args: ConstructorParameters<Ctor>
                 //   ...args: ArgMap[K]
+                // Optionality is the exception: `...args?: T` has effective type
+                // `T | undefined`, a union that is provably not an array type
+                // regardless of `T`, so tsc reports TS2370 for it even though `T`
+                // alone would be deferred.
                 let resolved = self.evaluate_type_with_resolution(declared_type);
-                if crate::query_boundaries::common::contains_type_parameters(
-                    self.ctx.types,
-                    resolved,
-                ) {
+                if !optional_adds_undefined
+                    && crate::query_boundaries::common::contains_type_parameters(
+                        self.ctx.types,
+                        resolved,
+                    )
+                {
                     continue;
                 }
+
+                let effective_type = if optional_adds_undefined {
+                    parameter_query::optional_parameter_type_with_undefined(
+                        self.ctx.types,
+                        declared_type,
+                    )
+                } else {
+                    declared_type
+                };
 
                 // Use is_array_like_type first — it properly resolves type parameter
                 // constraints (e.g., `T extends any[]` is recognized as array-like).
                 // Fall back to assignability for custom array subclasses (e.g.,
                 // `CoolArray<T> extends Array<T>` which is structurally array-like
                 // but not recognized by classify_array_like as a raw Array/Tuple).
-                let array_check_type = resolved;
-                if !self.is_array_like_type(declared_type)
+                let array_check_type = self.evaluate_type_with_resolution(effective_type);
+                if !self.is_array_like_type(effective_type)
                     && !self.is_array_like_type(array_check_type)
                 {
                     let readonly_any_array =
                         parameter_query::readonly_any_array_type(self.ctx.types);
 
                     if !self
-                        .rest_parameter_relation_outcome(declared_type, readonly_any_array)
+                        .rest_parameter_relation_outcome(effective_type, readonly_any_array)
                         .related
                         && !self
                             .rest_parameter_relation_outcome(array_check_type, readonly_any_array)

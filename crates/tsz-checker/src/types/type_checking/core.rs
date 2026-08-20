@@ -976,6 +976,21 @@ impl<'a> CheckerState<'a> {
                             if member_node.kind == syntax_kind_ext::PROPERTY_SIGNATURE {
                                 self.check_bigint_literal_property_name(sig.name);
                             }
+                            // TS2370: a rest parameter must be of an array type. A
+                            // type literal in annotation position (variable,
+                            // parameter, or return type) reaches this walk but not
+                            // the type-alias body walk, so the rest check belongs
+                            // here too. Property signatures have no parameters, so
+                            // this is a no-op for them; any duplicate emission with
+                            // another walk is collapsed by diagnostic dedup. Push
+                            // the signature's own type parameters so `(...args: T)`
+                            // resolves rather than emitting a spurious TS2304.
+                            let (_tp, rest_tp_updates) =
+                                self.push_type_parameters(&sig.type_parameters);
+                            self.check_rest_parameter_types(
+                                sig.parameters.as_ref().map_or(&[][..], |p| &p.nodes),
+                            );
+                            self.pop_type_parameters(rest_tp_updates);
                         } else if let Some(accessor) = self.ctx.arena.get_accessor(member_node) {
                             // For get/set accessors in type literals, use TS2464
                             // (general computed property check) matching tsc behavior
