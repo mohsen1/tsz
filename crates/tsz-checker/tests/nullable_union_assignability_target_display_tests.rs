@@ -991,15 +991,28 @@ fn expression_indexed_access_generic_receiver_keeps_deferred_pair_renamed_binder
     );
 }
 
-/// Negative control: when the receiver is already CONCRETE (not a type
-/// parameter), the index-derived-from-constraint fast path must still
-/// eagerly resolve to the concrete property union — this fix only defers
-/// resolution when the receiver itself remains generic.
+/// A CONCRETE receiver (not a type parameter) indexed by a generic key also
+/// keeps the deferred `Wares3[K]` identity on the head, matching tsc's
+/// oracle output — the concrete-receiver sibling of the generic-receiver
+/// case above (#17718 witness 2's own target; see
+/// `concrete_receiver_expression_indexed_access_keeps_full_union` and its
+/// siblings for the fuller adjacent matrix). Previously pinned as a negative
+/// control asserting the pre-fix eager-resolve behavior (`Type 'number' is
+/// not assignable to type 'string'.`); oracle-reverified against pinned
+/// typescript@7.0.2 and flipped to the correct expectation.
+///
+/// KNOWN GAP, not asserted here: tsc also emits a second, indented
+/// elaboration line (`Type 'number' is not assignable to type 'string'.`)
+/// that tsz does not yet synthesize for this expression-typed source shape.
+/// Tracked in #17718 (see the 2026-08-19 comment on that issue) — extending
+/// `indexed_access_constraint_display_walk`'s trigger sites to this
+/// top-level expression-source case is the next slice, not a silent
+/// omission.
 #[test]
-fn expression_indexed_access_concrete_receiver_still_resolves_eagerly() {
-    let msg = message_with_chain(
+fn expression_indexed_access_concrete_receiver_also_keeps_deferred_pair() {
+    let msg = message(
         "interface Wares3 { p: number; q: number }\nfunction pick3<K extends keyof Wares3>(x: Wares3, k: K) {\n  const y: string = x[k];\n}\n",
         2322,
     );
-    assert_eq!(msg, "Type 'number' is not assignable to type 'string'.");
+    assert_eq!(msg, "Type 'Wares3[K]' is not assignable to type 'string'.");
 }
