@@ -4,6 +4,7 @@ use super::super::TypeFormatter;
 use super::super::needs_property_name_quotes;
 use crate::types::{PropertyInfo, TypeData, TypeId};
 use tsz_binder::SymbolId;
+use tsz_common::interner::Atom;
 
 impl<'a> TypeFormatter<'a> {
     fn object_display_tail_index(&self, props: &[&PropertyInfo]) -> usize {
@@ -240,6 +241,37 @@ impl<'a> TypeFormatter<'a> {
         let id: u32 = raw.as_ref().strip_prefix("__unique_")?.parse().ok()?;
         let symbol = self.symbol_arena?.get(SymbolId(id))?;
         Some(format!("[{}]", symbol.escaped_name))
+    }
+
+    /// Render one named property of an object-like type exactly as the full
+    /// object display renders it between braces — method shorthand,
+    /// `readonly`, optionality with `| undefined`, and property-name quoting
+    /// included. `display_type`, when given, substitutes the property's value
+    /// type for rendering (the caller's display-widening policy) without
+    /// touching its other display-bearing facts. `None` when `type_id` is not
+    /// an object-like type or carries no property named `name`; callers keep
+    /// their own fallback for that case.
+    pub fn format_object_type_property(
+        &mut self,
+        type_id: TypeId,
+        name: Atom,
+        display_type: Option<TypeId>,
+    ) -> Option<String> {
+        let (TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) =
+            self.interner.lookup(type_id)?
+        else {
+            return None;
+        };
+        let shape = self.interner.object_shape(shape_id);
+        let prop = shape.properties.iter().find(|prop| prop.name == name)?;
+        match display_type.filter(|&display| display != prop.type_id) {
+            Some(display) => {
+                let mut display_prop = prop.clone();
+                display_prop.type_id = display;
+                Some(self.format_property(&display_prop))
+            }
+            None => Some(self.format_property(prop)),
+        }
     }
 
     pub(super) fn format_property(&mut self, prop: &PropertyInfo) -> String {

@@ -404,3 +404,60 @@ const u: U = { kind: "a", v: { x: 9 } };
         r#"Type '{ kind: "a"; v: { x: 9; }; }' is not assignable to type 'U'."#
     );
 }
+
+/// A union arm that does not expose the discriminant key at all stays
+/// included during discrimination (tsc's `discriminateTypeByDiscriminableItems`
+/// only touches `include[i]` when `getTypeOfPropertyOrIndexSignatureOfType`
+/// returns a type), so the discriminated result stays a multi-member union
+/// (`{ kind: "a"; n: 1 } | { other?: string }`), the keyless arm makes the
+/// per-property indexed access undefined, and the whole-object head reports —
+/// never a bare drill-in leaf, and never a false TS2353 pinning the keyless
+/// arm. Oracle (typescript@7.0.2):
+/// `Type '{ kind: "a"; n: 2; }' is not assignable to type 'G'.`
+///
+/// Regression fence for the #17802 family: the keyless-arm shape had no
+/// coverage, so the drift #17789 introduced (absent-key members eliminated,
+/// TS2345/TS2322 heads rewritten into per-property leaves) was invisible to
+/// every suite until `main` went red. Requires both the #17798 discriminate
+/// semantics and the #17801 excess-property revert semantics; either
+/// regressing flips this fence.
+#[test]
+fn keyless_object_arm_survives_discrimination_and_blocks_per_property_drill() {
+    let source = r#"
+type G = { kind: "a"; n: 1 } | { kind: "b"; n: 9 } | { other?: string };
+const g: G = { kind: "a", n: 2 };
+"#;
+    let diag = single_diag(source, 2322);
+    assert!(
+        diag.message_text
+            .starts_with(r#"Type '{ kind: "a"; n: 2; }' is not assignable to type 'G'."#),
+        "keyless arm must block the per-property drill, got: {:?}",
+        diag.message_text
+    );
+    assert!(
+        diags_with_code(source, 2353).is_empty(),
+        "the keyless arm must not be pinned by a false excess-property TS2353"
+    );
+}
+
+/// Same structural condition, renamed binders and different unit values.
+/// Oracle (typescript@7.0.2):
+/// `Type '{ tag: "x"; len: 9; }' is not assignable to type 'Wire'.`
+#[test]
+fn keyless_object_arm_blocks_drill_with_renamed_binders() {
+    let source = r#"
+type Wire = { tag: "x"; len: 3 } | { tag: "y"; len: 7 } | { fallback?: boolean };
+const w: Wire = { tag: "x", len: 9 };
+"#;
+    let diag = single_diag(source, 2322);
+    assert!(
+        diag.message_text
+            .starts_with(r#"Type '{ tag: "x"; len: 9; }' is not assignable to type 'Wire'."#),
+        "renamed-binder keyless arm must block the per-property drill, got: {:?}",
+        diag.message_text
+    );
+    assert!(
+        diags_with_code(source, 2353).is_empty(),
+        "the keyless arm must not be pinned by a false excess-property TS2353"
+    );
+}

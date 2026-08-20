@@ -103,25 +103,45 @@ impl<'a> CheckerState<'a> {
                 // index-signature bucket displays property-style from the type
                 // captured at computation time (`[ws]: () => number`, a getter
                 // by its return type, a setter by its parameter type), like a
-                // computed-key property assignment. Any other method/accessor
-                // keeps the structural fallback for the whole literal.
-                let member =
-                    self.computed_index_member_source_display(child_idx, target_shape.as_deref())?;
-                match (contextual_index_key_kind, member.computed_index_kind) {
-                    (None, Some(kind)) => contextual_index_key_kind = Some(kind),
-                    (Some(existing), Some(kind)) if existing == kind => {}
-                    _ => all_contextual_index_properties = false,
+                // computed-key property assignment.
+                if let Some(member) =
+                    self.computed_index_member_source_display(child_idx, target_shape.as_deref())
+                {
+                    match (contextual_index_key_kind, member.computed_index_kind) {
+                        (None, Some(kind)) => contextual_index_key_kind = Some(kind),
+                        (Some(existing), Some(kind)) if existing == kind => {}
+                        _ => all_contextual_index_properties = false,
+                    }
+                    if member.computed_index_kind.is_some() && !member.key_is_entity_name {
+                        any_non_entity_wide_key = true;
+                    }
+                    if member.computed_index_kind.is_some() {
+                        contextual_index_value_types.push(member.widened_value);
+                    }
+                    // A wide computed key never resolves to a static property
+                    // name, so it cannot collide in the property table — always
+                    // appended.
+                    parts.push(member.rendered);
+                    continue;
                 }
-                if member.computed_index_kind.is_some() && !member.key_is_entity_name {
-                    any_non_entity_wide_key = true;
-                }
-                if member.computed_index_kind.is_some() {
-                    contextual_index_value_types.push(member.widened_value);
-                }
-                // A wide computed key never resolves to a static property
-                // name, so it cannot collide in the property table — always
-                // appended.
-                parts.push(member.rendered);
+                // A method/accessor under a written (non-computed) name
+                // renders from the literal's own checked type via the shared
+                // printer — method shorthand `f(): number`, `readonly` for a
+                // get-only accessor — so a method member no longer forces the
+                // sibling property assignments onto the widened structural
+                // fallback (`kind: "a"` stayed preserved in tsc's head while
+                // tsz widened it to `kind: string`). A computed or otherwise
+                // unresolvable name keeps the structural fallback for the
+                // whole literal, as before.
+                let (member_name, rendered) =
+                    self.named_method_member_source_display(child_idx, expr_idx)?;
+                all_contextual_index_properties = false;
+                push_object_literal_display_member(
+                    &mut parts,
+                    &mut member_slots,
+                    Some(member_name),
+                    rendered,
+                );
                 continue;
             }
             let (name_idx, value_idx) = if child.kind == syntax_kind_ext::PROPERTY_ASSIGNMENT {
@@ -204,46 +224,12 @@ impl<'a> CheckerState<'a> {
             // numeric/boolean/bigint properties were wrongly widened.
             let source_literal_base =
                 diagnostic_query::widen_literal_to_primitive(self.ctx.types, value_type);
-            let target_accepts_literal = property_name
-                .and_then(|name| {
-                    // First try the direct object shape
-                    if let Some(shape) = target_shape.as_ref() {
-                        return shape
-                            .properties
-                            .iter()
-                            .find(|p| p.name == name)
-                            .filter(|p| {
-                                self.type_contains_literal_of_primitive_base(
-                                    p.type_id,
-                                    source_literal_base,
-                                )
-                            })
-                            .map(|p| p.type_id);
-                    }
-                    // For union targets, check each member's properties. The
-                    // per-member gate already enforces the base match, so the
-                    // returned type needs no re-check below.
-                    let target = target?;
-                    let members = diagnostic_query::union_members(self.ctx.types, target)?;
-                    for member in &members {
-                        if let Some(member_shape) =
-                            crate::query_boundaries::common::object_shape_for_type(
-                                self.ctx.types,
-                                *member,
-                            )
-                            && let Some(prop) =
-                                member_shape.properties.iter().find(|p| p.name == name)
-                            && self.type_contains_literal_of_primitive_base(
-                                prop.type_id,
-                                source_literal_base,
-                            )
-                        {
-                            return Some(prop.type_id);
-                        }
-                    }
-                    None
-                })
-                .is_some();
+            let target_accepts_literal = self.target_property_accepts_same_base_literal(
+                property_name,
+                source_literal_base,
+                target,
+                target_shape.as_deref(),
+            );
             if let Some(literal_display) = self.literal_expression_display(value_idx) {
                 let preserve_normalized_union_boolean = preserve_literal_source_for_normalized_union
                     && matches!(literal_display.as_str(), "true" | "false");
@@ -447,6 +433,124 @@ impl<'a> CheckerState<'a> {
         }
 
         Some(format!("{{ {}; }}", parts.join("; ")))
+    }
+
+    /// Whether the contextual target carries a property `property_name` whose
+    /// type contains a literal of the source value's primitive base — the
+    /// `getWidenedLiteralLikeTypeForContextualType` acceptance test deciding
+    /// when a fresh literal property keeps its literal in the display.
+    /// A union target accepts through any of its object members; the
+    /// per-member gate already enforces the base match.
+    fn target_property_accepts_same_base_literal(
+        &mut self,
+        property_name: Option<tsz_common::Atom>,
+        source_literal_base: TypeId,
+        target: Option<TypeId>,
+        target_shape: Option<&tsz_solver::ObjectShape>,
+    ) -> bool {
+        let Some(name) = property_name else {
+            return false;
+        };
+        if let Some(shape) = target_shape {
+            return shape
+                .properties
+                .iter()
+                .find(|p| p.name == name)
+                .is_some_and(|p| {
+                    self.type_contains_literal_of_primitive_base(p.type_id, source_literal_base)
+                });
+        }
+        let Some(target) = target else {
+            return false;
+        };
+        let Some(members) = diagnostic_query::union_members(self.ctx.types, target) else {
+            return false;
+        };
+        members.iter().any(|member| {
+            diagnostic_query::object_shape_for_type(self.ctx.types, *member)
+                .and_then(|member_shape| {
+                    member_shape
+                        .properties
+                        .iter()
+                        .find(|p| p.name == name)
+                        .map(|p| p.type_id)
+                })
+                .is_some_and(|prop_type| {
+                    self.type_contains_literal_of_primitive_base(prop_type, source_literal_base)
+                })
+        })
+    }
+
+    /// Source display for a method, getter, or setter member declared under a
+    /// written (non-computed) property name: the member's rendering in the
+    /// object literal's own checked type, produced by the shared printer so
+    /// method shorthand (`f(): number`), `readonly` on a get-only accessor,
+    /// and name quoting all match the structural formatter exactly. An
+    /// accessor's value type follows the same contextual literal-preservation
+    /// rule as a property assignment's: it keeps a literal only when the
+    /// target's own property accepts a literal of that base, and widens for
+    /// display otherwise.
+    ///
+    /// `None` — sending the caller to the whole-literal structural fallback,
+    /// the pre-existing behavior — for a computed or unresolvable name, an
+    /// errored literal, or a member the checked type does not carry.
+    fn named_method_member_source_display(
+        &mut self,
+        member_idx: NodeIndex,
+        literal_idx: NodeIndex,
+    ) -> Option<(tsz_common::Atom, String)> {
+        let member_node = self.ctx.arena.get(member_idx)?;
+        let name_idx = if let Some(method) = self.ctx.arena.get_method_decl(member_node) {
+            method.name
+        } else {
+            self.ctx.arena.get_accessor(member_node)?.name
+        };
+        let name_node = self.ctx.arena.get(name_idx)?;
+        if name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+            return None;
+        }
+        let name_text = self.get_property_name(name_idx)?;
+        let member_name = self.ctx.types.intern_string(&name_text);
+        let literal_type = self.get_type_of_node(literal_idx);
+        if literal_type == TypeId::ERROR {
+            return None;
+        }
+        let literal_type = self.evaluate_type_for_assignability(literal_type);
+        let (prop_type, prop_is_method) =
+            diagnostic_query::object_shape_for_type(self.ctx.types, literal_type).and_then(
+                |shape| {
+                    shape
+                        .properties
+                        .iter()
+                        .find(|p| p.name == member_name)
+                        .map(|p| (p.type_id, p.is_method))
+                },
+            )?;
+        let display_override = if prop_is_method {
+            // A method's function type has no literal to widen.
+            None
+        } else {
+            // tsc infers an accessor member's type by widening the getter's
+            // return literal (a mutable location with no freshness): oracled
+            // against 7.0.2, `get b() { return true }` beside
+            // `set b(v: boolean)` renders `b: boolean`, and a get-only
+            // `get n() { return 5; }` against an `n: number` target renders
+            // `readonly n: number`. tsz's checked accessor type keeps the raw
+            // return literal, so reconstruct the inference-widened type here —
+            // the inference widening (boolean literals included), not the
+            // boolean-preserving display widening. (The one spelling tsc keeps
+            // literal — a setter whose own parameter pins the same-base
+            // literal, `set b(v: true)` — diverges upstream in accessor
+            // checking before this display path is reached.)
+            let widened =
+                diagnostic_query::widen_type_preserving_unique_symbols(self.ctx.types, prop_type);
+            (widened != prop_type).then_some(widened)
+        };
+        let _budget_scope = crate::error_reporter::display_budget::DisplayBudgetScope::enter();
+        let mut formatter = self.ctx.create_assignability_type_formatter();
+        let rendered =
+            formatter.format_object_type_property(literal_type, member_name, display_override)?;
+        Some((member_name, rendered))
     }
 
     /// Whether `array_idx` is an array literal whose every element is a
