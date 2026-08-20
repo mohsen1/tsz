@@ -132,14 +132,29 @@ impl<'a> CheckerState<'a> {
                 return Some(self.ctx.types.array(elem));
             }
 
+            // No argument was supplied for this parameter (the IIFE passed no
+            // argument list, or fewer arguments than this position). What that
+            // means for an *optional* parameter is `strictNullChecks`-dependent,
+            // matching tsc:
+            //   * with `strictNullChecks`, the parameter can be `undefined`, so
+            //     `((k?) => k + 1)()` reports TS18048 "'k' is possibly
+            //     'undefined'" (see `contextuallyTypedIifeStrict.ts`);
+            //   * without it, `undefined` is absorbed into implicit-`any`, so
+            //     `((k?) => k + 1)()` types `k` as `any` and `k + 1` is a clean
+            //     addition (`contextuallyTypedIife.ts`, "o should be any").
+            // Returning `None` defers to the caller's implicit-any fallback. A
+            // genuine `undefined` *argument* is the different path below and
+            // still infers `undefined` in either mode.
+            let missing_arg_type =
+                (is_optional && self.ctx.strict_null_checks()).then_some(TypeId::UNDEFINED);
             let Some(args) = args else {
-                return is_optional.then_some(TypeId::UNDEFINED);
+                return missing_arg_type;
             };
             let expanded = self.expanded_iife_argument_types(args);
             if let Some(&arg_type) = expanded.get(param_index) {
                 return Some(arg_type);
             }
-            return is_optional.then_some(TypeId::UNDEFINED);
+            return missing_arg_type;
         }
         None
     }
