@@ -363,6 +363,20 @@ pub(crate) struct InferenceContext<'a> {
     /// `(a: number) => number` for `f<T,U>(x: T, cb: (a: T) => U, y: U)` called
     /// as `f(1, function(a){return ''}, 1)`).
     pub(crate) top_level_in_return_type_unfixed: FxHashSet<InferenceVar>,
+    /// Inference vars that a callback parameter of the call's signature is
+    /// typed by — i.e. the type variable appears as a callback parameter's type
+    /// (`foo<T>(a: (x: T) => T, …)`), so a context-sensitive callback argument
+    /// contextually types its own parameter with this variable. tsc's
+    /// same-priority "first wins" rule for two `ReturnType` callback-return
+    /// candidates (#17553) applies only when the parameter is inferred purely
+    /// from the callbacks' *returns* (`k<T>(a: () => T, b: () => T)`). When the
+    /// same variable is also fixed contravariantly by the callbacks' parameters,
+    /// tsc does not first-wins-pin it from one callback and reject the other; it
+    /// leaves the variable to the combination (union) path and accepts the call.
+    /// This set records that contravariant callback-parameter occurrence
+    /// (populated by the parameter-position contravariant matcher) so resolution
+    /// can disable the return-type first-wins rule for these variables (#17761).
+    pub(crate) vars_typed_by_callback_parameter: FxHashSet<InferenceVar>,
     /// Inference vars whose candidates were rewritten after resolving
     /// higher-order source placeholders. The union table can retain the
     /// pre-rewrite placeholder candidate, so resolution may drop only those
@@ -469,6 +483,7 @@ impl<'a> InferenceContext<'a> {
             infer_depth: 0,
             infer_visited: FxHashSet::default(),
             top_level_in_return_type_unfixed: FxHashSet::default(),
+            vars_typed_by_callback_parameter: FxHashSet::default(),
             vars_with_substituted_candidates: FxHashSet::default(),
             in_array_element_context: false,
             candidate_from_top_level_naked: false,
@@ -501,6 +516,7 @@ impl<'a> InferenceContext<'a> {
             infer_depth: 0,
             infer_visited: FxHashSet::default(),
             top_level_in_return_type_unfixed: FxHashSet::default(),
+            vars_typed_by_callback_parameter: FxHashSet::default(),
             vars_with_substituted_candidates: FxHashSet::default(),
             in_array_element_context: false,
             candidate_from_top_level_naked: false,
@@ -522,38 +538,6 @@ impl<'a> InferenceContext<'a> {
             subtype_entries,
             estimated_size_bytes,
         }
-    }
-
-    /// Mark an inference variable as representing a type parameter that
-    /// occurs at the top level of the signature's return type and has not
-    /// yet been fixed. Such variables suppress literal-type widening during
-    /// covariant resolution, matching tsc's `getCovariantInference` gate.
-    pub fn mark_top_level_in_return_type_unfixed(&mut self, var: InferenceVar) {
-        let root = self.table.find(var);
-        self.top_level_in_return_type_unfixed.insert(root);
-    }
-
-    /// Record that `var` is inferred from a tuple packed out of trailing
-    /// rest arguments, so candidate resolution widens its literal elements
-    /// per the declared constraint (tsc's `getSpreadArgumentType` rule)
-    /// instead of blanket-widening the whole tuple.
-    pub fn mark_spread_rest_var(
-        &mut self,
-        var: InferenceVar,
-        mode: crate::inference::spread_rest_literals::SpreadRestLiteralMode,
-    ) {
-        let root = self.table.find(var);
-        self.spread_rest_var_modes.insert(root, mode);
-    }
-
-    /// The spread-rest literal mode recorded for `var`, if its candidates
-    /// come from a packed rest-argument tuple.
-    pub fn spread_rest_mode_of(
-        &mut self,
-        var: InferenceVar,
-    ) -> Option<crate::inference::spread_rest_literals::SpreadRestLiteralMode> {
-        let root = self.table.find(var);
-        self.spread_rest_var_modes.get(&root).copied()
     }
 
     /// Create a fresh inference variable

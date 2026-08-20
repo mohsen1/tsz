@@ -316,7 +316,6 @@ impl<'a> InferenceContext<'a> {
             {
                 concrete_contra_candidates.retain(|c| c.priority <= best_cov_priority);
             }
-            let skip_literal_widening = self.top_level_in_return_type_unfixed.contains(&root);
             let spread_rest_mode = self.spread_rest_var_modes.get(&root).copied();
             let result = if !candidates.is_empty() {
                 let covariant_result = self.resolve_from_candidates(
@@ -325,8 +324,8 @@ impl<'a> InferenceContext<'a> {
                     &info.upper_bounds,
                     dc,
                     dc_preserves_literals,
-                    skip_literal_widening,
                     spread_rest_mode,
+                    root,
                 );
                 // (TypeParameter filtering already done above)
                 if !concrete_contra_candidates.is_empty() {
@@ -458,7 +457,6 @@ impl<'a> InferenceContext<'a> {
         if candidates.is_empty() {
             return None;
         }
-        let skip_literal_widening = self.top_level_in_return_type_unfixed.contains(&root);
         let spread_rest_mode = self.spread_rest_var_modes.get(&root).copied();
         Some(self.resolve_from_candidates(
             &candidates,
@@ -466,8 +464,8 @@ impl<'a> InferenceContext<'a> {
             &info.upper_bounds,
             dc,
             dc_preserves_literals,
-            skip_literal_widening,
             spread_rest_mode,
+            root,
         ))
     }
 
@@ -514,8 +512,6 @@ impl<'a> InferenceContext<'a> {
                         let dc = self.declared_constraints.get(&root).copied();
                         let dc_preserves_literals =
                             self.literal_preserving_declared_constraints.contains(&root);
-                        let skip_literal_widening =
-                            self.top_level_in_return_type_unfixed.contains(&root);
                         let spread_rest_mode = self.spread_rest_var_modes.get(&root).copied();
                         let covariant_result = self.resolve_from_candidates(
                             &candidates,
@@ -523,8 +519,8 @@ impl<'a> InferenceContext<'a> {
                             &info.upper_bounds,
                             dc,
                             dc_preserves_literals,
-                            skip_literal_widening,
                             spread_rest_mode,
+                            root,
                         );
                         if !contra_candidates.is_empty() {
                             let covariant_is_uninformative = matches!(

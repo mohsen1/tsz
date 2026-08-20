@@ -567,7 +567,6 @@ impl<'a> InferenceContext<'a> {
         let declared_constraint = self.declared_constraints.get(&root).copied();
         let declared_constraint_preserves_literals =
             self.literal_preserving_declared_constraints.contains(&root);
-        let skip_literal_widening = self.top_level_in_return_type_unfixed.contains(&root);
         let spread_rest_mode = self.spread_rest_var_modes.get(&root).copied();
 
         let result = if !candidates.is_empty() {
@@ -578,8 +577,8 @@ impl<'a> InferenceContext<'a> {
                 &upper_bounds,
                 declared_constraint,
                 declared_constraint_preserves_literals,
-                skip_literal_widening,
                 spread_rest_mode,
+                root,
             );
             if !concrete_contra_candidates.is_empty() {
                 // Match tsc's getInferredType: when both co- and contra-variant
@@ -664,9 +663,16 @@ impl<'a> InferenceContext<'a> {
         upper_bounds: &[TypeId],
         declared_constraint: Option<TypeId>,
         declared_constraint_preserves_literals: bool,
-        skip_literal_widening: bool,
         spread_rest_mode: Option<crate::inference::spread_rest_literals::SpreadRestLiteralMode>,
+        root: InferenceVar,
     ) -> TypeId {
+        // Per-variable resolution flags, derived from `root` here rather than
+        // threaded from every call site: whether literal widening is suppressed
+        // (the variable is top-level-in-return-type and unfixed) and whether the
+        // return-type "first wins" pin is disabled (the variable is typed by a
+        // callback parameter, #17761).
+        let skip_literal_widening = self.top_level_in_return_type_unfixed.contains(&root);
+        let disable_return_type_first_wins = self.vars_typed_by_callback_parameter.contains(&root);
         let filtered = self.filter_candidates_by_priority(candidates);
         tracing::trace!(
             candidates = ?candidates
@@ -775,7 +781,8 @@ impl<'a> InferenceContext<'a> {
         // below (which also keys on `priority_implies_combination`): only fires
         // with 2+ ReturnType candidates that are all disjoint bare primitives
         // and none index-signature-sourced.
-        let return_type_disjoint_primitives_first_wins = filtered_no_never.len() > 1
+        let return_type_disjoint_primitives_first_wins = !disable_return_type_first_wins
+            && filtered_no_never.len() > 1
             && !has_index_signature_candidates
             && filtered_no_never
                 .first()

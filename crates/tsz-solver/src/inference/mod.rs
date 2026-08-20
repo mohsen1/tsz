@@ -10,6 +10,7 @@ mod infer_matching_structure;
 pub(crate) mod infer_matching_tuples;
 pub(crate) mod infer_resolve;
 mod infer_resolve_fixing;
+mod infer_var_attributes;
 pub(crate) mod infer_variance;
 mod partially_inferable;
 pub(crate) mod spread_rest_literals;
