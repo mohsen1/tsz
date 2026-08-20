@@ -376,6 +376,20 @@ pub(crate) struct InferenceContext<'a> {
     /// `(a: number) => number` for `f<T,U>(x: T, cb: (a: T) => U, y: U)` called
     /// as `f(1, function(a){return ''}, 1)`).
     pub(crate) top_level_in_return_type_unfixed: FxHashSet<InferenceVar>,
+    /// Inference vars that a callback parameter of the call's signature is
+    /// typed by — i.e. the type variable appears as a callback parameter's type
+    /// (`foo<T>(a: (x: T) => T, …)`), so a context-sensitive callback argument
+    /// contextually types its own parameter with this variable. tsc's
+    /// same-priority "first wins" rule for two `ReturnType` callback-return
+    /// candidates (#17553) applies only when the parameter is inferred purely
+    /// from the callbacks' *returns* (`k<T>(a: () => T, b: () => T)`). When the
+    /// same variable is also fixed contravariantly by the callbacks' parameters,
+    /// tsc does not first-wins-pin it from one callback and reject the other; it
+    /// leaves the variable to the combination (union) path and accepts the call.
+    /// This set records that contravariant callback-parameter occurrence
+    /// (populated by the parameter-position contravariant matcher) so resolution
+    /// can disable the return-type first-wins rule for these variables (#17761).
+    pub(crate) vars_typed_by_callback_parameter: FxHashSet<InferenceVar>,
     /// Inference variables whose corresponding type parameter occurs at the
     /// top level of the signature's return type (through unions, intersections,
     /// alias applications, and shallow conditional branches), with no further
@@ -501,6 +515,7 @@ impl<'a> InferenceContext<'a> {
             infer_depth: 0,
             infer_visited: FxHashSet::default(),
             top_level_in_return_type_unfixed: FxHashSet::default(),
+            vars_typed_by_callback_parameter: FxHashSet::default(),
             top_level_in_return_type: FxHashSet::default(),
             contextually_fixed_vars: FxHashSet::default(),
             vars_with_substituted_candidates: FxHashSet::default(),
@@ -536,6 +551,7 @@ impl<'a> InferenceContext<'a> {
             infer_depth: 0,
             infer_visited: FxHashSet::default(),
             top_level_in_return_type_unfixed: FxHashSet::default(),
+            vars_typed_by_callback_parameter: FxHashSet::default(),
             top_level_in_return_type: FxHashSet::default(),
             contextually_fixed_vars: FxHashSet::default(),
             vars_with_substituted_candidates: FxHashSet::default(),

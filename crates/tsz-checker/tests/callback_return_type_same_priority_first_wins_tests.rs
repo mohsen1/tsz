@@ -113,3 +113,62 @@ const reveal: string = r;
         "a single callback candidate must be unaffected; got {codes:?}"
     );
 }
+
+// --- #17761: the first-wins rule is scoped to callbacks whose type parameter
+// is inferred PURELY from their return positions. When the same type parameter
+// also appears in the callbacks' PARAMETER positions (`(x: T) => T`), a
+// context-sensitive callback contextually types its own parameter with the
+// still-unresolved variable, so tsc does NOT first-wins-pin it from one
+// callback and reject the sibling — it leaves the variable to the combination
+// (union) path and accepts the call. `#17755` widened the callback return
+// contributions cross-domain, which surfaced this pre-existing over-fire as a
+// false `TS2322` on `genericCallWithGenericSignatureArguments.ts`.
+
+#[test]
+fn type_param_in_callback_parameter_position_disables_first_wins() {
+    // `T` is in both the parameter and return position of each callback. tsc
+    // leaves `T` unresolved and accepts `foo((x) => 1, (x) => '')`; the
+    // return-type first-wins pin must not fire. (`r1b` shape.)
+    let source = r#"
+declare function foo<T>(a: (x: T) => T, b: (x: T) => T): (x: T) => T;
+var r1b = foo((x) => 1, (x) => '');
+"#;
+    let codes = check_source_strict_codes(source);
+    assert!(
+        !codes.contains(&2322) && !codes.contains(&2345),
+        "a bidirectional (param+return) type parameter must not first-wins-pin \
+         from one callback; got {codes:?}"
+    );
+}
+
+#[test]
+fn bidirectional_callback_param_renamed_binders_block_bodies_stay_clean() {
+    // Structural rule must not depend on the binder names or the body form.
+    let source = r#"
+declare function bar<Value>(a: (y: Value) => Value, b: (y: Value) => Value): Value;
+var q = bar(function (y) { return 'a'; }, function (y) { return 2; });
+"#;
+    let codes = check_source_strict_codes(source);
+    assert!(
+        !codes.contains(&2322) && !codes.contains(&2345),
+        "renamed binders / block bodies must stay clean; got {codes:?}"
+    );
+}
+
+#[test]
+fn return_only_type_param_still_first_wins_with_a_param_of_another_type() {
+    // Control: the callback has a parameter, but it is a DIFFERENT (already
+    // concrete) type, so the inferred `T` is still return-only. First-wins must
+    // still apply and report `TS2322` on the mismatched second callback.
+    let source = r#"
+declare function k<T>(a: (n: number) => T, b: (n: number) => T): T;
+const r = k((n) => "s", (n) => 1);
+const reveal: void = r;
+"#;
+    let codes = check_source_strict_codes(source);
+    assert!(
+        codes.contains(&2322),
+        "a return-only type parameter must still first-wins even when the \
+         callback has an unrelated concrete parameter; got {codes:?}"
+    );
+}

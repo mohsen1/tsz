@@ -22,6 +22,15 @@ impl<'a> InferenceContext<'a> {
         self.top_level_in_return_type_unfixed.insert(root);
     }
 
+    /// Record that `var` is the type of a callback parameter position in the
+    /// call's signature (`(x: T) => …`). Such variables disable the return-type
+    /// "first wins" pin during covariant resolution (see
+    /// [`InferenceContext::vars_typed_by_callback_parameter`], #17761).
+    pub fn mark_vars_typed_by_callback_parameter(&mut self, var: InferenceVar) {
+        let root = self.table.find(var);
+        self.vars_typed_by_callback_parameter.insert(root);
+    }
+
     /// Mark an inference variable as occurring at the top level of the
     /// signature's return type (the structural half of tsc's
     /// `isTypeParameterAtTopLevelInReturnType`), with no further
@@ -371,6 +380,9 @@ impl<'a> InferenceContext<'a> {
                         skip_literal_widening,
                         preserve_return_position_literals: self
                             .root_preserves_return_position_literals(root),
+                        disable_return_type_first_wins: self
+                            .vars_typed_by_callback_parameter
+                            .contains(&root),
                     },
                     spread_rest_mode,
                 );
@@ -516,6 +528,8 @@ impl<'a> InferenceContext<'a> {
                 skip_literal_widening,
                 preserve_return_position_literals:
                     self.root_preserves_return_position_literals(root),
+                disable_return_type_first_wins:
+                    self.vars_typed_by_callback_parameter.contains(&root),
             },
             spread_rest_mode,
         ))
@@ -577,6 +591,9 @@ impl<'a> InferenceContext<'a> {
                                 skip_literal_widening,
                                 preserve_return_position_literals: self
                                     .root_preserves_return_position_literals(root),
+                                disable_return_type_first_wins: self
+                                    .vars_typed_by_callback_parameter
+                                    .contains(&root),
                             },
                             spread_rest_mode,
                         );
