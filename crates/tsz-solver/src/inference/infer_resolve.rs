@@ -18,6 +18,26 @@ use crate::visitor::is_literal_type;
 use rustc_hash::FxHashSet;
 use tsz_common::interner::Atom;
 
+/// Per-variable resolution flags threaded into candidate resolution together.
+/// The first two are the literal-widening halves of tsc
+/// `getCovariantInference`'s `widenLiteralTypes` gate.
+#[derive(Clone, Copy)]
+pub(super) struct LiteralWideningPolicy {
+    /// The contextual-pin / conditional-parameter mark
+    /// (`top_level_in_return_type_unfixed`): fresh literal candidates are not
+    /// widened for this variable.
+    pub(super) skip_literal_widening: bool,
+    /// The runtime `isFixed` half: the variable sits at the top level of the
+    /// signature's return type and was never fixed for contextual typing
+    /// (`root_preserves_return_position_literals`).
+    pub(super) preserve_return_position_literals: bool,
+    /// The variable is typed by a callback parameter (`(x: T) => …`), so the
+    /// return-type "first wins" pin is disabled and disjoint callback-return
+    /// candidates take the combination path (`vars_typed_by_callback_parameter`,
+    /// #17761).
+    pub(super) disable_return_type_first_wins: bool,
+}
+
 impl<'a> InferenceContext<'a> {
     pub(super) fn discard_self_referential_candidates(
         &mut self,
@@ -578,7 +598,14 @@ impl<'a> InferenceContext<'a> {
                 &upper_bounds,
                 declared_constraint,
                 declared_constraint_preserves_literals,
-                skip_literal_widening,
+                LiteralWideningPolicy {
+                    skip_literal_widening,
+                    preserve_return_position_literals: self
+                        .root_preserves_return_position_literals(root),
+                    disable_return_type_first_wins: self
+                        .vars_typed_by_callback_parameter
+                        .contains(&root),
+                },
                 spread_rest_mode,
             );
             if !concrete_contra_candidates.is_empty() {
@@ -664,9 +691,14 @@ impl<'a> InferenceContext<'a> {
         upper_bounds: &[TypeId],
         declared_constraint: Option<TypeId>,
         declared_constraint_preserves_literals: bool,
-        skip_literal_widening: bool,
+        widening_policy: LiteralWideningPolicy,
         spread_rest_mode: Option<crate::inference::spread_rest_literals::SpreadRestLiteralMode>,
     ) -> TypeId {
+        let LiteralWideningPolicy {
+            skip_literal_widening,
+            preserve_return_position_literals,
+            disable_return_type_first_wins,
+        } = widening_policy;
         let filtered = self.filter_candidates_by_priority(candidates);
         tracing::trace!(
             candidates = ?candidates
@@ -687,9 +719,108 @@ impl<'a> InferenceContext<'a> {
         if filtered_no_never.is_empty() {
             return TypeId::NEVER;
         }
+        // tsc's `getSupertypeOrUnion` unions covariant candidates that are
+        // literals of a single base type (`literalTypesWithSameBaseType` ->
+        // `getUnionType`) instead of collapsing to one priority winner or
+        // widening them to their base. tsz records a directly-passed callback's
+        // return inference at `ReturnType` priority and a naked argument at
+        // `NakedTypeVariable`, so without this the priority filter drops the
+        // lower-priority candidate (`h<U>(fn: () => U, init: U)` called
+        // `h(() => 5, 0)` resolves `U = 0` rather than `0 | 5`) and the
+        // `ReturnType` combination branch widens two callback candidates
+        // (`k<T>(a: () => T, b: () => T)` called `k(() => 1, () => 2)` resolves
+        // `T = number` rather than `1 | 2`).
+        //
+        // Fire only when the call pins these literals (`skip_literal_widening`,
+        // e.g. a literal contextual type on a naked return-position parameter,
+        // #17710) and every argument-derived candidate across all priorities is a
+        // literal of one base type. This runs BEFORE the pin-agreement narrowing
+        // below (#17778): that narrowing widens a *disagreeing* pinned literal to
+        // its base to avoid a spurious second diagnostic, but when the disagreeing
+        // literals share a base tsc combines them instead, which this returns.
+        // The pure-naked same-base case (`f<T>(a: T, b: T)` -> `1 | 2`) already
+        // reaches the same union through `get_common_supertype_for_inference`;
+        // this extends it across the priority levels tsz separates.
+        //
+        // Contextual-return-hint candidates (`from_contextual_return_hint`) are
+        // excluded: tsc seeds the call's own literal contextual type as a
+        // covariant candidate but drops it once genuine argument candidates
+        // arrive, so `const r: 5 = h(() => 7, 0)` unions the callback/argument
+        // literals `0 | 7` rather than folding in the contextual `5`. When the
+        // contextual value also comes from an argument, that argument's own
+        // (unflagged) candidate keeps the value (`h(() => 5, 0)` -> `0 | 5`).
+        if skip_literal_widening {
+            let arg_literal_candidates: Vec<TypeId> = candidates
+                .iter()
+                .filter(|candidate| {
+                    candidate.type_id != TypeId::NEVER && !candidate.from_contextual_return_hint
+                })
+                .map(|candidate| candidate.type_id)
+                .collect();
+            if arg_literal_candidates.len() > 1
+                && arg_literal_candidates
+                    .iter()
+                    .all(|&ty| is_literal_type(self.interner, ty))
+            {
+                let base = self.get_base_type(arg_literal_candidates[0]);
+                if base.is_some()
+                    && arg_literal_candidates
+                        .iter()
+                        .all(|&ty| self.get_base_type(ty) == base)
+                {
+                    let mut distinct: Vec<TypeId> =
+                        Vec::with_capacity(arg_literal_candidates.len());
+                    for &ty in &arg_literal_candidates {
+                        if !distinct.contains(&ty) {
+                            distinct.push(ty);
+                        }
+                    }
+                    if distinct.len() > 1 {
+                        return self.interner.union_from_slice(&distinct);
+                    }
+                }
+            }
+        }
+        // The union above already returned `tsc`'s combined type for the
+        // same-base disagreeing case (#17773); the residual is a base mismatch,
+        // where honouring either pin source keeps one literal and re-checks the
+        // other at its own inference site — a second diagnostic `tsc` never emits.
+        // Both pin sources therefore compose under this agreement condition
+        // (computed once over the raw candidate set, since priority filtering has
+        // already discarded the losing literal from `filtered_no_never`).
+        let fresh_literal_candidates_agree = {
+            let mut fresh_literals = candidates
+                .iter()
+                .filter(|candidate| candidate.is_fresh_literal)
+                .map(|candidate| candidate.type_id);
+            match fresh_literals.next() {
+                None => true,
+                Some(first) => fresh_literals.all(|type_id| type_id == first),
+            }
+        };
         let all_from_object_properties = filtered_no_never
             .iter()
             .all(|candidate| candidate.from_object_property);
+        // tsc `getCovariantInference`: `widenLiteralTypes = inference.topLevel &&
+        // (inference.isFixed || !isTypeParameterAtTopLevelInReturnType(signature,
+        // tp))`. `preserve_return_position_literals` carries the parenthesized
+        // half (top level in the return type, never fixed for contextual
+        // typing); the `inference.topLevel` half holds when every counted
+        // candidate was itself inferred at the top level of its argument
+        // position (a structural/nested-position candidate re-enables
+        // widening, matching tsc clearing `topLevel`).
+        //
+        // Both pin sources — the contextual mark and the runtime
+        // return-position preserve — compose under the agreement condition:
+        // neither may pin while the fresh literal candidates disagree, or the
+        // losing literal (already discarded from `filtered_no_never` by
+        // priority filtering, hence the read over raw `candidates`) is
+        // re-checked against the pinned winner and produces a second
+        // diagnostic tsc never emits (#17773/#17778).
+        let skip_literal_widening = (skip_literal_widening
+            || (preserve_return_position_literals
+                && filtered_no_never.iter().all(|c| c.at_top_level_of_walk)))
+            && fresh_literal_candidates_agree;
         // TypeScript preserves literal types when:
         // 1. The type parameter is `const`, OR
         // 2. The declared constraint implies literals (e.g., T extends "a" | "b"), OR
@@ -775,7 +906,8 @@ impl<'a> InferenceContext<'a> {
         // below (which also keys on `priority_implies_combination`): only fires
         // with 2+ ReturnType candidates that are all disjoint bare primitives
         // and none index-signature-sourced.
-        let return_type_disjoint_primitives_first_wins = filtered_no_never.len() > 1
+        let return_type_disjoint_primitives_first_wins = !disable_return_type_first_wins
+            && filtered_no_never.len() > 1
             && !has_index_signature_candidates
             && filtered_no_never
                 .first()
@@ -818,7 +950,17 @@ impl<'a> InferenceContext<'a> {
                 && filtered_no_never
                     .iter()
                     .all(|c| !c.is_fresh_literal && is_literal_type(self.interner, c.type_id));
-            if all_non_fresh_literals {
+            // When the literal-widening gate says fresh literals survive
+            // (`skip_literal_widening`), `best_common_type`'s
+            // `find_common_base_type` step must not collapse them either:
+            // union the all-literal candidate set instead, mirroring the
+            // widening branch's gate on the combination path (#17710).
+            let gated_fresh_literals = skip_literal_widening
+                && !filtered_no_never.is_empty()
+                && filtered_no_never
+                    .iter()
+                    .all(|c| is_literal_type(self.interner, c.type_id));
+            if all_non_fresh_literals || gated_fresh_literals {
                 self.interner.union_from_slice(&candidate_types)
             } else {
                 self.best_common_type(&candidate_types)

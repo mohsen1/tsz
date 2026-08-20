@@ -619,8 +619,12 @@ fn concrete_receiver_expression_indexed_access_renamed_binders_null_variant() {
 }
 
 /// Negative control: a genuinely generic receiver (`x: T`) still goes through
-/// the type-parameter deferral path unaffected — the new concrete-receiver
-/// branch must not fire when the receiver is itself a type parameter.
+/// the type-parameter deferral path unaffected — the concrete-receiver branch
+/// must not fire when the receiver is itself a type parameter. This is
+/// #17718 witness 2's own repro; tsc's oracle output is the head plus the
+/// 3-line constraint walk (`indexed_access_constraint_display_walk`, wired to
+/// this top-level expression-source call site — see #17718's 2026-08-19
+/// 23:47Z comment), oracle-verified via `scripts/conformance/oracle.sh`.
 #[test]
 fn generic_receiver_expression_indexed_access_still_defers_via_type_param_path() {
     let msg = message_with_chain(
@@ -628,7 +632,11 @@ fn generic_receiver_expression_indexed_access_still_defers_via_type_param_path()
         2322,
     );
     assert_eq!(
-        msg, "Type 'T[K]' is not assignable to type 'string | undefined'.",
+        msg,
+        "Type 'T[K]' is not assignable to type 'string | undefined'.\n\
+         Type 'T[keyof T]' is not assignable to type 'string | undefined'.\n\
+         Type 'T[string] | T[number] | T[symbol]' is not assignable to type 'string | undefined'.\n\
+         Type 'T[string]' is not assignable to type 'string | undefined'.",
         "generic-receiver expression indexed access must keep its own (unrelated) deferral path, got: {msg}"
     );
 }
@@ -651,19 +659,119 @@ fn concrete_receiver_literal_key_expression_access_still_resolves_eagerly() {
 
 /// Same rule, renamed binders (anti-hardcoding: the behavior is structural,
 /// not name-driven), TS2345 argument position. The argument-drill renderer is a
-/// separate "no source elaboration" path, so it keeps the as-written pair but
-/// does NOT synthesize the constraint walk yet — a documented residual, distinct
-/// from the declaration-position (TS2322) walk fenced above. tsc would emit the
-/// full `TRow[keyof TRow]` -> distribute -> `TRow[string]` chain here too.
+/// separate "no source elaboration" path that used to keep only the as-written
+/// pair; it now routes a deferred, constraint-relative property source through
+/// the same shared property-drill leaf the declaration-position (TS2322) walk
+/// hangs on, so the full `TRow[keyof TRow]` -> distribute -> `TRow[string]`
+/// chain renders here too (byte-identical to tsc, modulo the leading
+/// indentation the helper strips). A `{ z: number }` base constraint does not
+/// change the walk (`keyof TRow` still expands to its key space, not `"z"`).
 #[test]
 fn deferred_generic_index_access_member_source_keeps_pair_identity_renamed_ts2345() {
     let msg = message_with_chain(
         "declare function gulp(v: { n: string | undefined }): void;\nfunction pipe<TRow extends { z: number }, KCol extends keyof TRow>(x: { n: TRow[KCol] }) {\n  gulp(x);\n}\n",
         2345,
     );
-    assert!(
-        msg.contains("Type 'TRow[KCol]' is not assignable to type 'string | undefined'."),
-        "renamed binders / TS2345 must keep the deferred pair identity, got: {msg}"
+    assert_eq!(
+        msg,
+        "Argument of type '{ n: TRow[KCol]; }' is not assignable to parameter of type '{ n: string | undefined; }'.\n\
+         Types of property 'n' are incompatible.\n\
+         Type 'TRow[KCol]' is not assignable to type 'string | undefined'.\n\
+         Type 'TRow[keyof TRow]' is not assignable to type 'string | undefined'.\n\
+         Type 'TRow[string] | TRow[number] | TRow[symbol]' is not assignable to type 'string | undefined'.\n\
+         Type 'TRow[string]' is not assignable to type 'string | undefined'.",
+    );
+}
+
+/// TS2345 argument, concrete-base generic index (`Obj[KP]`): the walk
+/// concretizes the object in a single step to the resolved value type `number`,
+/// and the target collapses to its single real member `string`. Companion to the
+/// generic-base argument walk above, exercising the concrete short-circuit on
+/// the argument surface.
+#[test]
+fn concrete_base_argument_member_drill_walks_to_resolved_value_type_ts2345() {
+    let msg = message_with_chain(
+        "interface Obj { a: number; b: number }\ndeclare function sink(v: { m: string | undefined }): void;\nfunction idx<KP extends keyof Obj>(x: { m: Obj[KP] }) {\n  sink(x);\n}\n",
+        2345,
+    );
+    assert_eq!(
+        msg,
+        "Argument of type '{ m: Obj[KP]; }' is not assignable to parameter of type '{ m: string | undefined; }'.\n\
+         Types of property 'm' are incompatible.\n\
+         Type 'Obj[KP]' is not assignable to type 'string | undefined'.\n\
+         Type 'number' is not assignable to type 'string'.",
+    );
+}
+
+/// Nested dotted-path drill (`{ outer: { m: T[K] } }`): tsc collapses the
+/// two-link property run into a single `The types of 'outer.m' are incompatible
+/// between these types.` header and then walks the deferred constraint one step
+/// per line beneath it — the same walk the single-property leaf synthesizes. The
+/// dotted-path collapse funnels its folded leaf through the shared
+/// `push_property_chain_leaf`, so the walk hangs there too.
+#[test]
+fn nested_dotted_path_member_drill_emits_full_constraint_walk() {
+    let msg = message_with_chain(
+        "function dig<TBox, KKey extends keyof TBox>(x: { outer: { m: TBox[KKey] } }) {\n  const y: { outer: { m: string | undefined } } = x;\n}\n",
+        2322,
+    );
+    assert_eq!(
+        msg,
+        "Type '{ outer: { m: TBox[KKey]; }; }' is not assignable to type '{ outer: { m: string | undefined; }; }'.\n\
+         The types of 'outer.m' are incompatible between these types.\n\
+         Type 'TBox[KKey]' is not assignable to type 'string | undefined'.\n\
+         Type 'TBox[keyof TBox]' is not assignable to type 'string | undefined'.\n\
+         Type 'TBox[string] | TBox[number] | TBox[symbol]' is not assignable to type 'string | undefined'.\n\
+         Type 'TBox[string]' is not assignable to type 'string | undefined'.",
+    );
+}
+
+/// Nested dotted-path drill, concrete base (`{ outer: { m: Obj[KP] } }`): the
+/// folded-leaf walk concretizes `Obj` in a single step to `number` and collapses
+/// the target to `string`, mirroring the concrete short-circuit on the
+/// single-property and argument surfaces.
+#[test]
+fn nested_dotted_path_concrete_base_member_drill_walks_to_resolved_value_type() {
+    let msg = message_with_chain(
+        "interface Obj { a: number; b: number }\nfunction idx<KP extends keyof Obj>(x: { outer: { m: Obj[KP] } }) {\n  const y: { outer: { m: string | undefined } } = x;\n}\n",
+        2322,
+    );
+    assert_eq!(
+        msg,
+        "Type '{ outer: { m: Obj[KP]; }; }' is not assignable to type '{ outer: { m: string | undefined; }; }'.\n\
+         The types of 'outer.m' are incompatible between these types.\n\
+         Type 'Obj[KP]' is not assignable to type 'string | undefined'.\n\
+         Type 'number' is not assignable to type 'string'.",
+    );
+}
+
+/// A bare `keyof T` source keeps ONLY its leaf line on the argument and
+/// dotted-path surfaces too (the walk is intentionally empty for it — the
+/// `string | number | symbol` key space renders through the `PropertyKey`
+/// display alias, a separate printer residual). This pins that the newly-wired
+/// surfaces do not diverge from the single-property leaf's bare-`keyof`
+/// behavior.
+#[test]
+fn keyof_argument_and_dotted_path_sources_keep_leaf_without_walk() {
+    let arg = message_with_chain(
+        "declare function sink(v: { m: string | undefined }): void;\nfunction fold<TObj>(box: { m: keyof TObj }) {\n  sink(box);\n}\n",
+        2345,
+    );
+    assert_eq!(
+        arg,
+        "Argument of type '{ m: keyof TObj; }' is not assignable to parameter of type '{ m: string | undefined; }'.\n\
+         Types of property 'm' are incompatible.\n\
+         Type 'keyof TObj' is not assignable to type 'string | undefined'.",
+    );
+    let dotted = message_with_chain(
+        "function fold<TObj>(box: { outer: { m: keyof TObj } }) {\n  const sink: { outer: { m: string | undefined } } = box;\n}\n",
+        2322,
+    );
+    assert_eq!(
+        dotted,
+        "Type '{ outer: { m: keyof TObj; }; }' is not assignable to type '{ outer: { m: string | undefined; }; }'.\n\
+         The types of 'outer.m' are incompatible between these types.\n\
+         Type 'keyof TObj' is not assignable to type 'string | undefined'.",
     );
 }
 
@@ -864,7 +972,11 @@ fn concrete_base_member_drill_walks_to_resolved_value_type() {
 /// `T[K]` pair on the TS2322 head, matching tsc's oracle output for this
 /// witness. tsz previously eagerly resolved through `K`'s (already-reduced)
 /// `keyof T` constraint to `Wares`'s concrete property union, rendering
-/// `number` instead of `T[K]`.
+/// `number` instead of `T[K]`. tsc also walks the operand's constraint one
+/// step per elaboration line beneath the head
+/// (`indexed_access_constraint_display_walk`, wired to this top-level
+/// expression-source case alongside the property-drill leaf — see #17718's
+/// 2026-08-19 23:47Z comment); oracle-verified via `scripts/conformance/oracle.sh`.
 #[test]
 fn expression_indexed_access_generic_receiver_keeps_deferred_pair() {
     let msg = message_with_chain(
@@ -873,7 +985,10 @@ fn expression_indexed_access_generic_receiver_keeps_deferred_pair() {
     );
     assert_eq!(
         msg,
-        "Type 'T[K]' is not assignable to type 'string | undefined'."
+        "Type 'T[K]' is not assignable to type 'string | undefined'.\n\
+         Type 'T[keyof T]' is not assignable to type 'string | undefined'.\n\
+         Type 'T[string] | T[number] | T[symbol]' is not assignable to type 'string | undefined'.\n\
+         Type 'T[string]' is not assignable to type 'string | undefined'."
     );
 }
 
@@ -887,19 +1002,128 @@ fn expression_indexed_access_generic_receiver_keeps_deferred_pair_renamed_binder
     );
     assert_eq!(
         msg,
-        "Type 'TSrc[KSel]' is not assignable to type 'string | undefined'."
+        "Type 'TSrc[KSel]' is not assignable to type 'string | undefined'.\n\
+         Type 'TSrc[keyof TSrc]' is not assignable to type 'string | undefined'.\n\
+         Type 'TSrc[string] | TSrc[number] | TSrc[symbol]' is not assignable to type 'string | undefined'.\n\
+         Type 'TSrc[string]' is not assignable to type 'string | undefined'."
     );
 }
 
-/// Negative control: when the receiver is already CONCRETE (not a type
-/// parameter), the index-derived-from-constraint fast path must still
-/// eagerly resolve to the concrete property union — this fix only defers
-/// resolution when the receiver itself remains generic.
+/// A CONCRETE receiver (not a type parameter) indexed by a generic key also
+/// keeps the deferred `Wares3[K]` identity on the head, matching tsc's
+/// oracle output — the concrete-receiver sibling of the generic-receiver
+/// case above (#17718 witness 2's own target; see
+/// `concrete_receiver_expression_indexed_access_keeps_full_union` and its
+/// siblings for the fuller adjacent matrix). Previously pinned as a negative
+/// control asserting the pre-fix eager-resolve behavior (`Type 'number' is
+/// not assignable to type 'string'.`); oracle-reverified against pinned
+/// typescript@7.0.2 and flipped to the correct expectation.
+///
+/// tsc also emits a second, indented elaboration line (`Type 'number' is not
+/// assignable to type 'string'.`) beneath the head, produced by walking the
+/// deferred operand's constraint one step to its concrete value type
+/// (`indexed_access_constraint_display_walk`, already used by the
+/// property-drill leaf since #17750; wired to this top-level expression-
+/// source head too — see #17718's 2026-08-19 23:47Z comment).
 #[test]
-fn expression_indexed_access_concrete_receiver_still_resolves_eagerly() {
+fn expression_indexed_access_concrete_receiver_also_keeps_deferred_pair() {
     let msg = message_with_chain(
         "interface Wares3 { p: number; q: number }\nfunction pick3<K extends keyof Wares3>(x: Wares3, k: K) {\n  const y: string = x[k];\n}\n",
         2322,
     );
-    assert_eq!(msg, "Type 'number' is not assignable to type 'string'.");
+    assert_eq!(
+        msg,
+        "Type 'Wares3[K]' is not assignable to type 'string'.\nType 'number' is not assignable to type 'string'."
+    );
+}
+
+// =====================================================================
+// #17718: the constraint-walk elaboration beneath a **top-level** (non-
+// property) deferred-indexed-access head must nest at the header's own
+// child depth, not one level deeper. `message_with_chain` above strips the
+// leading indentation, so the depth is asserted directly here against
+// `related_information`. A top-level TS2322 header is the diagnostic's main
+// message; per the renderer's `2 * (depth + 1)`-space rule its first child
+// sits at depth 0 (2 spaces). `push_deferred_constraint_walk_steps` had used
+// the property-drill child depth (`base_depth + 1`), over-indenting the whole
+// walk by one level for these plain top-level heads — tsc renders the first
+// step at 2 spaces, tsz rendered it at 4. Oracle-verified against pinned
+// typescript@7.0.2 via `scripts/conformance/oracle.sh`.
+// =====================================================================
+
+/// The `related_information` chain of the first `TS{code}` diagnostic as
+/// `(depth, message)` pairs, so a fence can assert the elaboration nesting
+/// (which `message_with_chain` flattens away).
+fn chain_depths(source: &str, code: u32) -> Vec<(u8, String)> {
+    let diags = check_source_diagnostics(source);
+    let diag = diags
+        .iter()
+        .find(|d| d.code == code)
+        .unwrap_or_else(|| panic!("expected TS{code}; got: {diags:?}"));
+    diag.related_information
+        .iter()
+        .map(|related| (related.depth, related.message_text.clone()))
+        .collect()
+}
+
+#[test]
+fn top_level_generic_indexed_access_walk_nests_at_header_child_depth() {
+    // Generic receiver `x: T`, key `k: K`: the constraint walk's three steps
+    // hang directly beneath the top-level head, starting at depth 0.
+    let chain = chain_depths(
+        "function pick<T, K extends keyof T>(x: T, k: K) {\n  const y: string | undefined = x[k];\n}\n",
+        2322,
+    );
+    assert_eq!(
+        chain,
+        vec![
+            (
+                0,
+                "Type 'T[keyof T]' is not assignable to type 'string | undefined'.".to_string()
+            ),
+            (
+                1,
+                "Type 'T[string] | T[number] | T[symbol]' is not assignable to type 'string | undefined'.".to_string()
+            ),
+            (
+                2,
+                "Type 'T[string]' is not assignable to type 'string | undefined'.".to_string()
+            ),
+        ],
+        "top-level generic indexed-access walk must nest at the header's child depth (0, 1, 2)"
+    );
+}
+
+#[test]
+fn top_level_concrete_receiver_indexed_access_walk_nests_at_header_child_depth() {
+    // Concrete receiver `x: Wares3` (the IntrinsicTypeMismatch catch-all path):
+    // the single concrete walk step sits at depth 0 beneath the head.
+    let chain = chain_depths(
+        "interface Wares3 { p: number; q: number }\nfunction pick3<K extends keyof Wares3>(x: Wares3, k: K) {\n  const y: string = x[k];\n}\n",
+        2322,
+    );
+    assert_eq!(
+        chain,
+        vec![(
+            0,
+            "Type 'number' is not assignable to type 'string'.".to_string()
+        )],
+        "concrete-receiver indexed-access walk step must sit at the header's child depth (0)"
+    );
+}
+
+#[test]
+fn top_level_indexed_access_walk_depth_is_binder_name_independent() {
+    // Renamed binders (anti-hardcoding): the nesting depth is structural, not
+    // keyed on the type-parameter spelling.
+    let chain = chain_depths(
+        "function grab<Src, Sel extends keyof Src>(bag: Src, sel: Sel) {\n  const out: string | undefined = bag[sel];\n}\n",
+        2322,
+    );
+    let depths: Vec<u8> = chain.iter().map(|(depth, _)| *depth).collect();
+    assert_eq!(
+        depths,
+        vec![0, 1, 2],
+        "walk nesting depth must be independent of binder names, got chain: {chain:?}"
+    );
 }

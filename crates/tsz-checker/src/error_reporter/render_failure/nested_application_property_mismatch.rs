@@ -305,6 +305,19 @@ impl<'a> CheckerState<'a> {
         idx: tsz_parser::parser::NodeIndex,
         depth: u32,
     ) {
+        // A deferred, constraint-relative leaf source (`T[K]`, `keyof T`, a
+        // conditional) keeps the as-written operand and the *full* nullable-union
+        // target at its pair, then walks the constraint one step per line — the
+        // same rule the single-property-drill leaf applies in
+        // `render_property_type_mismatch`. The dotted-path collapse
+        // (`peel_plain_property_chain`) funnels every folded run's leaf through
+        // here, so this is the shared point where the walk hangs for
+        // `{ outer: { m: T[K] } }` too. The structured leaf reason (a collapsed
+        // best-matching member) is discarded for the same reason it is at the
+        // property-drill leaf: it would render the wrong pair.
+        if self.try_push_deferred_constraint_walk(diag, leaf_src, leaf_tgt, depth) {
+            return;
+        }
         if let Some(leaf) = leaf {
             // A header-led leaf (tuple element/arity, index-signature) does
             // not begin with the deepest property pair's relation line, so
@@ -335,95 +348,6 @@ impl<'a> CheckerState<'a> {
                 depth,
             );
         }
-    }
-
-    /// Emit a deferred, constraint-relative source's leaf pair and the
-    /// constraint-walk elaboration `tsc` renders beneath it.
-    ///
-    /// `tsc` keeps the as-written operand and the full nullable-union target on
-    /// the first line (`TBox[KKey]` vs `string | undefined`), then walks the
-    /// operand's constraint one step per line
-    /// ([`indexed_access_constraint_display_walk`]), collapsing the target to
-    /// its single real member only once a walk step reaches a concrete source
-    /// (`number` vs `string`) — a deferred or union step keeps the full union.
-    /// `base_depth` is the elaboration depth of the leaf pair line.
-    ///
-    /// [`indexed_access_constraint_display_walk`]: crate::query_boundaries::diagnostics::indexed_access_constraint_display_walk
-    pub(super) fn push_deferred_constraint_walk(
-        &mut self,
-        diag: &mut Diagnostic,
-        source: TypeId,
-        target: TypeId,
-        base_depth: u32,
-    ) {
-        // The as-written operand renders verbatim with the full nullable union
-        // (its deferred form defers its relation to the constraint), so its
-        // strip decision must NOT resolve it — `Obj[KP]` would otherwise reduce
-        // to its constraint `number` and collapse the union prematurely.
-        self.push_constraint_walk_line(diag, source, target, base_depth, false);
-        let steps = crate::query_boundaries::diagnostics::indexed_access_constraint_display_walk(
-            self.ctx.types.as_type_database(),
-            source,
-            target,
-        );
-        for (i, step) in steps.iter().enumerate() {
-            let depth = base_depth + 1 + i as u32;
-            // Only a CONCRETE walk step (its object resolved from a real type)
-            // collapses the target to its single real member; a still-deferred
-            // generic-base step keeps the full nullable union, so it must not be
-            // resolved for the strip decision.
-            self.push_constraint_walk_line(diag, step.type_id, target, depth, step.concrete);
-        }
-    }
-
-    /// Push one `Type 'S' is not assignable to type 'T'.` line for a constraint
-    /// walk, rendering `target` in full for a union or deferred source and
-    /// collapsed to its single real member for a concrete source (mirroring
-    /// `tsc`'s `getBestMatchingType` at the concrete leaf only). `resolve_strip`
-    /// resolves the source through the checker's resolver before the strip
-    /// decision — set for a concrete walk step (where `Obj[keyof Obj]` reduces to
-    /// `number`) but not for a still-deferred step or the verbatim as-written
-    /// operand. This resolution is the checker's job by contract, not a patch:
-    /// the solver flags the step `concrete`, and `DefId -> TypeId` resolution of
-    /// a `Lazy` object base is owned by the checker's `TypeEnvironment`, so the
-    /// solver deliberately leaves the final reduction to this call.
-    fn push_constraint_walk_line(
-        &mut self,
-        diag: &mut Diagnostic,
-        source: TypeId,
-        target: TypeId,
-        depth: u32,
-        resolve_strip: bool,
-    ) {
-        // The nullish-strip decision must see the source the reader sees: a
-        // resolved concrete-base access (`Obj[keyof Obj]` -> `number`) collapses
-        // the target to its single real member; a still-deferred access or a
-        // union keeps the full nullable union.
-        let strip_source = if resolve_strip {
-            self.evaluate_type_for_assignability(source)
-        } else {
-            source
-        };
-        let display_target =
-            if crate::query_boundaries::common::union_members(self.ctx.types, strip_source)
-                .is_some()
-            {
-                target
-            } else {
-                self.strip_nullish_for_assignability_display(target, strip_source)
-                    .unwrap_or(target)
-            };
-        let source_str = self.format_type_for_assignability_message(source);
-        let target_str = self.format_type_for_assignability_message(display_target);
-        let line = format_message(
-            diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-            &[&source_str, &target_str],
-        );
-        diag.push_elaboration(
-            line,
-            diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-            depth,
-        );
     }
 
     pub(super) fn render_property_type_mismatch(
@@ -685,17 +609,12 @@ impl<'a> CheckerState<'a> {
             // (`TBox[KKey]` vs `string | undefined`) and the constraint-walk
             // elaboration tsc emits beneath it; the solver's collapsed nested
             // reason is discarded here because it would show the wrong pair.
-            if crate::query_boundaries::common::is_deferred_constraint_relative_operand(
-                self.ctx.types.as_type_database(),
-                &self.ctx.definition_store,
+            if self.try_push_deferred_constraint_walk(
+                &mut diag,
                 source_property_type,
+                target_property_type,
+                depth + 1,
             ) {
-                self.push_deferred_constraint_walk(
-                    &mut diag,
-                    source_property_type,
-                    target_property_type,
-                    depth + 1,
-                );
                 return diag;
             }
             if let Some(nested) = nested_reason {
@@ -1448,7 +1367,7 @@ impl<'a> CheckerState<'a> {
         // so its first child is at related-depth 0; when nested, the outer
         // is at related-depth `depth`, so the child is at `depth + 1`.
         if depth < 5 {
-            let child_depth = if depth == 0 { 0 } else { depth + 1 };
+            let child_depth = super::first_child_depth(depth);
             let (nested_source, nested_target) =
                 Self::nested_failure_display_types(nested_reason, child_source, child_target);
             if Self::nested_reason_is_plain_type_mismatch(nested_reason) {
@@ -1577,7 +1496,7 @@ impl<'a> CheckerState<'a> {
         // headline. At depth 0 the headline is the (un-indented) primary, so its
         // first child is related-depth 0; when nested, the headline is at
         // related-depth `depth`, so the child is at `depth + 1`.
-        let child_depth = if depth == 0 { 0 } else { depth + 1 };
+        let child_depth = super::first_child_depth(depth);
 
         // A reason that self-heads with a non-frame primary (a missing-property
         // leaf renders `Property 'p' is missing in type 'S' but required in type
@@ -1875,7 +1794,7 @@ impl<'a> CheckerState<'a> {
         // The element relation `se -> te` sits directly beneath the array
         // header (no intermediate line, exactly like a single-element tuple).
         // It occupies related-depth `elem_depth`; its own drill goes one deeper.
-        let elem_depth = if depth == 0 { 0 } else { depth + 1 };
+        let elem_depth = super::first_child_depth(depth);
 
         match nested_reason {
             // Self-heading element (scalar leaf, union, nested array, …): the

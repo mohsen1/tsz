@@ -3,6 +3,69 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
+/// Collapse runs of horizontal whitespace (spaces and tabs) to a single space
+/// outside string and template literals, so a single-line annotation echoed
+/// verbatim from source text matches `tsc`'s printer, which emits canonical
+/// spacing regardless of how the annotation was written (`P   &   Q` ->
+/// `P & Q`). Only the interior of a `'...'` / `"..."` / `` `...` `` literal keeps
+/// its exact spelling (`'a  b'` stays `'a  b'`), matching the canonical-rebuild
+/// the `FUNCTION_TYPE`/`CONSTRUCTOR_TYPE` path
+/// ([`CheckerState::canonical_function_type_annotation_text`]) already applies to
+/// signatures.
+///
+/// Line breaks are preserved verbatim (they are not collapsed into the single
+/// space): a *multi-line* annotation must keep its newline so
+/// [`CheckerState::sanitize_type_annotation_text_for_diagnostic`]'s
+/// first-newline guard still fires and routes it to the structural fallback (a
+/// multi-line intersection carrying a type-literal member renders through the
+/// structural formatter, not this raw echo). Collapsing the newline here would
+/// smuggle such an annotation past that guard and change its rendering.
+fn normalize_declared_annotation_whitespace(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut pending_space = false;
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '\'' | '"' | '`' => {
+                if pending_space && !out.is_empty() {
+                    out.push(' ');
+                }
+                pending_space = false;
+                out.push(c);
+                // Copy the literal verbatim, honoring backslash escapes, up to
+                // and including the matching closing delimiter.
+                while let Some(inner) = chars.next() {
+                    out.push(inner);
+                    if inner == '\\' {
+                        if let Some(escaped) = chars.next() {
+                            out.push(escaped);
+                        }
+                    } else if inner == c {
+                        break;
+                    }
+                }
+            }
+            ' ' | '\t' => {
+                pending_space = true;
+            }
+            // Line breaks are structural to the newline guard downstream — keep
+            // them, and let a following non-space char stand on its own.
+            '\n' | '\r' => {
+                pending_space = false;
+                out.push(c);
+            }
+            other => {
+                if pending_space && !out.is_empty() {
+                    out.push(' ');
+                }
+                pending_space = false;
+                out.push(other);
+            }
+        }
+    }
+    out
+}
+
 impl<'a> CheckerState<'a> {
     /// Recover a non-generic `readonly` array / `readonly` tuple type-alias name
     /// from an argument expression's declared annotation, for the `TS2345`
@@ -465,6 +528,258 @@ impl<'a> CheckerState<'a> {
         Some(self.ctx.types.resolve_atom(alias_name))
     }
 
+    /// When the assignment target's declared annotation is a **bare,
+    /// non-generic** `TYPE_REFERENCE` to a type alias whose lowered body is
+    /// identity-equal to the displayed target type, render that alias's own
+    /// declared name.
+    ///
+    /// `tsc` keys a type's display identity on the alias reference written at
+    /// the use site (`aliasSymbol` travels with the *reference*, not the
+    /// interned content), so `type First = string | number; type Second =
+    /// string | number; const a: Second = flag` renders `Second`. tsz interns
+    /// one `TypeId` per content and the reverse `type_to_def` table
+    /// (`register_type_to_def`) is earliest-declaration-wins, so a global
+    /// lookup answers `First` for both spellings. The written annotation is
+    /// the per-occurrence provenance that recovers the reference identity.
+    ///
+    /// Declines — keeping the established display paths — for:
+    /// - a reference with type arguments, or an alias with type parameters (a
+    ///   generic application keeps its `Name[Args]` surface already);
+    /// - an alias `tsc` renders by its underlying type
+    ///   ([`type_alias_displayed_as_underlying`]: computed conditional /
+    ///   indexed-access / `keyof` bodies, bare enum / interface / class
+    ///   references, intrinsic singletons);
+    /// - an alias whose body does not resolve to the exact displayed target
+    ///   type, so a narrowed or unrelated target can never be repainted.
+    ///
+    /// A bare alias-to-alias forwarding body (`type Outer = Inner`) is
+    /// **chased**, not declined: resolving a reference to an alias whose own
+    /// body is itself just a bare (argument-less) reference to another alias
+    /// never builds a new `Type` in tsc — it returns exactly the referenced
+    /// alias's own `Type` object, `aliasSymbol` and all (oracle-pinned:
+    /// `type Outer = Inner` written at the use site renders `Inner`, even
+    /// through several forwarding hops). Chasing the *syntactic* chain here
+    /// matters because the alternative — falling through to the global
+    /// `type_to_def` reverse map — is first-writer-wins per interned
+    /// `TypeId` and can land on an unrelated alias (or a lib alias like
+    /// `PropertyKey`) that merely happens to share the same structural
+    /// content, not the one actually written in the forwarding chain.
+    ///
+    /// [`type_alias_displayed_as_underlying`]: crate::query_boundaries::assignability_alias_display::type_alias_displayed_as_underlying
+    pub(in crate::error_reporter) fn written_alias_reference_target_display(
+        &mut self,
+        anchor_idx: NodeIndex,
+        target: TypeId,
+    ) -> Option<String> {
+        let target_expr = self
+            .assignment_target_expression(anchor_idx)
+            .unwrap_or(anchor_idx);
+        self.written_alias_reference_display_for_expression(target_expr, target)
+    }
+
+    /// Source-side wrapper for the per-occurrence written-alias gate: resolve
+    /// the *source expression* written at the diagnostic anchor and apply
+    /// [`Self::written_alias_reference_display_for_expression`] to its declared
+    /// annotation. `tsc` renders an identifier source by the declared type's
+    /// own `aliasSymbol` — the alias reference written on the *declaration* —
+    /// so `type SrcA = { x: number }; type SrcB = { x: number };
+    /// declare const sb: SrcB; const n: number = sb` says `SrcB`, not the
+    /// first-registered `SrcA`. Every decline of the shared core applies; a
+    /// flow-narrowed source additionally declines through the identity guard
+    /// (the narrowed type no longer equals the annotation's lowered body).
+    pub(in crate::error_reporter) fn written_alias_reference_source_display(
+        &mut self,
+        anchor_idx: NodeIndex,
+        source: TypeId,
+    ) -> Option<String> {
+        let expr_idx = self
+            .direct_diagnostic_source_expression(anchor_idx)
+            .or_else(|| self.assignment_source_expression(anchor_idx))?;
+        self.written_alias_reference_display_for_expression(expr_idx, source)
+    }
+
+    /// Shared core of the per-occurrence written-alias gate: resolve
+    /// `expr_idx`'s declared annotation to a bare, non-generic type-alias
+    /// reference whose lowered body is identity-equal to `displayed`, and
+    /// render that alias's declared name. See
+    /// [`Self::written_alias_reference_target_display`] for the display-model
+    /// rationale and the decline list.
+    fn written_alias_reference_display_for_expression(
+        &mut self,
+        expr_idx: NodeIndex,
+        displayed: TypeId,
+    ) -> Option<String> {
+        let def_id = {
+            let (arena, annotation_idx) =
+                self.declared_type_annotation_node_for_expression(expr_idx)?;
+            let type_ref = arena.get_type_ref(arena.get(annotation_idx)?)?;
+            if type_ref.type_arguments.is_some() {
+                return None;
+            }
+            // An alias whose own declared RHS is a reference to another name
+            // (`type Outer = Inner`, `type BoxNum = Box[number]`,
+            // `type Foo2 = Id[{...}]`) either forwards (bare, no type
+            // arguments — chased below to the terminal alias tsc actually
+            // stamps) or applies (type arguments present — the established
+            // application-aware paths already implement tsc's split there:
+            // `BoxNum` keeps the alias, the recursive mapped `Id[{...}]` of
+            // `deeplyNestedMappedTypes.ts` renders the substituted
+            // application; repainting an application reference from here
+            // regressed the latter, so it still declines outright). The
+            // declaration walk mirrors `annotation_type_query_alias_def_id`.
+            let sym_id = self
+                .ctx
+                .binder
+                .resolve_identifier(arena, type_ref.type_name)?;
+            let symbol = self.ctx.binder.get_symbol(sym_id)?;
+            let rhs_reference = symbol.declarations.iter().find_map(|&decl_idx| {
+                let decl_node = arena.get(decl_idx)?;
+                let alias = arena.get_type_alias(decl_node)?;
+                let rhs = arena.get(alias.type_node)?;
+                (rhs.kind == syntax_kind_ext::TYPE_REFERENCE)
+                    .then(|| arena.get_type_ref(rhs))
+                    .flatten()
+            });
+            if let Some(rhs_ref) = rhs_reference {
+                if rhs_ref.type_arguments.is_some() {
+                    return None;
+                }
+                let self_def_id =
+                    self.annotation_type_reference_alias_def_id(arena, annotation_idx)?;
+                self.terminal_forwarding_alias_def_id(arena, self_def_id)
+            } else {
+                self.annotation_type_reference_alias_def_id(arena, annotation_idx)?
+            }
+        };
+        let alias_name = {
+            let def = self.ctx.definition_store.get(def_id)?;
+            if !def.type_params.is_empty() {
+                return None;
+            }
+            def.name
+        };
+        if crate::query_boundaries::assignability_alias_display::type_alias_displayed_as_underlying(
+            self.ctx.types.as_type_database(),
+            &self.ctx.definition_store,
+            def_id,
+        )
+        .is_some()
+        {
+            return None;
+        }
+        let body = self.ctx.definition_store.get_body(def_id)?;
+        // A bare alias-to-alias forwarding body: tsc renders the alias the
+        // chain resolves to, not the forwarding name written here. (Routed
+        // through the diagnostics boundary re-export — a direct `common::`
+        // reference here would grow the #8225 quarantine counter.)
+        if crate::query_boundaries::diagnostics::lazy_def_id(
+            self.ctx.types.as_type_database(),
+            body,
+        )
+        .and_then(|next| self.ctx.definition_store.get_kind(next))
+            == Some(tsz_solver::def::DefKind::TypeAlias)
+        {
+            return None;
+        }
+        // Per-occurrence identity guard: the written alias must lower to the
+        // exact type being displayed. A narrowed target, a nested property
+        // target, or any other type reached through this anchor keeps its
+        // established display.
+        let resolved_body = self.resolve_lazy_type(body);
+        if resolved_body != self.resolve_lazy_type(displayed) {
+            return None;
+        }
+        Some(self.ctx.types.resolve_atom(alias_name))
+    }
+
+    /// Follows a bare (argument-less) alias-to-alias reference chain
+    /// (`type Outer = Inner;`, possibly several hops deep) from `def_id`'s
+    /// own declaration to the terminal alias `tsc` actually stamps.
+    ///
+    /// Each hop re-derives the *syntactic* RHS from the alias symbol's own
+    /// declaration nodes — mirroring the first-hop walk in
+    /// [`Self::written_alias_reference_target_display`] — rather than
+    /// consulting the global `type_to_def` reverse map, which is
+    /// first-writer-wins per interned `TypeId` and can land on an unrelated
+    /// alias (or a lib alias like `PropertyKey`) that merely happens to
+    /// share the same structural content.
+    ///
+    /// Stops (returns `def_id` unchanged, on the first hop, or the last
+    /// resolved def on a later one) at an alias whose RHS is not a bare
+    /// non-generic reference to another type alias — a structural body
+    /// (union, object, ...) or an application (`Box[number]`) both
+    /// terminate the walk, since an application already has its own
+    /// established display policy. Also stops, defensively, when a hop
+    /// cannot be resolved (a cross-file declaration this walk's single-arena
+    /// lookup cannot follow, a symbol that lost its `TYPE_ALIAS` flag, a
+    /// missing definition-store entry) or when a bound on the chain length
+    /// is hit, so a malformed or pathological chain degrades to "keep the
+    /// last alias resolved" rather than panicking or looping.
+    fn terminal_forwarding_alias_def_id(
+        &self,
+        arena: &tsz_parser::NodeArena,
+        mut def_id: tsz_solver::def::DefId,
+    ) -> tsz_solver::def::DefId {
+        for _ in 0..16 {
+            let Some(def) = self.ctx.definition_store.get(def_id) else {
+                break;
+            };
+            let Some(symbol_id) = def.symbol_id else {
+                break;
+            };
+            let Some(symbol) = self.ctx.binder.get_symbol(tsz_binder::SymbolId(symbol_id)) else {
+                break;
+            };
+            let next_name_node = symbol.declarations.iter().find_map(|&decl_idx| {
+                let decl_node = arena.get(decl_idx)?;
+                let alias = arena.get_type_alias(decl_node)?;
+                let rhs = arena.get(alias.type_node)?;
+                if rhs.kind != syntax_kind_ext::TYPE_REFERENCE {
+                    return None;
+                }
+                let rhs_ref = arena.get_type_ref(rhs)?;
+                if rhs_ref.type_arguments.is_some() {
+                    return None;
+                }
+                Some(rhs_ref.type_name)
+            });
+            let Some(next_name_node) = next_name_node else {
+                break;
+            };
+            let Some(next_sym_id) = self.ctx.binder.resolve_identifier(arena, next_name_node)
+            else {
+                break;
+            };
+            let Some(next_symbol) = self.ctx.binder.get_symbol(next_sym_id) else {
+                break;
+            };
+            if !next_symbol.has_any_flags(tsz_binder::symbol_flags::TYPE_ALIAS) {
+                break;
+            }
+            let name_atom = self.ctx.types.intern_string(&next_symbol.escaped_name);
+            let Some(next_def_id) = self
+                .ctx
+                .definition_store
+                .find_defs_by_name(name_atom)
+                .and_then(|defs| {
+                    defs.into_iter().find(|candidate| {
+                        self.ctx.definition_store.get(*candidate).is_some_and(|nd| {
+                            nd.kind == tsz_solver::def::DefKind::TypeAlias
+                                && (nd.symbol_id == Some(next_sym_id.0) || nd.name == name_atom)
+                        })
+                    })
+                })
+            else {
+                break;
+            };
+            if next_def_id == def_id {
+                break;
+            }
+            def_id = next_def_id;
+        }
+        def_id
+    }
+
     fn declared_source_type_annotation_node(&self, expr_idx: NodeIndex) -> Option<NodeIndex> {
         let expr_idx = self.ctx.arena.skip_parenthesized_and_assertions(expr_idx);
         let node = self.ctx.arena.get(expr_idx)?;
@@ -533,7 +848,9 @@ impl<'a> CheckerState<'a> {
         if start >= end || end > source.len() {
             return None;
         }
-        Some(source[start..end].to_string())
+        Some(normalize_declared_annotation_whitespace(
+            &source[start..end],
+        ))
     }
 
     /// Declared-annotation text for a parameter/return type position: recurses
@@ -634,5 +951,47 @@ impl<'a> CheckerState<'a> {
         annotation_idx: NodeIndex,
     ) -> Option<String> {
         Self::declared_annotation_type_text(arena, annotation_idx)
+    }
+}
+
+#[cfg(test)]
+mod normalize_whitespace_tests {
+    use super::normalize_declared_annotation_whitespace as norm;
+
+    #[test]
+    fn collapses_runs_outside_literals() {
+        assert_eq!(norm("P   &   Q"), "P & Q");
+        assert_eq!(norm("A   |   B"), "A | B");
+        assert_eq!(norm("readonly   number[]"), "readonly number[]");
+    }
+
+    #[test]
+    fn collapses_tabs_and_trims_but_keeps_newlines() {
+        assert_eq!(norm("\tP\t&\tQ\t"), "P & Q");
+        assert_eq!(norm("  P & Q  "), "P & Q");
+        // A line break is preserved verbatim: the downstream sanitizer's
+        // first-newline guard depends on it to reject multi-line annotations.
+        assert_eq!(norm("P &\n  Q"), "P &\n Q");
+        assert!(norm("A & C & {\n  f0: F0;\n}").contains('\n'));
+    }
+
+    #[test]
+    fn already_canonical_is_idempotent() {
+        assert_eq!(norm("P & Q"), "P & Q");
+        assert_eq!(norm("{ a: number; b: string }"), "{ a: number; b: string }");
+    }
+
+    #[test]
+    fn preserves_string_literal_interior() {
+        // A string-literal type's own spelling is never re-spaced.
+        assert_eq!(norm(r#""a  b" | "c""#), r#""a  b" | "c""#);
+        assert_eq!(norm("'x   y'  &  Q"), "'x   y' & Q");
+        // An escaped closing quote does not end the literal early.
+        assert_eq!(norm(r#""a\"  b""#), r#""a\"  b""#);
+    }
+
+    #[test]
+    fn preserves_template_literal_interior() {
+        assert_eq!(norm("`a  ${T}` | X"), "`a  ${T}` | X");
     }
 }

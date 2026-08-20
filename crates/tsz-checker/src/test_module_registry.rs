@@ -57,6 +57,8 @@ mod array_literal_spread_inference_widening_tests;
 mod array_source_literal_element_display_tests;
 #[path = "tests/as_const_nested_literal_display_tests.rs"]
 mod as_const_nested_literal_display_tests;
+#[path = "tests/as_const_object_literal_union_fold_tests.rs"]
+mod as_const_object_literal_union_fold_tests;
 #[path = "tests/assertion_thenable_comparability_tests.rs"]
 mod assertion_thenable_comparability_tests;
 #[path = "tests/assertion_type_predicate_diagnostics_tests.rs"]
@@ -369,8 +371,14 @@ mod for_in_lhs_relation_routing_arch_tests;
 mod fresh_const_array_mutable_assignment_tests;
 #[path = "tests/fresh_object_literal_array_like_union_drill_gate_tests.rs"]
 mod fresh_object_literal_array_like_union_drill_gate_tests;
+#[path = "tests/fresh_object_literal_array_property_display_tests.rs"]
+mod fresh_object_literal_array_property_display_tests;
 #[path = "tests/fresh_object_literal_union_literal_kind_display_tests.rs"]
 mod fresh_object_literal_union_literal_kind_display_tests;
+#[path = "tests/fresh_union_fold_head_nested_literal_display_tests.rs"]
+mod fresh_union_fold_head_nested_literal_display_tests;
+#[path = "tests/fresh_union_property_target_cross_arm_tests.rs"]
+mod fresh_union_property_target_cross_arm_tests;
 #[path = "tests/function_callee_spread_ts2556_tests.rs"]
 mod function_callee_spread_ts2556_tests;
 #[path = "tests/function_namespace_merge_property_write_ts2322_tests.rs"]
@@ -705,6 +713,8 @@ mod missing_property_base_class_head_tests;
 mod missing_property_declared_here_tests;
 #[path = "tests/missing_property_symbol_members_object_fallback_tests.rs"]
 mod missing_property_symbol_members_object_fallback_tests;
+#[path = "tests/mixed_union_discriminant_include_narrowing_tests.rs"]
+mod mixed_union_discriminant_include_narrowing_tests;
 #[path = "tests/module_scoped_var_shadows_lib_global_ts2300_tests.rs"]
 mod module_scoped_var_shadows_lib_global_ts2300_tests;
 #[path = "tests/multi_overload_infer_capture_tests.rs"]
@@ -1049,6 +1059,8 @@ mod ts2345_private_brand_argument_elaboration_tests;
 mod ts2345_unknown_argument_assignability_tests;
 #[path = "tests/ts2353_generic_constraint_tests.rs"]
 mod ts2353_generic_constraint_tests;
+#[path = "tests/ts2353_union_arm_excess_routing_tests.rs"]
+mod ts2353_union_arm_excess_routing_tests;
 #[path = "tests/ts2383_overload_flag_agreement_tests.rs"]
 mod ts2383_overload_flag_agreement_tests;
 #[path = "tests/ts2391_default_export_overload_group_tests.rs"]
@@ -1133,6 +1145,8 @@ mod union_constraint_relation_routing_arch_tests;
 mod union_display_longhand_primitive_repaint_tests;
 #[path = "tests/union_excess_property_relation_routing_arch_tests.rs"]
 mod union_excess_property_relation_routing_arch_tests;
+#[path = "tests/union_fold_missing_property_chain_link_display_tests.rs"]
+mod union_fold_missing_property_chain_link_display_tests;
 #[path = "tests/union_index_signature_kind_subtype_reduction_tests.rs"]
 mod union_index_signature_kind_subtype_reduction_tests;
 #[path = "tests/union_index_signature_relation_routing_arch_tests.rs"]

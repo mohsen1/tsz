@@ -2,6 +2,7 @@ pub(crate) mod infer;
 pub(crate) mod infer_bct;
 mod infer_bct_guard_state;
 pub(crate) mod infer_candidate_kinds;
+mod infer_candidate_queries;
 mod infer_guard_state;
 pub(crate) mod infer_matching;
 mod infer_matching_guard_state;

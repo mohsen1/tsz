@@ -275,6 +275,16 @@ pub(crate) fn display_union_type(db: &dyn TypeDatabase, members: Vec<TypeId>) ->
     db.union(members)
 }
 
+/// Union built with literal-only reduction, for display types whose members
+/// must survive as written — a deferred `Lazy` alias arm stays a top-level
+/// member instead of being flattened into its body.
+pub(crate) fn display_union_literal_reduce_type(
+    db: &dyn TypeDatabase,
+    members: Vec<TypeId>,
+) -> TypeId {
+    db.union_literal_reduce(members)
+}
+
 pub(crate) fn display_union_or_single_type(db: &dyn TypeDatabase, members: Vec<TypeId>) -> TypeId {
     tsz_solver::utils::union_or_single(db, members)
 }

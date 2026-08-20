@@ -491,7 +491,7 @@ impl<'a> CheckerState<'a> {
             return display;
         }
 
-        if let Some(display) = self.instantiated_call_parameter_display(arg_idx) {
+        if let Some(display) = self.instantiated_call_parameter_display(param_type, arg_idx) {
             return self.strip_synthetic_optional_from_display_for_arg(display, arg_type);
         }
 

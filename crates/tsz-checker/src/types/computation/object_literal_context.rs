@@ -1703,8 +1703,98 @@ impl<'a> CheckerState<'a> {
             return ctx_type;
         }
 
-        // For each union member, check if all discriminant values are compatible
-        // AND no present property maps to `never` in that member.
+        // Unit-discriminant elimination follows tsc's
+        // `discriminateTypeByDiscriminableItems` (reached through
+        // `discriminateContextualTypeByObjectMembers`): a member is eliminated
+        // by a discriminant property only when that discriminant MATCHED some
+        // member — when a written value matches no member at all, the members
+        // it failed against stay included (tsc's `Maybe` state reverts to
+        // included). Members that lack the property entirely stay included
+        // through every round, and primitive/nullish members start excluded
+        // (tsc pre-marks `Primitive` constituents `False`), so a literal
+        // matching no member still narrows `{ p } | { q } | number[]` to the
+        // declaring members instead of collapsing to the vacuously-matching
+        // array arm — which lost every per-property contextual type, widened
+        // the literal's own property types, and defeated the downstream
+        // best-member selection. The rule this replaces required each member
+        // to satisfy ALL written discriminants at once.
+        const INCLUDE_TRUE: u8 = 0;
+        const INCLUDE_FALSE: u8 = 1;
+        const INCLUDE_MAYBE: u8 = 2;
+        let mut include: Vec<u8> = Vec::with_capacity(members.len());
+        for &member in members.iter() {
+            let state = if unit_discriminants.is_empty() {
+                // No unit discriminants written: the elimination rounds below
+                // never run, so keep every member and let the structural
+                // phases (`never`/absent-required) own the narrowing.
+                INCLUDE_TRUE
+            } else {
+                let lazy_member = self.resolve_lazy_type(member);
+                let resolved = self.resolve_type_for_property_access(lazy_member);
+                if resolved.is_nullish()
+                    || resolved == TypeId::NEVER
+                    || common::is_primitive_type(self.ctx.types, resolved)
+                {
+                    INCLUDE_FALSE
+                } else {
+                    INCLUDE_TRUE
+                }
+            };
+            include.push(state);
+        }
+        for (prop_name, lit_type) in &unit_discriminants {
+            let mut matched = false;
+            for (index, &member) in members.iter().enumerate() {
+                if include[index] != INCLUDE_TRUE {
+                    continue;
+                }
+                let lazy_member = self.resolve_lazy_type(member);
+                let resolved_member = self.resolve_type_for_property_access(lazy_member);
+                let evaluated_member = self.evaluate_contextual_type(resolved_member);
+                let member_candidates = [evaluated_member, resolved_member, lazy_member, member];
+                let member_prop_type = member_candidates.iter().find_map(|&candidate| {
+                    self.ctx
+                        .types
+                        .contextual_property_type(candidate, prop_name)
+                });
+                // A member without the property is not discriminated by it.
+                let Some(target_type) = member_prop_type else {
+                    continue;
+                };
+                // For optional properties (e.g. `disc?: false`), the effective
+                // type includes `undefined`. `contextual_property_type` returns
+                // the raw declared type without `undefined`, so optionality is
+                // checked explicitly for a written `undefined` value.
+                let relates = *lit_type == target_type
+                    || self
+                        .diagnostic_subtype_outcome(*lit_type, target_type)
+                        .related
+                    || (*lit_type == TypeId::UNDEFINED && {
+                        let prop_name_atom = self.ctx.types.intern_string(prop_name);
+                        member_candidates.iter().any(|&candidate| {
+                            common::find_property_in_object(
+                                self.ctx.types,
+                                candidate,
+                                prop_name_atom,
+                            )
+                            .is_some_and(|p| p.optional)
+                        })
+                    });
+                if relates {
+                    matched = true;
+                } else {
+                    include[index] = INCLUDE_MAYBE;
+                }
+            }
+            for state in include.iter_mut() {
+                if *state == INCLUDE_MAYBE {
+                    *state = if matched { INCLUDE_FALSE } else { INCLUDE_TRUE };
+                }
+            }
+        }
+
+        // For each union member, check the discriminant include state AND that
+        // no present property maps to `never` in that member.
         let mut matching_members: Vec<TypeId> = Vec::new();
         for (member_index, &member) in members.iter().enumerate() {
             let lazy_member = self.resolve_lazy_type(member);
@@ -1712,49 +1802,7 @@ impl<'a> CheckerState<'a> {
             let evaluated_member = self.evaluate_contextual_type(resolved_member);
             let member_candidates = [evaluated_member, resolved_member, lazy_member, member];
 
-            // Check unit-type discriminants: literal must be subtype of member's prop type.
-            let unit_match = unit_discriminants.iter().all(|(prop_name, lit_type)| {
-                let member_prop_type = member_candidates.iter().find_map(|&candidate| {
-                    self.ctx
-                        .types
-                        .contextual_property_type(candidate, prop_name)
-                });
-                match member_prop_type {
-                    Some(target_type) => {
-                        if *lit_type == target_type
-                            || self
-                                .diagnostic_subtype_outcome(*lit_type, target_type)
-                                .related
-                        {
-                            return true;
-                        }
-                        // For optional properties (e.g. `disc?: false`), the effective type
-                        // includes `undefined`. contextual_property_type returns the raw
-                        // declared type without `undefined`, so we must check optionality
-                        // explicitly. If the property is optional and the literal is
-                        // `undefined`, it matches (undefined is always valid for optional
-                        // properties).
-                        if *lit_type == TypeId::UNDEFINED {
-                            let prop_name_atom = self.ctx.types.intern_string(prop_name);
-                            let is_optional = member_candidates.iter().any(|&candidate| {
-                                common::find_property_in_object(
-                                    self.ctx.types,
-                                    candidate,
-                                    prop_name_atom,
-                                )
-                                .is_some_and(|p| p.optional)
-                            });
-                            if is_optional {
-                                return true;
-                            }
-                        }
-                        false
-                    }
-                    // If the member doesn't have this property, it could still match
-                    // (the property might be optional or absent).
-                    None => true,
-                }
-            });
+            let unit_match = include[member_index] == INCLUDE_TRUE;
 
             // Check present properties: eliminate members where a present property
             // has type `never` (the member requires the property to be absent).

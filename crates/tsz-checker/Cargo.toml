@@ -2961,6 +2961,9 @@ path = "tests/qualified_default_import_enum_namespace_merge_root_tests.rs"
 name = "union_display_alias_repaint_parity_tests"
 path = "tests/union_display_alias_repaint_parity_tests.rs"
 [[test]]
+name = "missing_property_alias_pair_display_tests"
+path = "tests/missing_property_alias_pair_display_tests.rs"
+[[test]]
 name = "symbol_key_index_signature_selection_tests"
 path = "tests/symbol_key_index_signature_selection_tests.rs"
 [[test]]
@@ -3097,3 +3100,7 @@ path = "tests/union_target_same_base_member_frame_tests.rs"
 [[test]]
 name = "generic_signature_dual_callback_inference_tests"
 path = "tests/generic_signature_dual_callback_inference_tests.rs"
+
+[[test]]
+name = "object_interface_nullish_union_assignability_tests"
+path = "tests/object_interface_nullish_union_assignability_tests.rs"

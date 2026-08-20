@@ -308,11 +308,6 @@ mod p1_error_recovery_tests;
 // Tests moved to checker crate: strict_null_manual, generic_inference_manual,
 // enum_nominality_tests, private_brands
 
-// Constructor accessibility tests
-#[cfg(test)]
-#[path = "../../tsz-checker/tests/constructor_accessibility.rs"]
-mod constructor_accessibility;
-
 // Void return exception tests
 #[cfg(test)]
 #[path = "../../tsz-checker/tests/void_return_exception.rs"]
@@ -325,22 +320,10 @@ mod void_return_exception;
 // with no lib files), not on `tsz-core`'s `test_fixtures`. They run in
 // `tsz-checker`'s own test runner via `[[test]]` entries; do not re-mount here.
 //
-// The remaining mounts below still depend on `tsz-core`'s `test_fixtures`
-// (`TestContext`, `setup_lib_contexts`, `merge_shared_lib_symbols`), which load
-// embedded lib symbols and have no `tsz_checker::test_utils` equivalent. They
-// cannot relocate until those fixtures move into `tsz-checker` (#13109).
-#[cfg(test)]
-#[path = "../../tsz-checker/tests/symbol_resolution_tests.rs"]
-mod symbol_resolution_tests;
-#[cfg(test)]
-#[path = "../../tsz-checker/tests/ts2305_tests.rs"]
-mod ts2305_tests;
-#[cfg(test)]
-#[path = "../../tsz-checker/tests/ts2306_tests.rs"]
-mod ts2306_tests;
-#[cfg(test)]
-#[path = "../../tsz-checker/tests/ts2498_export_star_export_equals_tests.rs"]
-mod ts2498_export_star_export_equals_tests;
-#[cfg(test)]
-#[path = "../../tsz-checker/tests/widening_integration_tests.rs"]
-mod widening_integration_tests;
+// `constructor_accessibility`, `symbol_resolution_tests`, `ts2305_tests`,
+// `ts2306_tests`, `ts2498_export_star_export_equals_tests`, and
+// `widening_integration_tests` relocated to `tsz-checker` (own `src/lib.rs`
+// `#[path]` mounts) on top of that crate's `test_utils` helpers, replacing
+// their prior dependency on `tsz-core`'s `test_fixtures`
+// (`TestContext`/`setup_lib_contexts`/`merge_shared_lib_symbols`); do not
+// re-mount them here.

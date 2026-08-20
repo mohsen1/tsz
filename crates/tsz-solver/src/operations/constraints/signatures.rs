@@ -1078,6 +1078,15 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // contravariant inferences go to `contraCandidates` and are resolved
         // via intersection (not union).
         if let Some(&var) = var_map.get(&target_param) {
+            // The callback's parameter position IS this type variable
+            // (`(x: T) => …`); record it to disable the return-type first-wins
+            // pin for `T` (#17761 — see `vars_typed_by_callback_parameter` for
+            // the full rationale). Only the bare-variable parameter shape is
+            // recorded here; a variable nested inside a callback parameter type
+            // (`(x: T[]) => T`, `(x: Foo<T>) => T`) reaches the `else` branch
+            // below and is not yet recorded — an acceptable narrowing, since the
+            // #17761 witnesses are all bare `(x: T) => …` parameters.
+            ctx.mark_vars_typed_by_callback_parameter(var);
             if ctx.collects_contra_candidates() {
                 // #17282: an unannotated (context-sensitive) callback parameter
                 // carries no contravariant inference in tsc — its contextual type
