@@ -178,7 +178,8 @@ impl<'a> TypeLowering<'a> {
                                 &sig.modifiers,
                                 tsz_scanner::SyntaxKind::ReadonlyKeyword,
                             );
-                            let value_type = self.lower_type(sig.type_annotation);
+                            let value_type =
+                                self.lower_member_value_annotation(sig.type_annotation);
                             parts.merge_implicit_symbol_index(value_type, readonly);
                         } else if let Some(prop) = self.lower_type_element(idx) {
                             parts.merge_property(prop);
@@ -204,7 +205,7 @@ impl<'a> TypeLowering<'a> {
             {
                 let is_getter = member.kind == syntax_kind_ext::GET_ACCESSOR;
                 let value_type = if is_getter {
-                    self.lower_type(accessor.type_annotation)
+                    self.lower_member_value_annotation(accessor.type_annotation)
                 } else {
                     accessor
                         .parameters
@@ -213,7 +214,7 @@ impl<'a> TypeLowering<'a> {
                         .and_then(|&param_idx| self.arena.get(param_idx))
                         .and_then(|param_node| self.arena.get_parameter(param_node))
                         .map_or(TypeId::UNKNOWN, |param| {
-                            self.lower_type(param.type_annotation)
+                            self.lower_member_value_annotation(param.type_annotation)
                         })
                 };
                 parts.merge_implicit_symbol_index(value_type, is_getter);
@@ -226,7 +227,7 @@ impl<'a> TypeLowering<'a> {
                     self.arena.string_property_name_flags(accessor.name);
                 let is_getter = member.kind == syntax_kind_ext::GET_ACCESSOR;
                 if is_getter {
-                    let getter_type = self.lower_type(accessor.type_annotation);
+                    let getter_type = self.lower_member_value_annotation(accessor.type_annotation);
                     let order = parts.next_declaration_order();
                     // Merge with existing accessor entry or create new one
                     match parts.properties.entry(name) {
@@ -267,7 +268,7 @@ impl<'a> TypeLowering<'a> {
                         .and_then(|&param_idx| self.arena.get(param_idx))
                         .and_then(|param_node| self.arena.get_parameter(param_node))
                         .map_or(TypeId::UNKNOWN, |param| {
-                            self.lower_type(param.type_annotation)
+                            self.lower_member_value_annotation(param.type_annotation)
                         });
                     let order = parts.next_declaration_order();
                     match parts.properties.entry(name) {
@@ -608,11 +609,7 @@ impl<'a> TypeLowering<'a> {
         match member.kind {
             k if k == syntax_kind_ext::METHOD_SIGNATURE => Some(self.lower_method_signature(sig)),
             k if k == syntax_kind_ext::PROPERTY_SIGNATURE => {
-                let base = if sig.type_annotation.is_some() {
-                    self.lower_type(sig.type_annotation)
-                } else {
-                    TypeId::ANY
-                };
+                let base = self.lower_member_value_annotation(sig.type_annotation);
                 if sig.question_token {
                     Some(self.interner.union(vec![base, TypeId::UNDEFINED]))
                 } else {
@@ -840,6 +837,30 @@ impl<'a> TypeLowering<'a> {
         true
     }
 
+    /// Lower the value/return/parameter type annotation of an object-type member
+    /// (property signature, get-accessor return, set-accessor parameter), where
+    /// an absent annotation is *legally* implicit `any` rather than a
+    /// missing-annotation error.
+    ///
+    /// `lower_type` maps `NodeIndex::NONE` to `TypeId::ERROR` — the deliberate
+    /// anti-any-poisoning sentinel for genuinely-required annotations. For a
+    /// member that TypeScript types as implicit `any` (and reports separately
+    /// via the `noImplicitAny` TS7008 diagnostic from the annotation node),
+    /// propagating that `error` instead would poison every structural query that
+    /// walks the containing object type: `check_index_signature_compatibility`
+    /// clears an index signature whose value "contains an error", silently
+    /// dropping an inherited index and suppressing TS2413. Typing the member as
+    /// implicit `any` at the lowering source keeps every downstream decision
+    /// correct. The TS7008 diagnostic is unaffected — the checker raises it from
+    /// the annotation node, independent of the lowered type.
+    pub(super) fn lower_member_value_annotation(&self, annotation: NodeIndex) -> TypeId {
+        if annotation.is_some() {
+            self.lower_type(annotation)
+        } else {
+            TypeId::ANY
+        }
+    }
+
     /// Lower a type element (property signature, method signature, etc.)
     pub(super) fn lower_type_element(&self, node_idx: NodeIndex) -> Option<PropertyInfo> {
         let node = self.arena.get(node_idx)?;
@@ -859,18 +880,7 @@ impl<'a> TypeLowering<'a> {
 
             // Get visibility (for type literals, always Public)
             let visibility = self.arena.get_visibility_from_modifiers(&sig.modifiers);
-            // A property signature with no type annotation is implicitly `any`
-            // (the `noImplicitAny` TS7008 diagnostic is raised separately by the
-            // checker from the missing-annotation node). Lowering it to the
-            // `error` sentinel that `lower_type(NONE)` yields would poison the
-            // property's type: any structural query that walks it (index-signature
-            // value compatibility, weak-type detection, ...) then sees a type that
-            // "contains an error" and suppresses otherwise-correct diagnostics.
-            let type_id = if sig.type_annotation == NodeIndex::NONE {
-                TypeId::ANY
-            } else {
-                self.lower_type(sig.type_annotation)
-            };
+            let type_id = self.lower_member_value_annotation(sig.type_annotation);
             let write_type = if readonly { TypeId::NONE } else { type_id };
 
             Some(PropertyInfo {
