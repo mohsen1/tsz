@@ -357,3 +357,23 @@ lr3 = 2;
         "annotated callback, no context",
     );
 }
+/// #17773/#17778 composition control: when a call's fresh literal candidates
+/// disagree (`() => 5` vs `0` under a `5` context), the contextual pin is
+/// disabled (#17778) and the runtime return-position preserve arm must not
+/// re-enable it: pinning `E := 0` would re-check the callback's `5` against
+/// `0` and emit a second TS2322 tsc never produces. tsz currently widens to
+/// `number` here where tsc 7.0.2 answers `0 | 5` (it preserves AND combines);
+/// the count is parity, the type text is the open #17773 gap, so this fence
+/// pins the count and the target half of the message only.
+#[test]
+fn disagreeing_fresh_literals_still_widen_under_context() {
+    assert_single_message_contains(
+        r#"
+declare function relay<E>(fn: () => E, init: E): E;
+const r: 5 = relay(() => 5, 0);
+"#,
+        2322,
+        &["is not assignable to type '5'."],
+        "disagreeing fresh literals",
+    );
+}

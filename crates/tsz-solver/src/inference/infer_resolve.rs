@@ -732,7 +732,7 @@ impl<'a> InferenceContext<'a> {
         //
         // Combining candidates under a literal contextual type is the real
         // parity gap, tracked in #17773.
-        let skip_literal_widening = skip_literal_widening && {
+        let fresh_literal_candidates_agree = {
             let mut fresh_literals = candidates
                 .iter()
                 .filter(|candidate| candidate.is_fresh_literal)
@@ -753,9 +753,18 @@ impl<'a> InferenceContext<'a> {
         // candidate was itself inferred at the top level of its argument
         // position (a structural/nested-position candidate re-enables
         // widening, matching tsc clearing `topLevel`).
-        let skip_literal_widening = skip_literal_widening
+        //
+        // Both pin sources — the contextual mark and the runtime
+        // return-position preserve — compose under the agreement condition:
+        // neither may pin while the fresh literal candidates disagree, or the
+        // losing literal (already discarded from `filtered_no_never` by
+        // priority filtering, hence the read over raw `candidates`) is
+        // re-checked against the pinned winner and produces a second
+        // diagnostic tsc never emits (#17773/#17778).
+        let skip_literal_widening = (skip_literal_widening
             || (preserve_return_position_literals
-                && filtered_no_never.iter().all(|c| c.at_top_level_of_walk));
+                && filtered_no_never.iter().all(|c| c.at_top_level_of_walk)))
+            && fresh_literal_candidates_agree;
         // TypeScript preserves literal types when:
         // 1. The type parameter is `const`, OR
         // 2. The declared constraint implies literals (e.g., T extends "a" | "b"), OR
@@ -884,9 +893,11 @@ impl<'a> InferenceContext<'a> {
                 && filtered_no_never
                     .iter()
                     .all(|c| !c.is_fresh_literal && is_literal_type(self.interner, c.type_id));
-            // EXPERIMENT (#17710): when tsc's `widenLiteralTypes` gate says the
-            // literals survive, `best_common_type`'s `find_common_base_type`
-            // step must not collapse them either.
+            // When the literal-widening gate says fresh literals survive
+            // (`skip_literal_widening`), `best_common_type`'s
+            // `find_common_base_type` step must not collapse them either:
+            // union the all-literal candidate set instead, mirroring the
+            // widening branch's gate on the combination path (#17710).
             let gated_fresh_literals = skip_literal_widening
                 && !filtered_no_never.is_empty()
                 && filtered_no_never
