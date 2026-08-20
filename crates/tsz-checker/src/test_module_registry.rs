@@ -57,6 +57,8 @@ mod array_literal_spread_inference_widening_tests;
 mod array_source_literal_element_display_tests;
 #[path = "tests/as_const_nested_literal_display_tests.rs"]
 mod as_const_nested_literal_display_tests;
+#[path = "tests/as_const_object_literal_union_fold_tests.rs"]
+mod as_const_object_literal_union_fold_tests;
 #[path = "tests/assertion_thenable_comparability_tests.rs"]
 mod assertion_thenable_comparability_tests;
 #[path = "tests/assertion_type_predicate_diagnostics_tests.rs"]
@@ -371,6 +373,8 @@ mod fresh_const_array_mutable_assignment_tests;
 mod fresh_object_literal_array_like_union_drill_gate_tests;
 #[path = "tests/fresh_object_literal_union_literal_kind_display_tests.rs"]
 mod fresh_object_literal_union_literal_kind_display_tests;
+#[path = "tests/fresh_union_property_target_cross_arm_tests.rs"]
+mod fresh_union_property_target_cross_arm_tests;
 #[path = "tests/function_callee_spread_ts2556_tests.rs"]
 mod function_callee_spread_ts2556_tests;
 #[path = "tests/function_namespace_merge_property_write_ts2322_tests.rs"]

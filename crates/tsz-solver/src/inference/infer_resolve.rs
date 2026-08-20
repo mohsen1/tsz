@@ -772,11 +772,12 @@ impl<'a> InferenceContext<'a> {
         //
         // Fire only when the call pins these literals (`skip_literal_widening`,
         // e.g. a literal contextual type on a naked return-position parameter,
-        // #17710) and every candidate across all priorities is a literal of one
-        // base type. Without a pinning context `skip_literal_widening` is false
-        // and the widen path below stands, matching tsc, which widens these
-        // callback-derived candidates when nothing preserves the literals. The
-        // pure-naked same-base case (`f<T>(a: T, b: T)` -> `1 | 2`) already
+        // #17710) and every argument-derived candidate across all priorities is a
+        // literal of one base type. This runs BEFORE the pin-agreement narrowing
+        // below (#17778): that narrowing widens a *disagreeing* pinned literal to
+        // its base to avoid a spurious second diagnostic, but when the disagreeing
+        // literals share a base tsc combines them instead, which this returns.
+        // The pure-naked same-base case (`f<T>(a: T, b: T)` -> `1 | 2`) already
         // reaches the same union through `get_common_supertype_for_inference`;
         // this extends it across the priority levels tsz separates.
         //
@@ -819,6 +820,33 @@ impl<'a> InferenceContext<'a> {
                 }
             }
         }
+        // The contextual-literal pin (`top_level_in_return_type_unfixed`) is
+        // decided from the contextual type alone, at marking time, before any
+        // candidate exists. That matches `tsc` while the fresh literal
+        // candidates agree — `pair<T, U>(x: T, cb: (a: T) => U, y: U): U` called
+        // as `pair(2, (a) => 1, 1)` contributes `1` at both sites, and `U := 1`
+        // is the pinned answer.
+        //
+        // It does not match once they disagree. When disagreeing literals share a
+        // base the union above already returned tsc's combined type; the residual
+        // case is a base mismatch, where honouring the pin keeps one literal and
+        // then rejects the other at its own inference site — a second diagnostic
+        // `tsc` never emits. Widening instead yields the base type, wrong only in
+        // the type text of one diagnostic rather than in the diagnostic count.
+        //
+        // Note this reads the raw candidate set, not `filtered_no_never`:
+        // priority filtering has already discarded the losing literal by this
+        // point, so the disagreement is invisible downstream.
+        let skip_literal_widening = skip_literal_widening && {
+            let mut fresh_literals = candidates
+                .iter()
+                .filter(|candidate| candidate.is_fresh_literal)
+                .map(|candidate| candidate.type_id);
+            match fresh_literals.next() {
+                None => true,
+                Some(first) => fresh_literals.all(|type_id| type_id == first),
+            }
+        };
         let all_from_object_properties = filtered_no_never
             .iter()
             .all(|candidate| candidate.from_object_property);

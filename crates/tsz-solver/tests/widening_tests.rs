@@ -1192,6 +1192,62 @@ fn test_apply_const_assertion_object_marks_props_readonly() {
 }
 
 #[test]
+fn test_apply_const_assertion_object_preserves_freshness_and_display_provenance() {
+    // A const assertion keeps the operand's fresh object-literal identity in
+    // tsc (`FreshLiteral` survives `checkAssertionWorker`), so the readonly
+    // rebuild must preserve the shape's flags — and any display-provenance
+    // properties must be carried forward with the assertion applied
+    // (readonly), not as the mutable pre-assertion snapshot.
+    let interner = TypeInterner::new();
+    let lit = interner.literal_number(1.0);
+    let name = interner.intern_string("qq");
+    let props = vec![PropertyInfo::new(name, lit)];
+    let fresh = interner.object_with_flags(props.clone(), ObjectFlags::FRESH_LITERAL);
+    interner.store_display_properties(fresh, props);
+
+    let result = apply_const_assertion(&interner, fresh);
+    assert_ne!(result, fresh, "readonly rebuild must produce a new type");
+    let shape = match interner.lookup(result) {
+        Some(TypeData::Object(id)) => interner.object_shape(id),
+        other => panic!("Expected object, got {other:?}"),
+    };
+    assert!(
+        shape.flags.contains(ObjectFlags::FRESH_LITERAL),
+        "const assertion must not launder FRESH_LITERAL"
+    );
+    assert!(shape.properties[0].readonly);
+
+    let display = interner
+        .get_display_properties(result)
+        .expect("display provenance must carry forward");
+    assert!(
+        display[0].readonly,
+        "carried display properties must be const-asserted (readonly)"
+    );
+    assert_eq!(display[0].type_id, lit);
+}
+
+#[test]
+fn test_apply_const_assertion_non_fresh_object_stays_non_fresh() {
+    // Flag preservation is symmetric: a non-fresh object shape does not GAIN
+    // freshness through a const assertion.
+    let interner = TypeInterner::new();
+    let lit = interner.literal_number(2.0);
+    let name = interner.intern_string("zz");
+    let obj = interner.object(vec![PropertyInfo::new(name, lit)]);
+    let result = apply_const_assertion(&interner, obj);
+    let shape = match interner.lookup(result) {
+        Some(TypeData::Object(id)) => interner.object_shape(id),
+        other => panic!("Expected object, got {other:?}"),
+    };
+    assert!(
+        !shape.flags.contains(ObjectFlags::FRESH_LITERAL),
+        "non-fresh input must stay non-fresh"
+    );
+    assert!(shape.properties[0].readonly);
+}
+
+#[test]
 fn test_apply_const_assertion_literal_preserved() {
     // Top-level literals pass through unchanged — `as const` does not widen.
     let interner = TypeInterner::new();

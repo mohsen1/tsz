@@ -726,6 +726,14 @@ impl<'a> CheckerState<'a> {
             if let Some(name) = self.recursive_non_generic_alias_body_display_name(target) {
                 return name;
             }
+            // The alias name must come from the reference *written at this
+            // anchor* when one resolves: the formatter's reverse type-to-def
+            // lookup is earliest-declaration-wins per interned `TypeId`, so
+            // two aliases of one shape would both restore the first (`ObjA`
+            // for a target written `: ObjB`).
+            if let Some(display) = self.written_alias_reference_target_display(anchor_idx, target) {
+                return display;
+            }
             // Not the pair formatter: its top-level nullish strip would undo
             // the alias restoration (`MaybeBox` must not strip to its
             // non-nullish member).

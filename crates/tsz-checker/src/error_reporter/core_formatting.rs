@@ -1315,11 +1315,7 @@ impl<'a> CheckerState<'a> {
         // that relates to a union through its base constraint — `T[K]`,
         // `keyof T`, a distributive conditional, or an intersection carrying
         // one — so the full declared union is kept (see the classifier's doc).
-        if query_common::is_deferred_constraint_relative_operand(
-            self.ctx.types.as_type_database(),
-            &self.ctx.definition_store,
-            other,
-        ) {
+        if self.is_deferred_constraint_relative_source(other) {
             return None;
         }
         // When `other` is a generic type (type parameter or intersection of type

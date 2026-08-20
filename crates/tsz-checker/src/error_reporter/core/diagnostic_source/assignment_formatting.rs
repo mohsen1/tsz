@@ -1047,9 +1047,14 @@ impl<'a> CheckerState<'a> {
         {
             return display;
         }
+        // tsc keys display identity on the alias reference written at the use
+        // site, not the interned content: after the readonly-array gate, the
+        // written-alias gate resolves the annotation's own reference
+        // (per-occurrence identity) instead of the first-writer reverse map.
         if display_target == target
-            && let Some(display) =
-                self.readonly_array_alias_target_display(target_expr, display_target)
+            && let Some(display) = self
+                .readonly_array_alias_target_display(target_expr, display_target)
+                .or_else(|| self.written_alias_reference_target_display(anchor_idx, target))
         {
             return display;
         }

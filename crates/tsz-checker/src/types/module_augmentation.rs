@@ -1643,34 +1643,14 @@ impl<'a> CheckerState<'a> {
             result = self.combine_augmentation_with_lib(Some(result), aug_type);
         }
         // Fold the cross-arena `declare global` groups in a deterministic
-        // program order. `cross_groups` is keyed on each arena's raw pointer
-        // address, so iterating it directly (`into_values`) folds in address
-        // order — a memory-layout-dependent sequence that varies with ASLR
-        // across otherwise-identical runs. `combine_augmentation_with_lib`
-        // (via `merge_interface_types`) is order-sensitive: the merged
-        // interface's member and overload-signature order — and therefore its
-        // interned `TypeId` identity — depends on the fold order. An
-        // address-ordered fold thus splits one merged lib interface (e.g. the
-        // globally augmented `Document`/`HTMLElement`) into distinct identities
-        // across runs, which later meet in a relation and mis-fire TS2345/
-        // TS2430. Sort by the owning file index (with the source file name as a
-        // stable tiebreaker) so the fold follows tsc's program-declaration
-        // order regardless of memory layout.
-        let mut ordered_groups: Vec<(Arc<NodeArena>, Vec<NodeIndex>)> =
-            cross_groups.into_values().collect();
-        ordered_groups.sort_by_cached_key(|(arena, _)| {
-            (
-                self.ctx
-                    .get_file_idx_for_arena(arena.as_ref())
-                    .unwrap_or(usize::MAX),
-                arena
-                    .source_files
-                    .first()
-                    .map(|sf| sf.file_name.clone())
-                    .unwrap_or_default(),
-            )
-        });
-        for (arena, decls) in ordered_groups {
+        // program order rather than the address order a raw `cross_groups`
+        // walk would produce. `combine_augmentation_with_lib` (via
+        // `merge_interface_types`) is order-sensitive, so an address-ordered
+        // fold splits one merged lib interface (e.g. the globally augmented
+        // `Document`/`HTMLElement`) into distinct identities across
+        // otherwise-identical runs, mis-firing TS2345/TS2430 downstream — see
+        // `order_cross_arena_augmentation_groups`.
+        for (arena, decls) in self.order_cross_arena_augmentation_groups(cross_groups) {
             let aug_type = self.lower_augmentation_for_arena(arena.as_ref(), &decls, &lib_contexts);
             result = self.combine_augmentation_with_lib(Some(result), aug_type);
         }
