@@ -320,6 +320,12 @@ impl<'a> CheckerState<'a> {
                         None => continue,
                     }
                 }
+                k if k == syntax_kind_ext::GET_ACCESSOR => {
+                    match self.ctx.arena.get_accessor(elem_node) {
+                        Some(accessor) => (accessor.name, elem_idx),
+                        None => continue,
+                    }
+                }
                 _ => continue,
             };
 
@@ -442,6 +448,65 @@ impl<'a> CheckerState<'a> {
                 || self.target_has_never_indexed_access_surface(target_prop_type_for_diagnostic)
             {
                 continue; // tsc elaborateElementwise: keep TS2322 on outer object for generic indexed-access props
+            }
+
+            // A `get` accessor member is checked directly against the target
+            // property type using the accessor's own inferred/declared return
+            // type, anchored at the accessor's name — never the object-literal
+            // head with a "Types of property X are incompatible" chain that the
+            // generic relation-failure path below would otherwise produce.
+            // tsc's `elaborateElementwise` does not walk into the getter body;
+            // it compares the checked property type (from `getTypeOfSymbol`,
+            // which is the getter's return type) at the accessor position.
+            // Oracled against both pinned 7.0.2 and local 6.0.2: `{ get v() {
+            // return true } }` against `{ v: number }` reports a single-line
+            // `TS2322: Type 'boolean' is not assignable to type 'number'.`
+            // anchored at `v`, with no head/chain — for both a plain and a
+            // union-member target.
+            if elem_node.kind == syntax_kind_ext::GET_ACCESSOR {
+                let accessor_source_prop_type =
+                    match self.resolve_property_access_with_env(source_type, &prop_name) {
+                        tsz_solver::operations::property::PropertyAccessResult::Success {
+                            type_id,
+                            ..
+                        } => Some(type_id),
+                        _ => None,
+                    };
+                if let Some(accessor_source_prop_type) = accessor_source_prop_type
+                    && accessor_source_prop_type != TypeId::ERROR
+                    && accessor_source_prop_type != TypeId::ANY
+                    && target_prop_type != TypeId::ERROR
+                    && target_prop_type != TypeId::ANY
+                    && !self
+                        .call_arg_relation_outcome(accessor_source_prop_type, target_prop_type)
+                        .related
+                {
+                    // Format both sides directly from the TypeIds rather than
+                    // through the anchor-driven `AssignmentSource` display
+                    // pipeline: that pipeline re-derives the source display
+                    // from the syntax at the anchor's enclosing assignment
+                    // (`assignment_source_expression`), which for an accessor
+                    // name walks back up to the whole object literal — there
+                    // is no property *value* expression to recover the return
+                    // type from the way a plain property's initializer gives
+                    // one. The accessor's own checked property type is
+                    // already exactly what tsc's `getTypeOfSymbol` reports.
+                    let src_str =
+                        self.format_type_for_assignability_message(accessor_source_prop_type);
+                    let tgt_str =
+                        self.format_type_for_assignability_message(target_prop_type_for_diagnostic);
+                    let msg = format_message(
+                        diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                        &[&src_str, &tgt_str],
+                    );
+                    self.error_at_node(
+                        prop_name_idx,
+                        &msg,
+                        diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                    );
+                    elaborated = true;
+                }
+                continue;
             }
 
             // Get the type of the property value in the object literal.

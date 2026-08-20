@@ -143,11 +143,12 @@ fn call_elaboration_object_literal_properties_use_relation_outcome_boundary() {
 
     assert_eq!(
         helper.matches("call_arg_relation_outcome(").count(),
-        // 8th probe added by #16443 item 2: the computed-key branch decides
-        // from the relation's `RelationFailure` (missing-property or not)
-        // rather than from the kind of the key, so it asks the same boundary
-        // this contract exists to enforce.
-        8,
+        // 9th probe: the `get` accessor branch checks the accessor's own
+        // property type directly against the target property type, so it
+        // asks the same boundary this contract exists to enforce (8th probe
+        // was added by #16443 item 2: the computed-key branch decides from
+        // the relation's `RelationFailure` rather than the kind of the key).
+        9,
         "object literal property elaboration should route parameter-derived probes through call_arg_relation_outcome"
     );
     assert_eq!(
