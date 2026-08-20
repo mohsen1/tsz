@@ -28,8 +28,8 @@ fn rest_parameter_array_diagnostics_use_relation_outcome_boundary() {
 
     assert!(
         compact_helper
-            .contains("rest_parameter_relation_outcome(declared_type,readonly_any_array).related"),
-        "rest parameter declared type should route array compatibility through relation outcome"
+            .contains("rest_parameter_relation_outcome(effective_type,readonly_any_array).related"),
+        "rest parameter effective type (declared + optional `| undefined`) should route array compatibility through relation outcome"
     );
     assert!(
         compact_helper.contains(

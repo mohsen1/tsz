@@ -333,6 +333,14 @@ impl<'a> CheckerState<'a> {
                             self.get_type_from_type_node(param.type_annotation);
                         }
                     }
+                    // TS2370: a rest parameter must be of an array type. Interface
+                    // call/construct/method signatures never flowed through the
+                    // function- or method-declaration checking paths, so this
+                    // check was missing for them. Runs with the signature's own
+                    // type parameters in scope so `(...args: T)` resolves `T`.
+                    self.check_rest_parameter_types(
+                        sig.parameters.as_ref().map_or(&[][..], |p| &p.nodes),
+                    );
                     if sig.type_annotation.is_some() {
                         let (params, _this_type) =
                             self.extract_params_from_signature_in_type_literal(sig);
