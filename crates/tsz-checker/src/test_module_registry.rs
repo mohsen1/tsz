@@ -1141,6 +1141,8 @@ mod union_constraint_relation_routing_arch_tests;
 mod union_display_longhand_primitive_repaint_tests;
 #[path = "tests/union_excess_property_relation_routing_arch_tests.rs"]
 mod union_excess_property_relation_routing_arch_tests;
+#[path = "tests/union_fold_missing_property_chain_link_display_tests.rs"]
+mod union_fold_missing_property_chain_link_display_tests;
 #[path = "tests/union_index_signature_kind_subtype_reduction_tests.rs"]
 mod union_index_signature_kind_subtype_reduction_tests;
 #[path = "tests/union_index_signature_relation_routing_arch_tests.rs"]

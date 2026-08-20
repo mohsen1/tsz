@@ -577,7 +577,16 @@ impl<'a> CheckerState<'a> {
         } else if source_type == TypeId::OBJECT {
             ("{}".to_string(), tgt_str)
         } else {
-            self.format_type_pair_diagnostic(widened_source, target)
+            let (mut src, tgt) = self.format_type_pair_diagnostic(widened_source, target);
+            if let Some(fresh) = self.nested_fresh_object_literal_chain_source_display(
+                idx,
+                source_type,
+                widened_source,
+                target,
+            ) {
+                src = fresh;
+            }
+            (src, tgt)
         };
         // When source and target collapse to the same short name (e.g. two
         // same-named classes from different modules), re-qualify them so the
@@ -1004,6 +1013,63 @@ impl<'a> CheckerState<'a> {
                 .factory()
                 .application(body_app.base, body_args),
         )
+    }
+
+    /// Fresh-source display for a nested (depth > 0) missing-property chain
+    /// link that re-describes the anchored object-literal expression the
+    /// diagnostic head already rendered fresh.
+    ///
+    /// `tsc` renders every relation line's source with `typeToString` of the
+    /// same checked type, so the union-fold chain's `Property 'x' is missing
+    /// in type '_'` link shows the identical fresh render its head used
+    /// (`{ kind: "a"; v: 1; }`): per-property widening is decided by the
+    /// contextual target property (a `v: 1` value keeps `1` against a `v: 1`
+    /// target member, widens to `number` against `v: number`), never by a
+    /// wholesale widening of the fresh literal. The same syntax-driven
+    /// renderer that owns the head slot reproduces that rule.
+    ///
+    /// Returns `None` — keeping the widened rendering — when the source is
+    /// not fresh (widening is a no-op, the display is already right), when
+    /// the anchor does not resolve to an object-literal expression, or when
+    /// the frame describes a genuinely nested source (a property value's own
+    /// failure) rather than the anchored literal itself. The cached node type
+    /// may already be widened by diagnostic time, so the frame/anchor match
+    /// compares the widened forms.
+    fn nested_fresh_object_literal_chain_source_display(
+        &mut self,
+        anchor_idx: NodeIndex,
+        source_type: TypeId,
+        widened_source: TypeId,
+        target: TypeId,
+    ) -> Option<String> {
+        if widened_source == source_type {
+            return None;
+        }
+        // A call-argument/expression anchor is the source expression itself; a
+        // declaration/assignment anchor reaches its initializer through the
+        // assignment route — the same two resolvers the depth-0 head display
+        // uses.
+        let expr_idx = self
+            .direct_diagnostic_source_expression(anchor_idx)
+            .filter(|&expr_idx| {
+                self.ctx
+                    .arena
+                    .get(self.ctx.arena.skip_parenthesized(expr_idx))
+                    .is_some_and(|node| node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION)
+            })
+            .or_else(|| self.assignment_source_expression(anchor_idx))?;
+        let expr_type = self.get_type_of_node(expr_idx);
+        if expr_type != source_type {
+            let widened_expr =
+                crate::query_boundaries::widening::widen_type_for_display_preserving_non_fresh(
+                    self.ctx.types,
+                    expr_type,
+                );
+            if widened_expr != widened_source {
+                return None;
+            }
+        }
+        self.object_literal_source_type_display(expr_idx, Some(target))
     }
 
     pub(super) fn render_missing_properties(
@@ -1505,7 +1571,13 @@ impl<'a> CheckerState<'a> {
                         self.ctx.types,
                         source_type,
                     );
-                self.format_type_diagnostic(widened_source)
+                self.nested_fresh_object_literal_chain_source_display(
+                    idx,
+                    source_type,
+                    widened_source,
+                    target,
+                )
+                .unwrap_or_else(|| self.format_type_diagnostic(widened_source))
             };
             let tgt_str = if depth == 0 {
                 self.checked_js_global_element_access_fallback_target_display(idx)
@@ -1599,20 +1671,30 @@ impl<'a> CheckerState<'a> {
                 )
             }
         } else {
-            // Nested (depth > 0) source: widen the source for display the same
-            // way the single-missing-property path does (`{ id: 1 }` ->
-            // `{ id: number }`) so the union-target elaboration's
-            // missing-properties line matches tsc's widened display. Route
-            // through the pair formatter (rather than the bare single-type
-            // formatter) so fresh object-literal property types are widened
-            // consistently with the `Property 'x' is missing …` rendering.
+            // Nested (depth > 0) source: same rule as the single-missing-
+            // property chain link — an anchored fresh object literal reuses
+            // the head's syntax-driven render (per-property widening decided
+            // by the contextual target property), and every other source
+            // widens wholesale for display (`{ id: 1 }` -> `{ id: number }`).
+            // The widened fallback routes through the pair formatter (rather
+            // than the bare single-type formatter) so fresh object-literal
+            // property types are widened consistently with the
+            // `Property 'x' is missing …` rendering.
             let widened_source =
                 crate::query_boundaries::widening::widen_type_for_display_preserving_non_fresh(
                     self.ctx.types,
                     display_source,
                 );
-            let (src, _) = self.format_type_pair_diagnostic(widened_source, target_type);
-            src
+            self.nested_fresh_object_literal_chain_source_display(
+                idx,
+                display_source,
+                widened_source,
+                target_type,
+            )
+            .unwrap_or_else(|| {
+                let (src, _) = self.format_type_pair_diagnostic(widened_source, target_type);
+                src
+            })
         };
         let ordered_names =
             self.sort_missing_property_names_for_display(target_type, &filtered_names);

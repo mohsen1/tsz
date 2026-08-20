@@ -56,12 +56,6 @@ const x: U = { kind: "a", v: [1, 2] };
 }
 
 #[test]
-#[ignore = "pre-existing residual with its own owner: the union fold's chained TS2741 \
-            link renders its SOURCE slot from the wholesale-widened fresh type — even a \
-            plain literal discriminant widens (`{ kind: string; v: number; }` for a \
-            `{ kind: \"a\", v: 1 }` source on current main) — where tsc reuses the fresh \
-            render; the owner is the chain-link source display in the union-fold \
-            missing-property elaboration, not `object_literal_source_type_display`"]
 fn numeric_tuple_preserved_in_union_missing_property_chain_link() {
     // tsc: Property 'w' is missing in type '{ kind: "a"; v: [1, 2]; }' but
     //      required in type '{ kind: "a"; v: [1, 2]; w: string; }'.
