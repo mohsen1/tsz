@@ -3,6 +3,69 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
+/// Collapse runs of horizontal whitespace (spaces and tabs) to a single space
+/// outside string and template literals, so a single-line annotation echoed
+/// verbatim from source text matches `tsc`'s printer, which emits canonical
+/// spacing regardless of how the annotation was written (`P   &   Q` ->
+/// `P & Q`). Only the interior of a `'...'` / `"..."` / `` `...` `` literal keeps
+/// its exact spelling (`'a  b'` stays `'a  b'`), matching the canonical-rebuild
+/// the `FUNCTION_TYPE`/`CONSTRUCTOR_TYPE` path
+/// ([`CheckerState::canonical_function_type_annotation_text`]) already applies to
+/// signatures.
+///
+/// Line breaks are preserved verbatim (they are not collapsed into the single
+/// space): a *multi-line* annotation must keep its newline so
+/// [`CheckerState::sanitize_type_annotation_text_for_diagnostic`]'s
+/// first-newline guard still fires and routes it to the structural fallback (a
+/// multi-line intersection carrying a type-literal member renders through the
+/// structural formatter, not this raw echo). Collapsing the newline here would
+/// smuggle such an annotation past that guard and change its rendering.
+fn normalize_declared_annotation_whitespace(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut pending_space = false;
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '\'' | '"' | '`' => {
+                if pending_space && !out.is_empty() {
+                    out.push(' ');
+                }
+                pending_space = false;
+                out.push(c);
+                // Copy the literal verbatim, honoring backslash escapes, up to
+                // and including the matching closing delimiter.
+                while let Some(inner) = chars.next() {
+                    out.push(inner);
+                    if inner == '\\' {
+                        if let Some(escaped) = chars.next() {
+                            out.push(escaped);
+                        }
+                    } else if inner == c {
+                        break;
+                    }
+                }
+            }
+            ' ' | '\t' => {
+                pending_space = true;
+            }
+            // Line breaks are structural to the newline guard downstream — keep
+            // them, and let a following non-space char stand on its own.
+            '\n' | '\r' => {
+                pending_space = false;
+                out.push(c);
+            }
+            other => {
+                if pending_space && !out.is_empty() {
+                    out.push(' ');
+                }
+                pending_space = false;
+                out.push(other);
+            }
+        }
+    }
+    out
+}
+
 impl<'a> CheckerState<'a> {
     /// Recover a non-generic `readonly` array / `readonly` tuple type-alias name
     /// from an argument expression's declared annotation, for the `TS2345`
@@ -785,7 +848,9 @@ impl<'a> CheckerState<'a> {
         if start >= end || end > source.len() {
             return None;
         }
-        Some(source[start..end].to_string())
+        Some(normalize_declared_annotation_whitespace(
+            &source[start..end],
+        ))
     }
 
     /// Declared-annotation text for a parameter/return type position: recurses
@@ -886,5 +951,47 @@ impl<'a> CheckerState<'a> {
         annotation_idx: NodeIndex,
     ) -> Option<String> {
         Self::declared_annotation_type_text(arena, annotation_idx)
+    }
+}
+
+#[cfg(test)]
+mod normalize_whitespace_tests {
+    use super::normalize_declared_annotation_whitespace as norm;
+
+    #[test]
+    fn collapses_runs_outside_literals() {
+        assert_eq!(norm("P   &   Q"), "P & Q");
+        assert_eq!(norm("A   |   B"), "A | B");
+        assert_eq!(norm("readonly   number[]"), "readonly number[]");
+    }
+
+    #[test]
+    fn collapses_tabs_and_trims_but_keeps_newlines() {
+        assert_eq!(norm("\tP\t&\tQ\t"), "P & Q");
+        assert_eq!(norm("  P & Q  "), "P & Q");
+        // A line break is preserved verbatim: the downstream sanitizer's
+        // first-newline guard depends on it to reject multi-line annotations.
+        assert_eq!(norm("P &\n  Q"), "P &\n Q");
+        assert!(norm("A & C & {\n  f0: F0;\n}").contains('\n'));
+    }
+
+    #[test]
+    fn already_canonical_is_idempotent() {
+        assert_eq!(norm("P & Q"), "P & Q");
+        assert_eq!(norm("{ a: number; b: string }"), "{ a: number; b: string }");
+    }
+
+    #[test]
+    fn preserves_string_literal_interior() {
+        // A string-literal type's own spelling is never re-spaced.
+        assert_eq!(norm(r#""a  b" | "c""#), r#""a  b" | "c""#);
+        assert_eq!(norm("'x   y'  &  Q"), "'x   y' & Q");
+        // An escaped closing quote does not end the literal early.
+        assert_eq!(norm(r#""a\"  b""#), r#""a\"  b""#);
+    }
+
+    #[test]
+    fn preserves_template_literal_interior() {
+        assert_eq!(norm("`a  ${T}` | X"), "`a  ${T}` | X");
     }
 }
