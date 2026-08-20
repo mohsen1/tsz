@@ -15,9 +15,7 @@ use crate::construction::{QueryDatabase, TypeDatabase};
 #[cfg(test)]
 use crate::types::*;
 use crate::types::{InferencePriority, TemplateSpan, TypeData, TypeId};
-use crate::visitor::{
-    array_element_union_widens_literals, contains_type_parameter_named, is_literal_type,
-};
+use crate::visitor::{array_element_union_widens_literals, is_literal_type};
 use ena::unify::{InPlaceUnificationTable, NoError, UnifyKey, UnifyValue};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::RefCell;
@@ -81,6 +79,21 @@ pub(crate) struct InferenceCandidate {
     /// (object property, tuple/array/rest element) have this `false`, so tsc's
     /// order-independent union is preserved for them.
     pub(crate) from_top_level_naked: bool,
+    /// Candidate was recorded at the top level of its inference walk: the
+    /// walk's target was the bare inference placeholder itself, not a
+    /// structural constituent reached by recursion. The runtime analogue of
+    /// tsc's `inference.topLevel`, consumed by `resolve_from_candidates`'
+    /// literal-widening gate. Unlike `from_top_level_naked` (set only by
+    /// `infer_from_types`, feeding the #17484 leftmost-wins fallback), this is
+    /// set by both structural walkers. Deliberately WITHOUT tsc's
+    /// `ReturnType`-priority exemption on the `topLevel` clearing site: tsz
+    /// materializes a callback's fresh literal return as a fresh candidate
+    /// where tsc's function type already widened it (`() => 1` types as
+    /// `() => number` without a contextual pin), so exempting those would
+    /// preserve literals tsc never sees; the contextual-pin path
+    /// (`top_level_in_return_type_unfixed`) owns the cases where tsc's
+    /// candidate stays fresh.
+    pub(crate) at_top_level_of_walk: bool,
     /// Candidate came from a readonly array-like source. Used when mixed
     /// co/contra inference would otherwise replace a direct readonly argument
     /// with a mutable callback parameter candidate.
@@ -363,6 +376,20 @@ pub(crate) struct InferenceContext<'a> {
     /// `(a: number) => number` for `f<T,U>(x: T, cb: (a: T) => U, y: U)` called
     /// as `f(1, function(a){return ''}, 1)`).
     pub(crate) top_level_in_return_type_unfixed: FxHashSet<InferenceVar>,
+    /// Inference variables whose corresponding type parameter occurs at the
+    /// top level of the signature's return type (through unions, intersections,
+    /// alias applications, and shallow conditional branches), with no further
+    /// qualification. The structural half of tsc's
+    /// `isTypeParameterAtTopLevelInReturnType(signature, tp)`.
+    pub(crate) top_level_in_return_type: FxHashSet<InferenceVar>,
+    /// Inference variables consumed by a context-sensitive callback argument's
+    /// *parameter* positions. Contextually typing such a callback reads these
+    /// variables through tsc's fixing mapper, setting `inference.isFixed`; a
+    /// fixed inference widens its fresh literal candidates even when the type
+    /// parameter is at top level in the return type (`widenLiteralTypes =
+    /// inference.topLevel && (inference.isFixed || !isTypeParameterAtTopLevel-
+    /// InReturnType(...))`, checker.ts `getCovariantInference`).
+    pub(crate) contextually_fixed_vars: FxHashSet<InferenceVar>,
     /// Inference vars whose candidates were rewritten after resolving
     /// higher-order source placeholders. The union table can retain the
     /// pre-rewrite placeholder candidate, so resolution may drop only those
@@ -376,6 +403,11 @@ pub(crate) struct InferenceContext<'a> {
     /// `from_top_level_naked = true`. Everything else — structural recursion,
     /// contra candidates, object properties — leaves it `false` (#17484).
     pub(crate) candidate_from_top_level_naked: bool,
+    /// Set transiently around candidate adds whose walk target was the bare
+    /// placeholder itself (both structural walkers): the per-candidate
+    /// `at_top_level_of_walk` source. The runtime analogue of tsc's
+    /// `inference.topLevel`.
+    pub(crate) candidate_at_top_level_of_walk: bool,
     /// Set while inference is descending through a `readonly` array/tuple source
     /// (e.g. from an `as const` argument or a `readonly T[]` annotation). Literal
     /// candidates collected in this context are non-fresh — tsc does not widen the
@@ -469,9 +501,12 @@ impl<'a> InferenceContext<'a> {
             infer_depth: 0,
             infer_visited: FxHashSet::default(),
             top_level_in_return_type_unfixed: FxHashSet::default(),
+            top_level_in_return_type: FxHashSet::default(),
+            contextually_fixed_vars: FxHashSet::default(),
             vars_with_substituted_candidates: FxHashSet::default(),
             in_array_element_context: false,
             candidate_from_top_level_naked: false,
+            candidate_at_top_level_of_walk: false,
             in_readonly_source_context: false,
             implied_arities: FxHashMap::default(),
             original_type_param_for_var: FxHashMap::default(),
@@ -501,9 +536,12 @@ impl<'a> InferenceContext<'a> {
             infer_depth: 0,
             infer_visited: FxHashSet::default(),
             top_level_in_return_type_unfixed: FxHashSet::default(),
+            top_level_in_return_type: FxHashSet::default(),
+            contextually_fixed_vars: FxHashSet::default(),
             vars_with_substituted_candidates: FxHashSet::default(),
             in_array_element_context: false,
             candidate_from_top_level_naked: false,
+            candidate_at_top_level_of_walk: false,
             in_readonly_source_context: false,
             implied_arities: FxHashMap::default(),
             original_type_param_for_var: FxHashMap::default(),
@@ -522,15 +560,6 @@ impl<'a> InferenceContext<'a> {
             subtype_entries,
             estimated_size_bytes,
         }
-    }
-
-    /// Mark an inference variable as representing a type parameter that
-    /// occurs at the top level of the signature's return type and has not
-    /// yet been fixed. Such variables suppress literal-type widening during
-    /// covariant resolution, matching tsc's `getCovariantInference` gate.
-    pub fn mark_top_level_in_return_type_unfixed(&mut self, var: InferenceVar) {
-        let root = self.table.find(var);
-        self.top_level_in_return_type_unfixed.insert(root);
     }
 
     /// Record that `var` is inferred from a tuple packed out of trailing
@@ -892,6 +921,7 @@ impl<'a> InferenceContext<'a> {
                 source_is_type_annotation: candidate.source_is_type_annotation,
                 from_array_element: candidate.from_array_element,
                 from_top_level_naked: candidate.from_top_level_naked,
+                at_top_level_of_walk: candidate.at_top_level_of_walk,
                 from_readonly_source: candidate.from_readonly_source,
                 from_unannotated_callback_param: candidate.from_unannotated_callback_param,
             });
@@ -1469,6 +1499,9 @@ impl<'a> InferenceContext<'a> {
             source_is_type_annotation: self.source_is_type_annotation,
             from_array_element: self.in_array_element_context,
             from_top_level_naked: self.candidate_from_top_level_naked,
+            // No `ReturnType`-priority exemption here; see the
+            // `InferenceCandidate::at_top_level_of_walk` field docs.
+            at_top_level_of_walk: self.candidate_at_top_level_of_walk,
             from_readonly_source: self.candidate_is_from_readonly_source(ty),
             from_unannotated_callback_param,
         };
@@ -1573,6 +1606,9 @@ impl<'a> InferenceContext<'a> {
             source_is_type_annotation: self.source_is_type_annotation,
             from_array_element: self.in_array_element_context,
             from_top_level_naked: self.candidate_from_top_level_naked,
+            // No `ReturnType`-priority exemption here; see the
+            // `InferenceCandidate::at_top_level_of_walk` field docs.
+            at_top_level_of_walk: self.candidate_at_top_level_of_walk,
             from_readonly_source: self.candidate_is_from_readonly_source(ty),
             from_unannotated_callback_param: false,
         };
@@ -1660,332 +1696,6 @@ impl<'a> InferenceContext<'a> {
                 ..InferenceInfo::default()
             },
         );
-    }
-
-    /// Get the constraints for a variable
-    pub fn get_constraints(&mut self, var: InferenceVar) -> Option<ConstraintSet> {
-        let root = self.table.find(var);
-        let info = self.table.probe_value(root);
-        if info.is_empty() {
-            None
-        } else {
-            Some(ConstraintSet::from_info(&info))
-        }
-    }
-
-    /// Check whether an inference variable has any candidates (covariant or contravariant).
-    pub fn var_has_candidates(&mut self, var: InferenceVar) -> bool {
-        let root = self.table.find(var);
-        let info = self.table.probe_value(root);
-        !info.candidates.is_empty() || !info.contra_candidates.is_empty()
-    }
-
-    /// Check whether an inference variable has `contra_candidates` with at least one
-    /// concrete (non-TypeParameter) type. `TypeParameter` types in `contra_candidates`
-    /// are typically unresolved source inference placeholders from generic function
-    /// arguments and should not drive the resolution gate.
-    #[expect(dead_code)] // Reserved contra-candidate resolution-gate query
-    pub fn has_concrete_contra_candidates(
-        &mut self,
-        var: InferenceVar,
-        db: &dyn crate::caches::db::TypeDatabase,
-    ) -> bool {
-        let root = self.table.find(var);
-        let info = self.table.probe_value(root);
-        info.contra_candidates.iter().any(|c| {
-            c.type_id.is_intrinsic()
-                || !matches!(db.lookup(c.type_id), Some(TypeData::TypeParameter(_)))
-        })
-    }
-
-    /// Returns `true` if `type_id` is a **call-local** bare inference placeholder —
-    /// a bare `__infer_*` `TypeParameter` whose name-atom is registered in this
-    /// context's `type_params`. Placeholders from outer generic call scopes have
-    /// atoms that are not in `type_params` and must not be filtered: they carry
-    /// real cross-call inference evidence (e.g. a recursive call's argument type
-    /// constrained by the outer function's unresolved type parameter).
-    pub(crate) fn is_local_inference_placeholder(&self, type_id: TypeId) -> bool {
-        if !crate::type_queries::data::is_bare_current_infer_placeholder_db(self.interner, type_id)
-        {
-            return false;
-        }
-        match self.interner.lookup(type_id) {
-            // `TypeData::Infer` nodes are always created within the current context.
-            Some(TypeData::TypeParameter(tp)) => {
-                self.type_params.iter().any(|(atom, _, _)| *atom == tp.name)
-            }
-            _ => true,
-        }
-    }
-
-    /// Check whether an inference variable has any contravariant candidates that are
-    /// usable for resolution. Call-local inference placeholders like `__infer_*`
-    /// are excluded, but higher-order source placeholders (`__infer_src_*`) and real
-    /// outer type parameters are preserved because they carry cross-generic evidence.
-    pub fn has_usable_contra_candidates(
-        &mut self,
-        var: InferenceVar,
-        _db: &dyn crate::caches::db::TypeDatabase,
-    ) -> bool {
-        let root = self.table.find(var);
-        let info = self.table.probe_value(root);
-        info.contra_candidates
-            .iter()
-            .any(|c| !self.is_local_inference_placeholder(c.type_id))
-    }
-
-    /// Returns `true` when `candidate` should be kept as a concrete
-    /// contra-variance candidate. Call-local `__infer_*` placeholders are
-    /// excluded; foreign bare placeholders and composite types that contain
-    /// real type parameters are kept.
-    pub(crate) fn is_concrete_contra_candidate(&self, type_id: TypeId) -> bool {
-        if self.is_local_inference_placeholder(type_id) {
-            return false;
-        }
-        if crate::type_queries::data::is_bare_current_infer_placeholder_db(self.interner, type_id) {
-            return true;
-        }
-        // Composite types built entirely from local placeholders are stale.
-        if crate::type_queries::data::contains_current_infer_placeholder_db(self.interner, type_id)
-            && !crate::type_queries::data::contains_non_infer_type_parameters_db(
-                self.interner,
-                type_id,
-            )
-        {
-            return false;
-        }
-        true
-    }
-
-    /// Returns `true` if any covariant candidate for `var` is or contains an
-    /// `IndexAccess` type (`T[K]` pattern). The circular-inference guard uses
-    /// this to distinguish true circular inference (passing `T[K]` to `T`)
-    /// from legitimate outer-`TypeParameter` forwarding (passing `T_outer` to
-    /// `T_inner` where they happen to resolve to the same `TypeParameter`).
-    pub fn has_index_access_covariant_candidate(&mut self, var: InferenceVar) -> bool {
-        let root = self.table.find(var);
-        let db = self.interner;
-        self.table
-            .probe_value(root)
-            .candidates
-            .iter()
-            .any(|c| type_contains_index_access(db, c.type_id))
-    }
-
-    /// Returns `true` when a covariant candidate for `var` is or contains an
-    /// `IndexAccess` that references `var`'s OWN original declared type
-    /// parameter — the circular self-inference signal of a recursive generic
-    /// call, where `deepMap(value[key], fn)` infers `T` from `T[K]` with `T`
-    /// being the very parameter under inference.
-    ///
-    /// The circular-inference guard normally recognizes this shape through a
-    /// contravariant candidate contributed by the recursive call's other
-    /// arguments (e.g. `fn: (v: T) => U`). In a self-recursive call, however,
-    /// that contra candidate is the callee's OWN type parameter, so
-    /// [`add_contra_candidate`](Self::add_contra_candidate) deliberately drops
-    /// it as a non-informative self-reference. This covariant-side check keeps
-    /// the guard able to fire without the suppressed contra candidate, while an
-    /// independent call like `identity(value[key])` does not fire: there the
-    /// index access references a *foreign* parameter (`deepMap`'s `T`), not
-    /// `identity`'s own `U`.
-    pub fn has_own_type_param_index_access_covariant_candidate(
-        &mut self,
-        var: InferenceVar,
-    ) -> bool {
-        let root = self.table.find(var);
-        // Original declared names whose inference var unifies with this root.
-        let entries: Vec<(Atom, InferenceVar)> = self
-            .original_type_param_for_var
-            .iter()
-            .map(|(&name, &mapped)| (name, mapped))
-            .collect();
-        let own_names: Vec<Atom> = entries
-            .into_iter()
-            .filter(|&(_, mapped)| self.table.find(mapped) == root)
-            .map(|(name, _)| name)
-            .collect();
-        if own_names.is_empty() {
-            return false;
-        }
-        let candidate_types: Vec<TypeId> = self
-            .table
-            .probe_value(root)
-            .candidates
-            .iter()
-            .map(|c| c.type_id)
-            .collect();
-        let db = self.interner;
-        candidate_types.into_iter().any(|ty| {
-            type_contains_index_access(db, ty)
-                && own_names
-                    .iter()
-                    .any(|&name| contains_type_parameter_named(db, ty, name))
-        })
-    }
-
-    /// Check whether a variable's inference came exclusively from contravariant positions.
-    pub fn has_only_contra_candidates(&mut self, var: InferenceVar) -> bool {
-        let root = self.table.find(var);
-        let info = self.table.probe_value(root);
-        info.candidates.is_empty() && !info.contra_candidates.is_empty()
-    }
-
-    /// Return deduplicated contravariant candidate types for an inference variable.
-    pub fn get_contra_candidate_types(&mut self, var: InferenceVar) -> Vec<TypeId> {
-        let root = self.table.find(var);
-        let info = self.table.probe_value(root);
-        let mut out = Vec::with_capacity(info.contra_candidates.len());
-        for candidate in &info.contra_candidates {
-            if !out.contains(&candidate.type_id) {
-                out.push(candidate.type_id);
-            }
-        }
-        out
-    }
-
-    /// Return deduplicated contravariant candidate types for an inference
-    /// variable, **excluding** those contributed by unannotated
-    /// (context-sensitive) callback parameters (issue #17282). Such candidates
-    /// carry no inference evidence in tsc, so the Round-1-fix restore must not
-    /// treat them as divergent.
-    pub fn get_annotated_contra_candidate_types(&mut self, var: InferenceVar) -> Vec<TypeId> {
-        let root = self.table.find(var);
-        let info = self.table.probe_value(root);
-        let mut out = Vec::with_capacity(info.contra_candidates.len());
-        for candidate in &info.contra_candidates {
-            if candidate.from_unannotated_callback_param {
-                continue;
-            }
-            if !out.contains(&candidate.type_id) {
-                out.push(candidate.type_id);
-            }
-        }
-        out
-    }
-
-    /// Whether `var` has any contra-candidate contributed by an unannotated
-    /// (context-sensitive) callback parameter (issue #17282).
-    pub fn var_has_unannotated_contra_candidate(&mut self, var: InferenceVar) -> bool {
-        let root = self.table.find(var);
-        let info = self.table.probe_value(root);
-        info.contra_candidates
-            .iter()
-            .any(|candidate| candidate.from_unannotated_callback_param)
-    }
-
-    pub fn has_index_signature_candidates(&mut self, var: InferenceVar) -> bool {
-        let root = self.table.find(var);
-        let info = self.table.probe_value(root);
-        info.candidates
-            .iter()
-            .any(|candidate| candidate.from_index_signature)
-    }
-
-    /// Check if all inference candidates for a variable have `ReturnType` priority.
-    /// This indicates the type was inferred from callback return types (Round 2),
-    /// not from direct arguments (Round 1).
-    pub fn all_candidates_are_return_type(&mut self, var: InferenceVar) -> bool {
-        let root = self.table.find(var);
-        let info = self.table.probe_value(root);
-        !info.candidates.is_empty()
-            && info
-                .candidates
-                .iter()
-                .all(|c| c.priority == InferencePriority::ReturnType)
-    }
-
-    /// Get the original un-widened literal candidate types for an inference variable.
-    pub fn get_literal_candidates(&mut self, var: InferenceVar) -> Vec<TypeId> {
-        let root = self.table.find(var);
-        let info = self.table.probe_value(root);
-        info.candidates
-            .iter()
-            .filter(|c| c.is_fresh_literal)
-            .map(|c| c.type_id)
-            .collect()
-    }
-
-    /// Check if all covariant candidates for a variable are fresh literals.
-    /// When false, the resolved type should NOT be widened by `widen_literal_type`
-    /// (matches tsc's `getWidenedLiteralType` which only widens fresh literals).
-    pub fn all_candidates_are_fresh_literals(&mut self, var: InferenceVar) -> bool {
-        let root = self.table.find(var);
-        let info = self.table.probe_value(root);
-        !info.candidates.is_empty() && info.candidates.iter().all(|c| c.is_fresh_literal)
-    }
-
-    /// Returns true when every candidate for `var` was inferred from an array
-    /// element match (`T[]` vs `"a"[]`). Used to widen scalar fresh literals in
-    /// `NoInfer<T>` positions, matching tsc's BCT widening of array literals.
-    pub fn all_candidates_from_array_elements(&mut self, var: InferenceVar) -> bool {
-        let root = self.table.find(var);
-        let info = self.table.probe_value(root);
-        !info.candidates.is_empty() && info.candidates.iter().all(|c| c.from_array_element)
-    }
-
-    /// Returns true when every candidate for `var` was inferred from an
-    /// object-literal property match (`{ value: T }` vs `{ value: 1 }`). A
-    /// literal inferred through an object-literal property is widened to its
-    /// primitive in tsc's `getInferredType` regardless of whether the type
-    /// parameter is also at the top level of the return type, so a sibling
-    /// `NoInfer<T>` position must be checked against the widened type. Only a
-    /// *direct* top-level argument (`value: T`) preserves the literal. Mirrors
-    /// `all_candidates_from_array_elements` for the object-property case.
-    pub fn all_candidates_from_object_property(&mut self, var: InferenceVar) -> bool {
-        let root = self.table.find(var);
-        let info = self.table.probe_value(root);
-        !info.candidates.is_empty() && info.candidates.iter().all(|c| c.from_object_property)
-    }
-
-    /// Returns true when at least one fresh literal candidate came from array
-    /// element inference. This is narrower than `all_candidates_from_array_elements`
-    /// so mixed direct/callback inference can still recognize literal-array evidence.
-    pub fn has_fresh_array_element_candidate(&mut self, var: InferenceVar) -> bool {
-        let root = self.table.find(var);
-        let info = self.table.probe_value(root);
-        info.candidates
-            .iter()
-            .any(|c| c.from_array_element && c.is_fresh_literal)
-    }
-
-    /// Returns `true` if any covariant candidate came from a type assertion (`expr as T`).
-    /// Asserted types are non-fresh and must not be widened.
-    pub fn has_type_annotation_candidates(&mut self, var: InferenceVar) -> bool {
-        let root = self.table.find(var);
-        let info = self.table.probe_value(root);
-        info.candidates.iter().any(|c| c.source_is_type_annotation)
-    }
-
-    /// Returns true when the winning covariant candidate type was produced
-    /// while descending through a readonly array/tuple source.
-    pub fn has_readonly_source_candidate_for(&mut self, var: InferenceVar, ty: TypeId) -> bool {
-        let root = self.table.find(var);
-        let info = self.table.probe_value(root);
-        info.candidates
-            .iter()
-            .any(|candidate| candidate.type_id == ty && candidate.from_readonly_source)
-    }
-
-    pub fn set_resolved_type(&mut self, var: InferenceVar, ty: TypeId) {
-        let root = self.table.find(var);
-        let mut info = self.table.probe_value(root);
-        info.resolved = Some(ty);
-        self.table.union_value(root, info);
-    }
-}
-
-/// Returns `true` when `ty` is or structurally contains an `IndexAccess` type.
-fn type_contains_index_access(db: &dyn crate::construction::TypeDatabase, ty: TypeId) -> bool {
-    if ty.is_intrinsic() {
-        return false;
-    }
-    match db.lookup(ty) {
-        Some(TypeData::IndexAccess(_, _)) => true,
-        Some(TypeData::Union(list_id) | TypeData::Intersection(list_id)) => db
-            .type_list(list_id)
-            .iter()
-            .any(|&m| type_contains_index_access(db, m)),
-        _ => false,
     }
 }
 
