@@ -181,16 +181,33 @@ c.option('x', 1).option('y', 2);
 
 /// Literal preservation must not over-fire: a union of fresh literals from
 /// sibling direct arguments is still widened (`tsc` keeps `1 | 2`, which is a
-/// non-error here), and a callback-return inference site widens to `number`.
+/// non-error here), and a callback-return inference site is not pinned to a
+/// single literal candidate. See the body for the residual gap against `tsc`.
 #[test]
 fn callback_return_site_widens_type_argument() {
-    // U is inferred from a callback return position, so the literal `5` widens
-    // to `number`; assigning the result to `5` is a TS2322 (not TS2345).
+    // Known parity gap (#17773): `tsc` 7.0.2 infers `U = 0 | 5` here — under a
+    // literal contextual type it both preserves the literal candidates and
+    // combines them — and reports exactly one TS2322 at `r`:
+    //
+    //   Type '0 | 5' is not assignable to type '5'.
+    //
+    // tsz widens to `number` instead, so the type text below is NOT tsc's. It
+    // is pinned anyway because the count alone cannot distinguish this from the
+    // worse failure mode: pinning a single literal candidate (`U = 0`) also
+    // yields a "preserved literal", but then rejects the callback's `5` at its
+    // own inference site and reports a SECOND diagnostic tsc never emits.
+    // Assert the text so that regression is visible as a text change, not just
+    // a count change.
     let diags = check_source_diagnostics(
         r#"
 declare function h<U>(fn: () => U, init: U): U;
 const r: 5 = h(() => 5, 0);
 "#,
     );
-    assert_eq!(diagnostics_with_code(&diags, 2322).len(), 1);
+    let ts2322 = diagnostics_with_code(&diags, 2322);
+    assert_eq!(ts2322.len(), 1);
+    assert_eq!(
+        ts2322[0].message_text,
+        "Type 'number' is not assignable to type '5'."
+    );
 }

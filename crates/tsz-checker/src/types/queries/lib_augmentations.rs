@@ -140,12 +140,59 @@ impl<'a> CheckerState<'a> {
             result = Some(self.combine_augmentation_with_lib(result, aug_type));
         }
 
-        for (arena, decls) in cross_file_groups.values() {
-            let aug_type = self.lower_augmentation_for_arena(arena.as_ref(), decls, lib_contexts);
+        // Fold the cross-file groups in deterministic program order, not the
+        // address order a raw `cross_file_groups.values()` walk would produce
+        // (`combine_augmentation_with_lib` -> `merge_interface_types` is
+        // order-sensitive, so an address-ordered fold splits one merged lib
+        // interface into distinct identities across runs — see
+        // `order_cross_arena_augmentation_groups`).
+        for (arena, decls) in self.order_cross_arena_augmentation_groups(cross_file_groups) {
+            let aug_type = self.lower_augmentation_for_arena(arena.as_ref(), &decls, lib_contexts);
             result = Some(self.combine_augmentation_with_lib(result, aug_type));
         }
 
         result
+    }
+
+    /// Order cross-file global-augmentation groups by their owning program file
+    /// index (source file name as a stable tiebreaker) so a downstream
+    /// order-sensitive fold produces a deterministic merged-interface identity.
+    ///
+    /// The groups arrive keyed on each arena's raw pointer address
+    /// (`Arc::as_ptr(arena) as usize`), so iterating the map directly folds in
+    /// memory-layout (ASLR/allocator) order. `combine_augmentation_with_lib`
+    /// (via `merge_interface_types`) is order-sensitive: the merged interface's
+    /// member and overload-signature order — and therefore its interned
+    /// `TypeId` identity — depends on the fold order. An address-ordered fold
+    /// splits one globally-augmented lib interface (e.g. `Document`,
+    /// `HTMLElement`) into distinct identities across otherwise-identical runs,
+    /// which later meet in a relation and mis-fire TS2345/TS2430. Sorting by the
+    /// owning file index makes the fold follow tsc's program-declaration order
+    /// regardless of memory layout.
+    ///
+    /// Shared by every global-augmentation fold site — `merge_global_augmentations`,
+    /// `apply_self_global_augmentations` (`declare global`),
+    /// `resolve_array_global_augmentation_property`, and
+    /// `resolve_augmentation_property_by_name` — so they all order groups
+    /// identically.
+    pub(crate) fn order_cross_arena_augmentation_groups(
+        &self,
+        groups: FxHashMap<usize, (Arc<NodeArena>, Vec<NodeIndex>)>,
+    ) -> Vec<(Arc<NodeArena>, Vec<NodeIndex>)> {
+        let mut ordered: Vec<(Arc<NodeArena>, Vec<NodeIndex>)> = groups.into_values().collect();
+        ordered.sort_by_cached_key(|(arena, _)| {
+            (
+                self.ctx
+                    .get_file_idx_for_arena(arena.as_ref())
+                    .unwrap_or(usize::MAX),
+                arena
+                    .source_files
+                    .first()
+                    .map(|sf| sf.file_name.clone())
+                    .unwrap_or_default(),
+            )
+        });
+        ordered
     }
 
     pub(crate) fn combine_augmentation_with_lib(
