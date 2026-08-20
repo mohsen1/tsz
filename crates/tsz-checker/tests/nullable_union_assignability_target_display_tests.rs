@@ -1036,3 +1036,94 @@ fn expression_indexed_access_concrete_receiver_also_keeps_deferred_pair() {
         "Type 'Wares3[K]' is not assignable to type 'string'.\nType 'number' is not assignable to type 'string'."
     );
 }
+
+// =====================================================================
+// #17718: the constraint-walk elaboration beneath a **top-level** (non-
+// property) deferred-indexed-access head must nest at the header's own
+// child depth, not one level deeper. `message_with_chain` above strips the
+// leading indentation, so the depth is asserted directly here against
+// `related_information`. A top-level TS2322 header is the diagnostic's main
+// message; per the renderer's `2 * (depth + 1)`-space rule its first child
+// sits at depth 0 (2 spaces). `push_deferred_constraint_walk_steps` had used
+// the property-drill child depth (`base_depth + 1`), over-indenting the whole
+// walk by one level for these plain top-level heads — tsc renders the first
+// step at 2 spaces, tsz rendered it at 4. Oracle-verified against pinned
+// typescript@7.0.2 via `scripts/conformance/oracle.sh`.
+// =====================================================================
+
+/// The `related_information` chain of the first `TS{code}` diagnostic as
+/// `(depth, message)` pairs, so a fence can assert the elaboration nesting
+/// (which `message_with_chain` flattens away).
+fn chain_depths(source: &str, code: u32) -> Vec<(u8, String)> {
+    let diags = check_source_diagnostics(source);
+    let diag = diags
+        .iter()
+        .find(|d| d.code == code)
+        .unwrap_or_else(|| panic!("expected TS{code}; got: {diags:?}"));
+    diag.related_information
+        .iter()
+        .map(|related| (related.depth, related.message_text.clone()))
+        .collect()
+}
+
+#[test]
+fn top_level_generic_indexed_access_walk_nests_at_header_child_depth() {
+    // Generic receiver `x: T`, key `k: K`: the constraint walk's three steps
+    // hang directly beneath the top-level head, starting at depth 0.
+    let chain = chain_depths(
+        "function pick<T, K extends keyof T>(x: T, k: K) {\n  const y: string | undefined = x[k];\n}\n",
+        2322,
+    );
+    assert_eq!(
+        chain,
+        vec![
+            (
+                0,
+                "Type 'T[keyof T]' is not assignable to type 'string | undefined'.".to_string()
+            ),
+            (
+                1,
+                "Type 'T[string] | T[number] | T[symbol]' is not assignable to type 'string | undefined'.".to_string()
+            ),
+            (
+                2,
+                "Type 'T[string]' is not assignable to type 'string | undefined'.".to_string()
+            ),
+        ],
+        "top-level generic indexed-access walk must nest at the header's child depth (0, 1, 2)"
+    );
+}
+
+#[test]
+fn top_level_concrete_receiver_indexed_access_walk_nests_at_header_child_depth() {
+    // Concrete receiver `x: Wares3` (the IntrinsicTypeMismatch catch-all path):
+    // the single concrete walk step sits at depth 0 beneath the head.
+    let chain = chain_depths(
+        "interface Wares3 { p: number; q: number }\nfunction pick3<K extends keyof Wares3>(x: Wares3, k: K) {\n  const y: string = x[k];\n}\n",
+        2322,
+    );
+    assert_eq!(
+        chain,
+        vec![(
+            0,
+            "Type 'number' is not assignable to type 'string'.".to_string()
+        )],
+        "concrete-receiver indexed-access walk step must sit at the header's child depth (0)"
+    );
+}
+
+#[test]
+fn top_level_indexed_access_walk_depth_is_binder_name_independent() {
+    // Renamed binders (anti-hardcoding): the nesting depth is structural, not
+    // keyed on the type-parameter spelling.
+    let chain = chain_depths(
+        "function grab<Src, Sel extends keyof Src>(bag: Src, sel: Sel) {\n  const out: string | undefined = bag[sel];\n}\n",
+        2322,
+    );
+    let depths: Vec<u8> = chain.iter().map(|(depth, _)| *depth).collect();
+    assert_eq!(
+        depths,
+        vec![0, 1, 2],
+        "walk nesting depth must be independent of binder names, got chain: {chain:?}"
+    );
+}
