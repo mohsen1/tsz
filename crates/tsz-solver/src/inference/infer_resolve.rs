@@ -8,88 +8,31 @@
 //! - Variable fixing and substitution building
 
 use crate::inference::infer::{
-    CandidateContext, InferenceCandidate, InferenceContext, InferenceError, InferenceInfo,
-    InferenceVar, MAX_TYPE_RECURSION_DEPTH,
+    InferenceCandidate, InferenceContext, InferenceError, InferenceInfo, InferenceVar,
+    MAX_TYPE_RECURSION_DEPTH,
 };
 use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 use crate::operations::widening;
 use crate::types::{InferencePriority, ObjectFlags, TemplateSpan, TypeData, TypeId};
-use crate::visitor::{array_element_union_widens_literals, is_literal_type};
+use crate::visitor::is_literal_type;
 use rustc_hash::FxHashSet;
 use tsz_common::interner::Atom;
 
-impl<'a> InferenceContext<'a> {
-    /// Build and route an inference candidate for `var`, applying the
-    /// per-source `CandidateContext` flags. Relocated from `infer.rs` to keep
-    /// that module under the architecture line cap; the candidate builders in
-    /// `infer.rs` call it across the module boundary.
-    pub(crate) fn add_candidate_with_context(
-        &mut self,
-        var: InferenceVar,
-        ty: TypeId,
-        priority: InferencePriority,
-        context: CandidateContext,
-    ) {
-        // In a contravariant position, a candidate that is the variable's own
-        // declared type parameter is a self-reference carrying no information
-        // (see `add_contra_candidate`). The placeholder rename hides it from the
-        // `occurs_in` self-referential filter at fixing time, so skip it here —
-        // otherwise the leaked bare parameter becomes a contra-candidate that
-        // overrides a legitimate covariant inference. Covariant routing keeps its
-        // existing behavior (handled by `discard_self_referential_candidates`).
-        if self.collects_contra_candidates() && self.type_is_own_original_type_param(var, ty) {
-            return;
-        }
-        let root = self.table.find(var);
-        // A candidate is a "fresh literal" (eligible for widening) when:
-        // - It's a literal type AND
-        // - Either it's NOT from an object property (direct arg like identity("hello")),
-        //   OR the source object is a fresh literal (from object literal expression).
-        // This matches TSC's RequiresWidening flag: literals from type annotations
-        // (non-fresh sources) are NOT widened, but literals from object literal
-        // expressions ARE widened.
-        let candidate = InferenceCandidate {
-            type_id: ty,
-            priority,
-            is_fresh_literal: (!context.from_object_property || context.source_is_fresh)
-                && (is_literal_type(self.interner, ty)
-                    || (self.in_array_element_context
-                        && array_element_union_widens_literals(self.interner, ty)))
-                && !self.source_is_type_annotation
-                && !self.in_readonly_source_context,
-            from_object_property: context.from_object_property,
-            from_index_signature: context.from_index_signature,
-            object_property_index: context.object_property_index,
-            object_property_name: context.object_property_name,
-            source_is_type_annotation: self.source_is_type_annotation,
-            from_array_element: self.in_array_element_context,
-            from_top_level_naked: self.candidate_from_top_level_naked,
-            from_readonly_source: self.candidate_is_from_readonly_source(ty),
-            from_unannotated_callback_param: false,
-            from_contextual_return_hint: context.from_contextual_return_hint,
-        };
-        if self.collects_contra_candidates() {
-            // In contravariant context (e.g., callback parameter structural
-            // decomposition), route to contra_candidates so they are resolved
-            // via intersection and only used when no covariant candidates exist.
-            self.table.union_value(
-                root,
-                InferenceInfo {
-                    contra_candidates: vec![candidate],
-                    ..InferenceInfo::default()
-                },
-            );
-        } else {
-            self.table.union_value(
-                root,
-                InferenceInfo {
-                    candidates: vec![candidate],
-                    ..InferenceInfo::default()
-                },
-            );
-        }
-    }
+/// The literal-widening halves of tsc `getCovariantInference`'s
+/// `widenLiteralTypes` gate, threaded into candidate resolution together.
+#[derive(Clone, Copy)]
+pub(super) struct LiteralWideningPolicy {
+    /// The contextual-pin / conditional-parameter mark
+    /// (`top_level_in_return_type_unfixed`): fresh literal candidates are not
+    /// widened for this variable.
+    pub(super) skip_literal_widening: bool,
+    /// The runtime `isFixed` half: the variable sits at the top level of the
+    /// signature's return type and was never fixed for contextual typing
+    /// (`root_preserves_return_position_literals`).
+    pub(super) preserve_return_position_literals: bool,
+}
 
+impl<'a> InferenceContext<'a> {
     pub(super) fn discard_self_referential_candidates(
         &mut self,
         root: InferenceVar,
@@ -649,7 +592,11 @@ impl<'a> InferenceContext<'a> {
                 &upper_bounds,
                 declared_constraint,
                 declared_constraint_preserves_literals,
-                skip_literal_widening,
+                LiteralWideningPolicy {
+                    skip_literal_widening,
+                    preserve_return_position_literals: self
+                        .root_preserves_return_position_literals(root),
+                },
                 spread_rest_mode,
             );
             if !concrete_contra_candidates.is_empty() {
@@ -735,9 +682,13 @@ impl<'a> InferenceContext<'a> {
         upper_bounds: &[TypeId],
         declared_constraint: Option<TypeId>,
         declared_constraint_preserves_literals: bool,
-        skip_literal_widening: bool,
+        widening_policy: LiteralWideningPolicy,
         spread_rest_mode: Option<crate::inference::spread_rest_literals::SpreadRestLiteralMode>,
     ) -> TypeId {
+        let LiteralWideningPolicy {
+            skip_literal_widening,
+            preserve_return_position_literals,
+        } = widening_policy;
         let filtered = self.filter_candidates_by_priority(candidates);
         tracing::trace!(
             candidates = ?candidates
@@ -820,24 +771,14 @@ impl<'a> InferenceContext<'a> {
                 }
             }
         }
-        // The contextual-literal pin (`top_level_in_return_type_unfixed`) is
-        // decided from the contextual type alone, at marking time, before any
-        // candidate exists. That matches `tsc` while the fresh literal
-        // candidates agree — `pair<T, U>(x: T, cb: (a: T) => U, y: U): U` called
-        // as `pair(2, (a) => 1, 1)` contributes `1` at both sites, and `U := 1`
-        // is the pinned answer.
-        //
-        // It does not match once they disagree. When disagreeing literals share a
-        // base the union above already returned tsc's combined type; the residual
-        // case is a base mismatch, where honouring the pin keeps one literal and
-        // then rejects the other at its own inference site — a second diagnostic
-        // `tsc` never emits. Widening instead yields the base type, wrong only in
-        // the type text of one diagnostic rather than in the diagnostic count.
-        //
-        // Note this reads the raw candidate set, not `filtered_no_never`:
-        // priority filtering has already discarded the losing literal by this
-        // point, so the disagreement is invisible downstream.
-        let skip_literal_widening = skip_literal_widening && {
+        // The union above already returned `tsc`'s combined type for the
+        // same-base disagreeing case (#17773); the residual is a base mismatch,
+        // where honouring either pin source keeps one literal and re-checks the
+        // other at its own inference site — a second diagnostic `tsc` never emits.
+        // Both pin sources therefore compose under this agreement condition
+        // (computed once over the raw candidate set, since priority filtering has
+        // already discarded the losing literal from `filtered_no_never`).
+        let fresh_literal_candidates_agree = {
             let mut fresh_literals = candidates
                 .iter()
                 .filter(|candidate| candidate.is_fresh_literal)
@@ -850,6 +791,26 @@ impl<'a> InferenceContext<'a> {
         let all_from_object_properties = filtered_no_never
             .iter()
             .all(|candidate| candidate.from_object_property);
+        // tsc `getCovariantInference`: `widenLiteralTypes = inference.topLevel &&
+        // (inference.isFixed || !isTypeParameterAtTopLevelInReturnType(signature,
+        // tp))`. `preserve_return_position_literals` carries the parenthesized
+        // half (top level in the return type, never fixed for contextual
+        // typing); the `inference.topLevel` half holds when every counted
+        // candidate was itself inferred at the top level of its argument
+        // position (a structural/nested-position candidate re-enables
+        // widening, matching tsc clearing `topLevel`).
+        //
+        // Both pin sources — the contextual mark and the runtime
+        // return-position preserve — compose under the agreement condition:
+        // neither may pin while the fresh literal candidates disagree, or the
+        // losing literal (already discarded from `filtered_no_never` by
+        // priority filtering, hence the read over raw `candidates`) is
+        // re-checked against the pinned winner and produces a second
+        // diagnostic tsc never emits (#17773/#17778).
+        let skip_literal_widening = (skip_literal_widening
+            || (preserve_return_position_literals
+                && filtered_no_never.iter().all(|c| c.at_top_level_of_walk)))
+            && fresh_literal_candidates_agree;
         // TypeScript preserves literal types when:
         // 1. The type parameter is `const`, OR
         // 2. The declared constraint implies literals (e.g., T extends "a" | "b"), OR
@@ -978,7 +939,17 @@ impl<'a> InferenceContext<'a> {
                 && filtered_no_never
                     .iter()
                     .all(|c| !c.is_fresh_literal && is_literal_type(self.interner, c.type_id));
-            if all_non_fresh_literals {
+            // When the literal-widening gate says fresh literals survive
+            // (`skip_literal_widening`), `best_common_type`'s
+            // `find_common_base_type` step must not collapse them either:
+            // union the all-literal candidate set instead, mirroring the
+            // widening branch's gate on the combination path (#17710).
+            let gated_fresh_literals = skip_literal_widening
+                && !filtered_no_never.is_empty()
+                && filtered_no_never
+                    .iter()
+                    .all(|c| is_literal_type(self.interner, c.type_id));
+            if all_non_fresh_literals || gated_fresh_literals {
                 self.interner.union_from_slice(&candidate_types)
             } else {
                 self.best_common_type(&candidate_types)
