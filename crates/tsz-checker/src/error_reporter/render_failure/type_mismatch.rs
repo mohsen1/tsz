@@ -611,7 +611,7 @@ impl<'a> CheckerState<'a> {
                 message,
                 diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE_TWO_DIFFERENT_TYPES_WITH_THIS_NAME_EXIST_BUT_THEY,
             );
-            let note_depth = if depth == 0 { 0 } else { depth + 1 };
+            let note_depth = super::first_child_depth(depth);
             if let Some(related) = self.unrelated_type_parameter_target_related_info(
                 source,
                 target,
@@ -650,7 +650,7 @@ impl<'a> CheckerState<'a> {
         // child-depth idiom used by the other nested-elaboration renderers. The
         // top-level mismatch is the diagnostic header, so its first child stays
         // at depth 0.
-        let note_depth = if depth == 0 { 0 } else { depth + 1 };
+        let note_depth = super::first_child_depth(depth);
         if let Some(related) = self.unrelated_type_parameter_target_related_info(
             source,
             target,

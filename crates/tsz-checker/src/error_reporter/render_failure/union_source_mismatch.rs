@@ -189,7 +189,7 @@ impl<'a> CheckerState<'a> {
         // structural drill sits one level beneath the header. At depth 0 the
         // union line is the (un-indented) primary, so its first child is at
         // related-depth 0.
-        let header_depth = if depth == 0 { 0 } else { depth + 1 };
+        let header_depth = super::first_child_depth(depth);
         let drill_depth = header_depth + 1;
 
         let display_member =

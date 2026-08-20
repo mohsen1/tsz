@@ -92,18 +92,18 @@ impl<'a> CheckerState<'a> {
         );
         // The head this walk hangs beneath is the diagnostic's MAIN message
         // (the caller built the head pair itself), not an elaboration line, so
-        // its first child follows the top-level child-depth convention the two
-        // call sites use for their sibling notes (`if depth == 0 { 0 } else {
-        // depth + 1 }`): a depth-0 header's first child stays at depth 0, and a
-        // nested header's children go one level deeper. This differs from
-        // [`Self::push_deferred_constraint_walk`], where the head pair IS an
-        // elaboration line at `base_depth`, so its children start at
-        // `base_depth + 1`. Using `base_depth + 1` here too over-indented the
-        // whole walk by one level for a plain top-level mismatch — tsc renders
-        // the first walk step at 2 spaces (`x[k]: T[K]` head, then `T[keyof T]`
-        // one level in), tsz rendered it at 4 (#17718 witnesses 2/3, and the
-        // concrete-receiver `Wares3[K]` IntrinsicTypeMismatch head).
-        let first_child_depth = if base_depth == 0 { 0 } else { base_depth + 1 };
+        // its first child follows the shared header child-depth convention (see
+        // [`super::first_child_depth`]): a depth-0 header's first child stays at
+        // depth 0, a nested header's children go one level deeper. This differs
+        // from [`Self::push_deferred_constraint_walk`], where the head pair IS
+        // an elaboration line at `base_depth`, so its children start at
+        // `base_depth + 1`. Seeding at `base_depth + 1` here too over-indented
+        // the whole walk by one level for a plain top-level mismatch — tsc
+        // renders the first walk step at 2 spaces (`x[k]: T[K]` head, then
+        // `T[keyof T]` one level in), tsz rendered it at 4 (#17718 witnesses
+        // 2/3, and the concrete-receiver `Wares3[K]` IntrinsicTypeMismatch
+        // head; the byte-exact regression is #17797).
+        let first_child_depth = super::first_child_depth(base_depth);
         for (i, step) in steps.iter().enumerate() {
             let depth = first_child_depth + i as u32;
             self.push_constraint_walk_line(diag, step.type_id, target, depth, step.concrete);

@@ -69,7 +69,7 @@ impl CheckerState<'_> {
         // depth 0 the headline is the (un-indented) primary, so its first
         // child is related-depth 0; nested, the headline is at related-depth
         // `depth`, so the child is at `depth + 1`.
-        let child_depth = if depth == 0 { 0 } else { depth + 1 };
+        let child_depth = super::first_child_depth(depth);
 
         // Member frame `Type 'S' is not assignable to type '<member>'.`
         // (structural display, so the member — not the whole union — is

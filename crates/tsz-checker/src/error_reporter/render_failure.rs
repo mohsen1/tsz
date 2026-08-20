@@ -14,6 +14,7 @@ use super::assignability::{
     is_object_prototype_method_for_array_target, is_primitive_type_name,
 };
 mod constraint_walk_display;
+mod elaboration_depth;
 mod nested_application_property_mismatch;
 #[path = "render_failure_index_access.rs"]
 mod render_failure_index_access;
@@ -26,6 +27,11 @@ mod render_failure_property_helpers;
 mod type_mismatch;
 mod union_source_mismatch;
 mod union_target_member_frame;
+
+// The shared "child of a header" elaboration-depth rule. Imported here so
+// `render_failure.rs` calls it unqualified and its submodules reach it via
+// `super::first_child_depth`.
+use elaboration_depth::first_child_depth;
 
 /// Depth at which the shared property-type-mismatch renderer
 /// ([`CheckerState::render_property_type_mismatch`]) stops recursing into a
@@ -391,7 +397,7 @@ impl<'a> CheckerState<'a> {
         // (indent level 0), so its first elaboration sits at field 0. At depth
         // > 0 the parent line is itself a related entry at field `depth`, so its
         // elaboration sits one level deeper.
-        let frame_depth = if depth == 0 { 0 } else { depth + 1 };
+        let frame_depth = first_child_depth(depth);
 
         // An object property-type leaf drills through the shared property
         // renderer, which caps its own recursion at depth 5. Compute the leaf's
@@ -1204,7 +1210,7 @@ impl<'a> CheckerState<'a> {
                 // absolute-depth convention every other nested `render_*` arm
                 // honors. Authoring it at a fixed `0` collapsed it up to the
                 // property-header level (issue #16859).
-                let leaf_depth = if depth == 0 { 0 } else { depth + 1 };
+                let leaf_depth = first_child_depth(depth);
                 diag.push_elaboration(
                     elaboration,
                     diagnostic_codes::TARGET_SIGNATURE_PROVIDES_TOO_FEW_ARGUMENTS_EXPECTED_OR_MORE_BUT_GOT,
