@@ -859,7 +859,18 @@ impl<'a> TypeLowering<'a> {
 
             // Get visibility (for type literals, always Public)
             let visibility = self.arena.get_visibility_from_modifiers(&sig.modifiers);
-            let type_id = self.lower_type(sig.type_annotation);
+            // A property signature with no type annotation is implicitly `any`
+            // (the `noImplicitAny` TS7008 diagnostic is raised separately by the
+            // checker from the missing-annotation node). Lowering it to the
+            // `error` sentinel that `lower_type(NONE)` yields would poison the
+            // property's type: any structural query that walks it (index-signature
+            // value compatibility, weak-type detection, ...) then sees a type that
+            // "contains an error" and suppresses otherwise-correct diagnostics.
+            let type_id = if sig.type_annotation == NodeIndex::NONE {
+                TypeId::ANY
+            } else {
+                self.lower_type(sig.type_annotation)
+            };
             let write_type = if readonly { TypeId::NONE } else { type_id };
 
             Some(PropertyInfo {
