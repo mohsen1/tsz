@@ -1114,6 +1114,14 @@ impl<'a> CheckerState<'a> {
 
     fn bare_nominal_display_name(display: &str) -> Option<&str> {
         let mut text = display.trim();
+        // A colliding `unique symbol` pair is not a nominal identifier (the
+        // two words don't parse as one below), but tsc still re-qualifies it
+        // — to `typeof <name>` — when both sides of a diagnostic stringify
+        // to the same bare keyword. Recognize it directly so the pair
+        // reaches `format_type_pair_diagnostic` instead of being skipped.
+        if text == "unique symbol" {
+            return Some(text);
+        }
         if let Some(rest) = text.strip_prefix("typeof ") {
             text = rest.trim();
         }

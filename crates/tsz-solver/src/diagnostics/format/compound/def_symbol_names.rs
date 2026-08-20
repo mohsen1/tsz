@@ -318,20 +318,29 @@ impl<'a> TypeFormatter<'a> {
         let arena = self.symbol_arena?;
         let sym = arena.get(sym_id)?;
         let mut qualified_name = sym.escaped_name.to_string();
+        let is_static_member = sym.has_any_flags(tsz_binder::symbol_flags::STATIC);
+        let immediate_parent = sym.parent;
         let mut current_parent = sym.parent;
 
         use tsz_binder::symbol_flags;
 
-        // Walk up the parent chain, qualifying with enum parents only.
-        // tsc qualifies type names with their containing enum (e.g., `Choice.Yes`)
-        // but uses SHORT names for types inside namespaces (e.g., `Line` not `A.Line`)
-        // unless disambiguation is needed (same name in outer scope). Namespace
-        // qualification requires scope-aware disambiguation not yet implemented.
+        // Walk up the parent chain, qualifying with enum parents, plus the
+        // immediate declaring class for a `static` member (tsc qualifies
+        // `typeof C.x` for a static class member the same way it qualifies
+        // `Choice.Yes` for an enum member). tsc qualifies type names with
+        // their containing enum but uses SHORT names for types inside
+        // namespaces (e.g., `Line` not `A.Line`) unless disambiguation is
+        // needed (same name in outer scope). Namespace qualification
+        // requires scope-aware disambiguation not yet implemented.
         // Skip file-level module symbols (synthetic names like __test1__, "file.ts", etc.)
         // as those represent file modules, not declared namespaces.
         while current_parent != SymbolId::NONE {
             if let Some(parent_sym) = arena.get(current_parent) {
-                let is_qualifying_parent = parent_sym.has_any_flags(symbol_flags::ENUM);
+                let is_static_class_parent = is_static_member
+                    && current_parent == immediate_parent
+                    && parent_sym.has_any_flags(symbol_flags::CLASS);
+                let is_qualifying_parent =
+                    parent_sym.has_any_flags(symbol_flags::ENUM) || is_static_class_parent;
                 let name = &parent_sym.escaped_name;
                 let is_file_module = name.starts_with('"')
                     || name.starts_with("__")
