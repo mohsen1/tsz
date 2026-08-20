@@ -133,11 +133,19 @@ pub(crate) fn report_type_predicate_in_constructor_type(
 }
 
 // Check duplicate parameters from a TypeNodeChecker context.
+//
+// `tsc` runs `checkGrammarParameterList` for every function-like signature
+// written in type position — a function/constructor type and every call,
+// construct, and method signature of an object type literal — and reports
+// `TS2300` on **every** occurrence of a repeated parameter name, exactly as it
+// does for a function declaration or an interface member. The `seen` map keeps
+// the first occurrence's node so the second occurrence can retroactively blame
+// it, matching `CheckerState::check_duplicate_parameters`.
 pub(crate) fn check_duplicate_parameters_in_type(
     ctx: &mut crate::CheckerContext,
     parameters: &tsz_parser::parser::NodeList,
 ) {
-    let mut seen_names = rustc_hash::FxHashSet::default();
+    let mut seen_names = rustc_hash::FxHashMap::default();
     for &param_idx in &parameters.nodes {
         if let Some(param_node) = ctx.arena.get(param_idx)
             && let Some(param) = ctx.arena.get_parameter(param_node)
@@ -205,29 +213,48 @@ fn node_source_text(ctx: &crate::CheckerContext, idx: NodeIndex) -> Option<Strin
 fn collect_names_in_type(
     ctx: &mut crate::CheckerContext,
     name_idx: tsz_parser::parser::NodeIndex,
-    seen: &mut rustc_hash::FxHashSet<String>,
+    seen: &mut rustc_hash::FxHashMap<String, NodeIndex>,
 ) {
     use tsz_scanner::SyntaxKind;
     let Some(node) = ctx.arena.get(name_idx) else {
         return;
     };
     if node.kind == SyntaxKind::Identifier as u16 {
+        // Capture the current occurrence's span before any `&mut ctx` call so no
+        // arena borrow is live across the diagnostic emission.
+        let cur_pos = node.pos;
+        let cur_len = node.end - node.pos;
         if let Some(name) = ctx
             .arena
             .get_identifier(node)
             .map(|i| i.escaped_text.to_string())
-            && !seen.insert(name.clone())
         {
+            use std::collections::hash_map::Entry;
             let msg = crate::diagnostics::format_message(
                 crate::diagnostics::diagnostic_messages::DUPLICATE_IDENTIFIER,
                 &[&name],
             );
-            ctx.error(
-                node.pos,
-                node.end - node.pos,
-                msg,
-                crate::diagnostics::diagnostic_codes::DUPLICATE_IDENTIFIER,
-            );
+            let code = crate::diagnostics::diagnostic_codes::DUPLICATE_IDENTIFIER;
+            match seen.entry(name) {
+                Entry::Occupied(mut entry) => {
+                    // Blame the first occurrence exactly once (mark it consumed
+                    // with `NONE`), then blame this one. tsc anchors TS2300 on
+                    // every occurrence of the repeated name.
+                    let first_idx = *entry.get();
+                    if first_idx != NodeIndex::NONE {
+                        if let Some((first_pos, first_len)) =
+                            ctx.arena.get(first_idx).map(|n| (n.pos, n.end - n.pos))
+                        {
+                            ctx.error(first_pos, first_len, msg.clone(), code);
+                        }
+                        entry.insert(NodeIndex::NONE);
+                    }
+                    ctx.error(cur_pos, cur_len, msg, code);
+                }
+                Entry::Vacant(entry) => {
+                    entry.insert(name_idx);
+                }
+            }
         }
     } else if (node.kind == tsz_parser::parser::syntax_kind_ext::OBJECT_BINDING_PATTERN
         || node.kind == tsz_parser::parser::syntax_kind_ext::ARRAY_BINDING_PATTERN)

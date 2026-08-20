@@ -32,6 +32,9 @@ dashmap = { workspace = true }
 web-time = { workspace = true }
 stacker = "0.1.23"
 [[test]]
+name = "duplicate_parameter_names_type_position_container_coverage_tests"
+path = "tests/duplicate_parameter_names_type_position_container_coverage_tests.rs"
+[[test]]
 name = "inherited_index_signature_implicit_any_accessor_tests"
 path = "tests/inherited_index_signature_implicit_any_accessor_tests.rs"
 [[test]]

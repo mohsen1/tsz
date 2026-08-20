@@ -1278,6 +1278,25 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
             if let Some(sig) = self.ctx.arena.get_signature(member) {
+                // TS2300: a call, construct, or method signature of an object
+                // type literal is a function-like signature whose parameter list
+                // carries the same duplicate-name grammar as an interface member
+                // or a function-type signature. tsc runs
+                // `checkGrammarParameterList` for all of them and blames every
+                // occurrence of a repeated name; this construction path is
+                // reached once per written type-literal node (alias body, inline
+                // annotation, nested), so it is the position-complete home for
+                // the check.
+                if matches!(
+                    member.kind,
+                    CALL_SIGNATURE | CONSTRUCT_SIGNATURE | METHOD_SIGNATURE
+                ) && let Some(ref params) = sig.parameters
+                {
+                    super::type_node_helpers::check_duplicate_parameters_in_type(
+                        &mut self.ctx,
+                        params,
+                    );
+                }
                 match member.kind {
                     CALL_SIGNATURE => {
                         if let Some(ref _params) = sig.parameters {}
