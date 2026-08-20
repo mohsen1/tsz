@@ -453,6 +453,7 @@ impl<'a> CheckerState<'a> {
             };
             let tgt_str = self
                 .checked_js_global_element_access_fallback_target_display(idx)
+                .or_else(|| self.written_alias_reference_target_display(idx, target))
                 .unwrap_or_else(|| self.format_assignability_type_for_message(target, source));
             // tsc truncates to "and N more" only ABOVE five missing
             // properties; five or fewer list in full (shared helper rule).
@@ -560,13 +561,19 @@ impl<'a> CheckerState<'a> {
                 )
             };
             let widened_target = self.widen_fresh_object_literal_properties_for_display(target);
-            (
-                src,
-                self.format_type_for_diagnostic_role(
-                    widened_target,
-                    DiagnosticTypeDisplayRole::FlattenedDiagnostic,
-                ),
-            )
+            // The "required in type '_'" name comes from the alias reference
+            // written at this anchor when one resolves: the `FlattenedDiagnostic`
+            // role has no anchor, so its reverse type-to-def lookup would
+            // answer the first-registered alias of the lowered shape.
+            let tgt = self
+                .written_alias_reference_target_display(idx, widened_target)
+                .unwrap_or_else(|| {
+                    self.format_type_for_diagnostic_role(
+                        widened_target,
+                        DiagnosticTypeDisplayRole::FlattenedDiagnostic,
+                    )
+                });
+            (src, tgt)
         } else if source_type == TypeId::OBJECT {
             ("{}".to_string(), tgt_str)
         } else {
@@ -1502,6 +1509,11 @@ impl<'a> CheckerState<'a> {
             };
             let tgt_str = if depth == 0 {
                 self.checked_js_global_element_access_fallback_target_display(idx)
+                    // The written-annotation alias is the target's own display
+                    // identity when it lowers to exactly this target; the
+                    // declaring-type name stays the fallback for inherited /
+                    // merged members.
+                    .or_else(|| self.written_alias_reference_target_display(idx, target))
                     .or_else(|| self.property_declaring_type_name(target_type, filtered_names[0]))
                     .unwrap_or_else(|| self.format_assignability_type_for_message(target, source))
             } else {
@@ -1618,7 +1630,13 @@ impl<'a> CheckerState<'a> {
                             self.format_assignability_type_for_message(target, source)
                         })
                     } else {
-                        self.format_assignability_type_for_message(target, source)
+                        // Per-occurrence written-alias identity beats the
+                        // formatter's first-registered reverse lookup (same
+                        // rule as the TS2322 target display).
+                        self.written_alias_reference_target_display(idx, target)
+                            .unwrap_or_else(|| {
+                                self.format_assignability_type_for_message(target, source)
+                            })
                     }
                 })
         } else {

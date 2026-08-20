@@ -501,9 +501,44 @@ impl<'a> CheckerState<'a> {
         let target_expr = self
             .assignment_target_expression(anchor_idx)
             .unwrap_or(anchor_idx);
+        self.written_alias_reference_display_for_expression(target_expr, target)
+    }
+
+    /// Source-side wrapper for the per-occurrence written-alias gate: resolve
+    /// the *source expression* written at the diagnostic anchor and apply
+    /// [`Self::written_alias_reference_display_for_expression`] to its declared
+    /// annotation. `tsc` renders an identifier source by the declared type's
+    /// own `aliasSymbol` — the alias reference written on the *declaration* —
+    /// so `type SrcA = { x: number }; type SrcB = { x: number };
+    /// declare const sb: SrcB; const n: number = sb` says `SrcB`, not the
+    /// first-registered `SrcA`. Every decline of the shared core applies; a
+    /// flow-narrowed source additionally declines through the identity guard
+    /// (the narrowed type no longer equals the annotation's lowered body).
+    pub(in crate::error_reporter) fn written_alias_reference_source_display(
+        &mut self,
+        anchor_idx: NodeIndex,
+        source: TypeId,
+    ) -> Option<String> {
+        let expr_idx = self
+            .direct_diagnostic_source_expression(anchor_idx)
+            .or_else(|| self.assignment_source_expression(anchor_idx))?;
+        self.written_alias_reference_display_for_expression(expr_idx, source)
+    }
+
+    /// Shared core of the per-occurrence written-alias gate: resolve
+    /// `expr_idx`'s declared annotation to a bare, non-generic type-alias
+    /// reference whose lowered body is identity-equal to `displayed`, and
+    /// render that alias's declared name. See
+    /// [`Self::written_alias_reference_target_display`] for the display-model
+    /// rationale and the decline list.
+    fn written_alias_reference_display_for_expression(
+        &mut self,
+        expr_idx: NodeIndex,
+        displayed: TypeId,
+    ) -> Option<String> {
         let def_id = {
             let (arena, annotation_idx) =
-                self.declared_type_annotation_node_for_expression(target_expr)?;
+                self.declared_type_annotation_node_for_expression(expr_idx)?;
             let type_ref = arena.get_type_ref(arena.get(annotation_idx)?)?;
             if type_ref.type_arguments.is_some() {
                 return None;
@@ -571,7 +606,7 @@ impl<'a> CheckerState<'a> {
         // target, or any other type reached through this anchor keeps its
         // established display.
         let resolved_body = self.resolve_lazy_type(body);
-        if resolved_body != self.resolve_lazy_type(target) {
+        if resolved_body != self.resolve_lazy_type(displayed) {
             return None;
         }
         Some(self.ctx.types.resolve_atom(alias_name))
