@@ -371,6 +371,8 @@ mod for_in_lhs_relation_routing_arch_tests;
 mod fresh_const_array_mutable_assignment_tests;
 #[path = "tests/fresh_object_literal_array_like_union_drill_gate_tests.rs"]
 mod fresh_object_literal_array_like_union_drill_gate_tests;
+#[path = "tests/fresh_object_literal_array_property_display_tests.rs"]
+mod fresh_object_literal_array_property_display_tests;
 #[path = "tests/fresh_object_literal_union_literal_kind_display_tests.rs"]
 mod fresh_object_literal_union_literal_kind_display_tests;
 #[path = "tests/fresh_union_fold_head_nested_literal_display_tests.rs"]
