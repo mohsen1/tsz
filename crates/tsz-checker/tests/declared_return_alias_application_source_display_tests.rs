@@ -394,16 +394,18 @@ take(flipped)
     );
 }
 
-/// Residual (`#[ignore]`d, red on main): the TS2345 argument elaboration's
-/// member frame renders the source alias application as written
-/// (`FlipRow<...>`); oracle 7.0.2 renders the base view
-/// (`PairRow<string | boolean, number | symbol>`), exactly like the TS2322
-/// member frame fixed in this suite. Owner: the TS2345 union-parameter
-/// elaboration route (it does not flow through
-/// `render_union_target_member_frame_mismatch`, so it misses the base-view
-/// hop applied there).
+/// The TS2345 argument elaboration's member frame renders the base view
+/// (`PairRow<string | boolean, number | symbol>`) where the head keeps the
+/// written alias application, exactly like the TS2322 member frame fixed in
+/// this suite. The route always flowed through
+/// `render_union_target_member_frame_mismatch`; the miss was the display
+/// provenance shape — an annotation-lowered source stores the full
+/// `evaluated -> base application -> written application` display-alias
+/// chain, so the base-view hop declined (the stored alias is already the
+/// base application, not a forwarding-alias application) and the default
+/// formatter chased the base application's own alias back to the written
+/// spelling.
 #[test]
-#[ignore = "TS2345 member frame keeps the alias spelling; oracle 7.0.2 renders the base view"]
 fn ts2345_argument_member_frame_renders_base_view() {
     assert_exact_chain(
         &format!(
@@ -449,5 +451,140 @@ function build(): PairRow<string, number> | PairRow<boolean, number> {{
 "
         ),
         "concrete-argument alias body",
+    );
+}
+
+/// TS2322 with an annotated-const source: the head keeps the written
+/// `Swap<...>` spelling while the member frame renders the base view. Fresh
+/// binder names (`Grid`/`Swap`, distinct member/property names) prove the
+/// hop is structural, not keyed to this suite's `PairRow`/`FlipRow`
+/// identifiers.
+#[test]
+fn ts2322_annotated_const_member_frame_renders_base_view() {
+    assert_exact_chain(
+        "
+interface Grid<L, R> {
+  readonly left: L | undefined
+  readonly right: R | undefined
+  readonly isGrid: true
+}
+type Swap<P, Q> = Grid<Q, P>
+declare const cell: Swap<number | symbol, string | boolean>
+const slot: Grid<string, number> | Grid<boolean, symbol> = cell
+",
+        2322,
+        &[
+            (
+                0,
+                "Type 'Swap<number | symbol, string | boolean>' is not assignable to type 'Grid<string, number> | Grid<boolean, symbol>'.",
+            ),
+            (
+                1,
+                "Type 'Grid<string | boolean, number | symbol>' is not assignable to type 'Grid<string, number>'.",
+            ),
+            (
+                2,
+                "Type 'string | boolean' is not assignable to type 'string'.",
+            ),
+            (3, "Type 'boolean' is not assignable to type 'string'."),
+        ],
+    );
+}
+
+/// A NON-generic named alias source (`type NamedRow = PairRow<...>`) erases
+/// the same way: the head keeps the alias name, the member frame renders the
+/// underlying application — tsc's normalized re-entry does not distinguish
+/// forwarding-alias applications from named-alias references.
+#[test]
+fn ts2322_named_alias_const_member_frame_renders_base_view() {
+    assert_exact_chain(
+        &format!(
+            "{PAIR}
+type NamedRow = PairRow<string | boolean, number | symbol>
+declare const named: NamedRow
+const row: PairRow<string, number> | PairRow<boolean, symbol> = named
+"
+        ),
+        2322,
+        &[
+            (
+                0,
+                "Type 'NamedRow' is not assignable to type 'PairRow<string, number> | PairRow<boolean, symbol>'.",
+            ),
+            (
+                1,
+                "Type 'PairRow<string | boolean, number | symbol>' is not assignable to type 'PairRow<string, number>'.",
+            ),
+            (
+                2,
+                "Type 'string | boolean' is not assignable to type 'string'.",
+            ),
+            (3, "Type 'boolean' is not assignable to type 'string'."),
+        ],
+    );
+}
+
+/// TS2345 with a call-return source instead of an annotated const: the same
+/// display-alias chain is written by the eager call-return evaluation, so the
+/// member frame takes the same base-view render.
+#[test]
+fn ts2345_call_return_member_frame_renders_base_view() {
+    assert_exact_chain(
+        &format!(
+            "{PAIR}
+type FlipRow<X, Y> = PairRow<Y, X>
+declare function take(row: PairRow<string, number> | PairRow<boolean, symbol>): void
+declare function make(): FlipRow<number | symbol, string | boolean>
+const flipped = make()
+take(flipped)
+"
+        ),
+        2345,
+        &[
+            (
+                0,
+                "Argument of type 'FlipRow<number | symbol, string | boolean>' is not assignable to parameter of type 'PairRow<string, number> | PairRow<boolean, symbol>'.",
+            ),
+            (
+                1,
+                "Type 'PairRow<string | boolean, number | symbol>' is not assignable to type 'PairRow<string, number>'.",
+            ),
+            (
+                2,
+                "Type 'string | boolean' is not assignable to type 'string'.",
+            ),
+            (3, "Type 'boolean' is not assignable to type 'string'."),
+        ],
+    );
+}
+
+/// Negative control: a directly-annotated base application source has nothing
+/// to erase — head and member frame render the same `PairRow<...>` spelling
+/// (oracle 7.0.2), unchanged by the base-view hop.
+#[test]
+fn ts2322_direct_application_const_frame_matches_head() {
+    assert_exact_chain(
+        &format!(
+            "{PAIR}
+declare const direct: PairRow<string | boolean, number | symbol>
+const row: PairRow<string, number> | PairRow<boolean, symbol> = direct
+"
+        ),
+        2322,
+        &[
+            (
+                0,
+                "Type 'PairRow<string | boolean, number | symbol>' is not assignable to type 'PairRow<string, number> | PairRow<boolean, symbol>'.",
+            ),
+            (
+                1,
+                "Type 'PairRow<string | boolean, number | symbol>' is not assignable to type 'PairRow<string, number>'.",
+            ),
+            (
+                2,
+                "Type 'string | boolean' is not assignable to type 'string'.",
+            ),
+            (3, "Type 'boolean' is not assignable to type 'string'."),
+        ],
     );
 }

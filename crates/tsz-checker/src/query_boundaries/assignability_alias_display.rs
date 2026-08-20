@@ -205,12 +205,22 @@ pub(crate) fn is_string_intrinsic_for_alias_display(
 ///
 /// `tsc` re-enters a failed union-member relation with the source's alias
 /// erased (`getNormalizedType`), so while the headline keeps the written alias
-/// application (`FlipRow<A, B>`), the member frame renders the underlying
-/// application the alias forwards to (`PairRow<B, A>`). Accepts either the
-/// alias application itself or an evaluated structural result that maps back
-/// to one through its display alias; returns the composed underlying
-/// application, or `None` when the source is not an alias-of-application (the
-/// caller keeps its existing display).
+/// spelling (`FlipRow<A, B>`, or a non-generic alias name `MyRow`), the member
+/// frame renders the underlying application (`PairRow<B, A>`). Accepts either
+/// the alias application itself or an evaluated structural result that maps
+/// back to an application through its display alias; returns the composed
+/// underlying application, or `None` when the source has no application view
+/// at all (the caller keeps its existing display).
+///
+/// Two provenance shapes reach here:
+/// * The source (or its display alias) is a *forwarding-alias* application
+///   (`FlipRow<A, B>` with `type FlipRow<X, Y> = PairRow<Y, X>`): the solver
+///   composes the underlying application by remapping the arguments.
+/// * The source is an evaluated structural result whose display alias is
+///   *already* the underlying base application (annotation-lowered sources
+///   store the composed `PairRow<...>` as display provenance while the head
+///   repaints the written spelling): the normalized member-frame view is that
+///   stored application itself.
 pub(crate) fn nested_relation_source_base_application_view(
     db: &dyn TypeDatabase,
     definitions: &DefinitionStore,
@@ -221,7 +231,12 @@ pub(crate) fn nested_relation_source_base_application_view(
     } else {
         db.get_display_alias(ty)?
     };
-    tsz_solver::forwarded_alias_application_display_view(db, definitions, application)
+    if let Some(forwarded) =
+        tsz_solver::forwarded_alias_application_display_view(db, definitions, application)
+    {
+        return Some(forwarded);
+    }
+    (application != ty).then_some(application)
 }
 
 /// Re-point an eagerly evaluated call return's display alias at the call's own
