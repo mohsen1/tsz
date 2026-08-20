@@ -173,9 +173,10 @@ impl<'a> CheckerState<'a> {
             {
                 any_non_entity_wide_key = true;
             }
-            let property_name = self
-                .get_property_name(name_idx)
-                .map(|name| self.ctx.types.intern_string(&name));
+            let property_name_text = self.get_property_name(name_idx);
+            let property_name = property_name_text
+                .as_deref()
+                .map(|name| self.ctx.types.intern_string(name));
             if self
                 .ctx
                 .arena
@@ -257,8 +258,30 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
-            // For nested object literals, recurse
-            if let Some(nested_display) = self.object_literal_source_type_display(value_idx, None) {
+            // For nested object literals, recurse with the target's own
+            // per-property type (the `getBestMatchIndexedAccessTypeOrUndefined`
+            // derivation) as the nested contextual target, so a nested literal
+            // whose contextual property type carries a same-base literal is
+            // preserved exactly like a top-level one (#17782). With no target
+            // property the nested render widens as before.
+            let nested_target = match (target, property_name_text.as_deref()) {
+                (Some(target_type), Some(prop_name))
+                    if self
+                        .ctx
+                        .arena
+                        .get(self.ctx.arena.skip_parenthesized(value_idx))
+                        .is_some_and(|node| {
+                            node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                        }) =>
+                {
+                    self.object_literal_target_property_type(target_type, name_idx, prop_name)
+                        .map(|(_check_type, display_type)| display_type)
+                }
+                _ => None,
+            };
+            if let Some(nested_display) =
+                self.object_literal_source_type_display(value_idx, nested_target)
+            {
                 push_object_literal_display_member(
                     &mut parts,
                     &mut member_slots,
