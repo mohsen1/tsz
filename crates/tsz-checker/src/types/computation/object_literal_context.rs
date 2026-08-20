@@ -1703,104 +1703,106 @@ impl<'a> CheckerState<'a> {
             return ctx_type;
         }
 
-        // Discriminate exactly like tsc's `discriminateTypeByDiscriminableItems`:
-        // every discriminator is applied independently over the still-included
-        // members. A discriminator that matches at least one included member
-        // eliminates the non-matching members; one that matches NO member is
-        // reverted and ignored — a failing unit literal that names no arm must
-        // not kill the narrowing the other discriminants produce (tsc's
-        // per-discriminator `matched` flag turning `Ternary.Maybe` back into
-        // `Ternary.True`).
-        //
-        // Deliberate divergence from tsc's `Ternary.False` primitive
-        // pre-marking: every constituent starts included here. tsc applies the
-        // pre-marking only to the contextual APPARENT type, while its
-        // elaboration re-derives per-property targets from the full relation
-        // target; tsz's elaboration gates key on `narrowed_by_discriminant`,
-        // so pre-excluding primitive arms would "narrow" a JSON-style union
-        // (`string | ... | T[] | { [k: string]: T }`) with zero matching
-        // discriminators and lose the outer whole-object frame (pinned by
-        // `fresh_object_literal_union_array_member_drill_in_tests`). A
-        // matching discriminator still eliminates primitive arms through the
-        // ordinary `Maybe -> No` path below.
-        #[derive(Clone, Copy, PartialEq, Eq)]
-        enum Include {
-            Yes,
-            No,
-            Maybe,
+        // Unit-discriminant elimination follows tsc's
+        // `discriminateTypeByDiscriminableItems` (reached through
+        // `discriminateContextualTypeByObjectMembers`): a member is eliminated
+        // by a discriminant property only when that discriminant MATCHED some
+        // member — when a written value matches no member at all, the members
+        // it failed against stay included (tsc's `Maybe` state reverts to
+        // included). Members that lack the property entirely stay included
+        // through every round, and primitive/nullish members start excluded
+        // (tsc pre-marks `Primitive` constituents `False`), so a literal
+        // matching no member still narrows `{ p } | { q } | number[]` to the
+        // declaring members instead of collapsing to the vacuously-matching
+        // array arm — which lost every per-property contextual type, widened
+        // the literal's own property types, and defeated the downstream
+        // best-member selection. The rule this replaces required each member
+        // to satisfy ALL written discriminants at once.
+        const INCLUDE_TRUE: u8 = 0;
+        const INCLUDE_FALSE: u8 = 1;
+        const INCLUDE_MAYBE: u8 = 2;
+        let mut include: Vec<u8> = Vec::with_capacity(members.len());
+        for &member in members.iter() {
+            let state = if unit_discriminants.is_empty() {
+                // No unit discriminants written: the elimination rounds below
+                // never run, so keep every member and let the structural
+                // phases (`never`/absent-required) own the narrowing.
+                INCLUDE_TRUE
+            } else {
+                let lazy_member = self.resolve_lazy_type(member);
+                let resolved = self.resolve_type_for_property_access(lazy_member);
+                if resolved.is_nullish()
+                    || resolved == TypeId::NEVER
+                    || common::is_primitive_type(self.ctx.types, resolved)
+                {
+                    INCLUDE_FALSE
+                } else {
+                    INCLUDE_TRUE
+                }
+            };
+            include.push(state);
         }
-        let member_candidates_by_index: Vec<[TypeId; 4]> = members
-            .iter()
-            .map(|&member| {
+        for (prop_name, lit_type) in &unit_discriminants {
+            let mut matched = false;
+            for (index, &member) in members.iter().enumerate() {
+                if include[index] != INCLUDE_TRUE {
+                    continue;
+                }
                 let lazy_member = self.resolve_lazy_type(member);
                 let resolved_member = self.resolve_type_for_property_access(lazy_member);
                 let evaluated_member = self.evaluate_contextual_type(resolved_member);
-                [evaluated_member, resolved_member, lazy_member, member]
-            })
-            .collect();
-        let mut include: Vec<Include> = vec![Include::Yes; member_candidates_by_index.len()];
-        for (prop_name, lit_type) in &unit_discriminants {
-            let mut matched = false;
-            for (member_index, candidates) in member_candidates_by_index.iter().enumerate() {
-                if include[member_index] != Include::Yes {
-                    continue;
-                }
-                let member_prop_type = candidates.iter().find_map(|&candidate| {
+                let member_candidates = [evaluated_member, resolved_member, lazy_member, member];
+                let member_prop_type = member_candidates.iter().find_map(|&candidate| {
                     self.ctx
                         .types
                         .contextual_property_type(candidate, prop_name)
                 });
-                let related = match member_prop_type {
-                    Some(target_type) => {
-                        *lit_type == target_type
-                            || self
-                                .diagnostic_subtype_outcome(*lit_type, target_type)
-                                .related
-                            // For optional properties (e.g. `disc?: false`), the
-                            // effective type includes `undefined`.
-                            // `contextual_property_type` returns the raw declared
-                            // type without `undefined`, so optionality is checked
-                            // explicitly when the literal is `undefined`.
-                            || (*lit_type == TypeId::UNDEFINED && {
-                                let prop_name_atom = self.ctx.types.intern_string(prop_name);
-                                candidates.iter().any(|&candidate| {
-                                    common::find_property_in_object(
-                                        self.ctx.types,
-                                        candidate,
-                                        prop_name_atom,
-                                    )
-                                    .is_some_and(|p| p.optional)
-                                })
-                            })
-                    }
-                    // The member does not expose the property at all: it cannot
-                    // match this discriminator (tsc's
-                    // `getTypeOfPropertyOrIndexSignatureOfType` is undefined).
-                    None => false,
+                // A member without the property is not discriminated by it.
+                let Some(target_type) = member_prop_type else {
+                    continue;
                 };
-                if related {
+                // For optional properties (e.g. `disc?: false`), the effective
+                // type includes `undefined`. `contextual_property_type` returns
+                // the raw declared type without `undefined`, so optionality is
+                // checked explicitly for a written `undefined` value.
+                let relates = *lit_type == target_type
+                    || self
+                        .diagnostic_subtype_outcome(*lit_type, target_type)
+                        .related
+                    || (*lit_type == TypeId::UNDEFINED && {
+                        let prop_name_atom = self.ctx.types.intern_string(prop_name);
+                        member_candidates.iter().any(|&candidate| {
+                            common::find_property_in_object(
+                                self.ctx.types,
+                                candidate,
+                                prop_name_atom,
+                            )
+                            .is_some_and(|p| p.optional)
+                        })
+                    });
+                if relates {
                     matched = true;
                 } else {
-                    include[member_index] = Include::Maybe;
+                    include[index] = INCLUDE_MAYBE;
                 }
             }
             for state in include.iter_mut() {
-                if *state == Include::Maybe {
-                    *state = if matched { Include::No } else { Include::Yes };
+                if *state == INCLUDE_MAYBE {
+                    *state = if matched { INCLUDE_FALSE } else { INCLUDE_TRUE };
                 }
             }
         }
 
-        // The structural eliminations below are separate tsc inferences
-        // (present-property-typed-`never`, absent-required-discriminant); they
-        // filter the discriminant-included members rather than participating in
-        // the per-discriminator revert above.
+        // For each union member, check the discriminant include state AND that
+        // no present property maps to `never` in that member.
         let mut matching_members: Vec<TypeId> = Vec::new();
         for (member_index, &member) in members.iter().enumerate() {
-            if include[member_index] != Include::Yes {
-                continue;
-            }
-            let member_candidates = member_candidates_by_index[member_index];
+            let lazy_member = self.resolve_lazy_type(member);
+            let resolved_member = self.resolve_type_for_property_access(lazy_member);
+            let evaluated_member = self.evaluate_contextual_type(resolved_member);
+            let member_candidates = [evaluated_member, resolved_member, lazy_member, member];
+
+            let unit_match = include[member_index] == INCLUDE_TRUE;
 
             // Check present properties: eliminate members where a present property
             // has type `never` (the member requires the property to be absent).
@@ -1908,7 +1910,7 @@ impl<'a> CheckerState<'a> {
                 ok
             };
 
-            if never_match && absent_required_match {
+            if unit_match && never_match && absent_required_match {
                 let raw_member = raw_members
                     .as_ref()
                     .and_then(|members| members.get(member_index))

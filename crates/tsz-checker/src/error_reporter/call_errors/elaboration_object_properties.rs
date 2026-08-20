@@ -153,8 +153,34 @@ impl<'a> CheckerState<'a> {
         // per-property target comes from that member alone. If the best-matching
         // member lacks the key, elaboration is skipped for that property and the
         // outer assignment error is reported.
-        let array_union_best_match_member =
-            self.object_literal_array_union_best_match_member(effective_param_type);
+        //
+        // The `findBestTypeForObjectLiteral` fallback is reached only when the
+        // discriminant step produced nothing: `getBestMatchingType` returns
+        // `findMatchingDiscriminantType`'s result — single member or narrowed
+        // union alike — before ever consulting the array-aware fallback, so a
+        // discriminant-narrowed target owns the per-property derivation below.
+        let array_union_best_match_member = if narrowed_by_discriminant {
+            None
+        } else {
+            self.object_literal_array_union_best_match_member(effective_param_type)
+        };
+        // A discriminant step that leaves SEVERAL members is still a union for
+        // the per-property target: tsc takes the indexed access over that
+        // discriminated union, which is defined only when every surviving
+        // member exposes the key. A vacuously-surviving member without the key
+        // (`number[]` in `{ p: 1; q: 4 } | { p: 2; q: 8 } | number[]`) makes it
+        // undefined, so the property is skipped and the outer relation error
+        // reports with the solver's own best-member chain — never an inner
+        // anchor against one member's property type.
+        let narrowed_multi_member_union = narrowed_by_discriminant && {
+            let resolved = self.resolve_type_for_property_access(effective_param_type);
+            query_common::union_members(self.ctx.types, resolved)
+                .or_else(|| {
+                    let evaluated = self.evaluate_type_with_env(resolved);
+                    query_common::union_members(self.ctx.types, evaluated)
+                })
+                .is_some_and(|members| members.len() >= 2)
+        };
 
         let mut elaborated = false;
         let mut seen_named_properties: rustc_hash::FxHashSet<String> =
@@ -352,11 +378,24 @@ impl<'a> CheckerState<'a> {
             .flatten();
             let Some((target_prop_type, target_prop_type_for_diagnostic)) = full_union_target
                 .or_else(|| {
-                    self.object_literal_target_property_type(
-                        target_source_type,
-                        prop_name_idx,
-                        &prop_name,
-                    )
+                    if narrowed_multi_member_union {
+                        // The discriminated result is still a union: tsc's
+                        // per-property target is the indexed access over that
+                        // union, undefined when a surviving member lacks the
+                        // key — the property is skipped, never drilled through
+                        // one member alone.
+                        self.full_union_object_literal_property_target(
+                            effective_param_type,
+                            prop_name_idx,
+                            &prop_name,
+                        )
+                    } else {
+                        self.object_literal_target_property_type(
+                            target_source_type,
+                            prop_name_idx,
+                            &prop_name,
+                        )
+                    }
                 })
             else {
                 continue;
@@ -1183,143 +1222,6 @@ impl<'a> CheckerState<'a> {
             let (body_type, _type_params) = self.type_reference_symbol_type_with_params(sym_id);
             return self.type_has_mapped_alias_surface(body_type, depth + 1);
         }
-        false
-    }
-
-    /// tsc's `findBestTypeForObjectLiteral` (the object-literal branch of
-    /// `getBestMatchingType`, used by `getBestMatchIndexedAccessTypeOrUndefined`):
-    /// when a fresh object-literal source is related to a union target that has
-    /// an array-like member, the best-matching member for per-property
-    /// elaboration is the first non-array-like member in union order. Returns
-    /// that member, or `None` when the target does not resolve to such a union
-    /// (no array-like member, or not a union at all).
-    ///
-    /// This is a deliberate narrowing of tsc's full `getBestMatchingType`
-    /// (which also scores members by discriminant/property overlap): the
-    /// array-like branch is the one that governs the recursive-JSON-alias shape
-    /// this gate targets (`… | Json[] | { [k: string]: Json }`), where the
-    /// leading primitive/object member is selected. Array-like = `T[]`, tuple,
-    /// or `readonly T[]` (tsc's `isArrayLikeType`).
-    pub(crate) fn object_literal_array_union_best_match_member(
-        &mut self,
-        param_type: TypeId,
-    ) -> Option<TypeId> {
-        use crate::query_boundaries::type_checking_utilities::{
-            ArrayLikeKind, classify_array_like,
-        };
-
-        let resolved = self.resolve_type_for_property_access(param_type);
-        let evaluated = self.judge_evaluate(resolved);
-        for candidate in [param_type, resolved, evaluated] {
-            let Some(members) =
-                crate::query_boundaries::common::union_members(self.ctx.types, candidate)
-            else {
-                continue;
-            };
-            let db = self.ctx.types.as_type_database();
-            let is_array_like = |member: TypeId| {
-                matches!(
-                    classify_array_like(db, member),
-                    ArrayLikeKind::Array(_) | ArrayLikeKind::Tuple | ArrayLikeKind::Readonly(_)
-                )
-            };
-            if !members.iter().any(|&member| is_array_like(member)) {
-                continue;
-            }
-            return members
-                .iter()
-                .copied()
-                .find(|&member| !is_array_like(member));
-        }
-        None
-    }
-
-    fn target_has_never_indexed_access_surface(&self, target_type: TypeId) -> bool {
-        crate::query_boundaries::diagnostics::contains_never_index_access_surface(
-            self.ctx.types.as_type_database(),
-            &self.ctx.definition_store,
-            target_type,
-            8,
-        )
-    }
-
-    fn target_has_indexed_access_surface(&self, target_type: TypeId) -> bool {
-        self.type_has_indexed_access_surface(target_type, 0)
-    }
-
-    /// `true` when any shape reachable from `target_type` has a named property
-    /// (not an index signature) whose atom equals `prop_name`.
-    fn target_has_named_property_for_key(&mut self, target_type: TypeId, prop_name: &str) -> bool {
-        let prop_atom = self.ctx.types.intern_string(prop_name);
-        let resolved = self.resolve_type_for_property_access(target_type);
-        let evaluated = self.evaluate_type_with_env(target_type);
-        let has_named = |type_id: TypeId| {
-            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, type_id)
-                .is_some_and(|shape| shape.properties.iter().any(|p| p.name == prop_atom))
-        };
-        [target_type, resolved, evaluated]
-            .into_iter()
-            .any(|candidate| {
-                crate::query_boundaries::common::union_members(self.ctx.types, candidate)
-                    .map_or_else(
-                        || has_named(candidate),
-                        |ms| ms.iter().copied().any(has_named),
-                    )
-            })
-    }
-
-    /// `true` when `target_type` is a literal type, or a union any member of
-    /// which is, so a fresh literal written under it keeps its literal type
-    /// instead of widening. This is the contextual half of ordinary
-    /// object-literal freshness, asked of the computed member's *target* type.
-    fn computed_member_target_is_literal_bearing(&mut self, target_type: TypeId) -> bool {
-        let evaluated = self.evaluate_type_with_env(target_type);
-        let is_literal = |type_id: TypeId| {
-            crate::query_boundaries::common::is_literal_type(self.ctx.types, type_id)
-        };
-        [target_type, evaluated].into_iter().any(|candidate| {
-            crate::query_boundaries::common::union_members(self.ctx.types, candidate).map_or_else(
-                || is_literal(candidate),
-                |ms| ms.iter().copied().any(is_literal),
-            )
-        })
-    }
-
-    fn type_has_indexed_access_surface(&self, target_type: TypeId, depth: usize) -> bool {
-        if depth > 8 {
-            return false;
-        }
-        let db = self.ctx.types.as_type_database();
-        if crate::query_boundaries::common::index_access_types(db, target_type).is_some() {
-            return true;
-        }
-        if let Some(members) = crate::query_boundaries::common::union_members(db, target_type)
-            && members
-                .iter()
-                .any(|&member| self.type_has_indexed_access_surface(member, depth + 1))
-        {
-            return true;
-        }
-        if let Some(members) =
-            crate::query_boundaries::common::intersection_members(db, target_type)
-            && members
-                .iter()
-                .any(|&member| self.type_has_indexed_access_surface(member, depth + 1))
-        {
-            return true;
-        }
-        if crate::query_boundaries::common::is_generic_application(self.ctx.types, target_type)
-            && let Some(def_id) = crate::query_boundaries::common::get_application_lazy_def_id(
-                self.ctx.types,
-                target_type,
-            )
-            && let Some(def) = self.ctx.definition_store.get(def_id)
-            && def.kind == tsz_solver::def::DefKind::TypeAlias
-            && let Some(body) = def.body
-        {
-            return self.type_has_indexed_access_surface(body, depth + 1);
-        }
-
         false
     }
 

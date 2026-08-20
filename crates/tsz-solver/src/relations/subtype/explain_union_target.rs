@@ -507,6 +507,18 @@ impl<R: TypeResolver> SubtypeChecker<'_, R> {
                 match self.discriminant_property_type(member, name) {
                     Some(prop_type) => {
                         any_present = true;
+                        // tsc's read type of an OPTIONAL property carries
+                        // `| undefined` under strictNullChecks, so a written
+                        // `undefined` value satisfies an optional slot and the
+                        // fold moves on to the genuinely failing property.
+                        let prop_type = if self.strict_null_checks
+                            && prop_type != TypeId::UNDEFINED
+                            && self.discriminant_property_is_optional(member, name)
+                        {
+                            self.interner.union(vec![prop_type, TypeId::UNDEFINED])
+                        } else {
+                            prop_type
+                        };
                         member_prop_types.push(prop_type);
                     }
                     // `getTypeOfPropertyInTypes`: a member without the

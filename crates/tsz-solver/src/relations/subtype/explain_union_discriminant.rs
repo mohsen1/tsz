@@ -158,16 +158,24 @@ impl<R: TypeResolver> SubtypeChecker<'_, R> {
             if !any_present || !all_unit {
                 continue;
             }
-            let filtered: Vec<TypeId> = candidates
-                .iter()
-                .copied()
-                .filter(|&member| {
-                    self.discriminant_property_type(member, name)
-                        .is_some_and(|member_value| {
-                            self.check_subtype(source_value, member_value).is_true()
-                        })
-                })
-                .collect();
+            let filtered: Vec<TypeId> =
+                candidates
+                    .iter()
+                    .copied()
+                    .filter(|&member| {
+                        let related = self.discriminant_property_type(member, name).is_some_and(
+                            |member_value| self.check_subtype(source_value, member_value).is_true(),
+                        );
+                        // An `undefined` value matches an OPTIONAL discriminant slot
+                        // (`on?: false`): the declared type read above carries no
+                        // `undefined`, so optionality is consulted directly —
+                        // matching tsc, whose `getTypeOfPropertyOrIndexSignatureOfType`
+                        // includes the optional `undefined` in the compared type.
+                        related
+                            || (source_value == TypeId::UNDEFINED
+                                && self.discriminant_property_is_optional(member, name))
+                    })
+                    .collect();
             if !filtered.is_empty() {
                 candidates = filtered;
                 narrowed = true;
@@ -214,6 +222,29 @@ impl<R: TypeResolver> SubtypeChecker<'_, R> {
             }
         }
         None
+    }
+
+    /// Whether property `name` on the apparent form of `type_id` is declared
+    /// optional. Used by the discriminant matcher: a written `undefined`
+    /// discriminant value matches an optional slot even though the declared
+    /// type read by [`Self::discriminant_property_type`] carries no
+    /// `undefined`.
+    pub(super) fn discriminant_property_is_optional(
+        &mut self,
+        type_id: TypeId,
+        name: Atom,
+    ) -> bool {
+        let resolved = self.apparent_type_for_keys(type_id);
+        let Some(shape_id) = object_shape_id(self.interner, resolved)
+            .or_else(|| object_with_index_shape_id(self.interner, resolved))
+        else {
+            return false;
+        };
+        self.interner
+            .object_shape(shape_id)
+            .properties
+            .iter()
+            .any(|prop| prop.name == name && prop.optional)
     }
 
     /// The read type of property `name` declared directly on `shape_id`.

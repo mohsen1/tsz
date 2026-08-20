@@ -412,20 +412,31 @@ both("s", { p: 1, q: 8 });
 }
 
 #[test]
-#[ignore = "known pre-existing residual (red on main before the arm-wise display too): tsc 7.0.2 follows the mixed-union head with `Types of property 'q' are incompatible. / Type '8' is not assignable to type '4'.` (best-arm elaboration); tsz emits the bare head. Owner: relation failure reason for union targets, not the display gateway."]
 fn mixed_union_head_carries_best_arm_property_elaboration() {
-    let messages = ts2345_messages(
+    // tsc 7.0.2 follows the mixed-union head with the discriminant-matched
+    // arm's property fold: `Types of property 'q' are incompatible.` /
+    // `Type '8' is not assignable to type '4'.` (the chain lives in the
+    // diagnostic's related information, not the head text).
+    let diags: Vec<_> = check_source_diagnostics(
         r#"
 type U = { p: 1; q: 4 } | { p: 2; q: 8 };
 declare function both<T>(t: T, u: U | T[]): void;
 both(0, { p: 1, q: 8 });
 "#,
-    );
+    )
+    .into_iter()
+    .filter(|d| d.code == 2345)
+    .collect();
     assert!(
-        messages
-            .iter()
-            .any(|m| m.contains("Types of property 'q' are incompatible")),
-        "tsc elaborates the discriminant-matched arm's property mismatch, got: {messages:?}"
+        diags.iter().any(|d| {
+            d.related_information
+                .iter()
+                .any(|info| info.message_text == "Types of property 'q' are incompatible.")
+                && d.related_information
+                    .iter()
+                    .any(|info| info.message_text == "Type '8' is not assignable to type '4'.")
+        }),
+        "tsc elaborates the discriminant-matched arm's property mismatch, got: {diags:?}"
     );
 }
 
