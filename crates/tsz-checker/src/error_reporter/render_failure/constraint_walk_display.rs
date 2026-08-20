@@ -3,7 +3,9 @@
 //! and the plain (non-property) top-level mismatch renderers. Extracted from
 //! `nested_application_property_mismatch.rs` to keep that module under the
 //! file-size cap; move-only, no behavior change.
-use crate::diagnostics::{Diagnostic, diagnostic_codes, diagnostic_messages, format_message};
+use crate::diagnostics::{
+    Diagnostic, DiagnosticRelatedInformation, diagnostic_codes, diagnostic_messages, format_message,
+};
 use crate::state::CheckerState;
 use tsz_solver::TypeId;
 
@@ -129,6 +131,26 @@ impl<'a> CheckerState<'a> {
         depth: u32,
         resolve_strip: bool,
     ) {
+        let line = self.constraint_walk_line_text(source, target, resolve_strip);
+        diag.push_elaboration(
+            line,
+            diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+            depth,
+        );
+    }
+
+    /// The `Type 'S' is not assignable to type 'T'.` text of one constraint-walk
+    /// line, with the same nullish-strip policy as [`Self::push_constraint_walk_line`]:
+    /// `target` renders in full for a union or deferred source and collapsed to
+    /// its single real member for a concrete source. Extracted so both the
+    /// `Diagnostic`-mutating push path and the pre-built related-info path
+    /// ([`Self::argument_deferred_constraint_walk_related`]) render identical text.
+    fn constraint_walk_line_text(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        resolve_strip: bool,
+    ) -> String {
         // The nullish-strip decision must see the source the reader sees: a
         // resolved concrete-base access (`Obj[keyof Obj]` -> `number`) collapses
         // the target to its single real member; a still-deferred access or a
@@ -149,14 +171,82 @@ impl<'a> CheckerState<'a> {
             };
         let source_str = self.format_type_for_assignability_message(source);
         let target_str = self.format_type_for_assignability_message(display_target);
-        let line = format_message(
+        format_message(
             diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
             &[&source_str, &target_str],
+        )
+    }
+
+    /// The constraint-walk elaboration to layer beneath a TS2345 argument head
+    /// whose source is a deferred, constraint-relative indexed access, or empty
+    /// when the walk does not apply to this argument surface.
+    ///
+    /// `tsc` renders the argument source at its apparent type. When the base is
+    /// still generic (`TE[KE]`, a bare `keyof T`, a conditional), the apparent
+    /// type stays the as-written operand and `tsc` walks its constraint one step
+    /// per line beneath the head — the head-kept path this fills in. When the
+    /// base is CONCRETE (`Goods[KG]` over an interface), the apparent type is
+    /// instead the resolved value type, which `tsc` collapses onto the head line
+    /// itself (`boolean` vs `string`) with no as-written operand to walk beneath;
+    /// that head-collapse is a distinct materialize-or-defer display concern
+    /// (#15396 family) owned elsewhere, so this declines it rather than layering
+    /// a walk beneath a (differently) wrong head. The two are told apart
+    /// structurally: a concrete-base walk's first step is a concrete leaf, a
+    /// generic-base walk's is not.
+    pub(in crate::error_reporter) fn argument_deferred_constraint_walk_related(
+        &mut self,
+        arg_type: TypeId,
+        param_type: TypeId,
+        start: u32,
+        length: u32,
+    ) -> Vec<DiagnosticRelatedInformation> {
+        if !self.is_deferred_constraint_relative_source(arg_type) {
+            return Vec::new();
+        }
+        let steps = crate::query_boundaries::diagnostics::indexed_access_constraint_display_walk(
+            self.ctx.types.as_type_database(),
+            arg_type,
+            param_type,
         );
-        diag.push_elaboration(
-            line,
-            diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-            depth,
-        );
+        // A concrete-base access collapses to its value type on the head line
+        // (owned by the materialize-or-defer display gateway), and a source with
+        // no further constraint (a bare `keyof T`, whose base key space renders
+        // through the `PropertyKey` alias) has no walk to emit — both leave the
+        // argument head as its own owner renders it.
+        if steps.first().is_none_or(|first| first.concrete) {
+            return Vec::new();
+        }
+        // The head this walk hangs beneath is the argument diagnostic's MAIN
+        // message, so its first child follows the shared header child-depth
+        // convention ([`super::first_child_depth`]) — the same seeding as the
+        // top-level TS2322 head's `push_deferred_constraint_walk_steps`, but
+        // built as pre-built related-info lines because the argument head is
+        // rendered through a `DiagnosticRenderRequest` and layers this on via
+        // `extra_related` rather than mutating a `Diagnostic` directly. Every
+        // line anchors on the head's own span (a chain link, not a
+        // cross-location pointer).
+        let first_child_depth = super::first_child_depth(0);
+        let file = self.ctx.file_name.clone();
+        steps
+            .iter()
+            .enumerate()
+            .map(|(i, step)| {
+                // Only a CONCRETE walk step collapses the nullable target to its
+                // single real member; a still-deferred generic-base step keeps
+                // the full union, so it must not be resolved for the strip
+                // decision — the same rule as the `Diagnostic`-push path.
+                let line = self.constraint_walk_line_text(step.type_id, param_type, step.concrete);
+                // `related_message` seeds depth 0; `with_depth_shift` owns the
+                // shift-and-clamp-into-`u8` so this does not re-spell it.
+                Diagnostic::related_message(
+                    diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                    file.clone(),
+                    start,
+                    length,
+                    line,
+                )
+                .with_depth_shift(i64::from(first_child_depth + i as u32))
+            })
+            .collect()
     }
 }
