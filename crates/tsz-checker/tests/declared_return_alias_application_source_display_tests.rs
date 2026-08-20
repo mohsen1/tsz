@@ -295,16 +295,15 @@ function build(): FlipRow<string, number> | FlipRow<boolean, symbol> {{
     );
 }
 
-/// Residual (`#[ignore]`d, red on main): the member frame's DRILL pair.
-/// Oracle 7.0.2 drills the first mismatching argument of the base-aligned
-/// pair (`PairRow<number | symbol, string | boolean>` vs
-/// `PairRow<number, string>`: `number | symbol` vs `number`); tsz's
-/// same-base relation drill picks the pair through the alias-application
-/// alignment (`string | boolean` vs `string`). Owner: the solver's same-base
-/// argument-drill selection for alias-of-application sources (relation
-/// failure reason, not display) — the display halves above are fixed.
+/// The member frame's DRILL pair. Oracle 7.0.2 drills the first mismatching
+/// argument of the base-aligned pair (`PairRow<number | symbol, string |
+/// boolean>` vs `PairRow<number, string>`: `number | symbol` vs `number`).
+/// `align_application_bases` now keeps hopping a shared alias base
+/// (`FlipRow<X, Y> = PairRow<Y, X>`) through to the nominal `PairRow`
+/// application instead of stopping at the alias's own (permuted) parameter
+/// order, so the same-base argument drill picks the base-aligned pair tsc
+/// reports.
 #[test]
-#[ignore = "solver same-base argument drill picks the alias-aligned pair; oracle 7.0.2 drills the base-aligned first mismatch"]
 fn alias_target_arms_drill_aligns_through_base_view() {
     assert_exact_chain(
         &format!(
