@@ -80,14 +80,23 @@ impl CheckerState<'_> {
         prop_name: &str,
     ) -> Option<(TypeId, TypeId)> {
         let resolved = self.resolve_type_for_property_access(target_type);
-        let members: Option<Vec<TypeId>> = query_common::union_members(self.ctx.types, resolved)
-            .or_else(|| {
-                let evaluated = self.evaluate_type_with_env(resolved);
-                query_common::union_members(self.ctx.types, evaluated)
-            })
-            .map(|list| list.as_ref().to_vec())
-            .filter(|list| list.len() >= 2);
-        let Some(members) = members else {
+        // Keep the union `TypeId` the member list was read from: the
+        // best-member scan needs it to restore written member order when
+        // canonical interning reordered the arms (an instantiated generic
+        // union's substituted arm re-interns and sorts away from its declared
+        // position, which would flip `findMostOverlappyType`'s LAST-member
+        // tie-break).
+        let union_target: Option<(TypeId, Vec<TypeId>)> =
+            query_common::union_members(self.ctx.types, resolved)
+                .map(|list| (resolved, list))
+                .or_else(|| {
+                    let evaluated = self.evaluate_type_with_env(resolved);
+                    query_common::union_members(self.ctx.types, evaluated)
+                        .map(|list| (evaluated, list))
+                })
+                .map(|(union_id, list)| (union_id, list.as_ref().to_vec()))
+                .filter(|(_, list)| list.len() >= 2);
+        let Some((union_id, members)) = union_target else {
             return self.object_literal_target_property_type(target_type, prop_name_idx, prop_name);
         };
         if let Some(pair) =
@@ -99,6 +108,7 @@ impl CheckerState<'_> {
             self.ctx.types,
             &self.ctx,
             source_type,
+            union_id,
             &members,
         )?;
         self.object_literal_target_property_type(member, prop_name_idx, prop_name)

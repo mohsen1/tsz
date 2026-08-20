@@ -112,10 +112,24 @@ impl<R: TypeResolver> SubtypeChecker<'_, R> {
         // structurally simplifies to `B` in `resolved_target` must still
         // render as `Mapped<B>` in the elaboration, matching tsc). Fall back
         // to the resolved union when the target is itself a lazy alias.
-        let members_id = union_list_id(self.interner, target)
-            .or_else(|| union_list_id(self.interner, resolved_target))
+        let (order_union_id, members_id) = union_list_id(self.interner, target)
+            .map(|list_id| (target, list_id))
+            .or_else(|| {
+                union_list_id(self.interner, resolved_target)
+                    .map(|list_id| (resolved_target, list_id))
+            })
             .expect("resolved_target is a union");
-        let members = self.interner.type_list(members_id);
+        let interned_members = self.interner.type_list(members_id);
+        // tsc's `getBestMatchingType` scans `target.types` in written
+        // (declaration) order — its `findMostOverlappyType` ties break to the
+        // LAST written member — so restore the as-written order whenever the
+        // interner recorded a canonical/source divergence (an instantiated
+        // generic union's substituted arm re-interns with a fresh `ShapeId`
+        // and sorts away from its declared position). Pure-permutation
+        // guarded; see `union_elaboration_origin_override`.
+        let members = self
+            .union_elaboration_origin_override(order_union_id, interned_members.as_ref())
+            .unwrap_or_else(|| interned_members.as_ref().to_vec());
         let application_shaped_comparison = application_id(self.interner, source).is_some()
             || application_id(self.interner, target).is_some();
         let source_members = union_list_id(self.interner, resolved_source)

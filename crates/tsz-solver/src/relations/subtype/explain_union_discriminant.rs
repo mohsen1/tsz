@@ -38,16 +38,30 @@ use tsz_common::interner::Atom;
 /// then a same-generic-base reference, then `findMostOverlappyType`'s
 /// key-overlap scan (ties to the LAST member; primitive arms expose no object
 /// keys and never score) — and elaborates the property against that single
-/// member. Returns `None` when no member is selected, in which case the
-/// property drill-in is skipped and the outer relation error reports.
+/// member. `union_type_id` is the union `members` was read from: the scan
+/// walks the members in written (declaration) order when the interner
+/// recorded a canonical/source divergence for it — an instantiated generic
+/// union's substituted arm re-interns with a fresh `ShapeId` and sorts away
+/// from its declared position, which would otherwise flip the LAST-member
+/// tie-break (see `union_declared_order_override`). Returns `None` when no
+/// member is selected, in which case the property drill-in is skipped and the
+/// outer relation error reports.
 pub fn union_target_best_elaboration_member<R: TypeResolver>(
     interner: &dyn TypeDatabase,
     resolver: &R,
     source: TypeId,
+    union_type_id: TypeId,
     members: &[TypeId],
 ) -> Option<TypeId> {
     let mut checker = SubtypeChecker::with_resolver(interner, resolver);
     let resolved_source = checker.apparent_type_for_keys(source);
+    let declared_order =
+        crate::relations::subtype::explain_union_order::union_declared_order_override(
+            interner,
+            union_type_id,
+            members,
+        );
+    let members = declared_order.as_deref().unwrap_or(members);
     checker.select_union_target_best_member(resolved_source, members)
 }
 

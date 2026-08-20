@@ -1147,13 +1147,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             // (`order_union_members_by_source`) — so the walk must be ranked
             // through the display comparator to match. Feed the comparator the
             // union's as-written source order when the interner recorded one
-            // (`union_source_elaboration_origin_override`, a pure reordering of
+            // (`union_elaboration_origin_override`, a pure reordering of
             // the interned members that fixes anonymous-object source order,
             // #16965); the comparator then floats named/higher-rank members
             // ahead of inline anonymous objects exactly as the header does
             // (`{ z: string } | K` elaborates `K`, not the object — #16980).
             let origin_override =
-                self.union_source_elaboration_origin_override(union_member_source, &members);
+                self.union_elaboration_origin_override(union_member_source, &members);
             let base = origin_override.unwrap_or_else(|| members.to_vec());
             let display_ordered = match self
                 .query_db
