@@ -13,6 +13,7 @@ use super::assignability::{
     is_builtin_wrapper_name, is_object_prototype_method,
     is_object_prototype_method_for_array_target, is_primitive_type_name,
 };
+mod constraint_walk_display;
 mod nested_application_property_mismatch;
 #[path = "render_failure_index_access.rs"]
 mod render_failure_index_access;
@@ -1836,13 +1837,29 @@ impl<'a> CheckerState<'a> {
                     diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                     &[&source_str, &target_str],
                 );
-                Diagnostic::error(
+                let mut diagnostic = Diagnostic::error(
                     file_name,
                     start,
                     length,
                     message,
                     diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                )
+                );
+                // Same constraint-walk elaboration as the `TypeMismatch` arm's
+                // top-level fallthrough (`render_type_mismatch`) — this
+                // catch-all handles other bare-mismatch reasons (e.g.
+                // `IntrinsicTypeMismatch` for a concrete-receiver `Bag[KSel]`
+                // indexed access whose resolved value type is itself an
+                // intrinsic) that keep the same as-written deferred operand on
+                // the head line and need the same per-step walk beneath it.
+                if depth == 0 && self.is_deferred_constraint_relative_source(source) {
+                    self.push_deferred_constraint_walk_steps(
+                        &mut diagnostic,
+                        source,
+                        target,
+                        depth,
+                    );
+                }
+                diagnostic
             }
         }
     }

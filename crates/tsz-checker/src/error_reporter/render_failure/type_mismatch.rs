@@ -633,6 +633,18 @@ impl<'a> CheckerState<'a> {
             base,
             diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
         );
+        // A deferred, constraint-relative top-level source (`T[K]`, `keyof T`,
+        // a conditional) keeps its as-written operand on this head line (see
+        // the display gate feeding `source_str` above); `tsc` then walks the
+        // operand's constraint one step per elaboration line beneath it
+        // (`indexed_access_constraint_display_walk`). The property-drill leaf
+        // already gets this via `push_deferred_constraint_walk`; this is the
+        // same walk for the plain (non-property) top-level mismatch, e.g. a
+        // direct `x[k]` assignment source, so the head-only cases (#17718
+        // witnesses 2/3) also get the constraint-walk elaboration.
+        if depth == 0 && self.is_deferred_constraint_relative_source(source) {
+            self.push_deferred_constraint_walk_steps(&mut diagnostic, source, target, depth);
+        }
         // The note is a child of the failing mismatch line this function renders
         // at chain depth `depth`; place it one level deeper, matching the
         // child-depth idiom used by the other nested-elaboration renderers. The
