@@ -3,10 +3,100 @@
 use crate::inference::infer::{InferenceContext, InferenceVar};
 use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 use crate::operations::{AssignabilityChecker, CallEvaluator};
-use crate::types::{FunctionShape, ParamInfo, TupleElement, TypeId, TypeParamInfo, TypePredicate};
-use rustc_hash::FxHashMap;
+use crate::types::{
+    FunctionShape, ParamInfo, TupleElement, TypeData, TypeId, TypeParamInfo, TypePredicate,
+};
+use rustc_hash::{FxHashMap, FxHashSet};
 
 impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
+    /// Whether a deferred argument is a *concrete* function-like value: at
+    /// least one signature with parameters, none of them `any`. Such an
+    /// argument supplies real Round-2 inference for the variables its target
+    /// references, so the contextual return type must not pre-seed them;
+    /// lambdas with `any`-typed parameters genuinely need the pre-fix for
+    /// contextual typing.
+    pub(super) fn arg_is_concrete_function_like(&self, arg_type: TypeId) -> bool {
+        match self.interner.lookup(arg_type) {
+            Some(TypeData::Function(shape_id)) => {
+                let shape = self.interner.function_shape(shape_id);
+                !shape.params.is_empty() && shape.params.iter().all(|p| p.type_id != TypeId::ANY)
+            }
+            Some(TypeData::Callable(shape_id)) => {
+                let shape = self.interner.callable_shape(shape_id);
+                shape
+                    .call_signatures
+                    .iter()
+                    .chain(shape.construct_signatures.iter())
+                    .any(|sig| {
+                        !sig.params.is_empty()
+                            && sig.params.iter().all(|p| p.type_id != TypeId::ANY)
+                    })
+            }
+            _ => false,
+        }
+    }
+
+    /// Record tsc's `inference.isFixed` for the literal-widening gate: every
+    /// inference variable mentioned by a context-sensitive callback argument's
+    /// contextual signature — in its parameter AND return positions, because
+    /// tsc's fixing mapper instantiates the whole signature
+    /// (`makeFixingMapperForContext`) — becomes contextually fixed, and a fixed
+    /// inference widens its fresh literal candidates even at the return type's
+    /// top level (`getCovariantInference`'s `widenLiteralTypes` gate).
+    ///
+    /// Context sensitivity is read from the AST-level
+    /// `arg_callback_param_unannotated` mask first: on a checker re-resolution
+    /// the callback argument arrives already checked (a concrete function
+    /// type), so the type-level `is_contextually_sensitive` probe reports
+    /// `false` on exactly the pass whose result feeds the call's type (#17282
+    /// records the same re-resolution asymmetry). The type-level probe still
+    /// applies as a fallback for shapes the mask cannot see (object literals
+    /// carrying context-sensitive members, spread-shifted positions).
+    pub(super) fn mark_contextually_fixed_inference_vars(
+        &mut self,
+        infer_ctx: &mut InferenceContext,
+        arg_types: &[TypeId],
+        instantiated_params: &[ParamInfo],
+        var_map: &FxHashMap<TypeId, InferenceVar>,
+        placeholder_probe_map: &mut FxHashMap<TypeId, InferenceVar>,
+        placeholder_visited: &mut FxHashSet<TypeId>,
+    ) {
+        for (i, &arg_type) in arg_types.iter().enumerate() {
+            let mask_context_sensitive = self
+                .arg_callback_param_unannotated
+                .get(i)
+                .is_some_and(|mask| mask.iter().any(|&unannotated| unannotated));
+            if !mask_context_sensitive && !self.is_contextually_sensitive(arg_type) {
+                continue;
+            }
+            let Some(target_type) =
+                self.param_type_for_arg_index(instantiated_params, i, arg_types.len())
+            else {
+                continue;
+            };
+            let Some(shape) = Self::get_contextual_signature_cached(self.interner, target_type)
+            else {
+                continue;
+            };
+            for position_type in shape
+                .params
+                .iter()
+                .map(|callback_param| callback_param.type_id)
+                .chain(std::iter::once(shape.return_type))
+            {
+                placeholder_visited.clear();
+                for var in self.collect_placeholder_vars_in_type(
+                    position_type,
+                    var_map,
+                    placeholder_probe_map,
+                    placeholder_visited,
+                ) {
+                    infer_ctx.mark_contextually_fixed(var);
+                }
+            }
+        }
+    }
+
     fn direct_type_param_info(&self, type_id: TypeId) -> Option<TypeParamInfo> {
         crate::type_param_info(self.interner.as_type_database(), type_id)
     }

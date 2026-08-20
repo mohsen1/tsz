@@ -296,3 +296,84 @@ take(() => 3);
         "argument context",
     );
 }
+
+/// A literal contextual type on the call itself keeps the fixed-param
+/// callback form clean: the widened covariant inference (`number`) fails the
+/// context's literal demand, so the unwidened contextual candidate wins and
+/// the callback checks against `(p: 1) => 1`. Oracle-verified (7.0.2,
+/// 2026-08-19): no diagnostics.
+#[test]
+fn direct_literal_context_fixed_param_callback_stays_clean() {
+    assert_clean(
+        r#"
+declare function fix8<Z>(seed: Z, op: (p: Z) => Z): Z;
+const chk: 1 = fix8(1, p => p);
+"#,
+        "direct-context fixed param callback",
+    );
+}
+
+/// Without a contextual type, a nullary unannotated callback's return literal
+/// widens in the callback's *own* function type (`() => 1` types as
+/// `() => number` when nothing pins its return), so the inference candidate is
+/// already `number` — no literal-preservation gate applies. Oracle-verified
+/// (7.0.2, 2026-08-19): exactly one TS2322.
+#[test]
+fn unannotated_nullary_callback_result_widens_without_context() {
+    assert_single_message_contains(
+        r#"
+declare function lift<V>(cb: () => V): V;
+const q = lift(() => 1);
+const c2: 1 = q;
+"#,
+        2322,
+        &["Type 'number' is not assignable to type '1'."],
+        "no-context nullary callback",
+    );
+}
+
+/// #17710 residual: an annotated (non-context-sensitive) callback fixes
+/// nothing, so `tsc` keeps the *fresh* literal `1` for the return-position
+/// parameter — `const` keeps `1` AND `let` still widens the fresh result to
+/// `number` at the declaration site. Oracle-verified (7.0.2, 2026-08-19):
+/// zero diagnostics for this program.
+///
+/// Blocked on fresh primitive literal representation: tsz has one interned
+/// literal type with no fresh/regular split (`tsz-solver/src/types.rs`), so
+/// preserving `1` here would make `lr3 = 2` a false positive (the `let`
+/// binding could not re-widen). Do not un-ignore by preserving the literal
+/// without threading freshness through the call result.
+#[test]
+#[ignore = "needs fresh primitive literal types: preserving U := 1 without freshness breaks let-rewidening"]
+fn annotated_callback_literal_survives_without_context() {
+    assert_clean(
+        r#"
+declare function sink<Q>(cb: (a: Q) => void, y: Q): Q;
+const r3 = sink((a: number) => {}, 1);
+const c3: 1 = r3;
+let lr3 = sink((a: number) => {}, 1);
+lr3 = 2;
+"#,
+        "annotated callback, no context",
+    );
+}
+/// #17773/#17778 composition control: when a call's fresh literal candidates
+/// disagree (`() => 5` vs `0` under a `5` context), the contextual pin is
+/// disabled (#17778) and the runtime return-position preserve arm must not
+/// re-enable it: pinning `E := 0` would re-check the callback's `5` against
+/// `0` and emit a second TS2322 tsc never produces. tsz currently widens to
+/// `number` here where tsc 7.0.2 answers `0 | 5` (it preserves AND combines);
+/// the count is parity, the type text is the open #17773 gap, so this fence
+/// pins the count and the target half of the message only.
+#[test]
+fn disagreeing_fresh_literals_still_widen_under_context() {
+    assert_single_message_contains(
+        r#"
+declare function relay<E>(fn: () => E, init: E): E;
+const r: 5 = relay(() => 5, 0);
+"#,
+        2322,
+        &["is not assignable to type '5'."],
+        "disagreeing fresh literals",
+    );
+}

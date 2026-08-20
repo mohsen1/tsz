@@ -144,6 +144,9 @@ mod commonjs_export_assignment_reference_tests;
 #[path = "../tests/comparability_indexed_access_reduce_tests.rs"]
 mod comparability_indexed_access_reduce_tests;
 #[cfg(test)]
+#[path = "../tests/constructor_accessibility.rs"]
+mod constructor_accessibility;
+#[cfg(test)]
 #[path = "../tests/constructor_overload_excess_property_tests.rs"]
 mod constructor_overload_excess_property_tests;
 #[cfg(test)]
@@ -279,6 +282,9 @@ mod stability_validation_tests;
 #[path = "../tests/string_literal_arithmetic_tests.rs"]
 mod string_literal_arithmetic_tests;
 #[cfg(test)]
+#[path = "../tests/symbol_resolution_tests.rs"]
+mod symbol_resolution_tests;
+#[cfg(test)]
 #[path = "../tests/symbol_resolver_stability_tests.rs"]
 mod symbol_resolver_stability_tests;
 #[cfg(test)]
@@ -307,6 +313,12 @@ mod ts2303_tests;
 #[cfg(test)]
 #[path = "../tests/ts2304_tests.rs"]
 mod ts2304_tests;
+#[cfg(test)]
+#[path = "../tests/ts2305_tests.rs"]
+mod ts2305_tests;
+#[cfg(test)]
+#[path = "../tests/ts2306_tests.rs"]
+mod ts2306_tests;
 #[cfg(test)]
 #[path = "../tests/ts2320_mapped_type_ancestor_tests.rs"]
 mod ts2320_mapped_type_ancestor_tests;
@@ -382,6 +394,9 @@ mod ts2450_const_enum_tests;
 #[cfg(test)]
 #[path = "../tests/ts2469_symbol_operator_tests.rs"]
 mod ts2469_symbol_operator_tests;
+#[cfg(test)]
+#[path = "../tests/ts2498_export_star_export_equals_tests.rs"]
+mod ts2498_export_star_export_equals_tests;
 #[cfg(test)]
 #[path = "../tests/ts2498_tests.rs"]
 mod ts2498_tests;
@@ -717,6 +732,9 @@ mod variadic_tuple_tail_arity_inference_tests;
 #[cfg(test)]
 #[path = "../tests/void_param_optionality_tests.rs"]
 mod void_param_optionality_tests;
+#[cfg(test)]
+#[path = "../tests/widening_integration_tests.rs"]
+mod widening_integration_tests;
 
 // Re-export key types
 pub use context::{CheckerContext, CheckerOptions, EnclosingClassInfo, TypeCache};

@@ -466,7 +466,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     /// Like `is_type_parameter_at_top_level`, but expands a top-level alias
     /// application (e.g. `Exclude<K, 'a'>` -> `K extends 'a' ? never : K`) so the
     /// type parameter's top-level position inside the alias body is visible.
-    fn type_param_at_top_level_through_aliases(
+    pub(super) fn type_param_at_top_level_through_aliases(
         &mut self,
         ty: TypeId,
         tp_name: tsz_common::Atom,

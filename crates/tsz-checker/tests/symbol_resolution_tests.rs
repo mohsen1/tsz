@@ -1,61 +1,42 @@
 //! Tests for symbol resolution behavior in the checker.
 
-use crate::checker::context::CheckerOptions;
-use crate::checker::state::CheckerState;
-use tsz_binder::BinderState;
-use tsz_solver::construction::TypeInterner;
+use crate::context::CheckerOptions;
+use crate::diagnostics::Diagnostic;
+use crate::test_utils::{check_multi_file_with_libs, check_source_diagnostics, load_lib_files};
 
-use crate::test_fixtures::{merge_shared_lib_symbols, setup_lib_contexts};
 fn parse_test_source(source: &str) -> (tsz_parser::ParserState, tsz_parser::parser::NodeIndex) {
     let mut parser = tsz_parser::ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     (parser, root)
 }
 
-fn collect_diagnostics(source: &str) -> Vec<crate::checker::diagnostics::Diagnostic> {
-    let (parser, root) = parse_test_source(source);
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
-
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.ts".to_string(),
-        CheckerOptions::default(),
-    );
-
-    // Enable TS2304 emission for unresolved names
-    checker.ctx.report_unresolved_imports = true;
-
-    checker.check_source_file(root);
-    checker.ctx.diagnostics.clone()
+fn collect_diagnostics(source: &str) -> Vec<Diagnostic> {
+    check_source_diagnostics(source)
 }
 
-fn collect_diagnostics_with_libs(source: &str) -> Vec<crate::checker::diagnostics::Diagnostic> {
-    let (parser, root) = parse_test_source(source);
+/// ES5 (plus non-DOM ES2015 additions, notably `Promise`) but no DOM globals —
+/// matches the historical fixture bundle these tests were authored against, so
+/// `console` (a DOM global) still misses and TS2584 fires as expected.
+fn non_dom_lib_files() -> Vec<std::sync::Arc<tsz_binder::lib_loader::LibFile>> {
+    load_lib_files(&[
+        "es5.d.ts",
+        "es2015.core.d.ts",
+        "es2015.collection.d.ts",
+        "es2015.iterable.d.ts",
+        "es2015.generator.d.ts",
+        "es2015.promise.d.ts",
+        "es2015.symbol.d.ts",
+        "es2015.symbol.wellknown.d.ts",
+    ])
+}
 
-    let mut binder = BinderState::new();
-    merge_shared_lib_symbols(&mut binder);
-    binder.bind_source_file(parser.get_arena(), root);
-
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.ts".to_string(),
+fn collect_diagnostics_with_libs(source: &str) -> Vec<Diagnostic> {
+    check_multi_file_with_libs(
+        &[("test.ts", source)],
+        "test.ts",
         CheckerOptions::default(),
-    );
-    setup_lib_contexts(&mut checker);
-
-    // Enable TS2304 emission for unresolved names
-    checker.ctx.report_unresolved_imports = true;
-
-    checker.check_source_file(root);
-    checker.ctx.diagnostics.clone()
+        &non_dom_lib_files(),
+    )
 }
 
 #[test]
@@ -346,7 +327,7 @@ namespace M {
 "#;
     let (parser, root) = parse_test_source(source);
 
-    let mut binder = BinderState::new();
+    let mut binder = tsz_binder::BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let m_sym_id = binder
@@ -375,7 +356,7 @@ namespace X {
 "#;
     let (parser, root) = parse_test_source(source);
 
-    let mut binder = BinderState::new();
+    let mut binder = tsz_binder::BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let x_sym_id = binder

@@ -27,7 +27,14 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // `InferenceContext::add_candidate` already routes through contra-candidates
         // when `in_contra_mode` is active.
         if let Some(&var) = var_map.get(&target) {
+            // The walk's target was the bare placeholder itself only at
+            // recursion depth 1; a hit below that is a structural constituent.
+            // Runtime analogue of tsc's `inference.topLevel` (see
+            // `InferenceCandidate::at_top_level_of_walk`).
+            let prev_walk = ctx.candidate_at_top_level_of_walk;
+            ctx.candidate_at_top_level_of_walk = self.constraint_recursion_depth.get() == 1;
             ctx.add_candidate(var, source, priority);
+            ctx.candidate_at_top_level_of_walk = prev_walk;
             return;
         }
 
@@ -47,7 +54,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             if ctx.collects_contra_candidates()
                 || ctx.parameter_recovery_mode == ParameterRecoveryMode::StandaloneReverse
             {
+                let prev_walk = ctx.candidate_at_top_level_of_walk;
+                ctx.candidate_at_top_level_of_walk = self.constraint_recursion_depth.get() == 1;
                 ctx.add_candidate(var, target, priority);
+                ctx.candidate_at_top_level_of_walk = prev_walk;
             } else {
                 ctx.add_upper_bound(var, target);
             }

@@ -3,6 +3,7 @@
 mod annotation_gated_structural_display;
 mod assignment_annotation_text;
 mod assignment_formatting;
+mod assignment_source_formatting;
 mod assignment_source_preservation;
 mod assignment_widening;
 mod collection_source_display;
