@@ -1033,6 +1033,17 @@ impl<'a> CheckerState<'a> {
             return (source_display, target_display);
         }
 
+        // A pair of distinct `unique symbol` operands is always disambiguated by
+        // tsc to each side's `typeof <name>` form so the message does not read
+        // `unique symbol` vs `unique symbol`. The gate is structural rather than
+        // `source_display == target_display` because tsz renders a written
+        // `typeof x` annotation as `typeof x` while a bare unique-symbol value
+        // renders as `unique symbol`, so the two default strings do not always
+        // collide even though tsc still disambiguates.
+        if let Some(disambiguated) = self.unique_symbol_pair_typeof_display(source, target) {
+            return disambiguated;
+        }
+
         let Some(source_name) = Self::bare_nominal_display_name(&source_display) else {
             return (source_display, target_display);
         };
@@ -1072,6 +1083,33 @@ impl<'a> CheckerState<'a> {
         }
 
         (pair_source, pair_target)
+    }
+
+    /// tsc's `getTypeNamesForErrorDisplay` disambiguation for a pair of distinct
+    /// `unique symbol` types. Both stringify to the bare `unique symbol` keyword
+    /// (`typeToString` of a unique symbol), so a mismatch would read
+    /// `Type 'unique symbol' is not assignable to type 'unique symbol'`. tsc
+    /// re-qualifies each side to its `typeof <name>` form — the same rule that
+    /// keeps a two-`unique symbol` mismatch a `TS2322` rather than `TS2719`, and
+    /// the mirror of [`Self::format_type_for_ts2367_display`]'s comparison-context
+    /// rendering (both delegate to [`Self::unique_symbol_typeof_display`]).
+    /// Returns `Some((typeof source, typeof target))` only when both operands are
+    /// unique symbols with resolvable, *distinct* declaration names; otherwise
+    /// `None`, leaving the bare `unique symbol` display in place — which is what
+    /// tsc keeps when it cannot produce two distinct names, and what it keeps when
+    /// only one side is a unique symbol (`symbol`/literal vs `unique symbol`,
+    /// where the two default names already differ).
+    fn unique_symbol_pair_typeof_display(
+        &self,
+        source: TypeId,
+        target: TypeId,
+    ) -> Option<(String, String)> {
+        let source_display = self.unique_symbol_typeof_display(source)?;
+        let target_display = self.unique_symbol_typeof_display(target)?;
+        if source_display == target_display {
+            return None;
+        }
+        Some((source_display, target_display))
     }
 
     fn bare_nominal_display_name(display: &str) -> Option<&str> {

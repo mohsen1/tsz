@@ -704,18 +704,26 @@ impl<'a> CheckerState<'a> {
         formatter.format_pair_disambiguated(type_a, type_b)
     }
 
+    /// The `typeof <name>` display for a `unique symbol` type, or `None` when
+    /// `type_id` is not a unique symbol (or its declaration name cannot be
+    /// resolved). tsc renders a unique symbol as the bare `unique symbol` keyword
+    /// by default and uses this named form only where it disambiguates — TS2367
+    /// comparison operands and a distinct `unique symbol` pair in an
+    /// assignability message (`Self::unique_symbol_pair_typeof_display`).
+    pub(crate) fn unique_symbol_typeof_display(&self, type_id: TypeId) -> Option<String> {
+        use crate::query_boundaries::common::unique_symbol_ref;
+        let sym_ref = unique_symbol_ref(self.ctx.types, type_id)?;
+        let mut formatter = self.ctx.create_type_formatter();
+        let name = formatter.resolve_unique_symbol_name(sym_ref)?;
+        Some(format!("typeof {name}"))
+    }
+
     /// Format a type for TS2367 comparison overlap error messages.
     /// tsc shows unique symbols as `typeof varName` in comparison contexts
     /// (distinct from index-type errors where it shows `unique symbol`).
     pub(crate) fn format_type_for_ts2367_display(&self, type_id: TypeId) -> String {
-        use crate::query_boundaries::common::unique_symbol_ref;
-        if let Some(sym_ref) = unique_symbol_ref(self.ctx.types, type_id) {
-            let mut formatter = self.ctx.create_type_formatter();
-            if let Some(name) = formatter.resolve_unique_symbol_name(sym_ref) {
-                return format!("typeof {name}");
-            }
-        }
-        self.format_type(type_id)
+        self.unique_symbol_typeof_display(type_id)
+            .unwrap_or_else(|| self.format_type(type_id))
     }
 
     /// Format a pair of types for diagnostic messages (skips union optionalization).
