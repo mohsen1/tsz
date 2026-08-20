@@ -77,6 +77,18 @@ impl CheckerState<'_> {
         // generalizes against the member (tsc `reportRelationError`).
         let display_source =
             self.generalize_nested_relation_source_for_display(source_type, member_type);
+        // tsc re-enters the member relation with the source's alias erased
+        // (`getNormalizedType`): a source that is (or displays as) an
+        // application of a forwarding alias renders the frame through the
+        // underlying application (`FlipRow<A, B>` heads the diagnostic;
+        // `PairRow<B, A>` heads the member frame).
+        let display_source = crate::query_boundaries::assignability_alias_display::
+            nested_relation_source_base_application_view(
+                self.ctx.types,
+                &self.ctx.definition_store,
+                display_source,
+            )
+            .unwrap_or(display_source);
         let frame_source = self.format_type_diagnostic(display_source);
         let frame_target = self.format_type_diagnostic(member_type);
         diag.push_elaboration_at(

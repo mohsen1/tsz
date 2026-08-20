@@ -200,3 +200,61 @@ pub(crate) fn is_string_intrinsic_for_alias_display(
 ) -> bool {
     common::is_string_intrinsic_type(db, type_id)
 }
+
+/// The nested-relation member-frame view of an alias-application SOURCE.
+///
+/// `tsc` re-enters a failed union-member relation with the source's alias
+/// erased (`getNormalizedType`), so while the headline keeps the written alias
+/// application (`FlipRow<A, B>`), the member frame renders the underlying
+/// application the alias forwards to (`PairRow<B, A>`). Accepts either the
+/// alias application itself or an evaluated structural result that maps back
+/// to one through its display alias; returns the composed underlying
+/// application, or `None` when the source is not an alias-of-application (the
+/// caller keeps its existing display).
+pub(crate) fn nested_relation_source_base_application_view(
+    db: &dyn TypeDatabase,
+    definitions: &DefinitionStore,
+    ty: TypeId,
+) -> Option<TypeId> {
+    let application = if common::type_application(db, ty).is_some() {
+        ty
+    } else {
+        db.get_display_alias(ty)?
+    };
+    tsz_solver::forwarded_alias_application_display_view(db, definitions, application)
+}
+
+/// Re-point an eagerly evaluated call return's display alias at the call's own
+/// declared-return application when the existing claim is provably the same
+/// type family.
+///
+/// The checker eagerly evaluates a monomorphic application call return; the
+/// evaluated structural result's display alias is first-writer-wins, and an
+/// inference-internal application interned during the same call's
+/// return-context merge scan (the per-position-union merge of the contextual
+/// union's arms) can claim it first — repainting the diagnostic head with the
+/// forwarded base (`PairRow<...>`) where `tsc` renders the declared alias
+/// application (`FlipRow<...>`). Replace the claim only when it equals the
+/// declared application's own forwarded view, so an unrelated first writer is
+/// never repainted.
+pub(crate) fn repoint_evaluated_call_return_display_alias(
+    db: &dyn TypeDatabase,
+    definitions: &DefinitionStore,
+    evaluated: TypeId,
+    return_application: TypeId,
+) {
+    if evaluated == return_application {
+        return;
+    }
+    let Some(existing) = db.get_display_alias(evaluated) else {
+        return;
+    };
+    if existing == return_application {
+        return;
+    }
+    if tsz_solver::forwarded_alias_application_display_view(db, definitions, return_application)
+        == Some(existing)
+    {
+        db.store_display_alias(evaluated, return_application);
+    }
+}
