@@ -1129,6 +1129,18 @@ impl<'a> TypeFormatter<'a> {
 
     /// Try to get a namespace-qualified name for a type (for disambiguation).
     fn namespace_qualified_name_for_type(&mut self, type_id: TypeId) -> Option<String> {
+        // A `unique symbol` type's default display is the bare `unique
+        // symbol` keyword (`key.rs`'s `TypeData::UniqueSymbol` arm), so two
+        // distinct unique symbols always collide under that shared name.
+        // tsc's `getTypeNamesForErrorDisplay` re-qualifies each side to its
+        // `typeof <name>` form there instead of a namespace/import prefix —
+        // there is no namespace to walk for a value-level unique symbol.
+        if let Some(sym_ref) =
+            crate::visitors::visitor_extract::unique_symbol_ref(self.interner, type_id)
+        {
+            let name = self.resolve_unique_symbol_name(sym_ref)?;
+            return Some(format!("typeof {name}"));
+        }
         // Try object shape symbol
         if let Some(shape) = crate::type_queries::get_object_shape(self.interner, type_id) {
             if let Some(sym_id) = shape.symbol {

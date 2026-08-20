@@ -197,6 +197,35 @@ const sameWrong: Same = true;
 }
 
 #[test]
+fn static_readonly_unique_symbol_diagnostic_displays_class_qualified_typeof() {
+    // tsc's `getTypeNamesForErrorDisplay` re-qualifies a `unique symbol`
+    // pair whose default display would otherwise collide (both print bare
+    // `unique symbol`) by switching each side to its `typeof <name>` form.
+    // For a static class member the qualifier must include the declaring
+    // class the same way an enum member is qualified with its enum —
+    // `typeof C.y` vs `typeof C.x`, not `typeof y` vs `typeof x`.
+    let source = r#"
+declare const sym1: symbol;
+declare const sym2: symbol;
+class C {
+    static readonly x: unique symbol = sym1;
+    static readonly y: unique symbol = sym2;
+}
+const z: typeof C.x = C.y;
+"#;
+    let diags = check_strict(source);
+    let message = diags
+        .iter()
+        .find(|(c, _)| *c == 2322)
+        .map(|(_, m)| m.as_str())
+        .unwrap_or_default();
+    assert!(
+        message.contains("typeof C.y") && message.contains("typeof C.x"),
+        "expected class-qualified typeof names on both sides, got: {message:?}"
+    );
+}
+
+#[test]
 fn static_readonly_unique_symbol_self_assigns_through_typeof() {
     // Symmetric positive coverage for the distinct-identity test:
     // `typeof C.X = C.X` must remain valid (same unique symbol identity).
@@ -212,5 +241,30 @@ const self: typeof C.X = C.X;
         ts2322_count(&diags),
         0,
         "self-assignment through typeof must remain valid: {diags:?}"
+    );
+}
+
+#[test]
+fn plain_module_scope_unique_symbol_pair_argument_shows_typeof_names() {
+    // Non-static coverage anchor for the same disambiguation mechanism:
+    // module-scope `const` unique symbols collide on the bare `unique
+    // symbol` keyword the same way static class members do, and must
+    // re-qualify to `typeof p` / `typeof q` with no class/enum prefix
+    // needed (#17813 evidence row 1).
+    let source = r#"
+declare const p: unique symbol;
+declare const q: unique symbol;
+declare function f(x: typeof p): void;
+f(q);
+"#;
+    let diags = check_strict(source);
+    let message = diags
+        .iter()
+        .find(|(c, _)| *c == 2345)
+        .map(|(_, m)| m.as_str())
+        .unwrap_or_default();
+    assert!(
+        message.contains("typeof q") && message.contains("typeof p"),
+        "expected typeof-qualified names on both sides, got: {message:?}"
     );
 }
