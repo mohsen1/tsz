@@ -1099,7 +1099,7 @@ impl<'a> CheckerState<'a> {
     /// tsc keeps when it cannot produce two distinct names, and what it keeps when
     /// only one side is a unique symbol (`symbol`/literal vs `unique symbol`,
     /// where the two default names already differ).
-    fn unique_symbol_pair_typeof_display(
+    pub(in crate::error_reporter) fn unique_symbol_pair_typeof_display(
         &self,
         source: TypeId,
         target: TypeId,

@@ -565,6 +565,23 @@ impl<'a> CheckerState<'a> {
                 source_str = self.format_type_for_assignability_message(display_source);
             }
         }
+        // A distinct `unique symbol` pair renders as each side's `typeof <name>`
+        // form (tsc `getTypeNamesForErrorDisplay`), never `unique symbol` vs
+        // `unique symbol` or a mixed `unique symbol` vs `typeof a`. The
+        // per-operand source-display rewrites above re-render the source from its
+        // `TypeId` and can leave it the bare `unique symbol` keyword (e.g.
+        // `const x: typeof a = b` and a `typeof`-returning signature body clobber
+        // the disambiguation `finalize_pair_display_for_diagnostic` applied
+        // mid-pipeline). This pair-level decision must win over those source-only
+        // rewrites, so apply it as the authoritative last step. It fires only for
+        // a genuinely distinct unique-symbol pair, leaving every other pair
+        // untouched.
+        if let Some((source_display, target_display)) =
+            self.unique_symbol_pair_typeof_display(source, target)
+        {
+            source_str = source_display;
+            target_str = target_display;
+        }
         let base = format_message(
             diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
             &[&source_str, &target_str],

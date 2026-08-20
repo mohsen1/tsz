@@ -149,6 +149,16 @@ impl<'a> CheckerState<'a> {
         source_display: &str,
         target_display: &str,
     ) -> Option<(String, String)> {
+        // A `unique symbol` source keeps whatever display the caller resolved:
+        // the bare `unique symbol` keyword by default, or the `typeof <name>`
+        // form when `render_type_mismatch` disambiguated a distinct
+        // unique-symbol pair (`const x: typeof a = b`). Its declared annotation
+        // is the bare `unique symbol` keyword, so the annotation/alias repaints
+        // below would undo that pair-level disambiguation. Unique symbols are
+        // never generic-alias applications, so declining here loses nothing.
+        if crate::query_boundaries::type_predicates::is_unique_symbol_type(self.ctx.types, source) {
+            return None;
+        }
         // A source identifier narrowed away from a declared `unknown`/`any` must
         // keep its narrowed checked-type display (already in `source_display`);
         // the declared-annotation repaints below would otherwise restore the
