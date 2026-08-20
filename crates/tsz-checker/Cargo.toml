@@ -2439,6 +2439,9 @@ path = "tests/track8_debt_contract_tests.rs"
 name = "static_readonly_unique_symbol_tests"
 path = "tests/static_readonly_unique_symbol_tests.rs"
 [[test]]
+name = "unique_symbol_pair_typeof_disambiguation_tests"
+path = "tests/unique_symbol_pair_typeof_disambiguation_tests.rs"
+[[test]]
 name = "ts2542_readonly_index_coemission_tests"
 path = "tests/ts2542_readonly_index_coemission_tests.rs"
 [[test]]

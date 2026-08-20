@@ -1033,6 +1033,17 @@ impl<'a> CheckerState<'a> {
             return (source_display, target_display);
         }
 
+        // `unique symbol` operands stringify to the bare keyword by default, so
+        // two distinct unique symbols collide as `unique symbol` vs
+        // `unique symbol`. tsc re-qualifies each colliding side to its
+        // `typeof <name>` form (`getTypeNamesForErrorDisplay`); mirror that here
+        // before the nominal-name path, which cannot see through the keyword.
+        if source_display == target_display
+            && let Some(pair) = self.disambiguate_unique_symbol_pair(source, target)
+        {
+            return pair;
+        }
+
         let Some(source_name) = Self::bare_nominal_display_name(&source_display) else {
             return (source_display, target_display);
         };
@@ -1072,6 +1083,30 @@ impl<'a> CheckerState<'a> {
         }
 
         (pair_source, pair_target)
+    }
+
+    /// When both operands of a colliding diagnostic pair are `unique symbol`
+    /// types with distinct identities, re-render each as `typeof <name>` so the
+    /// message is not `unique symbol` unassignable-to-itself. Returns `None`
+    /// when either operand is not a unique symbol, either name is unresolvable,
+    /// or the two resolve to the same name (no disambiguation possible).
+    fn disambiguate_unique_symbol_pair(
+        &self,
+        source: TypeId,
+        target: TypeId,
+    ) -> Option<(String, String)> {
+        let source_sym = query_common::unique_symbol_ref(self.ctx.types, source)?;
+        let target_sym = query_common::unique_symbol_ref(self.ctx.types, target)?;
+        let mut formatter = self.ctx.create_type_formatter();
+        let source_name = formatter.resolve_unique_symbol_name(source_sym)?;
+        let target_name = formatter.resolve_unique_symbol_name(target_sym)?;
+        if source_name == target_name {
+            return None;
+        }
+        Some((
+            format!("typeof {source_name}"),
+            format!("typeof {target_name}"),
+        ))
     }
 
     fn bare_nominal_display_name(display: &str) -> Option<&str> {
