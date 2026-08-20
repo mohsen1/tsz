@@ -8,17 +8,88 @@
 //! - Variable fixing and substitution building
 
 use crate::inference::infer::{
-    InferenceCandidate, InferenceContext, InferenceError, InferenceInfo, InferenceVar,
-    MAX_TYPE_RECURSION_DEPTH,
+    CandidateContext, InferenceCandidate, InferenceContext, InferenceError, InferenceInfo,
+    InferenceVar, MAX_TYPE_RECURSION_DEPTH,
 };
 use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 use crate::operations::widening;
 use crate::types::{InferencePriority, ObjectFlags, TemplateSpan, TypeData, TypeId};
-use crate::visitor::is_literal_type;
+use crate::visitor::{array_element_union_widens_literals, is_literal_type};
 use rustc_hash::FxHashSet;
 use tsz_common::interner::Atom;
 
 impl<'a> InferenceContext<'a> {
+    /// Build and route an inference candidate for `var`, applying the
+    /// per-source `CandidateContext` flags. Relocated from `infer.rs` to keep
+    /// that module under the architecture line cap; the candidate builders in
+    /// `infer.rs` call it across the module boundary.
+    pub(crate) fn add_candidate_with_context(
+        &mut self,
+        var: InferenceVar,
+        ty: TypeId,
+        priority: InferencePriority,
+        context: CandidateContext,
+    ) {
+        // In a contravariant position, a candidate that is the variable's own
+        // declared type parameter is a self-reference carrying no information
+        // (see `add_contra_candidate`). The placeholder rename hides it from the
+        // `occurs_in` self-referential filter at fixing time, so skip it here —
+        // otherwise the leaked bare parameter becomes a contra-candidate that
+        // overrides a legitimate covariant inference. Covariant routing keeps its
+        // existing behavior (handled by `discard_self_referential_candidates`).
+        if self.collects_contra_candidates() && self.type_is_own_original_type_param(var, ty) {
+            return;
+        }
+        let root = self.table.find(var);
+        // A candidate is a "fresh literal" (eligible for widening) when:
+        // - It's a literal type AND
+        // - Either it's NOT from an object property (direct arg like identity("hello")),
+        //   OR the source object is a fresh literal (from object literal expression).
+        // This matches TSC's RequiresWidening flag: literals from type annotations
+        // (non-fresh sources) are NOT widened, but literals from object literal
+        // expressions ARE widened.
+        let candidate = InferenceCandidate {
+            type_id: ty,
+            priority,
+            is_fresh_literal: (!context.from_object_property || context.source_is_fresh)
+                && (is_literal_type(self.interner, ty)
+                    || (self.in_array_element_context
+                        && array_element_union_widens_literals(self.interner, ty)))
+                && !self.source_is_type_annotation
+                && !self.in_readonly_source_context,
+            from_object_property: context.from_object_property,
+            from_index_signature: context.from_index_signature,
+            object_property_index: context.object_property_index,
+            object_property_name: context.object_property_name,
+            source_is_type_annotation: self.source_is_type_annotation,
+            from_array_element: self.in_array_element_context,
+            from_top_level_naked: self.candidate_from_top_level_naked,
+            from_readonly_source: self.candidate_is_from_readonly_source(ty),
+            from_unannotated_callback_param: false,
+            from_contextual_return_hint: context.from_contextual_return_hint,
+        };
+        if self.collects_contra_candidates() {
+            // In contravariant context (e.g., callback parameter structural
+            // decomposition), route to contra_candidates so they are resolved
+            // via intersection and only used when no covariant candidates exist.
+            self.table.union_value(
+                root,
+                InferenceInfo {
+                    contra_candidates: vec![candidate],
+                    ..InferenceInfo::default()
+                },
+            );
+        } else {
+            self.table.union_value(
+                root,
+                InferenceInfo {
+                    candidates: vec![candidate],
+                    ..InferenceInfo::default()
+                },
+            );
+        }
+    }
+
     pub(super) fn discard_self_referential_candidates(
         &mut self,
         root: InferenceVar,
@@ -686,6 +757,67 @@ impl<'a> InferenceContext<'a> {
             .collect();
         if filtered_no_never.is_empty() {
             return TypeId::NEVER;
+        }
+        // tsc's `getSupertypeOrUnion` unions covariant candidates that are
+        // literals of a single base type (`literalTypesWithSameBaseType` ->
+        // `getUnionType`) instead of collapsing to one priority winner or
+        // widening them to their base. tsz records a directly-passed callback's
+        // return inference at `ReturnType` priority and a naked argument at
+        // `NakedTypeVariable`, so without this the priority filter drops the
+        // lower-priority candidate (`h<U>(fn: () => U, init: U)` called
+        // `h(() => 5, 0)` resolves `U = 0` rather than `0 | 5`) and the
+        // `ReturnType` combination branch widens two callback candidates
+        // (`k<T>(a: () => T, b: () => T)` called `k(() => 1, () => 2)` resolves
+        // `T = number` rather than `1 | 2`).
+        //
+        // Fire only when the call pins these literals (`skip_literal_widening`,
+        // e.g. a literal contextual type on a naked return-position parameter,
+        // #17710) and every candidate across all priorities is a literal of one
+        // base type. Without a pinning context `skip_literal_widening` is false
+        // and the widen path below stands, matching tsc, which widens these
+        // callback-derived candidates when nothing preserves the literals. The
+        // pure-naked same-base case (`f<T>(a: T, b: T)` -> `1 | 2`) already
+        // reaches the same union through `get_common_supertype_for_inference`;
+        // this extends it across the priority levels tsz separates.
+        //
+        // Contextual-return-hint candidates (`from_contextual_return_hint`) are
+        // excluded: tsc seeds the call's own literal contextual type as a
+        // covariant candidate but drops it once genuine argument candidates
+        // arrive, so `const r: 5 = h(() => 7, 0)` unions the callback/argument
+        // literals `0 | 7` rather than folding in the contextual `5`. When the
+        // contextual value also comes from an argument, that argument's own
+        // (unflagged) candidate keeps the value (`h(() => 5, 0)` -> `0 | 5`).
+        if skip_literal_widening {
+            let arg_literal_candidates: Vec<TypeId> = candidates
+                .iter()
+                .filter(|candidate| {
+                    candidate.type_id != TypeId::NEVER && !candidate.from_contextual_return_hint
+                })
+                .map(|candidate| candidate.type_id)
+                .collect();
+            if arg_literal_candidates.len() > 1
+                && arg_literal_candidates
+                    .iter()
+                    .all(|&ty| is_literal_type(self.interner, ty))
+            {
+                let base = self.get_base_type(arg_literal_candidates[0]);
+                if base.is_some()
+                    && arg_literal_candidates
+                        .iter()
+                        .all(|&ty| self.get_base_type(ty) == base)
+                {
+                    let mut distinct: Vec<TypeId> =
+                        Vec::with_capacity(arg_literal_candidates.len());
+                    for &ty in &arg_literal_candidates {
+                        if !distinct.contains(&ty) {
+                            distinct.push(ty);
+                        }
+                    }
+                    if distinct.len() > 1 {
+                        return self.interner.union_from_slice(&distinct);
+                    }
+                }
+            }
         }
         let all_from_object_properties = filtered_no_never
             .iter()

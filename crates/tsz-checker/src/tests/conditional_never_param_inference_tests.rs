@@ -179,13 +179,16 @@ c.option('x', 1).option('y', 2);
     );
 }
 
-/// Literal preservation must not over-fire: a union of fresh literals from
-/// sibling direct arguments is still widened (`tsc` keeps `1 | 2`, which is a
-/// non-error here), and a callback-return inference site widens to `number`.
+/// A callback-return literal and a sibling direct-argument literal of the same
+/// base type union rather than collapse to one candidate. `U` is inferred from
+/// both `fn`'s return (`5`) and `init` (`0`), so `tsc`'s `getSupertypeOrUnion`
+/// resolves `U = 0 | 5` (oracle-verified against `typescript@7.0.2`); assigning
+/// that to `5` is a single TS2322 (not TS2345 on the callback body). The earlier
+/// expectation here — that `5` widened to `number` — matched the diagnostic
+/// *count* by luck but not the inferred type (#17773); the union is what tsc
+/// actually infers.
 #[test]
 fn callback_return_site_widens_type_argument() {
-    // U is inferred from a callback return position, so the literal `5` widens
-    // to `number`; assigning the result to `5` is a TS2322 (not TS2345).
     let diags = check_source_diagnostics(
         r#"
 declare function h<U>(fn: () => U, init: U): U;

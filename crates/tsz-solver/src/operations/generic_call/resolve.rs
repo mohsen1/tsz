@@ -690,8 +690,12 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     // upper bound. Argument candidates carry a higher priority
                     // (`NakedTypeVariable`) and win during candidate filtering, so
                     // an outer `as never` / `as SomeNarrower` cannot clamp `T`.
+                    // Flagged as a contextual-return hint so covariant same-base
+                    // literal unioning excludes it (tsc drops the contextual
+                    // candidate once genuine argument candidates exist): keeps a
+                    // callback/argument union `0 | 7` from becoming `0 | 5 | 7`.
                     if let Some(&var) = var_map.get(&return_type_with_placeholders) {
-                        infer_ctx.add_candidate(
+                        infer_ctx.add_contextual_return_hint_candidate(
                             var,
                             ctx_type,
                             crate::types::InferencePriority::ReturnType,
