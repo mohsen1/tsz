@@ -13,6 +13,7 @@ use super::assignability::{
     is_builtin_wrapper_name, is_object_prototype_method,
     is_object_prototype_method_for_array_target, is_primitive_type_name,
 };
+mod constraint_walk_display;
 mod nested_application_property_mismatch;
 #[path = "render_failure_index_access.rs"]
 mod render_failure_index_access;
@@ -1521,13 +1522,24 @@ impl<'a> CheckerState<'a> {
                     diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                     &[&source_str, &target_str],
                 );
-                Diagnostic::error(
+                let mut diag = Diagnostic::error(
                     file_name,
                     start,
                     length,
                     message,
                     diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                )
+                );
+                // #17718 witness 2/3: `NoUnionMemberMatches` is the failure
+                // reason a deferred, constraint-relative source produces when
+                // the solver can partially evaluate through a receiver's own
+                // constraint (a concrete or bounded-generic receiver) even
+                // though display keeps the as-written operand — the sibling
+                // of `TypeMismatch`'s same walk in `render_type_mismatch`,
+                // wired here because this reason bypasses that renderer.
+                if depth == 0 && self.is_deferred_constraint_relative_source(display_source) {
+                    self.push_deferred_constraint_walk_steps(&mut diag, display_source, target, 0);
+                }
+                diag
             }
 
             SubtypeFailureReason::NoCommonProperties {
@@ -1836,13 +1848,24 @@ impl<'a> CheckerState<'a> {
                     diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                     &[&source_str, &target_str],
                 );
-                Diagnostic::error(
+                let mut diag = Diagnostic::error(
                     file_name,
                     start,
                     length,
                     message,
                     diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                )
+                );
+                // #17718 witness 2/3: this catch-all arm renders
+                // `IntrinsicTypeMismatch`/`LiteralTypeMismatch` (and any other
+                // reason with no dedicated renderer) — including a concrete
+                // receiver's `Wares[K]` collapsing to its evaluated value type
+                // for the relation while display keeps the deferred operand.
+                // Same sibling walk as the `TypeMismatch`/`NoUnionMemberMatches`
+                // sites above.
+                if depth == 0 && self.is_deferred_constraint_relative_source(source) {
+                    self.push_deferred_constraint_walk_steps(&mut diag, source, target, 0);
+                }
+                diag
             }
         }
     }

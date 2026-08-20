@@ -621,6 +621,11 @@ fn concrete_receiver_expression_indexed_access_renamed_binders_null_variant() {
 /// Negative control: a genuinely generic receiver (`x: T`) still goes through
 /// the type-parameter deferral path unaffected — the new concrete-receiver
 /// branch must not fire when the receiver is itself a type parameter.
+///
+/// tsc also walks `T[K]`'s constraint one step per elaboration line beneath
+/// the head (oracle-verified against pinned typescript@7.0.2) — the #17718
+/// top-level constraint-walk wiring produces the full chain here too, not
+/// just the head this test used to check alone.
 #[test]
 fn generic_receiver_expression_indexed_access_still_defers_via_type_param_path() {
     let msg = message_with_chain(
@@ -628,7 +633,8 @@ fn generic_receiver_expression_indexed_access_still_defers_via_type_param_path()
         2322,
     );
     assert_eq!(
-        msg, "Type 'T[K]' is not assignable to type 'string | undefined'.",
+        msg,
+        "Type 'T[K]' is not assignable to type 'string | undefined'.\nType 'T[keyof T]' is not assignable to type 'string | undefined'.\nType 'T[string] | T[number] | T[symbol]' is not assignable to type 'string | undefined'.\nType 'T[string]' is not assignable to type 'string | undefined'.",
         "generic-receiver expression indexed access must keep its own (unrelated) deferral path, got: {msg}"
     );
 }
@@ -965,6 +971,12 @@ fn concrete_base_member_drill_walks_to_resolved_value_type() {
 /// witness. tsz previously eagerly resolved through `K`'s (already-reduced)
 /// `keyof T` constraint to `Wares`'s concrete property union, rendering
 /// `number` instead of `T[K]`.
+///
+/// tsc also walks the deferred operand's constraint one step per elaboration
+/// line beneath the head (`T[K]` -> `T[keyof T]` -> distribute -> `T[string]`,
+/// oracle-verified against pinned typescript@7.0.2) — the top-level head
+/// renderer now drives `indexed_access_constraint_display_walk`'s steps-only
+/// variant to synthesize the full chain, not just the head pair.
 #[test]
 fn expression_indexed_access_generic_receiver_keeps_deferred_pair() {
     let msg = message_with_chain(
@@ -973,7 +985,7 @@ fn expression_indexed_access_generic_receiver_keeps_deferred_pair() {
     );
     assert_eq!(
         msg,
-        "Type 'T[K]' is not assignable to type 'string | undefined'."
+        "Type 'T[K]' is not assignable to type 'string | undefined'.\nType 'T[keyof T]' is not assignable to type 'string | undefined'.\nType 'T[string] | T[number] | T[symbol]' is not assignable to type 'string | undefined'.\nType 'T[string]' is not assignable to type 'string | undefined'."
     );
 }
 
@@ -987,7 +999,7 @@ fn expression_indexed_access_generic_receiver_keeps_deferred_pair_renamed_binder
     );
     assert_eq!(
         msg,
-        "Type 'TSrc[KSel]' is not assignable to type 'string | undefined'."
+        "Type 'TSrc[KSel]' is not assignable to type 'string | undefined'.\nType 'TSrc[keyof TSrc]' is not assignable to type 'string | undefined'.\nType 'TSrc[string] | TSrc[number] | TSrc[symbol]' is not assignable to type 'string | undefined'.\nType 'TSrc[string]' is not assignable to type 'string | undefined'."
     );
 }
 
@@ -1001,18 +1013,19 @@ fn expression_indexed_access_generic_receiver_keeps_deferred_pair_renamed_binder
 /// not assignable to type 'string'.`); oracle-reverified against pinned
 /// typescript@7.0.2 and flipped to the correct expectation.
 ///
-/// KNOWN GAP, not asserted here: tsc also emits a second, indented
-/// elaboration line (`Type 'number' is not assignable to type 'string'.`)
-/// that tsz does not yet synthesize for this expression-typed source shape.
-/// Tracked in #17718 (see the 2026-08-19 comment on that issue) — extending
-/// `indexed_access_constraint_display_walk`'s trigger sites to this
-/// top-level expression-source case is the next slice, not a silent
-/// omission.
+/// tsc also emits a second, indented elaboration line beneath the head
+/// (`Type 'number' is not assignable to type 'string'.`) — the top-level
+/// head renderer now drives `indexed_access_constraint_display_walk`'s
+/// steps-only variant to synthesize it, closing the gap this test used to
+/// leave unasserted (tracked in #17718's 2026-08-19 comment).
 #[test]
 fn expression_indexed_access_concrete_receiver_also_keeps_deferred_pair() {
-    let msg = message(
+    let msg = message_with_chain(
         "interface Wares3 { p: number; q: number }\nfunction pick3<K extends keyof Wares3>(x: Wares3, k: K) {\n  const y: string = x[k];\n}\n",
         2322,
     );
-    assert_eq!(msg, "Type 'Wares3[K]' is not assignable to type 'string'.");
+    assert_eq!(
+        msg,
+        "Type 'Wares3[K]' is not assignable to type 'string'.\nType 'number' is not assignable to type 'string'."
+    );
 }

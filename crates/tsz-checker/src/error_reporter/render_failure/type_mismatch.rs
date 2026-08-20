@@ -633,6 +633,17 @@ impl<'a> CheckerState<'a> {
             base,
             diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
         );
+        // #17718 witness 2/3: a top-level head that kept its deferred,
+        // constraint-relative operand (`T[K]`, `keyof T`, ...) still owes the
+        // constraint-walk elaboration `tsc` renders beneath it — the
+        // property-mismatch drill leaf already gets this via
+        // `push_deferred_constraint_walk`; the plain top-level mismatch this
+        // function renders did not. Steps-only variant: the head line above
+        // already is this source/target pair, so only the walk beneath it is
+        // new.
+        if depth == 0 && self.is_deferred_constraint_relative_source(source) {
+            self.push_deferred_constraint_walk_steps(&mut diagnostic, source, target, 0);
+        }
         // The note is a child of the failing mismatch line this function renders
         // at chain depth `depth`; place it one level deeper, matching the
         // child-depth idiom used by the other nested-elaboration renderers. The
