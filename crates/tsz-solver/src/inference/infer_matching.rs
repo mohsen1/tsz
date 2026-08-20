@@ -119,9 +119,12 @@ impl<'a> InferenceContext<'a> {
             // candidate order match tsc's source order, making the primitive
             // leftmost-wins fallback safe (#17484).
             let prev = self.candidate_from_top_level_naked;
+            let prev_walk = self.candidate_at_top_level_of_walk;
             self.candidate_from_top_level_naked = self.infer_depth == 1;
+            self.candidate_at_top_level_of_walk = self.infer_depth == 1;
             self.add_candidate(var, source, priority);
             self.candidate_from_top_level_naked = prev;
+            self.candidate_at_top_level_of_walk = prev_walk;
             return Ok(());
         }
 

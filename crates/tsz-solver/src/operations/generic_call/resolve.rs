@@ -236,8 +236,14 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             // 'a'` -> `never`); a forbidden argument then reaches a `never`
             // parameter and is rejected (TS2345). Inference from a nested position
             // (callback return, array element, …) still widens.
-            if self.type_param_preserves_inferred_literal(func, tp.name) {
-                infer_ctx.mark_top_level_in_return_type_unfixed(var);
+            if self.type_param_at_top_level_through_aliases(func.return_type, tp.name) {
+                // Structural half of tsc's `isTypeParameterAtTopLevelInReturnType`,
+                // consumed by the runtime literal-widening gate together with the
+                // contextually-fixed set recorded after Round 1 below.
+                infer_ctx.mark_top_level_in_return_type(var);
+                if self.type_param_preserves_inferred_literal(func, tp.name) {
+                    infer_ctx.mark_top_level_in_return_type_unfixed(var);
+                }
             }
         }
 
@@ -1047,35 +1053,17 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 // We only suppress the seed for concrete functions — lambdas with
                 // `any`-typed params genuinely need the var pre-fixed for contextual
                 // typing.
-                if !deferred_arg_covers_return_var && let Some((_, _)) = return_type_bare_var {
-                    let is_concrete_function = match self.interner.lookup(arg_type) {
-                        Some(TypeData::Function(shape_id)) => {
-                            let shape = self.interner.function_shape(shape_id);
-                            !shape.params.is_empty()
-                                && shape.params.iter().all(|p| p.type_id != TypeId::ANY)
-                        }
-                        Some(TypeData::Callable(shape_id)) => {
-                            let shape = self.interner.callable_shape(shape_id);
-                            shape
-                                .call_signatures
-                                .iter()
-                                .chain(shape.construct_signatures.iter())
-                                .any(|sig| {
-                                    !sig.params.is_empty()
-                                        && sig.params.iter().all(|p| p.type_id != TypeId::ANY)
-                                })
-                        }
-                        _ => false,
-                    };
-                    if is_concrete_function {
-                        placeholder_visited.clear();
-                        if self.type_contains_placeholder(
-                            target_type,
-                            &var_map,
-                            &mut placeholder_visited,
-                        ) {
-                            deferred_arg_covers_return_var = true;
-                        }
+                if !deferred_arg_covers_return_var
+                    && let Some((_, _)) = return_type_bare_var
+                    && self.arg_is_concrete_function_like(arg_type)
+                {
+                    placeholder_visited.clear();
+                    if self.type_contains_placeholder(
+                        target_type,
+                        &var_map,
+                        &mut placeholder_visited,
+                    ) {
+                        deferred_arg_covers_return_var = true;
                     }
                 }
                 continue;
@@ -1615,6 +1603,17 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         {
             infer_ctx.add_candidate(var, ctx_type, crate::types::InferencePriority::ReturnType);
         }
+
+        // tsc's `inference.isFixed`, recorded pass-stably before Round-1
+        // fixing (see `mark_contextually_fixed_inference_vars`).
+        self.mark_contextually_fixed_inference_vars(
+            &mut infer_ctx,
+            arg_types,
+            &instantiated_params,
+            &var_map,
+            &mut placeholder_probe_map,
+            &mut placeholder_visited,
+        );
 
         // === Fixing: Resolve variables with enough information ===
         // This "fixes" type variables that have candidates from Round 1,
