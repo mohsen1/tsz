@@ -1831,6 +1831,15 @@ impl<'a> CheckerState<'a> {
                 self.type_contains_literal_of_primitive_base(member, primitive_base)
             });
         }
+        // `boolean` is internally `true | false` in tsc's type system (unlike
+        // `string`/`number`/`bigint`, which are genuine opaque primitives with
+        // no literal constituents), so a boolean-literal source is always "of
+        // a contextual type carrying a literal of the same base" even when the
+        // target property's own type is the bare `boolean` intrinsic rather
+        // than an explicit union of its two literals.
+        if type_id == TypeId::BOOLEAN && primitive_base == TypeId::BOOLEAN {
+            return true;
+        }
         let widened = query::widen_literal_to_primitive(self.ctx.types, type_id);
         widened != type_id && widened == primitive_base
     }
