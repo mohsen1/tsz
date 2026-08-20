@@ -687,6 +687,39 @@ impl<'a> InferenceContext<'a> {
         if filtered_no_never.is_empty() {
             return TypeId::NEVER;
         }
+        // The contextual-literal pin (`top_level_in_return_type_unfixed`) is
+        // decided from the contextual type alone, at marking time, before any
+        // candidate exists. That matches `tsc` while the fresh literal
+        // candidates agree — `pair<T, U>(x: T, cb: (a: T) => U, y: U): U` called
+        // as `pair(2, (a) => 1, 1)` contributes `1` at both sites, and `U := 1`
+        // is the pinned answer.
+        //
+        // It does not match once they disagree. For
+        // `h<U>(fn: () => U, init: U): U` called as `const r: 5 = h(() => 5, 0)`,
+        // `tsc` 7.0.2 answers `U = 0 | 5`: it preserves the literals AND
+        // combines them. tsz has no combination here — priority filtering
+        // selects one candidate — so honouring the pin keeps `U := 0` and then
+        // rejects the callback's `5` at its own inference site, a second
+        // diagnostic `tsc` never emits. Widening instead yields `U := number`,
+        // which is still not `tsc`'s type but is wrong only in the type text of
+        // one diagnostic rather than in the diagnostic count.
+        //
+        // Note this reads the raw candidate set, not `filtered_no_never`:
+        // priority filtering has already discarded the losing literal by this
+        // point, so the disagreement is invisible downstream.
+        //
+        // Combining candidates under a literal contextual type is the real
+        // parity gap, tracked in #17773.
+        let skip_literal_widening = skip_literal_widening && {
+            let mut fresh_literals = candidates
+                .iter()
+                .filter(|candidate| candidate.is_fresh_literal)
+                .map(|candidate| candidate.type_id);
+            match fresh_literals.next() {
+                None => true,
+                Some(first) => fresh_literals.all(|type_id| type_id == first),
+            }
+        };
         let all_from_object_properties = filtered_no_never
             .iter()
             .all(|candidate| candidate.from_object_property);
