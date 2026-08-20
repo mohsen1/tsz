@@ -173,9 +173,10 @@ impl<'a> CheckerState<'a> {
             {
                 any_non_entity_wide_key = true;
             }
-            let property_name = self
-                .get_property_name(name_idx)
-                .map(|name| self.ctx.types.intern_string(&name));
+            let property_name_str = self.get_property_name(name_idx);
+            let property_name = property_name_str
+                .as_deref()
+                .map(|name| self.ctx.types.intern_string(name));
             if self
                 .ctx
                 .arena
@@ -257,8 +258,27 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
-            // For nested object literals, recurse
-            if let Some(nested_display) = self.object_literal_source_type_display(value_idx, None) {
+            // For nested object literals, recurse. Thread the nested property's
+            // contextual target down instead of dropping it (`None`): the target
+            // of a nested object-literal value is that property's type on the
+            // outer target, unioned across the outer target's union arms
+            // (`R = { v: { x: 1 } } | { v: { x: 2 } }` gives `{ x: 1 } | { x: 2 }`
+            // for `v`). Without it the nested call had no contextual property to
+            // check against, so every nested fresh literal widened to its
+            // primitive base — tsc renders `v: { x: 2 }`, tsz rendered
+            // `v: { x: number }` (#17782). The property access resolves the union
+            // through the solver, so a single-arm target, a union target, and
+            // deeper nesting are all covered by the same recursion. A property the
+            // outer target does not expose yields `None`, preserving the prior
+            // widening behavior for those arms.
+            let nested_target = target.and_then(|outer| {
+                let name = property_name_str.as_deref()?;
+                self.resolve_property_access_with_env(outer, name)
+                    .success_type()
+            });
+            if let Some(nested_display) =
+                self.object_literal_source_type_display(value_idx, nested_target)
+            {
                 push_object_literal_display_member(
                     &mut parts,
                     &mut member_slots,

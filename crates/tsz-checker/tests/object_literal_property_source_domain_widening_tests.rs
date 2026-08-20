@@ -180,6 +180,72 @@ fn plain_boolean_annotation_still_widens_string_literal() {
     );
 }
 
+// --- #17782: a nested object-literal value inside a fresh union-fold head keeps
+// its literal surface when the arm admits it -----------------------------------
+// tsc renders the head as `{ kind: "a"; v: { x: 2; }; }` — the nested `v.x`
+// literal survives because a discriminated-union arm carries `v: { x: 2 }`, a
+// same-domain literal. tsz dropped the contextual target when recursing into the
+// nested object literal, so every nested value widened to its primitive base
+// (`v: { x: number; }`). The fix threads the nested property's contextual target
+// (the property's type unioned across the target's arms) into the recursion.
+// Binder names varied so the rule is structural.
+
+#[test]
+fn nested_object_literal_number_literal_preserved_in_union_fold_head() {
+    let src = r#"type Shape =
+           | { tag: "lo"; box: { size: 1 } }
+           | { tag: "hi"; box: { size: 2 } };
+       const picked: Shape = { tag: "lo", box: { size: 2 } };"#;
+    assert_source_display(src, "box: { size: 2; }");
+    assert_no_source_display(src, "box: { size: number; }");
+}
+
+#[test]
+fn nested_object_literal_string_literal_preserved_in_union_fold_head() {
+    let src = r#"type Route =
+           | { via: "road"; edge: { name: "north" } }
+           | { via: "rail"; edge: { name: "south" } };
+       const trip: Route = { via: "road", edge: { name: "south" } };"#;
+    assert_source_display(src, r#"edge: { name: "south"; }"#);
+    assert_no_source_display(src, "edge: { name: string; }");
+}
+
+#[test]
+fn nested_object_literal_boolean_literal_preserved_in_union_fold_head() {
+    let src = r#"type Mode =
+           | { key: "on"; state: { live: true } }
+           | { key: "off"; state: { live: false } };
+       const run: Mode = { key: "on", state: { live: false } };"#;
+    assert_source_display(src, "state: { live: false; }");
+    assert_no_source_display(src, "state: { live: boolean; }");
+}
+
+#[test]
+fn deeply_nested_object_literal_preserved_in_union_fold_head() {
+    // Three levels: the recursion threads the contextual target at every depth.
+    let src = r#"type Deep =
+           | { sel: "a"; outer: { middle: { leaf: 1 } } }
+           | { sel: "b"; outer: { middle: { leaf: 2 } } };
+       const value: Deep = { sel: "a", outer: { middle: { leaf: 2 } } };"#;
+    assert_source_display(src, "outer: { middle: { leaf: 2; }; }");
+    assert_no_source_display(src, "leaf: number");
+}
+
+#[test]
+fn nested_object_literal_domain_mismatch_is_not_over_preserved() {
+    // The negative control: when no arm's nested property admits the source's
+    // domain, the nested literal still widens (threading a target must not
+    // over-preserve). A string source against numeric-literal arms widens to
+    // `string`, and the `"many"` literal never survives — the bedrock
+    // fresh-literal domain rule this file encodes, here through a nested value.
+    let src = r#"type Bucket =
+           | { id: "x"; cell: { count: 1 } }
+           | { id: "y"; cell: { count: 2 } };
+       const item: Bucket = { id: "x", cell: { count: "many" } };"#;
+    assert_source_display(src, "Type 'string' is not assignable");
+    assert_no_source_display(src, r#""many""#);
+}
+
 // --- `NoInfer<T>` targets are transparent for the literal-domain decision ----
 // `NoInfer<>` only suppresses inference, never assignability, so a same-domain
 // literal source must be preserved when the wrapped target admits its domain
