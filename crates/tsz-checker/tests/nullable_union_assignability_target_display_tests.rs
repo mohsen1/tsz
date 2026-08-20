@@ -1127,3 +1127,121 @@ fn top_level_indexed_access_walk_depth_is_binder_name_independent() {
         "walk nesting depth must be independent of binder names, got chain: {chain:?}"
     );
 }
+
+// =====================================================================
+// #17718 residual: the TS2345 **argument** head must carry the same
+// deferred-constraint-relative walk the TS2322 declaration head already
+// does. `tsc` renders the argument at its apparent type: a generic-base
+// indexed access (`TE[KE]`, base is a type parameter) stays the as-written
+// operand on the head line and walks its constraint one step per line
+// beneath it, while a concrete-base access collapses to its resolved value
+// type on the head with no operand to walk. The walk is wired here through
+// the argument emitter's `extra_related`, gated so only the generic-base
+// (walk-stays-deferred) surface fires. All chains oracle-verified
+// byte-identical to pinned typescript@7.0.2 via `scripts/conformance/oracle.sh`.
+// =====================================================================
+
+/// Core fix: a generic-base indexed-access argument keeps `TE[KE]` on the
+/// head and emits `tsc`'s three constraint-walk lines beneath it at the
+/// header's child depths (0, 1, 2), against a `| undefined` parameter.
+#[test]
+fn ts2345_generic_base_indexed_access_arg_emits_constraint_walk() {
+    let source = "declare function gulp(v: string | undefined): void;\nfunction pipe<TE extends { e: number }, KE extends keyof TE>(x: TE[KE]) {\n  gulp(x);\n}\n";
+    assert_eq!(
+        message(source, 2345),
+        "Argument of type 'TE[KE]' is not assignable to parameter of type 'string | undefined'.",
+        "argument head must keep the as-written deferred operand"
+    );
+    assert_eq!(
+        chain_depths(source, 2345),
+        vec![
+            (
+                0,
+                "Type 'TE[keyof TE]' is not assignable to type 'string | undefined'.".to_string()
+            ),
+            (
+                1,
+                "Type 'TE[string] | TE[number] | TE[symbol]' is not assignable to type 'string | undefined'.".to_string()
+            ),
+            (
+                2,
+                "Type 'TE[string]' is not assignable to type 'string | undefined'.".to_string()
+            ),
+        ],
+        "generic-base indexed-access argument must emit the constraint walk beneath its head"
+    );
+}
+
+/// Same walk against a `| null` parameter with fully renamed binders
+/// (anti-hardcoding): the nullish member kept is structural, not name-driven.
+#[test]
+fn ts2345_generic_base_indexed_access_arg_walk_keeps_null_member() {
+    let source = "declare function gulp(v: number | null): void;\nfunction feed<TR extends { r: string }, KR extends keyof TR>(x: TR[KR]) {\n  gulp(x);\n}\n";
+    assert_eq!(
+        message(source, 2345),
+        "Argument of type 'TR[KR]' is not assignable to parameter of type 'number | null'.",
+    );
+    assert_eq!(
+        chain_depths(source, 2345),
+        vec![
+            (
+                0,
+                "Type 'TR[keyof TR]' is not assignable to type 'number | null'.".to_string()
+            ),
+            (
+                1,
+                "Type 'TR[string] | TR[number] | TR[symbol]' is not assignable to type 'number | null'.".to_string()
+            ),
+            (
+                2,
+                "Type 'TR[string]' is not assignable to type 'number | null'.".to_string()
+            ),
+        ],
+        "walk must keep the `| null` member on every line and stay binder-name independent"
+    );
+}
+
+/// A plain (non-nullable) parameter: the walk lines carry the full target
+/// verbatim, since no nullish strip applies to a still-deferred source.
+#[test]
+fn ts2345_generic_base_indexed_access_arg_walk_plain_target() {
+    let source = "declare function gulp(v: string): void;\nfunction pipe<TE extends { e: number }, KE extends keyof TE>(x: TE[KE]) {\n  gulp(x);\n}\n";
+    assert_eq!(
+        chain_depths(source, 2345),
+        vec![
+            (
+                0,
+                "Type 'TE[keyof TE]' is not assignable to type 'string'.".to_string()
+            ),
+            (
+                1,
+                "Type 'TE[string] | TE[number] | TE[symbol]' is not assignable to type 'string'."
+                    .to_string()
+            ),
+            (
+                2,
+                "Type 'TE[string]' is not assignable to type 'string'.".to_string()
+            ),
+        ],
+        "plain-target argument walk must carry the full target on every line"
+    );
+}
+
+/// Negative control (the position-dependent boundary the issue warns about):
+/// a CONCRETE-base indexed access (`Goods[KG]`, all members `boolean`) has its
+/// apparent type resolved to the value type by `tsc`, so the head collapses
+/// there with no as-written operand to walk beneath. The argument-walk gate
+/// must decline it — a concrete-base walk's first step is a concrete leaf —
+/// rather than layering a walk under a differently-owned head. (The head's own
+/// value-collapse is the materialize-or-defer concern of #15396, not this fix.)
+#[test]
+fn ts2345_concrete_base_indexed_access_arg_has_no_constraint_walk() {
+    let source = "interface Goods { p: boolean; q: boolean }\ndeclare function eat(v: string | undefined): void;\nfunction feed<KG extends keyof Goods>(x: Goods[KG]) {\n  eat(x);\n}\n";
+    let chain = chain_depths(source, 2345);
+    assert!(
+        !chain
+            .iter()
+            .any(|(_, line)| line.contains("keyof") || line.contains("Goods[")),
+        "concrete-base argument must not receive the generic-base constraint walk, got: {chain:?}"
+    );
+}

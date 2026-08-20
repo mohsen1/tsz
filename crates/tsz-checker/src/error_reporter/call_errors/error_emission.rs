@@ -574,7 +574,7 @@ impl<'a> CheckerState<'a> {
         // the sink for the remaining call/`new`-argument callers, which dropped
         // the note entirely (#17447). The helper is a no-op for concrete
         // targets, so ordinary TS2345s are unaffected.
-        let extra_related = self
+        let mut extra_related = self
             .unrelated_type_parameter_target_related_info(
                 arg_type,
                 param_type,
@@ -586,6 +586,23 @@ impl<'a> CheckerState<'a> {
             )
             .into_iter()
             .collect::<Vec<_>>();
+
+        // A deferred, constraint-relative generic-base argument (`TE[KE]`, a
+        // bare `keyof T`, a conditional) keeps its as-written operand on the
+        // head line above; `tsc` then walks the operand's constraint one step
+        // per elaboration line beneath it
+        // (`indexed_access_constraint_display_walk`), exactly as the TS2322
+        // declaration head does via `push_deferred_constraint_walk_steps`. The
+        // argument head is built here through a `DiagnosticRenderRequest`, so
+        // the walk layers on as `extra_related` rather than a direct
+        // `Diagnostic` mutation. The helper declines a concrete-base or
+        // walk-less argument, whose head has a different owner.
+        extra_related.extend(self.argument_deferred_constraint_walk_related(
+            arg_type,
+            param_type,
+            anchor.start,
+            anchor.length,
+        ));
 
         // tsc runs the whole argument relation against the check-time
         // instantiation, so when the head display restored a later literal
