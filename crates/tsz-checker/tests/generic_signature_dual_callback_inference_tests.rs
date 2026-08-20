@@ -286,3 +286,54 @@ var same = join((v) => 1, (v) => 2);
         "same-kind literal callbacks",
     );
 }
+
+/// #17761's narrowed strict-only residual: the same `r2`/`r3` shapes as
+/// `annotated_callback_with_null_return_stays_clean_nonstrict`, but under
+/// `--strict`. `tsc` infers `T = string` (the contravariant common subtype of
+/// the two annotated parameters) because `null`'s covariant return
+/// contribution is not assignable to `Object` under strict null checks, so
+/// the covariant/contravariant combination falls back to the contravariant
+/// result. tsz previously accepted `null <: Object` for a union source
+/// (`string | null`) because the combination's guard checked
+/// `TypeId::is_nullable()`, which only matches the bare NULL/UNDEFINED/VOID
+/// intrinsics and not a union carrying one, so the covariant `string | null`
+/// incorrectly won and rendered as the callback parameter.
+#[test]
+fn annotated_callback_with_null_return_reports_ts2345_strict() {
+    for (source, context) in [
+        (
+            r#"
+declare function foo<T>(a: (x: T) => T, b: (x: T) => T): (x: T) => T;
+var r2 = foo((x: Object) => null, (x: string) => '');
+"#,
+            "Object/null then string",
+        ),
+        (
+            r#"
+declare function foo<T>(a: (x: T) => T, b: (x: T) => T): (x: T) => T;
+var r3 = foo((x: number) => 1, (x: Object) => null);
+"#,
+            "number then Object/null",
+        ),
+    ] {
+        let diags = check_with(source, true);
+        assert_eq!(
+            diags.len(),
+            1,
+            "{context} (strict): expected exactly one diagnostic, got: {:#?}",
+            messages(&diags)
+        );
+        assert_eq!(diags[0].code, 2345, "{context} (strict)");
+        let needle = if context.starts_with("Object") {
+            "Argument of type '(x: Object) => null' is not assignable to parameter of type '(x: string) => string'."
+        } else {
+            "Argument of type '(x: Object) => null' is not assignable to parameter of type '(x: number) => number'."
+        };
+        assert_eq!(
+            diags[0].message_text,
+            needle,
+            "{context} (strict): got: {:#?}",
+            messages(&diags)
+        );
+    }
+}
