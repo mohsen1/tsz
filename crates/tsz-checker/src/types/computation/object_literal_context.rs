@@ -1710,8 +1710,19 @@ impl<'a> CheckerState<'a> {
         // reverted and ignored — a failing unit literal that names no arm must
         // not kill the narrowing the other discriminants produce (tsc's
         // per-discriminator `matched` flag turning `Ternary.Maybe` back into
-        // `Ternary.True`). Primitive constituents start excluded, mirroring
-        // tsc's `Ternary.False` pre-marking.
+        // `Ternary.True`).
+        //
+        // Deliberate divergence from tsc's `Ternary.False` primitive
+        // pre-marking: every constituent starts included here. tsc applies the
+        // pre-marking only to the contextual APPARENT type, while its
+        // elaboration re-derives per-property targets from the full relation
+        // target; tsz's elaboration gates key on `narrowed_by_discriminant`,
+        // so pre-excluding primitive arms would "narrow" a JSON-style union
+        // (`string | ... | T[] | { [k: string]: T }`) with zero matching
+        // discriminators and lose the outer whole-object frame (pinned by
+        // `fresh_object_literal_union_array_member_drill_in_tests`). A
+        // matching discriminator still eliminates primitive arms through the
+        // ordinary `Maybe -> No` path below.
         #[derive(Clone, Copy, PartialEq, Eq)]
         enum Include {
             Yes,
@@ -1727,19 +1738,7 @@ impl<'a> CheckerState<'a> {
                 [evaluated_member, resolved_member, lazy_member, member]
             })
             .collect();
-        let mut include: Vec<Include> = member_candidates_by_index
-            .iter()
-            .map(|candidates| {
-                if candidates
-                    .iter()
-                    .any(|&candidate| common::is_primitive_type(self.ctx.types, candidate))
-                {
-                    Include::No
-                } else {
-                    Include::Yes
-                }
-            })
-            .collect();
+        let mut include: Vec<Include> = vec![Include::Yes; member_candidates_by_index.len()];
         for (prop_name, lit_type) in &unit_discriminants {
             let mut matched = false;
             for (member_index, candidates) in member_candidates_by_index.iter().enumerate() {
