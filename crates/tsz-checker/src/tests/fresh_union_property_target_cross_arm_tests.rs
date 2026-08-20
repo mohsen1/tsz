@@ -521,15 +521,15 @@ const pn: Pn = { t: "zz", u: 2 };
     );
 }
 
-/// Pinned residual (oracle-verified, distinct owner — the written-union arm
-/// ORDER family, #17696 residuals): instantiating a generic union alias
-/// (`GU[1]`, square brackets standing in for angle brackets) re-interns the
-/// substituted arm so it sorts LAST in the evaluated member list, and the
-/// last-best-wins scan then picks it — tsz renders `'1'` where tsc 7.0.2
-/// keeps declaration order and renders `'9'`. The concrete forms above prove
-/// the fallback itself; this pin guards the order half only.
+/// The written-union arm ORDER half (#17696 residuals family): instantiating
+/// a generic union alias (`GU<1>`) re-interns the substituted arm with a
+/// fresh `ShapeId`, so the canonical member list sorts it away from its
+/// declared position — the last-best-wins scan must still walk declaration
+/// order (restored from the interner's `union_origin` side table) and pick
+/// the LAST max-overlap arm as written, `{ k: "b"; v: 9 }`. tsc 7.0.2:
+/// `Type '2' is not assignable to type '9'.` The concrete forms above prove
+/// the fallback itself; this guards the order half.
 #[test]
-#[ignore = "instantiated union arms lose declaration order, so last-best-wins picks the re-interned substituted arm — tsz '1' vs tsc 7.0.2 '9'"]
 fn instantiated_generic_union_keeps_declaration_order_for_most_overlappy() {
     let diags = diags_with_code(
         r#"
@@ -543,6 +543,90 @@ const gx: GU<1> = { k: "zz", v: 2 };
             .iter()
             .any(|d| d.message_text == "Type '2' is not assignable to type '9'."),
         "declaration order must drive the last-best-wins tie, got: {diags:?}"
+    );
+}
+
+/// Flipped declaration: the type-parameter arm is written LAST of the two
+/// max-overlap arms, so tsc's last-best-wins tie-break selects the
+/// SUBSTITUTED arm (`m: Z` with `Z = 1`) — the rule is declaration order,
+/// not "prefer the concrete arm". tsc 7.0.2:
+/// `Type '2' is not assignable to type '1'.`
+#[test]
+fn instantiated_generic_union_tie_breaks_to_last_written_substituted_arm() {
+    let diags = diags_with_code(
+        r#"
+type GT<Z> = { tag: "y"; m: 9 } | { tag: "x"; m: Z } | { tag: "w" };
+const gt: GT<1> = { tag: "zz", m: 2 };
+"#,
+        2322,
+    );
+    assert!(
+        diags
+            .iter()
+            .any(|d| d.message_text == "Type '2' is not assignable to type '1'."),
+        "the last-written substituted arm must win the tie, got: {diags:?}"
+    );
+}
+
+/// A forwarding alias hop (`W<T> = GU2<T>`) does not disturb the restored
+/// declaration order. tsc 7.0.2: `Type '2' is not assignable to type '9'.`
+#[test]
+fn forwarded_generic_union_alias_keeps_declaration_order_for_most_overlappy() {
+    let diags = diags_with_code(
+        r#"
+type GU2<T> = { k: "a"; v: T } | { k: "b"; v: 9 } | { k: "c" };
+type W<T> = GU2<T>;
+const wx: W<1> = { k: "zz", v: 2 };
+"#,
+        2322,
+    );
+    assert!(
+        diags
+            .iter()
+            .any(|d| d.message_text == "Type '2' is not assignable to type '9'."),
+        "the alias hop must not disturb declaration order, got: {diags:?}"
+    );
+}
+
+/// Argument position takes the same restored order: `elaborateElementwise`
+/// runs for call arguments too. tsc 7.0.2 reports the same property-node
+/// TS2322 pair as the declaration form.
+#[test]
+fn instantiated_generic_union_argument_position_keeps_declaration_order() {
+    let diags = diags_with_code(
+        r#"
+type GA<T> = { k: "a"; v: T } | { k: "b"; v: 9 } | { k: "c" };
+declare function take(g: GA<1>): void;
+take({ k: "zz", v: 2 });
+"#,
+        2322,
+    );
+    assert!(
+        diags
+            .iter()
+            .any(|d| d.message_text == "Type '2' is not assignable to type '9'."),
+        "argument-position elaboration must keep declaration order, got: {diags:?}"
+    );
+}
+
+/// Renamed binders and different literal values: the behavior is structural,
+/// not tied to the `k`/`v`/`GU` spellings. tsc 7.0.2:
+/// `Type '5' is not assignable to type '8'.` (plus the discriminant head,
+/// whose cross-arm union tsc prints in its own sorted display order).
+#[test]
+fn instantiated_generic_union_declaration_order_survives_renamed_binders() {
+    let diags = diags_with_code(
+        r#"
+type Pick2<Z> = { s: "one"; q: Z } | { s: "two"; q: 8 } | { s: "three" };
+const p2: Pick2<3> = { s: "zz", q: 5 };
+"#,
+        2322,
+    );
+    assert!(
+        diags
+            .iter()
+            .any(|d| d.message_text == "Type '5' is not assignable to type '8'."),
+        "renamed binders must not change the order rule, got: {diags:?}"
     );
 }
 

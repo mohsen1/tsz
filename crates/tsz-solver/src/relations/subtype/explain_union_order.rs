@@ -63,18 +63,24 @@ fn is_pure_permutation(a: &[TypeId], b: &[TypeId]) -> bool {
 }
 
 impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
-    /// As-written source order for a union-source failure elaboration, when the
+    /// As-written declaration order for a union failure elaboration, when the
     /// interner recorded one that should override the canonical member order.
     ///
-    /// `tsc` walks a union source's members in source (as-written) order when
-    /// it elaborates the failing member beneath the union-to-target line. tsz's
-    /// interner stores members in a canonicalization order (by `ShapeId` /
-    /// allocation identity) so that `A | B` and `B | A` share one `TypeId`; for
-    /// anonymous object members that canonical order can reverse source order
-    /// (e.g. `{ a: string } | { b: number }` interned as `{ b: number }`-first
-    /// when `{ b: number }`'s shape was content-interned first), so a raw
-    /// interned walk names the wrong constituent even though the union *header*
-    /// already prints source order (#16965).
+    /// `tsc` walks a union's members in source (as-written) order on BOTH
+    /// sides of a failed relation: a union *source* elaborates the first
+    /// failing member beneath the union-to-target line in written order, and a
+    /// union *target*'s best-member selection (`getBestMatchingType` →
+    /// `findMostOverlappyType`, ties to the LAST member) scans `target.types`
+    /// in written order too. tsz's interner stores members in a
+    /// canonicalization order (by `ShapeId` / allocation identity) so that
+    /// `A | B` and `B | A` share one `TypeId`; for anonymous object members
+    /// that canonical order can diverge from source order — a written
+    /// `{ a: string } | { b: number }` interned `{ b: number }`-first when its
+    /// shape was content-interned first (#16965), or an instantiated generic
+    /// union (`GU<1>`) whose substituted arm re-interns with a fresh `ShapeId`
+    /// and sorts away from its declared position — so a raw interned walk
+    /// names the wrong constituent even though the union *header* already
+    /// prints source order.
     ///
     /// The interner records the as-written order in the `union_origin` side
     /// table (`get_union_origin`) precisely when canonical and source order
@@ -90,14 +96,29 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// order is the same multiset either way, so the relation outcome and the
     /// elaborated member's failure reason are unaffected — only which failing
     /// constituent is named changes.
-    pub(in crate::relations::subtype) fn union_source_elaboration_origin_override(
+    pub(in crate::relations::subtype) fn union_elaboration_origin_override(
         &self,
         union_type_id: TypeId,
         interned_members: &[TypeId],
     ) -> Option<Vec<TypeId>> {
-        self.interner
-            .get_union_origin(union_type_id)
-            .filter(|origin| is_pure_permutation(origin.as_ref(), interned_members))
-            .map(|origin| origin.as_ref().clone())
+        union_declared_order_override(self.interner, union_type_id, interned_members)
     }
+}
+
+/// Free-function form of
+/// [`SubtypeChecker::union_elaboration_origin_override`] for callers outside a
+/// relation walk — the per-property elaboration boundary
+/// ([`union_target_best_elaboration_member`]) restores its best-member scan
+/// order through this.
+///
+/// [`union_target_best_elaboration_member`]: crate::relations::subtype::union_target_best_elaboration_member
+pub fn union_declared_order_override(
+    interner: &dyn crate::construction::TypeDatabase,
+    union_type_id: TypeId,
+    interned_members: &[TypeId],
+) -> Option<Vec<TypeId>> {
+    interner
+        .get_union_origin(union_type_id)
+        .filter(|origin| is_pure_permutation(origin.as_ref(), interned_members))
+        .map(|origin| origin.as_ref().clone())
 }
