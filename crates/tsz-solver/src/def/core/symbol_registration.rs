@@ -67,6 +67,27 @@ impl DefinitionStore {
                 (self.register(info), true)
             }
             Entry::Vacant(vacant) => {
+                // Cross-arena convergence: a sibling checker may have already
+                // minted a `DefId` for this *declaration site* under a
+                // different arena-local `(symbol, file)` identity — per-file
+                // binders number symbols privately, so the same source
+                // declaration reached through two arenas arrives with two
+                // distinct `symbol_id`s and misses each other in this index.
+                // Reuse the existing decl-site `DefId` instead of minting a
+                // second one for a single declaration: a duplicate mint splits
+                // the declaration's body across two `DefId`s whose independent
+                // materialization order is thread-schedule dependent, so a
+                // reader that resolves through the non-canonical twin observes
+                // a half-built body — the diagnostic that flickers run-to-run
+                // in issue #16309 (evidence #1/#2). This mirrors the
+                // decl-site fallback the `Occupied` arm already applies.
+                if let Some(existing_def_id) = self.find_decl_site_def_for_info(&info) {
+                    vacant.insert(existing_def_id);
+                    self.insert_symbol_only_mapping(symbol_id, existing_def_id);
+                    self.bump_generation();
+                    return (existing_def_id, false);
+                }
+
                 // `register` touches only other maps (`definitions`,
                 // `name_to_defs`, `symbol_only_index`, `file_to_defs`),
                 // never `symbol_def_index`, so allocating under this entry
