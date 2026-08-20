@@ -26,7 +26,8 @@ mod tests;
 pub mod tracing_helpers;
 
 pub use alias_underlying::{
-    application_reduces_to_displayable_shape, type_alias_displayed_as_underlying,
+    application_reduces_to_displayable_shape, forwarded_alias_application_display_view,
+    type_alias_displayed_as_underlying,
 };
 pub use property_names::format_excess_property_name;
 

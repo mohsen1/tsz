@@ -112,13 +112,7 @@ impl<'a> CheckerState<'a> {
         let is_conditional_return = common::is_conditional_type(self.ctx.types, return_type);
         let is_monomorphic_meta_return = is_monomorphic_application || is_conditional_return;
         let return_type = if is_monomorphic_meta_return && !self.is_promise_type(return_type) {
-            if is_monomorphic_application
-                && self.return_application_uses_opaque_object_base(return_type)
-            {
-                self.evaluate_application_type_for_property_access(return_type)
-            } else {
-                self.evaluate_type_with_env(return_type)
-            }
+            self.eagerly_evaluate_meta_return_type(return_type, is_monomorphic_application)
         } else {
             return_type
         };
@@ -135,7 +129,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn return_application_uses_opaque_object_base(&self, ty: TypeId) -> bool {
+    pub(super) fn return_application_uses_opaque_object_base(&self, ty: TypeId) -> bool {
         let Some((base, args)) = common::application_info(self.ctx.types, ty) else {
             return false;
         };

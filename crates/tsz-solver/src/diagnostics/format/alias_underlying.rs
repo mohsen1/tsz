@@ -292,3 +292,77 @@ pub fn application_reduces_to_displayable_shape(
     crate::visitor::is_primitive_type(interner, evaluated)
         && !matches!(interner.lookup(evaluated), Some(TypeData::Literal(_)))
 }
+
+/// When `type_id` is an application of a generic type alias whose body merely
+/// applies another generic base over the alias's own parameters — declared
+/// order (`type Fwd<X, Y> = Pair<X, Y>`), permuted (`type Flip<X, Y> =
+/// Pair<Y, X>`), or repeated (`type Dup<T> = Pair<T, T>`) — return the
+/// underlying application with the outer arguments carried into the body's
+/// argument positions, composing the remap across a chain of such aliases
+/// (fuel-bounded).
+///
+/// This is `tsc`'s normalized-source rendering for the nested lines of a
+/// failed relation: the headline keeps the written alias application
+/// (`Flip<A, B>`), while each nested member frame re-enters the relation with
+/// the source's alias erased, rendering the underlying application
+/// (`Pair<B, A>`). A body argument that is any other shape — a compound
+/// mentioning a parameter (`T[]`) or a concrete type (`Pair<X, number>`) —
+/// declines the hop rather than risking a wrong alignment, mirroring the
+/// inference-side `alias_forwarded_application` rule.
+pub fn forwarded_alias_application_display_view(
+    interner: &dyn TypeDatabase,
+    def_store: &DefinitionStore,
+    type_id: TypeId,
+) -> Option<TypeId> {
+    let mut current = type_id;
+    for _ in 0..4 {
+        let Some(TypeData::Application(app_id)) = interner.lookup(current) else {
+            break;
+        };
+        let app = interner.type_application(app_id);
+        let Some(next) = forwarded_alias_application_hop(interner, def_store, app.base, &app.args)
+        else {
+            break;
+        };
+        current = next;
+    }
+    (current != type_id).then_some(current)
+}
+
+/// One hop of [`forwarded_alias_application_display_view`]: rewrite
+/// `base<args>` through `base`'s alias body when that body is an application
+/// over the alias's own parameters, matched by binder identity.
+fn forwarded_alias_application_hop(
+    interner: &dyn TypeDatabase,
+    def_store: &DefinitionStore,
+    base: TypeId,
+    args: &[TypeId],
+) -> Option<TypeId> {
+    let Some(TypeData::Lazy(def_id)) = interner.lookup(base) else {
+        return None;
+    };
+    let def = def_store.get(def_id)?;
+    if def.kind != DefKind::TypeAlias || def.type_params.is_empty() {
+        return None;
+    }
+    let body = def.body?;
+    let Some(TypeData::Application(body_app_id)) = interner.lookup(body) else {
+        return None;
+    };
+    let body_app = interner.type_application(body_app_id);
+    if args.len() != def.type_params.len() {
+        return None;
+    }
+    let mut mapped = Vec::with_capacity(body_app.args.len());
+    for &body_arg in &body_app.args {
+        let Some(TypeData::TypeParameter(tp)) = interner.lookup(body_arg) else {
+            return None;
+        };
+        let position = def
+            .type_params
+            .iter()
+            .position(|param| tp.is_same_binder(*param))?;
+        mapped.push(args[position]);
+    }
+    Some(interner.application(body_app.base, mapped))
+}
