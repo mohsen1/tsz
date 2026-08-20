@@ -1,5 +1,6 @@
 use crate::test_utils::{
-    check_js_source_diagnostics, check_source_diagnostics, check_source_with_libs, load_lib_files,
+    check_js_source_diagnostics, check_source_diagnostics, check_source_non_strict_codes,
+    check_source_with_libs, load_lib_files,
 };
 
 #[test]
@@ -424,6 +425,103 @@ fn ts18050_null_plus_string_no_error() {
         !has_18050,
         "Should NOT emit TS18050 for null + string (concatenation), got: {:?}",
         diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+// TS2365 tests: `+` with a nullish operand under `strictNullChecks: false`.
+// tsc's `+` uses `isTypeAssignableToKind(t, NumberLike | StringLike,
+// /*strict*/ true)`, which excludes `null`/`undefined`/`void`, so a nullish
+// operand paired with a non-string operand reports TS2365 in non-strict mode
+// too (there is no TS18050 without `strictNullChecks`). Regression guard: an
+// earlier "borrow the other operand's numeric kind" allowance silenced
+// `number + null` under non-strict.
+
+#[test]
+fn ts2365_number_plus_null_non_strict() {
+    // `3 + null`: tsc `compiler/null.ts` (`@strict: false`) reports TS2365.
+    let codes = check_source_non_strict_codes("var z = 3 + null;");
+    assert!(
+        codes.contains(&2365),
+        "Expected TS2365 for number + null (non-strict), got: {codes:?}"
+    );
+}
+
+#[test]
+fn ts2365_number_variable_plus_undefined_non_strict() {
+    let codes = check_source_non_strict_codes("declare var n: number;\nvar z = n + undefined;");
+    assert!(
+        codes.contains(&2365),
+        "Expected TS2365 for number + undefined (non-strict), got: {codes:?}"
+    );
+}
+
+#[test]
+fn ts2365_null_plus_number_non_strict() {
+    let codes = check_source_non_strict_codes("var z = null + 3;");
+    assert!(
+        codes.contains(&2365),
+        "Expected TS2365 for null + number (non-strict), got: {codes:?}"
+    );
+}
+
+#[test]
+fn ts2365_both_nullish_plus_non_strict() {
+    // Two nullish operands have no numeric/string side at all.
+    let codes = check_source_non_strict_codes("var z = null + undefined;");
+    assert!(
+        codes.contains(&2365),
+        "Expected TS2365 for null + undefined (non-strict), got: {codes:?}"
+    );
+}
+
+#[test]
+fn no_ts2365_string_plus_null_non_strict() {
+    // A string operand makes `+` concatenation, which is valid in either mode.
+    let codes = check_source_non_strict_codes("declare var d: string;\nvar z = d + null;");
+    assert!(
+        !codes.contains(&2365),
+        "Should NOT emit TS2365 for string + null (concatenation), got: {codes:?}"
+    );
+}
+
+#[test]
+fn no_ts2365_any_plus_null_non_strict() {
+    // An `any` operand accepts anything; `((k?) => k + 1)()`-style uncovered
+    // optional params are `any`, not `undefined`, and must stay clean.
+    let codes = check_source_non_strict_codes("declare var a: any;\nvar z = a + null;");
+    assert!(
+        !codes.contains(&2365),
+        "Should NOT emit TS2365 for any + null, got: {codes:?}"
+    );
+}
+
+#[test]
+fn no_ts2365_iife_uncovered_optional_param_is_any() {
+    // An IIFE param with no matching argument is implicit-`any` (not
+    // `undefined`), so `k + 1` is a clean addition — matching tsc's
+    // `contextuallyTypedIife.ts` ("o should be any"). Guards the interaction
+    // between the IIFE param-inference and the `+` nullish-operand rule: the
+    // `+` fix must not turn a well-typed IIFE param into a false TS2365.
+    let codes = check_source_non_strict_codes("((k?) => k + 1)();");
+    assert!(
+        !codes.contains(&2365),
+        "Should NOT emit TS2365 for uncovered optional IIFE param + number, got: {codes:?}"
+    );
+    let covered = check_source_non_strict_codes("((k?) => k + 1)(5);");
+    assert!(
+        !covered.contains(&2365),
+        "Should NOT emit TS2365 when the IIFE supplies a numeric argument, got: {covered:?}"
+    );
+}
+
+#[test]
+fn ts2365_iife_explicit_undefined_argument() {
+    // A genuine `undefined` *argument* (not a missing one) types the param
+    // `undefined`, so `k + 1` is a real TS2365 — tsc reports it too.
+    let codes = check_source_non_strict_codes("((k) => k + 1)(undefined);");
+    assert!(
+        codes.contains(&2365),
+        "Expected TS2365 for an explicit undefined IIFE argument + number, got: {codes:?}"
     );
 }
 

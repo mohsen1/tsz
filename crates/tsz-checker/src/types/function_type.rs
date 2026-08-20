@@ -720,10 +720,14 @@ impl<'a> CheckerState<'a> {
                             param.dot_dot_dot_token,
                             param.question_token || param.initializer.is_some(),
                         );
-                        // When the IIFE returns `undefined` (no argument provided) but
-                        // the parameter has a default value, discard the IIFE inference
-                        // so the default value type is used instead. E.g.:
-                        //   (({ u = 22 } = { u: 23 }) => u)()
+                        // When a genuine `undefined` *argument* is passed to a
+                        // parameter that has a default value, the default kicks
+                        // in, so discard the `undefined` inference and let the
+                        // default value type be used instead. E.g.:
+                        //   (({ u = 22 } = { u: 23 }) => u)(undefined)
+                        // (A *missing* argument for a non-`strictNullChecks`
+                        // optional parameter now returns `None` from the helper
+                        // and falls through to implicit-any.)
                         if raw == Some(TypeId::UNDEFINED) && param.initializer.is_some() {
                             None
                         } else {
