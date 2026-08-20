@@ -14,6 +14,7 @@ mod display_formatting_property_access;
 mod display_formatting_variadic;
 mod elaboration;
 mod elaboration_array_mismatch;
+mod elaboration_union_property_target;
 mod error_emission;
 
 #[path = "../call_errors_binding_patterns.rs"]
