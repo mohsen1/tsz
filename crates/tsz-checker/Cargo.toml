@@ -3119,3 +3119,7 @@ path = "tests/object_interface_nullish_union_assignability_tests.rs"
 [[test]]
 name = "inherited_index_signature_implicit_any_member_tests"
 path = "tests/inherited_index_signature_implicit_any_member_tests.rs"
+
+[[test]]
+name = "type_assertion_no_excess_property_check_tests"
+path = "tests/type_assertion_no_excess_property_check_tests.rs"
