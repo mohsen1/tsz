@@ -82,11 +82,13 @@ impl<'a> CheckerState<'a> {
         let lazy_evaluated_param_type = self.evaluate_contextual_type(lazy_resolved_param_type);
         let assignability_param_type = self.evaluate_type_for_assignability(effective_param_type);
         let lazy_member_param_type = self.resolve_lazy_members_in_union(assignability_param_type);
-        // The target as written (post nullish-split, pre discriminant
-        // narrowing): the per-property elaboration target derives from this
-        // when every union constituent exposes the key (see
-        // `full_union_object_literal_property_target`).
-        let pre_narrow_param_type = effective_param_type;
+        // The target as WRITTEN — before the nullish split and the
+        // discriminant narrowing: the per-property elaboration target derives
+        // from this when every union constituent (nullish arms included)
+        // exposes the key, so `A | B | undefined` falls back to the
+        // best-matching member exactly like tsc's undefined indexed access
+        // (see `full_union_object_literal_property_target`).
+        let pre_narrow_param_type = param_type;
         let mut narrowed_by_discriminant = false;
         for candidate in [
             effective_param_type,

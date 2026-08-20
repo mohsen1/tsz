@@ -218,6 +218,26 @@ const q: V = { kind: "a", v: { x: 2 } };
 }
 
 #[test]
+fn nullish_arm_keeps_best_match_member_target() {
+    // `undefined` is a union constituent that lacks every key, so tsc's
+    // indexed access over the full union is undefined and the
+    // discriminant-matched member owns the target — the nullish arm must not
+    // be stripped before the every-constituent check. tsc:
+    // Type '2' is not assignable to type '1'.
+    let diag = single_diag(
+        r#"
+type N2 = { kind: "a"; v: { x: 1 } } | { kind: "b"; v: { x: 9 } } | undefined;
+const nb: N2 = { kind: "a", v: { x: 2 } };
+"#,
+        2322,
+    );
+    assert_eq!(
+        diag.message_text, "Type '2' is not assignable to type '1'.",
+        "a nullish arm must keep the best-match member target"
+    );
+}
+
+#[test]
 fn primitive_arm_keeps_best_match_member_target() {
     let diag = single_diag(
         r#"

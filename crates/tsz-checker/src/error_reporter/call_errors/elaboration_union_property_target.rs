@@ -20,13 +20,15 @@ use tsz_solver::TypeId;
 
 impl CheckerState<'_> {
     /// The `(check, display)` per-property target pair derived from the FULL
-    /// (pre-narrowing) union target, mirroring `tsc`'s
+    /// (pre-narrowing, pre-nullish-split) union target, mirroring `tsc`'s
     /// `getIndexedAccessTypeOrUndefined` step on a union.
     ///
     /// Returns `None` — the caller keeps its discriminant-narrowed derivation,
     /// which owns `tsc`'s best-matching-member fallback — when the target is
     /// not a multi-member union, when some constituent does not expose the
-    /// key, or when the union-level derivation itself declines.
+    /// key (a nullish arm of `A | B | undefined` never does, exactly like
+    /// `tsc`'s undefined indexed access over that union), or when the
+    /// union-level derivation itself declines.
     pub(in crate::error_reporter::call_errors) fn full_union_object_literal_property_target(
         &mut self,
         pre_narrow_target: TypeId,
