@@ -3113,3 +3113,6 @@ path = "tests/generic_signature_dual_callback_inference_tests.rs"
 [[test]]
 name = "object_interface_nullish_union_assignability_tests"
 path = "tests/object_interface_nullish_union_assignability_tests.rs"
+[[test]]
+name = "inherited_index_signature_implicit_any_member_tests"
+path = "tests/inherited_index_signature_implicit_any_member_tests.rs"
