@@ -31,6 +31,7 @@ pub(crate) mod visitor;
 // publicly re-export them (e.g., SubtypeChecker, is_subtype_of).
 pub use self::cache::{lazy_resolve_failure_count, reset_subtype_thread_local_state};
 pub use self::core::*;
+pub use self::explain_union_discriminant::union_target_best_elaboration_member;
 
 // Re-export SubtypeFailureReason so rules/ submodules can use `super::super::SubtypeFailureReason`
 pub(crate) use crate::diagnostics::SubtypeFailureReason;

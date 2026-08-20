@@ -91,7 +91,18 @@ impl<'a> CheckerState<'a> {
         let pre_narrow_param_type = param_type;
         let epc_pre_narrow_target = effective_param_type;
         let mut narrowed_by_discriminant = false;
-        for candidate in [
+        // The WRITTEN target leads the candidate list: tsc's include-walk
+        // (`discriminateTypeByDiscriminableItems`) pre-excludes primitive and
+        // nullish arms itself, so a written `A | B | undefined` with a
+        // discriminator set counts as DISCRIMINATED down to `A | B` even when
+        // no discriminant value matches — the per-property target is then the
+        // indexed access over the surviving object arms (undefined when one
+        // lacks the key, skipping the drill-in), never the most-overlappy
+        // single member. The nullish split above hides the dropped arm from
+        // `effective_param_type`, so the walk must see the written form first.
+        let written_candidate =
+            (pre_narrow_param_type != effective_param_type).then_some(pre_narrow_param_type);
+        for candidate in written_candidate.into_iter().chain([
             effective_param_type,
             contextual_param_type,
             evaluated_param_type,
@@ -100,7 +111,7 @@ impl<'a> CheckerState<'a> {
             lazy_evaluated_param_type,
             assignability_param_type,
             lazy_member_param_type,
-        ] {
+        ]) {
             let narrowed = self.narrow_contextual_union_via_object_literal_discriminants(
                 candidate,
                 &obj.elements.nodes,
@@ -401,6 +412,17 @@ impl<'a> CheckerState<'a> {
                         // one member alone.
                         self.full_union_object_literal_property_target(
                             effective_param_type,
+                            prop_name_idx,
+                            &prop_name,
+                        )
+                    } else if !narrowed_by_discriminant && array_union_best_match_member.is_none() {
+                        // Un-narrowed union target (every discriminator failed
+                        // or none exists): the cross-arm union owns the target
+                        // only when every constituent exposes the key; else
+                        // tsc's `findMostOverlappyType` member does.
+                        self.unnarrowed_union_object_literal_property_target(
+                            source_type,
+                            pre_narrow_param_type,
                             prop_name_idx,
                             &prop_name,
                         )

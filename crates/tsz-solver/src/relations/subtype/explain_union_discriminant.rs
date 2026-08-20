@@ -20,12 +20,36 @@
 //! missing property — and a source with no overlap picked an arbitrary member
 //! `tsc` never elaborates. These helpers restore the full ordering.
 
+use crate::construction::TypeDatabase;
 use crate::def::resolver::TypeResolver;
 use crate::relations::subtype::SubtypeChecker;
 use crate::type_queries::flow::is_unit_type;
 use crate::types::{ObjectShapeId, TypeId};
 use crate::visitor::{application_id, object_shape_id, object_with_index_shape_id};
 use tsz_common::interner::Atom;
+
+/// Free-function form of [`SubtypeChecker::select_union_target_best_member`]
+/// for the checker's per-property elaboration boundary.
+///
+/// `tsc`'s `elaborateElementwise` derives a property's target through
+/// `getBestMatchIndexedAccessTypeOrUndefined`: when the indexed access over
+/// the full union is undefined (some constituent lacks the key), it falls
+/// back to `getBestMatchingType(source, union)` — a discriminant match first,
+/// then a same-generic-base reference, then `findMostOverlappyType`'s
+/// key-overlap scan (ties to the LAST member; primitive arms expose no object
+/// keys and never score) — and elaborates the property against that single
+/// member. Returns `None` when no member is selected, in which case the
+/// property drill-in is skipped and the outer relation error reports.
+pub fn union_target_best_elaboration_member<R: TypeResolver>(
+    interner: &dyn TypeDatabase,
+    resolver: &R,
+    source: TypeId,
+    members: &[TypeId],
+) -> Option<TypeId> {
+    let mut checker = SubtypeChecker::with_resolver(interner, resolver);
+    let resolved_source = checker.apparent_type_for_keys(source);
+    checker.select_union_target_best_member(resolved_source, members)
+}
 
 impl<R: TypeResolver> SubtypeChecker<'_, R> {
     /// Select the union member `tsc`'s `getBestMatchingType` would elaborate a

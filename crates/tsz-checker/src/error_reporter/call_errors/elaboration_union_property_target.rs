@@ -55,6 +55,55 @@ impl CheckerState<'_> {
         }
         self.object_literal_target_property_type(pre_narrow_target, prop_name_idx, prop_name)
     }
+
+    /// Per-property elaboration target when the union target was NOT
+    /// discriminant-narrowed and has no array-like member — `tsc`'s
+    /// `getBestMatchIndexedAccessTypeOrUndefined` in full.
+    ///
+    /// The indexed access over the whole union owns the target only when
+    /// EVERY constituent exposes the key (the cross-arm union). Otherwise the
+    /// access is undefined and `getBestMatchingType`'s final
+    /// `findMostOverlappyType` step selects the single member sharing the
+    /// most keys with the source (ties to the LAST member; primitive and
+    /// nullish arms never score), and the property elaborates against that
+    /// member alone — with every discriminator failing (`kind: "zz"`, `n: 2`
+    /// against `{ kind: "a"; n: 1 } | { kind: "b"; n: 9 } | { kind: "c" }`),
+    /// the `n` leaf reports `'9'`, not the key-bearing arms' `'1 | 9'`. A
+    /// non-union target keeps the plain derivation. `None` — the selected
+    /// member lacks the key, or no member is selected — skips the drill-in so
+    /// the outer relation error reports.
+    pub(in crate::error_reporter::call_errors) fn unnarrowed_union_object_literal_property_target(
+        &mut self,
+        source_type: TypeId,
+        target_type: TypeId,
+        prop_name_idx: NodeIndex,
+        prop_name: &str,
+    ) -> Option<(TypeId, TypeId)> {
+        let resolved = self.resolve_type_for_property_access(target_type);
+        let members: Option<Vec<TypeId>> = query_common::union_members(self.ctx.types, resolved)
+            .or_else(|| {
+                let evaluated = self.evaluate_type_with_env(resolved);
+                query_common::union_members(self.ctx.types, evaluated)
+            })
+            .map(|list| list.as_ref().to_vec())
+            .filter(|list| list.len() >= 2);
+        let Some(members) = members else {
+            return self.object_literal_target_property_type(target_type, prop_name_idx, prop_name);
+        };
+        if let Some(pair) =
+            self.full_union_object_literal_property_target(target_type, prop_name_idx, prop_name)
+        {
+            return Some(pair);
+        }
+        let member = crate::query_boundaries::assignability::union_target_best_elaboration_member(
+            self.ctx.types,
+            &self.ctx,
+            source_type,
+            &members,
+        )?;
+        self.object_literal_target_property_type(member, prop_name_idx, prop_name)
+    }
+
     /// tsc's `findBestTypeForObjectLiteral` (the object-literal branch of
     /// `getBestMatchingType`, used by `getBestMatchIndexedAccessTypeOrUndefined`):
     /// when a fresh object-literal source is related to a union target that has

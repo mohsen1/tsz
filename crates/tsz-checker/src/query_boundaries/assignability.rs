@@ -52,6 +52,23 @@ pub(crate) fn are_types_structurally_identical<R: TypeResolver>(
     tsz_solver::relations::subtype::are_types_structurally_identical(db, resolver, left, right)
 }
 
+/// The union member `tsc`'s `getBestMatchingType` elaborates a failed
+/// object-to-union relation against: discriminant match, then same-generic-base
+/// reference, then `findMostOverlappyType`'s key-overlap scan (ties to the
+/// LAST member). Used by per-property object-literal elaboration when the
+/// indexed access over the full union is undefined (some constituent lacks
+/// the key). `None` means no member is selected and the drill-in is skipped.
+pub(crate) fn union_target_best_elaboration_member<R: TypeResolver>(
+    db: &dyn TypeDatabase,
+    resolver: &R,
+    source: TypeId,
+    members: &[TypeId],
+) -> Option<TypeId> {
+    tsz_solver::relations::subtype::union_target_best_elaboration_member(
+        db, resolver, source, members,
+    )
+}
+
 pub(crate) fn intersection_source_contains_target_member<R: TypeResolver>(
     db: &dyn TypeDatabase,
     resolver: &R,
