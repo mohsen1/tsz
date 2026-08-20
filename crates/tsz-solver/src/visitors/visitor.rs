@@ -1375,7 +1375,40 @@ impl<'a> ConstAssertionVisitor<'a> {
                     });
                 }
 
-                self.db.object(new_props)
+                // Rebuild preserving the shape's flags (`FRESH_LITERAL` in
+                // particular) and declaring symbol: a const assertion keeps
+                // the operand's fresh object-literal identity in tsc, so the
+                // readonly rebuild must not launder it into an anonymous
+                // non-fresh object. Display provenance is carried forward
+                // with the assertion applied — the recorded properties are
+                // pre-widened display types of the MUTABLE literal, and
+                // display surfaces that read them would otherwise drop the
+                // `readonly` modifiers the asserted type gained.
+                let rebuilt =
+                    self.db
+                        .object_with_flags_and_symbol(new_props, shape.flags, shape.symbol);
+                if rebuilt != type_id
+                    && let Some(display_props) = self.db.get_display_properties(type_id)
+                {
+                    let const_display_props: Vec<crate::types::PropertyInfo> = display_props
+                        .iter()
+                        .map(|prop| {
+                            let mut const_prop = prop.clone();
+                            const_prop.type_id = self.apply_const_assertion(prop.type_id);
+                            const_prop.write_type = self.apply_const_assertion(prop.write_type);
+                            const_prop.readonly = true;
+                            const_prop
+                        })
+                        .collect();
+                    crate::diagnostics::display_provenance::record_fresh_object_literal_display(
+                        self.db,
+                        crate::diagnostics::display_provenance::FreshObjectLiteralDisplayProvenance {
+                            type_id: rebuilt,
+                            properties: const_display_props,
+                        },
+                    );
+                }
+                rebuilt
             }
 
             // Objects with index signatures
