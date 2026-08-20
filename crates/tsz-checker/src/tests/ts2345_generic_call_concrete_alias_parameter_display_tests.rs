@@ -441,7 +441,7 @@ both(0, { p: 1, q: 8 });
 }
 
 #[test]
-#[ignore = "known pre-existing residual (red on main before the arm-wise display too): a generic alias-application arm (`u: U | Box<T>`) — tsc 7.0.2 reports TS2345 with target `Box<number> | U`; tsz routes the fresh object literal through the excess-property check and reports TS2353 against `Box<number>` alone. Owner: argument excess-property vs assignability routing for mixed-union parameters, not the display gateway."]
+#[ignore = "routing half fixed (no more TS2353 against `Box<number>` alone — see `ts2353_union_arm_excess_routing_tests`), but post-#17789 the discriminant-pinned elaboration anchors a bare property leaf (`Type '8' is not assignable to type '4'.`) where tsc 7.0.2 keeps the TS2345 head with the instantiated `Box<number> | U` target. Owner: relation failure reason / checkTypes elaboration frame for union targets — same owner as `mixed_union_head_carries_best_arm_property_elaboration`."]
 fn generic_alias_application_arm_keeps_application_spelling() {
     let messages = ts2345_messages(
         r#"
