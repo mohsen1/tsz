@@ -235,8 +235,12 @@ const q: Q = { on: undefined, cb: "s" };
 // vacuously-matching arm.
 // ---------------------------------------------------------------------------
 
+/// The excess-property arm-selection residual noted when this fence was
+/// first pinned (TS2353 misrouted against the non-declaring `{ z: string }`
+/// arm) is resolved by #17801's excess-property-known-ness fix, which runs
+/// known-ness against the pre-narrow union instead of the narrowed member —
+/// re-verified passing on current `main`.
 #[test]
-#[ignore = "pre-existing excess-property arm-selection residual (unchanged by the discriminant-include fix): the TS2353 check reports 'p' against the non-declaring '{ z: string }' arm where tsc emits the outer TS2322 with the matched arm's q chain. Owner: object-literal excess-property routing for union targets — the same owner as the #17770 TS2353-vs-TS2345 ignored residual in ts2345_generic_call_concrete_alias_parameter_display_tests."]
 fn extra_object_arm_reports_matched_arm_not_excess_against_vacuous_arm() {
     let source = r#"
 const x: { p: 1; q: 4 } | { p: 2; q: 8 } | { z: string } = { p: 1, q: 8 };

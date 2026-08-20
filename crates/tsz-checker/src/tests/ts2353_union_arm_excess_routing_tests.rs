@@ -71,16 +71,14 @@ both({ p: 1, q: 8 });
     );
 }
 
-/// Pinned residual (oracle-verified shape, deliberately out of scope): tsc
-/// 7.0.2 reports the TS2345 HEAD against the full union with the
+/// tsc 7.0.2 reports the TS2345 HEAD against the full union with the
 /// `Types of property 'q'` elaboration beneath it — `hasExcessProperties`'
 /// per-property `checkTypes` loop reports under the outer relation error when
-/// the reduced target is still a union. tsz anchors a bare property leaf.
-/// Owner: the relation-failure/checkTypes half for union targets (same owner
-/// as the best-arm elaboration residual in
-/// `ts2345_generic_call_concrete_alias_parameter_display_tests`).
+/// the reduced target is still a union. This head shape (previously a pinned
+/// residual: tsz anchored a bare property leaf instead) is now produced as a
+/// side effect of #17798's discriminant-include-walk fix and #17801's
+/// excess-property routing fix — re-verified passing on current `main`.
 #[test]
-#[ignore = "tsz anchors a property-leaf TS2322 where tsc 7.0.2 keeps the TS2345 head + `Types of property 'q'` elaboration for a reduced target that is still a union"]
 fn concrete_call_oracle_head_shape() {
     let diags = code_messages(
         r#"
