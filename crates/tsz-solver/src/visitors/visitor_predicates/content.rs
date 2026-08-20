@@ -455,6 +455,52 @@ fn resolution_path_contains_matching(
     })
 }
 
+/// Whether `unknown` occurs at an instantiation-transparent position of
+/// `root`: the root itself, union or intersection members, `Application` type
+/// arguments, tuple elements, or `Array`/`ReadonlyType`/`NoInfer` element
+/// positions.
+///
+/// Unlike [`contains_type_by_id`], this walk does NOT enter object members,
+/// callable signatures, lazy references, or deferred type-level operations.
+/// `unknown` declared inside a named type's member (`{ value: unknown }`) is
+/// committed, user-written structure; `unknown` at an instantiation position
+/// (`Wrap<unknown>`, `unknown | A`) marks an uninformative inference product.
+/// Callers use this to decide whether a contextual type is concrete enough to
+/// drive a generic call's return-type adoption. The member-descending walk is
+/// also representation-dependent for that decision — a `Lazy` boundary hides
+/// the same `unknown` member a materialized shape exposes — which this
+/// position-bounded walk avoids.
+pub fn contains_unknown_at_instantiation_positions(types: &dyn TypeDatabase, root: TypeId) -> bool {
+    let mut visited = FxHashSet::default();
+    let mut stack = vec![root];
+    while let Some(current) = stack.pop() {
+        if current == TypeId::UNKNOWN {
+            return true;
+        }
+        if !visited.insert(current) {
+            continue;
+        }
+        match types.lookup(current) {
+            Some(TypeData::Union(list_id) | TypeData::Intersection(list_id)) => {
+                stack.extend(types.type_list(list_id).iter().copied());
+            }
+            Some(TypeData::Application(app_id)) => {
+                stack.extend(types.type_application(app_id).args.iter().copied());
+            }
+            Some(TypeData::Tuple(list_id)) => {
+                stack.extend(types.tuple_list(list_id).iter().map(|elem| elem.type_id));
+            }
+            Some(
+                TypeData::Array(inner) | TypeData::ReadonlyType(inner) | TypeData::NoInfer(inner),
+            ) => {
+                stack.push(inner);
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
 /// Check if a type transitively contains a specific `TypeId`.
 ///
 /// This is more efficient than `collect_referenced_types(…).contains(&target)`

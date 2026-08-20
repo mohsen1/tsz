@@ -104,6 +104,19 @@ pub(crate) fn contains_type_by_id(db: &dyn TypeDatabase, type_id: TypeId, target
     tsz_solver::contains_type_by_id(db, type_id, target)
 }
 
+/// Whether `unknown` occurs at an instantiation-transparent position of the
+/// type (itself, union/intersection members, application type arguments,
+/// tuple/array elements) — see
+/// [`tsz_solver::contains_unknown_at_instantiation_positions`]. Unlike the
+/// deep [`contains_type_by_id`] walk, this does not enter object members, so
+/// a declared `unknown` member does not make a contextual type non-concrete.
+pub(crate) fn contains_unknown_at_instantiation_positions(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> bool {
+    tsz_solver::contains_unknown_at_instantiation_positions(db, type_id)
+}
+
 /// Whether a generic call's resolved return type is still *unresolved* — it
 /// mentions a type parameter, an `infer` placeholder, or `unknown`.
 pub(crate) fn return_type_is_unresolved(db: &dyn TypeDatabase, type_id: TypeId) -> bool {

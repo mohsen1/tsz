@@ -1513,10 +1513,23 @@ impl<'a> CheckerState<'a> {
                     .iter()
                     .copied()
                     .any(|arg| self.is_callback_like_argument(arg));
+                // `unknown` only disqualifies the contextual return type when
+                // it sits at an instantiation position (`Wrap<unknown>`,
+                // `unknown | A`, the type itself) — there it marks an
+                // uninformative inference product. A declared `unknown`
+                // *member* (e.g. `interface V { value: unknown }` behind
+                // `Readonly<V>`) is committed user-written structure, and the
+                // deep member walk is also representation-dependent: a `Lazy`
+                // member boundary hides the same `unknown` that a materialized
+                // shape exposes, so the same written contextual type would
+                // flip this gate depending on which interned form arrives.
                 let contextual_return_is_concrete =
                     !common::contains_type_parameters(self.ctx.types, ctx_type)
                         && !common::contains_infer_types(self.ctx.types, ctx_type)
-                        && !common::contains_type_by_id(self.ctx.types, ctx_type, TypeId::UNKNOWN);
+                        && !common::contains_unknown_at_instantiation_positions(
+                            self.ctx.types,
+                            ctx_type,
+                        );
                 // Whether every argument's actual type is compatible with the
                 // parameter type implied by the contextual-return substitution.
                 // Shared by every override below: a type parameter that a

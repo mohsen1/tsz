@@ -594,7 +594,8 @@ pub use content::{
     contains_type_by_id, contains_type_matching, contains_type_parameter_binder,
     contains_type_parameter_identity_shallow, contains_type_parameter_named,
     contains_type_parameter_named_shallow, contains_type_parameters,
-    free_decl_scoped_type_parameter_origins_in, free_type_parameter_ids_in,
-    mapped_context_references_type_param_binder, mapped_context_references_type_param_named,
-    references_any_type_param_named, references_type_param_outside_id_set,
+    contains_unknown_at_instantiation_positions, free_decl_scoped_type_parameter_origins_in,
+    free_type_parameter_ids_in, mapped_context_references_type_param_binder,
+    mapped_context_references_type_param_named, references_any_type_param_named,
+    references_type_param_outside_id_set,
 };

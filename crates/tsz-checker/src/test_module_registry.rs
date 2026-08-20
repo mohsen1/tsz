@@ -245,6 +245,8 @@ mod constructor_argument_type_parameter_target_elaboration_tests;
 mod contextual_callback_shadowed_type_param_tests;
 #[path = "tests/contextual_new_relation_routing_arch_tests.rs"]
 mod contextual_new_relation_routing_arch_tests;
+#[path = "tests/contextual_return_unknown_member_concreteness_tests.rs"]
+mod contextual_return_unknown_member_concreteness_tests;
 #[path = "tests/contextual_return_wrapper_tests.rs"]
 mod contextual_return_wrapper_tests;
 #[path = "tests/cross_file_class_instance_publication_tests.rs"]

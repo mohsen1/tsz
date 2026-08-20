@@ -39,7 +39,8 @@ pub(crate) use super::containment_queries::{
     contains_generic_indexed_access_surface, contains_generic_type_parameters,
     contains_index_access_type, contains_infer_types, contains_keyof_type,
     contains_lazy_or_recursive, contains_never_type, contains_this_type, contains_type_by_id,
-    contains_type_parameter_named, contains_type_parameters, has_deferred_conditional_member,
+    contains_type_parameter_named, contains_type_parameters,
+    contains_unknown_at_instantiation_positions, has_deferred_conditional_member,
     references_any_type_param_named, return_type_is_unresolved, type_contains_undefined,
     union_of_bare_lazy_def_ids, walk_referenced_types,
 };
