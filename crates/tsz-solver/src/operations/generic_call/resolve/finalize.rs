@@ -176,6 +176,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             first_direct_primitive_mismatch,
             saw_deferred_arg,
         } = args;
+        // tsc's `inference.isFixed` set for this call. Recomputed here from the
+        // (stable) AST masks and declared parameter types so a nested Round-2
+        // resolution between the mark site and finalization cannot perturb it.
+        // Issue #17710.
+        let contextually_fixed = self.contextually_fixed_type_params(func, arg_types);
         let aggregate_rest_type_params = func
             .type_params
             .iter()
@@ -693,9 +698,12 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                                 // element) or for a parameter not at the return's top level
                                 // is widened to its primitive, as before.
                                 let db = self.interner.as_type_database();
-                                let preserve = self
-                                    .type_param_preserves_inferred_literal(func, tp.name)
-                                    && !infer_ctx.all_candidates_from_array_elements(var);
+                                let preserve = self.type_param_preserves_inferred_literal(
+                                    func,
+                                    tp.name,
+                                    contextually_fixed.as_ref(),
+                                ) && !infer_ctx
+                                    .all_candidates_from_array_elements(var);
                                 if preserve {
                                     ty
                                 } else {

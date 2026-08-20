@@ -84,6 +84,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             .iter()
             .copied()
             .any(|arg| self.is_contextually_sensitive(arg));
+
+        // tsc's `inference.isFixed` set (recomputed at the finalize site). #17710.
+        let contextually_fixed = self.contextually_fixed_type_params(func, arg_types);
         // Check argument count BEFORE type inference
         // This prevents false positive TS2554 errors for generic functions with optional/rest params
         let (min_args, max_args) = self.arg_count_bounds(&func.params, &func.type_params);
@@ -227,16 +230,15 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 self.defaulted_placeholders.insert(placeholder_id);
             }
 
-            // Mirror tsc's `widenLiteralTypes` gate (checker.ts ~26595): when the
-            // type parameter is inferred purely from top-level positions and
-            // occurs at the top level of the return type, fresh literal candidates
-            // must NOT be widened. This preserves literal inferences such as
-            // `T = 'a'` so a conditional / `Exclude` parameter referencing the type
-            // parameter reduces to its real form (e.g. `'a' extends 'a' ? never :
-            // 'a'` -> `never`); a forbidden argument then reaches a `never`
-            // parameter and is rejected (TS2345). Inference from a nested position
-            // (callback return, array element, …) still widens.
-            if self.type_param_preserves_inferred_literal(func, tp.name) {
+            // Mirror tsc's `widenLiteralTypes` gate: a fresh literal candidate for
+            // a type parameter at the top level of the return type is not widened
+            // when the parameter is unfixed / contextually pinned / conditional-
+            // reducing. See `type_param_preserves_inferred_literal`.
+            if self.type_param_preserves_inferred_literal(
+                func,
+                tp.name,
+                contextually_fixed.as_ref(),
+            ) {
                 infer_ctx.mark_top_level_in_return_type_unfixed(var);
             }
         }

@@ -296,3 +296,99 @@ take(() => 3);
         "argument context",
     );
 }
+
+// --- tsc's `inference.isFixed` half of the widen gate, WITHOUT a contextual
+// --- type on the call (issue #17710 residual B). The call's result is revealed
+// --- through a following literal-typed binding, so the call itself is inferred
+// --- with no expected type: preservation must come from the parameter being
+// --- unfixed, not from a contextual pin. Binder names vary from the witnesses.
+
+/// An *unfixed* top-level-in-return type parameter keeps its literal even with
+/// no contextual type on the call: `relay`'s callback is fully annotated, so it
+/// is not context-sensitive and never fixes `V`. tsc infers `V := 1`, so the
+/// later `const pinned: 1 = relayed` is clean. Was a TS2322 false positive
+/// (tsz widened `V` to `number`) before #17710.
+#[test]
+fn unfixed_return_param_keeps_literal_without_contextual_type() {
+    assert_clean(
+        r#"
+declare function relay<V>(sink: (value: V) => void, seed: V): V;
+const relayed = relay((value: number) => {}, 1);
+const pinned: 1 = relayed;
+"#,
+        "unfixed param, no contextual type",
+    );
+}
+
+/// Negative control: a context-sensitive callback (unannotated parameter) whose
+/// contextual signature mentions the return-position parameter *fixes* it, so
+/// its fresh literal candidate still widens even with no contextual type on the
+/// call. tsc infers `B := number`, so `const pinned: 1 = combined` errors.
+#[test]
+fn context_sensitive_callback_fixes_and_widens_without_contextual_type() {
+    assert_single_message_contains(
+        r#"
+declare function combine<A, B>(first: A, transform: (input: A) => B, second: B): B;
+const combined = combine(2, (input) => 1, 1);
+const pinned: 1 = combined;
+"#,
+        2322,
+        &["Type 'number' is not assignable to type '1'."],
+        "context-sensitive callback fixes the parameter",
+    );
+}
+
+/// Negative control (`literalTypes2.ts` `g8` shape, renamed, revealed without a
+/// contextual type): a context-sensitive callback that consumes and returns the
+/// parameter fixes it, so the result is genuinely `number`.
+#[test]
+fn context_sensitive_identity_callback_widens_without_contextual_type() {
+    assert_single_message_contains(
+        r#"
+declare function fold<S>(seed: S, step: (acc: S) => S): S;
+const folded = fold(1, acc => acc);
+const pinned: 1 = folded;
+"#,
+        2322,
+        &["Type 'number' is not assignable to type '1'."],
+        "context-sensitive identity callback fixes the parameter",
+    );
+}
+
+/// Negative control: the return-position parameter occurs only *nested* — as a
+/// callback's own return (`cb: (a: T) => U`), never as a direct `y: U` argument
+/// — so its fresh literal is not top-level and still widens even though nothing
+/// fixes it. `foo2(1, function <Z>(a: Z) { return '' })` infers `U := string`,
+/// so the generic callback relates to `(a: number) => string` and there is no
+/// error (a callback-return-only literal must not be pinned to `""`).
+#[test]
+fn nested_only_return_param_widens_without_contextual_type() {
+    assert_clean(
+        r#"
+declare function foo2<T, U>(x: T, cb: (a: T) => U): U;
+var r4 = foo2(1, function <Z>(a: Z) { return '' });
+"#,
+        "nested-only return param widens",
+    );
+}
+
+/// Living TODO (issue #17710 residual): two direct top-level literal arguments
+/// for an unfixed return parameter should infer their union unwidened
+/// (`f<T>(x: T, y: T): T; f(1, 2)` -> `1 | 2`, oracle-verified). tsz still
+/// widens to `number` here because the multi-candidate resolution runs through
+/// the `best_common_type` combination branch, which collapses fresh literals
+/// before the `skip_literal_widening` gate is consulted. Distinct from the
+/// callback-shaped cases above and left for a follow-up that teaches the
+/// combination branch the same gate. Drop the `#[ignore]` when fixing.
+#[test]
+#[ignore = "residual: best_common_type combination branch widens before the gate (#17710)"]
+fn unfixed_return_param_keeps_literal_union_without_contextual_type() {
+    assert_clean(
+        r#"
+declare function choose<T>(first: T, second: T): T;
+const chosen = choose(1, 2);
+const pinned: 1 | 2 = chosen;
+"#,
+        "unfixed param, two direct literal candidates",
+    );
+}

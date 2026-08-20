@@ -988,7 +988,7 @@ impl<'a> CheckerState<'a> {
                     None,
                     None,
                 )
-            } else if generic_inference_arg_markers.any_set() {
+            } else if generic_inference_arg_markers.requires_arg_source_path() {
                 self.resolve_call_with_checker_adapter_and_arg_sources(
                     callee_type_for_call,
                     &generic_inference_arg_types,
@@ -1161,7 +1161,7 @@ impl<'a> CheckerState<'a> {
                     None,
                     None,
                 )
-            } else if retry_arg_markers.any_set() {
+            } else if retry_arg_markers.requires_arg_source_path() {
                 self.resolve_call_with_checker_adapter_and_arg_sources(
                     callee_type_for_call,
                     &retry_generic_arg_types,

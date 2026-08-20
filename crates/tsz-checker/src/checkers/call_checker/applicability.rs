@@ -49,6 +49,25 @@ impl CallArgSourceMarkers<'_> {
                 .iter()
                 .any(|mask| mask.iter().any(|&u| u))
     }
+
+    /// Whether generic call resolution must take the arg-source-aware path.
+    ///
+    /// It runs when any marker is set, and additionally whenever a
+    /// callback-shaped argument is present — even a fully annotated one, whose
+    /// per-parameter mask is non-empty but all-`false`. Forwarding those aligned
+    /// masks lets the solver distinguish "reliably no context-sensitive
+    /// argument" from "no information" when applying tsc's `isFixed` literal-
+    /// widen gate (a fresh literal for an *unfixed* top-level-in-return type
+    /// parameter is not widened). The plain adapter is the arg-source adapter
+    /// with empty slices, so forwarding an all-`false` mask is behavior-neutral
+    /// apart from enabling that gate. Issue #17710.
+    pub(crate) fn requires_arg_source_path(&self) -> bool {
+        self.any_set()
+            || self
+                .callback_param_unannotated
+                .iter()
+                .any(|mask| !mask.is_empty())
+    }
 }
 
 impl<'a> CheckerState<'a> {

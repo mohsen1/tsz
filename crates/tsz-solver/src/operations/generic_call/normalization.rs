@@ -382,15 +382,112 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     /// level of the return type and flows into a conditional / `Exclude`
     /// parameter that can reduce to `never`. Every other shape keeps its prior
     /// (widening) behavior. Generalizing to tsc's full model is a follow-up.
+    /// The set of type parameters this call's context-sensitive arguments *fix*
+    /// (tsc's `inference.isFixed`), or `None` when the information is not
+    /// reliably available for this call shape.
+    ///
+    /// tsc fixes a type parameter when contextually typing a context-sensitive
+    /// argument (a function/arrow expression written with an unannotated
+    /// parameter) walks over a reference to it. The argument's contextual
+    /// signature is its declared parameter type, so a type parameter is fixed
+    /// iff some context-sensitive argument's declared parameter type mentions
+    /// it — in either the callback's own parameter or return position.
+    ///
+    /// Context-sensitivity is read from the checker-supplied per-argument
+    /// unannotated-parameter masks (`arg_callback_param_unannotated`, the same
+    /// AST-level signal `tsc`'s `isContextSensitive` uses), not from the
+    /// already-typed argument, whose parameter types may already carry the
+    /// call's own placeholders. The masks are only populated for the simple
+    /// aligned argument case (`args.len() == arg_types.len()`); a spread shifts
+    /// the per-argument positions, so this returns `None` there and the caller
+    /// falls back to its prior (widening) behavior rather than guess.
+    ///
+    /// This drives the `getCovariantInference` widen gate: a fresh literal
+    /// candidate for a top-level-in-return type parameter is widened only when
+    /// the parameter is fixed. Computed from stable inputs (the AST masks and
+    /// the declared parameter types), so it can be recomputed at any point in
+    /// the call's resolution without a nested resolution clobbering shared
+    /// state. Issue #17710.
+    pub(super) fn contextually_fixed_type_params(
+        &self,
+        func: &FunctionShape,
+        arg_types: &[TypeId],
+    ) -> Option<FxHashSet<tsz_common::Atom>> {
+        let masks = &self.arg_callback_param_unannotated;
+        // Masks are aligned one-per-argument only in the non-spread case; an
+        // empty/short mask list means "no reliable information".
+        if masks.len() != arg_types.len() {
+            return None;
+        }
+        let mut fixed: FxHashSet<tsz_common::Atom> = FxHashSet::default();
+        if func.type_params.is_empty() {
+            return Some(fixed);
+        }
+        for (arg_index, mask) in masks.iter().enumerate() {
+            // A function/arrow argument is context-sensitive when it has at
+            // least one unannotated parameter. Non-callback arguments carry an
+            // empty mask and are never context-sensitive.
+            if !mask.iter().any(|&unannotated| unannotated) {
+                continue;
+            }
+            // Map the argument to its parameter: aligned by index, falling back
+            // to a trailing rest parameter for arguments past the fixed arity.
+            let Some(param) = func
+                .params
+                .get(arg_index)
+                .or_else(|| func.params.last().filter(|p| p.rest))
+            else {
+                continue;
+            };
+            for tp in &func.type_params {
+                if !fixed.contains(&tp.name)
+                    && crate::visitor::contains_type_parameter_named(
+                        self.interner.as_type_database(),
+                        param.type_id,
+                        tp.name,
+                    )
+                {
+                    fixed.insert(tp.name);
+                }
+            }
+        }
+        Some(fixed)
+    }
+
     pub(super) fn type_param_preserves_inferred_literal(
         &mut self,
         func: &FunctionShape,
         tp_name: tsz_common::Atom,
+        contextually_fixed: Option<&FxHashSet<tsz_common::Atom>>,
     ) -> bool {
         if !self.type_param_at_top_level_through_aliases(func.return_type, tp_name) {
             return false;
         }
         if self.contextual_return_type_pins_literal(func, tp_name) {
+            return true;
+        }
+        // tsc's `getCovariantInference` widen gate (`checker.ts`): a fresh
+        // literal candidate for a type parameter at the top level of the return
+        // type is widened only when `inference.isFixed` — set by contextually
+        // typing a context-sensitive argument whose declared signature mentions
+        // the parameter. An *unfixed* top-level-in-return parameter keeps its
+        // literal, so `g3<U>(cb: (a: U) => void, y: U): U; g3((a: number) => {},
+        // 1)` infers `U := 1`, matching tsc. A parameter fixed by a context-
+        // sensitive callback (`pair(2, a => 1, 1)`, `g8(1, x => x)`) is not
+        // marked here and still widens. When the fixed set is unavailable
+        // (spread arguments), fall through to the narrower conditional-parameter
+        // gate below so behavior is unchanged for that shape.
+        //
+        // The parameter must also occur as a *direct* naked argument (`y: U`):
+        // tsc sets `inference.topLevel` only for a candidate inferred at such a
+        // depth-1 position, so a literal that reaches the parameter solely
+        // through a callback return (`foo2<T, U>(x: T, cb: (a: T) => U): U;
+        // foo2(1, function <Z>(a: Z) { return '' })` infers `U := string`) still
+        // widens. Issue #17710.
+        if let Some(contextually_fixed) = contextually_fixed
+            && !contextually_fixed.contains(&tp_name)
+            && self.type_param_appears_as_direct_naked_argument(func, tp_name)
+        {
             return true;
         }
         let param_types: Vec<TypeId> = func.params.iter().map(|p| p.type_id).collect();
@@ -400,6 +497,24 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 param_type,
                 tp_name,
             ) && self.type_reduces_via_conditional(param_type)
+        })
+    }
+
+    /// Whether `tp_name` occurs as a *direct*, top-level naked parameter of the
+    /// call — a parameter whose declared type is exactly the bare type parameter
+    /// (`y: U`), rather than only appearing nested inside a callback or container
+    /// (`cb: (a: T) => U`). tsc's `inference.topLevel` is set only for a
+    /// candidate inferred at such a depth-1 position, so a literal that reaches
+    /// the parameter solely through a nested position widens even when the
+    /// parameter is unfixed. Issue #17710.
+    fn type_param_appears_as_direct_naked_argument(
+        &self,
+        func: &FunctionShape,
+        tp_name: tsz_common::Atom,
+    ) -> bool {
+        func.params.iter().any(|param| {
+            crate::type_param_info(self.interner.as_type_database(), param.type_id)
+                .is_some_and(|info| info.name == tp_name)
         })
     }
 
