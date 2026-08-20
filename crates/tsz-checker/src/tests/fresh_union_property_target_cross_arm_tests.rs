@@ -312,13 +312,11 @@ const g: G = { kind: "a", n: 2 };
     assert_eq!(diag.message_text, "Type '2' is not assignable to type '1'.");
 }
 
-/// Pinned residual (oracle-verified divergence, deliberately out of scope):
-/// the outer fold's HEAD widens a nested object property's literal
-/// (`v: { x: number; }`) where tsc preserves it (`v: { x: 9; }`) — the
-/// fresh-literal display surface preservation is per top-level property and
-/// does not recurse into nested object properties.
+/// The outer fold's HEAD preserves a nested object property's literal
+/// (`v: { x: 9; }`) like tsc: the nested render recurses with the target's
+/// own per-property type as its contextual target (#17782; adjacent matrix in
+/// `fresh_union_fold_head_nested_literal_display_tests.rs`).
 #[test]
-#[ignore = "tsz head renders 'v: { x: number; }' where tsc 7.0.2 renders 'v: { x: 9; }' — nested literal display preservation residual"]
 fn outer_fold_head_preserves_nested_literal_display() {
     let diag = single_diag(
         r#"

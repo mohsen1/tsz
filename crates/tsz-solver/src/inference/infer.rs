@@ -104,15 +104,22 @@ pub(crate) struct InferenceCandidate {
     /// the `any`-taint path) but the `#17282` Round-1-fix restore treats it as
     /// non-divergent, since it carries no real inference evidence.
     pub(crate) from_unannotated_callback_param: bool,
+    /// Candidate seeded from the call's own literal contextual type as a
+    /// low-priority `ReturnType` hint (`const r: 5 = h(() => 7, 0)`). Excluded
+    /// from covariant same-base literal unioning so a callback/argument union
+    /// (`0 | 7`) does not absorb the contextual literal (`0 | 5 | 7`), matching
+    /// tsc, which drops the contextual candidate once argument candidates exist.
+    pub(crate) from_contextual_return_hint: bool,
 }
 
 #[derive(Copy, Clone, Debug, Default)]
-struct CandidateContext {
-    from_object_property: bool,
-    from_index_signature: bool,
-    object_property_index: Option<u32>,
-    object_property_name: Option<Atom>,
-    source_is_fresh: bool,
+pub(crate) struct CandidateContext {
+    pub(crate) from_object_property: bool,
+    pub(crate) from_index_signature: bool,
+    pub(crate) object_property_index: Option<u32>,
+    pub(crate) object_property_name: Option<Atom>,
+    pub(crate) source_is_fresh: bool,
+    pub(crate) from_contextual_return_hint: bool,
 }
 
 /// Value stored for each inference variable root.
@@ -376,6 +383,20 @@ pub(crate) struct InferenceContext<'a> {
     /// `(a: number) => number` for `f<T,U>(x: T, cb: (a: T) => U, y: U)` called
     /// as `f(1, function(a){return ''}, 1)`).
     pub(crate) top_level_in_return_type_unfixed: FxHashSet<InferenceVar>,
+    /// Inference vars that a callback parameter of the call's signature is
+    /// typed by — i.e. the type variable appears as a callback parameter's type
+    /// (`foo<T>(a: (x: T) => T, …)`), so a context-sensitive callback argument
+    /// contextually types its own parameter with this variable. tsc's
+    /// same-priority "first wins" rule for two `ReturnType` callback-return
+    /// candidates (#17553) applies only when the parameter is inferred purely
+    /// from the callbacks' *returns* (`k<T>(a: () => T, b: () => T)`). When the
+    /// same variable is also fixed contravariantly by the callbacks' parameters,
+    /// tsc does not first-wins-pin it from one callback and reject the other; it
+    /// leaves the variable to the combination (union) path and accepts the call.
+    /// This set records that contravariant callback-parameter occurrence
+    /// (populated by the parameter-position contravariant matcher) so resolution
+    /// can disable the return-type first-wins rule for these variables (#17761).
+    pub(crate) vars_typed_by_callback_parameter: FxHashSet<InferenceVar>,
     /// Inference variables whose corresponding type parameter occurs at the
     /// top level of the signature's return type (through unions, intersections,
     /// alias applications, and shallow conditional branches), with no further
@@ -501,6 +522,7 @@ impl<'a> InferenceContext<'a> {
             infer_depth: 0,
             infer_visited: FxHashSet::default(),
             top_level_in_return_type_unfixed: FxHashSet::default(),
+            vars_typed_by_callback_parameter: FxHashSet::default(),
             top_level_in_return_type: FxHashSet::default(),
             contextually_fixed_vars: FxHashSet::default(),
             vars_with_substituted_candidates: FxHashSet::default(),
@@ -536,6 +558,7 @@ impl<'a> InferenceContext<'a> {
             infer_depth: 0,
             infer_visited: FxHashSet::default(),
             top_level_in_return_type_unfixed: FxHashSet::default(),
+            vars_typed_by_callback_parameter: FxHashSet::default(),
             top_level_in_return_type: FxHashSet::default(),
             contextually_fixed_vars: FxHashSet::default(),
             vars_with_substituted_candidates: FxHashSet::default(),
@@ -911,19 +934,8 @@ impl<'a> InferenceContext<'a> {
                 continue;
             }
             candidates.push(InferenceCandidate {
-                type_id: candidate.type_id,
                 priority: InferencePriority::Circular,
-                is_fresh_literal: candidate.is_fresh_literal,
-                from_object_property: candidate.from_object_property,
-                from_index_signature: candidate.from_index_signature,
-                object_property_index: candidate.object_property_index,
-                object_property_name: candidate.object_property_name,
-                source_is_type_annotation: candidate.source_is_type_annotation,
-                from_array_element: candidate.from_array_element,
-                from_top_level_naked: candidate.from_top_level_naked,
-                at_top_level_of_walk: candidate.at_top_level_of_walk,
-                from_readonly_source: candidate.from_readonly_source,
-                from_unannotated_callback_param: candidate.from_unannotated_callback_param,
+                ..candidate
             });
         }
 
@@ -1449,6 +1461,22 @@ impl<'a> InferenceContext<'a> {
         self.add_candidate_with_context(var, ty, priority, CandidateContext::default());
     }
 
+    /// Seed the call's own literal contextual type as a covariant hint candidate
+    /// (see `InferenceCandidate::from_contextual_return_hint`), flagged so
+    /// covariant same-base literal unioning can exclude it.
+    pub fn add_contextual_return_hint_candidate(
+        &mut self,
+        var: InferenceVar,
+        ty: TypeId,
+        priority: InferencePriority,
+    ) {
+        let context = CandidateContext {
+            from_contextual_return_hint: true,
+            ..CandidateContext::default()
+        };
+        self.add_candidate_with_context(var, ty, priority, context);
+    }
+
     /// Add a contravariant inference candidate for a variable.
     /// Used when the type parameter appears in a contravariant position
     /// (e.g., function parameter types). When only `contra_candidates` exist
@@ -1504,6 +1532,7 @@ impl<'a> InferenceContext<'a> {
             at_top_level_of_walk: self.candidate_at_top_level_of_walk,
             from_readonly_source: self.candidate_is_from_readonly_source(ty),
             from_unannotated_callback_param,
+            from_contextual_return_hint: false,
         };
         self.table.union_value(
             root,
@@ -1611,6 +1640,7 @@ impl<'a> InferenceContext<'a> {
             at_top_level_of_walk: self.candidate_at_top_level_of_walk,
             from_readonly_source: self.candidate_is_from_readonly_source(ty),
             from_unannotated_callback_param: false,
+            from_contextual_return_hint: context.from_contextual_return_hint,
         };
         if self.collects_contra_candidates() {
             // In contravariant context (e.g., callback parameter structural
@@ -1661,7 +1691,7 @@ impl<'a> InferenceContext<'a> {
             | ((self.parameter_recovery_mode as u8) << 3)
     }
 
-    fn candidate_is_from_readonly_source(&self, ty: TypeId) -> bool {
+    pub(crate) fn candidate_is_from_readonly_source(&self, ty: TypeId) -> bool {
         self.in_readonly_source_context || self.type_is_readonly_array_like(ty)
     }
 

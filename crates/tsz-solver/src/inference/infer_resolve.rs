@@ -18,8 +18,9 @@ use crate::visitor::is_literal_type;
 use rustc_hash::FxHashSet;
 use tsz_common::interner::Atom;
 
-/// The literal-widening halves of tsc `getCovariantInference`'s
-/// `widenLiteralTypes` gate, threaded into candidate resolution together.
+/// Per-variable resolution flags threaded into candidate resolution together.
+/// The first two are the literal-widening halves of tsc
+/// `getCovariantInference`'s `widenLiteralTypes` gate.
 #[derive(Clone, Copy)]
 pub(super) struct LiteralWideningPolicy {
     /// The contextual-pin / conditional-parameter mark
@@ -30,6 +31,11 @@ pub(super) struct LiteralWideningPolicy {
     /// signature's return type and was never fixed for contextual typing
     /// (`root_preserves_return_position_literals`).
     pub(super) preserve_return_position_literals: bool,
+    /// The variable is typed by a callback parameter (`(x: T) => …`), so the
+    /// return-type "first wins" pin is disabled and disjoint callback-return
+    /// candidates take the combination path (`vars_typed_by_callback_parameter`,
+    /// #17761).
+    pub(super) disable_return_type_first_wins: bool,
 }
 
 impl<'a> InferenceContext<'a> {
@@ -596,6 +602,9 @@ impl<'a> InferenceContext<'a> {
                     skip_literal_widening,
                     preserve_return_position_literals: self
                         .root_preserves_return_position_literals(root),
+                    disable_return_type_first_wins: self
+                        .vars_typed_by_callback_parameter
+                        .contains(&root),
                 },
                 spread_rest_mode,
             );
@@ -688,6 +697,7 @@ impl<'a> InferenceContext<'a> {
         let LiteralWideningPolicy {
             skip_literal_widening,
             preserve_return_position_literals,
+            disable_return_type_first_wins,
         } = widening_policy;
         let filtered = self.filter_candidates_by_priority(candidates);
         tracing::trace!(
@@ -709,29 +719,75 @@ impl<'a> InferenceContext<'a> {
         if filtered_no_never.is_empty() {
             return TypeId::NEVER;
         }
-        // The contextual-literal pin (`top_level_in_return_type_unfixed`) is
-        // decided from the contextual type alone, at marking time, before any
-        // candidate exists. That matches `tsc` while the fresh literal
-        // candidates agree — `pair<T, U>(x: T, cb: (a: T) => U, y: U): U` called
-        // as `pair(2, (a) => 1, 1)` contributes `1` at both sites, and `U := 1`
-        // is the pinned answer.
+        // tsc's `getSupertypeOrUnion` unions covariant candidates that are
+        // literals of a single base type (`literalTypesWithSameBaseType` ->
+        // `getUnionType`) instead of collapsing to one priority winner or
+        // widening them to their base. tsz records a directly-passed callback's
+        // return inference at `ReturnType` priority and a naked argument at
+        // `NakedTypeVariable`, so without this the priority filter drops the
+        // lower-priority candidate (`h<U>(fn: () => U, init: U)` called
+        // `h(() => 5, 0)` resolves `U = 0` rather than `0 | 5`) and the
+        // `ReturnType` combination branch widens two callback candidates
+        // (`k<T>(a: () => T, b: () => T)` called `k(() => 1, () => 2)` resolves
+        // `T = number` rather than `1 | 2`).
         //
-        // It does not match once they disagree. For
-        // `h<U>(fn: () => U, init: U): U` called as `const r: 5 = h(() => 5, 0)`,
-        // `tsc` 7.0.2 answers `U = 0 | 5`: it preserves the literals AND
-        // combines them. tsz has no combination here — priority filtering
-        // selects one candidate — so honouring the pin keeps `U := 0` and then
-        // rejects the callback's `5` at its own inference site, a second
-        // diagnostic `tsc` never emits. Widening instead yields `U := number`,
-        // which is still not `tsc`'s type but is wrong only in the type text of
-        // one diagnostic rather than in the diagnostic count.
+        // Fire only when the call pins these literals (`skip_literal_widening`,
+        // e.g. a literal contextual type on a naked return-position parameter,
+        // #17710) and every argument-derived candidate across all priorities is a
+        // literal of one base type. This runs BEFORE the pin-agreement narrowing
+        // below (#17778): that narrowing widens a *disagreeing* pinned literal to
+        // its base to avoid a spurious second diagnostic, but when the disagreeing
+        // literals share a base tsc combines them instead, which this returns.
+        // The pure-naked same-base case (`f<T>(a: T, b: T)` -> `1 | 2`) already
+        // reaches the same union through `get_common_supertype_for_inference`;
+        // this extends it across the priority levels tsz separates.
         //
-        // Note this reads the raw candidate set, not `filtered_no_never`:
-        // priority filtering has already discarded the losing literal by this
-        // point, so the disagreement is invisible downstream.
-        //
-        // Combining candidates under a literal contextual type is the real
-        // parity gap, tracked in #17773.
+        // Contextual-return-hint candidates (`from_contextual_return_hint`) are
+        // excluded: tsc seeds the call's own literal contextual type as a
+        // covariant candidate but drops it once genuine argument candidates
+        // arrive, so `const r: 5 = h(() => 7, 0)` unions the callback/argument
+        // literals `0 | 7` rather than folding in the contextual `5`. When the
+        // contextual value also comes from an argument, that argument's own
+        // (unflagged) candidate keeps the value (`h(() => 5, 0)` -> `0 | 5`).
+        if skip_literal_widening {
+            let arg_literal_candidates: Vec<TypeId> = candidates
+                .iter()
+                .filter(|candidate| {
+                    candidate.type_id != TypeId::NEVER && !candidate.from_contextual_return_hint
+                })
+                .map(|candidate| candidate.type_id)
+                .collect();
+            if arg_literal_candidates.len() > 1
+                && arg_literal_candidates
+                    .iter()
+                    .all(|&ty| is_literal_type(self.interner, ty))
+            {
+                let base = self.get_base_type(arg_literal_candidates[0]);
+                if base.is_some()
+                    && arg_literal_candidates
+                        .iter()
+                        .all(|&ty| self.get_base_type(ty) == base)
+                {
+                    let mut distinct: Vec<TypeId> =
+                        Vec::with_capacity(arg_literal_candidates.len());
+                    for &ty in &arg_literal_candidates {
+                        if !distinct.contains(&ty) {
+                            distinct.push(ty);
+                        }
+                    }
+                    if distinct.len() > 1 {
+                        return self.interner.union_from_slice(&distinct);
+                    }
+                }
+            }
+        }
+        // The union above already returned `tsc`'s combined type for the
+        // same-base disagreeing case (#17773); the residual is a base mismatch,
+        // where honouring either pin source keeps one literal and re-checks the
+        // other at its own inference site — a second diagnostic `tsc` never emits.
+        // Both pin sources therefore compose under this agreement condition
+        // (computed once over the raw candidate set, since priority filtering has
+        // already discarded the losing literal from `filtered_no_never`).
         let fresh_literal_candidates_agree = {
             let mut fresh_literals = candidates
                 .iter()
@@ -850,7 +906,8 @@ impl<'a> InferenceContext<'a> {
         // below (which also keys on `priority_implies_combination`): only fires
         // with 2+ ReturnType candidates that are all disjoint bare primitives
         // and none index-signature-sourced.
-        let return_type_disjoint_primitives_first_wins = filtered_no_never.len() > 1
+        let return_type_disjoint_primitives_first_wins = !disable_return_type_first_wins
+            && filtered_no_never.len() > 1
             && !has_index_signature_candidates
             && filtered_no_never
                 .first()

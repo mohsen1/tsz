@@ -373,6 +373,8 @@ mod fresh_const_array_mutable_assignment_tests;
 mod fresh_object_literal_array_like_union_drill_gate_tests;
 #[path = "tests/fresh_object_literal_union_literal_kind_display_tests.rs"]
 mod fresh_object_literal_union_literal_kind_display_tests;
+#[path = "tests/fresh_union_fold_head_nested_literal_display_tests.rs"]
+mod fresh_union_fold_head_nested_literal_display_tests;
 #[path = "tests/fresh_union_property_target_cross_arm_tests.rs"]
 mod fresh_union_property_target_cross_arm_tests;
 #[path = "tests/function_callee_spread_ts2556_tests.rs"]

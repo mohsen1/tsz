@@ -300,11 +300,19 @@ fn index_access_walk_step(db: &dyn TypeDatabase, obj: TypeId, idx: TypeId) -> Op
         // The object's constraint has no member at this index (`{ a: number }`
         // has no `[string]`), so `tsc`'s `getConstraintFromIndexedAccess`
         // returns nothing and the walk stops — do not leak the `any`/error
-        // that a missing member evaluates to as a spurious walk line.
+        // that a missing member evaluates to as a spurious walk line. A
+        // concrete-but-indexless object (no index signature at this key)
+        // doesn't reduce to `ANY`/`ERROR` here — `evaluate_index_access`
+        // reconstructs an unresolved `IndexAccess` over the same (non-generic)
+        // object instead, which displays as `any` once the checker's resolver
+        // forces it — so treat any still-unresolved `IndexAccess` result the
+        // same as the literal ANY/ERROR/UNKNOWN/NEVER case: no real progress,
+        // stop the walk.
         if !matches!(
             access,
             TypeId::ANY | TypeId::ERROR | TypeId::UNKNOWN | TypeId::NEVER
         ) && access != obj
+            && !matches!(db.lookup(access), Some(TypeData::IndexAccess(_, _)))
         {
             return Some(access);
         }
