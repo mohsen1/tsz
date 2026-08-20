@@ -8,10 +8,11 @@ use std::path::{Path, PathBuf};
 use crate::program::{CompilerOptions, EmittedFile, ProgramFile};
 use crate::source::{SourceText, Span};
 use crate::syntax::{
-    ArrowBody, BinaryOperator, Expression, ExpressionKind, FunctionDeclaration,
-    InterfaceDeclaration, KeywordType, Literal, ObjectProperty, Parameter, SourceUnit, Statement,
-    StatementKind, TypeAliasDeclaration, TypeNode, TypeNodeKind, TypeProperty, VariableDeclaration,
-    VariableKind,
+    AccessorKind, ArrowBody, BinaryOperator, ClassDeclaration, ClassMemberKind, ExportDeclaration,
+    Expression, ExpressionKind, FunctionDeclaration, ImportDeclaration, InterfaceDeclaration,
+    KeywordType, Literal, ObjectProperty, Parameter, SourceUnit, Statement, StatementKind,
+    SwitchClauseKind, TypeAliasDeclaration, TypeNode, TypeNodeKind, TypeProperty, UnaryOperator,
+    VariableDeclaration, VariableKind,
 };
 
 /// Emit the JavaScript product and, when requested, its declaration product.
@@ -127,11 +128,20 @@ impl<'a> Printer<'a> {
         let has_export = unit.statements.iter().any(statement_is_exported);
         for statement in &unit.statements {
             match &statement.kind {
+                StatementKind::Import(declaration) => {
+                    self.write_declaration_import(statement, declaration);
+                }
+                StatementKind::Export(declaration) => {
+                    self.write_declaration_export(statement, declaration);
+                }
                 StatementKind::Variable(declaration) => {
                     self.write_declaration_variable(declaration);
                 }
                 StatementKind::Function(declaration) => {
                     self.write_declaration_function(declaration);
+                }
+                StatementKind::Class(declaration) => {
+                    self.write_declaration_class(declaration);
                 }
                 StatementKind::TypeAlias(declaration) => {
                     self.write_declaration_type_alias(declaration);
@@ -140,6 +150,10 @@ impl<'a> Printer<'a> {
                     self.write_declaration_interface(declaration);
                 }
                 StatementKind::Return(_)
+                | StatementKind::If(_)
+                | StatementKind::Switch(_)
+                | StatementKind::Break(_)
+                | StatementKind::Continue(_)
                 | StatementKind::Block(_)
                 | StatementKind::Expression(_)
                 | StatementKind::Empty
@@ -153,11 +167,20 @@ impl<'a> Printer<'a> {
 
     fn write_javascript_statement(&mut self, statement: &Statement, top_level: bool) {
         match &statement.kind {
+            StatementKind::Import(declaration) => {
+                self.write_javascript_import(statement, declaration);
+            }
+            StatementKind::Export(declaration) => {
+                self.write_javascript_export(statement, declaration);
+            }
             StatementKind::Variable(declaration) => {
                 self.write_javascript_variable(declaration, top_level);
             }
             StatementKind::Function(declaration) => {
                 self.write_javascript_function(statement, declaration, top_level);
+            }
+            StatementKind::Class(declaration) => {
+                self.write_javascript_class(declaration, top_level);
             }
             // Type-only and unknown syntax has no safe JavaScript product.
             // Copying unknown source could leak TypeScript-only syntax.
@@ -170,6 +193,40 @@ impl<'a> Printer<'a> {
                     self.write_expression(expression, PREC_LOWEST);
                 }
                 self.output.push_str(";\n");
+            }
+            StatementKind::If(control_flow) => self.write_javascript_if(control_flow),
+            StatementKind::Switch(control_flow) => {
+                self.write_indent();
+                self.output.push_str("switch (");
+                self.write_expression(&control_flow.expression, PREC_LOWEST);
+                self.output.push_str(") {\n");
+                self.indent += 1;
+                for clause in &control_flow.clauses {
+                    self.write_indent();
+                    match &clause.kind {
+                        SwitchClauseKind::Case(expression) => {
+                            self.output.push_str("case ");
+                            self.write_expression(expression, PREC_LOWEST);
+                            self.output.push(':');
+                        }
+                        SwitchClauseKind::Default => self.output.push_str("default:"),
+                    }
+                    self.output.push('\n');
+                    self.indent += 1;
+                    for nested in &clause.statements {
+                        self.write_javascript_statement(nested, false);
+                    }
+                    self.indent = self.indent.saturating_sub(1);
+                }
+                self.indent = self.indent.saturating_sub(1);
+                self.write_indent();
+                self.output.push_str("}\n");
+            }
+            StatementKind::Break(jump) => {
+                self.write_jump_statement("break", jump.label.as_deref());
+            }
+            StatementKind::Continue(jump) => {
+                self.write_jump_statement("continue", jump.label.as_deref());
             }
             StatementKind::Block(statements) => {
                 self.write_indent();
@@ -186,6 +243,42 @@ impl<'a> Printer<'a> {
                 self.output.push_str(";\n");
             }
         }
+    }
+
+    fn write_javascript_if(&mut self, control_flow: &crate::syntax::IfStatement) {
+        self.write_indent();
+        self.output.push_str("if (");
+        self.write_expression(&control_flow.condition, PREC_LOWEST);
+        self.output.push(')');
+        self.write_control_flow_body(&control_flow.then_statement);
+        if let Some(else_statement) = &control_flow.else_statement {
+            self.write_indent();
+            self.output.push_str("else");
+            self.write_control_flow_body(else_statement);
+        }
+    }
+
+    fn write_control_flow_body(&mut self, statement: &Statement) {
+        if let StatementKind::Block(statements) = &statement.kind {
+            self.output.push(' ');
+            self.write_braced_statements(statements);
+            self.output.push('\n');
+        } else {
+            self.output.push('\n');
+            self.indent += 1;
+            self.write_javascript_statement(statement, false);
+            self.indent = self.indent.saturating_sub(1);
+        }
+    }
+
+    fn write_jump_statement(&mut self, keyword: &str, label: Option<&str>) {
+        self.write_indent();
+        self.output.push_str(keyword);
+        if let Some(label) = label {
+            self.output.push(' ');
+            self.output.push_str(label);
+        }
+        self.output.push_str(";\n");
     }
 
     fn write_javascript_variable(&mut self, declaration: &VariableDeclaration, top_level: bool) {
@@ -237,6 +330,337 @@ impl<'a> Printer<'a> {
         }
     }
 
+    fn write_javascript_import(&mut self, _statement: &Statement, declaration: &ImportDeclaration) {
+        let has_runtime_binding = declaration
+            .bindings
+            .iter()
+            .any(|binding| !binding.type_only);
+        if declaration.type_only || (!declaration.side_effect_only && !has_runtime_binding) {
+            return;
+        }
+        if self.module_format == ModuleFormat::EsModule {
+            self.write_esmodule_import(declaration);
+            return;
+        }
+        let module = quote_string(&declaration.module_specifier);
+        if declaration.side_effect_only {
+            self.write_indent();
+            self.output.push_str("require(");
+            self.output.push_str(&module);
+            self.output.push_str(");\n");
+            return;
+        }
+        for binding in declaration
+            .bindings
+            .iter()
+            .filter(|binding| !binding.type_only)
+        {
+            self.write_indent();
+            self.output
+                .push_str(self.runtime_variable_kind(VariableKind::Const));
+            self.output.push(' ');
+            self.output.push_str(&binding.local);
+            self.output.push_str(" = require(");
+            self.output.push_str(&module);
+            self.output.push(')');
+            if !binding.namespace {
+                self.output.push('.');
+                self.output
+                    .push_str(binding.imported.as_deref().unwrap_or("default"));
+            }
+            self.output.push_str(";\n");
+        }
+    }
+
+    fn write_esmodule_import(&mut self, declaration: &ImportDeclaration) {
+        self.write_indent();
+        self.output.push_str("import ");
+        if declaration.side_effect_only {
+            self.write_module_specifier(&declaration.module_specifier, declaration.module_span);
+            self.output.push_str(";\n");
+            return;
+        }
+
+        // The parser records the default clause first. A future syntax-model
+        // port should distinguish it explicitly from `{ default as local }`.
+        let default_binding = declaration.bindings.first().filter(|binding| {
+            !binding.type_only
+                && !binding.namespace
+                && binding.imported.as_deref() == Some("default")
+        });
+        let namespace_binding = declaration
+            .bindings
+            .iter()
+            .find(|binding| !binding.type_only && binding.namespace);
+        let named_bindings = declaration
+            .bindings
+            .iter()
+            .enumerate()
+            .filter(|(index, binding)| {
+                !binding.type_only
+                    && !binding.namespace
+                    && !(default_binding.is_some() && *index == 0)
+            })
+            .map(|(_, binding)| binding)
+            .collect::<Vec<_>>();
+
+        let mut wrote_clause = false;
+        if let Some(binding) = default_binding {
+            self.output.push_str(&binding.local);
+            wrote_clause = true;
+        }
+        if let Some(binding) = namespace_binding {
+            if wrote_clause {
+                self.output.push_str(", ");
+            }
+            self.output.push_str("* as ");
+            self.output.push_str(&binding.local);
+        } else if !named_bindings.is_empty() {
+            if wrote_clause {
+                self.output.push_str(", ");
+            }
+            self.output.push_str("{ ");
+            for (index, binding) in named_bindings.iter().enumerate() {
+                if index != 0 {
+                    self.output.push_str(", ");
+                }
+                let imported = binding.imported.as_deref().unwrap_or(&binding.local);
+                self.output.push_str(imported);
+                if imported != binding.local {
+                    self.output.push_str(" as ");
+                    self.output.push_str(&binding.local);
+                }
+            }
+            self.output.push_str(" }");
+        }
+        self.output.push_str(" from ");
+        self.write_module_specifier(&declaration.module_specifier, declaration.module_span);
+        self.output.push_str(";\n");
+    }
+
+    fn write_javascript_export(&mut self, _statement: &Statement, declaration: &ExportDeclaration) {
+        if declaration.type_only
+            || (!declaration.export_all
+                && declaration.assignment.is_none()
+                && declaration
+                    .specifiers
+                    .iter()
+                    .all(|specifier| specifier.type_only))
+        {
+            return;
+        }
+        if self.module_format == ModuleFormat::EsModule {
+            self.write_esmodule_export(declaration);
+            return;
+        }
+        if let Some(assignment) = &declaration.assignment {
+            self.write_indent();
+            self.output.push_str(if declaration.default_export {
+                "exports.default = "
+            } else {
+                "module.exports = "
+            });
+            self.write_expression(assignment, PREC_ASSIGNMENT);
+            self.output.push_str(";\n");
+            return;
+        }
+        if declaration.export_all {
+            if let Some(module) = &declaration.module_specifier {
+                self.write_indent();
+                self.output.push_str("Object.assign(exports, require(");
+                self.output.push_str(&quote_string(module));
+                self.output.push_str("));\n");
+            }
+            return;
+        }
+        for specifier in declaration
+            .specifiers
+            .iter()
+            .filter(|specifier| !specifier.type_only)
+        {
+            self.write_indent();
+            self.output.push_str("exports.");
+            self.output.push_str(&specifier.exported);
+            self.output.push_str(" = ");
+            if let Some(module) = &declaration.module_specifier {
+                self.output.push_str("require(");
+                self.output.push_str(&quote_string(module));
+                self.output.push_str(").");
+            }
+            self.output.push_str(&specifier.local);
+            self.output.push_str(";\n");
+        }
+    }
+
+    fn write_esmodule_export(&mut self, declaration: &ExportDeclaration) {
+        if let Some(assignment) = &declaration.assignment {
+            if !declaration.default_export {
+                return;
+            }
+            self.write_indent();
+            self.output.push_str("export default ");
+            self.write_expression(assignment, PREC_ASSIGNMENT);
+            self.output.push_str(";\n");
+            return;
+        }
+
+        self.write_indent();
+        if declaration.export_all {
+            self.output.push_str("export *");
+            if let Some(specifier) = declaration
+                .specifiers
+                .iter()
+                .find(|specifier| !specifier.type_only)
+            {
+                self.output.push_str(" as ");
+                self.output.push_str(&specifier.exported);
+            }
+        } else {
+            self.output.push_str("export { ");
+            let mut first = true;
+            for specifier in declaration
+                .specifiers
+                .iter()
+                .filter(|specifier| !specifier.type_only)
+            {
+                if !first {
+                    self.output.push_str(", ");
+                }
+                first = false;
+                self.output.push_str(&specifier.local);
+                if specifier.local != specifier.exported {
+                    self.output.push_str(" as ");
+                    self.output.push_str(&specifier.exported);
+                }
+            }
+            self.output.push_str(" }");
+        }
+        if let (Some(module), Some(span)) = (
+            declaration.module_specifier.as_deref(),
+            declaration.module_span,
+        ) {
+            self.output.push_str(" from ");
+            self.write_module_specifier(module, span);
+        }
+        self.output.push_str(";\n");
+    }
+
+    fn write_javascript_class(&mut self, declaration: &ClassDeclaration, top_level: bool) {
+        if declaration.declared {
+            return;
+        }
+        self.write_indent();
+        if top_level && declaration.exported && self.module_format == ModuleFormat::EsModule {
+            self.output.push_str("export ");
+            if declaration.default_export {
+                self.output.push_str("default ");
+            }
+        }
+        self.output.push_str("class ");
+        self.output.push_str(&declaration.name);
+        if let Some(base) = &declaration.extends {
+            self.output.push_str(" extends ");
+            self.write_heritage_type(base);
+        }
+        self.output.push_str(" {\n");
+        self.indent += 1;
+        for member in &declaration.members {
+            if member.modifiers.declared
+                || member.modifiers.abstract_member
+                || matches!(
+                    &member.kind,
+                    ClassMemberKind::Constructor {
+                        has_body: false,
+                        ..
+                    } | ClassMemberKind::Method {
+                        has_body: false,
+                        ..
+                    }
+                )
+            {
+                continue;
+            }
+            self.write_indent();
+            if member.modifiers.static_member {
+                self.output.push_str("static ");
+            }
+            match &member.kind {
+                ClassMemberKind::Constructor {
+                    parameters, body, ..
+                } => {
+                    self.output.push_str("constructor");
+                    self.write_runtime_parameters(parameters);
+                    self.output.push(' ');
+                    self.write_braced_statements(body);
+                    self.output.push('\n');
+                }
+                ClassMemberKind::Property { initializer, .. } => {
+                    self.write_property_name(&member.name, member.name_span);
+                    if let Some(initializer) = initializer {
+                        self.output.push_str(" = ");
+                        self.write_expression(initializer, PREC_ASSIGNMENT);
+                    }
+                    self.output.push_str(";\n");
+                }
+                ClassMemberKind::Method {
+                    parameters,
+                    body,
+                    accessor,
+                    ..
+                } => {
+                    if member.modifiers.async_member {
+                        self.output.push_str("async ");
+                    }
+                    if let Some(accessor) = accessor {
+                        self.output.push_str(match accessor {
+                            AccessorKind::Get => "get ",
+                            AccessorKind::Set => "set ",
+                        });
+                    }
+                    self.write_property_name(&member.name, member.name_span);
+                    self.write_runtime_parameters(parameters);
+                    self.output.push(' ');
+                    self.write_braced_statements(body);
+                    self.output.push('\n');
+                }
+            }
+        }
+        self.indent = self.indent.saturating_sub(1);
+        self.write_indent();
+        self.output.push_str("}\n");
+        if top_level && declaration.exported && self.module_format == ModuleFormat::CommonJs {
+            self.write_commonjs_export(&declaration.name);
+        }
+    }
+
+    fn write_raw_statement(&mut self, statement: &Statement) {
+        self.write_indent();
+        self.output
+            .push_str(self.source.slice(statement.span).trim());
+        self.output.push('\n');
+    }
+
+    fn write_module_specifier(&mut self, value: &str, span: Span) {
+        let raw = self.source.slice(span).trim();
+        if is_quoted(raw) {
+            self.output.push_str(raw);
+        } else {
+            self.output.push_str(&quote_string(value));
+        }
+    }
+
+    fn write_heritage_type(&mut self, ty: &TypeNode) {
+        match &ty.kind {
+            TypeNodeKind::Reference { name, .. } => self.output.push_str(name),
+            TypeNodeKind::Parenthesized(inner) => {
+                self.output.push('(');
+                self.write_heritage_type(inner);
+                self.output.push(')');
+            }
+            _ => self.output.push_str(self.source.slice(ty.span).trim()),
+        }
+    }
+
     fn write_braced_statements(&mut self, statements: &[Statement]) {
         self.output.push_str("{\n");
         self.indent += 1;
@@ -253,6 +677,9 @@ impl<'a> Printer<'a> {
         for (index, parameter) in parameters.iter().enumerate() {
             if index != 0 {
                 self.output.push_str(", ");
+            }
+            if parameter.rest {
+                self.output.push_str("...");
             }
             self.output.push_str(&parameter.name);
         }
@@ -317,12 +744,26 @@ impl<'a> Printer<'a> {
                 }
                 self.output.push(')');
             }
+            ExpressionKind::New { callee, arguments } => {
+                self.output.push_str("new ");
+                self.write_expression(callee, PREC_POSTFIX);
+                self.output.push('(');
+                for (index, argument) in arguments.iter().enumerate() {
+                    if index != 0 {
+                        self.output.push_str(", ");
+                    }
+                    self.write_expression(argument, PREC_LOWEST);
+                }
+                self.output.push(')');
+            }
             ExpressionKind::Member { object, name, .. } => {
                 self.write_expression(object, PREC_POSTFIX);
                 self.output.push('.');
                 self.output.push_str(name);
             }
-            ExpressionKind::Arrow { parameters, body } => {
+            ExpressionKind::Arrow {
+                parameters, body, ..
+            } => {
                 self.write_arrow(parameters, body);
             }
             ExpressionKind::Binary {
@@ -335,6 +776,13 @@ impl<'a> Printer<'a> {
                 self.output.push_str(binary_operator_text(*operator));
                 self.output.push(' ');
                 self.write_expression(right, precedence.saturating_add(1));
+            }
+            ExpressionKind::Unary { operator, operand } => {
+                self.output.push_str(unary_operator_text(*operator));
+                if unary_operator_is_keyword(*operator) {
+                    self.output.push(' ');
+                }
+                self.write_expression(operand, PREC_UNARY);
             }
             ExpressionKind::Assignment { left, right } => {
                 self.write_expression(left, PREC_ASSIGNMENT.saturating_add(1));
@@ -412,10 +860,27 @@ impl<'a> Printer<'a> {
         match &expression.kind {
             ExpressionKind::Arrow { .. } | ExpressionKind::Assignment { .. } => PREC_ASSIGNMENT,
             ExpressionKind::Binary { operator, .. } => match operator {
+                BinaryOperator::LogicalOr | BinaryOperator::NullishCoalesce => PREC_LOGICAL_OR,
+                BinaryOperator::LogicalAnd => PREC_LOGICAL_AND,
+                BinaryOperator::Equals
+                | BinaryOperator::NotEquals
+                | BinaryOperator::StrictEquals
+                | BinaryOperator::StrictNotEquals => PREC_EQUALITY,
+                BinaryOperator::LessThan
+                | BinaryOperator::LessThanEquals
+                | BinaryOperator::GreaterThan
+                | BinaryOperator::GreaterThanEquals
+                | BinaryOperator::In
+                | BinaryOperator::InstanceOf => PREC_RELATIONAL,
                 BinaryOperator::Add | BinaryOperator::Subtract => PREC_ADDITIVE,
-                BinaryOperator::Multiply | BinaryOperator::Divide => PREC_MULTIPLICATIVE,
+                BinaryOperator::Multiply | BinaryOperator::Divide | BinaryOperator::Remainder => {
+                    PREC_MULTIPLICATIVE
+                }
             },
-            ExpressionKind::Call { .. } | ExpressionKind::Member { .. } => PREC_POSTFIX,
+            ExpressionKind::Unary { .. } => PREC_UNARY,
+            ExpressionKind::Call { .. }
+            | ExpressionKind::New { .. }
+            | ExpressionKind::Member { .. } => PREC_POSTFIX,
             ExpressionKind::As { expression, .. } => self.expression_precedence(expression),
             ExpressionKind::Identifier { .. }
             | ExpressionKind::Literal(_)
@@ -501,6 +966,15 @@ impl<'a> Printer<'a> {
         self.output.push_str("interface ");
         self.output.push_str(&declaration.name);
         self.write_type_parameters(&declaration.type_parameters);
+        if !declaration.extends.is_empty() {
+            self.output.push_str(" extends ");
+            for (index, base) in declaration.extends.iter().enumerate() {
+                if index != 0 {
+                    self.output.push_str(", ");
+                }
+                self.write_type(base, TYPE_PREC_LOWEST);
+            }
+        }
         self.output.push_str(" {\n");
         self.indent += 1;
         for property in &declaration.properties {
@@ -513,11 +987,123 @@ impl<'a> Printer<'a> {
         self.output.push_str("}\n");
     }
 
+    fn write_declaration_import(
+        &mut self,
+        statement: &Statement,
+        _declaration: &ImportDeclaration,
+    ) {
+        self.write_raw_statement(statement);
+    }
+
+    fn write_declaration_export(&mut self, statement: &Statement, declaration: &ExportDeclaration) {
+        if declaration.assignment.is_none() {
+            self.write_raw_statement(statement);
+        }
+    }
+
+    fn write_declaration_class(&mut self, declaration: &ClassDeclaration) {
+        self.write_indent();
+        if declaration.exported {
+            self.output.push_str("export ");
+            if declaration.default_export {
+                self.output.push_str("default ");
+            }
+        }
+        self.output.push_str("declare class ");
+        self.output.push_str(&declaration.name);
+        self.write_type_parameters(&declaration.type_parameters);
+        if let Some(base) = &declaration.extends {
+            self.output.push_str(" extends ");
+            self.write_type(base, TYPE_PREC_LOWEST);
+        }
+        if !declaration.implements.is_empty() {
+            self.output.push_str(" implements ");
+            for (index, implemented) in declaration.implements.iter().enumerate() {
+                if index != 0 {
+                    self.output.push_str(", ");
+                }
+                self.write_type(implemented, TYPE_PREC_LOWEST);
+            }
+        }
+        self.output.push_str(" {\n");
+        self.indent += 1;
+        for member in &declaration.members {
+            self.write_indent();
+            if member.modifiers.private {
+                self.output.push_str("private ");
+            } else if member.modifiers.protected {
+                self.output.push_str("protected ");
+            } else if member.modifiers.public {
+                self.output.push_str("public ");
+            }
+            if member.modifiers.static_member {
+                self.output.push_str("static ");
+            }
+            if member.modifiers.readonly {
+                self.output.push_str("readonly ");
+            }
+            match &member.kind {
+                ClassMemberKind::Constructor { parameters, .. } => {
+                    self.output.push_str("constructor");
+                    self.write_declaration_parameters(parameters);
+                    self.output.push_str(";\n");
+                }
+                ClassMemberKind::Property {
+                    annotation,
+                    optional,
+                    ..
+                } => {
+                    self.write_property_name(&member.name, member.name_span);
+                    if *optional {
+                        self.output.push('?');
+                    }
+                    self.output.push_str(": ");
+                    if let Some(annotation) = annotation {
+                        self.write_type(annotation, TYPE_PREC_LOWEST);
+                    } else {
+                        self.output.push_str("unknown");
+                    }
+                    self.output.push_str(";\n");
+                }
+                ClassMemberKind::Method {
+                    type_parameters,
+                    parameters,
+                    return_type,
+                    accessor,
+                    ..
+                } => {
+                    if let Some(accessor) = accessor {
+                        self.output.push_str(match accessor {
+                            AccessorKind::Get => "get ",
+                            AccessorKind::Set => "set ",
+                        });
+                    }
+                    self.write_property_name(&member.name, member.name_span);
+                    self.write_type_parameters(type_parameters);
+                    self.write_declaration_parameters(parameters);
+                    self.output.push_str(": ");
+                    if let Some(return_type) = return_type {
+                        self.write_type(return_type, TYPE_PREC_LOWEST);
+                    } else {
+                        self.output.push_str("unknown");
+                    }
+                    self.output.push_str(";\n");
+                }
+            }
+        }
+        self.indent = self.indent.saturating_sub(1);
+        self.write_indent();
+        self.output.push_str("}\n");
+    }
+
     fn write_declaration_parameters(&mut self, parameters: &[Parameter]) {
         self.output.push('(');
         for (index, parameter) in parameters.iter().enumerate() {
             if index != 0 {
                 self.output.push_str(", ");
+            }
+            if parameter.rest {
+                self.output.push_str("...");
             }
             self.output.push_str(&parameter.name);
             if parameter.optional {
@@ -595,6 +1181,19 @@ impl<'a> Printer<'a> {
                 self.output.push_str(" => ");
                 self.write_type(return_type, TYPE_PREC_FUNCTION);
             }
+            TypeNodeKind::Constructor {
+                parameters,
+                return_type,
+                abstract_constructor,
+            } => {
+                if *abstract_constructor {
+                    self.output.push_str("abstract ");
+                }
+                self.output.push_str("new ");
+                self.write_declaration_parameters(parameters);
+                self.output.push_str(" => ");
+                self.write_type(return_type, TYPE_PREC_FUNCTION);
+            }
             TypeNodeKind::Reference {
                 name, arguments, ..
             } => {
@@ -610,9 +1209,86 @@ impl<'a> Printer<'a> {
                     self.output.push('>');
                 }
             }
+            TypeNodeKind::TypeQuery { name, .. } => {
+                self.output.push_str("typeof ");
+                self.output.push_str(name);
+            }
+            TypeNodeKind::Infer {
+                name, constraint, ..
+            } => {
+                self.output.push_str("infer ");
+                self.output.push_str(name);
+                if let Some(constraint) = constraint {
+                    self.output.push_str(" extends ");
+                    self.write_type(constraint, TYPE_PREC_LOWEST);
+                }
+            }
+            TypeNodeKind::Predicate {
+                parameter,
+                asserts,
+                ty,
+                ..
+            } => {
+                if *asserts {
+                    self.output.push_str("asserts ");
+                }
+                self.output.push_str(parameter);
+                if let Some(ty) = ty {
+                    self.output.push_str(" is ");
+                    self.write_type(ty, TYPE_PREC_LOWEST);
+                }
+            }
             TypeNodeKind::KeyOf(operand) => {
                 self.output.push_str("keyof ");
                 self.write_type(operand, TYPE_PREC_PREFIX);
+            }
+            TypeNodeKind::Readonly(operand) => {
+                self.output.push_str("readonly ");
+                self.write_type(operand, TYPE_PREC_PREFIX);
+            }
+            TypeNodeKind::Conditional {
+                check_type,
+                extends_type,
+                true_type,
+                false_type,
+            } => {
+                self.write_type(check_type, TYPE_PREC_FUNCTION);
+                self.output.push_str(" extends ");
+                self.write_type(extends_type, TYPE_PREC_FUNCTION);
+                self.output.push_str(" ? ");
+                self.write_type(true_type, TYPE_PREC_LOWEST);
+                self.output.push_str(" : ");
+                self.write_type(false_type, TYPE_PREC_LOWEST);
+            }
+            TypeNodeKind::Mapped {
+                parameter,
+                constraint,
+                name_type,
+                value_type,
+                readonly,
+                optional,
+                ..
+            } => {
+                self.output.push_str("{ ");
+                if let Some(readonly) = readonly {
+                    self.output
+                        .push_str(if *readonly { "readonly " } else { "-readonly " });
+                }
+                self.output.push('[');
+                self.output.push_str(parameter);
+                self.output.push_str(" in ");
+                self.write_type(constraint, TYPE_PREC_LOWEST);
+                if let Some(name_type) = name_type {
+                    self.output.push_str(" as ");
+                    self.write_type(name_type, TYPE_PREC_LOWEST);
+                }
+                self.output.push(']');
+                if let Some(optional) = optional {
+                    self.output.push_str(if *optional { "?" } else { "-?" });
+                }
+                self.output.push_str(": ");
+                self.write_type(value_type, TYPE_PREC_LOWEST);
+                self.output.push_str("; }");
             }
             TypeNodeKind::IndexedAccess { object, index } => {
                 self.write_type(object, TYPE_PREC_POSTFIX);
@@ -661,9 +1337,12 @@ impl<'a> Printer<'a> {
 
     fn write_property_name(&mut self, name: &str, span: Span) {
         let raw = self.source.slice(span).trim();
-        if raw_is_property_name(raw) {
+        if raw_is_property_name(raw) || is_private_identifier(raw) {
             self.output.push_str(raw);
-        } else if is_identifier_name(name) || is_numeric_property_name(name) {
+        } else if is_identifier_name(name)
+            || is_numeric_property_name(name)
+            || is_private_identifier(name)
+        {
             self.output.push_str(name);
         } else {
             self.output.push_str(&quote_string(name));
@@ -696,12 +1375,27 @@ impl<'a> Printer<'a> {
 
     fn statement_is_runtime_export(&self, statement: &Statement) -> bool {
         match &statement.kind {
+            StatementKind::Export(declaration) => {
+                !declaration.type_only
+                    && (declaration.export_all
+                        || declaration.assignment.is_some()
+                        || declaration
+                            .specifiers
+                            .iter()
+                            .any(|specifier| !specifier.type_only))
+            }
+            StatementKind::Class(declaration) => declaration.exported && !declaration.declared,
             StatementKind::Variable(declaration) => declaration.exported,
             StatementKind::Function(declaration) => {
                 declaration.exported && !declaration.declared && self.function_has_body(statement)
             }
-            StatementKind::TypeAlias(_)
+            StatementKind::Import(_)
+            | StatementKind::TypeAlias(_)
             | StatementKind::Interface(_)
+            | StatementKind::If(_)
+            | StatementKind::Switch(_)
+            | StatementKind::Break(_)
+            | StatementKind::Continue(_)
             | StatementKind::Return(_)
             | StatementKind::Block(_)
             | StatementKind::Expression(_)
@@ -723,10 +1417,15 @@ impl<'a> Printer<'a> {
 
 const PREC_LOWEST: u8 = 0;
 const PREC_ASSIGNMENT: u8 = 1;
-const PREC_ADDITIVE: u8 = 2;
-const PREC_MULTIPLICATIVE: u8 = 3;
-const PREC_POSTFIX: u8 = 4;
-const PREC_PRIMARY: u8 = 5;
+const PREC_LOGICAL_OR: u8 = 2;
+const PREC_LOGICAL_AND: u8 = 3;
+const PREC_EQUALITY: u8 = 4;
+const PREC_RELATIONAL: u8 = 5;
+const PREC_ADDITIVE: u8 = 6;
+const PREC_MULTIPLICATIVE: u8 = 7;
+const PREC_UNARY: u8 = 8;
+const PREC_POSTFIX: u8 = 9;
+const PREC_PRIMARY: u8 = 10;
 
 const TYPE_PREC_LOWEST: u8 = 0;
 const TYPE_PREC_FUNCTION: u8 = 1;
@@ -738,16 +1437,22 @@ const TYPE_PREC_PRIMARY: u8 = 6;
 
 const fn type_precedence(ty: &TypeNode) -> u8 {
     match &ty.kind {
-        TypeNodeKind::Function { .. } => TYPE_PREC_FUNCTION,
+        TypeNodeKind::Function { .. }
+        | TypeNodeKind::Constructor { .. }
+        | TypeNodeKind::Predicate { .. }
+        | TypeNodeKind::Conditional { .. } => TYPE_PREC_FUNCTION,
         TypeNodeKind::Union(_) => TYPE_PREC_UNION,
         TypeNodeKind::Intersection(_) => TYPE_PREC_INTERSECTION,
-        TypeNodeKind::KeyOf(_) => TYPE_PREC_PREFIX,
+        TypeNodeKind::KeyOf(_) | TypeNodeKind::Readonly(_) => TYPE_PREC_PREFIX,
         TypeNodeKind::Array(_) | TypeNodeKind::IndexedAccess { .. } => TYPE_PREC_POSTFIX,
         TypeNodeKind::Keyword(_)
         | TypeNodeKind::Literal(_)
         | TypeNodeKind::Tuple(_)
         | TypeNodeKind::Object(_)
         | TypeNodeKind::Reference { .. }
+        | TypeNodeKind::TypeQuery { .. }
+        | TypeNodeKind::Infer { .. }
+        | TypeNodeKind::Mapped { .. }
         | TypeNodeKind::Parenthesized(_)
         | TypeNodeKind::Missing => TYPE_PREC_PRIMARY,
     }
@@ -755,11 +1460,17 @@ const fn type_precedence(ty: &TypeNode) -> u8 {
 
 const fn statement_is_exported(statement: &Statement) -> bool {
     match &statement.kind {
+        StatementKind::Import(_) | StatementKind::Export(_) => true,
         StatementKind::Variable(declaration) => declaration.exported,
         StatementKind::Function(declaration) => declaration.exported,
+        StatementKind::Class(declaration) => declaration.exported,
         StatementKind::TypeAlias(declaration) => declaration.exported,
         StatementKind::Interface(declaration) => declaration.exported,
-        StatementKind::Return(_)
+        StatementKind::If(_)
+        | StatementKind::Switch(_)
+        | StatementKind::Break(_)
+        | StatementKind::Continue(_)
+        | StatementKind::Return(_)
         | StatementKind::Block(_)
         | StatementKind::Expression(_)
         | StatementKind::Empty
@@ -781,7 +1492,41 @@ const fn binary_operator_text(operator: BinaryOperator) -> &'static str {
         BinaryOperator::Subtract => "-",
         BinaryOperator::Multiply => "*",
         BinaryOperator::Divide => "/",
+        BinaryOperator::Remainder => "%",
+        BinaryOperator::LessThan => "<",
+        BinaryOperator::LessThanEquals => "<=",
+        BinaryOperator::GreaterThan => ">",
+        BinaryOperator::GreaterThanEquals => ">=",
+        BinaryOperator::Equals => "==",
+        BinaryOperator::NotEquals => "!=",
+        BinaryOperator::StrictEquals => "===",
+        BinaryOperator::StrictNotEquals => "!==",
+        BinaryOperator::LogicalAnd => "&&",
+        BinaryOperator::LogicalOr => "||",
+        BinaryOperator::NullishCoalesce => "??",
+        BinaryOperator::In => "in",
+        BinaryOperator::InstanceOf => "instanceof",
     }
+}
+
+const fn unary_operator_text(operator: UnaryOperator) -> &'static str {
+    match operator {
+        UnaryOperator::Plus => "+",
+        UnaryOperator::Minus => "-",
+        UnaryOperator::Not => "!",
+        UnaryOperator::BitwiseNot => "~",
+        UnaryOperator::TypeOf => "typeof",
+        UnaryOperator::Void => "void",
+        UnaryOperator::Delete => "delete",
+        UnaryOperator::Await => "await",
+    }
+}
+
+const fn unary_operator_is_keyword(operator: UnaryOperator) -> bool {
+    matches!(
+        operator,
+        UnaryOperator::TypeOf | UnaryOperator::Void | UnaryOperator::Delete | UnaryOperator::Await
+    )
 }
 
 const fn variable_kind_text(kind: VariableKind) -> &'static str {
@@ -804,6 +1549,8 @@ const fn keyword_type_text(keyword: KeywordType) -> &'static str {
         KeywordType::Number => "number",
         KeywordType::String => "string",
         KeywordType::BigInt => "bigint",
+        KeywordType::Object => "object",
+        KeywordType::Symbol => "symbol",
     }
 }
 
@@ -852,6 +1599,10 @@ fn is_declaration_source(path: &Path) -> bool {
 
 fn raw_is_property_name(raw: &str) -> bool {
     is_quoted(raw) || is_identifier_name(raw) || is_numeric_property_name(raw)
+}
+
+fn is_private_identifier(text: &str) -> bool {
+    text.strip_prefix('#').is_some_and(is_identifier_name)
 }
 
 fn is_quoted(text: &str) -> bool {
@@ -1013,7 +1764,7 @@ mod tests {
     }
 
     #[test]
-    fn emits_basic_commonjs_and_downlevels_block_scope() {
+    fn emits_basic_commonjs_at_the_ts7_default_target() {
         let file = program_file("value.ts", "export const value: number = 1;\n");
         let output = emit_file(&file, &CompilerOptions::default());
         assert_eq!(
@@ -1021,7 +1772,7 @@ mod tests {
             concat!(
                 "\"use strict\";\n",
                 "Object.defineProperty(exports, \"__esModule\", { value: true });\n",
-                "var value = 1;\n",
+                "const value = 1;\n",
                 "exports.value = value;\n",
             )
         );
@@ -1059,5 +1810,133 @@ mod tests {
         assert_eq!(output[1].path, Path::new("src/value.d.mts"));
         assert_eq!(output[0].text, "const value = 1;\nexport {};\n");
         assert_eq!(output[1].text, "declare const value: number;\nexport {};\n");
+    }
+
+    #[test]
+    fn emits_modern_module_classes_from_structured_nodes() {
+        let file = program_file(
+            "src/service.ts",
+            concat!(
+                "import { token } from \"./token\";\n",
+                "export class Service extends Base {\n",
+                "  value: number = token;\n",
+                "  constructor(value: number) { this.value = value; }\n",
+                "  static create(value: number): Service { return new Service(value); }\n",
+                "}\n",
+            ),
+        );
+        let options = CompilerOptions {
+            target: "es2022".to_string(),
+            module: "esnext".to_string(),
+            ..CompilerOptions::default()
+        };
+        let output = emit_file(&file, &options);
+        assert_eq!(
+            output[0].text,
+            concat!(
+                "import { token } from \"./token\";\n",
+                "export class Service extends Base {\n",
+                "    value = token;\n",
+                "    constructor(value) {\n",
+                "        this.value = value;\n",
+                "    }\n",
+                "    static create(value) {\n",
+                "        return new Service(value);\n",
+                "    }\n",
+                "}\n",
+            )
+        );
+    }
+
+    #[test]
+    fn erases_class_overload_signatures_but_keeps_empty_implementations() {
+        let file = program_file(
+            "service.ts",
+            concat!(
+                "class Service {\n",
+                "  constructor(value: string);\n",
+                "  constructor() {}\n",
+                "  method(value: string): void;\n",
+                "  method() {}\n",
+                "}\n",
+            ),
+        );
+        let options = CompilerOptions {
+            target: "es2022".to_string(),
+            module: "esnext".to_string(),
+            ..CompilerOptions::default()
+        };
+        let output = emit_file(&file, &options);
+        assert_eq!(
+            output[0].text,
+            concat!(
+                "\"use strict\";\n",
+                "class Service {\n",
+                "    constructor() {\n",
+                "    }\n",
+                "    method() {\n",
+                "    }\n",
+                "}\n",
+            )
+        );
+    }
+
+    #[test]
+    fn rewrites_mixed_esm_clauses_and_assertions_from_structured_nodes() {
+        let file = program_file(
+            "module.ts",
+            concat!(
+                "import Default, { type Shape, live as renamed } from \"./dep\";\n",
+                "export { type Shape, renamed as exposed } from \"./dep\";\n",
+                "const value = [Default, renamed] as unknown;\n",
+                "export default (value as unknown);\n",
+            ),
+        );
+        let options = CompilerOptions {
+            target: "es2022".to_string(),
+            module: "esnext".to_string(),
+            ..CompilerOptions::default()
+        };
+        let output = emit_file(&file, &options);
+        assert_eq!(
+            output[0].text,
+            concat!(
+                "import Default, { live as renamed } from \"./dep\";\n",
+                "export { renamed as exposed } from \"./dep\";\n",
+                "const value = [Default, renamed];\n",
+                "export default value;\n",
+            )
+        );
+    }
+
+    #[test]
+    fn erases_non_runtime_class_fields_and_preserves_private_names() {
+        let file = program_file(
+            "model.ts",
+            concat!(
+                "abstract class Model {\n",
+                "  declare cached: string;\n",
+                "  abstract pending: number;\n",
+                "  #secret = 1;\n",
+                "  visible: number;\n",
+                "}\n",
+            ),
+        );
+        let options = CompilerOptions {
+            target: "es2022".to_string(),
+            module: "esnext".to_string(),
+            ..CompilerOptions::default()
+        };
+        let output = emit_file(&file, &options);
+        assert_eq!(
+            output[0].text,
+            concat!(
+                "\"use strict\";\n",
+                "class Model {\n",
+                "    #secret = 1;\n",
+                "    visible;\n",
+                "}\n",
+            )
+        );
     }
 }

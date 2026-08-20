@@ -11,6 +11,7 @@ pub mod program;
 pub mod semantics;
 pub mod service;
 pub mod source;
+pub mod standard_library;
 pub mod syntax;
 
 pub use program::{CompileOutput, Compiler, CompilerOptions, EmittedFile, SourceInput};

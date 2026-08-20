@@ -13,6 +13,7 @@ use crate::diagnostics::{Diagnostic, DiagnosticCategory, sort_and_deduplicate};
 use crate::emit::emit_file;
 use crate::semantics::{CheckResult, check_program};
 use crate::source::{DeclId, FileId, SourceText};
+use crate::standard_library::{StandardLibraryDeclaration, StandardLibraryEnvironment};
 use crate::syntax::{SourceUnit, parse_source};
 
 #[derive(Debug, Clone)]
@@ -36,6 +37,8 @@ impl SourceInput {
 pub struct CompilerOptions {
     pub strict: bool,
     pub no_implicit_any: bool,
+    pub no_lib: bool,
+    pub lib: Option<Vec<String>>,
     pub no_check: bool,
     pub no_emit: bool,
     pub no_emit_on_error: bool,
@@ -55,6 +58,8 @@ impl Default for CompilerOptions {
         Self {
             strict: false,
             no_implicit_any: false,
+            no_lib: false,
+            lib: None,
             no_check: false,
             no_emit: false,
             no_emit_on_error: false,
@@ -63,7 +68,7 @@ impl Default for CompilerOptions {
             source_map: false,
             inline_source_map: false,
             remove_comments: false,
-            target: "es5".to_string(),
+            target: "es2025".to_string(),
             module: "commonjs".to_string(),
             out_dir: None,
             declaration_dir: None,
@@ -83,6 +88,7 @@ pub struct Program {
     pub files: Vec<ProgramFile>,
     pub global_values: BTreeMap<String, Vec<DeclId>>,
     pub global_types: BTreeMap<String, Vec<DeclId>>,
+    pub standard_library: StandardLibraryEnvironment,
 }
 
 impl Program {
@@ -102,7 +108,23 @@ impl Program {
             Meaning::Value => &self.global_values,
             Meaning::Type => &self.global_types,
         };
-        table.get(name).and_then(|ids| ids.first().copied())
+        table
+            .get(name)
+            .and_then(|ids| ids.first().copied())
+            .or_else(|| self.standard_library.resolve(name, meaning))
+    }
+
+    #[must_use]
+    pub fn standard_library_declaration(&self, id: DeclId) -> Option<&StandardLibraryDeclaration> {
+        self.standard_library.declaration(id)
+    }
+
+    fn missing_essential_global_types(&self) -> Vec<&'static str> {
+        StandardLibraryEnvironment::essential_type_names()
+            .iter()
+            .copied()
+            .filter(|name| self.resolve_global(name, Meaning::Type).is_none())
+            .collect()
     }
 }
 
@@ -191,14 +213,26 @@ impl Compiler {
             bind_time += job.bind_time;
             files.push(job.file);
         }
+        let option_diagnostics = compiler_option_diagnostics(options);
+        let has_fatal_option_error = !option_diagnostics.is_empty();
+        diagnostics.extend(option_diagnostics);
         files.sort_by_key(|file| file.source.id);
-        let program = build_program(files);
+        let program = build_program(files, options);
+        let missing_essential_types = if diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.category == DiagnosticCategory::Error)
+        {
+            Vec::new()
+        } else {
+            program.missing_essential_global_types()
+        };
+        let has_missing_essential_types = !missing_essential_types.is_empty();
 
         let check_start = Instant::now();
         let CheckResult {
             diagnostics: semantic_diagnostics,
             type_count,
-        } = if options.no_check {
+        } = if options.no_check || has_missing_essential_types || has_fatal_option_error {
             CheckResult {
                 diagnostics: Vec::new(),
                 type_count: 0,
@@ -207,6 +241,11 @@ impl Compiler {
             check_program(&program, options)
         };
         let check_time = check_start.elapsed();
+        diagnostics.extend(
+            missing_essential_types
+                .into_iter()
+                .map(|name| Diagnostic::global(format!("Cannot find global type '{name}'."), 2318)),
+        );
         diagnostics.extend(semantic_diagnostics);
         sort_and_deduplicate(&mut diagnostics);
 
@@ -214,7 +253,10 @@ impl Compiler {
             .iter()
             .any(|diagnostic| diagnostic.category == DiagnosticCategory::Error);
         let emit_start = Instant::now();
-        let mut emitted_files = if options.no_emit || (has_errors && options.no_emit_on_error) {
+        let mut emitted_files = if options.no_emit
+            || has_fatal_option_error
+            || (has_errors && options.no_emit_on_error)
+        {
             Vec::new()
         } else {
             program
@@ -259,6 +301,34 @@ impl Compiler {
     }
 }
 
+fn compiler_option_diagnostics(options: &CompilerOptions) -> Vec<Diagnostic> {
+    let target = options.target.trim().to_ascii_lowercase();
+    let diagnostic = match target.as_str() {
+        "es3" => Some(Diagnostic::global(
+            "Option 'target=ES3' has been removed. Please remove it from your configuration."
+                .to_string(),
+            5108,
+        )),
+        "es5" => Some(Diagnostic::global(
+            "Option 'target=ES5' has been removed. Please remove it from your configuration."
+                .to_string(),
+            5108,
+        )),
+        "es6" | "es2015" | "es2016" | "es2017" | "es2018" | "es2019" | "es2020" | "es2021"
+        | "es2022" | "es2023" | "es2024" | "es2025" | "esnext" => None,
+        _ => Some(Diagnostic::global(
+            concat!(
+                "Argument for '--target' option must be: 'es6', 'es2015', 'es2016', ",
+                "'es2017', 'es2018', 'es2019', 'es2020', 'es2021', 'es2022', ",
+                "'es2023', 'es2024', 'es2025', 'esnext'."
+            )
+            .to_string(),
+            6046,
+        )),
+    };
+    diagnostic.into_iter().collect()
+}
+
 struct ParseBindJob {
     file: ProgramFile,
     diagnostics: Vec<Diagnostic>,
@@ -266,7 +336,7 @@ struct ParseBindJob {
     bind_time: Duration,
 }
 
-fn build_program(files: Vec<ProgramFile>) -> Program {
+fn build_program(files: Vec<ProgramFile>, options: &CompilerOptions) -> Program {
     let mut global_values: BTreeMap<String, Vec<DeclId>> = BTreeMap::new();
     let mut global_types: BTreeMap<String, Vec<DeclId>> = BTreeMap::new();
     for file in &files {
@@ -288,6 +358,7 @@ fn build_program(files: Vec<ProgramFile>) -> Program {
         files,
         global_values,
         global_types,
+        standard_library: StandardLibraryEnvironment::from_options(options),
     }
 }
 

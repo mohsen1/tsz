@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 use rustc_hash::FxHashMap;
 
 use crate::source::{DeclId, FileId, NodeId, Span};
-use crate::syntax::{FunctionDeclaration, SourceUnit, Statement, StatementKind};
+use crate::syntax::{ClassDeclaration, FunctionDeclaration, SourceUnit, Statement, StatementKind};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ScopeId(pub u32);
@@ -15,7 +15,9 @@ pub struct ScopeId(pub u32);
 pub enum DeclarationKind {
     Variable,
     Parameter,
+    Import,
     Function,
+    Class,
     TypeAlias,
     Interface,
 }
@@ -112,6 +114,28 @@ impl Binder {
     fn bind_statement(&mut self, statement: &Statement, scope: ScopeId) {
         self.scope_for_node.insert(statement.id, scope);
         match &statement.kind {
+            StatementKind::Import(declaration) => {
+                for binding in &declaration.bindings {
+                    if !binding.type_only {
+                        self.declare(
+                            scope,
+                            statement.id,
+                            &binding.local,
+                            binding.local_span,
+                            DeclarationKind::Import,
+                            Meaning::Value,
+                        );
+                    }
+                    self.declare(
+                        scope,
+                        statement.id,
+                        &binding.local,
+                        binding.local_span,
+                        DeclarationKind::Import,
+                        Meaning::Type,
+                    );
+                }
+            }
             StatementKind::Variable(declaration) => {
                 self.declare(
                     scope,
@@ -132,6 +156,25 @@ impl Binder {
                     Meaning::Value,
                 );
                 self.bind_function(statement.id, declaration, scope);
+            }
+            StatementKind::Class(declaration) => {
+                self.declare(
+                    scope,
+                    statement.id,
+                    &declaration.name,
+                    declaration.name_span,
+                    DeclarationKind::Class,
+                    Meaning::Value,
+                );
+                self.declare(
+                    scope,
+                    statement.id,
+                    &declaration.name,
+                    declaration.name_span,
+                    DeclarationKind::Class,
+                    Meaning::Type,
+                );
+                self.bind_class(statement.id, declaration, scope);
             }
             StatementKind::TypeAlias(declaration) => {
                 self.declare(
@@ -159,10 +202,58 @@ impl Binder {
                     self.bind_statement(nested, child);
                 }
             }
-            StatementKind::Return(_)
+            StatementKind::If(control_flow) => {
+                self.bind_statement(&control_flow.then_statement, scope);
+                if let Some(else_statement) = &control_flow.else_statement {
+                    self.bind_statement(else_statement, scope);
+                }
+            }
+            StatementKind::Switch(control_flow) => {
+                let child = self.new_scope(scope, statement.id);
+                self.scope_for_node.insert(statement.id, child);
+                for clause in &control_flow.clauses {
+                    for nested in &clause.statements {
+                        self.bind_statement(nested, child);
+                    }
+                }
+            }
+            StatementKind::Export(_)
+            | StatementKind::Break(_)
+            | StatementKind::Continue(_)
+            | StatementKind::Return(_)
             | StatementKind::Expression(_)
             | StatementKind::Empty
             | StatementKind::Unknown => {}
+        }
+    }
+
+    fn bind_class(&mut self, owner: NodeId, declaration: &ClassDeclaration, parent: ScopeId) {
+        let class_scope = self.new_scope(parent, owner);
+        self.scope_for_node.insert(owner, class_scope);
+        for member in &declaration.members {
+            let (parameters, body) = match &member.kind {
+                crate::syntax::ClassMemberKind::Constructor {
+                    parameters, body, ..
+                }
+                | crate::syntax::ClassMemberKind::Method {
+                    parameters, body, ..
+                } => (parameters.as_slice(), body.as_slice()),
+                crate::syntax::ClassMemberKind::Property { .. } => continue,
+            };
+            let member_scope = self.new_scope(class_scope, owner);
+            for parameter in parameters {
+                self.declare(
+                    member_scope,
+                    owner,
+                    &parameter.name,
+                    parameter.name_span,
+                    DeclarationKind::Parameter,
+                    Meaning::Value,
+                );
+            }
+            for statement in body {
+                self.bind_statement(statement, member_scope);
+            }
         }
     }
 

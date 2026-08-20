@@ -18,6 +18,7 @@ pub struct ParameterType {
     pub name: String,
     pub ty: TypeId,
     pub optional: bool,
+    pub rest: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -26,13 +27,56 @@ pub struct Signature {
     pub return_type: TypeId,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum DeferredLogicalOperator {
+    And,
+    Or,
+    Nullish,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum DeferredUnaryOperator {
+    Plus,
+    Minus,
+    BitwiseNot,
+    Await,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum DeferredType {
     Reference {
         declaration: DeclId,
         arguments: Vec<TypeId>,
     },
+    Value(DeclId),
+    Call(TypeId),
+    Property {
+        object: TypeId,
+        name: String,
+    },
+    Logical {
+        operator: DeferredLogicalOperator,
+        left: TypeId,
+        right: TypeId,
+    },
+    Unary {
+        operator: DeferredUnaryOperator,
+        operand: TypeId,
+    },
     KeyOf(TypeId),
+    Conditional {
+        check: TypeId,
+        extends: TypeId,
+        when_true: TypeId,
+        when_false: TypeId,
+    },
+    Mapped {
+        constraint: TypeId,
+        name_type: Option<TypeId>,
+        value: TypeId,
+        readonly: Option<bool>,
+        optional: Option<bool>,
+    },
     IndexedAccess {
         object: TypeId,
         index: TypeId,
@@ -52,6 +96,8 @@ pub enum TypeKind {
     Number,
     String,
     BigInt,
+    ObjectKeyword,
+    Symbol,
     LiteralBoolean(bool),
     LiteralNumber(String),
     LiteralString(String),
@@ -82,6 +128,8 @@ pub struct BuiltinTypes {
     pub number: TypeId,
     pub string: TypeId,
     pub bigint: TypeId,
+    pub object: TypeId,
+    pub symbol: TypeId,
 }
 
 #[derive(Debug)]
@@ -115,6 +163,8 @@ impl TypeStore {
                 number: TypeId(0),
                 string: TypeId(0),
                 bigint: TypeId(0),
+                object: TypeId(0),
+                symbol: TypeId(0),
             },
         };
         store.builtins = BuiltinTypes {
@@ -129,6 +179,8 @@ impl TypeStore {
             number: store.intern(TypeKind::Number),
             string: store.intern(TypeKind::String),
             bigint: store.intern(TypeKind::BigInt),
+            object: store.intern(TypeKind::ObjectKeyword),
+            symbol: store.intern(TypeKind::Symbol),
         };
         store
     }
@@ -205,6 +257,8 @@ impl TypeStore {
             TypeKind::Number => "number".to_string(),
             TypeKind::String => "string".to_string(),
             TypeKind::BigInt => "bigint".to_string(),
+            TypeKind::ObjectKeyword => "object".to_string(),
+            TypeKind::Symbol => "symbol".to_string(),
             TypeKind::LiteralBoolean(value) => value.to_string(),
             TypeKind::LiteralNumber(value) => value.clone(),
             TypeKind::LiteralString(value) => format!("\"{value}\""),
@@ -248,7 +302,11 @@ impl TypeStore {
                     .iter()
                     .map(|parameter| format!(
                         "{}{}: {}",
-                        parameter.name,
+                        if parameter.rest {
+                            format!("...{}", parameter.name)
+                        } else {
+                            parameter.name.clone()
+                        },
                         if parameter.optional { "?" } else { "" },
                         self.display_inner(parameter.ty, depth + 1)
                     ))
@@ -259,9 +317,79 @@ impl TypeStore {
             TypeKind::Deferred(DeferredType::Reference { declaration, .. }) => {
                 format!("deferred#{}:{}", declaration.file.0, declaration.local)
             }
+            TypeKind::Deferred(DeferredType::Value(declaration)) => {
+                format!("value#{}:{}", declaration.file.0, declaration.local)
+            }
+            TypeKind::Deferred(DeferredType::Call(callee)) => {
+                format!("call {}", self.display_inner(*callee, depth + 1))
+            }
+            TypeKind::Deferred(DeferredType::Property { object, name }) => {
+                format!("{}.{}", self.display_inner(*object, depth + 1), name)
+            }
+            TypeKind::Deferred(DeferredType::Logical {
+                operator,
+                left,
+                right,
+            }) => format!(
+                "{} {} {}",
+                self.display_inner(*left, depth + 1),
+                match operator {
+                    DeferredLogicalOperator::And => "&&",
+                    DeferredLogicalOperator::Or => "||",
+                    DeferredLogicalOperator::Nullish => "??",
+                },
+                self.display_inner(*right, depth + 1)
+            ),
+            TypeKind::Deferred(DeferredType::Unary { operator, operand }) => format!(
+                "{}{}",
+                match operator {
+                    DeferredUnaryOperator::Plus => "+",
+                    DeferredUnaryOperator::Minus => "-",
+                    DeferredUnaryOperator::BitwiseNot => "~",
+                    DeferredUnaryOperator::Await => "await ",
+                },
+                self.display_inner(*operand, depth + 1)
+            ),
             TypeKind::Deferred(DeferredType::KeyOf(operand)) => {
                 format!("keyof {}", self.display_inner(*operand, depth + 1))
             }
+            TypeKind::Deferred(DeferredType::Conditional {
+                check,
+                extends,
+                when_true,
+                when_false,
+            }) => format!(
+                "{} extends {} ? {} : {}",
+                self.display_inner(*check, depth + 1),
+                self.display_inner(*extends, depth + 1),
+                self.display_inner(*when_true, depth + 1),
+                self.display_inner(*when_false, depth + 1)
+            ),
+            TypeKind::Deferred(DeferredType::Mapped {
+                constraint,
+                name_type,
+                value,
+                readonly,
+                optional,
+            }) => format!(
+                "{{ {}[K in {}{}]{}: {} }}",
+                match readonly {
+                    Some(true) => "readonly ",
+                    Some(false) => "-readonly ",
+                    None => "",
+                },
+                self.display_inner(*constraint, depth + 1),
+                name_type.map_or_else(String::new, |name_type| format!(
+                    " as {}",
+                    self.display_inner(name_type, depth + 1)
+                )),
+                match optional {
+                    Some(true) => "?",
+                    Some(false) => "-?",
+                    None => "",
+                },
+                self.display_inner(*value, depth + 1)
+            ),
             TypeKind::Deferred(DeferredType::IndexedAccess { object, index }) => format!(
                 "{}[{}]",
                 self.display_inner(*object, depth + 1),

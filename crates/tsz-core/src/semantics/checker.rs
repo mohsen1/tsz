@@ -7,14 +7,16 @@ use crate::diagnostics::Diagnostic;
 use crate::program::{CompilerOptions, Program};
 use crate::source::{DeclId, FileId, NodeId, Span};
 use crate::syntax::{
-    ArrowBody, BinaryOperator, Expression, ExpressionKind, FunctionDeclaration,
-    InterfaceDeclaration, KeywordType, Literal, Parameter, Statement, StatementKind,
-    TypeAliasDeclaration, TypeNode, TypeNodeKind, VariableDeclaration, VariableKind,
+    ArrowBody, BinaryOperator, ClassDeclaration, ClassMemberKind, Expression, ExpressionKind,
+    FunctionDeclaration, InterfaceDeclaration, KeywordType, Literal, Parameter, Statement,
+    StatementKind, SwitchClauseKind, TypeAliasDeclaration, TypeNode, TypeNodeKind, UnaryOperator,
+    VariableDeclaration, VariableKind,
 };
 
 use super::relation::{RelationContext, RelationFailureKind, RelationMode, relate};
 use super::types::{
-    Completion, DeferredType, ParameterType, Property, Signature, TypeId, TypeKind, TypeStore,
+    Completion, DeferredLogicalOperator, DeferredType, DeferredUnaryOperator, ParameterType,
+    Property, Signature, TypeId, TypeKind, TypeStore,
 };
 
 #[derive(Debug)]
@@ -197,7 +199,45 @@ impl<'a> Checker<'a> {
                     self.collect_statement_model(file, nested, nested_scope);
                 }
             }
-            StatementKind::Return(_)
+            StatementKind::If(control_flow) => {
+                let then_scope = bound
+                    .scope_for_node
+                    .get(&control_flow.then_statement.id)
+                    .copied()
+                    .unwrap_or(scope);
+                self.collect_statement_model(file, &control_flow.then_statement, then_scope);
+                if let Some(else_statement) = &control_flow.else_statement {
+                    let else_scope = bound
+                        .scope_for_node
+                        .get(&else_statement.id)
+                        .copied()
+                        .unwrap_or(scope);
+                    self.collect_statement_model(file, else_statement, else_scope);
+                }
+            }
+            StatementKind::Switch(control_flow) => {
+                let switch_scope = bound
+                    .scope_for_node
+                    .get(&statement.id)
+                    .copied()
+                    .unwrap_or(scope);
+                for clause in &control_flow.clauses {
+                    for nested in &clause.statements {
+                        let nested_scope = bound
+                            .scope_for_node
+                            .get(&nested.id)
+                            .copied()
+                            .unwrap_or(switch_scope);
+                        self.collect_statement_model(file, nested, nested_scope);
+                    }
+                }
+            }
+            StatementKind::Import(_)
+            | StatementKind::Export(_)
+            | StatementKind::Class(_)
+            | StatementKind::Break(_)
+            | StatementKind::Continue(_)
+            | StatementKind::Return(_)
             | StatementKind::Expression(_)
             | StatementKind::Empty
             | StatementKind::Unknown => {}
@@ -229,6 +269,12 @@ impl<'a> Checker<'a> {
         expected_return: Option<TypeId>,
     ) {
         match &statement.kind {
+            StatementKind::Export(declaration) => {
+                if let Some(expression) = &declaration.assignment {
+                    self.infer_expression(file, scope, expression, None);
+                }
+            }
+            StatementKind::Class(declaration) => self.check_class(file, declaration),
             StatementKind::Variable(declaration) => {
                 self.check_variable(file, scope, statement.id, declaration);
             }
@@ -299,11 +345,149 @@ impl<'a> Checker<'a> {
                     self.check_statement(file, nested_scope, nested, expected_return);
                 }
             }
+            StatementKind::If(control_flow) => {
+                self.infer_expression(file, scope, &control_flow.condition, None);
+                let then_scope = self.program.files[file.0 as usize]
+                    .bindings
+                    .scope_for_node
+                    .get(&control_flow.then_statement.id)
+                    .copied()
+                    .unwrap_or(scope);
+                self.check_statement(
+                    file,
+                    then_scope,
+                    &control_flow.then_statement,
+                    expected_return,
+                );
+                if let Some(else_statement) = &control_flow.else_statement {
+                    let else_scope = self.program.files[file.0 as usize]
+                        .bindings
+                        .scope_for_node
+                        .get(&else_statement.id)
+                        .copied()
+                        .unwrap_or(scope);
+                    self.check_statement(file, else_scope, else_statement, expected_return);
+                }
+            }
+            StatementKind::Switch(control_flow) => {
+                let switch_scope = self.program.files[file.0 as usize]
+                    .bindings
+                    .scope_for_node
+                    .get(&statement.id)
+                    .copied()
+                    .unwrap_or(scope);
+                self.infer_expression(file, switch_scope, &control_flow.expression, None);
+                for clause in &control_flow.clauses {
+                    if let SwitchClauseKind::Case(expression) = &clause.kind {
+                        self.infer_expression(file, switch_scope, expression, None);
+                    }
+                    for nested in &clause.statements {
+                        let nested_scope = self.program.files[file.0 as usize]
+                            .bindings
+                            .scope_for_node
+                            .get(&nested.id)
+                            .copied()
+                            .unwrap_or(switch_scope);
+                        self.check_statement(file, nested_scope, nested, expected_return);
+                    }
+                }
+            }
             StatementKind::Expression(expression) => {
                 self.infer_expression(file, scope, expression, None);
             }
-            StatementKind::Empty | StatementKind::Unknown => {}
+            StatementKind::Import(_)
+            | StatementKind::Break(_)
+            | StatementKind::Continue(_)
+            | StatementKind::Empty
+            | StatementKind::Unknown => {}
         }
+    }
+
+    fn check_class(&mut self, file: FileId, declaration: &ClassDeclaration) {
+        if declaration.declared
+            || is_declaration_source(&self.program.files[file.0 as usize].source.path)
+        {
+            return;
+        }
+
+        for (index, member) in declaration.members.iter().enumerate() {
+            match &member.kind {
+                ClassMemberKind::Constructor {
+                    has_body: false, ..
+                } if !member.modifiers.abstract_member && !member.modifiers.declared => {
+                    let next_is_constructor =
+                        declaration.members.get(index + 1).is_some_and(|next| {
+                            matches!(next.kind, ClassMemberKind::Constructor { .. })
+                        });
+                    if !next_is_constructor {
+                        self.push_diagnostic(
+                            file,
+                            member.name_span,
+                            "Constructor implementation is missing.".to_string(),
+                            2390,
+                        );
+                    }
+                }
+                ClassMemberKind::Method {
+                    has_body: false,
+                    accessor: None,
+                    ..
+                } if !member.modifiers.abstract_member && !member.modifiers.declared => {
+                    let Some(next) = declaration.members.get(index + 1) else {
+                        self.report_missing_method_implementation(file, member.name_span);
+                        continue;
+                    };
+                    let ClassMemberKind::Method {
+                        has_body: next_has_body,
+                        accessor: None,
+                        ..
+                    } = &next.kind
+                    else {
+                        self.report_missing_method_implementation(file, member.name_span);
+                        continue;
+                    };
+
+                    if next.name == member.name {
+                        if *next_has_body
+                            && next.modifiers.static_member != member.modifiers.static_member
+                        {
+                            let (code, message) = if member.modifiers.static_member {
+                                (2387, "Function overload must be static.")
+                            } else {
+                                (2388, "Function overload must not be static.")
+                            };
+                            self.push_diagnostic(file, next.name_span, message.to_string(), code);
+                        }
+                    } else if *next_has_body {
+                        let expected_name = self.program.files[file.0 as usize]
+                            .source
+                            .slice(member.name_span)
+                            .to_string();
+                        self.push_diagnostic(
+                            file,
+                            next.name_span,
+                            format!("Function implementation name must be '{expected_name}'."),
+                            2389,
+                        );
+                    } else {
+                        self.report_missing_method_implementation(file, member.name_span);
+                    }
+                }
+                ClassMemberKind::Constructor { .. }
+                | ClassMemberKind::Property { .. }
+                | ClassMemberKind::Method { .. } => {}
+            }
+        }
+    }
+
+    fn report_missing_method_implementation(&mut self, file: FileId, span: Span) {
+        self.push_diagnostic(
+            file,
+            span,
+            "Function implementation is missing or not immediately following the declaration."
+                .to_string(),
+            2391,
+        );
     }
 
     fn check_variable(
@@ -357,20 +541,15 @@ impl<'a> Checker<'a> {
         else {
             return;
         };
-        let signature_type = self.declaration_value_type(id, 0);
-        let signature_type = match signature_type {
-            Completion::Complete(ty) => ty,
-            Completion::Deferred | Completion::Cycle | Completion::Limit => {
-                self.store.builtins.error
-            }
-        };
-        let forced = match self.force_type(signature_type, 0) {
-            Completion::Complete(ty) => ty,
-            Completion::Deferred | Completion::Cycle | Completion::Limit => signature_type,
-        };
-        let expected_return = match self.store.kind(forced) {
-            TypeKind::Function(signature) => Some(signature.return_type),
-            _ => None,
+        let expected_return = match self.declaration_value_type(id, 0) {
+            Completion::Complete(signature_type) => match self.force_type(signature_type, 0) {
+                Completion::Complete(forced) => match self.store.kind(forced) {
+                    TypeKind::Function(signature) => Some(signature.return_type),
+                    _ => None,
+                },
+                Completion::Deferred | Completion::Cycle | Completion::Limit => None,
+            },
+            Completion::Deferred | Completion::Cycle | Completion::Limit => None,
         };
         let scope = self.program.files[file.0 as usize]
             .bindings
@@ -405,6 +584,9 @@ impl<'a> Checker<'a> {
     }
 
     fn declaration_value_type(&mut self, id: DeclId, depth: usize) -> Completion<TypeId> {
+        if self.program.standard_library_declaration(id).is_some() {
+            return Completion::Deferred;
+        }
         if depth > 100 {
             self.value_queries
                 .insert(id, QueryState::Failed(QueryFailure::Limit));
@@ -504,6 +686,7 @@ impl<'a> Checker<'a> {
                         self.resolve_type_node(id.file, scope, annotation, &type_parameters)
                     }),
                 optional: parameter.optional,
+                rest: parameter.rest,
             })
             .collect();
         let return_type = declaration
@@ -537,6 +720,8 @@ impl<'a> Checker<'a> {
                 KeywordType::Number => self.store.builtins.number,
                 KeywordType::String => self.store.builtins.string,
                 KeywordType::BigInt => self.store.builtins.bigint,
+                KeywordType::Object => self.store.builtins.object,
+                KeywordType::Symbol => self.store.builtins.symbol,
             },
             TypeNodeKind::Literal(literal) => self.literal_type(literal),
             TypeNodeKind::Array(element) => {
@@ -591,6 +776,32 @@ impl<'a> Checker<'a> {
                             },
                         ),
                         optional: parameter.optional,
+                        rest: parameter.rest,
+                    })
+                    .collect();
+                let return_type = self.resolve_type_node(file, scope, return_type, type_parameters);
+                self.store.intern(TypeKind::Function(Signature {
+                    parameters,
+                    return_type,
+                }))
+            }
+            TypeNodeKind::Constructor {
+                parameters,
+                return_type,
+                ..
+            } => {
+                let parameters = parameters
+                    .iter()
+                    .map(|parameter| ParameterType {
+                        name: parameter.name.clone(),
+                        ty: parameter.annotation.as_ref().map_or(
+                            self.store.builtins.any,
+                            |annotation| {
+                                self.resolve_type_node(file, scope, annotation, type_parameters)
+                            },
+                        ),
+                        optional: parameter.optional,
+                        rest: parameter.rest,
                     })
                     .collect();
                 let return_type = self.resolve_type_node(file, scope, return_type, type_parameters);
@@ -629,10 +840,100 @@ impl<'a> Checker<'a> {
                         arguments,
                     }))
             }
+            TypeNodeKind::TypeQuery { name, name_span } => {
+                let root_name = name.split('.').next().unwrap_or(name);
+                let Some(declaration) = self.resolve_name(file, scope, root_name, Meaning::Value)
+                else {
+                    self.push_diagnostic(
+                        file,
+                        *name_span,
+                        format!("Cannot find name '{root_name}'."),
+                        2304,
+                    );
+                    return self.store.builtins.error;
+                };
+                self.store
+                    .intern(TypeKind::Deferred(DeferredType::Value(declaration)))
+            }
+            TypeNodeKind::Infer {
+                name,
+                name_span,
+                constraint,
+            } => {
+                if let Some(ty) = type_parameters.get(name) {
+                    *ty
+                } else {
+                    if let Some(constraint) = constraint {
+                        let _ = self.resolve_type_node(file, scope, constraint, type_parameters);
+                    }
+                    self.store.intern(TypeKind::TypeParameter {
+                        declaration: DeclId {
+                            file,
+                            local: name_span.start | (1 << 31),
+                        },
+                        index: 0,
+                        name: name.clone(),
+                    })
+                }
+            }
+            TypeNodeKind::Predicate { .. } => self.store.builtins.boolean,
             TypeNodeKind::KeyOf(operand) => {
                 let operand = self.resolve_type_node(file, scope, operand, type_parameters);
                 self.store
                     .intern(TypeKind::Deferred(DeferredType::KeyOf(operand)))
+            }
+            TypeNodeKind::Readonly(inner) | TypeNodeKind::Parenthesized(inner) => {
+                self.resolve_type_node(file, scope, inner, type_parameters)
+            }
+            TypeNodeKind::Conditional {
+                check_type,
+                extends_type,
+                true_type,
+                false_type,
+            } => {
+                let check = self.resolve_type_node(file, scope, check_type, type_parameters);
+                let extends = self.resolve_type_node(file, scope, extends_type, type_parameters);
+                let true_type = self.resolve_type_node(file, scope, true_type, type_parameters);
+                let false_type = self.resolve_type_node(file, scope, false_type, type_parameters);
+                self.store
+                    .intern(TypeKind::Deferred(DeferredType::Conditional {
+                        check,
+                        extends,
+                        when_true: true_type,
+                        when_false: false_type,
+                    }))
+            }
+            TypeNodeKind::Mapped {
+                parameter,
+                parameter_span,
+                constraint,
+                name_type,
+                value_type,
+                readonly,
+                optional,
+            } => {
+                let constraint = self.resolve_type_node(file, scope, constraint, type_parameters);
+                let parameter_type = self.store.intern(TypeKind::TypeParameter {
+                    declaration: DeclId {
+                        file,
+                        local: parameter_span.start | (1 << 31),
+                    },
+                    index: 0,
+                    name: parameter.clone(),
+                });
+                let mut mapped_parameters = type_parameters.clone();
+                mapped_parameters.insert(parameter.clone(), parameter_type);
+                let name_type = name_type.as_ref().map(|name_type| {
+                    self.resolve_type_node(file, scope, name_type, &mapped_parameters)
+                });
+                let value = self.resolve_type_node(file, scope, value_type, &mapped_parameters);
+                self.store.intern(TypeKind::Deferred(DeferredType::Mapped {
+                    constraint,
+                    name_type,
+                    value,
+                    readonly: *readonly,
+                    optional: *optional,
+                }))
             }
             TypeNodeKind::IndexedAccess { object, index } => {
                 let object = self.resolve_type_node(file, scope, object, type_parameters);
@@ -642,9 +943,6 @@ impl<'a> Checker<'a> {
                         object,
                         index,
                     }))
-            }
-            TypeNodeKind::Parenthesized(inner) => {
-                self.resolve_type_node(file, scope, inner, type_parameters)
             }
             TypeNodeKind::Missing => self.store.builtins.error,
         }
@@ -671,12 +969,8 @@ impl<'a> Checker<'a> {
                     );
                     return self.store.builtins.error;
                 };
-                match self.declaration_value_type(declaration, 0) {
-                    Completion::Complete(ty) => ty,
-                    Completion::Deferred | Completion::Cycle | Completion::Limit => {
-                        self.store.builtins.error
-                    }
-                }
+                self.store
+                    .intern(TypeKind::Deferred(DeferredType::Value(declaration)))
             }
             ExpressionKind::Literal(literal) => self.literal_type(literal),
             ExpressionKind::Object(properties) => {
@@ -720,8 +1014,16 @@ impl<'a> Checker<'a> {
             }
             ExpressionKind::Call { callee, arguments } => {
                 let callee_type = self.infer_expression(file, scope, callee, None);
-                let Some(callee_type) = self.complete_type(callee_type) else {
-                    return self.store.builtins.error;
+                let callee_type = match self.force_type(callee_type, 0) {
+                    Completion::Complete(callee_type) => callee_type,
+                    Completion::Deferred | Completion::Cycle | Completion::Limit => {
+                        for argument in arguments {
+                            let _ = self.infer_expression(file, scope, argument, None);
+                        }
+                        return self
+                            .store
+                            .intern(TypeKind::Deferred(DeferredType::Call(callee_type)));
+                    }
                 };
                 let TypeKind::Function(signature) = self.store.kind(callee_type).clone() else {
                     if !matches!(
@@ -738,16 +1040,32 @@ impl<'a> Checker<'a> {
                     }
                     return self.store.builtins.any;
                 };
+                let rest_index = signature
+                    .parameters
+                    .iter()
+                    .position(|parameter| parameter.rest);
                 let required = signature
                     .parameters
                     .iter()
+                    .take(rest_index.unwrap_or(signature.parameters.len()))
                     .filter(|parameter| !parameter.optional)
                     .count();
-                if arguments.len() < required || arguments.len() > signature.parameters.len() {
-                    let expected_count = if required == signature.parameters.len() {
+                let maximum =
+                    rest_index.map_or(Some(signature.parameters.len()), |index| {
+                        match self.store.kind(signature.parameters[index].ty) {
+                            TypeKind::Tuple(elements) => Some(index + elements.len()),
+                            _ => None,
+                        }
+                    });
+                if arguments.len() < required
+                    || maximum.is_some_and(|maximum| arguments.len() > maximum)
+                {
+                    let expected_count = if maximum.is_none() {
+                        format!("at least {required}")
+                    } else if maximum == Some(required) {
                         required.to_string()
                     } else {
-                        format!("{}-{}", required, signature.parameters.len())
+                        format!("{}-{}", required, maximum.unwrap_or(required))
                     };
                     self.push_diagnostic(
                         file,
@@ -759,11 +1077,30 @@ impl<'a> Checker<'a> {
                         2554,
                     );
                 }
-                for (argument, parameter) in arguments.iter().zip(&signature.parameters) {
-                    let actual = self.infer_expression(file, scope, argument, Some(parameter.ty));
+                for (index, argument) in arguments.iter().enumerate() {
+                    let Some(parameter) = signature.parameters.get(index).or_else(|| {
+                        rest_index.and_then(|rest_index| signature.parameters.get(rest_index))
+                    }) else {
+                        let _ = self.infer_expression(file, scope, argument, None);
+                        continue;
+                    };
+                    let expected = if parameter.rest {
+                        match self.store.kind(parameter.ty) {
+                            TypeKind::Array(element) => *element,
+                            TypeKind::Tuple(elements) => rest_index
+                                .and_then(|rest_index| index.checked_sub(rest_index))
+                                .and_then(|index| elements.get(index))
+                                .copied()
+                                .unwrap_or(parameter.ty),
+                            _ => parameter.ty,
+                        }
+                    } else {
+                        parameter.ty
+                    };
+                    let actual = self.infer_expression(file, scope, argument, Some(expected));
                     self.report_relation(
                         actual,
-                        parameter.ty,
+                        expected,
                         argument.span,
                         Some(argument),
                         RelationMode::Assignment,
@@ -772,6 +1109,13 @@ impl<'a> Checker<'a> {
                     );
                 }
                 signature.return_type
+            }
+            ExpressionKind::New { callee, arguments } => {
+                let _ = self.infer_expression(file, scope, callee, None);
+                for argument in arguments {
+                    let _ = self.infer_expression(file, scope, argument, None);
+                }
+                self.store.builtins.any
             }
             ExpressionKind::Member {
                 object,
@@ -791,12 +1135,19 @@ impl<'a> Checker<'a> {
                         );
                         self.store.builtins.error
                     }
-                    Completion::Deferred | Completion::Cycle | Completion::Limit => {
-                        self.store.builtins.error
-                    }
+                    Completion::Deferred | Completion::Cycle | Completion::Limit => self
+                        .store
+                        .intern(TypeKind::Deferred(DeferredType::Property {
+                            object: object_type,
+                            name: name.clone(),
+                        })),
                 }
             }
-            ExpressionKind::Arrow { parameters, body } => {
+            ExpressionKind::Arrow {
+                parameters,
+                return_type: annotation,
+                body,
+            } => {
                 let expected_signature = expected
                     .and_then(|expected| self.complete_type(expected))
                     .and_then(|expected| match self.store.kind(expected) {
@@ -833,12 +1184,20 @@ impl<'a> Checker<'a> {
                             name: parameter.name.clone(),
                             ty,
                             optional: parameter.optional,
+                            rest: parameter.rest,
                         }
                     })
                     .collect::<Vec<_>>();
-                let expected_return = expected_signature
+                let expected_return = annotation
                     .as_ref()
-                    .map(|signature| signature.return_type);
+                    .map(|annotation| {
+                        self.resolve_type_node(file, scope, annotation, &HashMap::new())
+                    })
+                    .or_else(|| {
+                        expected_signature
+                            .as_ref()
+                            .map(|signature| signature.return_type)
+                    });
                 let return_type = match body {
                     ArrowBody::Expression(body) => {
                         self.infer_expression(file, scope, body, expected_return)
@@ -866,8 +1225,64 @@ impl<'a> Checker<'a> {
                     && (self.is_string_like(left) || self.is_string_like(right))
                 {
                     self.store.builtins.string
+                } else if matches!(
+                    operator,
+                    BinaryOperator::LessThan
+                        | BinaryOperator::LessThanEquals
+                        | BinaryOperator::GreaterThan
+                        | BinaryOperator::GreaterThanEquals
+                        | BinaryOperator::Equals
+                        | BinaryOperator::NotEquals
+                        | BinaryOperator::StrictEquals
+                        | BinaryOperator::StrictNotEquals
+                        | BinaryOperator::In
+                        | BinaryOperator::InstanceOf
+                ) {
+                    self.store.builtins.boolean
+                } else if matches!(
+                    operator,
+                    BinaryOperator::LogicalAnd
+                        | BinaryOperator::LogicalOr
+                        | BinaryOperator::NullishCoalesce
+                ) {
+                    let operator = match operator {
+                        BinaryOperator::LogicalAnd => DeferredLogicalOperator::And,
+                        BinaryOperator::LogicalOr => DeferredLogicalOperator::Or,
+                        BinaryOperator::NullishCoalesce => DeferredLogicalOperator::Nullish,
+                        _ => unreachable!(),
+                    };
+                    self.store.intern(TypeKind::Deferred(DeferredType::Logical {
+                        operator,
+                        left,
+                        right,
+                    }))
                 } else {
                     self.store.builtins.number
+                }
+            }
+            ExpressionKind::Unary { operator, operand } => {
+                let operand = self.infer_expression(file, scope, operand, None);
+                match operator {
+                    UnaryOperator::Not | UnaryOperator::Delete => self.store.builtins.boolean,
+                    UnaryOperator::TypeOf => self.store.builtins.string,
+                    UnaryOperator::Void => self.store.builtins.undefined,
+                    UnaryOperator::Await => {
+                        self.store.intern(TypeKind::Deferred(DeferredType::Unary {
+                            operator: DeferredUnaryOperator::Await,
+                            operand,
+                        }))
+                    }
+                    UnaryOperator::Plus | UnaryOperator::Minus | UnaryOperator::BitwiseNot => {
+                        self.store.intern(TypeKind::Deferred(DeferredType::Unary {
+                            operator: match operator {
+                                UnaryOperator::Plus => DeferredUnaryOperator::Plus,
+                                UnaryOperator::Minus => DeferredUnaryOperator::Minus,
+                                UnaryOperator::BitwiseNot => DeferredUnaryOperator::BitwiseNot,
+                                _ => unreachable!(),
+                            },
+                            operand,
+                        }))
+                    }
                 }
             }
             ExpressionKind::Assignment { left, right } => {
@@ -936,7 +1351,21 @@ impl<'a> Checker<'a> {
                 declaration,
                 arguments,
             } => self.evaluate_reference(declaration, &arguments),
+            DeferredType::Value(declaration) => self.declaration_value_type(declaration, depth + 1),
+            DeferredType::Call(callee) => self.evaluate_call(callee, depth + 1),
+            DeferredType::Property { object, name } => {
+                self.evaluate_property(object, &name, depth + 1)
+            }
+            DeferredType::Logical {
+                operator,
+                left,
+                right,
+            } => self.evaluate_logical(operator, left, right, depth + 1),
+            DeferredType::Unary { operator, operand } => {
+                self.evaluate_unary(operator, operand, depth + 1)
+            }
             DeferredType::KeyOf(operand) => self.evaluate_keyof(operand, depth + 1),
+            DeferredType::Conditional { .. } | DeferredType::Mapped { .. } => Completion::Deferred,
             DeferredType::IndexedAccess { object, index } => {
                 self.evaluate_indexed_access(object, index, depth + 1)
             }
@@ -975,6 +1404,13 @@ impl<'a> Checker<'a> {
         declaration: DeclId,
         arguments: &[TypeId],
     ) -> Completion<TypeId> {
+        if self
+            .program
+            .standard_library_declaration(declaration)
+            .is_some()
+        {
+            return Completion::Deferred;
+        }
         let Some(model) = self.models.get(&declaration).copied() else {
             return Completion::Complete(self.store.builtins.error);
         };
@@ -1057,6 +1493,122 @@ impl<'a> Checker<'a> {
             .map(|property| self.store.intern(TypeKind::LiteralString(property.name)))
             .collect::<Vec<_>>();
         Completion::Complete(self.store.union(keys))
+    }
+
+    fn evaluate_call(&mut self, callee: TypeId, depth: usize) -> Completion<TypeId> {
+        let callee = match self.force_type(callee, depth) {
+            Completion::Complete(callee) => callee,
+            Completion::Deferred => return Completion::Deferred,
+            Completion::Cycle => return Completion::Cycle,
+            Completion::Limit => return Completion::Limit,
+        };
+        match self.store.kind(callee) {
+            TypeKind::Function(signature) => Completion::Complete(signature.return_type),
+            TypeKind::Any => Completion::Complete(self.store.builtins.any),
+            _ => Completion::Deferred,
+        }
+    }
+
+    fn evaluate_property(
+        &mut self,
+        object: TypeId,
+        name: &str,
+        depth: usize,
+    ) -> Completion<TypeId> {
+        let object = match self.force_type(object, depth) {
+            Completion::Complete(object) => object,
+            Completion::Deferred => return Completion::Deferred,
+            Completion::Cycle => return Completion::Cycle,
+            Completion::Limit => return Completion::Limit,
+        };
+        match self.store.kind(object) {
+            TypeKind::Object(properties) => properties
+                .iter()
+                .find(|property| property.name == name)
+                .map_or(Completion::Deferred, |property| {
+                    Completion::Complete(property.ty)
+                }),
+            TypeKind::Any => Completion::Complete(self.store.builtins.any),
+            _ => Completion::Deferred,
+        }
+    }
+
+    fn evaluate_logical(
+        &mut self,
+        operator: DeferredLogicalOperator,
+        left: TypeId,
+        right: TypeId,
+        depth: usize,
+    ) -> Completion<TypeId> {
+        let left = match self.force_type(left, depth) {
+            Completion::Complete(left) => left,
+            Completion::Deferred => return Completion::Deferred,
+            Completion::Cycle => return Completion::Cycle,
+            Completion::Limit => return Completion::Limit,
+        };
+        let left_kind = self.store.kind(left);
+        match operator {
+            DeferredLogicalOperator::And => match known_truthiness(left_kind) {
+                Some(true) => Completion::Complete(right),
+                Some(false) => Completion::Complete(left),
+                None => Completion::Deferred,
+            },
+            DeferredLogicalOperator::Or => match known_truthiness(left_kind) {
+                Some(true) => Completion::Complete(left),
+                Some(false) => Completion::Complete(right),
+                None => Completion::Deferred,
+            },
+            DeferredLogicalOperator::Nullish => {
+                if matches!(left_kind, TypeKind::Null | TypeKind::Undefined) {
+                    Completion::Complete(right)
+                } else if matches!(
+                    left_kind,
+                    TypeKind::Boolean
+                        | TypeKind::Number
+                        | TypeKind::String
+                        | TypeKind::BigInt
+                        | TypeKind::ObjectKeyword
+                        | TypeKind::Symbol
+                        | TypeKind::LiteralBoolean(_)
+                        | TypeKind::LiteralNumber(_)
+                        | TypeKind::LiteralString(_)
+                        | TypeKind::Array(_)
+                        | TypeKind::Tuple(_)
+                        | TypeKind::Object(_)
+                        | TypeKind::Function(_)
+                ) {
+                    Completion::Complete(left)
+                } else {
+                    Completion::Deferred
+                }
+            }
+        }
+    }
+
+    fn evaluate_unary(
+        &mut self,
+        operator: DeferredUnaryOperator,
+        operand: TypeId,
+        depth: usize,
+    ) -> Completion<TypeId> {
+        let operand = match self.force_type(operand, depth) {
+            Completion::Complete(operand) => operand,
+            Completion::Deferred => return Completion::Deferred,
+            Completion::Cycle => return Completion::Cycle,
+            Completion::Limit => return Completion::Limit,
+        };
+        if operator == DeferredUnaryOperator::Await {
+            return Completion::Complete(operand);
+        }
+        match self.store.kind(operand) {
+            TypeKind::Number | TypeKind::LiteralNumber(_) | TypeKind::Any => {
+                Completion::Complete(self.store.builtins.number)
+            }
+            TypeKind::BigInt if operator != DeferredUnaryOperator::Plus => {
+                Completion::Complete(self.store.builtins.bigint)
+            }
+            _ => Completion::Deferred,
+        }
     }
 
     fn evaluate_indexed_access(
@@ -1243,7 +1795,7 @@ impl<'a> Checker<'a> {
 
     fn report_complexity(&mut self, deferred: &DeferredType) {
         let span = match deferred {
-            DeferredType::Reference { declaration, .. } => {
+            DeferredType::Reference { declaration, .. } | DeferredType::Value(declaration) => {
                 self.models.get(declaration).map(|model| match model {
                     DeclarationModel::TypeAlias { declaration, .. } => declaration.name_span,
                     DeclarationModel::Interface { declaration, .. } => declaration.name_span,
@@ -1252,7 +1804,14 @@ impl<'a> Checker<'a> {
                     DeclarationModel::Function { declaration, .. } => declaration.name_span,
                 })
             }
-            DeferredType::KeyOf(_) | DeferredType::IndexedAccess { .. } => None,
+            DeferredType::Call(_)
+            | DeferredType::Property { .. }
+            | DeferredType::Logical { .. }
+            | DeferredType::Unary { .. }
+            | DeferredType::KeyOf(_)
+            | DeferredType::Conditional { .. }
+            | DeferredType::Mapped { .. }
+            | DeferredType::IndexedAccess { .. } => None,
         };
         if let Some(span) = span {
             self.push_diagnostic(
@@ -1274,6 +1833,20 @@ impl<'a> Checker<'a> {
     }
 }
 
+fn known_truthiness(kind: &TypeKind) -> Option<bool> {
+    match kind {
+        TypeKind::Null | TypeKind::Undefined | TypeKind::LiteralBoolean(false) => Some(false),
+        TypeKind::LiteralBoolean(true)
+        | TypeKind::Array(_)
+        | TypeKind::Tuple(_)
+        | TypeKind::Object(_)
+        | TypeKind::Function(_) => Some(true),
+        TypeKind::LiteralString(value) => Some(!value.is_empty()),
+        TypeKind::LiteralNumber(value) => Some(value != "0" && value != "-0" && value != "NaN"),
+        _ => None,
+    }
+}
+
 fn object_property_span(expression: &Expression, name: &str) -> Option<Span> {
     let ExpressionKind::Object(properties) = &expression.kind else {
         return None;
@@ -1282,6 +1855,13 @@ fn object_property_span(expression: &Expression, name: &str) -> Option<Span> {
         .iter()
         .find(|property| property.name == name)
         .map(|property| property.name_span)
+}
+
+fn is_declaration_source(path: &std::path::Path) -> bool {
+    let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+        return false;
+    };
+    name.ends_with(".d.ts") || name.ends_with(".d.mts") || name.ends_with(".d.cts")
 }
 
 impl RelationContext for Checker<'_> {

@@ -81,7 +81,11 @@ fn relate_inner<C: RelationContext>(
     match (&source_kind, &target_kind) {
         (TypeKind::LiteralString(_), TypeKind::String)
         | (TypeKind::LiteralNumber(_), TypeKind::Number)
-        | (TypeKind::LiteralBoolean(_), TypeKind::Boolean) => Ok(()),
+        | (TypeKind::LiteralBoolean(_), TypeKind::Boolean)
+        | (
+            TypeKind::Object(_) | TypeKind::Array(_) | TypeKind::Tuple(_) | TypeKind::Function(_),
+            TypeKind::ObjectKeyword,
+        ) => Ok(()),
         (TypeKind::LiteralString(left), TypeKind::LiteralString(right)) if left == right => Ok(()),
         (TypeKind::LiteralNumber(left), TypeKind::LiteralNumber(right)) if left == right => Ok(()),
         (TypeKind::LiteralBoolean(left), TypeKind::LiteralBoolean(right)) if left == right => {
@@ -168,7 +172,7 @@ fn relate_inner<C: RelationContext>(
             let target_required = target_signature
                 .parameters
                 .iter()
-                .filter(|parameter| !parameter.optional)
+                .filter(|parameter| !parameter.optional && !parameter.rest)
                 .count();
             if source_signature.parameters.len() < target_required {
                 return Err(failure(source, target, RelationFailureKind::Incompatible));

@@ -14,6 +14,14 @@ use crate::syntax::{
     VariableKind, parse_source,
 };
 
+mod navigation;
+
+pub use navigation::{
+    DefinitionAndBoundSpan, DefinitionInfo, DocumentHighlights, HighlightSpan, ReferenceEntry,
+    ReferencedSymbol, ReferencedSymbolDefinition, RenameInfo, RenameLocation, RenameResult,
+    SymbolDisplayPart,
+};
+
 #[derive(Debug, Clone)]
 struct OpenFile {
     text: Arc<str>,
@@ -27,7 +35,7 @@ pub struct QuickInfo {
     pub display: String,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TextSpan {
     pub start: u32,
     pub length: u32,
@@ -194,7 +202,14 @@ impl LanguageService {
                         display: format!("interface {}", declaration.name),
                     });
                 }
-                StatementKind::Return(_)
+                StatementKind::Import(_)
+                | StatementKind::Export(_)
+                | StatementKind::Class(_)
+                | StatementKind::If(_)
+                | StatementKind::Switch(_)
+                | StatementKind::Break(_)
+                | StatementKind::Continue(_)
+                | StatementKind::Return(_)
                 | StatementKind::Block(_)
                 | StatementKind::Expression(_)
                 | StatementKind::Empty
@@ -206,6 +221,42 @@ impl LanguageService {
             }
         }
         None
+    }
+
+    /// Resolve the declaration at `offset` together with the token span that
+    /// was bound. Unsupported syntax returns `None`; it never fabricates a
+    /// same-spelling result.
+    pub fn definition_and_bound_span(
+        &self,
+        path: &str,
+        offset: u32,
+    ) -> Option<DefinitionAndBoundSpan> {
+        navigation::NavigationIndex::build(self.compile().program).definition(path, offset)
+    }
+
+    /// Find references through the same declaration identity used by
+    /// definition lookup.
+    pub fn references(&self, path: &str, offset: u32) -> Vec<ReferencedSymbol> {
+        navigation::NavigationIndex::build(self.compile().program).references(path, offset)
+    }
+
+    /// Return identity-based highlights, restricted to the requested files.
+    pub fn document_highlights(
+        &self,
+        path: &str,
+        offset: u32,
+        files_to_search: &[String],
+    ) -> Vec<DocumentHighlights> {
+        navigation::NavigationIndex::build(self.compile().program).document_highlights(
+            path,
+            offset,
+            files_to_search,
+        )
+    }
+
+    /// Return the rename trigger and all locations for the resolved symbol.
+    pub fn rename(&self, path: &str, offset: u32) -> RenameResult {
+        navigation::NavigationIndex::build(self.compile().program).rename(path, offset)
     }
 }
 
@@ -288,9 +339,16 @@ fn display_type_node(node: &TypeNode) -> String {
                 )
             }
         }
+        TypeNodeKind::TypeQuery { name, .. } => format!("typeof {name}"),
+        TypeNodeKind::Infer { name, .. } => format!("infer {name}"),
         TypeNodeKind::Object(_)
         | TypeNodeKind::Function { .. }
+        | TypeNodeKind::Constructor { .. }
+        | TypeNodeKind::Predicate { .. }
         | TypeNodeKind::KeyOf(_)
+        | TypeNodeKind::Readonly(_)
+        | TypeNodeKind::Conditional { .. }
+        | TypeNodeKind::Mapped { .. }
         | TypeNodeKind::IndexedAccess { .. }
         | TypeNodeKind::Parenthesized(_)
         | TypeNodeKind::Missing => "unknown".to_string(),

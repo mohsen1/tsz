@@ -33,5 +33,9 @@ tempfile.workspace = true
 name = "rewrite_foundation"
 path = "rewrite-tests/foundation.rs"
 
+[[test]]
+name = "rewrite_standard_library"
+path = "rewrite-tests/standard_library.rs"
+
 [lints]
 workspace = true

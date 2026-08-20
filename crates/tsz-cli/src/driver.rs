@@ -95,6 +95,10 @@ pub fn parse_arguments(arguments: &[OsString]) -> Result<Invocation> {
                 invocation.options.no_implicit_any =
                     optional_bool(arguments, &mut index, inline_value, true);
             }
+            "nolib" => {
+                invocation.options.no_lib =
+                    optional_bool(arguments, &mut index, inline_value, true);
+            }
             "declaration" => {
                 invocation.options.declaration =
                     optional_bool(arguments, &mut index, inline_value, true)
@@ -124,6 +128,16 @@ pub fn parse_arguments(arguments: &[OsString]) -> Result<Invocation> {
             "extendeddiagnostics" => invocation.extended_diagnostics = true,
             "target" => invocation.options.target = take_value()?,
             "module" => invocation.options.module = take_value()?,
+            "lib" => {
+                invocation.options.lib = Some(
+                    take_value()?
+                        .split(',')
+                        .map(str::trim)
+                        .filter(|name| !name.is_empty())
+                        .map(str::to_string)
+                        .collect(),
+                );
+            }
             "outdir" => invocation.options.out_dir = Some(PathBuf::from(take_value()?)),
             "declarationdir" => {
                 invocation.options.declaration_dir = Some(PathBuf::from(take_value()?));
@@ -135,8 +149,7 @@ pub fn parse_arguments(arguments: &[OsString]) -> Result<Invocation> {
             // Accepted process-surface options. The R0 engine applies the ones
             // represented in `CompilerOptions`; unsupported transforms remain
             // visible as emit mismatches in the retained oracle harness.
-            "nolib"
-            | "alwaysstrict"
+            "alwaysstrict"
             | "downleveliteration"
             | "noemithelpers"
             | "importhelpers"
@@ -152,8 +165,7 @@ pub fn parse_arguments(arguments: &[OsString]) -> Result<Invocation> {
             | "stripinternal" => {
                 consume_optional_bool(arguments, &mut index, inline_value);
             }
-            "lib"
-            | "jsx"
+            "jsx"
             | "jsxfactory"
             | "jsxfragmentfactory"
             | "jsximportsource"
@@ -346,6 +358,7 @@ fn apply_config_options(options: &mut CompilerOptions, value: Option<&Value>) {
     options.strict = bool_option(value, "strict").unwrap_or(options.strict);
     options.no_implicit_any =
         bool_option(value, "noImplicitAny").unwrap_or(options.no_implicit_any);
+    options.no_lib = bool_option(value, "noLib").unwrap_or(options.no_lib);
     options.no_check = bool_option(value, "noCheck").unwrap_or(options.no_check);
     options.no_emit = bool_option(value, "noEmit").unwrap_or(options.no_emit);
     options.no_emit_on_error =
@@ -359,6 +372,15 @@ fn apply_config_options(options: &mut CompilerOptions, value: Option<&Value>) {
     }
     if let Some(module) = value.get("module").and_then(Value::as_str) {
         options.module = module.to_string();
+    }
+    if let Some(libraries) = value.get("lib").and_then(Value::as_array) {
+        options.lib = Some(
+            libraries
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect(),
+        );
     }
     if let Some(out_dir) = value.get("outDir").and_then(Value::as_str) {
         options.out_dir = Some(PathBuf::from(out_dir));

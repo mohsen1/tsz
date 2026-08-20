@@ -50,5 +50,9 @@ tempfile.workspace = true
 name = "rewrite_process_contract"
 path = "rewrite-tests/process_contract.rs"
 
+[[test]]
+name = "rewrite_standard_library_options"
+path = "rewrite-tests/standard_library_options.rs"
+
 [lints]
 workspace = true
