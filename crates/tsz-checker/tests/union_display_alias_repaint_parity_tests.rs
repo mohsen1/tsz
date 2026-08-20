@@ -462,20 +462,218 @@ fn an_alias_declared_after_the_use_site_does_not_repaint_the_longhand_union_targ
 /// Two distinct aliases of the *same* interned union: each written spelling
 /// keeps its own name rather than collapsing to whichever registered first.
 ///
-/// Red both with and without the target gate above, because it is a different
-/// mechanism: `register_type_to_def` is first-writer-wins on the interned
-/// `TypeId`, so `First` wins globally and the gate — which only decides
-/// *whether* to consult that table — has no second name to offer. Fixing it
-/// needs per-occurrence alias reference identity at lowering, not a display
-/// gate.
+/// `register_type_to_def` is first-writer-wins on the interned `TypeId`, so a
+/// global reverse lookup answers `First` for both spellings. Fixed by the
+/// per-occurrence gate `written_alias_reference_target_display`, which resolves
+/// the annotation's own written reference to its alias definition and requires
+/// the alias body to be identity-equal to the displayed target.
 #[test]
-#[ignore = "separate open divergence: `register_type_to_def` is first-writer-wins per interned TypeId, so two aliases of one union both render the first; needs per-occurrence alias identity at lowering"]
 fn two_aliases_of_one_union_each_keep_their_own_written_target_spelling() {
     let source = "type First = string | number;\n\
                   type Second = string | number;\n\
                   declare const flag: boolean;\n\
                   const a: Second = flag;\n";
     assert_eq!(rendered_target_type(source), "Second");
+}
+
+/// The first-declared spelling of the same pair keeps *its* name too — the fix
+/// renders the written reference, not "the other alias".
+#[test]
+fn two_aliases_of_one_union_first_written_target_keeps_the_first_alias() {
+    let source = "type First = string | number;\n\
+                  type Second = string | number;\n\
+                  declare const flag: boolean;\n\
+                  const a: First = flag;\n";
+    assert_eq!(rendered_target_type(source), "First");
+}
+
+/// Renamed binders and a three-member union, so no row of this family can be
+/// satisfied by anything keyed on the `First`/`Second` spelling or the
+/// two-member shape.
+#[test]
+fn renamed_binder_alias_pair_three_member_union_target_keeps_the_written_alias() {
+    let source = "type AlphaKeys = string | number | symbol;\n\
+                  type BetaKeys = string | number | symbol;\n\
+                  declare const held: boolean;\n\
+                  const sink: AlphaKeys = held;\n";
+    assert_eq!(rendered_target_type(source), "AlphaKeys");
+}
+
+/// The written alias declared *after* the use site (and after an unreferenced
+/// twin) still names the diagnostic, ruling out a declaration-order artifact.
+#[test]
+fn written_alias_declared_after_the_use_site_still_names_the_target() {
+    let source = "declare const flag: boolean;\n\
+                  const a: Late = flag;\n\
+                  type Early = string | number;\n\
+                  type Late = string | number;\n";
+    assert_eq!(rendered_target_type(source), "Late");
+}
+
+/// The same collapse for **object**-bodied alias pairs — the defect is alias
+/// reference identity, not a union-shaped special case.
+#[test]
+fn two_object_aliases_of_one_shape_keep_their_own_written_target_spelling() {
+    let source = "type ObjA = { p: number };\n\
+                  type ObjB = { p: number };\n\
+                  declare const flag: boolean;\n\
+                  const o: ObjB = flag;\n";
+    assert_eq!(rendered_target_type(source), "ObjB");
+}
+
+/// Negative control: two aliases of the same *computed* body (a reduced
+/// conditional) both render the underlying type — tsc attaches no
+/// `aliasSymbol` to a reducing operator's shared result, so the
+/// per-occurrence gate must decline via `type_alias_displayed_as_underlying`.
+#[test]
+fn two_computed_body_aliases_still_render_the_underlying_type() {
+    let source = "type CondA = true extends true ? string : number;\n\
+                  type CondB = true extends true ? string : number;\n\
+                  declare const flag: boolean;\n\
+                  const c: CondB = flag;\n";
+    assert_eq!(rendered_target_type(source), "string");
+}
+
+/// The forwarding chain: `type Outer = Inner` written at the use site
+/// renders `Inner` — tsc resolves the bare alias-to-alias reference through
+/// the chain and stamps the inner alias (oracle-pinned on 7.0.2), so the
+/// per-occurrence gate chases a bare forwarding body to its terminal alias
+/// instead of declining to the (first-writer-wins) global reverse map.
+///
+/// This minimal two-alias shape alone cannot distinguish "chases the written
+/// chain" from "happens to land on the right answer via the global map,
+/// because `Inner` is also the only/first writer for this content" — see
+/// `bare_alias_to_alias_forwarding_target_ignores_an_unrelated_first_writer`
+/// below for the sharper witness.
+#[test]
+fn bare_alias_to_alias_forwarding_target_renders_the_inner_alias() {
+    let source = "type Inner = string | number;\n\
+                  type Outer = Inner;\n\
+                  declare const flag: boolean;\n\
+                  const c: Outer = flag;\n";
+    assert_eq!(rendered_target_type(source), "Inner");
+}
+
+/// Sharper witness: an unrelated alias (`Zeta`) of the identical union
+/// content is declared *first*, so the global `type_to_def` reverse map's
+/// first-writer would answer `Zeta` for this `TypeId`. The forwarding chain
+/// written at the use site (`Outer` -> `Inner`) must still win — this is the
+/// case that was actually broken (`Zeta`, not `Outer`, was the reported
+/// symptom's true mechanism: the per-occurrence gate correctly declined the
+/// forwarding body, but the fallback it deferred to is the same
+/// first-writer-wins map #17756 fixes for the non-forwarding case).
+#[test]
+fn bare_alias_to_alias_forwarding_target_ignores_an_unrelated_first_writer() {
+    let source = "type Zeta = string | number;\n\
+                  type Inner = string | number;\n\
+                  type Outer = Inner;\n\
+                  declare const flag: boolean;\n\
+                  const a: Outer = flag;\n";
+    assert_eq!(rendered_target_type(source), "Inner");
+}
+
+/// Even sharper: the competing first writer is a *lib* alias
+/// (`PropertyKey = string | number | symbol`), always interned before any
+/// user code runs, so it always wins the global reverse map. The forwarding
+/// chain must still resolve to the user's own written `InnerAlpha`, not the
+/// lib name.
+#[test]
+fn bare_alias_to_alias_forwarding_target_ignores_a_lib_first_writer() {
+    let source = "type InnerAlpha = string | number | symbol;\n\
+                  type OuterBeta = InnerAlpha;\n\
+                  declare const held: boolean;\n\
+                  const sink: OuterBeta = held;\n";
+    assert_eq!(rendered_target_type(source), "InnerAlpha");
+}
+
+/// Multi-hop chain (three aliases deep): tsc's forwarding resolves all the
+/// way to the terminal, structurally-bodied alias, not just one hop.
+#[test]
+fn bare_alias_to_alias_forwarding_target_resolves_multiple_hops() {
+    let source = "type Innermost = string | number;\n\
+                  type Middle = Innermost;\n\
+                  type Outer = Middle;\n\
+                  declare const flag: boolean;\n\
+                  const a: Outer = flag;\n";
+    assert_eq!(rendered_target_type(source), "Innermost");
+}
+
+/// Renamed binders, so no row of this family can be satisfied by anything
+/// keyed on the `Inner`/`Outer` spelling specifically.
+#[test]
+fn renamed_binders_bare_alias_to_alias_forwarding_target_renders_the_inner_alias() {
+    let source = "type PrimitiveKeys = string | number;\n\
+                  type ForwardedKeys = PrimitiveKeys;\n\
+                  declare const held: boolean;\n\
+                  const sink: ForwardedKeys = held;\n";
+    assert_eq!(rendered_target_type(source), "PrimitiveKeys");
+}
+
+/// Negative control on application-bodied aliases, half one: a plain
+/// generic-application body keeps the written alias (`BoxNum`), which the
+/// established application display path already produced — the
+/// per-occurrence gate declines application bodies and must not disturb it.
+#[test]
+fn plain_application_bodied_alias_target_keeps_the_written_alias() {
+    let source = "type Box<T> = { v: T };\n\
+                  type BoxNum = Box<number>;\n\
+                  declare const flag: boolean;\n\
+                  const b: BoxNum = flag;\n";
+    assert_eq!(rendered_target_type(source), "BoxNum");
+}
+
+/// Negative control on application-bodied aliases, half two: a *recursive
+/// mapped* application body renders the substituted application, not the
+/// written alias — tsc splits the application-bodied family this way
+/// (oracle-pinned; the deep form is conformance `deeplyNestedMappedTypes.ts`,
+/// which regressed when the per-occurrence gate repainted it and is why the
+/// gate declines every application body).
+#[test]
+fn recursive_mapped_application_alias_target_renders_the_application() {
+    let source = "type Id<T> = { [K in keyof T]: Id<T[K]> };\n\
+                  type FooA = Id<{ x: { c: number } }>;\n\
+                  type FooB = Id<{ x: { c: string } }>;\n\
+                  declare const fa: FooA;\n\
+                  const fb: FooB = fa;\n";
+    // The source here is not `boolean`, so this row asserts the whole head
+    // line rather than going through `rendered_target_type`.
+    let diagnostics = check_source_with_libs_code_messages(
+        source,
+        "case.ts",
+        CheckerOptions {
+            strict: true,
+            ..Default::default()
+        },
+        &load_default_lib_files(),
+    );
+    let heads: Vec<&String> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2322)
+        .map(|(_, message)| message)
+        .collect();
+    assert_eq!(
+        heads.len(),
+        1,
+        "expected exactly one TS2322: {diagnostics:?}"
+    );
+    assert!(
+        heads[0].starts_with(
+            "Type 'Id<{ x: { c: number; }; }>' is not assignable to type 'Id<{ x: { c: string; }; }>'."
+        ),
+        "unexpected head: {}",
+        heads[0]
+    );
+}
+
+/// The source-side dual of the two-alias pair: the declared annotation of the
+/// *source* identifier keeps its own written spelling too.
+#[test]
+fn two_aliases_of_one_union_source_keeps_its_own_written_spelling() {
+    let source = "type First = string | number;\n\
+                  type Second = string | number;\n\
+                  declare const s: Second;\n\
+                  const t: boolean = s;\n";
+    assert_eq!(rendered_source_type(source), "Second");
 }
 
 /// Baseline with no alias anywhere: the structural render must be unchanged, so

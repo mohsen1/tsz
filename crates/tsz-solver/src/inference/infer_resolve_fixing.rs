@@ -13,6 +13,57 @@ use crate::types::{InferencePriority, TypeData, TypeId};
 use tsz_common::interner::Atom;
 
 impl<'a> InferenceContext<'a> {
+    /// Mark an inference variable as representing a type parameter that
+    /// occurs at the top level of the signature's return type and has not
+    /// yet been fixed. Such variables suppress literal-type widening during
+    /// covariant resolution, matching tsc's `getCovariantInference` gate.
+    pub fn mark_top_level_in_return_type_unfixed(&mut self, var: InferenceVar) {
+        let root = self.table.find(var);
+        self.top_level_in_return_type_unfixed.insert(root);
+    }
+
+    /// Record that `var` is the type of a callback parameter position in the
+    /// call's signature (`(x: T) => …`). Such variables disable the return-type
+    /// "first wins" pin during covariant resolution (see
+    /// [`InferenceContext::vars_typed_by_callback_parameter`], #17761).
+    pub fn mark_vars_typed_by_callback_parameter(&mut self, var: InferenceVar) {
+        let root = self.table.find(var);
+        self.vars_typed_by_callback_parameter.insert(root);
+    }
+
+    /// Mark an inference variable as occurring at the top level of the
+    /// signature's return type (the structural half of tsc's
+    /// `isTypeParameterAtTopLevelInReturnType`), with no further
+    /// qualification. See `root_preserves_return_position_literals`.
+    pub fn mark_top_level_in_return_type(&mut self, var: InferenceVar) {
+        let root = self.table.find(var);
+        self.top_level_in_return_type.insert(root);
+    }
+
+    /// Mark an inference variable as consumed by a context-sensitive callback
+    /// argument's parameter positions — tsc's `inference.isFixed` trigger.
+    pub fn mark_contextually_fixed(&mut self, var: InferenceVar) {
+        let root = self.table.find(var);
+        tracing::debug!(?var, ?root, "mark_contextually_fixed");
+        self.contextually_fixed_vars.insert(root);
+    }
+
+    /// Whether fresh literal candidates for `var` must be preserved (not
+    /// widened) during covariant resolution because the variable occurs at the
+    /// top level of the return type and was never fixed for contextual typing.
+    ///
+    /// Mirrors the `inference.isFixed || !isTypeParameterAtTopLevelInReturnType`
+    /// half of tsc `getCovariantInference`'s `widenLiteralTypes` gate. The
+    /// `inference.topLevel` half (every counted candidate was inferred at the
+    /// top level of its argument position) is applied per-candidate inside
+    /// `resolve_from_candidates` via `from_top_level_naked`, so a variable that
+    /// also received structural (nested-position) candidates keeps its widening
+    /// behavior.
+    pub(crate) fn root_preserves_return_position_literals(&self, root: InferenceVar) -> bool {
+        self.top_level_in_return_type.contains(&root)
+            && !self.contextually_fixed_vars.contains(&root)
+    }
+
     /// Detect and unify type parameters that form circular constraints.
     /// For example, if T extends U and U extends T, they should be unified
     /// into a single equivalence class for inference purposes.
@@ -316,6 +367,7 @@ impl<'a> InferenceContext<'a> {
             {
                 concrete_contra_candidates.retain(|c| c.priority <= best_cov_priority);
             }
+            let skip_literal_widening = self.top_level_in_return_type_unfixed.contains(&root);
             let spread_rest_mode = self.spread_rest_var_modes.get(&root).copied();
             let result = if !candidates.is_empty() {
                 let covariant_result = self.resolve_from_candidates(
@@ -324,8 +376,15 @@ impl<'a> InferenceContext<'a> {
                     &info.upper_bounds,
                     dc,
                     dc_preserves_literals,
+                    crate::inference::infer_resolve::LiteralWideningPolicy {
+                        skip_literal_widening,
+                        preserve_return_position_literals: self
+                            .root_preserves_return_position_literals(root),
+                        disable_return_type_first_wins: self
+                            .vars_typed_by_callback_parameter
+                            .contains(&root),
+                    },
                     spread_rest_mode,
-                    root,
                 );
                 // (TypeParameter filtering already done above)
                 if !concrete_contra_candidates.is_empty() {
@@ -457,6 +516,7 @@ impl<'a> InferenceContext<'a> {
         if candidates.is_empty() {
             return None;
         }
+        let skip_literal_widening = self.top_level_in_return_type_unfixed.contains(&root);
         let spread_rest_mode = self.spread_rest_var_modes.get(&root).copied();
         Some(self.resolve_from_candidates(
             &candidates,
@@ -464,8 +524,14 @@ impl<'a> InferenceContext<'a> {
             &info.upper_bounds,
             dc,
             dc_preserves_literals,
+            crate::inference::infer_resolve::LiteralWideningPolicy {
+                skip_literal_widening,
+                preserve_return_position_literals:
+                    self.root_preserves_return_position_literals(root),
+                disable_return_type_first_wins:
+                    self.vars_typed_by_callback_parameter.contains(&root),
+            },
             spread_rest_mode,
-            root,
         ))
     }
 
@@ -512,6 +578,8 @@ impl<'a> InferenceContext<'a> {
                         let dc = self.declared_constraints.get(&root).copied();
                         let dc_preserves_literals =
                             self.literal_preserving_declared_constraints.contains(&root);
+                        let skip_literal_widening =
+                            self.top_level_in_return_type_unfixed.contains(&root);
                         let spread_rest_mode = self.spread_rest_var_modes.get(&root).copied();
                         let covariant_result = self.resolve_from_candidates(
                             &candidates,
@@ -519,8 +587,15 @@ impl<'a> InferenceContext<'a> {
                             &info.upper_bounds,
                             dc,
                             dc_preserves_literals,
+                            crate::inference::infer_resolve::LiteralWideningPolicy {
+                                skip_literal_widening,
+                                preserve_return_position_literals: self
+                                    .root_preserves_return_position_literals(root),
+                                disable_return_type_first_wins: self
+                                    .vars_typed_by_callback_parameter
+                                    .contains(&root),
+                            },
                             spread_rest_mode,
-                            root,
                         );
                         if !contra_candidates.is_empty() {
                             let covariant_is_uninformative = matches!(
