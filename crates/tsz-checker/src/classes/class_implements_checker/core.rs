@@ -496,8 +496,26 @@ impl<'a> CheckerState<'a> {
             // a value identifier, emitting spurious name-resolution diagnostics.
             // Snapshot the diagnostic buffer and restore it so only the
             // re-parented elaboration frames survive.
+            //
+            // The anchor here is the overridden member's *name*, never an
+            // assignment RHS, so the depth-0 source display must be structural.
+            // Left to the `AssignmentSource` role, a member whose reason is a
+            // parameter mismatch has its name anchor walked up to the method
+            // declaration and typed as that method's (possibly inferred) return
+            // type — collapsing `(x: number) => void` to `void`. Supplying the
+            // structural source display up front pins the lead to the member's
+            // real function type regardless of whether the return type was
+            // annotated.
+            let source_display = self.format_type_for_assignability_message(source_type);
             let diagnostics_before = self.ctx.diagnostics.len();
-            let inner = self.render_failure_reason(&reason, source_type, target_type, node_idx, 0);
+            let inner = self.render_failure_reason_with_source_display(
+                &reason,
+                source_type,
+                target_type,
+                node_idx,
+                0,
+                Some(source_display),
+            );
             self.ctx.diagnostics.truncate(diagnostics_before);
             // The rendered reason's own lead becomes the first elaboration frame
             // (depth 0); its nested frames sit one level deeper (depth + 1).
