@@ -89,6 +89,7 @@ impl<'a> CheckerState<'a> {
         // best-matching member exactly like tsc's undefined indexed access
         // (see `full_union_object_literal_property_target`).
         let pre_narrow_param_type = param_type;
+        let epc_pre_narrow_target = effective_param_type;
         let mut narrowed_by_discriminant = false;
         for candidate in [
             effective_param_type,
@@ -121,7 +122,21 @@ impl<'a> CheckerState<'a> {
         // → `string`) does not produce a spurious mismatch against a `'name'`
         // target — the false positive a prior up-front bail tried to avoid.
         let diagnostics_before_epc = self.ctx.diagnostics.len();
-        self.check_object_literal_excess_properties(source_type, effective_param_type, arg_idx);
+        // Excess-property KNOWN-NESS runs against the pre-narrow union, never
+        // the discriminant-narrowed member: tsc's `hasExcessProperties`
+        // receives the relation target and derives its own reduced target
+        // (`findMatchingDiscriminantType` with per-discriminator revert, arms
+        // lacking the property untouched), so a property declared by an arm
+        // the narrowing eliminated is still "known" and the failure stays a
+        // plain assignability error instead of a TS2353 against the surviving
+        // arm. The narrowed type keeps driving the per-property elaboration
+        // below, which is a separate tsc mechanism.
+        let excess_check_target = if narrowed_by_discriminant {
+            epc_pre_narrow_target
+        } else {
+            effective_param_type
+        };
+        self.check_object_literal_excess_properties(source_type, excess_check_target, arg_idx);
         // `check_object_literal_excess_properties` can trigger a contextual-type
         // refresh that retains/drops earlier implicit-any diagnostics (see
         // object_literal_support.rs). `recent_diagnostics` clamps its start, so

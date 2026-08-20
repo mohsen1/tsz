@@ -687,6 +687,19 @@ impl<'a> CheckerState<'a> {
             // to member 2, but tsz also dropped member 2 on the `subkind`
             // pass because it lacks subkind, leaving no narrowed member and
             // skipping excess emission entirely. See `compiler/missingDiscriminants*.ts`.
+            // A discriminator only participates when its source value
+            // positively matches at least one still-active member that
+            // declares the property. tsc's `discriminateTypeByDiscriminableItems`
+            // tracks a per-discriminator `matched` flag and REVERTS the pass
+            // when no constituent matched (`Ternary.Maybe` back to included):
+            // a failing unit literal that names no arm must not narrow the
+            // union — it is an ordinary property-type mismatch for the
+            // relation to report, not a discriminant. Without this revert,
+            // `{ p: 1, q: 8 }` against `{ p: 1; q: 4 } | { p: 2; q: 8 } | Box`
+            // lets the failing `q: 8` pass drop the `p: 1`-matched arm and pin
+            // `Box` alone, misrouting a plain TS2345/TS2322 into a TS2353
+            // ("'p' does not exist in type 'Box'").
+            let mut any_positive_match = false;
             let candidate: Vec<usize> = active_indices
                 .iter()
                 .copied()
@@ -695,8 +708,11 @@ impl<'a> CheckerState<'a> {
                         .iter()
                         .find(|(idx, _)| *idx == i)
                         .is_none_or(|(_, target_ty)| {
-                            self.diagnostic_subtype_outcome(prop_type, *target_ty)
-                                .related
+                            let related = self
+                                .diagnostic_subtype_outcome(prop_type, *target_ty)
+                                .related;
+                            any_positive_match |= related;
+                            related
                         })
                 })
                 .collect();
@@ -713,6 +729,14 @@ impl<'a> CheckerState<'a> {
             // falsely pin the first member alone (TS2353 false positive).
             if candidate.is_empty() {
                 return None;
+            }
+
+            // The revert itself: some active member survived (it lacks the
+            // property), but no member positively matched the source value —
+            // skip this discriminator instead of letting the lacking members
+            // alone define the narrowed set.
+            if !any_positive_match {
+                continue;
             }
 
             if candidate.len() < active_indices.len() {

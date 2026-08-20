@@ -430,8 +430,11 @@ both(0, { p: 1, q: 8 });
 }
 
 #[test]
-#[ignore = "known pre-existing residual (red on main before the arm-wise display too): a generic alias-application arm (`u: U | Box<T>`) — tsc 7.0.2 reports TS2345 with target `Box<number> | U`; tsz routes the fresh object literal through the excess-property check and reports TS2353 against `Box<number>` alone. Owner: argument excess-property vs assignability routing for mixed-union parameters, not the display gateway."]
 fn generic_alias_application_arm_keeps_application_spelling() {
+    // Fixed by the TS2353-vs-TS2345 routing change: excess-property
+    // known-ness now runs against the pre-narrow union (see
+    // `ts2353_union_arm_excess_routing_tests`), so the fresh literal is no
+    // longer routed into TS2353 against `Box<number>` alone.
     let messages = ts2345_messages(
         r#"
 type U = { p: 1; q: 4 } | { p: 2; q: 8 };
