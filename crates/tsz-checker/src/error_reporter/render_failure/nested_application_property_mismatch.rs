@@ -1367,7 +1367,7 @@ impl<'a> CheckerState<'a> {
         // so its first child is at related-depth 0; when nested, the outer
         // is at related-depth `depth`, so the child is at `depth + 1`.
         if depth < 5 {
-            let child_depth = if depth == 0 { 0 } else { depth + 1 };
+            let child_depth = super::first_child_depth(depth);
             let (nested_source, nested_target) =
                 Self::nested_failure_display_types(nested_reason, child_source, child_target);
             if Self::nested_reason_is_plain_type_mismatch(nested_reason) {
@@ -1496,7 +1496,7 @@ impl<'a> CheckerState<'a> {
         // headline. At depth 0 the headline is the (un-indented) primary, so its
         // first child is related-depth 0; when nested, the headline is at
         // related-depth `depth`, so the child is at `depth + 1`.
-        let child_depth = if depth == 0 { 0 } else { depth + 1 };
+        let child_depth = super::first_child_depth(depth);
 
         // A reason that self-heads with a non-frame primary (a missing-property
         // leaf renders `Property 'p' is missing in type 'S' but required in type
@@ -1794,7 +1794,7 @@ impl<'a> CheckerState<'a> {
         // The element relation `se -> te` sits directly beneath the array
         // header (no intermediate line, exactly like a single-element tuple).
         // It occupies related-depth `elem_depth`; its own drill goes one deeper.
-        let elem_depth = if depth == 0 { 0 } else { depth + 1 };
+        let elem_depth = super::first_child_depth(depth);
 
         match nested_reason {
             // Self-heading element (scalar leaf, union, nested array, …): the
