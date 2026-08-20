@@ -1154,20 +1154,17 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             self.explain_provenance_application(resolved_target)?
         };
 
-        let same_base = |checker: &Self, s: TypeId, t: TypeId| {
-            let s_app = application_id(checker.interner, s);
-            let t_app = application_id(checker.interner, t);
-            match (s_app, t_app) {
-                (Some(s_app), Some(t_app)) => {
-                    checker.interner.type_application(s_app).base
-                        == checker.interner.type_application(t_app).base
-                }
-                _ => false,
-            }
-        };
-        if !same_base(self, s_ty, t_ty) {
-            (s_ty, t_ty) = self.align_application_bases(s_ty, t_ty)?;
-        }
+        // Always hop through forwarding-alias bases to the canonical nominal
+        // application before comparing argument-by-argument: tsc's `target`
+        // reference for a generic alias application is the underlying
+        // interface/class, never the alias itself. This matters even when
+        // both operands already share the same alias identity — a permuting
+        // alias (`type FlipRow<X, Y> = PairRow<Y, X>`) used on both sides
+        // would otherwise report the mismatch through its OWN parameter
+        // order instead of the nominal base's, picking the wrong argument
+        // pair. `align_application_bases` is a no-op when the shared base is
+        // already nominal.
+        (s_ty, t_ty) = self.align_application_bases(s_ty, t_ty)?;
         let s_app_id = application_id(self.interner, s_ty)?;
         let t_app_id = application_id(self.interner, t_ty)?;
         let s_app = self.interner.type_application(s_app_id);
@@ -1358,7 +1355,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         for _ in 0..MAX_ALIAS_HOPS {
             let s_base = base_of(self, sides[0])?;
             let t_base = base_of(self, sides[1])?;
-            if s_base == t_base {
+            // A shared base that is STILL a forwarding alias has not reached
+            // tsc's `target` identity yet (a permuting alias like `type
+            // FlipRow<X, Y> = PairRow<Y, X>` used on both sides matches here
+            // trivially, but its own parameter order is not the pair tsc
+            // reports) — keep hopping instead of accepting the alias
+            // identity as final.
+            if s_base == t_base && !is_alias_base(self, s_base) {
                 return Some((sides[0], sides[1]));
             }
             let mut progressed = false;
@@ -1378,7 +1381,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 }
             }
             if !progressed {
-                return None;
+                // Neither side's alias body is itself an application (e.g.
+                // `type Id<T> = { x: T }`) — there is no further nominal
+                // target to hop to. When the bases still agree, fall back to
+                // the shared alias identity as-is, matching the prior
+                // behavior for non-forwarding aliases; a genuine base
+                // disagreement stays a decline.
+                return (s_base == t_base).then_some((sides[0], sides[1]));
             }
         }
         None
