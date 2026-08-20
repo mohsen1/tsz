@@ -20,7 +20,9 @@ use tsz_solver::TypeId;
 /// multi-line intersection carrying a type-literal member renders through the
 /// structural formatter, not this raw echo). Collapsing the newline here would
 /// smuggle such an annotation past that guard and change its rendering.
-fn normalize_declared_annotation_whitespace(text: &str) -> String {
+pub(in crate::error_reporter::core) fn normalize_declared_annotation_whitespace(
+    text: &str,
+) -> String {
     let mut out = String::with_capacity(text.len());
     let mut pending_space = false;
     let mut chars = text.chars().peekable();

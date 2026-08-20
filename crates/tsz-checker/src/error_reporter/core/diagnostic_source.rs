@@ -25,7 +25,7 @@ mod recursive_alias_display;
 mod span_diagnostic_queries;
 mod static_schema;
 mod tuple_source_display;
-mod type_query_alias;
+pub(in crate::error_reporter::core) mod type_query_alias;
 mod wrapper_provenance;
 
 use crate::query_boundaries::diagnostics as diagnostic_query;
