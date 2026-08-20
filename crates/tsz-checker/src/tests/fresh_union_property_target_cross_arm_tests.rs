@@ -363,15 +363,14 @@ const cb: CB = { kind: "a", n: 2, f: x => x.length };
     );
 }
 
-/// Pinned residual (oracle-verified divergence, deliberately out of scope):
-/// when EVERY discriminator matches no arm (`kind: "zz"`, `n: 2`), tsc's
+/// When EVERY discriminator matches no arm (`kind: "zz"`, `n: 2`), tsc's
 /// `getBestMatchingType` falls through to `findMostOverlappyType`, whose
 /// last-best-wins scan selects the LAST arm sharing the most keys — the `n`
-/// leaf renders `'9'` (arm `"b"`). tsz has no most-overlappy fallback and
-/// renders the key-bearing-arm union. The `kind` head (`'"zz"'` vs
-/// `'"a" | "b" | "c"'`) already agrees.
+/// leaf renders `'9'` (arm `"b"`), while the `kind` head (present in every
+/// arm) keeps the cross-arm union. tsz mirrors this through the solver's
+/// `select_union_target_best_member` when the full-union indexed access is
+/// undefined (`unnarrowed_union_object_literal_property_target`).
 #[test]
-#[ignore = "tsz renders '1 | 9' where tsc 7.0.2 renders '9' — findMostOverlappyType fallback not modeled when every discriminator fails"]
 fn all_discriminators_failing_uses_most_overlappy_member() {
     let source = r#"
 type G = { kind: "a"; n: 1 } | { kind: "b"; n: 9 } | { kind: "c" };
@@ -383,6 +382,167 @@ const g: G = { kind: "zz", n: 2 };
             .iter()
             .any(|d| d.message_text == "Type '2' is not assignable to type '9'."),
         "n leaf must report the most-overlappy member's property type, got: {diags:?}"
+    );
+    assert!(
+        diags.iter().any(
+            |d| d.message_text == r#"Type '"zz"' is not assignable to type '"a" | "b" | "c"'."#
+        ),
+        "the kind head must keep the cross-arm union, got: {diags:?}"
+    );
+}
+
+/// Ties break to the LAST max-overlap arm in written order (tsc compares with
+/// `>=`): with the `9` arm written FIRST, the selected arm flips to the later
+/// `1` arm. tsc 7.0.2: Type '2' is not assignable to type '1'.
+#[test]
+fn most_overlappy_tie_breaks_to_the_last_written_arm() {
+    let diags = diags_with_code(
+        r#"
+type H = { tag: "y"; m: 9 } | { tag: "x"; m: 1 } | { tag: "w" };
+const h: H = { tag: "zz", m: 2 };
+"#,
+        2322,
+    );
+    assert!(
+        diags
+            .iter()
+            .any(|d| d.message_text == "Type '2' is not assignable to type '1'."),
+        "the LAST max-overlap arm must win the tie, got: {diags:?}"
+    );
+}
+
+/// A higher key overlap beats written position: the first arm shares three
+/// keys with the source, the last only one, so the first arm owns the target
+/// even though ties would go to the last. tsc 7.0.2:
+/// Type '2' is not assignable to type '1'.
+#[test]
+fn higher_key_overlap_beats_later_written_position() {
+    let diags = diags_with_code(
+        r#"
+type R = { op: "put"; sz: 1; extra: true } | { op: "get" };
+const r: R = { op: "zz", sz: 2, extra: true };
+"#,
+        2322,
+    );
+    assert!(
+        diags
+            .iter()
+            .any(|d| d.message_text == "Type '2' is not assignable to type '1'."),
+        "the max-overlap arm must beat a later low-overlap arm, got: {diags:?}"
+    );
+}
+
+/// Alias-wrapped arms behave like inline arms: the overlap scan hops each
+/// alias to its object shape. tsc 7.0.2: Type '2' is not assignable to type '9'.
+#[test]
+fn most_overlappy_fallback_hops_alias_arms() {
+    let diags = diags_with_code(
+        r#"
+type A1 = { m: "p"; w: 1 };
+type A2 = { m: "q"; w: 9 };
+type A3 = { m: "r" };
+type U2 = A1 | A2 | A3;
+const uu: U2 = { m: "zz", w: 2 };
+"#,
+        2322,
+    );
+    assert!(
+        diags
+            .iter()
+            .any(|d| d.message_text == "Type '2' is not assignable to type '9'."),
+        "alias arms must resolve for the overlap scan, got: {diags:?}"
+    );
+}
+
+/// Argument position takes the same fallback: `elaborateElementwise` runs for
+/// call arguments too, so the property-node TS2322 pair matches the
+/// declaration form. tsc 7.0.2 reports the same two diagnostics.
+#[test]
+fn argument_position_uses_most_overlappy_member() {
+    let source = r#"
+type Gc = { kind: "a"; n: 1 } | { kind: "b"; n: 9 } | { kind: "c" };
+declare function take(g: Gc): void;
+take({ kind: "zz", n: 2 });
+"#;
+    let diags = diags_with_code(source, 2322);
+    assert!(
+        diags
+            .iter()
+            .any(|d| d.message_text == "Type '2' is not assignable to type '9'."),
+        "argument-position n leaf must use the most-overlappy member, got: {diags:?}"
+    );
+}
+
+/// A nullish arm is PRE-EXCLUDED by the include-walk
+/// (`discriminateTypeByDiscriminableItems` marks primitive constituents
+/// `False` up front), so the written `... | undefined` union counts as
+/// discriminated down to its object arms even though `kind: "zz"` matches
+/// none of them: `kind` (exposed by every survivor) keeps the cross-arm
+/// union, and `n` (missing from the `"c"` survivor) has an undefined indexed
+/// access — NO `n` diagnostic, never the most-overlappy single arm. tsc
+/// 7.0.2 reports exactly one diagnostic.
+#[test]
+fn nullish_arm_discriminates_to_object_arms_not_most_overlappy_member() {
+    let source = r#"
+type NU = { kind: "a"; n: 1 } | { kind: "b"; n: 9 } | { kind: "c" } | undefined;
+const nu: NU = { kind: "zz", n: 2 };
+"#;
+    let diags = diags_with_code(source, 2322);
+    assert_eq!(
+        diags.len(),
+        1,
+        "only the kind diagnostic may fire, got: {diags:?}"
+    );
+    assert_eq!(
+        diags[0].message_text, r#"Type '"zz"' is not assignable to type '"a" | "b" | "c"'."#,
+        "the kind head must keep the surviving object arms' union"
+    );
+}
+
+/// Same pre-exclusion for a non-nullish primitive arm (`number`): the
+/// surviving object arms own the target, `t` renders their cross-arm union,
+/// and `u` (missing from a survivor) is skipped. tsc 7.0.2 reports exactly
+/// one diagnostic.
+#[test]
+fn primitive_arm_discriminates_to_object_arms_not_most_overlappy_member() {
+    let source = r#"
+type Pn = { t: "x"; u: 1 } | { t: "y" } | number;
+const pn: Pn = { t: "zz", u: 2 };
+"#;
+    let diags = diags_with_code(source, 2322);
+    assert_eq!(
+        diags.len(),
+        1,
+        "only the t diagnostic may fire, got: {diags:?}"
+    );
+    assert_eq!(
+        diags[0].message_text, r#"Type '"zz"' is not assignable to type '"x" | "y"'."#,
+        "the t head must keep the surviving object arms' union"
+    );
+}
+
+/// Pinned residual (oracle-verified, distinct owner — the written-union arm
+/// ORDER family, #17696 residuals): instantiating a generic union alias
+/// (`GU[1]`, square brackets standing in for angle brackets) re-interns the
+/// substituted arm so it sorts LAST in the evaluated member list, and the
+/// last-best-wins scan then picks it — tsz renders `'1'` where tsc 7.0.2
+/// keeps declaration order and renders `'9'`. The concrete forms above prove
+/// the fallback itself; this pin guards the order half only.
+#[test]
+#[ignore = "instantiated union arms lose declaration order, so last-best-wins picks the re-interned substituted arm — tsz '1' vs tsc 7.0.2 '9'"]
+fn instantiated_generic_union_keeps_declaration_order_for_most_overlappy() {
+    let diags = diags_with_code(
+        r#"
+type GU<T> = { k: "a"; v: T } | { k: "b"; v: 9 } | { k: "c" };
+const gx: GU<1> = { k: "zz", v: 2 };
+"#,
+        2322,
+    );
+    assert!(
+        diags
+            .iter()
+            .any(|d| d.message_text == "Type '2' is not assignable to type '9'."),
+        "declaration order must drive the last-best-wins tie, got: {diags:?}"
     );
 }
 
