@@ -24774,63 +24774,6 @@ export class UserStore<T extends User> {
 `
   },
   {
-    key: "sound_mode",
-    title: "Sound Mode: Sticky Freshness",
-    category: "diagnostics",
-    description: "Fresh object literals stay exact after a variable assignment.",
-    soundDiagnosticCode: "TSZ3006",
-    source: `// Sound Mode is experimental.
-// Uncheck "sound" to compare current tsc-compatible behavior.
-
-// Sticky freshness keeps object-literal excess-property checks alive
-// after the literal has been assigned to a variable.
-interface Point2D { x: number; y: number }
-
-const point3d = { x: 1, y: 2, z: 3 };
-const point: Point2D = point3d;
-`
-  },
-  {
-    key: "sound_mode_argument",
-    title: "Sound Mode: Method Bivariance",
-    category: "diagnostics",
-    description: "Method implementations cannot narrow a parameter unsafely.",
-    soundDiagnosticCode: "TSZ2002",
-    source: `// Sound Mode is experimental.
-// Uncheck "sound" to compare current tsc-compatible behavior.
-
-interface EventSink {
-  handle(value: string | number): void;
-}
-
-class StringOnlySink implements EventSink {
-  handle(value: string) {
-    value.toUpperCase();
-  }
-}
-`
-  },
-  {
-    key: "sound_mode_array",
-    title: "Sound Mode: Any Escape",
-    category: "diagnostics",
-    description: "Nested any cannot quietly satisfy a more precise shape.",
-    soundDiagnosticCode: "TSZ1001",
-    source: `// Sound Mode is experimental.
-// Uncheck "sound" to compare current tsc-compatible behavior.
-
-interface Payload {
-  name: string;
-}
-
-function parsePayload(): { name: any } {
-  return JSON.parse('{"name":{"firstName":"Alan","lastName":"Turing"}}');
-}
-
-const payload: Payload = parsePayload();
-`
-  },
-  {
     key: "errors",
     title: "Type Errors",
     category: "diagnostics",
@@ -25245,13 +25188,10 @@ function PlaygroundApp() {
   const strictModeRef = (0, import_react.useRef)(true);
   const tsconfigRef = (0, import_react.useRef)(createTsconfigText(true));
   const tsconfigSyncingRef = (0, import_react.useRef)(false);
-  const initialSoundMode = initialExampleKey.startsWith("sound_mode");
-  const soundModeRef = (0, import_react.useRef)(initialSoundMode);
   const [selectedExampleKey, setSelectedExampleKey] = (0, import_react.useState)(initialExampleKey);
   const [code, setCode] = (0, import_react.useState)(initialExample.source);
   const [strictMode, setStrictMode] = (0, import_react.useState)(true);
   const [tsconfigText, setTsconfigText] = (0, import_react.useState)(() => createTsconfigText(true));
-  const [soundMode, setSoundMode] = (0, import_react.useState)(initialSoundMode);
   const [activePanel, setActivePanel] = (0, import_react.useState)("diagnostics");
   const [diagnostics, setDiagnostics] = (0, import_react.useState)([]);
   const [status, setStatus] = (0, import_react.useState)({ text: "loading editor...", className: "status-loading" });
@@ -25263,13 +25203,11 @@ function PlaygroundApp() {
   codeRef.current = code;
   strictModeRef.current = strictMode;
   tsconfigRef.current = tsconfigText;
-  soundModeRef.current = soundMode;
   function getCurrentCompilerOptions() {
     const tsconfigOptions = readCompilerOptionsFromTsconfig(tsconfigRef.current);
     return {
       ...tsconfigOptions,
-      strict: strictModeRef.current,
-      soundMode: soundModeRef.current
+      strict: strictModeRef.current
     };
   }
   function resetOutputCache() {
@@ -25391,31 +25329,8 @@ function PlaygroundApp() {
     });
     return [];
   }
-  function getDiagnosticIdentity(diagnostic) {
-    return JSON.stringify({
-      start: diagnostic.start ?? 0,
-      length: diagnostic.length ?? 0,
-      code: diagnostic.code,
-      messageText: diagnostic.messageText || "",
-      category: diagnostic.category
-    });
-  }
-  function withSoundDiagnosticDisplayCodes(soundDiagnostics, baselineDiagnostics, forcedDisplayCode = null) {
-    const baselineIdentities = new Set(baselineDiagnostics.map(getDiagnosticIdentity));
-    return soundDiagnostics.map((diagnostic) => {
-      if (!forcedDisplayCode && baselineIdentities.has(getDiagnosticIdentity(diagnostic))) {
-        return diagnostic;
-      }
-      return {
-        ...diagnostic,
-        displayCode: forcedDisplayCode || "TSZ3006",
-        originalCode: `TS${diagnostic.code}`,
-        domain: "sound"
-      };
-    });
-  }
   function formatDiagnosticCode(diagnostic) {
-    return diagnostic.displayCode || `TS${diagnostic.code}`;
+    return `TS${diagnostic.code}`;
   }
   function toLspPosition(position) {
     return {
@@ -25569,7 +25484,6 @@ function PlaygroundApp() {
     debugDiagnosticsLog("runCheck:start", {
       example: selectedExampleKey,
       strict: options.strict,
-      soundMode: options.soundMode,
       code: codeRef.current
     });
     setStatus({ text: "checking...", className: "status-checking" });
@@ -25577,21 +25491,7 @@ function PlaygroundApp() {
     try {
       const program = createCheckProgram(codeRef.current, options);
       const parsedDiagnostics = normalizeDiagnostics(program, codeRef.current);
-      let userDiagnostics = parsedDiagnostics.filter((diagnostic) => !(diagnostic.code === 2318 && diagnostic.start === 0));
-      if (options.soundMode) {
-        const selectedExample = getExampleByKey(selectedExampleKey);
-        const baselineOptions = { ...options, soundMode: false };
-        const baselineProgram = createCheckProgram(codeRef.current, baselineOptions);
-        const baselineDiagnostics = normalizeDiagnostics(baselineProgram, codeRef.current).filter((diagnostic) => !(diagnostic.code === 2318 && diagnostic.start === 0));
-        userDiagnostics = withSoundDiagnosticDisplayCodes(
-          userDiagnostics,
-          baselineDiagnostics,
-          selectedExample?.soundDiagnosticCode
-        );
-        if (typeof baselineProgram.dispose === "function") {
-          baselineProgram.dispose();
-        }
-      }
+      const userDiagnostics = parsedDiagnostics.filter((diagnostic) => !(diagnostic.code === 2318 && diagnostic.start === 0));
       const elapsed = `${(performance.now() - startedAt).toFixed(0)}ms`;
       debugDiagnosticsLog("runCheck:raw-diagnostics", parsedDiagnostics);
       setDiagnostics(userDiagnostics);
@@ -25902,7 +25802,7 @@ function PlaygroundApp() {
   }, [code]);
   (0, import_react.useEffect)(() => {
     disposeLspParser();
-  }, [code, strictMode, soundMode, tsconfigText]);
+  }, [code, strictMode, tsconfigText]);
   (0, import_react.useEffect)(() => {
     if (!editorsReady || !wasmReady) return;
     if (!hasRunInitialCheckRef.current) {
@@ -25917,7 +25817,7 @@ function PlaygroundApp() {
         checkTimeoutRef.current = null;
       }
     };
-  }, [code, strictMode, soundMode, tsconfigText, editorsReady, wasmReady]);
+  }, [code, strictMode, tsconfigText, editorsReady, wasmReady]);
   (0, import_react.useEffect)(() => {
     if (!editorsReady || !wasmReady) return;
     if (activePanel === "js" || activePanel === "dts") {
@@ -25932,10 +25832,6 @@ function PlaygroundApp() {
   }
   function handleStrictChange(event) {
     setStrictEverywhere(event.target.checked);
-  }
-  function handleSoundChange(event) {
-    setSoundMode(event.target.checked);
-    resetOutputCache();
   }
   function handleDiagnosticClick(start) {
     if (!editorRef.current) return;
@@ -25953,12 +25849,9 @@ function PlaygroundApp() {
   }, {});
   const showFallback = Boolean(loadError);
   return showFallback ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "fallback-box", children: [
-    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "WASM module not available." }) }),
-    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: loadError || "The playground requires the tsz WASM build." }),
-    /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "install-block", style: { justifyContent: "center" }, children: [
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "prompt", children: "$" }),
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "cmd", children: "npm install -g @mohsen-azimi/tsz-dev" })
-    ] })
+    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "Playground unavailable during the clean-slate rewrite." }) }),
+    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: "The retired WASM compiler was removed. A new browser build returns after the replacement service API is stable; until then this page does not run tsz." }),
+    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("a", { href: "https://github.com/tsz-org/tsz/blob/main/docs/plan/ROADMAP.md", children: "Follow the rewrite roadmap" }) })
   ] }) : /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
     /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "playground-toolbar", children: [
       /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "toolbar-left", children: [
@@ -25966,10 +25859,6 @@ function PlaygroundApp() {
         /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "toolbar-check", children: [
           /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", { type: "checkbox", checked: strictMode, onChange: handleStrictChange }),
           /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "strict" })
-        ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "toolbar-check", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", { type: "checkbox", checked: soundMode, onChange: handleSoundChange }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "sound" })
         ] })
       ] }),
       /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "toolbar-right", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { id: "playground-status", className: status.className, children: status.text }) })

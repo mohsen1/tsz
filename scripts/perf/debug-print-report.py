@@ -1,10 +1,8 @@
 #!/usr/bin/env python3
-"""Report stdout/stderr debug macros in compiler internals.
+"""Report stdout/stderr debug macros in replacement compiler internals.
 
-This is a Performance Plan guardrail report, not a hard failure gate. It scans
-compiler-internal Rust sources for `println!`, `eprintln!`, and `dbg!` so PRs
-can cite the remaining surface and avoid adding ad-hoc debug output in hot
-paths. Intentional CLI/user-facing output is out of scope.
+This guardrail scans `tsz-core` for `println!`, `eprintln!`, and `dbg!`.
+Intentional CLI/user-facing output is out of scope.
 """
 
 from __future__ import annotations
@@ -20,21 +18,11 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
 DEFAULT_SCAN_DIRS = (
-    "crates/tsz-binder/src",
-    "crates/tsz-checker/src",
-    "crates/tsz-common/src",
     "crates/tsz-core/src",
-    "crates/tsz-emitter/src",
-    "crates/tsz-lowering/src",
-    "crates/tsz-parser/src",
-    "crates/tsz-scanner/src",
-    "crates/tsz-solver/src",
 )
 
 MACRO_RE = re.compile(r"\b(println|eprintln|dbg)!\s*(?:\(|\{|\[)")
 COMMENT_PREFIXES = ("//", "///", "//!")
-TRACE_RESOLUTION_PATH = "crates/tsz-core/src/module_resolver/mod.rs"
-TRACE_RESOLUTION_RE = re.compile(r"\bif\s+self\.trace_resolution\b")
 
 
 @dataclass(frozen=True)
@@ -118,32 +106,22 @@ def scan_file(root: Path, path: Path) -> list[DebugPrintHit]:
     hits: list[DebugPrintHit] = []
     rel = path.relative_to(root).as_posix()
     in_block_comment = False
-    trace_resolution_depth = 0
     for idx, raw_line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
         stripped = raw_line.lstrip()
         if stripped.startswith(COMMENT_PREFIXES):
             continue
         code, in_block_comment = scrub_comments_and_strings(raw_line, in_block_comment)
-        starts_trace_resolution = rel == TRACE_RESOLUTION_PATH and bool(
-            TRACE_RESOLUTION_RE.search(code)
-        )
-        in_trace_resolution_output = trace_resolution_depth > 0 or starts_trace_resolution
         match = MACRO_RE.search(code)
         if match:
             macro = f"{match.group(1)}!"
-            if not (in_trace_resolution_output and macro == "println!"):
-                hits.append(
-                    DebugPrintHit(
-                        path=rel,
-                        line=idx,
-                        macro=macro,
-                        text=raw_line.strip(),
-                    )
+            hits.append(
+                DebugPrintHit(
+                    path=rel,
+                    line=idx,
+                    macro=macro,
+                    text=raw_line.strip(),
                 )
-        if in_trace_resolution_output:
-            trace_resolution_depth += code.count("{") - code.count("}")
-            if trace_resolution_depth <= 0:
-                trace_resolution_depth = 0
+            )
     return hits
 
 

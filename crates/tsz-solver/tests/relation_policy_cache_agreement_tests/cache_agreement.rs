@@ -100,170 +100,6 @@ fn subtype_cache_any_propagation_mode_matches_uncached_nested_any() {
 }
 
 #[test]
-fn assignability_cache_strict_any_matches_uncached_relation_policy() {
-    let interner = TypeInterner::new();
-    let db = QueryCache::new(&interner);
-    let value = interner.intern_string("value");
-
-    let source = interner.object(vec![PropertyInfo::new(value, TypeId::ANY)]);
-    let target = interner.object(vec![PropertyInfo::new(value, TypeId::NUMBER)]);
-
-    let ordinary = RelationPolicy::default().with_strict_any_propagation(false);
-    let strict_any = RelationPolicy::default().with_strict_any_propagation(true);
-    let ordinary_key = RelationCacheKey::for_assignability(source, target, ordinary.cache_config());
-    let strict_any_key =
-        RelationCacheKey::for_assignability(source, target, strict_any.cache_config());
-
-    assert_ne!(
-        ordinary_key, strict_any_key,
-        "ordinary and strict-any policies must occupy distinct assignability cache slots",
-    );
-
-    let ordinary_uncached = query_relation(
-        &interner,
-        source,
-        target,
-        RelationKind::Assignable,
-        ordinary,
-        RelationContext::default(),
-    )
-    .is_related();
-    let strict_any_uncached = query_relation(
-        &interner,
-        source,
-        target,
-        RelationKind::Assignable,
-        strict_any,
-        RelationContext::default(),
-    )
-    .is_related();
-
-    assert!(
-        ordinary_uncached,
-        "ordinary assignability should allow nested `any` to satisfy a number property",
-    );
-    assert!(
-        !strict_any_uncached,
-        "strict-any assignability must not let nested `any` silence the property mismatch",
-    );
-
-    assert_eq!(
-        db.is_assignable_to_with_policy(source, target, ordinary),
-        ordinary_uncached,
-        "cached ordinary any policy must match direct query_relation",
-    );
-    assert_eq!(
-        db.lookup_assignability_cache(ordinary_key),
-        Some(ordinary_uncached),
-        "ordinary any result must be stored in the ordinary assignability slot",
-    );
-    assert_eq!(
-        db.lookup_assignability_cache(strict_any_key),
-        None,
-        "strict-any lookup must not hit the ordinary any slot",
-    );
-
-    assert_eq!(
-        db.is_assignable_to_with_policy(source, target, strict_any),
-        strict_any_uncached,
-        "cached strict-any policy must match direct query_relation",
-    );
-    assert_eq!(
-        db.lookup_assignability_cache(strict_any_key),
-        Some(strict_any_uncached),
-        "strict-any result must be stored in its own assignability slot",
-    );
-    assert_eq!(
-        db.lookup_assignability_cache(ordinary_key),
-        Some(ordinary_uncached),
-        "ordinary any slot must remain intact after the strict-any lookup",
-    );
-}
-
-#[test]
-fn assignability_cache_strict_function_types_does_not_imply_strict_any_policy() {
-    let interner = TypeInterner::new();
-    let db = QueryCache::new(&interner);
-    let value = interner.intern_string("value");
-
-    let source = interner.object(vec![PropertyInfo::new(value, TypeId::ANY)]);
-    let target = interner.object(vec![PropertyInfo::new(value, TypeId::NUMBER)]);
-
-    let strict_functions =
-        RelationPolicy::from_relation_flags(RelationFlags::STRICT_FUNCTION_TYPES);
-    let strict_any = strict_functions.with_strict_any_propagation(true);
-    let strict_functions_key =
-        RelationCacheKey::for_assignability(source, target, strict_functions.cache_config());
-    let strict_any_key =
-        RelationCacheKey::for_assignability(source, target, strict_any.cache_config());
-
-    assert_ne!(
-        strict_functions_key, strict_any_key,
-        "strict-function and strict-any policies must occupy distinct assignability cache slots",
-    );
-
-    let strict_functions_uncached = query_relation(
-        &interner,
-        source,
-        target,
-        RelationKind::Assignable,
-        strict_functions,
-        RelationContext::default(),
-    )
-    .is_related();
-    let strict_any_uncached = query_relation(
-        &interner,
-        source,
-        target,
-        RelationKind::Assignable,
-        strict_any,
-        RelationContext::default(),
-    )
-    .is_related();
-
-    assert!(
-        strict_functions_uncached,
-        "strict function types alone should still allow nested `any` to satisfy a number property",
-    );
-    assert!(
-        !strict_any_uncached,
-        "explicit strict-any propagation must reject the nested `any` property mismatch",
-    );
-
-    assert_eq!(
-        db.is_assignable_to_with_policy(source, target, strict_functions),
-        strict_functions_uncached,
-        "cached strict-function policy must match direct query_relation",
-    );
-    assert_eq!(
-        db.lookup_assignability_cache(strict_functions_key),
-        Some(strict_functions_uncached),
-        "strict-function result must be stored in the strict-function assignability slot",
-    );
-    assert_eq!(
-        db.lookup_assignability_cache(strict_any_key),
-        None,
-        "strict-any lookup must not hit the strict-function slot",
-    );
-
-    assert_eq!(
-        db.is_assignable_to_with_policy(source, target, strict_any),
-        strict_any_uncached,
-        "cached strict-any policy must match direct query_relation",
-    );
-    assert_eq!(
-        db.lookup_assignability_cache(strict_any_key),
-        Some(strict_any_uncached),
-        "strict-any result must be stored in its own assignability slot",
-    );
-    assert_eq!(
-        db.lookup_assignability_cache(strict_functions_key),
-        Some(strict_functions_uncached),
-        "strict-function slot must remain intact after the strict-any lookup",
-    );
-}
-
-#[test]
 fn assignability_cache_skip_weak_type_checks_matches_uncached_relation_policy() {
     let interner = TypeInterner::new();
     let db = QueryCache::new(&interner);
@@ -1088,7 +924,7 @@ fn assignability_cache_disable_method_bivariance_matches_uncached_method_policy(
 
     let bivariant_policy =
         RelationPolicy::from_relation_flags(RelationFlags::STRICT_FUNCTION_TYPES);
-    let sound_policy = RelationPolicy::from_relation_flags(
+    let no_bivariance_policy = RelationPolicy::from_relation_flags(
         RelationFlags::STRICT_FUNCTION_TYPES | RelationFlags::DISABLE_METHOD_BIVARIANCE,
     );
 
@@ -1100,17 +936,18 @@ fn assignability_cache_disable_method_bivariance_matches_uncached_method_policy(
         bivariant_policy,
         RelationContext::default(),
     );
-    let sound_uncached = query_relation(
+    let no_bivariance_uncached = query_relation(
         &interner,
         source,
         target,
         RelationKind::Assignable,
-        sound_policy,
+        no_bivariance_policy,
         RelationContext::default(),
     );
 
     let bivariant_cached = db.is_assignable_to_with_policy(source, target, bivariant_policy);
-    let sound_cached = db.is_assignable_to_with_policy(source, target, sound_policy);
+    let no_bivariance_cached =
+        db.is_assignable_to_with_policy(source, target, no_bivariance_policy);
     let bivariant_cached_again = db.is_assignable_to_with_policy(source, target, bivariant_policy);
     let stats = db.relation_cache_stats();
 
@@ -1120,9 +957,9 @@ fn assignability_cache_disable_method_bivariance_matches_uncached_method_policy(
         "cached method-bivariant assignability must match the uncached relation facade",
     );
     assert_eq!(
-        sound_cached,
-        sound_uncached.is_related(),
-        "cached sound method assignability must match the uncached relation facade",
+        no_bivariance_cached,
+        no_bivariance_uncached.is_related(),
+        "cached no-bivariance method assignability must match the uncached relation facade",
     );
     assert_eq!(
         bivariant_cached_again, bivariant_cached,
@@ -1133,7 +970,7 @@ fn assignability_cache_disable_method_bivariance_matches_uncached_method_policy(
         "strict function types should still allow method parameter bivariance by default",
     );
     assert!(
-        !sound_cached,
+        !no_bivariance_cached,
         "disabling method bivariance should reject `(dog) => void` where `(animal) => void` is required",
     );
     assert!(
@@ -1142,104 +979,7 @@ fn assignability_cache_disable_method_bivariance_matches_uncached_method_policy(
     );
     assert!(
         stats.assignability_misses >= 2,
-        "method-bivariant and sound-method policies should miss in separate cache slots",
-    );
-}
-
-#[test]
-fn assignability_cache_strict_subtype_checking_matches_uncached_method_policy() {
-    let interner = TypeInterner::new();
-    let db = QueryCache::new(&interner);
-    let run = interner.intern_string("run");
-    let name = interner.intern_string("name");
-    let breed = interner.intern_string("breed");
-
-    let animal = interner.object(vec![PropertyInfo::new(name, TypeId::STRING)]);
-    let dog = interner.object(vec![
-        PropertyInfo::new(name, TypeId::STRING),
-        PropertyInfo::new(breed, TypeId::STRING),
-    ]);
-    let dog_method = interner.function(FunctionShape::new(
-        vec![ParamInfo::unnamed(dog)],
-        TypeId::VOID,
-    ));
-    let animal_method = interner.function(FunctionShape::new(
-        vec![ParamInfo::unnamed(animal)],
-        TypeId::VOID,
-    ));
-    let source = interner.object(vec![PropertyInfo::method(run, dog_method)]);
-    let target = interner.object(vec![PropertyInfo::method(run, animal_method)]);
-
-    let ordinary = RelationPolicy::from_relation_flags(RelationFlags::STRICT_FUNCTION_TYPES)
-        .with_strict_subtype_checking(false);
-    let strict = RelationPolicy::from_relation_flags(RelationFlags::STRICT_FUNCTION_TYPES)
-        .with_strict_subtype_checking(true);
-    let ordinary_key = RelationCacheKey::for_assignability(source, target, ordinary.cache_config());
-    let strict_key = RelationCacheKey::for_assignability(source, target, strict.cache_config());
-
-    assert_ne!(
-        ordinary_key, strict_key,
-        "ordinary and strict-subtype policies must occupy distinct assignability cache slots",
-    );
-
-    let ordinary_uncached = query_relation(
-        &interner,
-        source,
-        target,
-        RelationKind::Assignable,
-        ordinary,
-        RelationContext::default(),
-    )
-    .is_related();
-    let strict_uncached = query_relation(
-        &interner,
-        source,
-        target,
-        RelationKind::Assignable,
-        strict,
-        RelationContext::default(),
-    )
-    .is_related();
-
-    assert!(
-        ordinary_uncached,
-        "ordinary strict-function assignability should keep method parameters bivariant",
-    );
-    assert!(
-        !strict_uncached,
-        "strict subtype checking should disable method bivariance for assignability",
-    );
-
-    assert_eq!(
-        db.is_assignable_to_with_policy(source, target, ordinary),
-        ordinary_uncached,
-        "cached ordinary policy must match direct query_relation",
-    );
-    assert_eq!(
-        db.lookup_assignability_cache(ordinary_key),
-        Some(ordinary_uncached),
-        "ordinary result must be stored in the ordinary assignability slot",
-    );
-    assert_eq!(
-        db.lookup_assignability_cache(strict_key),
-        None,
-        "strict-subtype lookup must not hit the ordinary slot",
-    );
-
-    assert_eq!(
-        db.is_assignable_to_with_policy(source, target, strict),
-        strict_uncached,
-        "cached strict-subtype policy must match direct query_relation",
-    );
-    assert_eq!(
-        db.lookup_assignability_cache(strict_key),
-        Some(strict_uncached),
-        "strict-subtype result must be stored in the strict assignability slot",
-    );
-    assert_eq!(
-        db.lookup_assignability_cache(ordinary_key),
-        Some(ordinary_uncached),
-        "ordinary assignability slot must remain intact after the strict lookup",
+        "method-bivariant and no-bivariance policies should miss in separate cache slots",
     );
 }
 
@@ -1268,14 +1008,12 @@ fn assignability_cache_allow_bivariant_rest_matches_uncached_relation_policy() {
     let ordinary = RelationPolicy::from_relation_flags(
         RelationFlags::STRICT_FUNCTION_TYPES | RelationFlags::STRICT_NULL_CHECKS,
     )
-    .with_strict_any_propagation(true)
     .with_any_propagation_mode(AnyPropagationMode::TopLevelOnly);
     let bivariant_rest = RelationPolicy::from_relation_flags(
         RelationFlags::STRICT_FUNCTION_TYPES
             | RelationFlags::STRICT_NULL_CHECKS
             | RelationFlags::ALLOW_BIVARIANT_REST,
     )
-    .with_strict_any_propagation(true)
     .with_any_propagation_mode(AnyPropagationMode::TopLevelOnly);
     let ordinary_key = RelationCacheKey::for_assignability(source, target, ordinary.cache_config());
     let bivariant_rest_key =
@@ -1307,7 +1045,7 @@ fn assignability_cache_allow_bivariant_rest_matches_uncached_relation_policy() {
 
     assert!(
         !ordinary_uncached,
-        "ordinary strict-any assignability should compare extra parameters normally",
+        "ordinary top-level-only any propagation should compare extra parameters normally",
     );
     assert!(
         bivariant_rest_uncached,
@@ -1781,19 +1519,19 @@ fn assignability_cache_disable_method_bivariance_matches_uncached_method_paramet
     let bivariant_method = RelationPolicy::from_relation_flags(
         RelationFlags::STRICT_FUNCTION_TYPES | RelationFlags::ALLOW_BIVARIANT_PARAM_COUNT,
     );
-    let sound_method = RelationPolicy::from_relation_flags(
+    let no_bivariance_method = RelationPolicy::from_relation_flags(
         RelationFlags::STRICT_FUNCTION_TYPES
             | RelationFlags::ALLOW_BIVARIANT_PARAM_COUNT
             | RelationFlags::DISABLE_METHOD_BIVARIANCE,
     );
     let bivariant_key =
         RelationCacheKey::for_assignability(source, target, bivariant_method.cache_config());
-    let sound_key =
-        RelationCacheKey::for_assignability(source, target, sound_method.cache_config());
+    let no_bivariance_key =
+        RelationCacheKey::for_assignability(source, target, no_bivariance_method.cache_config());
 
     assert_ne!(
-        bivariant_key, sound_key,
-        "method-bivariant and sound-method parameter-count policies must occupy distinct assignability cache slots",
+        bivariant_key, no_bivariance_key,
+        "method-bivariant and no-bivariance parameter-count policies must occupy distinct assignability cache slots",
     );
 
     let bivariant_uncached = query_relation(
@@ -1805,12 +1543,12 @@ fn assignability_cache_disable_method_bivariance_matches_uncached_method_paramet
         RelationContext::default(),
     )
     .is_related();
-    let sound_uncached = query_relation(
+    let no_bivariance_uncached = query_relation(
         &interner,
         source,
         target,
         RelationKind::Assignable,
-        sound_method,
+        no_bivariance_method,
         RelationContext::default(),
     )
     .is_related();
@@ -1820,7 +1558,7 @@ fn assignability_cache_disable_method_bivariance_matches_uncached_method_paramet
         "method bivariance should allow extra required method parameters when the count exception is enabled",
     );
     assert!(
-        !sound_uncached,
+        !no_bivariance_uncached,
         "disabling method bivariance should also disable the method parameter-count exception",
     );
 
@@ -1835,25 +1573,26 @@ fn assignability_cache_disable_method_bivariance_matches_uncached_method_paramet
         "method-bivariant parameter-count result must use its own cache slot",
     );
     assert_eq!(
-        db.lookup_assignability_cache(sound_key),
+        db.lookup_assignability_cache(no_bivariance_key),
         None,
-        "sound-method lookup must not hit the method-bivariant parameter-count slot",
+        "no-bivariance lookup must not hit the method-bivariant parameter-count slot",
     );
 
-    let sound_cached = db.is_assignable_to_with_policy(source, target, sound_method);
+    let no_bivariance_cached =
+        db.is_assignable_to_with_policy(source, target, no_bivariance_method);
     assert_eq!(
-        sound_cached, sound_uncached,
-        "cached sound-method parameter-count policy must match direct query_relation",
+        no_bivariance_cached, no_bivariance_uncached,
+        "cached no-bivariance parameter-count policy must match direct query_relation",
     );
     assert_eq!(
-        db.lookup_assignability_cache(sound_key),
-        Some(sound_cached),
-        "sound-method parameter-count result must use its own cache slot",
+        db.lookup_assignability_cache(no_bivariance_key),
+        Some(no_bivariance_cached),
+        "no-bivariance parameter-count result must use its own cache slot",
     );
     assert_eq!(
         db.lookup_assignability_cache(bivariant_key),
         Some(bivariant_cached),
-        "method-bivariant parameter-count slot must remain intact after the sound-method lookup",
+        "method-bivariant parameter-count slot must remain intact after the no-bivariance lookup",
     );
 }
 
@@ -1899,7 +1638,7 @@ fn subtype_cache_split_accessor_variance_matches_uncached_property_policy() {
         "split accessor with a wider write type should satisfy a uniform property target",
     );
     // PARITY: tsc relates properties through their *read* types only, so the
-    // reverse direction is also related; write types are Sound Mode-only.
+    // reverse direction is also related; write types do not affect compatibility.
     // This test's subject is cache-slot agreement, not the relation value.
     assert!(
         narrow_to_wide_uncached,

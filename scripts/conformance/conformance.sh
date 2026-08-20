@@ -147,20 +147,11 @@ binaries_are_fresh() {
     local newest_binary_mtime=$(for f in "$tsz_bin" "$conformance_bin" "$cache_gen_bin"; do file_mtime "$f"; done | sort -n | tail -1)
     
     # Check if any Rust source file in the relevant crates is newer than the binaries
-    # These are all the workspace crates that tsz-cli and tsz-conformance depend on
+    # These are the three active clean-slate workspace crates.
     local crates_to_check=(
         "tsz-cli"
         "tsz-core"
         "conformance"
-        "tsz-common"
-        "tsz-scanner"
-        "tsz-parser"
-        "tsz-binder"
-        "tsz-solver"
-        "tsz-checker"
-        "tsz-emitter"
-        "tsz-lsp"
-        "tsz-wasm"
     )
     
     local crates_dir="$REPO_ROOT/crates"

@@ -219,7 +219,6 @@ fn member_names_at_end_with_lib(source: &str, lib_source: &str) -> Vec<String> {
         "test.ts".to_string(),
         crate::provider_macro::FullProviderOptions {
             strict: true,
-            sound_mode: false,
             checker_options: None,
             lib_contexts: &lib_contexts,
         },

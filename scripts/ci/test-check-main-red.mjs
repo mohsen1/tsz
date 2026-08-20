@@ -138,11 +138,11 @@ test("classifyJobsFailure: job-level timed_out/startup_failure => real", () => {
 test("classifyJobsFailure: cancelled work step counts as interrupted => infra", () => {
   const jobs = {
     jobs: [{
-      name: "unit-checker-integration",
+      name: "rewrite-unit-nightly",
       conclusion: "failure",
       steps: [
         { name: "Checkout", conclusion: "success" },
-        { name: "Run checker integration suite", conclusion: "cancelled" },
+        { name: "Run rewrite unit suite", conclusion: "cancelled" },
       ],
     }],
   };

@@ -1,508 +1,191 @@
-# Developer Tooling Guide
+# TSZ Tooling Reference
 
-This document describes the scripts and tools available for development, testing, and analysis in the tsz codebase.
+This page lists the tools that remain useful during the clean-slate rewrite.
+Commands target the three-package workspace: `tsz-core`, `tsz-cli`, and
+`tsz-conformance`.
 
-## Architecture Boundary Checking
-
-### `scripts/arch/check-checker-boundaries.sh`
-
-Enforces the checker-solver boundary at commit time. Runs as part of the pre-commit hook.
-
-Checks for:
-- Forbidden imports of solver internals (`TypeKey`, raw interner) from checker code
-- Direct `CompatChecker` access from TS2322-family paths (should route through `query_boundaries`)
-- Cross-layer imports that violate the pipeline architecture
-- Track 10 ratchet metrics for post-check fingerprint rewrites, checker and
-  emitter `source_text.contains` decisions, file-name/path substring
-  decisions, and rendered-type string decisions
-
-```bash
-# Run manually
-./scripts/arch/check-checker-boundaries.sh
-```
-
-### `scripts/arch/arch_guard.py`
-
-Python-based architecture guard that validates import patterns across the entire workspace.
-
-```bash
-# Run the guard
-python3 scripts/arch/arch_guard.py
-
-# Emit machine-readable guard status
-python3 scripts/arch/arch_guard.py --json
-
-# Persist a report artifact while preserving the guard exit code
-python3 scripts/arch/arch_guard.py --json-report artifacts/arch_guard_report.json
-
-# Render the CheckerContext field lifetime manifest
-python3 scripts/arch/arch_guard.py --checker-context-lifetime-table
-
-# Run its test suite
-python3 scripts/arch/test_arch_guard.py
-```
-
-The JSON payload includes `status`, `arch_guard_status`, git context, total
-matched debt, and per-check failures. Use `--json-report` for CI artifacts or
-PR evidence when changing boundary ratchets, LSP/WASM/compiler-service
-front-door rules, checker context lifetime ownership, or output-surgery-adjacent
-architecture caps.
-
-### `scripts/arch/render_architecture_report.py`
-
-Generates an HTML/text report of crate dependencies and boundary compliance.
-
-```bash
-python3 scripts/arch/render_architecture_report.py
-```
-
-### `scripts/emit/audit-output-surgery.py`
-
-Audits emitter string rewrites that change already-emitted JS/DTS output and
-tracks the ratcheted allowlist budget.
-
-```bash
-# Run the guard
-python3 scripts/emit/audit-output-surgery.py
-
-# Emit machine-readable output-surgery pressure
-python3 scripts/emit/audit-output-surgery.py --json
-
-# Persist a report artifact while preserving the guard exit code
-python3 scripts/emit/audit-output-surgery.py --json-report artifacts/output_surgery_report.json
-
-# Fail when allowlisted debt exhausts category/global pressure budget
-python3 scripts/emit/audit-output-surgery.py --fail-on-warnings
-```
-
-The JSON payload includes `status`, `output_surgery_status`, git context,
-allowlist budget counters, category pressure, failures, files, and individual
-findings. Use `--json` for direct agent/CI probes and `--json-report` when a PR
-or workflow needs an artifact.
-
-## Quality And Performance Tooling
-
-These tools are additive guardrails. Normal PR CI keeps the fast path focused on
-formatting, lint, dependency policy, build, and unit tests; heavier exploratory
-tools run from the scheduled/manual `Quality Tools` workflow or local focused
-commands.
-
-### `cargo-deny`
-
-`cargo-deny` runs in PR CI through `deny.toml`. It enforces dependency-source
-policy, rejects wildcard dependency versions, checks RustSec advisories, and
-keeps license review explicit.
-
-```bash
-cargo install cargo-deny --version 0.19.6 --locked
-cargo deny check
-```
-
-### `cargo-shear`
-
-`cargo-shear` runs in PR CI to catch dependencies that remain declared in
-`Cargo.toml` after the code stops using them. Treat findings as dependency
-graph hygiene work; do not use `--fix` in an unrelated semantic PR.
-
-```bash
-cargo install cargo-shear --version 1.12.0 --locked
-cargo shear
-```
-
-### Miri
-
-Miri is useful for undefined-behavior checks in pure Rust library tests. Keep it
-focused; do not run conformance, emit, fourslash, CLI process harnesses, or the
-whole workspace under Miri.
-
-The default target set covers a small substrate slice plus the `tsz-core`
-snapshot cache round trip, which exercises the unsafe environment mutation used
-by that cache test. The script runs with strict provenance and disables Miri's
-host isolation by default so that the snapshot target can create a temporary
-directory. Keep `TSZ_MIRI_TARGETS` pinned to known-safe unit tests when adding
-new cases.
-
-```bash
-rustup toolchain install nightly --component miri
-rustup run nightly cargo miri setup
-scripts/quality/run-miri.sh
-```
-
-Override the default target list with `package:test-filter` entries when
-investigating a crate:
-
-```bash
-TSZ_MIRI_TARGETS="tsz-common:interner::tests::test_interner_intern_and_resolve" \
-  scripts/quality/run-miri.sh
-```
-
-### Coverage
-
-`cargo-llvm-cov` produces source coverage for focused library unit tests. The
-default script covers the common scanner/parser/common substrate and writes an
-LCOV artifact.
-
-```bash
-cargo install cargo-llvm-cov --version 0.8.7 --locked
-scripts/quality/run-coverage.sh
-```
-
-## Emit Snapshot Tooling
-
-### `scripts/emit/query-emit.py`
-
-Reads the checked-in emit detail artifact without re-running the emit suite.
-Use text output for quick triage and JSON output when a PR, CI artifact, or
-handoff needs structured evidence.
-
-```bash
-# Human-readable failure families
-python3 scripts/emit/query-emit.py --families
-
-# Machine-readable failure families
-python3 scripts/emit/query-emit.py --families-json
-
-# Historical checked-detail rows when the public aggregate is newer
-python3 scripts/emit/query-emit.py --families-json --include-stale-detail
-```
-
-When the README/public aggregate is ahead of `scripts/emit/emit-detail.json`,
-family rows are suppressed by default. Pass `--include-stale-detail` only when
-the report is explicitly framed as historical checked-detail triage rather than
-the current public remaining set.
-
-When checked detail and README/public aggregates match,
-`scripts/emit/emit-snapshot.json` can prove the named rows too. It does so by
-storing the checked-detail row fingerprint and result count beside the public
-summary. `--freshness-json` reports `rowFreshnessProven: true` only when the
-README aggregate, snapshot summary, detail summary, recomputed detail rows, and
-snapshot fingerprint all agree.
-
-### Mutation Testing
-
-`cargo-mutants` is intentionally scoped by default. Use it to audit whether
-focused unit tests actually protect a rule before or after high-risk checker,
-solver, scanner, or parser changes.
-
-```bash
-cargo install cargo-mutants --version 27.0.0 --locked
-scripts/quality/run-mutants-smoke.sh
-TSZ_MUTANTS_PACKAGE=tsz-scanner TSZ_MUTANTS_FILE='crates/tsz-scanner/src/**/*.rs' \
-  scripts/quality/run-mutants-smoke.sh
-```
-
-The smoke script lists mutants only. Run a real mutation campaign deliberately
-with a tight file glob and `--test-tool nextest` once the baseline command is
-known to be fast enough.
-
-### SemVer Checks
-
-`cargo-semver-checks` audits public Rust API compatibility for the publishable
-workspace crates. It is manual-only in the `Quality Tools` workflow because
-TSZ is pre-1.0 and internal public APIs still move often; use it before
-releases or when a PR changes a public crate boundary. It is not a substitute
-for TypeScript conformance.
-
-```bash
-cargo install cargo-semver-checks --version 0.47.0 --locked
-scripts/quality/run-semver-checks.sh
-TSZ_SEMVER_BASELINE_REV=origin/main scripts/quality/run-semver-checks.sh
-TSZ_SEMVER_BASELINE_REV=v0.1.9 scripts/quality/run-semver-checks.sh
-TSZ_SEMVER_PACKAGES="tsz-core tsz-checker" scripts/quality/run-semver-checks.sh
-```
-
-### Sanitizers
-
-Sanitizer smoke tests are Linux/nightly-only and target narrow native library
-tests. They are for unsafe/FFI/native-dependency investigations, not routine
-local pre-commit.
-
-```bash
-rustup toolchain install nightly --component rust-src
-scripts/quality/run-sanitizer.sh
-```
-
-### Performance Probes
-
-The repo already has Criterion benches and a benchmark workflow. The quality
-workflow adds lightweight profile-build and binary-size attribution probes:
-
-```bash
-cargo install cargo-bloat --version 0.12.1 --locked
-scripts/quality/run-perf-probes.sh
-```
-
-For CPU investigations, prefer the existing flame profile:
-
-```bash
-cargo build --profile flame --bin tsz
-samply record --save-only -o /tmp/tsz-profile.json -- .target/flame/tsz check benches/
-```
-
-Lower-priority overlaps are deliberately kept out of the default quality
-workflow: `cargo-audit` is covered by `cargo-deny` advisories, broad formal
-verification is too expensive without a specific proof target, `cargo-fuzz` and
-Loom need dedicated parser/checker or concurrency harnesses before they are
-useful, and extra binary-size/profiling tools should stay tied to a measured
-performance question.
-
-## Conformance Testing
-
-Full conformance is a CI gate, not a normal local command. Local conformance
-work should answer a specific debugging question with a narrow filter, then
-stop once the result informs the fix.
-
-### Quick Reference
-
-```bash
-# Build the conformance runner (fast profile)
-cargo build --profile dist-fast -p tsz-conformance
-
-# Run filtered tests (fast iteration)
-.target/dist-fast/tsz-conformance --filter "controlFlow" \
-  --cache-file scripts/conformance/tsc-cache-full.json
-
-# Verbose output (see expected vs actual diagnostics)
-.target/dist-fast/tsz-conformance --filter "testName" --verbose \
-  --cache-file scripts/conformance/tsc-cache-full.json
-
-# Limit test count for quick smoke tests
-.target/dist-fast/tsz-conformance --filter "pattern" --max 50 \
-  --cache-file scripts/conformance/tsc-cache-full.json
-```
-
-### Offline Analysis Tools
-
-These work from pre-computed snapshot files — zero CPU cost, instant results.
-
-#### `scripts/conformance/query-conformance.py`
-
-The primary analysis tool. Queries the conformance snapshot without running any tests.
-
-```bash
-# Overview: what to work on next
-python3 scripts/conformance/query-conformance.py
-
-# Root-cause campaign recommendations
-python3 scripts/conformance/query-conformance.py --campaigns
-
-# Deep-dive one campaign
-python3 scripts/conformance/query-conformance.py --campaign big3
-
-# Tests fixable by adding 1 missing diagnostic
-python3 scripts/conformance/query-conformance.py --one-missing
-
-# Tests fixable by removing 1 extra diagnostic (false positives)
-python3 scripts/conformance/query-conformance.py --one-extra
-
-# False positive breakdown
-python3 scripts/conformance/query-conformance.py --false-positives
-
-# Deep-dive a specific error code
-python3 scripts/conformance/query-conformance.py --code TS2322
-
-# List tests where a code is falsely emitted
-python3 scripts/conformance/query-conformance.py --extra-code TS7053
-
-# Tests closest to passing (diff <= N)
-python3 scripts/conformance/query-conformance.py --close 2
-
-# Export paths for piping
-python3 scripts/conformance/query-conformance.py --code TS2454 --paths-only
-```
-
-#### `scripts/conformance/link-regression-issues.py`
-
-Cross-checks open regression issue titles (or bare test names) against the
-current snapshot artifacts. Emits markdown suitable for pasting into a PR
-or issue comment so a human can decide whether to close, re-scope, or keep
-the regression issue open.
-
-```bash
-# A bare test name from an issue title
-python3 scripts/conformance/link-regression-issues.py tsxGenericAttributesType6
-
-# Several titles at once (each becomes one report row)
-python3 scripts/conformance/link-regression-issues.py \
-    "tsxGenericAttributesType6 wrong codes" \
-    "excessPropertyCheckIntersectionWithRecursiveType regression"
-
-# One title per line from a file (e.g. dumped from issue search)
-python3 scripts/conformance/link-regression-issues.py --from-file open-issues.txt
-
-# JSON instead of markdown
-python3 scripts/conformance/link-regression-issues.py --json tsxGenericAttributesType6
-```
-
-Status taxonomy and the matching closure pattern are documented in the
-helper's module docstring. The helper never re-runs conformance and never
-posts comments on its own — it only reads checked-in artifacts.
-
-**Closure pattern for stale regression issues.** When the helper reports
-`stale: passing in current snapshot`, close the regression issue with
-`not planned (stale)` and paste the helper output as the closing comment.
-When it reports `stale: accepted-regression entry no longer fails`, treat that
-as checked-in snapshot evidence only: first verify exact-head aggregate CI no
-longer lists the test in shard failures, then open a follow-up to drop the entry
-from `scripts/conformance/conformance-accepted-regressions.txt`. When it reports
-`aggregate: no single snapshot row`, reply with the dashboard categories the
-helper points to instead of pretending a single row exists.
-
-#### `scripts/conformance/conformance.sh`
-
-The main conformance test orchestrator. Use it locally only with a narrow
-filter. Full run/snapshot modes are reserved for CI or explicit maintainer
-baseline work.
-
-```bash
-# Run one focused conformance filter
-./scripts/conformance/conformance.sh run --filter "mappedTypeRelationships" --verbose
-
-# Analyze from existing snapshots (no CPU cost)
-./scripts/conformance/conformance.sh analyze --campaigns
-./scripts/conformance/conformance.sh analyze --one-missing
-./scripts/conformance/conformance.sh analyze --close 2
-```
-
-Use snapshot-writing modes only in CI or explicit baseline-maintainer work.
-
-### Snapshot Files
-
-| File | Description |
-|------|-------------|
-| `scripts/conformance/conformance-snapshot.json` | High-level aggregates (summary, areas, top failures) |
-| `scripts/conformance/conformance-detail.json` | Per-test failure data (expected/actual/missing/extra codes) |
-| `scripts/conformance/conformance-baseline.txt` | One-line-per-test pass/fail with code diff |
-| `scripts/conformance/conformance-accepted-regressions.txt` | Failing tests tracked as accepted regressions (the CI budget set) |
-| `scripts/conformance/tsc-cache-full.json` | tsc expected diagnostics for every test |
-
-### Reading Snapshots Directly
-
-```python
-import json
-
-# High-level summary
-with open('scripts/conformance/conformance-snapshot.json') as f:
-    snap = json.load(f)
-# Keys: summary, areas_by_pass_rate, top_failures, partial_codes,
-#        one_missing_zero_extra, one_extra_zero_missing, false_positive_codes
-
-# Per-test detail
-with open('scripts/conformance/conformance-detail.json') as f:
-    detail = json.load(f)
-# detail["failures"][test_path] = {"e": [...], "a": [...], "m": [...], "x": [...]}
-# e=expected, a=actual, m=missing, x=extra
-
-# tsc expected diagnostics
-with open('scripts/conformance/tsc-cache-full.json') as f:
-    cache = json.load(f)
-# cache[test_key] = {"error_codes": [...], "diagnostic_fingerprints": [...]}
-```
-
-## Setup and Maintenance
-
-### `scripts/setup/setup.sh`
-
-One-time setup: installs git hooks, initializes TypeScript submodule.
+## Setup And Intake
 
 ```bash
 ./scripts/setup/setup.sh
+scripts/setup/disk-worktree-guard.sh
+git worktree list
 ```
 
-### `scripts/safe-run.sh`
+The setup script installs hooks and initializes the pinned TypeScript checkout.
+Use the disk guard before new worktrees or memory-heavy builds. Preserve useful
+Rust and TypeScript caches when reclaiming space.
 
-Memory-guarded command execution. Monitors RSS and kills the process if it exceeds the limit.
+## Fast Compiler Loop
 
 ```bash
-# Default limit (75% of system RAM)
-scripts/safe-run.sh cargo nextest run
-
-# Custom limit
-scripts/safe-run.sh --limit 8192 -- cargo build --release
-
-# Verbose (show memory usage)
-scripts/safe-run.sh --verbose -- cargo build
+cargo fmt --all
+cargo check --workspace --all-targets
+cargo nextest run -p tsz-core --test rewrite_foundation
+cargo nextest run -p tsz-cli --test rewrite_process_contract
 ```
 
-Use for long-running or memory-intensive commands such as a full
-`cargo nextest run`, release builds, and multi-worker test runners. This does
-not override the CI-only rule for full conformance, emit, or fourslash suites:
-keep those full suites out of normal local development and let CI run them.
-
-On macOS the guard samples physical footprint via `footprint` when available,
-falling back to RSS elsewhere. Each memory probe runs under a deadline
-(`SAFE_RUN_PROBE_TIMEOUT_SECS`, default 10s); a timed-out probe falls back to
-an RSS sample on the same tick, and after three consecutive probe failures the
-run downgrades to RSS mode permanently, so a slow or wedged `footprint` never
-disables memory enforcement or hangs the wrapper after the child exits
-(issue #15439). Teardown kills the entire monitor process tree so pipelines
-reading safe-run's output (`... | tee log`) get EOF as soon as the wrapped
-command finishes. The behavior is covered by `scripts/test/safe-run-test.sh`,
-which runs in the CI lint gate.
-
-### `scripts/test/nextest-guard.sh`
-
-Serializes local `cargo nextest` runs and self-heals a wedged orchestrator.
-`cargo-nextest` can wedge at ~0% CPU — the orchestrator stays alive but idle
-with no `rustc` running and no output — when two nextest invocations run
-concurrently, or after a nextest is killed mid-build (issue #13982). The guard
-encodes the reliable manual workaround ("serialize nextest, never kill it
-mid-build") as tooling:
-
-- it holds a host-wide advisory lock for the wrapped command, so a second
-  guarded run queues behind the first instead of racing the orchestrator into a
-  wedge;
-- on startup, if the previous lock holder died abnormally, it reaps the
-  orchestrator process tree that the prior guarded run recorded (and only that
-  tree — never an unrelated `cargo-nextest` it did not start), then takes the
-  lock and proceeds.
+Use `cargo nextest`, not `cargo test`. A full strict rewrite check is:
 
 ```bash
-# Run targeted unit tests serialized against any other guarded nextest
-scripts/test/nextest-guard.sh -- cargo nextest run -p tsz-checker --lib <name>
-
-# Compose with safe-run.sh (memory guard) in either order
-scripts/test/nextest-guard.sh -- scripts/safe-run.sh -- cargo nextest run
-
-# Fail fast instead of waiting if another guarded run holds the lock
-scripts/test/nextest-guard.sh --no-wait -- cargo nextest run -p tsz-solver
+cargo fmt --all --check
+cargo check --workspace --all-targets
+cargo clippy --workspace --all-targets -- -D warnings
+cargo nextest run --workspace
+python3 scripts/arch/arch_guard.py
+python3 -m unittest discover scripts/arch -p 'test_arch_guard*.py' -v
 ```
 
-The lock is advisory: it only constrains commands launched through the guard,
-and it never changes test behavior or output. `--scope target` narrows
-serialization to runs that share a `CARGO_TARGET_DIR`; the default (`global`)
-serializes every guarded nextest on the host, because the wedge reproduces even
-across distinct target dirs. The behavior is covered by
-`scripts/test/nextest-guard-test.sh`.
+The architecture guard enforces the workspace graph, dependency direction,
+anti-hardcoding rules, retired-surface removal, and the 2,000-line file limit.
 
-### `scripts/setup/reset-ts-submodule.sh`
+## Native Binaries
 
-Resets the TypeScript submodule to the pinned commit SHA. Called automatically by the pre-commit hook.
+Build the four R0 adapters together:
 
-## Pre-commit Hook Details
+```bash
+cargo build -p tsz-cli \
+  --bin tsz --bin tsz-server --bin tsz-lsp --bin try-tsz
+```
 
-The pre-commit hook (`scripts/githooks/pre-commit`) keeps local commits cheap.
-It blocks TypeScript submodule changes and formats staged Rust files. Build,
-lint, unit, conformance, emit, fourslash, and WASM verification run in CI.
+Useful smoke launches:
 
-In fast mode it runs these checks in order:
+```bash
+cargo run -p tsz-cli --bin tsz -- --help
+cargo run -p tsz-cli --bin try-tsz -- --help
+```
 
-1. **Submodule block** — prevents committing TypeScript submodule changes
-2. **Formatting** — `cargo fmt` with auto-fix and re-stage
+`tsz-server` uses the retained framed protocol, and `tsz-lsp` is an honest
+adapter over the service API. Exercise protocol behavior through process tests
+instead of importing CLI internals. There is no browser/WASM build in R0; that
+surface returns in R4.
 
-Environment variables to control behavior:
-- `TSZ_SKIP_HOOKS=1` — skip all checks
-- `TSZ_SKIP_BENCH=1` — skip microbenchmark check
-- `TSZ_PRECOMMIT_FULL=1` — run strict legacy-style checks: cleanup, clippy fix, CI parity lint, wasm check, and transitive tests
-- `TSZ_PRECOMMIT_CLEAN=1` — run target cleanup in fast mode
-- `TSZ_PRECOMMIT_CLIPPY_FIX=1` — run `cargo clippy --fix` before clippy verification
-- `TSZ_PRECOMMIT_CI_PARITY=1` — run full CI parity lint in fast mode
-- `TSZ_PRECOMMIT_WASM=1` — run the wasm32 check in fast mode
-- `TSZ_PRECOMMIT_RESET_TYPESCRIPT=1` — reset/init the TypeScript submodule before checking
-- `TSZ_PRECOMMIT_TEST_SCOPE=affected` — test changed crates plus transitive dependents
-- `TSZ_PRECOMMIT_TEST_SCOPE=all` or `TSZ_TEST_ALL=1` — force testing all workspace crates
-- `TSZ_GIT_HOOK_RESET_TYPESCRIPT=1` — reset/init TypeScript from post-merge and post-rewrite hooks
+## TypeScript 7 Oracle
 
-The TypeScript submodule is intentionally on-demand in git hooks. Conformance,
-emit, and fourslash runners initialize or validate `TypeScript/` when those
-suites need the corpus or baselines.
+The pinned TypeScript 7.0.2 checkout is the behavioral source of truth. Oracle
+evidence should include the exact input and all applicable outputs:
+
+- diagnostic code, file, normalized start/length, and message chain;
+- process exit status;
+- JavaScript and declaration output;
+- root-file order and compiler options;
+- oracle commit and declared threading mode.
+
+Do not edit the submodule. If its test corpus or libraries are missing, rerun
+setup rather than substituting a different TypeScript installation.
+
+## Conformance
+
+Launch one narrow case:
+
+```bash
+./scripts/conformance/conformance.sh run \
+  --filter '<case>' --max 1 --workers 1 --verbose
+```
+
+Inspect existing result artifacts without launching the compiler:
+
+```bash
+python3 scripts/conformance/query-conformance.py
+python3 scripts/conformance/query-conformance.py --code TS2322
+python3 scripts/conformance/query-conformance.py --close 2
+```
+
+Never run two conformance invocations concurrently in one worktree. Full-corpus
+results are observations during R0/R1; keep unsupported and crashed cases in
+the result. A seed capability becomes a floor only when the roadmap declares
+it supported.
+
+## Emit
+
+```bash
+./scripts/emit/run.sh --filter='<case>' --max=1 --verbose
+./scripts/emit/run.sh --filter='<case>' --max=1 --js-only
+./scripts/emit/run.sh --filter='<case>' --max=1 --dts-only
+```
+
+Use `--json-out=<path>` for a machine-readable observation. JavaScript emit
+uses syntax; declaration emit uses explicit checked summaries. An emit test
+must not be made to pass by reparsing or patching rendered output.
+
+## Fourslash And Server
+
+```bash
+cargo build --release -p tsz-cli --bin tsz-server
+./scripts/fourslash/run-fourslash.sh \
+  --filter='<case>' --max=1 --sequential --skip-cargo-build
+```
+
+Use `--json-out=<path>` when preserving an observation. Fourslash is broad
+legacy evidence until each language-service behavior is ported through the
+public service API.
+
+## Project And Performance Harnesses
+
+Project definitions and measurement infrastructure remain under
+`scripts/bench/` and `scripts/perf/`. Use their checked-in metadata validators
+before changing rows or fixtures:
+
+```bash
+node scripts/bench/validate-project-metadata.mjs
+node scripts/bench/test-project-rows.mjs
+```
+
+Performance is meaningful only for an oracle-green row with its real dependency
+graph. Build once, record the binary hash, and time an immutable optimized
+binary. Keep CPU, wall time, peak RSS, diagnostics fingerprint, fixture hash,
+and oracle version together. Wrap heavy measurements:
+
+```bash
+scripts/safe-run.sh ./scripts/bench/bench-vs-tsgo.sh \
+  --quick --filter '<row>' --json-file /tmp/tsz-bench.json
+```
+
+Do not call a red, yellow, gray, stubbed, or unsupported row a speed win.
+
+## Tracing
+
+Compiler internals use tracing:
+
+```bash
+TSZ_LOG=debug TSZ_LOG_FORMAT=tree \
+  cargo run -p tsz-cli --bin tsz -- path/to/file.ts
+```
+
+Do not add temporary print or `dbg!` instrumentation. Prefer source reading and
+focused traces; remove task-specific trace configuration from committed tests.
+
+## Memory-Guarded Commands
+
+Wrap long or memory-heavy work with the repository guard:
+
+```bash
+scripts/safe-run.sh --limit 8192 -- cargo build --profile dist -p tsz-cli
+```
+
+The guard reports and terminates excessive RSS. Do not run broad recursive disk
+scans or discard caches without first identifying ownership.
+
+## Documentation And Context Checks
+
+After changing `.codex/`, `.claude/`, `AGENTS.md`, repo skills, or startup
+hooks, run:
+
+```bash
+python3 scripts/agents/llm-context-audit.py
+```
+
+Use `rg` and `rg --files` for repository navigation. The retired generated
+repository inventory is intentionally gone; current architecture is documented
+in `docs/architecture/RESET.md`.
+
+## Result Language
+
+Keep three classes of evidence distinct in output, issues, and PR bodies:
+
+1. frozen legacy checkpoint;
+2. exact rewrite capability result;
+3. broad rewrite corpus observation.
+
+Record exact commands and failures. Never turn an observation green by
+filtering unsupported cases or lowering a historical metric.

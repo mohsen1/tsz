@@ -8,11 +8,6 @@ const ROOT = path.resolve(WEBSITE, "..", "..");
 const DOCS = path.join(ROOT, "docs");
 const SRC = path.join(WEBSITE, "src");
 const TARGET_DOCS = path.join(SRC, "docs");
-const TARGET_ARCH_TEMPLATE = path.join(SRC, "architecture.njk");
-const TARGET_ARCH_DATA = path.join(SRC, "_data", "architecture_page.js");
-const TARGET_ARCH_LEGACY_DIR = path.join(SRC, "architecture");
-const LIB_ASSETS = path.join(ROOT, "crates", "tsz-core", "src", "lib-assets");
-const TARGET_LIB = path.join(SRC, "lib");
 const DOCS_ALLOWLIST = [
   "site",
   "architecture",
@@ -36,15 +31,6 @@ function copyFileIfChanged(srcPath, destPath) {
 
   ensureDir(path.dirname(destPath));
   fs.copyFileSync(srcPath, destPath);
-}
-
-function writeFileIfChanged(destPath, content) {
-  if (fs.existsSync(destPath) && fs.readFileSync(destPath, "utf8") === content) {
-    return;
-  }
-
-  ensureDir(path.dirname(destPath));
-  fs.writeFileSync(destPath, content);
 }
 
 function pruneTree(rootDir, expectedFiles) {
@@ -106,74 +92,9 @@ function copyAllowedDocs() {
   pruneTree(TARGET_DOCS, expectedFiles);
 }
 
-function buildArchitecturePage() {
-  const source = path.join(DOCS, "architecture.html");
-  if (!fs.existsSync(source)) return;
-
-  const archHtml = fs.readFileSync(source, "utf8");
-  const styleMatch = archHtml.match(/<style[\s\S]*?<\/style>/i);
-  const bodyMatch = archHtml.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
-
-  const head = styleMatch?.[0] ?? "";
-  let body = bodyMatch?.[1] ?? "";
-  const scripts = [...body.matchAll(/<script[\s\S]*?<\/script>/gi)].map((m) => m[0]).join("\n");
-
-  body = body.replace(/<script[\s\S]*?<\/script>/gi, "");
-  body = body.replace(/<footer[\s\S]*?<\/footer>/i, "");
-  body = body.replace(/<main class="content">/, '<div class="content">');
-  body = body.replace(/<\/main>\s*<\/div>\s*$/, "</div>\n</div>");
-
-  const archData = {
-    head,
-    body: body.trim(),
-    scripts,
-  };
-
-  ensureDir(path.dirname(TARGET_ARCH_DATA));
-  writeFileIfChanged(TARGET_ARCH_DATA, `export default ${JSON.stringify(archData, null, 2)};\n`);
-
-  const archTemplate = `---
-title: Deep Dive
-layout: layouts/base.njk
-page_class: architecture
-permalink: /architecture/index.html
-eleventyComputed:
-  extra_head: "{{ architecture_page.head | safe }}"
-  extra_scripts: "{{ architecture_page.scripts | safe }}"
----
-{{ architecture_page.body | safe }}
-`;
-
-  writeFileIfChanged(TARGET_ARCH_TEMPLATE, archTemplate);
-}
-
-function syncPlaygroundLibFiles() {
-  const expectedFiles = new Set();
-  ensureDir(TARGET_LIB);
-
-  if (!fs.existsSync(LIB_ASSETS)) {
-    pruneTree(TARGET_LIB, expectedFiles);
-    return;
-  }
-
-  for (const entry of fs.readdirSync(LIB_ASSETS, { withFileTypes: true })) {
-    if (!entry.isFile()) continue;
-    if (!entry.name.endsWith(".d.ts")) continue;
-    const sourcePath = path.join(LIB_ASSETS, entry.name);
-    const destPath = path.join(TARGET_LIB, `lib.${entry.name}`);
-    expectedFiles.add(destPath);
-    copyFileIfChanged(sourcePath, destPath);
-  }
-
-  pruneTree(TARGET_LIB, expectedFiles);
-}
-
 function main() {
-  fs.rmSync(TARGET_ARCH_LEGACY_DIR, { recursive: true, force: true });
   ensureDir(TARGET_DOCS);
   copyAllowedDocs();
-  buildArchitecturePage();
-  syncPlaygroundLibFiles();
   console.log(`Synced docs markdown into ${path.relative(ROOT, TARGET_DOCS)}`);
 }
 
@@ -181,15 +102,6 @@ function sourceWatchPaths() {
   const paths = DOCS_ALLOWLIST
     .map((relPath) => path.join(DOCS, relPath))
     .filter((sourcePath) => fs.existsSync(sourcePath));
-
-  const architectureHtml = path.join(DOCS, "architecture.html");
-  if (fs.existsSync(architectureHtml)) {
-    paths.push(architectureHtml);
-  }
-
-  if (fs.existsSync(LIB_ASSETS)) {
-    paths.push(LIB_ASSETS);
-  }
 
   return paths;
 }

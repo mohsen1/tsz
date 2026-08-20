@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import { parseDirectiveLine, parseFlagDirectiveLine, splitListValues, firstListValue } from './directives.js';
 
 // Locks the emit-harness directive recognizers to the canonical grammar
-// vectors shared with crates/tsz-common/src/common/test_directives.rs and
+// vectors shared with crates/conformance/src/test_directives.rs and
 // scripts/conformance/test_corpus_coverage.py (issue #13127).
 // Run with: node dist/directives-spec.test.js (after building the runner).
 

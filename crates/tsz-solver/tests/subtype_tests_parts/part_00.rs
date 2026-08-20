@@ -1249,12 +1249,6 @@ fn test_split_accessor_variance() {
     // string) }; const b: { get x(): string; set x(v: string | number) } = a`
     // is accepted by tsc.
     assert!(checker.is_subtype_of(narrow_accessor, wide_accessor));
-
-    // Sound Mode opts back into the contravariant write check.
-    let mut sound_checker = SubtypeChecker::new(&interner);
-    sound_checker.check_split_accessor_writes = true;
-    assert!(sound_checker.is_subtype_of(wide_accessor, narrow_accessor));
-    assert!(!sound_checker.is_subtype_of(narrow_accessor, wide_accessor));
 }
 
 #[test]

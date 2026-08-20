@@ -8,6 +8,7 @@ pub(crate) mod options_convert;
 pub(crate) mod process_rss;
 pub mod runner;
 pub(crate) mod server_pool;
+pub mod test_directives;
 pub mod test_filter;
 pub mod test_parser;
 pub mod text_decode;

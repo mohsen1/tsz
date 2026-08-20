@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Report branch-local `visited.clone()` traversal sites.
 
-This is a Performance Plan guardrail report, not a hard failure gate. It scans
-compiler Rust sources for clones of variables whose names contain `visited`.
+This rewrite guardrail scans replacement compiler sources for clones of
+variables whose names contain `visited`.
 Those clones are often a signal that graph traversal is carrying branch-local
 visited state instead of using node-keyed memoized DP, worklists, SCCs, or a
 documented small bound.
@@ -22,10 +22,7 @@ from typing import Iterable
 ROOT = Path(__file__).resolve().parents[2]
 
 DEFAULT_ROOTS = (
-    "crates/tsz-binder/src",
-    "crates/tsz-checker/src",
-    "crates/tsz-lsp/src",
-    "crates/tsz-solver/src",
+    "crates/tsz-core/src",
 )
 EXCLUDED_DIRS = {".git", "target", "node_modules", "tests", "benches", "examples"}
 CLONE_RE = re.compile(

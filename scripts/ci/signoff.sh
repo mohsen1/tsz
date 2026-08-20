@@ -88,20 +88,10 @@ if [[ -n "${SIGNOFF_COMMANDS_FILE:-}" ]]; then
   done < "$SIGNOFF_COMMANDS_FILE"
 else
   commands+=("cargo fmt --all --check")
-  # Run the delta-verified unit suite (#15646): every nextest pass runs with
-  # fail-fast disabled (signoff profile) and records a junit report, then
-  # --gate has known-failures-check.mjs distinguish a NEW regression from the
-  # committed known-failures baseline (#15399); a nonzero rc before the gate
-  # is an infrastructure failure (build error, missing junit). Signoff runs a
-  # SUPERSET of the unit CI job's package set (--workspace-minus-checker adds
-  # tsz-cli, tsz-lowering, ... on top of CI's core list); the shared baseline
-  # is reconciled from this superset and the gate tolerates subsets, so green
-  # means "no NEW failures in what ran" in both places. The tsz-checker
-  # lib-test target (its in-crate unit tests) is outside both suites:
-  # compiling it exceeds a 32 GiB machine (see [profile.ci-unit] in
-  # Cargo.toml). node-less machines can fall back to `--profile precommit`
-  # via SIGNOFF_COMMANDS_FILE (script header).
-  commands+=("scripts/test/nextest-guard.sh -- scripts/safe-run.sh -- scripts/ci/unit-nextest.sh --junit-dir .ci-logs/signoff-unit-junit --workspace-minus-checker --gate")
+  # Active rewrite tests are one strict workspace pass. The retained legacy
+  # corpus is disabled until cases are ported through the public API; there is
+  # no known-failures allowance for tests that have joined this suite.
+  commands+=("scripts/test/nextest-guard.sh -- scripts/safe-run.sh -- scripts/ci/unit-nextest.sh --junit-dir .ci-logs/signoff-unit-junit --workspace")
 fi
 
 announce "$green" "Attempting to sign off on ${sha} as ${user}."

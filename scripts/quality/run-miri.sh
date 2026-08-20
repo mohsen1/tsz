@@ -5,15 +5,13 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$repo_root"
 
 default_targets=(
-  tsz-common:interner::tests::test_interner_intern_and_resolve
-  tsz-scanner:scanner_impl::tests::scan_identifiers
-  tsz-parser:parser::node_arena::tests::estimated_size_bytes_is_nonzero_for_empty_arena
-  tsz-core:parallel::lib_snapshot::tests::disk_round_trip_resolves_identifier_text_and_symbols
+  tsz-core:emit::tests::erases_type_only_syntax_and_annotations
+  tsz-conformance:test_directives::tests::directive_line_basic_forms
 )
 targets=()
 read -r -a targets <<< "${TSZ_MIRI_TARGETS:-${default_targets[*]}}"
-# The snapshot-cache target creates a temp directory. Keep strict provenance
-# enabled, but disable Miri isolation so that filesystem-backed test can run.
+# Keep strict provenance enabled. The retained conformance grammar test reads
+# the shared spec vectors, so Miri isolation remains disabled for that target.
 miri_flags="${MIRIFLAGS:--Zmiri-strict-provenance -Zmiri-disable-isolation}"
 
 for target in "${targets[@]}"; do

@@ -1646,7 +1646,6 @@ fn test_judge_config_defaults() {
     assert!(config.strict_function_types);
     assert!(!config.exact_optional_property_types);
     assert!(!config.no_unchecked_indexed_access);
-    assert!(!config.sound_mode);
 }
 
 // =============================================================================

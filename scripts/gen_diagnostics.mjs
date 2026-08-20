@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Generate crates/tsz-common/src/diagnostics/data.rs and its split data files
+// Generate crates/tsz-core/data/diagnostics/data.rs and its split data files
 // from TypeScript's diagnosticMessages.json plus typescript-go's native overlay.
 //
 // Each diagnostic is declared exactly once per part file as
@@ -279,7 +279,7 @@ function reExportCompatibilityAliases(submodule) {
   );
 }
 
-const dataRoot = join(root, "crates/tsz-common/src/diagnostics/data");
+const dataRoot = join(root, "crates/tsz-core/data/diagnostics/data");
 const partsDir = join(dataRoot, "parts");
 const generatedFiles = new Map();
 
@@ -295,7 +295,7 @@ ${chunk.map(diagnosticDeclaration).join("\n")}
 }
 
 generatedFiles.set(
-  join(root, "crates/tsz-common/src/diagnostics/data.rs"),
+  join(root, "crates/tsz-core/data/diagnostics/data.rs"),
   `${generatedHeader}
 ${partNames.map((name) => `#[path = "data/parts/${name}.rs"]\nmod ${name};`).join("\n")}
 
@@ -368,5 +368,5 @@ console.log(
   `${action} ${codeEntries.length} diagnostic entries (${baseEntries.length} base, ${replacedCount} replaced, ${addedCount} added, ${compatibilityAliases.length} compatibility aliases)`
 );
 console.log(
-  `Output: crates/tsz-common/src/diagnostics/data.rs + ${partNames.length} part files`
+  `Output: crates/tsz-core/data/diagnostics/data.rs + ${partNames.length} part files`
 );

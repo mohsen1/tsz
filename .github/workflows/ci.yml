@@ -8,8 +8,9 @@ on:
     branches:
       - main
   schedule:
-    # Nightly heavy lane. Local runs are the per-merge source of truth for
-    # conformance/emit/fourslash/unit; this is the automated drift detector.
+    # Nightly full-corpus observation. These retained runners describe how
+    # much of the legacy perimeter the rewrite can currently execute; they do
+    # not impose the retired implementation's compatibility floor on R0.
     - cron: '0 4 * * *'
   workflow_dispatch:
     inputs:
@@ -31,6 +32,8 @@ concurrency:
 
 jobs:
   clippy:
+    # Keep the historical required-check name while broadening its contract to
+    # the complete R0 foundation gate.
     name: clippy
     if: ${{ github.event_name != 'workflow_dispatch' || inputs.refresh_tsc_cache != true }}
     runs-on: ubuntu-latest
@@ -39,8 +42,12 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 1
-      - name: Install clippy
-        run: rustup component add clippy
+      - name: Install Rust components
+        run: rustup component add clippy rustfmt
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@288e746965032cfcc232e09af2daf5f23c14d780 # v2
+        with:
+          tool: cargo-nextest
       - name: Check shell portability (macOS /bin/bash 3.2)
         run: |
           python3 scripts/lib/check-sh-portability.py
@@ -50,19 +57,26 @@ jobs:
           python3 scripts/ci/test_typescript_corpus_init.py
           python3 scripts/setup/test_reset_typescript_corpus.py
           node scripts/bench/test-typescript-tool-resolution.mjs
-      # Known-failures baseline contract (#15646): the unit job's green means
-      # "no NEW unit failures", so the baseline may only move in reviewed ways
-      # and the gate wiring itself is contract-tested here (cheap, <15s).
-      - name: Known-failures baseline gate and unit-lane contract tests
+      - name: Check rewrite unit-lane contracts
         run: scripts/ci/check-unit-gate-contracts.sh
+      - name: Check formatting
+        run: cargo fmt --all --check
+      - name: Check active workspace
+        run: |
+          scripts/safe-run.sh --limit 88% -- \
+            cargo check --workspace --all-targets
       - name: Run cargo clippy
         run: |
           scripts/safe-run.sh --limit 88% -- \
             cargo clippy --profile ci-lint --workspace \
               --all-targets -- -D warnings
+      - name: Run rewrite unit tests
+        run: |
+          scripts/safe-run.sh --limit 88% -- \
+            cargo nextest run --workspace
 
   unit:
-    name: unit
+    name: rewrite-unit-nightly
     if: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && inputs.refresh_tsc_cache != true }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -74,7 +88,7 @@ jobs:
         run: scripts/ci/github-suite.sh unit
 
   conformance:
-    name: conformance-${{ matrix.shard }}
+    name: conformance-observation-${{ matrix.shard }}
     if: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && inputs.refresh_tsc_cache != true }}
     runs-on: ubuntu-latest
     timeout-minutes: 90
@@ -92,8 +106,14 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 1
-      - name: Run conformance shard
+      - name: Observe conformance shard
+        id: observe
+        continue-on-error: true
         run: scripts/ci/github-suite.sh conformance
+      - name: Report conformance observation status
+        if: always()
+        run: |
+          echo "::notice::Conformance is an R0 full-corpus observation; runner outcome=${{ steps.observe.outcome }}. Compatibility failures are preserved in the artifact and do not gate the rewrite foundation."
       - name: Upload conformance shard result
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -103,11 +123,14 @@ jobs:
             ci-metrics/conformance.json
             ci-metrics/conformance-failures-*.txt
             ci-metrics/conformance-timings-*.json
+            .ci-logs/full-ci.log
+            .ci-status/check-summary.md
+            .ci-status/full-ci.exit
           if-no-files-found: warn
           retention-days: 14
 
   conformance-aggregate:
-    name: conformance-aggregate
+    name: conformance-observation-aggregate
     needs: conformance
     if: ${{ always() && (github.event_name != 'workflow_dispatch' || inputs.refresh_tsc_cache != true) && needs.conformance.result != 'skipped' && needs.conformance.result != 'cancelled' }}
     runs-on: ubuntu-latest
@@ -126,11 +149,25 @@ jobs:
           pattern: conformance-shard-*
           path: .conformance-shards
           merge-multiple: false
-      - name: Aggregate conformance results
+      - name: Aggregate conformance observation
+        id: observe
+        continue-on-error: true
         run: scripts/ci/github-suite.sh conformance-aggregate
+      - name: Upload conformance observation aggregate
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: conformance-observation-aggregate
+          path: |
+            ci-metrics/conformance.json
+            .ci-logs/full-ci.log
+            .ci-status/check-summary.md
+            .ci-status/full-ci.exit
+          if-no-files-found: warn
+          retention-days: 14
 
   emit:
-    name: emit-${{ matrix.shard }}
+    name: emit-observation-${{ matrix.shard }}
     if: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && inputs.refresh_tsc_cache != true }}
     runs-on: ubuntu-latest
     timeout-minutes: 35
@@ -147,8 +184,14 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 1
-      - name: Run emit shard
+      - name: Observe emit shard
+        id: observe
+        continue-on-error: true
         run: scripts/ci/github-suite.sh emit-shard
+      - name: Report emit observation status
+        if: always()
+        run: |
+          echo "::notice::Emit is an R0 full-corpus observation; runner outcome=${{ steps.observe.outcome }}. Compatibility failures are preserved in the artifact and do not gate the rewrite foundation."
       - name: Upload emit shard result
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -158,11 +201,14 @@ jobs:
             ci-metrics/emit-shard-${{ matrix.shard }}.json
             ci-metrics/emit-detail-${{ matrix.shard }}.json
             .ci-logs/emit/*.log
+            .ci-logs/full-ci.log
+            .ci-status/check-summary.md
+            .ci-status/full-ci.exit
           if-no-files-found: warn
           retention-days: 14
 
   emit-aggregate:
-    name: emit-aggregate
+    name: emit-observation-aggregate
     needs: emit
     if: ${{ always() && (github.event_name != 'workflow_dispatch' || inputs.refresh_tsc_cache != true) && needs.emit.result != 'skipped' && needs.emit.result != 'cancelled' }}
     runs-on: ubuntu-latest
@@ -180,11 +226,25 @@ jobs:
           pattern: emit-shard-*
           path: .emit-shards
           merge-multiple: false
-      - name: Aggregate emit results
+      - name: Aggregate emit observation
+        id: observe
+        continue-on-error: true
         run: scripts/ci/github-suite.sh emit-aggregate
+      - name: Upload emit observation aggregate
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: emit-observation-aggregate
+          path: |
+            ci-metrics/emit.json
+            .ci-logs/full-ci.log
+            .ci-status/check-summary.md
+            .ci-status/full-ci.exit
+          if-no-files-found: warn
+          retention-days: 14
 
   fourslash:
-    name: fourslash-${{ matrix.shard }}
+    name: fourslash-observation-${{ matrix.shard }}
     if: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && inputs.refresh_tsc_cache != true }}
     runs-on: ubuntu-latest
     timeout-minutes: 35
@@ -196,9 +256,7 @@ jobs:
       _TSZ_CI_FOURSLASH_SHARD_INDEX: ${{ matrix.shard }}
       _TSZ_CI_FOURSLASH_SHARD_COUNT: 6
       TSZ_CI_FOURSLASH_SHARD_STRATEGY: weighted
-      # Shard 4 repeatedly terminates hosted runners before artifact upload with
-      # higher worker counts. Keep the PR gate reliable; weighted sharding still
-      # leaves single-worker shards inside the job timeout.
+      # Keep full-corpus observation bounded on hosted runners.
       TSZ_CI_FOURSLASH_WORKERS: 1
       TSZ_CI_FOURSLASH_TIMEOUT_MS: 60000
       TSZ_CI_CACHE_SAVE: "0"
@@ -207,8 +265,14 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 1
-      - name: Run fourslash shard
+      - name: Observe fourslash shard
+        id: observe
+        continue-on-error: true
         run: scripts/ci/github-suite.sh fourslash-shard
+      - name: Report fourslash observation status
+        if: always()
+        run: |
+          echo "::notice::Fourslash is an R0 full-corpus observation; runner outcome=${{ steps.observe.outcome }}. Unsupported service behavior is preserved in the artifact and does not gate the rewrite foundation."
       - name: Upload fourslash shard result
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -217,11 +281,14 @@ jobs:
           path: |
             ci-metrics/fourslash-shard-${{ matrix.shard }}.json
             .ci-logs/fourslash/*.log
+            .ci-logs/full-ci.log
+            .ci-status/check-summary.md
+            .ci-status/full-ci.exit
           if-no-files-found: warn
           retention-days: 14
 
   fourslash-aggregate:
-    name: fourslash-aggregate
+    name: fourslash-observation-aggregate
     needs: fourslash
     if: ${{ always() && (github.event_name != 'workflow_dispatch' || inputs.refresh_tsc_cache != true) && needs.fourslash.result != 'skipped' && needs.fourslash.result != 'cancelled' }}
     runs-on: ubuntu-latest
@@ -239,8 +306,22 @@ jobs:
           pattern: fourslash-shard-*
           path: .fourslash-shards
           merge-multiple: false
-      - name: Aggregate fourslash results
+      - name: Aggregate fourslash observation
+        id: observe
+        continue-on-error: true
         run: scripts/ci/github-suite.sh fourslash-aggregate
+      - name: Upload fourslash observation aggregate
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: fourslash-observation-aggregate
+          path: |
+            ci-metrics/fourslash.json
+            .ci-logs/full-ci.log
+            .ci-status/check-summary.md
+            .ci-status/full-ci.exit
+          if-no-files-found: warn
+          retention-days: 14
 
   arch-size:
     name: arch-size
@@ -251,17 +332,14 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 1
-      # Full guard (#15643): size caps, #8225 quarantine ratchets, metric-7
-      # import counts, Track 10 residency counts, and boundary pattern checks
-      # all gate merges. Ratchet baselines live in
-      # scripts/arch/arch_guard_shared.py; pay down or intentionally bump them
-      # in the same PR that moves a count.
-      - name: Run full architecture guard
+      - name: Run rewrite architecture guard
         run: python3 scripts/arch/arch_guard.py
+      - name: Verify disabled inline-test archive
+        run: python3 scripts/reset/verify-legacy-inline.py
       - name: Run architecture guard self-tests
         run: |
           cd scripts/arch
-          python3 -m unittest discover -p "test_arch_guard*.py" -v 2>&1 | tail -20
+          python3 -m unittest discover -p "test_arch_guard*.py" -v
 
   refresh-tsc-cache:
     name: refresh-tsc-cache
@@ -440,7 +518,7 @@ jobs:
           import sys
 
           needs = json.loads(os.environ["NEEDS_JSON"])
-          required = {
+          jobs = {
               "clippy",
               "unit",
               "conformance",
@@ -452,21 +530,24 @@ jobs:
               "arch-size",
           }
 
-          # Two lanes. `fast` runs on every event and must always succeed.
-          # `heavy` runs only on schedule / workflow_dispatch, because local
-          # runs are the per-merge source of truth for conformance, emit,
-          # fourslash and unit; on every other event those jobs are skipped BY
-          # DESIGN and skipping must count as passing, or nothing can merge.
-          #
-          # A real failure or cancellation still fails in both lanes, and on the
-          # events where the heavy jobs actually run they are strictly required.
+          # The active rewrite gate is strict: formatting, cargo check, Clippy,
+          # nextest, and the architecture guard must pass. The retained broad
+          # runners are observations until their semantic families graduate in
+          # the roadmap; their runner steps use continue-on-error so artifacts
+          # preserve the real unsupported/failure surface without reviving the
+          # retired implementation's aggregate floor as an R0 merge gate.
           fast = {"clippy", "arch-size"}
           heavy_lane_event = os.environ.get("EVENT_NAME") in {"schedule", "workflow_dispatch"}
 
           failures = []
-          for name in sorted(required):
+          for name in sorted(jobs):
               result = needs.get(name, {}).get("result")
-              if name in fast or heavy_lane_event:
+              if name in fast or (heavy_lane_event and name == "unit"):
+                  passing = {"success"}
+              elif heavy_lane_event:
+                  # A behavior failure is continued inside the observation
+                  # step. A failed job here therefore means the observation
+                  # infrastructure itself did not complete.
                   passing = {"success"}
               else:
                   passing = {"success", "skipped"}
@@ -480,12 +561,15 @@ jobs:
               sys.exit(1)
 
           if heavy_lane_event:
-              print("Heavy lane: clippy, unit, conformance, emit and fourslash all passed.")
+              print(
+                  "Rewrite foundation checks and rewrite unit tests passed. "
+                  "Conformance, emit, and fourslash observations completed; "
+                  "their artifacts, including unsupported cases, are informational."
+              )
           else:
               print(
-                  "Fast lane: clippy and arch-size passed. Conformance, emit, "
-                  "fourslash and unit are skipped by design on this event — they "
-                  "run nightly and on workflow_dispatch, and local runs are the "
-                  "per-merge source of truth. See docs/CONTRIBUTING.md."
+                  "Rewrite foundation gate passed: fmt, check, Clippy, nextest, "
+                  "and the architecture guard are green. Full-corpus conformance, "
+                  "emit, and fourslash observations run nightly and manually."
               )
           PY

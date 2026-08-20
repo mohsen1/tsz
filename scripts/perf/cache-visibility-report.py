@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Report cache-like fields that need stats or size-accounting review.
 
-This is a Performance Plan guardrail report, not a hard failure gate. It scans
-compiler Rust sources for cache-like map fields/type aliases and annotates each
+This rewrite guardrail scans replacement compiler sources for cache-like map
+fields/type aliases and annotates each
 candidate with simple evidence that hit/miss/entry statistics or size/memory
 accounting exist nearby.
 """
@@ -21,11 +21,7 @@ from typing import Iterable
 ROOT = Path(__file__).resolve().parents[2]
 
 DEFAULT_ROOTS = (
-    "crates/tsz-binder/src",
-    "crates/tsz-checker/src",
     "crates/tsz-core/src",
-    "crates/tsz-lsp/src",
-    "crates/tsz-solver/src",
 )
 EXCLUDED_DIRS = {".git", "target", "node_modules", "tests", "benches", "examples"}
 MAP_TYPES = ("HashMap", "FxHashMap", "DashMap", "IndexMap", "BTreeMap")
@@ -50,40 +46,6 @@ STRUCT_RE = re.compile(
 )
 STATS_RE = re.compile(r"(?:hits?|miss(?:es)?|entries|entry_count|Stats|statistics|total_entries)")
 SIZE_RE = re.compile(r"(?:estimated_size_bytes|size_bytes|memory|Memory|total_entries|entries)")
-
-RETAINED_OWNERS = {
-    "BinderState",
-    "CheckerContext",
-    "LibLoader",
-    "ModuleResolver",
-    "QueryCache",
-    "TypeCache",
-    "TypeInterner",
-}
-OPERATION_LOCAL_OWNERS = {
-    "ApplicationEvaluator",
-    "CallEvaluator",
-    "Canonicalizer",
-    "CompatChecker",
-    "DeepContainsChecker",
-    "DefaultJudge",
-    "ElementIndexableMemo",
-    "FlowAnalyzer",
-    "FreeTypeParamCollector",
-    "InferenceContext",
-    "PropertyAccessEvaluator",
-    "NumericIndexSurfaceWalk",
-    "SubtypeChecker",
-    "TypeEvaluator",
-    "TypeFormatter",
-}
-RETAINED_MODULE_PATHS = {
-    "crates/tsz-checker/src/context/aliases.rs",
-    "crates/tsz-checker/src/flow/control_flow/core.rs",
-    "crates/tsz-lsp/src/resolver/core.rs",
-}
-SNAPSHOT_OWNERS = {"CacheSnapshot"}
-
 
 @dataclass(frozen=True)
 class CacheCandidate:
@@ -243,13 +205,10 @@ def has_size_signal(file_text: str, name: str) -> bool:
 
 
 def classify_retention(path: str, owner: str) -> str:
-    if owner in SNAPSHOT_OWNERS:
+    del path
+    if owner.endswith("Snapshot"):
         return "snapshot"
-    if owner in RETAINED_OWNERS:
-        return "retained"
-    if owner in OPERATION_LOCAL_OWNERS:
-        return "operation_local"
-    if owner == "<module>" and path in RETAINED_MODULE_PATHS:
+    if owner.endswith(("Cache", "Service", "Store")):
         return "retained"
     if owner == "<module>":
         return "module"

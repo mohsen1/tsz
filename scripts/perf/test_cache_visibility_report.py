@@ -131,7 +131,7 @@ class CacheVisibilityReportTests(unittest.TestCase):
         self.assertEqual(candidates[0].owner, "LibLoader")
         self.assertFalse(candidates[0].needs_review)
 
-    def test_retention_classifies_known_operation_local_and_snapshot_caches(self):
+    def test_retention_classifies_structural_owner_lifetimes(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             self.write(
@@ -152,23 +152,23 @@ class CacheVisibilityReportTests(unittest.TestCase):
             candidates = self.module.scan([root / "src"])
 
         by_name = {candidate.name: candidate for candidate in candidates}
-        self.assertEqual(by_name["conditional_subtype_cache"].retention, "operation_local")
+        self.assertEqual(by_name["conditional_subtype_cache"].retention, "unknown")
         self.assertEqual(by_name["flow_analysis_cache"].retention, "snapshot")
 
-    def test_retained_path_only_applies_to_module_aliases(self):
+    def test_retention_does_not_depend_on_retired_module_paths(self):
         self.assertEqual(
             self.module.classify_retention(
-                "crates/tsz-checker/src/flow/control_flow/core.rs",
-                "<module>",
+                "crates/tsz-core/src/semantics/types.rs",
+                "TypeStore",
             ),
             "retained",
         )
         self.assertEqual(
             self.module.classify_retention(
-                "crates/tsz-checker/src/flow/control_flow/core.rs",
-                "FlowAnalyzer",
+                "crates/tsz-core/src/semantics/checker.rs",
+                "Checker",
             ),
-            "operation_local",
+            "unknown",
         )
 
     def test_retained_only_filters_json_output(self):
@@ -179,7 +179,7 @@ class CacheVisibilityReportTests(unittest.TestCase):
                 "src/lib.rs",
                 "\n".join(
                     [
-                        "pub struct CheckerContext {",
+                        "pub struct QueryCache {",
                         "    lib_type_resolution_cache: FxHashMap<String, bool>,",
                         "}",
                         "pub struct TypeEvaluator {",
@@ -423,200 +423,8 @@ class CacheVisibilityReportTests(unittest.TestCase):
         self.assertEqual(len(candidates), 1)
         self.assertFalse(candidates[0].needs_review)
 
-    def test_checker_retained_cache_surfaces_are_visible(self):
-        root = Path(__file__).resolve().parents[2]
-        candidates = self.module.scan(
-            [
-                root / "crates/tsz-checker/src/context",
-                root / "crates/tsz-checker/src/flow/control_flow",
-            ]
-        )
-        by_key = {
-            (candidate.path, candidate.owner, candidate.name): candidate
-            for candidate in candidates
-        }
-
-        expected = {
-            (
-                "crates/tsz-checker/src/context/aliases.rs",
-                "<module>",
-                "AccessorLevelsCache",
-            ),
-            (
-                "crates/tsz-checker/src/context/aliases.rs",
-                "<module>",
-                "MemberAccessInfoCache",
-            ),
-            (
-                "crates/tsz-checker/src/context/aliases.rs",
-                "<module>",
-                "CallbackMismatchMemo",
-            ),
-            (
-                "crates/tsz-checker/src/context/aliases.rs",
-                "<module>",
-                "FlowAnalysisCacheMap",
-            ),
-            (
-                "crates/tsz-checker/src/context/aliases.rs",
-                "<module>",
-                "ReexportResolutionCache",
-            ),
-            (
-                "crates/tsz-checker/src/context/mod.rs",
-                "CheckerContext",
-                "enclosing_class_declares_member_cache",
-            ),
-            (
-                "crates/tsz-checker/src/context/mod.rs",
-                "NameResolutionDiagnostics",
-                "suggestion_scan_cache",
-            ),
-            (
-                "crates/tsz-checker/src/context/mod.rs",
-                "FlowSharedCaches",
-                "flow_switch_case_literal_cache",
-            ),
-            (
-                "crates/tsz-checker/src/context/mod.rs",
-                "FlowSharedCaches",
-                "flow_switch_all_distinct_literals_cache",
-            ),
-            (
-                "crates/tsz-checker/src/context/mod.rs",
-                "CheckerContext",
-                "lazy_def_ids_cache",
-            ),
-            (
-                "crates/tsz-checker/src/context/mod.rs",
-                "CheckerContext",
-                "type_queries_cache",
-            ),
-            (
-                "crates/tsz-checker/src/context/mod.rs",
-                "CheckerContext",
-                "type_position_resolution_cache",
-            ),
-            (
-                "crates/tsz-checker/src/context/mod.rs",
-                "CheckerContext",
-                "package_json_cache",
-            ),
-            (
-                "crates/tsz-checker/src/context/mod.rs",
-                "CheckerContext",
-                "inferred_return_type_memo",
-            ),
-            (
-                "crates/tsz-checker/src/flow/control_flow/core.rs",
-                "<module>",
-                "AliasBaseAssignmentCache",
-            ),
-            (
-                "crates/tsz-checker/src/flow/control_flow/core.rs",
-                "<module>",
-                "AliasPathAssignmentCache",
-            ),
-        }
-
-        for key in expected:
-            with self.subTest(key=key):
-                self.assertIn(key, by_key)
-                self.assertFalse(by_key[key].needs_review, by_key[key])
-
-    def test_display_budget_eval_memo_is_visible(self):
-        root = Path(__file__).resolve().parents[2]
-        candidates = self.module.scan([root / "crates/tsz-checker/src/error_reporter"])
-        by_key = {
-            (candidate.path, candidate.owner, candidate.name): candidate
-            for candidate in candidates
-        }
-
-        key = (
-            "crates/tsz-checker/src/error_reporter/display_budget.rs",
-            "DisplayBudget",
-            "eval_memo",
-        )
-        self.assertIn(key, by_key)
-        self.assertFalse(by_key[key].needs_review, by_key[key])
-        self.assertNotIn(
-            (
-                "crates/tsz-checker/src/error_reporter/display_budget.rs",
-                "DisplayBudgetScope",
-                "eval_memo",
-            ),
-            by_key,
-        )
-
-    def test_solver_visitor_predicate_memos_are_visible(self):
-        root = Path(__file__).resolve().parents[2]
-        candidates = self.module.scan([root / "crates/tsz-solver/src/visitors"])
-        predicate_memos = {
-            candidate.owner: candidate
-            for candidate in candidates
-            if candidate.path.startswith("crates/tsz-solver/src/visitors/visitor_predicates")
-            and candidate.name == "memo"
-        }
-
-        self.assertEqual(
-            set(predicate_memos),
-            {
-                "DeepContainsChecker",
-                "FreeTypeParamCollector",
-            },
-        )
-        self.assertFalse(
-            any(candidate.needs_review for candidate in predicate_memos.values()),
-            predicate_memos,
-        )
-
-    def test_type_interner_retained_pure_function_memos_are_visible(self):
-        root = Path(__file__).resolve().parents[2]
-        candidates = self.module.scan([root / "crates/tsz-solver/src/intern/core"])
-        by_name = {
-            candidate.name: candidate
-            for candidate in candidates
-            if candidate.path == "crates/tsz-solver/src/intern/core/interner.rs"
-            and candidate.owner == "TypeInterner"
-        }
-
-        for name in (
-            "widen_type_cache",
-            "extract_type_params_cache",
-            "proto_instantiation_cache",
-            "contravariant_infer_names_cache",
-        ):
-    def test_subtype_checker_local_relation_cache_is_visible(self):
-        root = Path(__file__).resolve().parents[2]
-        candidates = self.module.scan([root / "crates/tsz-solver/src/relations/subtype"])
-        local_relation_cache = [
-            candidate
-            for candidate in candidates
-            if candidate.path == "crates/tsz-solver/src/relations/subtype/core.rs"
-            and candidate.owner == "SubtypeChecker"
-            and candidate.name == "local_relation_cache"
-        ]
-
-        self.assertEqual(len(local_relation_cache), 1)
-        self.assertFalse(local_relation_cache[0].needs_review, local_relation_cache[0])
-
-    def test_type_formatter_application_memos_are_visible(self):
-        root = Path(__file__).resolve().parents[2]
-        candidates = self.module.scan([root / "crates/tsz-solver/src/diagnostics/format"])
-        by_name = {
-            candidate.name: candidate
-            for candidate in candidates
-            if candidate.path == "crates/tsz-solver/src/diagnostics/format/mod.rs"
-            and candidate.owner == "TypeFormatter"
-        }
-
-        for name in ("application_reduction_cache", "recursive_alias_base_cache"):
-            with self.subTest(name=name):
-                self.assertIn(name, by_name)
-                self.assertFalse(by_name[name].needs_review, by_name[name])
-
-    def test_default_roots_include_binder_cache_surfaces(self):
-        self.assertIn("crates/tsz-binder/src", self.module.DEFAULT_ROOTS)
+    def test_default_roots_only_include_replacement_compiler(self):
+        self.assertEqual(self.module.DEFAULT_ROOTS, ("crates/tsz-core/src",))
 
     def test_cli_json_output_is_machine_readable(self):
         with tempfile.TemporaryDirectory() as temp_dir:

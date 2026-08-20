@@ -23,11 +23,6 @@ const builds = [
     jsx: "automatic",
     outfile: path.join(root, "static", "playground-app.js"),
   },
-  {
-    ...sharedBuildOptions,
-    entryPoints: [path.join(root, "src", "sound-mode-page", "main.js")],
-    outfile: path.join(root, "static", "sound-mode-page.js"),
-  },
 ];
 
 if (watchMode) {

@@ -47,14 +47,10 @@ die() { log_error "$@"; exit 2; }
 
 # Files that can affect tsz semantic output.
 TSZ_WATCH_PATHS=(
-    "$ROOT_DIR/src"
+    "$ROOT_DIR/crates/tsz-core/src"
     "$ROOT_DIR/crates/tsz-cli/src"
-    "$ROOT_DIR/crates/tsz-emitter/src"
-    "$ROOT_DIR/crates/tsz-checker/src"
-    "$ROOT_DIR/crates/tsz-solver/src"
-    "$ROOT_DIR/crates/tsz-parser/src"
-    "$ROOT_DIR/crates/tsz-scanner/src"
-    "$ROOT_DIR/crates/tsz-common/src"
+    "$ROOT_DIR/crates/tsz-core/Cargo.toml"
+    "$ROOT_DIR/crates/tsz-cli/Cargo.toml"
     "$ROOT_DIR/Cargo.toml"
     "$ROOT_DIR/Cargo.lock"
 )

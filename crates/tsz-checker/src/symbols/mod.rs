@@ -1,9 +1,0 @@
-pub(crate) mod alias_cycle;
-pub(crate) mod name_text;
-pub mod scope_finder;
-pub(crate) mod scope_finder_contexts;
-pub(crate) mod super_order;
-pub mod symbol_resolver;
-pub(crate) mod symbol_resolver_entity_name;
-pub(crate) mod symbol_resolver_qualified;
-pub(crate) mod symbol_resolver_utils;

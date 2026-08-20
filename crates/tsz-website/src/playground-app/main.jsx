@@ -418,14 +418,11 @@ function PlaygroundApp() {
   const strictModeRef = useRef(true);
   const tsconfigRef = useRef(createTsconfigText(true));
   const tsconfigSyncingRef = useRef(false);
-  const initialSoundMode = initialExampleKey.startsWith("sound_mode");
-  const soundModeRef = useRef(initialSoundMode);
 
   const [selectedExampleKey, setSelectedExampleKey] = useState(initialExampleKey);
   const [code, setCode] = useState(initialExample.source);
   const [strictMode, setStrictMode] = useState(true);
   const [tsconfigText, setTsconfigText] = useState(() => createTsconfigText(true));
-  const [soundMode, setSoundMode] = useState(initialSoundMode);
   const [activePanel, setActivePanel] = useState("diagnostics");
   const [diagnostics, setDiagnostics] = useState([]);
   const [status, setStatus] = useState({ text: "loading editor...", className: "status-loading" });
@@ -438,14 +435,12 @@ function PlaygroundApp() {
   codeRef.current = code;
   strictModeRef.current = strictMode;
   tsconfigRef.current = tsconfigText;
-  soundModeRef.current = soundMode;
 
   function getCurrentCompilerOptions() {
     const tsconfigOptions = readCompilerOptionsFromTsconfig(tsconfigRef.current);
     return {
       ...tsconfigOptions,
       strict: strictModeRef.current,
-      soundMode: soundModeRef.current,
     };
   }
 
@@ -604,35 +599,8 @@ function PlaygroundApp() {
     return [];
   }
 
-  function getDiagnosticIdentity(diagnostic) {
-    return JSON.stringify({
-      start: diagnostic.start ?? 0,
-      length: diagnostic.length ?? 0,
-      code: diagnostic.code,
-      messageText: diagnostic.messageText || "",
-      category: diagnostic.category,
-    });
-  }
-
-  function withSoundDiagnosticDisplayCodes(soundDiagnostics, baselineDiagnostics, forcedDisplayCode = null) {
-    const baselineIdentities = new Set(baselineDiagnostics.map(getDiagnosticIdentity));
-
-    return soundDiagnostics.map(diagnostic => {
-      if (!forcedDisplayCode && baselineIdentities.has(getDiagnosticIdentity(diagnostic))) {
-        return diagnostic;
-      }
-
-      return {
-        ...diagnostic,
-        displayCode: forcedDisplayCode || "TSZ3006",
-        originalCode: `TS${diagnostic.code}`,
-        domain: "sound",
-      };
-    });
-  }
-
   function formatDiagnosticCode(diagnostic) {
-    return diagnostic.displayCode || `TS${diagnostic.code}`;
+    return `TS${diagnostic.code}`;
   }
 
   function toLspPosition(position) {
@@ -811,7 +779,6 @@ function PlaygroundApp() {
     debugDiagnosticsLog("runCheck:start", {
       example: selectedExampleKey,
       strict: options.strict,
-      soundMode: options.soundMode,
       code: codeRef.current,
     });
 
@@ -822,22 +789,7 @@ function PlaygroundApp() {
     try {
       const program = createCheckProgram(codeRef.current, options);
       const parsedDiagnostics = normalizeDiagnostics(program, codeRef.current);
-      let userDiagnostics = parsedDiagnostics.filter(diagnostic => !(diagnostic.code === 2318 && diagnostic.start === 0));
-      if (options.soundMode) {
-        const selectedExample = getExampleByKey(selectedExampleKey);
-        const baselineOptions = { ...options, soundMode: false };
-        const baselineProgram = createCheckProgram(codeRef.current, baselineOptions);
-        const baselineDiagnostics = normalizeDiagnostics(baselineProgram, codeRef.current)
-          .filter(diagnostic => !(diagnostic.code === 2318 && diagnostic.start === 0));
-        userDiagnostics = withSoundDiagnosticDisplayCodes(
-          userDiagnostics,
-          baselineDiagnostics,
-          selectedExample?.soundDiagnosticCode
-        );
-        if (typeof baselineProgram.dispose === "function") {
-          baselineProgram.dispose();
-        }
-      }
+      const userDiagnostics = parsedDiagnostics.filter(diagnostic => !(diagnostic.code === 2318 && diagnostic.start === 0));
       const elapsed = `${(performance.now() - startedAt).toFixed(0)}ms`;
 
       debugDiagnosticsLog("runCheck:raw-diagnostics", parsedDiagnostics);
@@ -1193,7 +1145,7 @@ function PlaygroundApp() {
 
   useEffect(() => {
     disposeLspParser();
-  }, [code, strictMode, soundMode, tsconfigText]);
+  }, [code, strictMode, tsconfigText]);
 
   useEffect(() => {
     if (!editorsReady || !wasmReady) return;
@@ -1212,7 +1164,7 @@ function PlaygroundApp() {
         checkTimeoutRef.current = null;
       }
     };
-  }, [code, strictMode, soundMode, tsconfigText, editorsReady, wasmReady]);
+  }, [code, strictMode, tsconfigText, editorsReady, wasmReady]);
 
   useEffect(() => {
     if (!editorsReady || !wasmReady) return;
@@ -1235,11 +1187,6 @@ function PlaygroundApp() {
     setStrictEverywhere(event.target.checked);
   }
 
-  function handleSoundChange(event) {
-    setSoundMode(event.target.checked);
-    resetOutputCache();
-  }
-
   function handleDiagnosticClick(start) {
     if (!editorRef.current) return;
     const position = editorRef.current.getModel().getPositionAt(start);
@@ -1259,12 +1206,9 @@ function PlaygroundApp() {
   const showFallback = Boolean(loadError);
   return showFallback ? (
     <div className="fallback-box">
-      <p><strong>WASM module not available.</strong></p>
-      <p>{loadError || "The playground requires the tsz WASM build."}</p>
-      <div className="install-block" style={{ justifyContent: "center" }}>
-        <span className="prompt">$</span>
-        <span className="cmd">npm install -g @mohsen-azimi/tsz-dev</span>
-      </div>
+      <p><strong>Playground unavailable during the clean-slate rewrite.</strong></p>
+      <p>The retired WASM compiler was removed. A new browser build returns after the replacement service API is stable; until then this page does not run tsz.</p>
+      <p><a href="https://github.com/tsz-org/tsz/blob/main/docs/plan/ROADMAP.md">Follow the rewrite roadmap</a></p>
     </div>
   ) : (
     <>
@@ -1282,10 +1226,6 @@ function PlaygroundApp() {
           <label className="toolbar-check">
             <input type="checkbox" checked={strictMode} onChange={handleStrictChange} />
             <span>strict</span>
-          </label>
-          <label className="toolbar-check">
-            <input type="checkbox" checked={soundMode} onChange={handleSoundChange} />
-            <span>sound</span>
           </label>
         </div>
         <div className="toolbar-right">

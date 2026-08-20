@@ -172,14 +172,14 @@ for (const job of [
 
 assert.match(
   ciWorkflow,
-  /name: clippy[\s\S]+?scripts\/safe-run\.sh --limit 88% --[\s\S]+?cargo clippy --profile ci-lint --workspace --exclude tsz-conformance[\s\S]+?--all-targets -- -D warnings/,
-  "The clippy job should run only cargo clippy through safe-run",
+  /name: clippy[\s\S]+?cargo fmt --all --check[\s\S]+?cargo check --workspace --all-targets[\s\S]+?cargo clippy --profile ci-lint --workspace[\s\S]+?cargo nextest run --workspace/,
+  "The historical clippy check should enforce the complete rewrite foundation gate",
 );
 
 assert.match(
   ciWorkflow,
   /TSZ_CI_FOURSLASH_WORKERS:\s*1/,
-  "Fourslash PR shards should use one worker on hosted runners to avoid shard shutdowns before artifact upload",
+  "Fourslash observation shards should stay bounded on hosted runners",
 );
 
 const fullCi = fs.readFileSync(
@@ -199,29 +199,46 @@ assert.doesNotMatch(
   "PR CI should not invoke removed helper suites",
 );
 
-for (const workflow of ["campaign-flag-lane.yml", "install-test.yml"]) {
-  const content = fs.readFileSync(path.join(WORKFLOW_DIR, workflow), "utf8");
-  assert.doesNotMatch(
-    content,
-    /^\s{2}pull_request:/m,
-    `${workflow} must not add a pull_request check to the default PR surface`,
-  );
-}
+assert.equal(
+  fs.existsSync(path.join(WORKFLOW_DIR, "campaign-flag-lane.yml")),
+  false,
+  "the retired implementation campaign workflow must stay deleted",
+);
 
+const installWorkflow = fs.readFileSync(
+  path.join(WORKFLOW_DIR, "install-test.yml"),
+  "utf8",
+);
 assert.match(
-  ciWorkflow,
-  /\n\s{2}ci-summary:\n[\s\S]+?needs:[\s\S]+?- clippy[\s\S]+?- unit[\s\S]+?- conformance[\s\S]+?- conformance-aggregate[\s\S]+?- emit[\s\S]+?- emit-aggregate[\s\S]+?- fourslash[\s\S]+?- fourslash-aggregate/,
-  "CI Summary should wait only on clippy, unit, conformance, emit, and fourslash leaves",
+  installWorkflow,
+  /^\s{2}pull_request:\n\s{4}paths:/m,
+  "install-test.yml may run only as a path-scoped installer contract on PRs",
+);
+assert.match(
+  installWorkflow,
+  /unavailable-contract:[\s\S]+?Bash installer fails closed[\s\S]+?PowerShell installer fails closed/,
+  "installer CI should prove both public installers fail closed during R0",
+);
+assert.doesNotMatch(
+  installWorkflow,
+  /installer-from-release|releases\/download|github\.event_name == 'release'/,
+  "installer CI must not restore a historical release-asset path",
 );
 
 assert.match(
   ciWorkflow,
-  /required = \{[\s\S]+?"clippy"[\s\S]+?"unit"[\s\S]+?"conformance"[\s\S]+?"conformance-aggregate"[\s\S]+?"emit"[\s\S]+?"emit-aggregate"[\s\S]+?"fourslash"[\s\S]+?"fourslash-aggregate"/,
+  /\n\s{2}ci-summary:\n[\s\S]+?needs:[\s\S]+?- clippy[\s\S]+?- unit[\s\S]+?- conformance[\s\S]+?- conformance-aggregate[\s\S]+?- emit[\s\S]+?- emit-aggregate[\s\S]+?- fourslash[\s\S]+?- fourslash-aggregate/,
+  "CI Summary should wait on rewrite gates and full-corpus observation leaves",
+);
+
+assert.match(
+  ciWorkflow,
+  /jobs = \{[\s\S]+?"clippy"[\s\S]+?"unit"[\s\S]+?"conformance"[\s\S]+?"conformance-aggregate"[\s\S]+?"emit"[\s\S]+?"emit-aggregate"[\s\S]+?"fourslash"[\s\S]+?"fourslash-aggregate"/,
   "CI Summary should require the same core check set at runtime",
 );
 
 assert.doesNotMatch(
   ciWorkflow,
-  /\n\s{2}ci-summary:\n[\s\S]+?required\.update\(/,
+  /\n\s{2}ci-summary:\n[\s\S]+?jobs\.update\(/,
   "CI Summary must not require a raw emit shard leaf; the sharded emit suite is gated through emit-aggregate",
 );

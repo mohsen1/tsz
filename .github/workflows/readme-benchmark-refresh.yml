@@ -1,196 +1,38 @@
-name: Refresh README benchmark image
+name: Validate README rewrite status
 
-# The README benchmark image and stats are committed assets that otherwise only
-# update when someone runs scripts/refresh-readme.py by hand, so they drift
-# stale. This regenerates them from the latest published benchmark data and
-# opens a PR (main is protected by the merge queue, so a direct push is not
-# possible). The website itself always renders fresh data; this only keeps the
-# committed README asset in sync.
+# The retired compiler's metrics remain checked-in evidence. They must not be
+# copied into the clean-slate README as live compatibility or performance data.
+# This workflow is intentionally read-only and never opens refresh PRs.
 
 on:
-  schedule:
-    # Daily at 07:00 UTC, after gh-pages (06:00) republishes the benchmark data.
-    - cron: "0 7 * * *"
+  pull_request:
+    paths:
+      - README.md
+      - scripts/refresh-readme.py
+      - scripts/ci/test_refresh_readme.py
+      - .github/workflows/readme-benchmark-refresh.yml
   workflow_dispatch:
-    inputs:
-      dry_run:
-        description: "Render and diff but do not open a PR"
-        type: boolean
-        default: false
 
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read
 
 concurrency:
-  group: readme-benchmark-refresh
-  cancel-in-progress: false
+  group: readme-rewrite-status-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  refresh:
-    name: Refresh README benchmark image
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+  validate:
+    name: Validate README rewrite status
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          # Persist the automation token, not the default GITHUB_TOKEN, so the
-          # heal path's `git push --force-with-lease` below triggers CI.
-          #
-          # GitHub deliberately suppresses workflow triggers for pushes made
-          # with GITHUB_TOKEN, to stop workflows from recursively triggering
-          # themselves. Creating the PR is unaffected -- `gh pr create` already
-          # runs under TSZ_PR_AUTOMATION_TOKEN, so the `opened` event fires and
-          # CI runs on a brand-new refresh branch. But a *healed* branch is
-          # updated by push alone, which raises `synchronize`, and that event
-          # was being swallowed: the PR ended up with zero check runs and
-          # `CI Summary` (the only required context) could never report, so the
-          # PR was permanently unmergeable -- "the base branch policy prohibits
-          # the merge" -- even though the heal itself worked.
-          #
-          # Falls back to github.token when the secret is absent, matching the
-          # `Open refresh PR` step. In that configuration a healed PR still gets
-          # no checks and needs a manual close/reopen to run them.
-          token: ${{ secrets.TSZ_PR_AUTOMATION_TOKEN || github.token }}
-
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
-        with:
-          node-version: "22"
 
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
 
-      - name: Install website deps (sharp renders the PNGs)
-        working-directory: crates/tsz-website
-        run: npm install --no-audit --no-fund
+      - name: Reject stale live-dashboard claims
+        run: python3 scripts/refresh-readme.py --check
 
-      - name: Refresh README from latest published benchmark data
-        run: python3 scripts/refresh-readme.py --write
-
-      - name: Detect changes
-        id: diff
-        shell: bash
-        run: |
-          set -euo pipefail
-          if git diff --quiet -- README.md crates/tsz-website/static/benchmark-data; then
-            echo "changed=false" >> "$GITHUB_OUTPUT"
-            echo "README benchmark image and stats already current; nothing to refresh."
-          else
-            echo "changed=true" >> "$GITHUB_OUTPUT"
-            git --no-pager diff --stat -- README.md crates/tsz-website/static/benchmark-data
-          fi
-
-      - name: Open refresh PR
-        if: steps.diff.outputs.changed == 'true' && (inputs.dry_run != true)
-        shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.TSZ_PR_AUTOMATION_TOKEN || github.token }}
-        run: |
-          set -euo pipefail
-          git config user.name "tsz-readme-bot"
-          git config user.email "tsz-readme-bot@users.noreply.github.com"
-
-          stamp="$(date -u +%Y%m%d)"
-          branch="automation/readme-benchmark-refresh-${stamp}"
-
-          # Build the refreshed commit first, on top of the checkout (which is
-          # at origin/main), so it exists whether we are creating today's branch
-          # or healing it.
-          git checkout -b "${branch}"
-          git add README.md crates/tsz-website/static/benchmark-data
-          git commit -m "chore(readme): refresh benchmark image and stats"
-
-          if ! git ls-remote --exit-code --heads origin "${branch}" >/dev/null 2>&1; then
-            git push -u origin "${branch}"
-          else
-            # Today's branch already exists. It was cut from whatever main was
-            # earlier today, so once README moves underneath it -- a conformance
-            # stats refresh, a manual edit -- the PR goes CONFLICTING and can
-            # never merge. Exiting here (the previous behaviour) meant a re-run
-            # regenerated the assets, detected changes, and then threw them away:
-            # the stale PR stayed stuck until the next calendar day orphaned it
-            # behind a fresh `-<tomorrow>` branch.
-            #
-            # Only heal a branch that still has an OPEN PR. If the PR merged or
-            # was closed, the branch is finished and must not be resurrected.
-            open_prs="$(gh pr list --head "${branch}" --state open --json number --jq 'length')"
-            if [ "${open_prs}" = "0" ]; then
-              echo "Branch ${branch} exists with no open PR (merged or closed); not resurrecting it."
-              exit 0
-            fi
-
-            # --force-with-lease against the tip we just observed, so a
-            # concurrent run or a human push is refused rather than clobbered.
-            git fetch origin "${branch}:refs/remotes/origin/${branch}"
-            remote_tip="$(git rev-parse "refs/remotes/origin/${branch}")"
-            echo "Healing existing branch ${branch} (was ${remote_tip}) onto current main."
-            git push --force-with-lease="${branch}:${remote_tip}" origin "${branch}"
-            echo "Updated the open refresh PR in place; not opening a second one."
-
-            # A healed PR is only useful if CI actually runs on the new head:
-            # `CI Summary` is the sole required context, so a head with zero
-            # check runs is unmergeable no matter how correct its contents are.
-            # The checkout token above normally makes the push raise
-            # `synchronize`, but when TSZ_PR_AUTOMATION_TOKEN is absent we fall
-            # back to GITHUB_TOKEN and that event is suppressed. Verify rather
-            # than assume, and recover by reopening -- CI listens for
-            # `reopened`.
-            pr_number="$(gh pr list --head "${branch}" --state open --json number --jq '.[0].number')"
-            new_head="$(git rev-parse "${branch}")"
-            checks=0
-            for _ in 1 2 3 4 5 6; do
-              sleep 10
-              checks="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${new_head}/check-runs" --jq '.total_count' 2>/dev/null || echo 0)"
-              [ "${checks}" != "0" ] && break
-            done
-            if [ "${checks}" = "0" ]; then
-              echo "Healed head ${new_head} has no check runs; reopening PR #${pr_number} to trigger CI."
-              gh pr close "${pr_number}"
-              gh pr reopen "${pr_number}"
-            else
-              echo "Healed head ${new_head} has ${checks} check run(s)."
-            fi
-            exit 0
-          fi
-
-          body=$(cat <<'EOF'
-          Automated refresh of the README benchmark image and progress stats from
-          the latest published benchmark data
-          (https://tsz.dev/benchmark-data/latest.json).
-
-          ## Goal
-          Goal: hold
-
-          ## Invariant
-          The committed README benchmark image and stats track the latest
-          published benchmark run instead of drifting stale between manual
-          `scripts/refresh-readme.py` runs. The merge queue lands it.
-
-          ## Scope
-          Generated assets only:
-          - `README.md` progress/benchmark blocks.
-          - Light/dark benchmark PNGs under
-            `crates/tsz-website/static/benchmark-data/`.
-
-          No source, build, or script changes.
-
-          ## Verification
-          - `python3 scripts/refresh-readme.py --write` reproduces these files
-            from the published benchmark artifact.
-          - `node scripts/bench/test-readme-perf-svg.mjs` covers the renderer.
-
-          ## Provenance
-          Machine: cloud
-          Assistant: bot
-          Model: github-actions
-          Effort: low
-          EOF
-          )
-
-          gh pr create \
-            --base main \
-            --head "${branch}" \
-            --title "chore(readme): refresh benchmark image and stats" \
-            --body "${body}" \
-            --label chore
+      - name: Test README status contract
+        run: python3 -m unittest scripts.ci.test_refresh_readme

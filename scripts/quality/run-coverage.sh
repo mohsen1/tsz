@@ -5,7 +5,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$repo_root"
 
 packages=()
-read -r -a packages <<< "${TSZ_COVERAGE_PACKAGES:-tsz-common tsz-scanner tsz-parser}"
+read -r -a packages <<< "${TSZ_COVERAGE_PACKAGES:-tsz-core tsz-cli tsz-conformance}"
 output_path="${TSZ_COVERAGE_OUTPUT:-target/llvm-cov/quality-tools.lcov}"
 
 args=()

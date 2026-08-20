@@ -884,12 +884,12 @@ check_prerequisites() {
     if [ -n "${TSZ_LIB_DIR:-}" ]; then
         if [ ! -d "$TSZ_LIB_DIR" ]; then
             echo -e "${RED}✗ lib directory not found: $TSZ_LIB_DIR${NC}"
-            echo "  Set TSZ_LIB_DIR or ensure crates/tsz-core/src/lib-assets exists."
+            echo "  Set TSZ_LIB_DIR or ensure crates/tsz-core/data/lib exists."
             exit 1
         fi
         echo -e "${GREEN}✓${NC} tsz lib assets: $TSZ_LIB_DIR"
     else
-        echo -e "${GREEN}✓${NC} tsz lib assets: embedded (built-in)"
+        echo -e "${GREEN}✓${NC} tsz lib assets: retained at crates/tsz-core/data/lib"
     fi
 
     # Check/build tsz with the dedicated benchmark target directory unless

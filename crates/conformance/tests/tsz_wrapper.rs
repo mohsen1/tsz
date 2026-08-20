@@ -1,5 +1,16 @@
 use super::*;
-use tsz::diagnostics::Diagnostic;
+
+#[derive(Debug, Clone)]
+struct Diagnostic {
+    code: u32,
+    message_text: String,
+}
+
+impl Diagnostic {
+    fn error(_file: String, _start: u32, _length: u32, message_text: String, code: u32) -> Self {
+        Self { code, message_text }
+    }
+}
 
 fn compile_test(
     content: &str,

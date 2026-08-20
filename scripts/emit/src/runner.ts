@@ -1610,10 +1610,8 @@ async function main() {
 
     const jsTotal = jsPass + jsFail;
     const dtsTotal = dtsPass + dtsFail;
-    // Stamp the measured tree so refresh-readme.py can distinguish a current
-    // reading from a stale local artifact (zero-drift downward writes are
-    // legitimate). Degrades to undefined off a git checkout rather than failing
-    // the emit run.
+    // Stamp the measured tree so observational artifacts retain provenance.
+    // Degrades to undefined off a git checkout rather than failing the emit run.
     let gitSha: string | undefined;
     try {
       gitSha = execFileSync('git', ['rev-parse', 'HEAD'], {

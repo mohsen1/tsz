@@ -14,22 +14,21 @@ SCCACHE_VERSION="${SCCACHE_VERSION:-0.9.1}"
 # Pinned fallback versions for GitHub-hosted runners. These only fire behind
 # the `command -v` guards below.
 NEXTEST_VERSION="${NEXTEST_VERSION:-0.9.137}"
-WASM_PACK_VERSION="${WASM_PACK_VERSION:-0.15.0}"
 export CARGO_PROFILE_DIST_FAST_LTO="${CARGO_PROFILE_DIST_FAST_LTO:-false}"
 export RUST_MIN_STACK="${RUST_MIN_STACK:-16777216}"
 export RUST_TEST_TIMEOUT="${RUST_TEST_TIMEOUT:-300}"
 export NPM_CONFIG_CACHE="${NPM_CONFIG_CACHE:-$ROOT_DIR/.ci-cache/npm}"
 export npm_config_cache="$NPM_CONFIG_CACHE"
-export TSZ_CI_WASM_PACK_CACHE="${TSZ_CI_WASM_PACK_CACHE:-$ROOT_DIR/.ci-cache/wasm-pack}"
 export PATH="$CARGO_HOME/bin:$HOME/.cargo/bin:/usr/local/cargo/bin:$PATH"
 
-mkdir -p "$CARGO_HOME" "$NPM_CONFIG_CACHE" "$TSZ_CI_WASM_PACK_CACHE"
+mkdir -p "$CARGO_HOME" "$NPM_CONFIG_CACHE"
 
-# Main's heavy-suite snapshots currently overstate the merge-gate floor. Shards
-# report their expected pass count from the partition they actually ran; gate on
-# that deficit when available so corpus-total drift does not force blind
-# absolute-floor edits. The fallback floor still protects paths without shard
-# expected counts.
+# These frozen thresholds describe the retired implementation checkpoint. R0's
+# scheduled workflow runs the retained conformance/emit/fourslash commands with
+# continue-on-error and uploads their real metrics, so falling below a threshold
+# is an observation rather than a rewrite merge-gate failure. Keep the historical
+# comparison logic intact until each semantic family graduates into the active
+# capability floor.
 # Snapshot refreshed 2026-07-25 at 5a1aa359: macOS measures 11342/12043.
 # This floor is deliberately BELOW that. The effective gate is
 # min(snapshot.passed, this floor), so the floor is what actually binds, and a
@@ -76,14 +75,9 @@ HOST_CPUS="$(getconf _NPROCESSORS_ONLN 2>/dev/null || nproc 2>/dev/null || echo 
 # shellcheck source=scripts/ci/ci-resources.sh
 source "$(dirname "${BASH_SOURCE[0]}")/ci-resources.sh"
 export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-$(default_cargo_build_jobs)}"
-# Cap nextest test-thread parallelism for memory-heavy unit lib-tests on
-# GitHub-hosted runners. Default to 2; override with TSZ_CI_UNIT_TEST_THREADS.
+# Cap nextest test-thread parallelism on GitHub-hosted runners. Override with
+# TSZ_CI_UNIT_TEST_THREADS after measuring the active rewrite suite.
 export UNIT_NEXTEST_TEST_THREADS="${TSZ_CI_UNIT_TEST_THREADS:-2}"
-# Same cap for the checker integration batches (unit-nextest.sh): several are
-# memory-heavy enough that running at num-cpus can SIGKILL otherwise-passing
-# tests on hosted runners (this was `test-threads = 4` in the retired
-# `[profile.ci]` nextest profile). Local runs leave it unset -> num-cpus.
-export CHECKER_NEXTEST_TEST_THREADS="${TSZ_CI_CHECKER_TEST_THREADS:-4}"
 echo "info: CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS} (HOST_CPUS=${HOST_CPUS})" >&2
 
 SHARD_COUNT="${TSZ_CI_SHARDS:-4}"
@@ -187,9 +181,6 @@ ensure_host_tools() {
       python3
       pkg-config
     )
-    if suite_needs_group "$suite" wasm; then
-      apt_packages+=(binaryen)
-    fi
     if suite_needs_group "$suite" node; then
       apt_packages+=(nodejs npm)
     fi
@@ -202,18 +193,10 @@ ensure_host_tools() {
     if suite_needs_group "$suite" lint; then
       rustup component add clippy rustfmt
     fi
-    if suite_needs_group "$suite" wasm; then
-      rustup target add wasm32-unknown-unknown
-    fi
   fi
 
   if suite_needs_group "$suite" unit && ! command -v cargo-nextest >/dev/null 2>&1; then
     curl -LsSf "https://get.nexte.st/${NEXTEST_VERSION}/linux" | tar zxf - -C /usr/local/bin
-  fi
-
-  if suite_needs_group "$suite" wasm && ! command -v wasm-pack >/dev/null 2>&1; then
-    curl -sL "https://github.com/rustwasm/wasm-pack/releases/download/v${WASM_PACK_VERSION}/wasm-pack-v${WASM_PACK_VERSION}-x86_64-unknown-linux-musl.tar.gz" \
-      | tar xz --strip-components=1 -C /usr/local/bin "wasm-pack-v${WASM_PACK_VERSION}-x86_64-unknown-linux-musl/wasm-pack"
   fi
 
   if suite_needs_group "$suite" rust_compile; then
@@ -296,29 +279,6 @@ configure_sccache() {
   fi
 }
 
-setup_wasm_pack_cache() {
-  local home_cache="$HOME/.cache"
-  local link_path="$home_cache/.wasm-pack"
-  mkdir -p "$home_cache" "$TSZ_CI_WASM_PACK_CACHE"
-
-  if [[ -e "$link_path" && ! -L "$link_path" ]]; then
-    if [[ -d "$link_path" ]]; then
-      shopt -s dotglob nullglob
-      local entries=("$link_path"/*)
-      if (( ${#entries[@]} > 0 )); then
-        cp -a "${entries[@]}" "$TSZ_CI_WASM_PACK_CACHE"/
-      fi
-      shopt -u dotglob nullglob
-      rm -rf "$link_path"
-    else
-      rm -f "$link_path"
-    fi
-  fi
-
-  ln -sfn "$TSZ_CI_WASM_PACK_CACHE" "$link_path"
-  echo "wasm-pack cache: ${link_path} -> ${TSZ_CI_WASM_PACK_CACHE}"
-}
-
 ensure_source_git_context() {
   ci_section "Ensure git metadata"
 
@@ -340,115 +300,25 @@ init_typescript_corpus() {
 }
 
 run_lint() {
-  ci_section "Lint"
+  ci_section "Rewrite foundation gate"
   cargo fmt --all --check || return $?
-  scripts/arch/check-workspace-metadata.sh || return $?
-  scripts/check-crate-root-files.sh || return $?
-  node scripts/bench/test-project-rows.mjs || return $?
-  node scripts/bench/test-project-fixture-deprecations.mjs || return $?
-  node scripts/bench/test-project-fixture-stub-fidelity.mjs || return $?
-  node scripts/bench/project-row-summary.mjs || return $?
-  node scripts/bench/test-project-row-summary.mjs || return $?
-  node scripts/bench/test-project-file-stats.mjs || return $?
-  node scripts/bench/validate-project-metadata.mjs || return $?
-  node scripts/bench/test-validate-project-metadata.mjs || return $?
-  node scripts/bench/test-row-utils.mjs || return $?
-  bash scripts/bench/test-hyperfine-comparison-output.sh || return $?
-  bash scripts/bench/test-ensure-git-fixture.sh || return $?
-  node scripts/bench/test-merge-results.mjs || return $?
-  node scripts/bench/test-perf-hotspots.mjs || return $?
-  node scripts/bench/test-tsgo-winner-report.mjs || return $?
-  node scripts/bench/test-readme-perf-svg.mjs || return $?
-  node scripts/bench/test-reduction-backlog.mjs || return $?
-  node scripts/bench/test-timeout-runner.mjs || return $?
-  node scripts/bench/test-measure-protocol.mjs || return $?
-  node scripts/bench/test-measure-tsz.mjs || return $?
-  node scripts/bench/test-typescript-tool-resolution.mjs || return $?
-  node scripts/setup/test-resolve-typescript-lib-dir.mjs || return $?
-  node scripts/bench/test-check-artifact-readiness.mjs || return $?
-  node scripts/bench/test-check-latest-freshness.mjs || return $?
-  node scripts/bench/test-bench-readiness-banner.mjs || return $?
-  node scripts/bench/test-ci-health-benchmark-readiness.mjs || return $?
-  node scripts/bench/test-benchmark-artifact-selection.mjs || return $?
-  node scripts/bench/test-gh-pages-benchmark-artifact-gate.mjs || return $?
-  node scripts/bench/test-bench-workflow-github-prep.mjs || return $?
-  node scripts/bench/test-bench-workflow-github-run.mjs || return $?
-  node scripts/bench/test-bench-workflow-micro-coverage.mjs || return $?
-  for script in scripts/ci/*type-challenges*.mjs; do
-    node --check "$script" || return $?
-  done
-  node scripts/ci/test-project-compile-guard-readiness-artifacts.mjs || return $?
-  node scripts/ci/test-project-compile-guard-fingerprint.mjs || return $?
-  node scripts/ci/test-project-compile-guard-rss-sentinel.mjs || return $?
-  node scripts/ci/test-project-tsc-oracle.mjs || return $?
-  node scripts/ci/test-type-challenges-semantic-families.mjs || return $?
-  node scripts/ci/test-gate-path-classifier.mjs || return $?
-  node scripts/ci/test-pr-ready-state.mjs || return $?
-  node scripts/ci/test-refresh-green-prs.mjs || return $?
-  node scripts/ci/test-check-stale-ci-runs.mjs || return $?
-  node scripts/ci/test-check-ci-job-timing.mjs || return $?
-  node scripts/ci/test-check-main-red.mjs || return $?
-  node scripts/ci/test-sentinel-issues.mjs || return $?
-  node scripts/ci/test-gh.mjs || return $?
-  node scripts/ci/test-wip-state-comments.mjs || return $?
-  node scripts/ci/test-project-compatibility.mjs || return $?
-  node scripts/ci/test-type-challenges-solutions-manifest.mjs || return $?
-  node scripts/ci/test-determinism-check.mjs || return $?
-  scripts/test/safe-run-test.sh || return $?
-  for test_file in scripts/agents/test_*.py scripts/setup/test_*.py; do
-    [[ -f "$test_file" ]] || continue
-    python3 "$test_file" || return $?
-  done
-  # Keep shell scripts within macOS system /bin/bash (3.2). The guard scans the
-  # whole script surface for Bash 4+ constructs; its unit test proves it flags
-  # them (#15440).
-  python3 scripts/lib/check-sh-portability.py || return $?
-  python3 scripts/lib/test_check_sh_portability.py || return $?
-  python3 scripts/ci/test_ci_resources.py || return $?
-  python3 scripts/ci/test_typescript_corpus_init.py || return $?
-  python3 scripts/ci/test_full_ci_conformance_artifacts.py || return $?
-  python3 scripts/ci/test_full_ci_summary.py || return $?
-  python3 scripts/ci/test_full_ci_emit_metrics.py || return $?
-  python3 scripts/ci/test_check_emit_regression_set.py || return $?
-  # Known-failures baseline contract + gate-wiring tests (#15646). The
-  # command list lives in one script shared with the ci.yml cheap-guards
-  # step so the two tiers cannot drift.
-  scripts/ci/check-unit-gate-contracts.sh || return $?
-  python3 scripts/ci/test_refresh_readme.py || return $?
-  python3 scripts/conformance/validate-cache-domain.py || return $?
-  python3 scripts/conformance/test_validate_cache_domain.py || return $?
-  python3 scripts/conformance/test_corpus_coverage.py || return $?
-  python3 scripts/conformance/test_query_conformance.py || return $?
-  python3 scripts/conformance/test_build_snapshot_detail.py || return $?
-  python3 scripts/conformance/test_check_accepted_regression_growth.py || return $?
-  python3 scripts/conformance/test_check_snapshot_regression.py || return $?
-  python3 scripts/conformance/test_conformance_cache_version_gate.py || return $?
-  python3 scripts/conformance/test_corpus_lib_dir.py || return $?
-  python3 scripts/conformance/test_link_regression_issues.py || return $?
-  python3 scripts/conformance/test_snapshot_accounting.py || return $?
-  python3 scripts/conformance/lib/test_accepted_regressions.py || return $?
-  python3 scripts/conformance/lib/test_results.py || return $?
-  python3 scripts/emit/test_query_emit_families.py || return $?
-  # Use the dedicated ci-lint profile (debug=false, incremental=false,
-  # codegen-units=256). Workspace clippy artifacts go to .target/ci-lint/
-  # — separate cache key from .target/debug so dev incrementals on a
-  # contributor's machine aren't poisoned by CI-shaped fingerprints, and
-  # vice versa.
-  # tsz-conformance joined this deny-level gate once measured clippy-clean
-  # under it (#13453 is closed; the exclusion outlived its justification).
-  # It stays excluded from the separate pedantic warn-level ratchet below
-  # (scripts/arch/check-clippy-warn-ratchet.py) — that group has a real,
-  # measured ~6.4k-warning backlog on this crate pending dedicated cleanup.
+  cargo check --workspace --all-targets || return $?
   cargo clippy --profile ci-lint --workspace \
     --all-targets -- -D warnings || return $?
-  scripts/arch/check-checker-boundaries.sh || return $?
-  # Warn-level ratchet: counts must not rise above the committed baseline.
-  # The baseline tracks the clippy pedantic floor (plus targeted cherry-picks,
-  # minus a curated allow-list) declared in CLIPPY_FLAGS in the script below
-  # (#13443); it is re-captured with --update-baseline when that set changes.
-  python3 scripts/arch/check-clippy-warn-ratchet.py --profile ci-lint || return $?
-  # Surface sccache stats so the cache health is visible without reading
-  # the workflow log into a separate step.
+
+  python3 scripts/arch/arch_guard.py || return $?
+  python3 scripts/reset/verify-legacy-inline.py || return $?
+  (
+    cd scripts/arch
+    python3 -m unittest discover -p "test_arch_guard*.py" -v
+  ) || return $?
+
+  python3 scripts/lib/check-sh-portability.py || return $?
+  python3 scripts/lib/test_check_sh_portability.py || return $?
+  python3 scripts/ci/test_typescript_corpus_init.py || return $?
+  node scripts/bench/test-typescript-tool-resolution.mjs || return $?
+  scripts/ci/check-unit-gate-contracts.sh || return $?
+
   if command -v sccache >/dev/null 2>&1; then
     echo "::group::sccache stats"
     sccache --show-stats || true
@@ -456,51 +326,24 @@ run_lint() {
   fi
 }
 
-# Every workspace crate whose tests the unit lane adjudicates. A crate absent
-# here is covered by no lane at all: its failures reach no junit, so
-# known-failures-check.mjs can neither fail on them nor ratchet them down, and
-# any baseline entry naming it is inert (#15999 §3). The
-# `known_failure_packages_are_in_the_unit_lane` contract test in
-# scripts/ci/test_full_ci_unit_gate.py holds that invariant.
+# The active rewrite workspace is intentionally explicit. The architecture
+# guard independently rejects additional members, and every selected test must
+# pass; the retired known-failures inventory does not apply to this suite.
 _UNIT_TEST_PACKAGES=(
-  tsz-common
-  tsz-scanner
-  tsz-parser
-  tsz-binder
-  tsz-solver
-  tsz-checker
-  tsz-emitter
-  tsz-lsp
   tsz-core
   tsz-cli
   tsz-conformance
 )
 
-# The `tsz-checker` lib-test target can exceed hosted runner memory even with
-# one Cargo job and serialized codegen. scripts/ci/unit-nextest.sh keeps
-# checker integration tests in the unit job by enumerating declared `[[test]]`
-# targets in bounded batches and never building the monolithic
-# `rustc --test crates/tsz-checker/src/lib.rs` artifact.
-
-# Resolve the active package set for `run_unit_tests` / `build_unit_test_archive`.
-#
-# `_TSZ_CI_UNIT_PACKAGES_OVERRIDE` is the gate-computed narrow set for
-# draft-phase fast-fail (P4). It is a space-separated list of crate names
-# (e.g., "tsz-parser tsz-binder"). When non-empty AND the names are all
-# known workspace crates, this returns one crate name per line. Otherwise it
-# returns the full `_UNIT_TEST_PACKAGES`.
-#
-# Unknown names are an error rather than silent fallback — a typo'd crate
-# name would otherwise skip tests in a way that goes unnoticed.
+# Resolve the active package set for run_unit_tests. A narrow override is
+# accepted only when every name belongs to the clean-slate workspace.
 unit_test_packages() {
   local override="${_TSZ_CI_UNIT_PACKAGES_OVERRIDE:-}"
   if [[ -z "$override" ]]; then
     printf '%s\n' "${_UNIT_TEST_PACKAGES[@]}"
     return
   fi
-  # Derived from _UNIT_TEST_PACKAGES rather than hand-copied: a second literal
-  # list drifts silently, and a crate missing from it is rejected as "unknown"
-  # even though the full lane runs it.
+
   local known=" ${_UNIT_TEST_PACKAGES[*]} "
   local crate
   for crate in $override; do
@@ -515,39 +358,18 @@ unit_test_packages() {
   done
 }
 
-# Both unit lanes run scripts/ci/unit-nextest.sh with --gate: the runner
-# collects one junit per nextest pass, exits nonzero for infrastructure
-# failures (build error, missing junit — reported by the runner itself), and
-# otherwise the known-failures delta gate's verdict is the job's verdict
-# (#15646): green means "no unit failures outside
-# scripts/ci/known-failures.txt", not a masked rc.
-
 run_unit_tests() {
-  ci_section "Workspace nextest suites (signoff profile + known-failures gate)"
+  ci_section "Strict rewrite nextest suite"
   local packages
-  # unit_test_packages validates _TSZ_CI_UNIT_PACKAGES_OVERRIDE; propagate its
-  # config-error rc instead of masking it in the $() assignment below.
   packages="$(unit_test_packages)" || return "$?"
+
   local extra_flags=()
   if [[ -n "${_TSZ_CI_UNIT_PACKAGES_OVERRIDE:-}" ]]; then
     echo "info: narrowed unit run to: ${_TSZ_CI_UNIT_PACKAGES_OVERRIDE}"
-    # Only a narrowed selection may legitimately produce zero junit reports
-    # (every pass rc=4). The full lane always has tests, so an empty report
-    # dir there is an infrastructure failure the gate must reject.
     extra_flags+=(--allow-no-reports)
   fi
-  if [[ "${TSZ_CI_UNIT_SKIP_CHECKER_INTEGRATION:-0}" == "1" ]]; then
-    echo "info: skipping checker integration tests in unit job"
-    extra_flags+=(--skip-checker-integration)
-  fi
   scripts/ci/unit-nextest.sh --junit-dir "$LOG_DIR/unit-junit" \
-    --gate --packages "$packages" ${extra_flags[@]+"${extra_flags[@]}"}
-}
-
-run_checker_integration_tests() {
-  ci_section "Checker integration nextest suites (signoff profile + known-failures gate)"
-  scripts/ci/unit-nextest.sh --junit-dir "$LOG_DIR/checker-integration-junit" \
-    --gate --packages tsz-checker
+    --packages "$packages" ${extra_flags[@]+"${extra_flags[@]}"}
 }
 
 build_unit_test_archive() {
@@ -567,6 +389,7 @@ build_test_binaries() {
     .target/dist-fast/tsz
     .target/dist-fast/tsz-lsp
     .target/dist-fast/tsz-server
+    .target/dist-fast/try-tsz
     .target/dist-fast/tsz-conformance
     .target/dist-fast/generate-tsc-cache
   )
@@ -625,6 +448,7 @@ build_test_binaries() {
       --bin tsz \
       --bin tsz-lsp \
       --bin tsz-server \
+      --bin try-tsz \
       --bin tsz-conformance \
       --bin generate-tsc-cache
   cargo_rc="$?"
@@ -638,41 +462,6 @@ build_test_binaries() {
   ln -sf "$ROOT_DIR/.target/dist-fast/tsz-lsp" .target/release/tsz-lsp
   ln -sf "$ROOT_DIR/.target/dist-fast/tsz-server" .target/release/tsz-server
   ls -lh "${binaries[@]}"
-}
-
-build_wasm() {
-  ci_section "WASM build (nodejs target)"
-  (
-    cd crates/tsz-wasm
-    CARGO_PROFILE_RELEASE_OPT_LEVEL="${TSZ_CI_WASM_OPT_LEVEL:-0}" \
-      CARGO_PROFILE_RELEASE_LTO="${TSZ_CI_WASM_LTO:-false}" \
-      CARGO_PROFILE_RELEASE_CODEGEN_UNITS="${TSZ_CI_WASM_CODEGEN_UNITS:-16}" \
-      CARGO_PROFILE_RELEASE_DEBUG="${TSZ_CI_WASM_DEBUG:-false}" \
-      wasm-pack build --target nodejs --out-dir ../../pkg --no-opt -- --jobs "$CARGO_BUILD_JOBS"
-  )
-  mkdir -p pkg/lib
-  cp -R TypeScript/src/lib/. pkg/lib/
-}
-
-build_wasm_web() {
-  ci_section "WASM build (web target for website playground)"
-  cp LICENSE.txt crates/tsz-wasm/LICENSE.txt
-  (
-    cd crates/tsz-wasm
-    CARGO_PROFILE_RELEASE_OPT_LEVEL="${TSZ_CI_WASM_OPT_LEVEL:-0}" \
-      CARGO_PROFILE_RELEASE_LTO="${TSZ_CI_WASM_LTO:-false}" \
-      CARGO_PROFILE_RELEASE_CODEGEN_UNITS="${TSZ_CI_WASM_CODEGEN_UNITS:-16}" \
-      CARGO_PROFILE_RELEASE_DEBUG="${TSZ_CI_WASM_DEBUG:-false}" \
-      wasm-pack build --target web --out-dir ../../pkg/web --no-opt -- --jobs "$CARGO_BUILD_JOBS"
-  )
-}
-
-build_wasm_all() {
-  # Build both targets in one job so the web build reuses the nodejs build's
-  # warmed wasm target dir and wasm-bindgen CLI install instead of paying a
-  # second cold dependency/toolchain compile in another job.
-  build_wasm
-  build_wasm_web
 }
 
 prep_node_artifacts() {
@@ -1168,9 +957,6 @@ run_common_setup() {
       configure_sccache
     fi
   fi
-  if suite_needs_group "$suite" wasm; then
-    setup_wasm_pack_cache
-  fi
 }
 
 main() {
@@ -1203,16 +989,8 @@ main() {
       timed run_unit_tests run_unit_tests
       record_sccache_metric unit
       ;;
-    checker-integration)
-      timed run_checker_integration_tests run_checker_integration_tests
-      ;;
     lsp-e2e)
       timed run_lsp_e2e_smoke run_lsp_e2e_smoke
-      ;;
-    wasm-all)
-      timed build_wasm_all build_wasm_all
-      show_sccache_stats
-      record_sccache_metric wasm
       ;;
     conformance)
       timed build_test_binaries build_test_binaries

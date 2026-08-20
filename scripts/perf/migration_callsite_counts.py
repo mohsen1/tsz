@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Report checker migration call-site counts for performance PR evidence."""
+"""Read the retired checker's migration call-site vocabulary.
+
+The replacement compiler has no parent-checker cache migration. There is no
+default source root. Pass ``--root`` only when inspecting a historical checkout
+or a saved fixture.
+"""
 
 from __future__ import annotations
 
@@ -12,7 +17,6 @@ from pathlib import Path
 from typing import Iterable
 
 ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_ROOT = ROOT / "crates" / "tsz-checker" / "src"
 EXCLUDED_DIRS = {".git", "target", "node_modules", "tests", "benches"}
 
 PATTERNS = {
@@ -121,12 +125,19 @@ def main(argv: list[str] | None = None) -> int:
         action="append",
         type=Path,
         default=None,
-        help="source root to scan; defaults to crates/tsz-checker/src",
+        help="historical source root to scan; may be repeated",
     )
     parser.add_argument("--json", action="store_true", help="print machine-readable JSON")
     args = parser.parse_args(argv)
 
-    search_roots = args.root if args.root is not None else [DEFAULT_ROOT]
+    if args.root is None:
+        print(
+            "migration-callsite-counts: unavailable for the clean-slate compiler; "
+            "pass --root only to inspect historical sources",
+            file=sys.stderr,
+        )
+        return 2
+    search_roots = args.root
     summary = summarize(scan(search_roots))
     if args.json:
         print(json.dumps(summary, indent=2))

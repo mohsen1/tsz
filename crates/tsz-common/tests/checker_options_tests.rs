@@ -123,12 +123,6 @@ fn test_default_no_property_access_from_index_signature_is_false() {
 }
 
 #[test]
-fn test_default_sound_mode_is_false() {
-    let opts = CheckerOptions::default();
-    assert!(!opts.sound_mode);
-}
-
-#[test]
 fn test_default_experimental_decorators_is_false() {
     let opts = CheckerOptions::default();
     assert!(!opts.experimental_decorators);

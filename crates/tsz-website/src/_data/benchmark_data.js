@@ -931,16 +931,10 @@ function loadBenchmarks() {
     }
   }
 
-  const snapshotPath = path.join(ROOT, "crates/tsz-website/bench-snapshot.json");
-  // Always use the latest available data. We do NOT gate selection on every app
-  // being clean, on green-only project timing pairs, or on a minimum count —
-  // benchmarks are allowed to fail individually; isChartEligible() decides which
-  // rows render (tsz within 1.5x of tsgo). Gating selection here is what left the
-  // whole dashboard empty whenever a canary/app legitimately crashed or timed out.
-  const selectedArtifact = selectLatestBenchmarkArtifact([
-    ...benchmarkArtifactFiles(),
-    snapshotPath,
-  ], {
+  // The committed benchmark snapshot predates the clean-slate rewrite. Preserve
+  // it as evidence, but fail closed when no current artifact is present rather
+  // than presenting retired timings as R0 measurements.
+  const selectedArtifact = selectLatestBenchmarkArtifact(benchmarkArtifactFiles(), {
     minimumProjectTimingPairs: 0,
   });
   if (selectedArtifact) {

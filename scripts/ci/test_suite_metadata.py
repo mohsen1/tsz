@@ -55,9 +55,7 @@ class SuiteMetadataTests(unittest.TestCase):
             "dist-binaries",
             "node-harness-prep",
             "lint",
-            "checker-integration",
             "lsp-e2e",
-            "wasm-all",
         }
 
         self.assertTrue(removed_from_pr.isdisjoint(suite_names("github")))
@@ -72,12 +70,27 @@ class SuiteMetadataTests(unittest.TestCase):
             "unit-shard",
             "wasm",
             "wasm-web",
+            "wasm-all",
+            "checker-integration",
             "emit",
             "fourslash",
         }
 
         self.assertTrue(removed.isdisjoint(suite_names("full")))
         self.assertTrue(removed.isdisjoint(suite_names("github")))
+        self.assertTrue(removed.isdisjoint(suite_names("cache")))
+
+    def test_retained_compatibility_observations_stay_addressable(self):
+        observations = {
+            "conformance",
+            "conformance-aggregate",
+            "emit-shard",
+            "emit-aggregate",
+            "fourslash-shard",
+            "fourslash-aggregate",
+        }
+        self.assertTrue(observations.issubset(set(suite_names("github"))))
+        self.assertTrue(observations.issubset(set(suite_names("full"))))
 
     def test_fourslash_shard_initializes_typescript_source(self):
         self.assertIn("typescript-source", suite_caches("fourslash-shard"))

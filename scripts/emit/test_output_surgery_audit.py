@@ -30,7 +30,7 @@ class OutputSurgeryAuditTests(unittest.TestCase):
         line = "let escaped = s.replace('\\\\', \"\\\\\\\\\").replace('\"', \"\\\\\\\"\");"
         self.assertTrue(
             self.audit.is_auto_allowed_data_cleanup(
-                "crates/tsz-emitter/src/enums/transform.rs", line
+                "crates/tsz-core/src/emit.rs", line
             )
         )
 
@@ -38,9 +38,23 @@ class OutputSurgeryAuditTests(unittest.TestCase):
         line = "output = output.replacen(&from, &to, 1);"
         self.assertFalse(
             self.audit.is_auto_allowed_data_cleanup(
-                "crates/tsz-emitter/src/emitter/transform_dispatch.rs", line
+                "crates/tsz-core/src/emit.rs", line
             )
         )
+
+    def test_default_scan_targets_the_replacement_emitter(self):
+        self.assertEqual(
+            list(self.audit.iter_rust_files()),
+            [ROOT / "crates" / "tsz-core" / "src" / "emit.rs"],
+        )
+
+    def test_missing_emitter_source_fails_closed(self):
+        with tempfile.TemporaryDirectory(dir=ROOT) as temp_dir:
+            missing = pathlib.Path(temp_dir) / "missing.rs"
+            with self.assertRaisesRegex(
+                FileNotFoundError, "emitter source path does not exist"
+            ):
+                list(self.audit.iter_rust_files(missing))
 
     def test_manual_debt_marker_is_tracked(self):
         with tempfile.TemporaryDirectory(dir=ROOT) as temp_dir:

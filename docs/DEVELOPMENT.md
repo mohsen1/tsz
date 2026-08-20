@@ -1,206 +1,178 @@
 # Development Guide
 
-This guide covers setting up and working with the tsz codebase.
+This guide describes the clean-slate TSZ workspace. Historical compiler source
+and architecture live only in Git history.
 
-## Getting Started
+## Setup
 
 ```bash
-# Clone the repository
 git clone https://github.com/tsz-org/tsz.git
 cd tsz
-
-# Run the setup script (installs git hooks, initializes submodules)
 ./scripts/setup/setup.sh
 ```
 
-The setup script initializes the TypeScript submodule (pinned to a specific commit for conformance tests) and installs pre-commit hooks.
+Setup initializes the pinned TypeScript checkout and installs Git hooks. The
+checkout supplies the TypeScript 7.0.2 oracle, test corpus, and library files;
+do not edit or commit changes inside it.
 
-## Git Hooks
-
-Pre-commit hooks run automatically on every commit. They keep local commits
-cheap and enforce:
-- `cargo fmt` — format code (auto-fixes and re-stages)
-- TypeScript submodule guard — prevents accidental submodule edits
-
-Build, lint, unit tests, WASM, conformance, emit, and fourslash run in CI.
-Every open PR runs the full suite on each push; path-based skips trim jobs
-for docs-only or tooling-only changes.
-
-To manually install hooks:
-```bash
-./scripts/setup/setup.sh
-```
-
-To skip hooks for a single commit (use sparingly):
-```bash
-TSZ_SKIP_HOOKS=1 git commit -m "message"
-```
-
-Environment variables for hook control:
-- `TSZ_SKIP_HOOKS=1` — skip all pre-commit checks
-
-## Project Structure
-
-tsz is a Cargo workspace with each pipeline stage in its own crate:
-
-```
-tsz/
-├── crates/
-│   ├── tsz-common/        # Shared types, IDs, diagnostic codes
-│   ├── tsz-scanner/       # Lexer/tokenizer, string interning
-│   ├── tsz-parser/        # Syntax-only AST construction
-│   ├── tsz-binder/        # Symbols, scopes, control-flow graph
-│   ├── tsz-solver/        # All type relations, inference, evaluation
-│   ├── tsz-checker/       # AST walk, diagnostics, delegates to solver
-│   ├── tsz-lowering/      # AST transforms (downlevel emit)
-│   ├── tsz-emitter/       # JS/declaration output
-│   ├── tsz-lsp/           # Language server protocol
-│   ├── tsz-cli/           # CLI binary (tsz command)
-│   ├── tsz-core/          # Integration crate, root tests
-│   ├── tsz-wasm/          # WASM target bindings
-│   ├── tsz-website/       # Website/playground
-│   └── conformance/       # Conformance test runner binary
-├── TypeScript/             # TypeScript submodule (test source, read-only)
-├── docs/                   # Documentation
-│   ├── architecture/       # Architecture decisions and boundaries
-│   ├── plan/              # Roadmaps and planning docs
-│   ├── specs/             # TypeScript behavior specifications
-│   └── site/              # Website content
-├── scripts/
-│   ├── conformance/       # Conformance test runner and analysis tools
-│   ├── setup/             # Setup and installation scripts
-│   ├── arch/              # Architecture boundary checking
-│   └── bench/             # Benchmarking scripts
-└── .claude/               # AI assistant configuration
-```
-
-### Pipeline Architecture
-
-```
-scanner → parser → binder → checker → solver → emitter
-                                ↕
-                          (query boundary)
-```
-
-- **Scanner**: Lexes source into tokens, interns strings to `Atom`
-- **Parser**: Builds syntax-only AST in `NodeArena`
-- **Binder**: Creates symbols, scopes, and control-flow graph (no type computation)
-- **Checker**: Walks AST, tracks diagnostics, delegates type questions to Solver
-- **Solver**: Owns all type relations, evaluation, inference, instantiation, narrowing
-- **Emitter**: Produces JS/declaration output from checked AST
-
-Key rule: if code computes type semantics, it belongs in the Solver. The Checker is thin orchestration only.
-
-## Running Tests
-
-CI is the default place for broad verification. Use local commands when they
-answer a specific debugging question, and prefer narrow filters over full
-suites on a development machine.
-
-### Unit Tests
+Before creating a worktree or starting a heavy command, use the repository's
+intake and disk guard:
 
 ```bash
-# Install nextest if you need targeted local unit feedback
-cargo install cargo-nextest
-
-# Run a specific test while debugging
-cargo nextest run -p tsz-checker --lib <test-name>
+scripts/setup/disk-worktree-guard.sh
+git worktree list
 ```
 
-If `cargo nextest` wedges locally at ~0% CPU (an idle orchestrator with no
-output — see issue #13982), run it through the serializing guard, which queues
-concurrent runs and clears a stale orchestrator left by a killed-mid-build run:
+## Workspace Shape
 
-```bash
-scripts/test/nextest-guard.sh -- cargo nextest run -p tsz-checker --lib <test-name>
+The root workspace has three packages:
+
+```text
+crates/
+├── tsz-core/       compiler modules and stable service facade
+├── tsz-cli/        native CLI, server, LSP, and try-tsz adapters
+└── conformance/    external-process TypeScript oracle harness
 ```
 
-See [`docs/development/TOOLING.md`](development/TOOLING.md) for details.
+Within `tsz-core`, the intended ownership is:
 
-### Conformance Tests
-
-Conformance tests compare tsz diagnostics against the official TypeScript compiler (`tsc`).
-
-```bash
-# Run one filtered test while debugging
-./scripts/conformance/conformance.sh run --filter "testName" --verbose
-
-# Full conformance runs in CI on every open PR
+```text
+syntax -> program -> checker -> emit
+             \          /
+              service
 ```
 
-### Conformance Analysis (Offline)
+- `syntax` owns scanning, immutable syntax, and parser recovery.
+- `program` owns normalized sources, options, root order, declarations, and
+  project facts.
+- checker/semantic modules own binding, type construction, inference,
+  relations, flow, queries, and structured failures.
+- `emit` transforms and prints syntax; declaration emit consumes explicit
+  checked summaries.
+- `service` is the only public compiler, project, and language-service facade.
 
-Analysis tools work from pre-computed snapshot files — no CPU cost:
+The CLI package adapts the service API. It must not grow an alternate compiler
+pipeline. The conformance harness communicates through native processes and
+must not depend on compiler internals.
 
-```bash
-# Overview of conformance status
-python3 scripts/conformance/query-conformance.py
+Do not add a package for a phase merely because the phase exists. Package
+splits require evidence. Browser/WASM bindings return in R4, after the service
+API is stable.
 
-# Root-cause campaign recommendations
-python3 scripts/conformance/query-conformance.py --campaigns
+## Build And Run
 
-# Tests fixable by removing 1 extra diagnostic
-python3 scripts/conformance/query-conformance.py --one-extra
-
-# Tests closest to passing (diff <= 2)
-python3 scripts/conformance/query-conformance.py --close 2
-
-# Deep-dive a specific error code
-python3 scripts/conformance/query-conformance.py --code TS2322
-
-# Snapshot refreshes are normally produced by CI/full verification batches
-```
-
-Snapshot files:
-- `scripts/conformance/conformance-snapshot.json` — high-level aggregates
-- `scripts/conformance/conformance-detail.json` — per-test failure data
-- `scripts/conformance/tsc-cache-full.json` — tsc expected diagnostics for every test
-
-## Building
-
-### Native Binary
+Fast development checks:
 
 ```bash
-# Use CI for broad build verification.
-# Build locally only when debugging a build-specific failure.
+cargo check --workspace --all-targets
 cargo build -p tsz-cli
+cargo run -p tsz-cli --bin tsz -- --help
 ```
 
-### WASM Build
+Build every native process adapter:
 
 ```bash
-# CI checks WASM on ready-for-review PRs.
-# Run locally only when debugging a WASM-specific failure.
-cargo check -p tsz-wasm --target wasm32-unknown-unknown
+cargo build -p tsz-cli \
+  --bin tsz --bin tsz-server --bin tsz-lsp --bin try-tsz
 ```
 
-## Architecture Rules
+Representative performance measurements use an immutable optimized binary,
+normally the `dist` profile. Do not time debug builds or rebuild inside a timed
+sample.
 
-These are enforced by code review and CI:
+## Tests
 
-1. **Solver owns type semantics** — if code computes type relations, evaluation, or inference, it goes in `tsz-solver`
-2. **Checker is thin orchestration** — reads AST/symbols/flow, asks Solver for answers, tracks diagnostics
-3. **No cross-layer imports** — Binder cannot import Solver, Emitter cannot import Checker internals
-4. **Single type universe** — one `TypeId` space via the Solver's interner
-5. **DefId-first resolution** — semantic references use `TypeData::Lazy(DefId)`, resolved through `TypeEnvironment`
-
-See `docs/architecture/BOUNDARIES.md` and `docs/architecture/NORTH_STAR.md` for details.
-
-## Memory-Guarded Execution
-
-If you must run long-running or memory-intensive commands locally, wrap them
-with the memory guard:
+Use nextest for Rust tests:
 
 ```bash
-scripts/safe-run.sh --limit 8192 -- cargo build --release
+cargo nextest run -p tsz-core
+cargo nextest run -p tsz-cli
+cargo nextest run --workspace
 ```
 
-This monitors RSS and kills the process if it exceeds the limit (default: 75% of system RAM).
+The rewrite tests are intentionally explicit targets because retained legacy
+tests are a disabled porting corpus:
 
-## Tips
+```bash
+cargo nextest run -p tsz-core --test rewrite_foundation
+cargo nextest run -p tsz-cli --test rewrite_process_contract
+```
 
-- Pre-commit hooks only format staged Rust changes; broad verification belongs in CI
-- Use `cargo check -p tsz-checker` for fast feedback during development
-- The TypeScript submodule is read-only — never commit changes to it
-- Conformance snapshot files are generated artifacts — update them with `conformance.sh snapshot`
-- Run `cargo fmt` before committing (hooks auto-fix but it's faster to do it yourself)
+The strict local gate is:
+
+```bash
+cargo fmt --all --check
+cargo check --workspace --all-targets
+cargo clippy --workspace --all-targets -- -D warnings
+cargo nextest run --workspace
+python3 scripts/arch/arch_guard.py
+```
+
+Use a focused retained harness to prove it can launch the replacement binary:
+
+```bash
+./scripts/conformance/conformance.sh run --filter '<case>' --max 1 --workers 1
+./scripts/emit/run.sh --filter='<case>' --max=1
+./scripts/fourslash/run-fourslash.sh --filter='<case>' --max=1 --sequential
+```
+
+Broad conformance, emit, fourslash, and project results are observations during
+R0/R1. Report unsupported and crashed cases; do not weaken a declared seed
+capability or relabel the frozen legacy score.
+
+Never run two conformance commands concurrently in one worktree. Use
+`scripts/safe-run.sh` for long or memory-heavy commands.
+
+## Oracle-First Development
+
+For a new behavior family:
+
+1. Minimize an input and run it with the pinned TypeScript 7 oracle.
+2. Record exact diagnostic code, normalized span, message chain, exit status,
+   and emitted text as applicable.
+3. Identify the owning TypeScript operation and its ordering constraints.
+4. Port the structural behavior to the corresponding `tsz-core` module.
+5. Add renamed, nested/wrapped, generic and concrete, positive, and fallback
+   cases where they apply.
+6. Verify repeated and reversed-root-order fingerprints.
+
+State the rule as:
+
+```text
+When <structural condition>, TypeScript 7 does X; TSZ does X through <module/API>.
+```
+
+Type handles are checker-session local. Deferred types stay symbolic until the
+owning operation requires a view, and semantic work exposes `Complete`,
+`Deferred`, `Cycle`, or `Limit` rather than turning incomplete work into a
+type. See [`architecture/RESET.md`](architecture/RESET.md).
+
+## Diagnostics, Logs, And Artifacts
+
+Use tracing instead of print debugging:
+
+```bash
+TSZ_LOG=debug TSZ_LOG_FORMAT=tree \
+  cargo run -p tsz-cli --bin tsz -- path/to/file.ts
+```
+
+Conformance, emit, and fourslash scripts can write machine-readable artifacts.
+Keep these result classes separate:
+
+- the frozen legacy checkpoint;
+- exact rewrite capability tests;
+- full-corpus rewrite observations.
+
+A narrow pass is evidence for its declared capability only.
+
+## Hooks And Git Hygiene
+
+Run setup again to reinstall the hooks:
+
+```bash
+./scripts/setup/setup.sh
+```
+
+Use `TSZ_SKIP_HOOKS=1` only for a deliberate emergency. Never commit changes to
+the TypeScript submodule, generated build output, or unrelated files. Follow
+[`CONTRIBUTING.md`](CONTRIBUTING.md) for PR verification and provenance.

@@ -21,7 +21,7 @@
     {
       "locale": "cs",
       "source": "internal/diagnostics/loc/cs-CZ.json.gz",
-      "output": "crates/tsz-cli/src/locales/cs.json",
+      "output": "crates/tsz-core/data/locales/cs.json",
       "compressedSize": 84411,
       "compressedSha256": "571547e5a47c7098239b78f7cb3c39ce460aa6797acc0b4f9255669b70a5424d",
       "uncompressedSize": 312446,
@@ -31,7 +31,7 @@
     {
       "locale": "de",
       "source": "internal/diagnostics/loc/de-DE.json.gz",
-      "output": "crates/tsz-cli/src/locales/de.json",
+      "output": "crates/tsz-core/data/locales/de.json",
       "compressedSize": 85430,
       "compressedSha256": "c13491abf596bb478a5e8279b6bea8c125b2370901b6d3236d291e2cf08d8906",
       "uncompressedSize": 335730,
@@ -41,7 +41,7 @@
     {
       "locale": "es",
       "source": "internal/diagnostics/loc/es-ES.json.gz",
-      "output": "crates/tsz-cli/src/locales/es.json",
+      "output": "crates/tsz-core/data/locales/es.json",
       "compressedSize": 82347,
       "compressedSha256": "6178830bedcb4f4d2b4b545f4ab92b08d935efd6722ce00b08647c37ca52c69b",
       "uncompressedSize": 332134,
@@ -51,7 +51,7 @@
     {
       "locale": "fr",
       "source": "internal/diagnostics/loc/fr-FR.json.gz",
-      "output": "crates/tsz-cli/src/locales/fr.json",
+      "output": "crates/tsz-core/data/locales/fr.json",
       "compressedSize": 84026,
       "compressedSha256": "aa7557af788d444ec75fe6811cbf57d6159d2d365deda57cd7ea1b2854668e15",
       "uncompressedSize": 338170,
@@ -61,7 +61,7 @@
     {
       "locale": "it",
       "source": "internal/diagnostics/loc/it-IT.json.gz",
-      "output": "crates/tsz-cli/src/locales/it.json",
+      "output": "crates/tsz-core/data/locales/it.json",
       "compressedSize": 80430,
       "compressedSha256": "51612e02697f7dca713b30c23b02c875a1fcc4c829dcb63a53e95092dda6ffec",
       "uncompressedSize": 330631,
@@ -71,7 +71,7 @@
     {
       "locale": "ja",
       "source": "internal/diagnostics/loc/ja-JP.json.gz",
-      "output": "crates/tsz-cli/src/locales/ja.json",
+      "output": "crates/tsz-core/data/locales/ja.json",
       "compressedSize": 86259,
       "compressedSha256": "b580569d30014dbb61a04c4814ad75e472ad9ec7a7b0c346b899c4322abec187",
       "uncompressedSize": 373532,
@@ -81,7 +81,7 @@
     {
       "locale": "ko",
       "source": "internal/diagnostics/loc/ko-KR.json.gz",
-      "output": "crates/tsz-cli/src/locales/ko.json",
+      "output": "crates/tsz-core/data/locales/ko.json",
       "compressedSize": 82419,
       "compressedSha256": "900f6a830055fd764eeda80105ac3fc77c5eefd1a8851f37d42e9f338db6fa4a",
       "uncompressedSize": 338094,
@@ -91,7 +91,7 @@
     {
       "locale": "pl",
       "source": "internal/diagnostics/loc/pl-PL.json.gz",
-      "output": "crates/tsz-cli/src/locales/pl.json",
+      "output": "crates/tsz-core/data/locales/pl.json",
       "compressedSize": 86450,
       "compressedSha256": "412c1dd58d495daad9c53f0bda7166ed0f40392035c2d70680537d4271fb6c6c",
       "uncompressedSize": 334153,
@@ -101,7 +101,7 @@
     {
       "locale": "pt-br",
       "source": "internal/diagnostics/loc/pt-BR.json.gz",
-      "output": "crates/tsz-cli/src/locales/pt-br.json",
+      "output": "crates/tsz-core/data/locales/pt-br.json",
       "compressedSize": 80983,
       "compressedSha256": "8269fca3e002fdc9dc006d6ca41c7a2439dcb5f37c9f2d960606a0152ab00032",
       "uncompressedSize": 322629,
@@ -111,7 +111,7 @@
     {
       "locale": "ru",
       "source": "internal/diagnostics/loc/ru-RU.json.gz",
-      "output": "crates/tsz-cli/src/locales/ru.json",
+      "output": "crates/tsz-core/data/locales/ru.json",
       "compressedSize": 95711,
       "compressedSha256": "93114bfd8b5bc79da5771b4081a2048d59ff45d0c5663b362417995ed43a9439",
       "uncompressedSize": 434583,
@@ -121,7 +121,7 @@
     {
       "locale": "tr",
       "source": "internal/diagnostics/loc/tr-TR.json.gz",
-      "output": "crates/tsz-cli/src/locales/tr.json",
+      "output": "crates/tsz-core/data/locales/tr.json",
       "compressedSize": 82010,
       "compressedSha256": "5e482df7be6c71d906928c8200dafbeee95fe088d60520581328d81c227fb851",
       "uncompressedSize": 322773,
@@ -131,7 +131,7 @@
     {
       "locale": "zh-cn",
       "source": "internal/diagnostics/loc/zh-CN.json.gz",
-      "output": "crates/tsz-cli/src/locales/zh-cn.json",
+      "output": "crates/tsz-core/data/locales/zh-cn.json",
       "compressedSize": 81885,
       "compressedSha256": "555e38a7ffd0c23876c207649b00b6d634a4110a48e96dcda31b9c22d120672d",
       "uncompressedSize": 287951,
@@ -141,7 +141,7 @@
     {
       "locale": "zh-tw",
       "source": "internal/diagnostics/loc/zh-TW.json.gz",
-      "output": "crates/tsz-cli/src/locales/zh-tw.json",
+      "output": "crates/tsz-core/data/locales/zh-tw.json",
       "compressedSize": 81640,
       "compressedSha256": "3559c822ce5c298691a5e379f06018960c1e3b737474556eb45bc907905ddfb9",
       "uncompressedSize": 283786,

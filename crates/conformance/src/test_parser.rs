@@ -1,8 +1,7 @@
 //! Test file directive parser
 //!
-//! Thin adapter over the canonical directive parser in
-//! `tsz_common::test_directives` (the single grammar shared by the
-//! conformance, emit, fourslash, and checker test-harness paths).
+//! Thin adapter over the canonical directive parser retained by the
+//! conformance harness.
 //! Supports: strict, target, module, filename, jsx, lib, noLib,
 //! moduleResolution, noCheck, skip, typeScriptVersion, etc.
 //!
@@ -14,7 +13,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-pub use tsz_common::test_directives::TestDirectives;
+pub use crate::test_directives::TestDirectives;
 
 /// Result of parsing a test file
 #[derive(Debug, Clone)]
@@ -39,7 +38,7 @@ pub struct ParsedTest {
 /// ```
 pub fn parse_test_file(content: &str) -> anyhow::Result<ParsedTest> {
     Ok(ParsedTest {
-        directives: tsz_common::test_directives::parse_test_file(content),
+        directives: crate::test_directives::parse_test_file(content),
     })
 }
 

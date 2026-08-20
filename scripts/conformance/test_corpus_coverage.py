@@ -22,7 +22,7 @@ SOURCE_SUFFIXES = {".ts", ".tsx", ".js", ".jsx", ".mts", ".cts"}
 DECLARATION_SUFFIXES = (".d.ts", ".d.mts", ".d.cts")
 
 # Canonical test-directive grammar (issue #13127); must agree with
-# crates/tsz-common/src/common/test_directives.rs and scripts/emit/src/directives.ts.
+# crates/conformance/src/test_directives.rs and scripts/emit/src/directives.ts.
 # Locked to scripts/test-directives/spec-vectors.json by the tests below.
 _DIRECTIVE_LINE_RE = re.compile(r"^\s*//\s*@([A-Za-z0-9_]+)\s*:([^\r\n]*)$")
 _FLAG_LINE_RE = re.compile(r"^\s*//\s*@([A-Za-z0-9_-]+)\s*$")

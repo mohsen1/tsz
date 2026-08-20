@@ -370,11 +370,6 @@ fn test_tier_2_type_checker_accuracy_fixes() {
             allow_synthetic_default_imports: false,
             allow_unreachable_code: None,
             allow_unused_labels: None,
-            sound_mode: false,
-            sound_check_declarations: false,
-            sound_report_only: false,
-            sound_pedantic: false,
-            sound_declaration_projection: false,
             experimental_decorators: false,
             no_unused_locals: false,
             no_unused_parameters: false,
@@ -1794,4 +1789,3 @@ const [a, b, c] = str;  // OK: string is iterable
         "Expected 0 TS2488 errors for array destructuring of string. All codes: {codes:?}"
     );
 }
-

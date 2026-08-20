@@ -2,10 +2,7 @@ import playwright from "../../../TypeScript/node_modules/playwright/index.mjs";
 import { playgroundExamples } from "../src/playground-app/examples.js";
 
 const baseUrl = process.env.PLAYGROUND_URL || "http://127.0.0.1:8080/playground/";
-const soundModeExampleKeys = playgroundExamples
-  .map(example => example.key)
-  .filter(key => key.startsWith("sound_mode"));
-const examplesWithExpectedDiagnostics = new Set(["errors", ...soundModeExampleKeys]);
+const examplesWithExpectedDiagnostics = new Set(["errors"]);
 
 function assert(condition, message) {
   if (!condition) {
@@ -36,10 +33,6 @@ async function getDiagnosticsSummary(page) {
         startLineNumber: marker.startLineNumber,
         startColumn: marker.startColumn,
       })) || [],
-      soundChecked: Array.from(document.querySelectorAll(".toolbar-check"))
-        .find(label => label.textContent?.trim() === "sound")
-        ?.querySelector("input")
-        ?.checked || false,
     };
   });
 }
@@ -65,27 +58,6 @@ try {
   const initialErrors = await getDiagnosticsSummary(page);
   console.log("initial errors", initialErrors);
   assert(initialErrors.count >= 3, `expected at least 3 diagnostics on errors example, got ${initialErrors.count}`);
-
-  for (const key of soundModeExampleKeys) {
-    const example = playgroundExamples.find(entry => entry.key === key);
-    await selectExample(page, key);
-    const soundOn = await getDiagnosticsSummary(page);
-    console.log(`${key} sound on`, soundOn);
-    assert(soundOn.soundChecked, `expected sound checkbox to be checked on ${key}`);
-    assert(soundOn.count >= 1, `expected sound diagnostics on ${key}, got ${soundOn.count}`);
-    assert(
-      soundOn.markers.some(marker => marker.code === example.soundDiagnosticCode),
-      `expected a ${example.soundDiagnosticCode} marker on ${key}, got ${JSON.stringify(soundOn.markers)}`
-    );
-  }
-
-  await selectExample(page, "sound_mode");
-  await page.getByLabel("sound").uncheck();
-  await waitForPlaygroundReady(page);
-  const soundOff = await getDiagnosticsSummary(page);
-  console.log("sound_mode sound off", soundOff);
-  assert(!soundOff.soundChecked, "expected sound checkbox to be unchecked after toggling it off");
-  assert(soundOff.count === 0, `expected sound diagnostics to clear when sound is off, got ${soundOff.count}`);
 
   for (const example of playgroundExamples) {
     if (examplesWithExpectedDiagnostics.has(example.key)) {

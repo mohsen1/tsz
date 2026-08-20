@@ -1399,7 +1399,7 @@ fn retained_diagnostic_code_from_line(line: &str, mode: DiagnosticLineMode) -> O
 /// Returns a map of source filename -> list of symlink paths.
 /// Format in test files: @filename: /path followed by @symlink: /link1,/link2
 fn parse_symlink_associations(content: &str) -> Vec<(String, Vec<String>)> {
-    use tsz_common::test_directives::{parse_directive_line, split_list_values};
+    use crate::test_directives::{parse_directive_line, split_list_values};
 
     let mut result = Vec::new();
     let mut current_filename: Option<String> = None;
@@ -1432,7 +1432,7 @@ fn parse_symlink_associations(content: &str) -> Vec<(String, Vec<String>)> {
 /// content. TypeScript's harness treats these as symlinks rooted at the
 /// destination path that point at the source path.
 fn parse_link_associations(content: &str) -> Vec<(String, String)> {
-    use tsz_common::test_directives::parse_directive_line;
+    use crate::test_directives::parse_directive_line;
 
     let mut result = Vec::new();
 

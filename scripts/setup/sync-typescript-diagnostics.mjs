@@ -19,6 +19,7 @@ const vendorRoot = join(root, "vendor/typescript-go");
 const manifestPath = join(vendorRoot, "artifacts.json");
 const versionsPath = join(root, "scripts/conformance/typescript-versions.json");
 const generatorPath = join(root, "scripts/gen_diagnostics.mjs");
+const outputLocaleRoot = "crates/tsz-core/data/locales";
 
 const EXPECTED_LOCALES = [
   ["cs", "cs-CZ.json.gz", "cs.json"],
@@ -242,7 +243,7 @@ function main() {
       "Unexpected source path for locale " + localeName
     );
     invariant(
-      locale.output === "crates/tsz-cli/src/locales/" + outputName,
+      locale.output === outputLocaleRoot + "/" + outputName,
       "Unexpected output path for locale " + localeName
     );
 
@@ -286,7 +287,7 @@ function main() {
     "Vendored locale file set differs from the artifact manifest"
   );
 
-  const outputLocaleDir = join(root, "crates/tsz-cli/src/locales");
+  const outputLocaleDir = join(root, outputLocaleRoot);
   const actualOutputFiles = existsSync(outputLocaleDir)
     ? readdirSync(outputLocaleDir)
         .filter((name) => name.endsWith(".json"))

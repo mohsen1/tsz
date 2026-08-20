@@ -3,7 +3,7 @@
  * (`// @option: value`).
  *
  * This is the emit-harness binding of the canonical grammar owned by
- * `crates/tsz-common/src/common/test_directives.rs`; both are locked to
+ * `crates/conformance/src/test_directives.rs`; both are locked to
  * `scripts/test-directives/spec-vectors.json` by unit tests so the
  * harnesses cannot drift apart (issue #13127).
  *

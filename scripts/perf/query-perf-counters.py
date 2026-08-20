@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
-"""Query attribution-mode perf-counter JSON without rerunning the bench.
+"""Query retired-compiler attribution JSON without rerunning the bench.
 
-Reads from a `--perf-counters-json` output file (the format documented in
-`docs/plan/PERFORMANCE_PLAN.md` §3 and produced by `tsz --features perf-tools`
-with `TSZ_PERF_COUNTERS=1`).
+This parser is retained for historical artifacts. The replacement compiler's
+`--perf-counters-json` output uses a different minimal schema; do not feed it
+to this tool or use this parser to make rewrite attribution claims.
 
 Default mode prints a one-page snapshot, including which
 `CheckerCreationReason` accounts for the largest share of
-`with_parent_cache_constructed`. That number is the lever the
-performance roadmap is trying to move. Checked-in attribution runs were
-removed from the repo; pass a fresh JSON artifact with `--json`.
+`with_parent_cache_constructed`. That number was a lever in the retired
+performance plan. Checked-in attribution runs were removed from the repo; pass
+a historical JSON artifact with `--json`.
 
 Usage:
-  # Point at a specific JSON file (e.g. a fresh post-PR re-measurement).
+  # Point at a specific retired-schema JSON file.
   python3 scripts/perf/query-perf-counters.py --json /tmp/post-fix-pc.json
 
   # Per-reason breakdown only, with absolute counts and percent share.
@@ -24,8 +24,8 @@ Usage:
       --baseline /tmp/baseline-pc.json
 
 The tool is intentionally read-only. It never invokes `tsz` or the bench
-script — that's the job of `scripts/bench/scale-cliff/run-cliff.sh` (in
-timing mode) or a direct attribution-mode invocation recorded in the PR body.
+script. `scripts/bench/scale-cliff/run-cliff.sh` still owns timing mode; a
+retired attribution artifact can only be reproduced from a historical checkout.
 """
 
 import argparse
@@ -65,7 +65,7 @@ def by_reason_rows(snap, optional=False):
         msg = (
             "JSON is missing `by_reason` — produced before that field was added "
             "(PR exposing per-CheckerCreationReason counters). Re-run the perf "
-            "binary with the current tsz to regenerate."
+            "retired compiler to regenerate. The replacement compiler does not emit it."
         )
         if optional:
             print(f"(skipping by_reason section: {msg})")
@@ -372,7 +372,7 @@ def print_by_reason(snap: dict, optional=False) -> None:
             f"Top non-baseline T2.2 target: {target['reason']} = "
             f"{fmt_int(target['with_parent_cache_constructed'])} ({target_pct:.1f}%)"
         )
-    print("See `docs/plan/PERFORMANCE_PLAN.md` §6/§7 for the lifetime-split and typed-query playbooks.")
+    print("Historical schema only; replacement-compiler attribution is not yet available.")
 
 
 def print_diff(post: dict, base: dict) -> None:

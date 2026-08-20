@@ -1,5 +1,5 @@
 {
-  "description": "Canonical test-directive grammar vectors. Every implementation that recognizes TypeScript test-file directives (`// @option: value`) must agree with these cases: crates/tsz-common/src/common/test_directives.rs (canonical, Rust harnesses), scripts/emit/src/directives.ts (emit harness), scripts/conformance/test_corpus_coverage.py (corpus tooling). Each language binds these vectors in its own unit tests so the parsers cannot drift apart silently (issue #13127).",
+  "description": "Canonical test-directive grammar vectors. Every implementation that recognizes TypeScript test-file directives (`// @option: value`) must agree with these cases: crates/conformance/src/test_directives.rs (canonical Rust harness), scripts/emit/src/directives.ts (emit harness), scripts/conformance/test_corpus_coverage.py (corpus tooling). Each language binds these vectors in its own unit tests so the parsers cannot drift apart silently (issue #13127).",
   "directive_lines": [
     { "line": "// @strict: true", "key": "strict", "value": "true" },
     { "line": "//@strict: true", "key": "strict", "value": "true" },

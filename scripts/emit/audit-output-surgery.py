@@ -21,7 +21,7 @@ from typing import Optional
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-SOURCE_ROOT = ROOT / "crates" / "tsz-emitter" / "src"
+SOURCE_ROOT = ROOT / "crates" / "tsz-core" / "src" / "emit.rs"
 ALLOWLIST_PATH = ROOT / "scripts" / "emit" / "output-surgery-allowlist.txt"
 
 REPLACE_CALL_RE = re.compile(r"(?:\.\s*)?(replace|replacen|replace_range)\s*\(")
@@ -73,7 +73,14 @@ class BudgetSummary:
 
 
 def iter_rust_files(base: pathlib.Path = SOURCE_ROOT):
-    yield from sorted(base.rglob("*.rs"))
+    if base.is_file():
+        if base.suffix == ".rs":
+            yield base
+        return
+    if base.is_dir():
+        yield from sorted(base.rglob("*.rs"))
+        return
+    raise FileNotFoundError(f"emitter source path does not exist: {base}")
 
 
 def is_auto_allowed_data_cleanup(path: str, line: str) -> bool:

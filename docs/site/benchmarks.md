@@ -7,27 +7,33 @@ permalink: /benchmarks/index.html
 
 # Benchmarks
 
-`tsz` has focused on single-file performance so far. Work is underway to make it fast for full projects too.
+R0 does not publish a rewrite performance dashboard. The committed pre-reset
+snapshot and images are frozen historical artifacts; they are not current
+compiler results.
 
-## Summary
+## Publication rule
 
-{{ benchmark_environment | safe }}
+A timing is eligible for a public speed claim only after the same row is green:
 
-{{ benchmark_mean_chart | safe }}
+- the real dependency graph is present;
+- `tsz` and the pinned TypeScript `7.0.2` oracle agree on the project result;
+- the run records binary, fixture, oracle, diagnostic, timing, and memory
+  provenance;
+- a failure, timeout, unsupported surface, or stubbed dependency cannot become a
+  win by being fast.
 
-<div class="bench-legend">
-  <span class="bench-legend-item"><span class="bench-legend-swatch tsz"></span> tsz (Rust compiler)</span>
-  <span class="bench-legend-item"><span class="bench-legend-swatch tsgo"></span> tsgo (Go compiler)</span>
-</div>
+The eventual target is at least 3x the throughput of `tsgo` on every green row.
+R0 currently has no rows eligible for that claim.
 
-## Full Project Type Checking
+## Retained harness
 
-Full-project rows use real repositories and generated app fixtures.
+The project, microbenchmark, and performance runners remain available for local
+engineering and observational CI artifacts:
 
-{{ benchmark_charts | safe }}
+```sh
+./scripts/bench/bench-vs-tsgo.sh --json
+```
 
-## Micro Benchmarks
-
-Focused cases for specific compiler paths: single-file library checks, generated type workloads, and solver stress tests.
-
-<p class="benchmark-micro-link"><a href="/benchmarks/micro/">View micro benchmarks</a></p>
+During the rewrite, those results should expose unsupported and failed rows
+rather than filter them away. A live dashboard returns when current rewrite
+artifacts satisfy the publication rule above.

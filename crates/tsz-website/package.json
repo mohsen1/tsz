@@ -8,8 +8,7 @@
     "build:playground": "node scripts/build-playground.mjs",
     "test:benchmarks": "node scripts/benchmark-data-smoke.mjs",
     "test:loc": "node scripts/loc-smoke.mjs",
-    "dev": "node scripts/dev.mjs",
-    "build:legacy": "node build.mjs"
+    "dev": "node scripts/dev.mjs"
   },
   "dependencies": {
     "@11ty/eleventy": "^3.0.0",

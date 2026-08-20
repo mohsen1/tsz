@@ -10,6 +10,8 @@ mod options_convert;
 mod process_rss;
 mod runner;
 mod server_pool;
+#[allow(dead_code)]
+mod test_directives;
 mod test_filter;
 mod test_parser;
 mod text_decode;

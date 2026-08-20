@@ -34,60 +34,23 @@ cap_workers() {
   fi
 }
 
-# Cap CARGO_BUILD_JOBS by memory to prevent rustc/linker SIGKILL during large
-# crate compiles. tsz-checker spawns many parallel codegen threads per rustc,
-# so the practical per-job RSS at peak (linker time) is bounded by the
-# `codegen-units` setting on the active profile. With dist-fast/ci-unit at
-# codegen-units=8, peak per-job RSS is ~7 GiB (down from ~12 GiB at cgu=16).
-#
-# We compute `memory_mb / mb_per_compile_job`, default 7168 MiB/job, then take
-# min(cpu, mem). Sizing examples:
-#   8 vCPU × 32 GiB  → min(8, 4)   = 4 jobs   (~28 GiB peak)
-#   16 vCPU × 64 GiB → min(16, 9)  = 9 jobs   (~63 GiB peak)
-#   32 vCPU × 128 GiB → min(32, 18) = 18 jobs (~126 GiB peak)
+# Cap CARGO_BUILD_JOBS by the available-memory budget before safe-run applies
+# its process-level backstop. Suite-specific defaults are conservative starting
+# points for the replacement workspace and remain overrideable for measured CI
+# tuning.
 default_cargo_build_jobs() {
   local cpu_jobs mem_mb mem_per_job_mb mem_jobs
   cpu_jobs="$HOST_CPUS"
   mem_mb="$(host_memory_mb)"
   case "${TSZ_CI_SUITE:-${_TSZ_CI_SUITE:-}}" in
-    unit|checker-integration)
-      # Force `CARGO_BUILD_JOBS=1` on unit. Observed RSS-per-rustc on this
-      # workspace's lib-test compiles (notably tsz-checker, tsz-emitter,
-      # tsz-solver, tsz-core lib-test) now exceeds 16 GiB per process during
-      # the LLVM codegen phase. With any -j > 1, peaks coincide and SIGKILL
-      # fires on the 8 vCPU × 32 GiB hosted runner.
-      #
-      # History of this knob, in order:
-      #   * commit 111d24ba98 — TSZ_CI_CARGO_MB_PER_JOB=7168 globally (4 jobs)
-      #   * commit 1bddbbfbf4 — TSZ_CI_UNIT_CARGO_MB_PER_JOB=16384 (2 jobs) +
-      #       sccache disablement, after silent-exit incidents.
-      #   * PR #7573 (rolled back here) — 8192 (4 jobs). Validated on one
-      #       run-of-the-day; sustained PR load on 2026-05-16 surfaced SIGKILL
-      #       in tsz-solver/checker/emitter lib-test compile.
-      #   * 12288 (2 jobs) intermediate — still SIGKILLs (this PR's first run).
-      #   * 24576 (1 job) ← current. Safe on 32 GiB box; floor(32768/24576)=1.
-      #
-      # Keep unit within the standard 32 GiB hosted runner budget. Heavy
-      # dist-style builds use their own profile-specific memory knob.
+    unit)
+      # Keep the first clean-slate unit lane serialized until its hosted-runner
+      # peak has enough history to justify parallel compile jobs.
       mem_per_job_mb="${TSZ_CI_UNIT_CARGO_MB_PER_JOB:-24576}"
       ;;
     dist-binaries)
-      # sccache is disabled for dist-binaries (TSZ_CI_DISABLE_SCCACHE=1 in
-      # GitHub CI) so every codegen unit compiles from scratch.
-      #
-      # The old 7168 MiB/job budget (→ -j4 on a 32 GiB runner) assumed each
-      # parallel rustc holds ~7 GiB simultaneously. Direct measurement on a
-      # 16 vCPU / 128 GiB box (dist-fast workspace recompile, warm deps —
-      # i.e. CI's post-restore state) refutes that: system-wide peak RSS is
-      # ~7.9 GiB at -j4, -j8, AND -j16 (flat). The peak is one big crate
-      # (tsz-core/tsz-checker) at link time, NOT N parallel rustc each at
-      # 7 GiB. Wall time: -j4 423s → -j8 335s (-88s, -21%); peak unchanged.
-      # The documented SIGKILL history is the `unit` lib-test compile
-      # (>16 GiB/rustc), never dist. So budget for -j8 on the 8 vCPU runner
-      # (3584 MiB/job → min(8 cpu, ~8 mem) = 8). safe-run.sh --limit 88%
-      # remains the backstop: if real peak (incl. any tmpfs target dir) ever
-      # approaches the limit it kills cargo gracefully rather than letting the
-      # kernel OOM-kill the runner.
+      # dist-fast builds use a separate budget because they do not compile test
+      # targets and safe-run remains the final memory-pressure backstop.
       mem_per_job_mb="${TSZ_CI_DIST_CARGO_MB_PER_JOB:-3584}"
       ;;
     *)

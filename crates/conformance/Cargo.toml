@@ -20,9 +20,6 @@ rayon = "1.10"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 
-# Canonical test-directive parsing (shared across harnesses)
-tsz-common = { path = "../tsz-common" }
-
 # Regex for diagnostic-output parsing
 regex = "1.11"
 once_cell = "1.21"
@@ -49,11 +46,3 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # Temporary files for compilation
 tempfile = "3"
 libc = "0.2.183"
-
-[dev-dependencies.tsz]
-path = "../tsz-core"
-package = "tsz-core"
-features = []
-
-[package.metadata.cargo-shear]
-ignored = ["tsz"]

@@ -217,8 +217,7 @@ def build_snapshot_detail(tests, git_sha=None):
         "failures": fail_detail,
         "unsupported": unsupported_detail,
     }
-    # Stamp the measured tree so `refresh-readme.py` can tell a current reading
-    # from a stale local artifact (zero-drift downward writes are legitimate).
+    # Stamp the measured tree so observational artifacts retain provenance.
     if git_sha and git_sha.lower() != "unknown":
         detail["git_sha"] = git_sha
     return detail
@@ -232,7 +231,7 @@ def main():
         "--git-sha",
         default=None,
         help="commit SHA the runner output was measured against; stamped into "
-        "the artifact so refresh-readme.py can distinguish a current reading "
+        "the artifact so consumers can distinguish a current reading "
         "from a stale local snapshot",
     )
     args = parser.parse_args()

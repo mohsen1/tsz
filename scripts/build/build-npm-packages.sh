@@ -1,12 +1,12 @@
 #!/bin/bash
-# Build and assemble all npm packages for @mohsen-azimi/tsz distribution.
+# Assemble private native npm packages for R0 process-contract validation.
+# Publication and WASM packaging stay disabled during the clean-slate rewrite.
 #
 # Usage:
 #   ./scripts/build/build-npm-packages.sh                  # build for current platform only (default)
 #   ./scripts/build/build-npm-packages.sh --local           # same as above
 #   ./scripts/build/build-npm-packages.sh --all             # build for all 6 platforms
-#   ./scripts/build/build-npm-packages.sh --wasm-only       # only build WASM, skip native binaries
-#   ./scripts/build/build-npm-packages.sh --native-only     # only build native, skip WASM
+#   ./scripts/build/build-npm-packages.sh --native-only     # compatibility alias; native is the only mode
 #   ./scripts/build/build-npm-packages.sh --dry-run         # show what would be built
 #   ./scripts/build/build-npm-packages.sh --skip-build      # assemble only (binaries already built)
 #
@@ -31,8 +31,6 @@ fi
 BUILD_MODE="local"  # local | all
 DRY_RUN=0
 SKIP_BUILD=0
-WASM_ONLY=0
-NATIVE_ONLY=0
 
 for arg in "$@"; do
   case "$arg" in
@@ -40,8 +38,11 @@ for arg in "$@"; do
     --all)         BUILD_MODE="all" ;;
     --dry-run)     DRY_RUN=1 ;;
     --skip-build)  SKIP_BUILD=1 ;;
-    --wasm-only)   WASM_ONLY=1 ;;
-    --native-only) NATIVE_ONLY=1 ;;
+    --wasm-only)
+      echo "Error: WASM packaging is unavailable during the rewrite; WASM returns at R4." >&2
+      exit 2
+      ;;
+    --native-only) ;;
     *) echo "Unknown argument: $arg"; exit 1 ;;
   esac
 done
@@ -135,19 +136,14 @@ fi
 if [ "$DRY_RUN" -eq 1 ]; then
   echo ""
   echo "Dry run — would build:"
-  if [ "$NATIVE_ONLY" -ne 1 ]; then
-    echo "  WASM: node + bundler targets"
-  fi
-  if [ "$WASM_ONLY" -ne 1 ]; then
-    for p in "${BUILD_PLATFORMS[@]}"; do
-      rt=$(get_rust_target "$p")
-      echo "  Native: $p ($rt)"
-    done
-  fi
+  for p in "${BUILD_PLATFORMS[@]}"; do
+    rt=$(get_rust_target "$p")
+    echo "  Native: $p ($rt)"
+  done
   echo ""
   echo "Packages:"
-  echo "  @mohsen-azimi/tsz (main package)"
-  echo "  try-tsz (main package)"
+  echo "  @mohsen-azimi/tsz (private R0 package)"
+  echo "  try-tsz (private R0 package)"
   for p in "${BUILD_PLATFORMS[@]}"; do
     echo "  @mohsen-azimi/tsz-$p"
     echo "  @mohsen-azimi/try-tsz-$p"
@@ -155,41 +151,8 @@ if [ "$DRY_RUN" -eq 1 ]; then
   exit 0
 fi
 
-# ─── Step 1: Build WASM ──────────────────────────────────────────────────────
-if [ "$NATIVE_ONLY" -ne 1 ] && [ "$SKIP_BUILD" -ne 1 ]; then
-  echo ""
-  echo "==> Building WASM targets..."
-
-  if ! command -v wasm-pack &>/dev/null; then
-    echo "Error: wasm-pack is not installed."
-    echo "Install with: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh"
-    exit 1
-  fi
-
-  cd "$PROJECT_ROOT"
-  cp "$PROJECT_ROOT/LICENSE.txt" "$PROJECT_ROOT/crates/tsz-wasm/LICENSE.txt"
-
-  # Clean previous WASM build outputs to avoid stale files
-  rm -rf "$MAIN_PKG/wasm/node" "$MAIN_PKG/wasm/bundler"
-
-  # Build Node.js target (CJS)
-  echo "  Building Node.js (CJS) target..."
-  wasm-pack build crates/tsz-wasm --target nodejs --out-dir "$MAIN_PKG/wasm/node"
-
-  # Build bundler target (ESM)
-  echo "  Building bundler (ESM) target..."
-  wasm-pack build crates/tsz-wasm --target bundler --out-dir "$MAIN_PKG/wasm/bundler"
-
-  # wasm-pack leaves .gitignore files that break npm publish
-  rm -f "$MAIN_PKG/wasm/node/.gitignore" "$MAIN_PKG/wasm/bundler/.gitignore"
-  # wasm-pack also writes package.json files we don't need
-  rm -f "$MAIN_PKG/wasm/node/package.json" "$MAIN_PKG/wasm/bundler/package.json"
-
-  echo "  WASM build complete."
-fi
-
-# ─── Step 2: Build native binaries ───────────────────────────────────────────
-if [ "$WASM_ONLY" -ne 1 ] && [ "$SKIP_BUILD" -ne 1 ]; then
+# ─── Step 1: Build native binaries ───────────────────────────────────────────
+if [ "$SKIP_BUILD" -ne 1 ]; then
   echo ""
   echo "==> Building native binaries..."
 
@@ -235,7 +198,7 @@ if [ "$WASM_ONLY" -ne 1 ] && [ "$SKIP_BUILD" -ne 1 ]; then
   done
 fi
 
-# ─── Step 3: Assemble main package ───────────────────────────────────────────
+# ─── Step 2: Assemble main package ───────────────────────────────────────────
 echo ""
 echo "==> Assembling main package..."
 
@@ -274,7 +237,8 @@ const commonMetadata = {
 const mainPackage = {
   name: "@mohsen-azimi/tsz",
   version,
-  description: "A TypeScript-compatible compiler written in Rust",
+  private: true,
+  description: "Private R0 TSZ rewrite package for native process-contract validation",
   ...commonMetadata,
   keywords: ["typescript", "compiler", "tsz", "tsc"],
   bin: {
@@ -282,7 +246,7 @@ const mainPackage = {
     "tsz-server": "bin/tsz-server.js",
   },
   optionalDependencies,
-  files: ["bin/", "wasm/", "lib-assets/", "LICENSE.txt"],
+  files: ["bin/", "lib-assets/", "LICENSE.txt"],
 };
 fs.mkdirSync(mainPkg, { recursive: true });
 fs.writeFileSync(path.join(mainPkg, "package.json"), JSON.stringify(mainPackage, null, 2) + "\n");
@@ -351,7 +315,8 @@ for (const { suffix, os, cpu } of platforms) {
   const pkg = {
     name: `@mohsen-azimi/tsz-${suffix}`,
     version,
-    description: `Native tsz binaries for ${suffix}`,
+    private: true,
+    description: `Private R0 native TSZ binaries for ${suffix}`,
     ...commonMetadata,
     os: [os],
     cpu: [cpu],
@@ -371,7 +336,7 @@ for entry in "${PLATFORMS[@]}"; do
 done
 
 # Bundle TypeScript lib files
-LIB_ASSETS="$PROJECT_ROOT/crates/tsz-core/src/lib-assets"
+LIB_ASSETS="$PROJECT_ROOT/crates/tsz-core/data/lib"
 if [ -d "$LIB_ASSETS" ]; then
   echo "  Bundling TypeScript lib files..."
   mkdir -p "$MAIN_PKG/lib-assets"
@@ -385,7 +350,7 @@ fi
 # Make launcher scripts executable
 chmod +x "$MAIN_PKG/bin/tsz.js" "$MAIN_PKG/bin/tsz-server.js"
 
-# ─── Step 4: Assemble try-tsz package ────────────────────────────────────────
+# ─── Step 3: Assemble try-tsz package ────────────────────────────────────────
 echo ""
 echo "==> Assembling try-tsz package..."
 
@@ -408,7 +373,8 @@ const optionalDependencies = Object.fromEntries(
 const pkg = {
   name: "try-tsz",
   version,
-  description: "Check whether tsz matches tsc on your TypeScript project",
+  private: true,
+  description: "Private R0 TSZ rewrite oracle-comparison package",
   license: "Apache-2.0",
   author: "Mohsen Azimi <mohsen@users.noreply.github.com>",
   repository: {
@@ -443,7 +409,8 @@ for (const { suffix, os, cpu } of platforms) {
   const nativePkg = {
     name: `@mohsen-azimi/try-tsz-${suffix}`,
     version,
-    description: `Native try-tsz binary for ${suffix}`,
+    private: true,
+    description: `Private R0 native try-tsz binary for ${suffix}`,
     ...commonMetadata,
     os: [os],
     cpu: [cpu],
@@ -524,9 +491,7 @@ done
 
 # GitHub artifact upload/download does not preserve executable bits reliably.
 # Restore them during package assembly so npm packs native binaries as runnable.
-if [ "$WASM_ONLY" -ne 1 ]; then
-  find "$NPM_DIR/@mohsen-azimi" -path "*/bin/*" -type f -exec chmod +x {} +
-fi
+find "$NPM_DIR/@mohsen-azimi" -path "*/bin/*" -type f -exec chmod +x {} +
 
 echo ""
 echo "==> Build complete!"
@@ -541,16 +506,4 @@ echo "To test locally:"
 echo "  cd $MAIN_PKG && npm link"
 echo "  tsz --noEmit"
 echo ""
-echo "To publish:"
-echo "  # Publish try-tsz platform packages first:"
-for platform_suffix in "${BUILD_PLATFORMS[@]}"; do
-  echo "  cd $NPM_DIR/@mohsen-azimi/try-tsz-$platform_suffix && npm publish --access public"
-done
-echo "  # Then publish try-tsz package:"
-echo "  cd $TRY_PKG && npm publish --access public"
-echo "  # Publish scoped tsz platform packages separately:"
-for platform_suffix in "${BUILD_PLATFORMS[@]}"; do
-  echo "  cd $NPM_DIR/@mohsen-azimi/tsz-$platform_suffix && npm publish --access public"
-done
-echo "  # Then publish scoped tsz main package:"
-echo "  cd $MAIN_PKG && npm publish --access public"
+echo "Publication is intentionally disabled during the clean-slate rewrite."

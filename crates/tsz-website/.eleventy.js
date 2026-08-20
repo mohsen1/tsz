@@ -27,7 +27,6 @@ export default function (eleventyConfig) {
 
   eleventyConfig.addWatchTarget("../../artifacts");
   eleventyConfig.addWatchTarget("../../scripts/bench/readme-perf-svg.mjs");
-  eleventyConfig.addWatchTarget("bench-snapshot.json");
   eleventyConfig.addWatchTarget("../../scripts/install.sh");
   eleventyConfig.addWatchTarget("../../scripts/install.ps1");
 
@@ -35,11 +34,10 @@ export default function (eleventyConfig) {
     "../../artifacts/bench-vs-tsgo-github-latest.json",
     "../../artifacts/bench-vs-tsgo-gcs-latest.json",
     "../../artifacts/bench-vs-tsgo-latest.json",
-    "bench-snapshot.json",
   ];
-  // Publish the latest available data; do not gate on app-compat cleanliness or
-  // a green-project minimum. Benchmarks may fail individually; the renderer
-  // decides which rows to chart (tsz within 1.5x of tsgo).
+  // R0 keeps the committed pre-reset snapshot as historical evidence, but never
+  // publishes it as current rewrite data. Only an explicit artifact from the
+  // current build may populate the observational endpoint.
   const latestBenchmarkArtifact = selectLatestBenchmarkArtifact(benchmarkArtifacts, {
     minimumProjectTimingPairs: 0,
   })?.file;

@@ -16,25 +16,25 @@ benchmark regressions, and timing claims.
 - Optimize the repeated operation, not a fixture spelling.
 - State invariant: cache key, invalidation/reset, request scope, fuel/cycle
   behavior, residency bound, or complexity change.
-- No checker-local semantic algorithms, display-string heuristics, source-text
-  shortcuts, name allowlists, or cross-interner `TypeId` comparisons.
-- Read `references/perf-mistakes.md` before adding/widening caches, changing
-  residency, or claiming speedups.
+- Do not change semantic sequencing merely to make a benchmark faster.
+- No display-string heuristics, source-text shortcuts, name allowlists,
+  cross-session `TypeId` comparisons, or hidden eager materialization.
+- Start semantic operations uncached. A new cache needs a typed key, explicit
+  dependencies/lifetime, a residency bound, and uncached agreement tests.
 
 ## Evidence
 
 Use narrow, reproducible commands; wrap heavy runs.
 
 ```bash
-python3 scripts/perf/cache-visibility-report.py --json
-python3 scripts/perf/visited-clone-report.py --json
-python3 scripts/perf/debug-print-report.py --json
-python3 scripts/perf/migration_callsite_counts.py --json
-python3 scripts/perf/query-perf-counters.py --json <artifact> --baseline <baseline>
 scripts/safe-run.sh ./scripts/bench/perf-hotspots.sh --quick --json-file /tmp/hotspots.json
 scripts/safe-run.sh ./scripts/bench/bench-vs-tsgo.sh --filter '<row>' --json-file /tmp/bench.json
 scripts/bench/measure-tsz.sh --timeout 420 --json-file /tmp/m.json -- --noEmit -p <tsconfig>
 ```
+
+`scripts/perf/query-perf-counters.py` reads the retired compiler's attribution
+schema. Keep it as historical harness evidence, but do not use it to interpret
+rewrite counters until its schema is explicitly ported to the replacement.
 
 Use focused compile guard or `cargo nextest run -E 'test(...)'` when shortest.
 Do not run full conformance, emit, fourslash, or broad project suites locally.
@@ -44,17 +44,18 @@ For ad-hoc timing or perf bisects on shared boxes, use
 hash-verified copy (never time the live `dist-fast/` path — sibling sessions
 overwrite it) and records process CPU time next to wall time, so wall-only
 timeouts under CPU contention are reported as unmeasured instead of slow.
-See `references/perf-mistakes.md` and issue #13174.
+The wrapper also records CPU share so host contention is not misclassified as
+a compiler regression.
 
 ## Cache Checklist
 
 - What semantic question is cached?
-- What stable identity is the key? Avoid cross-file `NodeIndex` and
-  cross-interner `TypeId`.
+- What stable identity is the key? Avoid cross-file syntax coordinates and
+  cross-session `TypeId`.
 - Does the key include all behavior modes: relation, variance, freshness,
   contextual typing, inference source, `any`, target/module/options, request
   scope, cycle/fuel, file/session generation?
-- Where is reset/invalidation?
+- Which declarations/options does it depend on, and where is reset/invalidation?
 - What happens cold/disabled/order-randomized?
 - Is size/residency bounded or observable?
 

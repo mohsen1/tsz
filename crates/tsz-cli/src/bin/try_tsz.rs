@@ -1,14 +1,10 @@
-#[cfg(not(target_arch = "wasm32"))]
-#[global_allocator]
-static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
-
-use anyhow::Result;
-use clap::Parser;
-use tsz_cli::try_tsz::{TryTszArgs, run};
-
-fn main() -> Result<()> {
-    let args = TryTszArgs::parse();
-    let cwd = std::env::current_dir()?;
-    let exit_code = run(args, &cwd)?;
-    std::process::exit(exit_code);
+fn main() {
+    let arguments = std::env::args_os().skip(1);
+    match tsz_cli::driver::main_entry(arguments) {
+        Ok(code) => std::process::exit(code),
+        Err(error) => {
+            println!("{error:#}");
+            std::process::exit(1);
+        }
+    }
 }

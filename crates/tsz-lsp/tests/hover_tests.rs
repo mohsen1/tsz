@@ -81,7 +81,6 @@ fn test_hover_global_from_lib_uses_lib_context_type() {
         "test.ts".to_string(),
         FullProviderOptions {
             strict: true,
-            sound_mode: false,
             checker_options: None,
             lib_contexts: &lib_contexts,
         },
@@ -380,7 +379,6 @@ fn get_hover_at_with_lib(lib_source: &str, source: &str, line: u32, col: u32) ->
         "test.ts".to_string(),
         FullProviderOptions {
             strict: true,
-            sound_mode: false,
             checker_options: None,
             lib_contexts: &lib_contexts,
         },
@@ -2119,7 +2117,6 @@ fn test_hover_async_promise_result() {
         "test.ts".to_string(),
         FullProviderOptions {
             strict: true,
-            sound_mode: false,
             checker_options: None,
             lib_contexts: &lib_contexts,
         },

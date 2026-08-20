@@ -1,9 +1,15 @@
 # `try-tsz` Plan
 
+> **Rewrite status:** This is a future product specification, not a description
+> of the R0 binary. The clean-slate workspace preserves the native `try-tsz`
+> process name, but package publication and project-adoption claims are disabled
+> until broad project parity is trustworthy. There is currently no supported
+> `npx try-tsz` release.
+
 ## Summary
 
-`try-tsz` is an adoption probe for TypeScript users who already run `tsc`.
-The user runs:
+The eventual `try-tsz` product is an adoption probe for TypeScript users who
+already run `tsc`. Once publication resumes, the user will run:
 
 ```sh
 npx try-tsz
