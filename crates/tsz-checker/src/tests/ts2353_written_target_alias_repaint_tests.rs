@@ -226,6 +226,30 @@ const n: G<number> = { kind: "a", v: 1, extra: 2 };
     );
 }
 
+/// Control: a BARE reference to a generic alias is an implicit instantiation
+/// (`Test` renders as `Test<any>` when its circular default degrades), never
+/// the bare written name. Caught by compare-to-parent on
+/// `typeArgumentDefaultUsesConstraintOnCircularDefault.ts`.
+#[test]
+fn control_bare_generic_reference_keeps_instantiation_display() {
+    let messages = ts2353_messages(
+        r#"
+type Test<T extends string = T> = { value: T };
+let zz: Test = { foo: "abc" };
+"#,
+    );
+    assert_eq!(
+        messages.len(),
+        1,
+        "expected exactly one TS2353, got: {messages:?}"
+    );
+    assert!(
+        messages[0].ends_with("does not exist in type 'Test<any>'."),
+        "bare generic reference must keep the instantiation display, got: {}",
+        messages[0]
+    );
+}
+
 /// RESIDUAL (distinct owner: nested-container property display): the
 /// nested-object TS2353 target is the property's type, written inline inside
 /// the arm; tsc renders it structurally, tsz still repaints it with a

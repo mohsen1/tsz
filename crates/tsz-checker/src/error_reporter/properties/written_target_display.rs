@@ -100,10 +100,29 @@ impl<'a> CheckerState<'a> {
                 self.format_type_for_assignability_message_anonymous_composite_structural(resolved),
             );
         }
+        // A bare reference to a GENERIC declaration is an implicit
+        // instantiation (`Test` with a defaulted parameter renders as
+        // `Test<any>`); the established application display owns it.
+        if crate::query_boundaries::diagnostics::type_application(self.ctx.types, lowered).is_some()
+        {
+            return None;
+        }
+        if let Some(alias) = self.ctx.types.get_display_alias(lowered)
+            && crate::query_boundaries::diagnostics::type_application(self.ctx.types, alias)
+                .is_some()
+        {
+            return None;
+        }
         // A written reference that still lowers to `Lazy(DefId)` prints the
         // referenced definition's own name without consulting the reverse
         // type-to-def lookup.
-        if crate::query_boundaries::diagnostics::lazy_def_id(self.ctx.types, lowered).is_some() {
+        if let Some(def_id) =
+            crate::query_boundaries::diagnostics::lazy_def_id(self.ctx.types, lowered)
+        {
+            let def = self.ctx.definition_store.get(def_id)?;
+            if !def.type_params.is_empty() {
+                return None;
+            }
             return Some(self.format_type_diagnostic_widened(lowered));
         }
         // Otherwise lowering resolved the reference; the written name is the
@@ -113,7 +132,9 @@ impl<'a> CheckerState<'a> {
     }
 
     /// The name of the type symbol a written bare reference resolves to
-    /// (`: P` → `P`), or `None` for qualified names and non-type resolutions.
+    /// (`: P` → `P`), or `None` for qualified names, non-type resolutions,
+    /// and generic declarations (whose bare reference is an implicit
+    /// instantiation, not a plain name).
     fn written_type_reference_symbol_name(&self, type_node: NodeIndex) -> Option<String> {
         use crate::symbol_resolver::TypeSymbolResolution;
         let node = self.ctx.arena.get(type_node)?;
@@ -129,6 +150,9 @@ impl<'a> CheckerState<'a> {
                 | tsz_binder::symbol_flags::INTERFACE
                 | tsz_binder::symbol_flags::CLASS,
         ) {
+            return None;
+        }
+        if self.symbol_declaration_has_type_parameters(sym_id) {
             return None;
         }
         Some(symbol.escaped_name.clone())
