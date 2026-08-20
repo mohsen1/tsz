@@ -270,19 +270,15 @@ both({ p: 1, zz: 8 });
     );
 }
 
-/// Pinned residual (oracle-verified divergence, deliberately out of scope):
-/// when the literal ALSO satisfies the discriminant-free arm structurally
+/// When the literal ALSO satisfies the discriminant-free arm structurally
 /// (`box: 5` present), tsc still fails the relation — `hasExcessProperties`
 /// checks each known property's type against the union of that property's
 /// types across the reduced arms (`getTypeOfPropertyInTypes`) and reports
-/// `Types of property 'q' are incompatible.` under the TS2345 head. tsz's
-/// relation accepts via the `Box` arm (extra properties are structurally
-/// fine once no excess fires), so no diagnostic is produced. Owner: the
-/// relation-failure half for union targets (adjacent to the best-arm
-/// elaboration residual pinned in
-/// `ts2345_generic_call_concrete_alias_parameter_display_tests`).
+/// `Types of property 'q' are incompatible.` under the TS2345 head. The
+/// Lawyer's `union_per_property_failure_witness` gate owns the verdict and
+/// `fresh_union_per_property_reason` the chain
+/// (`relations/subtype/union_property_check.rs`).
 #[test]
-#[ignore = "tsz accepts via the discriminant-free arm where tsc 7.0.2 reports TS2345 with the per-property union check (`Types of property 'q'` / `8` vs `4`) — relation-verdict half not modeled"]
 fn literal_satisfying_discriminant_free_arm_still_fails_per_property_check() {
     let diags = code_messages(
         r#"
@@ -297,4 +293,181 @@ both({ p: 1, q: 8, box: 5 });
             && m.contains("Types of property 'q' are incompatible.")),
         "tsc fails the reduced-union per-property check, got: {diags:?}"
     );
+}
+
+/// Verdict half of the per-property union check when EVERY key is known
+/// somewhere in the union: `{ alpha: 1, beta: 3 }` triggers no excess key
+/// against `{ alpha: 1 } | { beta: 2 }` and structurally satisfies the
+/// first arm, but tsc's `hasExcessProperties` fails `beta` against the
+/// union of the declaring arms' types (`2`); the property-anchored
+/// elaboration then reports at `beta` (oracle: TS2322
+/// `Type '3' is not assignable to type '2'.`).
+#[test]
+fn every_key_known_across_arms_still_fails_per_property_union() {
+    let diags = code_messages(
+        r#"
+declare function pick(x: { alpha: 1 } | { beta: 2 }): void;
+pick({ alpha: 1, beta: 3 });
+"#,
+    );
+    assert!(
+        diags
+            .iter()
+            .any(|(code, m)| *code == 2322 && m.contains("Type '3' is not assignable to type '2'.")),
+        "per-property union check must reject the cross-arm literal, got: {diags:?}"
+    );
+    assert_no_ts2353(&diags);
+}
+
+/// Assignment position (TS2322 head) with renamed binders: the discriminant
+/// `tag: "sq"` reduces the arms to the matched arm plus the key-free `Loose`,
+/// and `size: 8` fails against the reduced declaring arms' `4`.
+#[test]
+fn assignment_position_fresh_literal_fails_per_property_union() {
+    let diags = code_messages(
+        r#"
+type Shape = { tag: "sq"; size: 4 } | { tag: "ci"; size: 8 };
+type Loose = { pad: number };
+const cell: Shape | Loose = { tag: "sq", size: 8, pad: 5 };
+"#,
+    );
+    assert!(
+        diags.iter().any(|(code, m)| *code == 2322
+            && m.contains("Types of property 'size' are incompatible.")
+            && m.contains("Type '8' is not assignable to type '4'.")),
+        "assignment-position per-property union check missing, got: {diags:?}"
+    );
+    assert_no_ts2353(&diags);
+}
+
+/// The whole union spelled through an alias (`Mixed`) with a nested union
+/// alias arm (`Data`): flattening must reach the leaf arms behind both lazy
+/// indirections for the reduction and the per-property collection.
+#[test]
+fn whole_union_alias_target_keeps_per_property_verdict() {
+    let diags = code_messages(
+        r#"
+type Data = { mode: 1; val: 4 } | { mode: 2; val: 8 };
+type Extra = { pad: number };
+type Mixed = Data | Extra;
+declare function feed(m: Mixed): void;
+feed({ mode: 1, val: 8, pad: 2 });
+"#,
+    );
+    assert!(
+        diags.iter().any(|(code, m)| *code == 2345
+            && m.contains("Types of property 'val' are incompatible.")
+            && m.contains("Type '8' is not assignable to type '4'.")),
+        "aliased union target must keep the per-property union verdict, got: {diags:?}"
+    );
+    assert_no_ts2353(&diags);
+}
+
+/// Negative control: a literal whose properties all satisfy the reduced arms
+/// stays accepted — the discriminant-free arm's key is legal through the kept
+/// arm, and every declared property relates (`val: 4` vs `4`).
+#[test]
+fn reduced_arm_satisfying_literal_stays_accepted() {
+    let diags = code_messages(
+        r#"
+type Data = { mode: 1; val: 4 } | { mode: 2; val: 8 };
+type Extra = { pad: number };
+declare function feed(m: Data | Extra): void;
+feed({ mode: 1, val: 4, pad: 1 });
+"#,
+    );
+    assert!(
+        diags.is_empty(),
+        "literal satisfying the reduced arms must stay accepted, got: {diags:?}"
+    );
+}
+
+/// Negative control: mixing keys of two arms is fine when the property types
+/// agree with their declaring arms (`extra: 3` vs `3`) — no discriminant
+/// narrowing applies (each key occurs in one arm only, uniform types).
+#[test]
+fn cross_arm_key_mix_without_conflict_stays_accepted() {
+    let diags = code_messages(
+        r#"
+declare function take(x: { left: 1 } | { right: 2; extra: 3 }): void;
+take({ left: 1, extra: 3 });
+"#,
+    );
+    assert!(
+        diags.is_empty(),
+        "agreeing cross-arm keys must stay accepted, got: {diags:?}"
+    );
+}
+
+/// Negative control: the per-property union check is an excess-property rule —
+/// it applies only to FRESH object literals. The same shape through a
+/// declared (non-fresh) value stays accepted via the structural arm.
+#[test]
+fn non_fresh_source_skips_per_property_union_check() {
+    let diags = code_messages(
+        r#"
+type Data = { mode: 1; val: 4 } | { mode: 2; val: 8 };
+type Extra = { pad: number };
+declare const stored: { mode: 1; val: 8; pad: 5 };
+declare function feed(m: Data | Extra): void;
+feed(stored);
+"#,
+    );
+    assert!(
+        diags.is_empty(),
+        "non-fresh source must skip the per-property union check, got: {diags:?}"
+    );
+}
+
+/// A generic application arm (`Holder<number>`) participates like any other
+/// arm: it survives the `key: 1` reduction (it lacks the key), its `held`
+/// property satisfies its declared type, and the failing `num` folds against
+/// the declaring reduced arm's `4`.
+#[test]
+fn generic_application_arm_participates_in_per_property_union() {
+    let diags = code_messages(
+        r#"
+interface Holder<T> { held: T }
+type Pair = { key: 1; num: 4 } | { key: 2; num: 8 };
+declare function put(x: Pair | Holder<number>): void;
+put({ key: 1, num: 8, held: 5 });
+"#,
+    );
+    assert!(
+        diags.iter().any(|(code, m)| *code == 2345
+            && m.contains("Types of property 'num' are incompatible.")
+            && m.contains("Type '8' is not assignable to type '4'.")),
+        "application arm must participate in the per-property union check, got: {diags:?}"
+    );
+    assert_no_ts2353(&diags);
+}
+
+/// Pinned residual (oracle-verified divergence, PRE-EXISTING on the parent of
+/// the per-property-verdict change — same TS2353 with and without it): when a
+/// discriminator (`q: 8`) positively matches an arm and the checker's
+/// arm-wise contextual typing widens another written unit (`p: 1` → `number`
+/// where the narrowed arm lacks `p`), tsc 7.0.2 reports
+/// `TS2345 ... Types of property 'p' are incompatible. Type 'number' is not
+/// assignable to type '2'.` while tsz's checker-side EPC misroutes into
+/// `TS2353 ... 'p' does not exist in type '{ box: number; q: 8; }'`. Owner:
+/// the checker's contextual-widening interaction with the EPC discriminant
+/// matcher (`excess_property_tail.rs`), not the solver's per-property union
+/// verdict.
+#[test]
+#[ignore = "checker EPC pins the q-matched arm and reports TS2353 for 'p'; tsc 7.0.2 widens the source's 'p' arm-wise to 'number' and fails the relation with `Types of property 'p' are incompatible.` (verified 2026-08-20, pre-existing before the per-property union verdict)"]
+fn contextually_widened_source_discriminant_misroutes_to_excess_residual() {
+    let diags = code_messages(
+        r#"
+type U = { p: 1; q: 4 } | { p: 2; q: 8 };
+declare function both(u: U | { box: number; q: 8 }): void;
+both({ p: 1, q: 8, box: 5 });
+"#,
+    );
+    assert!(
+        diags.iter().any(|(code, m)| *code == 2345
+            && m.contains("Types of property 'p' are incompatible.")
+            && m.contains("Type 'number' is not assignable to type '2'.")),
+        "tsc widens 'p' arm-wise and fails the relation per-property, got: {diags:?}"
+    );
+    assert_no_ts2353(&diags);
 }

@@ -896,8 +896,49 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
     /// # Returns
     /// `true` if no excess properties found, `false` if TS2353 should be reported
     fn check_excess_properties(&mut self, source: TypeId, target: TypeId) -> bool {
-        self.find_excess_property_in(source, target, false)
+        if self
+            .find_excess_property_in(source, target, false)
+            .is_some()
+        {
+            return false;
+        }
+        self.union_per_property_failure_witness(source, target)
             .is_none()
+    }
+
+    /// The second half of `tsc`'s `hasExcessProperties` for union targets:
+    /// after the excess-key check passes, every property of a fresh
+    /// object-literal source must also relate to the union of that property's
+    /// types across the discriminant-reduced arms
+    /// (`getTypeOfPropertyInTypes`). This can fail the RELATION even when the
+    /// literal structurally satisfies a discriminant-free arm — `tsc` rejects
+    /// `{ p: 1, q: 8, box: 5 }` against `{ p: 1; q: 4 } | { p: 2; q: 8 } |
+    /// Box` with `Types of property 'q' are incompatible.` although `Box`
+    /// accepts it. Owner of the verdict; `explain_failure` folds the same
+    /// witness into the failure reason. See
+    /// `relations/subtype/union_property_check.rs` for the oracle-pinned
+    /// semantics.
+    fn union_per_property_failure_witness(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> Option<(TypeId, Vec<TypeId>)> {
+        // Union sources: the first failing fresh member is the witness,
+        // mirroring `find_excess_property_in`.
+        if let Some(TypeData::Union(source_members_id)) = self.interner.lookup(source) {
+            let source_members: Vec<TypeId> = self.interner.type_list(source_members_id).to_vec();
+            return source_members
+                .iter()
+                .find_map(|&member| self.union_per_property_failure_witness(member, target));
+        }
+        let resolved_target = self.try_normalize_excess_property_target(target)?;
+        let members_id = union_list_id(self.interner, target)
+            .or_else(|| union_list_id(self.interner, resolved_target))?;
+        let members = self.interner.type_list(members_id).to_vec();
+        self.subtype
+            .fresh_union_per_property_failure(source, &members)
+            .is_some()
+            .then_some((source, members))
     }
 
     /// Find the first excess property in object literal assignment.
@@ -1766,6 +1807,22 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
                 property_name: excess_prop,
                 target_type: target,
             });
+        }
+
+        // tsc `hasExcessProperties`' per-property union check (the Lawyer's
+        // union-target verdict in `check_excess_properties`): when the
+        // structural walk found no reason — the fresh literal satisfies some
+        // arm — a failed relation came from that gate. Fold the failing
+        // property directly beneath the head line, matching tsc's chain
+        // (`Types of property 'q' are incompatible.`).
+        if structural_result.is_none()
+            && let Some((witness_source, members)) =
+                self.union_per_property_failure_witness(source, target)
+            && let Some(reason) = self
+                .subtype
+                .fresh_union_per_property_reason(witness_source, &members)
+        {
+            return Some(reason);
         }
 
         // If the structural path found a useful reason, use it.

@@ -441,11 +441,12 @@ impl<R: TypeResolver> SubtypeChecker<'_, R> {
         })
     }
 
-    /// `tsc`'s `hasExcessProperties` union fold for a fresh object-literal
-    /// source: reduce the union target to the discriminant-matched member
+    /// Reporting-side fold for a STRUCTURALLY failed relation: `tsc` re-runs
+    /// the failed relation with errors enabled, where `hasExcessProperties`
+    /// reduces the union target to the discriminant-matched member
     /// (`findMatchingDiscriminantType`), falling back to every object-like
-    /// member, then report the FIRST source property (declaration order) whose
-    /// type fails against those members' property types
+    /// member, then reports the FIRST source property (declaration order)
+    /// whose type fails against those members' property types
     /// (`getTypeOfPropertyInTypes`: per-member property type, `undefined` for
     /// a member lacking the property) as a bare
     /// [`SubtypeFailureReason::PropertyTypeMismatch`] — rendered
@@ -454,6 +455,11 @@ impl<R: TypeResolver> SubtypeChecker<'_, R> {
     /// frame. Returns `None` for a non-fresh source, a union with no
     /// object-like member, or when no present property fails (a missing
     /// required property keeps the best-member elaboration).
+    ///
+    /// The VERDICT-side twin (a relation that PASSES structurally but fails
+    /// `hasExcessProperties`' per-property union check) lives in
+    /// `union_property_check.rs` and reaches diagnostics through the Lawyer's
+    /// `explain_failure` hook, not this fold.
     fn fresh_object_literal_union_property_fold(
         &mut self,
         resolved_source: TypeId,
@@ -550,5 +556,42 @@ impl<R: TypeResolver> SubtypeChecker<'_, R> {
             });
         }
         None
+    }
+
+    /// `tsc`'s `hasExcessProperties` union fold for a fresh object-literal
+    /// source: reduce the union target's arms by the source's unit
+    /// discriminants (`discriminateTypeByDiscriminableItems` — partial
+    /// reductions keep arms lacking the key; see
+    /// `union_property_check.rs`), falling back to every object-like arm,
+    /// then report the FIRST source property (declaration order) whose type
+    /// fails against the union of the DECLARING arms' property types
+    /// (`getTypeOfPropertyInTypes`) as a bare
+    /// [`SubtypeFailureReason::PropertyTypeMismatch`] — rendered
+    /// `Types of property 'X' are incompatible.` directly beneath the head,
+    /// with the property relation's own reason nested below and NO member
+    /// frame. Returns `None` for a non-fresh source, a union with no
+    /// object-like member, or when no present property fails (a missing
+    /// required property keeps the best-member elaboration).
+    ///
+    /// Shared with the Lawyer: `relations/compat.rs` consults the same
+    /// [`SubtypeChecker::fresh_union_per_property_failure`] for the relation
+    /// VERDICT, and calls this builder for the failure reason when the
+    /// structural walk (which the per-property gate bypasses) found nothing.
+    pub(crate) fn fresh_union_per_property_reason(
+        &mut self,
+        resolved_source: TypeId,
+        members: &[TypeId],
+    ) -> Option<SubtypeFailureReason> {
+        let (property_name, source_property_type, target_property_type) =
+            self.fresh_union_per_property_failure(resolved_source, members)?;
+        let nested_reason = self
+            .explain_failure_guarded(source_property_type, target_property_type)
+            .map(Box::new);
+        Some(SubtypeFailureReason::PropertyTypeMismatch {
+            property_name,
+            source_property_type,
+            target_property_type,
+            nested_reason,
+        })
     }
 }

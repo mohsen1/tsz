@@ -24,6 +24,7 @@ pub(crate) mod explain_union_target;
 pub(crate) mod helpers;
 pub(crate) mod overlap;
 pub(crate) mod rules;
+pub(crate) mod union_property_check;
 pub(crate) mod visitor;
 
 // Re-export core items at the same visibility they were originally declared with.
