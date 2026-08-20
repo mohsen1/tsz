@@ -109,6 +109,8 @@ mod base_type_param_default_inheritance_tests;
 mod bind_overloaded_receiver_preserves_signatures_tests;
 #[path = "tests/boolean_literal_union_narrowing_tests.rs"]
 mod boolean_literal_union_narrowing_tests;
+#[path = "tests/boolean_property_plain_target_literal_preservation_tests.rs"]
+mod boolean_property_plain_target_literal_preservation_tests;
 #[path = "tests/boxed_global_env_authority_tests.rs"]
 mod boxed_global_env_authority_tests;
 #[path = "tests/builtin_iterator_implements_tests.rs"]
