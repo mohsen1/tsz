@@ -34,6 +34,19 @@ mod union_target_member_frame;
 /// rendering rather than emitted with its final relation line truncated.
 const PROPERTY_MISMATCH_RENDER_DEPTH_CAP: u32 = 5;
 
+/// Elaboration depth of the *first child* of a header rendered at chain depth
+/// `depth`. A top-level mismatch (`depth == 0`) is the diagnostic message
+/// header itself, so its first child stays at elaboration depth `0`
+/// (indent `2`); a nested header at `depth > 0` is already an elaboration line,
+/// so its first child sits one level deeper at `depth + 1`. Every nested
+/// renderer that hangs a note, leaf, frame, or constraint-walk step beneath a
+/// header shares this rule — funnel it through here rather than re-deriving the
+/// `depth == 0` special case (getting it wrong over-indents the whole subtree by
+/// one level; see #17797).
+pub(in crate::error_reporter) const fn first_child_depth(depth: u32) -> u32 {
+    if depth == 0 { 0 } else { depth + 1 }
+}
+
 /// Parameters shared across all `render_*` dispatch helpers.
 pub(in crate::error_reporter) struct RenderContext {
     pub source: TypeId,
@@ -391,7 +404,7 @@ impl<'a> CheckerState<'a> {
         // (indent level 0), so its first elaboration sits at field 0. At depth
         // > 0 the parent line is itself a related entry at field `depth`, so its
         // elaboration sits one level deeper.
-        let frame_depth = if depth == 0 { 0 } else { depth + 1 };
+        let frame_depth = first_child_depth(depth);
 
         // An object property-type leaf drills through the shared property
         // renderer, which caps its own recursion at depth 5. Compute the leaf's
@@ -1204,7 +1217,7 @@ impl<'a> CheckerState<'a> {
                 // absolute-depth convention every other nested `render_*` arm
                 // honors. Authoring it at a fixed `0` collapsed it up to the
                 // property-header level (issue #16859).
-                let leaf_depth = if depth == 0 { 0 } else { depth + 1 };
+                let leaf_depth = first_child_depth(depth);
                 diag.push_elaboration(
                     elaboration,
                     diagnostic_codes::TARGET_SIGNATURE_PROVIDES_TOO_FEW_ARGUMENTS_EXPECTED_OR_MORE_BUT_GOT,

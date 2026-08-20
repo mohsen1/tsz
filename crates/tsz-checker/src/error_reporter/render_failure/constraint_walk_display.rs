@@ -78,6 +78,14 @@ impl<'a> CheckerState<'a> {
     /// beneath it — unlike [`Self::push_deferred_constraint_walk`], this does
     /// NOT re-render the head pair as its own elaboration line. Empty (a
     /// no-op) when `source` has no further constraint to walk.
+    ///
+    /// The head here is the diagnostic MESSAGE header (`base_depth == 0`), not
+    /// an elaboration line, so its first child sits at elaboration depth `0` —
+    /// the shared [`super::first_child_depth`] rule the sibling related-info note
+    /// applies at each call site. Seeding the walk at `base_depth + 1` instead
+    /// over-indented every step by one nesting level (`+2` spaces at every
+    /// depth); see #17797. When the head is a nested elaboration line
+    /// (`base_depth > 0`) the first child stays one level deeper, same rule.
     pub(super) fn push_deferred_constraint_walk_steps(
         &mut self,
         diag: &mut Diagnostic,
@@ -90,8 +98,9 @@ impl<'a> CheckerState<'a> {
             source,
             target,
         );
+        let child_base_depth = super::first_child_depth(base_depth);
         for (i, step) in steps.iter().enumerate() {
-            let depth = base_depth + 1 + i as u32;
+            let depth = child_base_depth + i as u32;
             self.push_constraint_walk_line(diag, step.type_id, target, depth, step.concrete);
         }
     }
