@@ -534,26 +534,79 @@ fn two_computed_body_aliases_still_render_the_underlying_type() {
     assert_eq!(rendered_target_type(source), "string");
 }
 
-/// Negative control on the forwarding chain: `type Outer = Inner` written at
-/// the use site renders `Inner` — tsc resolves the bare alias-to-alias
-/// reference through the chain and stamps the inner alias (oracle-pinned on
-/// 7.0.2), so the per-occurrence gate declines a forwarding body and leaves
-/// the chain-following display path in charge.
+/// The forwarding chain: `type Outer = Inner` written at the use site
+/// renders `Inner` — tsc resolves the bare alias-to-alias reference through
+/// the chain and stamps the inner alias (oracle-pinned on 7.0.2), so the
+/// per-occurrence gate chases a bare forwarding body to its terminal alias
+/// instead of declining to the (first-writer-wins) global reverse map.
 ///
-/// Red both with and without the per-occurrence gate: tsz renders `Outer`
-/// through the established display path (the gate correctly declines, so it
-/// neither causes nor can fix this). Recorded rather than fixed — the
-/// chain-resolution display is the alias-underlying family's own owner
-/// (`type_alias_displayed_as_underlying` currently keeps a forwarding alias's
-/// declared name where tsc re-stamps the inner alias).
+/// This minimal two-alias shape alone cannot distinguish "chases the written
+/// chain" from "happens to land on the right answer via the global map,
+/// because `Inner` is also the only/first writer for this content" — see
+/// `bare_alias_to_alias_forwarding_target_ignores_an_unrelated_first_writer`
+/// below for the sharper witness.
 #[test]
-#[ignore = "separate open divergence: a bare alias-to-alias forwarding target renders the outer alias name; tsc resolves the chain and shows the inner alias"]
 fn bare_alias_to_alias_forwarding_target_renders_the_inner_alias() {
     let source = "type Inner = string | number;\n\
                   type Outer = Inner;\n\
                   declare const flag: boolean;\n\
                   const c: Outer = flag;\n";
     assert_eq!(rendered_target_type(source), "Inner");
+}
+
+/// Sharper witness: an unrelated alias (`Zeta`) of the identical union
+/// content is declared *first*, so the global `type_to_def` reverse map's
+/// first-writer would answer `Zeta` for this `TypeId`. The forwarding chain
+/// written at the use site (`Outer` -> `Inner`) must still win — this is the
+/// case that was actually broken (`Zeta`, not `Outer`, was the reported
+/// symptom's true mechanism: the per-occurrence gate correctly declined the
+/// forwarding body, but the fallback it deferred to is the same
+/// first-writer-wins map #17756 fixes for the non-forwarding case).
+#[test]
+fn bare_alias_to_alias_forwarding_target_ignores_an_unrelated_first_writer() {
+    let source = "type Zeta = string | number;\n\
+                  type Inner = string | number;\n\
+                  type Outer = Inner;\n\
+                  declare const flag: boolean;\n\
+                  const a: Outer = flag;\n";
+    assert_eq!(rendered_target_type(source), "Inner");
+}
+
+/// Even sharper: the competing first writer is a *lib* alias
+/// (`PropertyKey = string | number | symbol`), always interned before any
+/// user code runs, so it always wins the global reverse map. The forwarding
+/// chain must still resolve to the user's own written `InnerAlpha`, not the
+/// lib name.
+#[test]
+fn bare_alias_to_alias_forwarding_target_ignores_a_lib_first_writer() {
+    let source = "type InnerAlpha = string | number | symbol;\n\
+                  type OuterBeta = InnerAlpha;\n\
+                  declare const held: boolean;\n\
+                  const sink: OuterBeta = held;\n";
+    assert_eq!(rendered_target_type(source), "InnerAlpha");
+}
+
+/// Multi-hop chain (three aliases deep): tsc's forwarding resolves all the
+/// way to the terminal, structurally-bodied alias, not just one hop.
+#[test]
+fn bare_alias_to_alias_forwarding_target_resolves_multiple_hops() {
+    let source = "type Innermost = string | number;\n\
+                  type Middle = Innermost;\n\
+                  type Outer = Middle;\n\
+                  declare const flag: boolean;\n\
+                  const a: Outer = flag;\n";
+    assert_eq!(rendered_target_type(source), "Innermost");
+}
+
+/// Renamed binders, so no row of this family can be satisfied by anything
+/// keyed on the `Inner`/`Outer` spelling specifically.
+#[test]
+fn renamed_binders_bare_alias_to_alias_forwarding_target_renders_the_inner_alias() {
+    let source = "type PrimitiveKeys = string | number;\n\
+                  type ForwardedKeys = PrimitiveKeys;\n\
+                  declare const held: boolean;\n\
+                  const sink: ForwardedKeys = held;\n";
+    assert_eq!(rendered_target_type(source), "PrimitiveKeys");
 }
 
 /// Negative control on application-bodied aliases, half one: a plain
