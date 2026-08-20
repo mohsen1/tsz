@@ -80,14 +80,16 @@ impl CheckerState<'_> {
         prop_name: &str,
     ) -> Option<(TypeId, TypeId)> {
         let resolved = self.resolve_type_for_property_access(target_type);
-        let members: Option<Vec<TypeId>> = query_common::union_members(self.ctx.types, resolved)
-            .or_else(|| {
-                let evaluated = self.evaluate_type_with_env(resolved);
-                query_common::union_members(self.ctx.types, evaluated)
-            })
-            .map(|list| list.as_ref().to_vec())
-            .filter(|list| list.len() >= 2);
-        let Some(members) = members else {
+        let union_with_members: Option<(TypeId, Vec<TypeId>)> =
+            query_common::union_members(self.ctx.types, resolved)
+                .map(|list| (resolved, list.as_ref().to_vec()))
+                .or_else(|| {
+                    let evaluated = self.evaluate_type_with_env(resolved);
+                    query_common::union_members(self.ctx.types, evaluated)
+                        .map(|list| (evaluated, list.as_ref().to_vec()))
+                });
+        let Some((union_type_id, members)) = union_with_members.filter(|(_, list)| list.len() >= 2)
+        else {
             return self.object_literal_target_property_type(target_type, prop_name_idx, prop_name);
         };
         if let Some(pair) =
@@ -95,6 +97,22 @@ impl CheckerState<'_> {
         {
             return Some(pair);
         }
+        // `findMostOverlappyType` ties to the LAST scanned member, so the
+        // scan order must be declaration order the way `tsc`'s own `types`
+        // array is, not the interner's canonical (identity-sort) order: a
+        // generic union alias re-interns a substituted arm at instantiation
+        // time, which can sort it after non-generic sibling arms in the
+        // canonical list even though it was declared first. The as-written
+        // origin (recorded by `instantiate`'s `TypeData::Union` arm the same
+        // way the printer already prefers it, see `format/key.rs`) is the
+        // declaration-ordered list when one was stored; otherwise the
+        // canonical order already matches declaration order.
+        let members = self
+            .ctx
+            .types
+            .get_union_origin(union_type_id)
+            .map(|origin| origin.as_ref().clone())
+            .unwrap_or(members);
         let member = crate::query_boundaries::assignability::union_target_best_elaboration_member(
             self.ctx.types,
             &self.ctx,

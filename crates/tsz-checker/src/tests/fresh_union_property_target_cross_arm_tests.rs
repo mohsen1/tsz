@@ -529,7 +529,6 @@ const pn: Pn = { t: "zz", u: 2 };
 /// keeps declaration order and renders `'9'`. The concrete forms above prove
 /// the fallback itself; this pin guards the order half only.
 #[test]
-#[ignore = "instantiated union arms lose declaration order, so last-best-wins picks the re-interned substituted arm — tsz '1' vs tsc 7.0.2 '9'"]
 fn instantiated_generic_union_keeps_declaration_order_for_most_overlappy() {
     let diags = diags_with_code(
         r#"
@@ -543,6 +542,52 @@ const gx: GU<1> = { k: "zz", v: 2 };
             .iter()
             .any(|d| d.message_text == "Type '2' is not assignable to type '9'."),
         "declaration order must drive the last-best-wins tie, got: {diags:?}"
+    );
+}
+
+/// Adjacent to the fence above: the generic (substituted) arm is declared
+/// SECOND, not first, so a fix that merely special-cased "the first arm is
+/// generic" would still fail this — the substituted arm must win the tie
+/// here because it is declared LAST among the two overlapping arms, the
+/// mirror image of the fence above. tsc 7.0.2: Type '2' is not assignable to
+/// type '1'.
+#[test]
+fn instantiated_generic_union_arm_declared_second_still_wins_tie() {
+    let diags = diags_with_code(
+        r#"
+type GenSecond<Elem> = { k: "b"; v: 9 } | { k: "a"; v: Elem } | { k: "c" };
+const gy: GenSecond<1> = { k: "zz", v: 2 };
+"#,
+        2322,
+    );
+    assert!(
+        diags
+            .iter()
+            .any(|d| d.message_text == "Type '2' is not assignable to type '1'."),
+        "the LAST declared overlapping arm must win even when it is the substituted one, got: {diags:?}"
+    );
+}
+
+/// Adjacent to the fence above: one non-generic alias hop between the
+/// `const` annotation and the generic union declaration must not disturb
+/// declaration order either — the origin recorded at the inner `GenWrapped`
+/// instantiation must still be visible through the outer alias. tsc 7.0.2:
+/// Type '2' is not assignable to type '9'.
+#[test]
+fn instantiated_generic_union_keeps_declaration_order_through_alias_wrapper() {
+    let diags = diags_with_code(
+        r#"
+type GenWrapped<Value> = { tag: "p"; data: Value } | { tag: "q"; data: 9 } | { tag: "r" };
+type GenWrappedAlias<Value> = GenWrapped<Value>;
+const gz: GenWrappedAlias<1> = { tag: "zz", data: 2 };
+"#,
+        2322,
+    );
+    assert!(
+        diags
+            .iter()
+            .any(|d| d.message_text == "Type '2' is not assignable to type '9'."),
+        "declaration order must survive one alias-wrapper hop, got: {diags:?}"
     );
 }
 
