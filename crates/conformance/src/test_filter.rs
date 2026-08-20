@@ -2,7 +2,7 @@ use std::path::Path;
 
 const CONFORMANCE_SOURCE_EXTENSIONS: &[&str] = &["ts", "tsx", "js", "jsx", "mts", "cts"];
 
-fn normalized_path(path: &Path) -> String {
+pub(crate) fn normalized_path(path: &Path) -> String {
     path.to_string_lossy().replace('\\', "/")
 }
 

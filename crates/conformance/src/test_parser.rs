@@ -60,11 +60,31 @@ pub fn should_skip_test(directives: &TestDirectives) -> Option<&'static str> {
 /// Apply the native TypeScript 7 runner's path-based skip registry before the
 /// structural directive/configuration policy.
 pub fn should_skip_test_at_path(path: &Path, directives: &TestDirectives) -> Option<&'static str> {
+    // Checked first so the baseline stays host-agnostic — see `HOST_DIVERGENT_TESTS`.
+    // A registered row wins even if it would also be TS7-unsupported.
+    if let Some(reason) = host_divergent_skip_reason(path) {
+        return Some(reason);
+    }
     let basename = path.file_name().and_then(|name| name.to_str());
     if basename.is_some_and(|name| TYPESCRIPT_7_SKIPPED_TESTS.contains(&name)) {
         return Some("skipped by TypeScript 7 harness");
     }
     should_skip_test(directives)
+}
+
+/// Stable reason emitted for a row excluded by the host-divergent registry.
+const HOST_DIVERGENT_SKIP_REASON: &str = "host-divergent";
+
+/// Suffix-match the forward-slash-normalized `path` against [`HOST_DIVERGENT_TESTS`],
+/// returning [`HOST_DIVERGENT_SKIP_REASON`] on a hit. Suffix (not basename)
+/// matching keeps look-alike siblings runnable; it is prefix-agnostic, so an
+/// absolute discovery path and a repo-relative one both match.
+fn host_divergent_skip_reason(path: &Path) -> Option<&'static str> {
+    let normalized = crate::test_filter::normalized_path(path);
+    HOST_DIVERGENT_TESTS
+        .iter()
+        .any(|suffix| normalized.ends_with(suffix))
+        .then_some(HOST_DIVERGENT_SKIP_REASON)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -145,6 +165,25 @@ const TYPESCRIPT_7_SKIPPED_TESTS: &[&str] = &[
     "noErrorUsingImportExportModuleAugmentationInDeclarationFile3.ts",
     "requireOfJsonFileWithModuleEmitNone.ts",
     "requireOfJsonFileWithModuleNodeResolutionEmitNone.ts",
+];
+
+/// Conformance rows whose PASS/FAIL outcome is **host-deterministic** — stable on
+/// one OS but divergent across systems because it hinges on OS-decided filesystem
+/// semantics (case sensitivity, path canonicalization) rather than on `tsz`'s
+/// type-checking. Excluding such a row on *every* host (a plain `Skipped`, out of
+/// the runnable denominator) keeps the committed baseline host-agnostic, at the
+/// cost of one diverging row of coverage.
+///
+/// Entries are sorted, unique `tests/cases`-relative suffixes. Add one only as a
+/// last resort for a row proven host-deterministic (a stable divergence across
+/// many samples, not flakiness), with the evidence recorded in the issue; a
+/// divergence rooted in `tsz` itself is a bug to fix.
+const HOST_DIVERGENT_TESTS: &[&str] = &[
+    // Host-deterministic typings resolution: fails 16/16 on darwin-arm64,
+    // passes on Linux CI, stable per host across many samples. The divergence is
+    // OS filesystem case-sensitivity in the typings lookup, not a `tsz`
+    // type-checking difference. See issue #17820.
+    "conformance/typings/typingsLookup3.ts",
 ];
 
 const TARGET_VALUES: &[&str] = &[
@@ -535,6 +574,63 @@ function foo() {}
         assert_eq!(
             should_skip_test_at_path(Path::new("compiler/ordinary.ts"), &directives),
             None
+        );
+    }
+
+    #[test]
+    fn host_divergent_registry_skips_only_registered_rows() {
+        let directives = TestDirectives::default();
+        // Repo-relative, absolute POSIX, and Windows-separator spellings of a
+        // registered row all resolve to the skip; basename-adjacent siblings that
+        // are not registered stay runnable (suffix matching must not sweep in
+        // look-alikes).
+        let cases = [
+            (
+                "TypeScript/tests/cases/conformance/typings/typingsLookup3.ts",
+                Some(HOST_DIVERGENT_SKIP_REASON),
+            ),
+            (
+                "/home/runner/tsz/TypeScript/tests/cases/conformance/typings/typingsLookup3.ts",
+                Some(HOST_DIVERGENT_SKIP_REASON),
+            ),
+            (
+                r"C:\src\TypeScript\tests\cases\conformance\typings\typingsLookup3.ts",
+                Some(HOST_DIVERGENT_SKIP_REASON),
+            ),
+            (
+                "TypeScript/tests/cases/conformance/typings/typingsLookup30.ts",
+                None,
+            ),
+            (
+                "TypeScript/tests/cases/conformance/typings/typingsLookup.ts",
+                None,
+            ),
+        ];
+        for (spelling, expected) in cases {
+            assert_eq!(
+                should_skip_test_at_path(Path::new(spelling), &directives),
+                expected,
+                "unexpected disposition for {spelling}"
+            );
+        }
+    }
+
+    #[test]
+    fn host_divergent_registry_entries_are_canonical_and_sorted() {
+        for entry in HOST_DIVERGENT_TESTS {
+            assert!(!entry.contains('\\'), "{entry:?} must use forward slashes");
+            assert!(
+                entry.contains('/'),
+                "{entry:?} must include its directory prefix so basenames cannot collide"
+            );
+        }
+        let mut sorted = HOST_DIVERGENT_TESTS.to_vec();
+        sorted.sort_unstable();
+        sorted.dedup();
+        assert_eq!(
+            sorted.as_slice(),
+            HOST_DIVERGENT_TESTS,
+            "HOST_DIVERGENT_TESTS must stay sorted and free of duplicates"
         );
     }
 

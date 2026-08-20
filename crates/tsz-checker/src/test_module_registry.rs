@@ -707,6 +707,8 @@ mod merged_interface_construct_order_tests;
 mod merged_interface_overload_order_tests;
 #[path = "tests/merged_interface_reference_flat_missing_tests.rs"]
 mod merged_interface_reference_flat_missing_tests;
+#[path = "tests/method_member_object_literal_source_display_tests.rs"]
+mod method_member_object_literal_source_display_tests;
 #[path = "tests/method_return_type_elaboration_tests.rs"]
 mod method_return_type_elaboration_tests;
 #[path = "tests/missing_property_base_class_head_tests.rs"]
