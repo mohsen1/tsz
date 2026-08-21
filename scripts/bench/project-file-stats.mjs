@@ -25,10 +25,16 @@
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
-import { createRequire } from "node:module";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
-const require = createRequire(import.meta.url);
+const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
+const REPO_ROOT = path.resolve(SCRIPT_DIR, "..", "..");
+const TYPESCRIPT_VERSIONS_FILE = path.join(
+  REPO_ROOT,
+  "scripts",
+  "conformance",
+  "typescript-versions.json",
+);
 
 const TS_FILE_RE = /\.(d\.)?[cm]?tsx?$/;
 const EXCLUDED_PATH_SEGMENTS = ["/node_modules/", "/.next/"];
@@ -181,25 +187,70 @@ export function aggregateProjectStats(files, { cache } = {}) {
   return { lines, bytes, fileCount };
 }
 
-function candidateTypeScriptPackageRoots() {
-  const candidates = new Set();
-  if (process.env.TSC_TOOL_DIR_VALUE) {
-    candidates.add(path.join(process.env.TSC_TOOL_DIR_VALUE, "node_modules", "typescript"));
+export function pinnedTypeScriptVersion() {
+  const versions = JSON.parse(fs.readFileSync(TYPESCRIPT_VERSIONS_FILE, "utf8"));
+  const version =
+    versions.current && versions.mappings?.[versions.current]?.npm
+      ? versions.mappings[versions.current].npm
+      : versions.default?.npm;
+  if (typeof version !== "string" || !/^7\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(version)) {
+    throw new Error(
+      `Unable to resolve the pinned TypeScript 7 version from ${TYPESCRIPT_VERSIONS_FILE}`,
+    );
   }
-  if (process.env.TSC_BIN_VALUE) {
-    try {
-      const realTsc = fs.realpathSync(process.env.TSC_BIN_VALUE);
-      candidates.add(path.resolve(path.dirname(realTsc), ".."));
-    } catch {
-      // Fall back to the default module resolution candidates below.
-    }
+  return version;
+}
+
+function packageRootFromTscBinary(tscBinary) {
+  const realTsc = fs.realpathSync(tscBinary);
+  const packageRoot = path.resolve(path.dirname(realTsc), "..");
+  const expectedEntry = path.join(packageRoot, "bin", path.basename(realTsc));
+  if (path.normalize(expectedEntry) !== path.normalize(realTsc)) {
+    throw new Error(
+      `TSC_BIN_VALUE is not a TypeScript package launcher: ${tscBinary}`,
+    );
   }
+  return packageRoot;
+}
+
+export function resolvePinnedTypeScriptPackageRoot({ env = process.env } = {}) {
+  const toolDir = env.TSC_TOOL_DIR_VALUE?.trim();
+  const tscBinary = env.TSC_BIN_VALUE?.trim();
+  const toolPackageRoot = toolDir
+    ? path.resolve(toolDir, "node_modules", "typescript")
+    : null;
+  const binaryPackageRoot = tscBinary ? packageRootFromTscBinary(tscBinary) : null;
+
+  if (
+    toolPackageRoot &&
+    binaryPackageRoot &&
+    fs.realpathSync(toolPackageRoot) !== fs.realpathSync(binaryPackageRoot)
+  ) {
+    throw new Error(
+      `Pinned TypeScript tool/binary roots disagree: ${toolPackageRoot} != ${binaryPackageRoot}`,
+    );
+  }
+
+  // An explicit bench-tool selection is authoritative. Otherwise use the
+  // repository-owned installation prepared by ensure-pinned-typescript.sh.
+  // Never ask Node to discover an ambient/global `typescript` package.
+  const packageRoot = toolPackageRoot ?? binaryPackageRoot ?? path.join(REPO_ROOT, "scripts", "node_modules", "typescript");
+  const packageJsonPath = path.join(packageRoot, "package.json");
+  let packageJson;
   try {
-    candidates.add(path.dirname(require.resolve("typescript/package.json")));
-  } catch {
-    // The explicit bench-tool candidates above may still be usable.
+    packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf8"));
+  } catch (error) {
+    throw new Error(
+      `Pinned TypeScript package is unavailable at ${packageJsonPath}; run scripts/setup/ensure-pinned-typescript.sh scripts (${error.message})`,
+    );
   }
-  return [...candidates];
+  const expectedVersion = pinnedTypeScriptVersion();
+  if (packageJson.name !== "typescript" || packageJson.version !== expectedVersion) {
+    throw new Error(
+      `Pinned TypeScript package mismatch at ${packageJsonPath}: expected typescript@${expectedVersion}, found ${packageJson.name ?? "<missing>"}@${packageJson.version ?? "<missing>"}`,
+    );
+  }
+  return fs.realpathSync(packageRoot);
 }
 
 function unstableSyncEntry(packageRoot) {
@@ -214,17 +265,20 @@ function unstableSyncEntry(packageRoot) {
 }
 
 async function loadTypeScriptSyncAPI() {
-  for (const packageRoot of candidateTypeScriptPackageRoots()) {
-    try {
-      const entry = unstableSyncEntry(packageRoot);
-      if (!entry) continue;
-      const module = await import(pathToFileURL(entry).href);
-      if (typeof module.API === "function") return module.API;
-    } catch {
-      // Try the next candidate.
-    }
+  const packageRoot = resolvePinnedTypeScriptPackageRoot();
+  const entry = unstableSyncEntry(packageRoot);
+  if (!entry || !fs.statSync(entry).isFile()) {
+    throw new Error(
+      `Pinned TypeScript package does not export ./unstable/sync: ${packageRoot}`,
+    );
   }
-  throw new Error("Unable to load the TypeScript 7 unstable sync API for tsconfig parsing");
+  const module = await import(pathToFileURL(entry).href);
+  if (typeof module.API !== "function") {
+    throw new Error(
+      `Pinned TypeScript ./unstable/sync entry has no API constructor: ${entry}`,
+    );
+  }
+  return module.API;
 }
 
 const TypeScriptSyncAPI = await loadTypeScriptSyncAPI();

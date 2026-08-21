@@ -26,7 +26,14 @@ node scripts/bench/project-fixture-stub-fidelity.mjs --check
 # Timing is reachable only after exact schema-v2 TSZ/TypeScript 7 project
 # evidence; fake compilers pin every former false-green escape hatch.
 node scripts/bench/test-bench-vs-tsgo-project-evidence.mjs
-node scripts/bench/test-project-file-stats.mjs
+# Project graph statistics must use the repository's verified TypeScript 7
+# installation. A fresh CI checkout intentionally has no node_modules yet, so
+# prepare the exact pin here instead of letting the test skip or resolve an
+# ambient package.
+./scripts/setup/ensure-pinned-typescript.sh scripts
+TSC_TOOL_DIR_VALUE="$ROOT_DIR/scripts" \
+  TSC_BIN_VALUE="$ROOT_DIR/scripts/node_modules/typescript/bin/tsc" \
+  node scripts/bench/test-project-file-stats.mjs
 # Publishing independently revalidates the same graph/diagnostic/exit and
 # zero-stub evidence, so a hand-forged or legacy artifact cannot bypass the
 # producer-side admission gate.

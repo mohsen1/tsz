@@ -28,6 +28,8 @@ import {
   isLocalProjectFile,
   isTypeScriptFile,
   loadStatsCache,
+  pinnedTypeScriptVersion,
+  resolvePinnedTypeScriptPackageRoot,
   resolveTsconfigFilesCached,
   saveStatsCache,
   statFileEntry,
@@ -38,6 +40,8 @@ const ROOT = path.resolve(SCRIPT_DIR, "..", "..");
 const BENCH_SCRIPT = path.join(SCRIPT_DIR, "bench-vs-tsgo.sh");
 const BENCH_PREREQS_SCRIPT = path.join(SCRIPT_DIR, "lib", "bench-vs-tsgo-prereqs.sh");
 const BENCH_RESULTS_SCRIPT = path.join(SCRIPT_DIR, "lib", "bench-vs-tsgo-results.sh");
+const PINNED_TOOL_DIR = path.join(ROOT, "scripts");
+const PINNED_TSC_BIN = path.join(PINNED_TOOL_DIR, "node_modules", "typescript", "bin", "tsc");
 
 function makeTempDir(prefix) {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -52,6 +56,55 @@ function writeFile(dir, name, contents) {
 
 function listAbsoluteFiles(dir, files) {
   return files.map((relative) => path.join(dir, relative));
+}
+
+// --------------------------------------------------------------------------
+// TypeScript resolution is explicit and pinned. A clean Linux runner has no
+// ambient `typescript`; the unit gate prepares scripts/node_modules and passes
+// these exact paths. Explicit bad roots must fail closed instead of falling
+// through to a developer-global package.
+
+assert.equal(pinnedTypeScriptVersion(), "7.0.2");
+assert.equal(
+  resolvePinnedTypeScriptPackageRoot({
+    env: {
+      TSC_TOOL_DIR_VALUE: PINNED_TOOL_DIR,
+      TSC_BIN_VALUE: PINNED_TSC_BIN,
+    },
+  }),
+  fs.realpathSync(path.join(PINNED_TOOL_DIR, "node_modules", "typescript")),
+  "the prepared repository TypeScript 7 package is the only positive resolver path",
+);
+
+{
+  const dir = makeTempDir("tsz-stats-wrong-typescript-");
+  try {
+    writeFile(
+      dir,
+      "node_modules/typescript/package.json",
+      JSON.stringify({ name: "typescript", version: "7.0.1" }),
+    );
+    assert.throws(
+      () => resolvePinnedTypeScriptPackageRoot({ env: { TSC_TOOL_DIR_VALUE: dir } }),
+      /expected typescript@7\.0\.2, found typescript@7\.0\.1/,
+      "an explicit wrong-version tool root never falls back to scripts/node_modules",
+    );
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+{
+  const dir = makeTempDir("tsz-stats-missing-typescript-");
+  try {
+    assert.throws(
+      () => resolvePinnedTypeScriptPackageRoot({ env: { TSC_TOOL_DIR_VALUE: dir } }),
+      /Pinned TypeScript package is unavailable/,
+      "a missing explicit tool root never resolves an ambient TypeScript package",
+    );
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 // Shared awk snippet that extracts a single top-level shell function (from its
@@ -462,7 +515,12 @@ assert.notEqual(
     );
 
     const cacheDir = path.join(dir, "cache");
-    const env = { ...process.env, TSZ_PROJECT_FILE_STATS_CACHE_DIR: cacheDir };
+    const env = {
+      ...process.env,
+      TSC_TOOL_DIR_VALUE: PINNED_TOOL_DIR,
+      TSC_BIN_VALUE: PINNED_TSC_BIN,
+      TSZ_PROJECT_FILE_STATS_CACHE_DIR: cacheDir,
+    };
     const scriptPath = path.join(SCRIPT_DIR, "project-file-stats.mjs");
 
     const first = spawnSync(process.execPath, [scriptPath, tsconfig], {
@@ -470,14 +528,7 @@ assert.notEqual(
       env,
     });
     if (first.status !== 0) {
-      // The TS7 unstable sync API is required by the script path; tests in this
-      // workspace install it via the bench tooling, but if it is genuinely
-      // absent we degrade to a warning instead of failing the whole suite.
-      if (/Unable to load the TypeScript 7 unstable sync API/i.test(first.stderr || "")) {
-        console.error("[skip] project-file-stats.mjs: TypeScript 7 sync API unavailable");
-      } else {
-        throw new Error(`project-file-stats.mjs failed: ${first.stderr}`);
-      }
+      throw new Error(`project-file-stats.mjs failed: ${first.stderr}`);
     } else {
       const parts = first.stdout.trim().split(/\s+/);
       assert.equal(parts.length, 3, "script must print three space-separated integers");

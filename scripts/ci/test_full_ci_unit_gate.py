@@ -10,6 +10,9 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "scripts" / "ci" / "full-ci.sh"
+UNIT_CONTRACT = ROOT / "scripts" / "ci" / "check-unit-gate-contracts.sh"
+PROJECT_STATS = ROOT / "scripts" / "bench" / "project-file-stats.mjs"
+PROJECT_STATS_TEST = ROOT / "scripts" / "bench" / "test-project-file-stats.mjs"
 
 
 def function_body(source: str, name: str) -> str:
@@ -27,6 +30,9 @@ class FullCiRewriteGateTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls.source = SCRIPT.read_text(encoding="utf-8")
+        cls.unit_contract = UNIT_CONTRACT.read_text(encoding="utf-8")
+        cls.project_stats = PROJECT_STATS.read_text(encoding="utf-8")
+        cls.project_stats_test = PROJECT_STATS_TEST.read_text(encoding="utf-8")
 
     def test_unit_packages_are_exact_clean_slate_workspace(self) -> None:
         match = re.search(
@@ -83,6 +89,17 @@ class FullCiRewriteGateTests(unittest.TestCase):
         for binary in ("tsz", "tsz-server", "tsz-lsp", "try-tsz"):
             self.assertIn(f".target/dist-fast/{binary}", body)
             self.assertIn(f"--bin {binary}", body)
+
+    def test_project_stats_prepares_and_selects_the_pinned_typescript(self) -> None:
+        setup = "./scripts/setup/ensure-pinned-typescript.sh scripts"
+        stats_test = "node scripts/bench/test-project-file-stats.mjs"
+        self.assertIn(setup, self.unit_contract)
+        self.assertIn(stats_test, self.unit_contract)
+        self.assertLess(self.unit_contract.index(setup), self.unit_contract.index(stats_test))
+        self.assertIn('TSC_TOOL_DIR_VALUE="$ROOT_DIR/scripts"', self.unit_contract)
+        self.assertIn('TSC_BIN_VALUE="$ROOT_DIR/scripts/node_modules/typescript/bin/tsc"', self.unit_contract)
+        self.assertNotIn('require.resolve("typescript/package.json")', self.project_stats)
+        self.assertNotIn("[skip] project-file-stats.mjs", self.project_stats_test)
 
 
 if __name__ == "__main__":
