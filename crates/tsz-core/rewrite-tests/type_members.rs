@@ -1901,7 +1901,6 @@ fn literal_defaults_feed_parameter_values_and_unknown_defaults_block_dts() {
         "function forward(value=later,later=1){}",
         "function bodyLocal(value=local){let local=1}",
         "function query(value:typeof local){let local=1}",
-        "function bodyless();",
     ] {
         let output = compile(source, true);
         assert_eq!(
@@ -1910,6 +1909,14 @@ fn literal_defaults_feed_parameter_values_and_unknown_defaults_block_dts() {
             "{source}"
         );
     }
+
+    let bodyless = compile("function bodyless();", true);
+    assert_eq!(codes(&bodyless), vec![2391, 7010]);
+    assert_eq!(bodyless.semantic_completion, SemanticCompletion::Complete);
+    assert_eq!(
+        bodyless.exit_status,
+        CompileExitStatus::DiagnosticsPresentOutputsSkipped
+    );
 }
 
 #[test]

@@ -470,7 +470,7 @@ impl<'a> Resolver<'a> {
             .cloned()
             .unwrap_or_else(|| RootMetadata {
                 display_path: display_path(host_path),
-                logical_path: logical_path_from_host(self.host.current_directory(), host_path),
+                logical_path: logical_source_path_from_host(self.host, host_path),
                 reason: RootReason::CommandLine,
             })
     }
@@ -751,7 +751,7 @@ impl<'a> Resolver<'a> {
                 self.record_root(
                     &path,
                     display_path(&path),
-                    logical_path_from_host(self.host.current_directory(), &path),
+                    logical_source_path_from_host(self.host, &path),
                     RootReason::FilesList,
                 );
                 roots.push(path);
@@ -1864,6 +1864,18 @@ fn path_key(path: &Path, case_sensitive: bool) -> String {
 
 fn display_path(path: &Path) -> String {
     path.to_string_lossy().replace('\\', "/")
+}
+
+fn logical_source_path_from_host(host: &dyn ProgramHost, path: &Path) -> PathBuf {
+    let current_directory = normalize_path(host.current_directory());
+    let path = normalize_path(path);
+    if let Ok(relative) = path.strip_prefix(&current_directory) {
+        // Preserve the user's spelling for ordinary and symlink-rooted
+        // projects. Realpath is only an identity fallback for transport
+        // aliases such as macOS `/var` versus `/private/var`.
+        return relative.to_path_buf();
+    }
+    logical_path_from_host(&host.realpath(&current_directory), &host.realpath(&path))
 }
 
 fn logical_path_from_host(current_directory: &Path, path: &Path) -> PathBuf {

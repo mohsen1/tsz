@@ -14,6 +14,18 @@ fn compile(source: &str) -> tsz::CompileOutput {
     )
 }
 
+fn compile_without_implicit_any(source: &str) -> tsz::CompileOutput {
+    Compiler::new().compile(
+        vec![SourceInput::new("case.ts", Arc::<str>::from(source))],
+        &CompilerOptions {
+            no_emit: true,
+            strict: false,
+            no_implicit_any: Some(false),
+            ..CompilerOptions::default()
+        },
+    )
+}
+
 fn codes(output: &tsz::CompileOutput) -> Vec<u32> {
     output
         .diagnostics
@@ -615,6 +627,11 @@ fn class_overload_groups_report_exact_missing_implementation_diagnostics() {
     let source = "class Example {\n  constructor();\n  method(): void;\n}\n";
     let output = compile(source);
     assert_eq!(codes(&output), vec![2390, 2391]);
+    assert_eq!(output.semantic_completion, SemanticCompletion::Complete);
+    assert_eq!(
+        output.exit_status,
+        CompileExitStatus::DiagnosticsPresentOutputsSkipped
+    );
     assert_eq!(
         (
             output.diagnostics[0].start,
@@ -653,6 +670,8 @@ fn class_overload_implementation_matching_is_structural() {
             "valid overload group for {method} failed: {:?}",
             output.diagnostics
         );
+        assert_eq!(output.semantic_completion, SemanticCompletion::Complete);
+        assert_eq!(output.exit_status, CompileExitStatus::Success);
 
         let wrong_implementation =
             format!("class Example {{\n  {method}(): void;\n  different() {{}}\n}}");
@@ -677,6 +696,783 @@ fn class_overload_implementation_matching_is_structural() {
                 format!("Function implementation name must be '{method}'.").as_str(),
             )
         );
+        assert_eq!(output.semantic_completion, SemanticCompletion::Complete);
+        assert_eq!(
+            output.exit_status,
+            CompileExitStatus::DiagnosticsPresentOutputsSkipped
+        );
+    }
+}
+
+#[test]
+fn declaration_only_overload_hosts_complete_until_value_use_demands_resolution() {
+    // TypeScript 7 accepts both declaration groups without selecting an
+    // overload. These mirror functionOverloads6 and functionOverloads10 while
+    // renaming the authored symbols.
+    for source in [
+        "class Renamed { static choose(); static choose(value:string); static choose(value?:any){} }",
+        "function select(value:string, position:number); function select(value:string); function select(value:any){}",
+    ] {
+        let output = compile_without_implicit_any(source);
+        assert!(
+            output.diagnostics.is_empty(),
+            "declaration-only overload failed for {source}: {:?}",
+            output.diagnostics
+        );
+        assert_eq!(output.semantic_completion, SemanticCompletion::Complete);
+        assert_eq!(output.exit_status, CompileExitStatus::Success);
+    }
+
+    for source in [
+        "function select(value:string):string; function select(value:any):any{return value} select('ready');",
+        "function choose(value:string):string; function choose(value:any):any{return value} const alias=choose; alias('ready');",
+    ] {
+        let output = compile(source);
+        assert!(
+            output.diagnostics.is_empty(),
+            "overload demand invented a diagnostic for {source}: {:?}",
+            output.diagnostics
+        );
+        assert_eq!(output.semantic_completion, SemanticCompletion::Deferred);
+        assert_eq!(output.exit_status, CompileExitStatus::SemanticIncomplete);
+    }
+
+    let separated = compile(
+        "function pending(value:string):string; const boundary=1; function pending(value:any):any{return value}",
+    );
+    assert_eq!(codes(&separated), vec![2391]);
+    assert_eq!(
+        separated.diagnostics[0].message_text,
+        "Function implementation is missing or not immediately following the declaration."
+    );
+    assert_eq!(
+        (
+            separated.diagnostics[0].start,
+            separated.diagnostics[0].length
+        ),
+        ("function ".len() as u32, "pending".len() as u32)
+    );
+    assert_eq!(separated.semantic_completion, SemanticCompletion::Complete);
+    assert_eq!(
+        separated.exit_status,
+        CompileExitStatus::DiagnosticsPresentOutputsSkipped
+    );
+
+    let recovered = compile(
+        "function renamed(value:number):number; const numeric=renamed(1); const rejected:string=numeric;",
+    );
+    assert_eq!(codes(&recovered), vec![2391, 2322]);
+    assert_eq!(recovered.semantic_completion, SemanticCompletion::Complete);
+    assert_eq!(
+        recovered.exit_status,
+        CompileExitStatus::DiagnosticsPresentOutputsSkipped
+    );
+
+    let ambient = Compiler::new().compile(
+        vec![SourceInput::new(
+            "ambient.d.ts",
+            Arc::<str>::from("declare function ambient(value:string):string;"),
+        )],
+        &CompilerOptions {
+            no_emit: true,
+            strict: true,
+            ..CompilerOptions::default()
+        },
+    );
+    assert!(ambient.diagnostics.is_empty(), "{:?}", ambient.diagnostics);
+    assert_eq!(ambient.semantic_completion, SemanticCompletion::Complete);
+    assert_eq!(ambient.exit_status, CompileExitStatus::Success);
+}
+
+#[test]
+fn function_overload_owner_matrix_is_monotonic_and_fail_closed() {
+    let single_source = "function bodyless(); const text:string=bodyless();";
+    let single = compile(single_source);
+    assert_eq!(codes(&single), vec![2391, 7010]);
+    for diagnostic in &single.diagnostics {
+        assert_eq!(
+            (diagnostic.start, diagnostic.length),
+            (
+                single_source.find("bodyless").unwrap() as u32,
+                "bodyless".len() as u32,
+            )
+        );
+    }
+    assert_eq!(
+        single.diagnostics[1].message_text,
+        "'bodyless', which lacks return-type annotation, implicitly has an 'any' return type."
+    );
+    assert_eq!(single.semantic_completion, SemanticCompletion::Complete);
+    assert_eq!(
+        single.exit_status,
+        CompileExitStatus::DiagnosticsPresentOutputsSkipped
+    );
+
+    let unannotated_pair = compile("function pair(); function pair();");
+    assert_eq!(codes(&unannotated_pair), vec![7010, 2391, 7010]);
+    assert_eq!(
+        unannotated_pair.semantic_completion,
+        SemanticCompletion::Complete
+    );
+
+    let annotated_pair = compile("function pair():void; function pair():void;");
+    assert_eq!(codes(&annotated_pair), vec![2391]);
+    assert_eq!(
+        annotated_pair.diagnostics[0].start,
+        "function pair():void; function ".len() as u32
+    );
+    assert_eq!(
+        annotated_pair.semantic_completion,
+        SemanticCompletion::Complete
+    );
+
+    let renamed_source = "function pending(value:number):number; function different(){return 1}";
+    let renamed = compile(renamed_source);
+    assert_eq!(codes(&renamed), vec![2389]);
+    assert_eq!(
+        (
+            renamed.diagnostics[0].start,
+            renamed.diagnostics[0].length,
+            renamed.diagnostics[0].message_text.as_str(),
+        ),
+        (
+            renamed_source.find("different").unwrap() as u32,
+            "different".len() as u32,
+            "Function implementation name must be 'pending'.",
+        )
+    );
+    assert_eq!(renamed.semantic_completion, SemanticCompletion::Complete);
+
+    let ambient_mismatch =
+        compile("function ambientMismatch():void; declare function ambientMismatch():void;");
+    assert_eq!(codes(&ambient_mismatch), vec![2384]);
+    assert_eq!(
+        ambient_mismatch.diagnostics[0].message_text,
+        "Overload signatures must all be ambient or non-ambient."
+    );
+    assert_eq!(
+        ambient_mismatch.semantic_completion,
+        SemanticCompletion::Complete
+    );
+
+    let export_mismatch = compile("export function exposed():void; function exposed():void {}");
+    assert_eq!(codes(&export_mismatch), vec![2383]);
+    assert_eq!(
+        export_mismatch.diagnostics[0].message_text,
+        "Overload signatures must all be exported or non-exported."
+    );
+    assert_eq!(
+        export_mismatch.semantic_completion,
+        SemanticCompletion::Complete
+    );
+
+    let compatible = compile(
+        "function compatible(value:number):number; function compatible(value:any):any{return value}",
+    );
+    assert!(
+        compatible.diagnostics.is_empty(),
+        "{:?}",
+        compatible.diagnostics
+    );
+    assert_eq!(compatible.semantic_completion, SemanticCompletion::Complete);
+
+    let incompatible = compile(
+        "function incompatible(value:number):number; function incompatible(value:string):string{return value}",
+    );
+    assert!(
+        incompatible.diagnostics.is_empty(),
+        "{:?}",
+        incompatible.diagnostics
+    );
+    assert_eq!(
+        incompatible.semantic_completion,
+        SemanticCompletion::Deferred
+    );
+    assert_eq!(
+        incompatible.exit_status,
+        CompileExitStatus::SemanticIncomplete
+    );
+
+    let declared = Compiler::new().compile(
+        vec![SourceInput::new(
+            "ambient.d.ts",
+            Arc::<str>::from("declare function ambientCallable();"),
+        )],
+        &CompilerOptions {
+            no_emit: true,
+            strict: true,
+            ..CompilerOptions::default()
+        },
+    );
+    assert_eq!(codes(&declared), vec![7010]);
+    assert_eq!(declared.semantic_completion, SemanticCompletion::Complete);
+
+    let unowned_dts = Compiler::new().compile(
+        vec![SourceInput::new(
+            "ambient.d.ts",
+            Arc::<str>::from("function unowned():void;"),
+        )],
+        &CompilerOptions {
+            no_emit: true,
+            strict: true,
+            ..CompilerOptions::default()
+        },
+    );
+    assert!(unowned_dts.diagnostics.is_empty());
+    assert_eq!(
+        unowned_dts.semantic_completion,
+        SemanticCompletion::Deferred
+    );
+}
+
+#[test]
+fn global_overload_demand_uses_the_program_owned_merged_group() {
+    let inputs = [
+        SourceInput::new(
+            "a.ts",
+            Arc::<str>::from("declare function choose(value:string):string;"),
+        ),
+        SourceInput::new(
+            "b.ts",
+            Arc::<str>::from("declare function choose(value:number):number;"),
+        ),
+    ];
+    let declarations = Compiler::new().compile(
+        inputs.to_vec(),
+        &CompilerOptions {
+            no_emit: true,
+            strict: true,
+            ..CompilerOptions::default()
+        },
+    );
+    assert!(declarations.diagnostics.is_empty());
+    assert_eq!(
+        declarations.semantic_completion,
+        SemanticCompletion::Complete
+    );
+
+    for reverse in [false, true] {
+        let mut roots = inputs.to_vec();
+        if reverse {
+            roots.reverse();
+        }
+        roots.push(SourceInput::new(
+            "use.ts",
+            Arc::<str>::from("const result=choose(true);"),
+        ));
+        let demanded = Compiler::new().compile(
+            roots,
+            &CompilerOptions {
+                no_emit: true,
+                strict: true,
+                ..CompilerOptions::default()
+            },
+        );
+        assert!(
+            demanded.diagnostics.is_empty(),
+            "{:?}",
+            demanded.diagnostics
+        );
+        assert_eq!(demanded.semantic_completion, SemanticCompletion::Deferred);
+        assert_eq!(demanded.exit_status, CompileExitStatus::SemanticIncomplete);
+    }
+}
+
+#[test]
+fn external_module_roots_never_enter_the_script_global_group() {
+    let overloaded_module = SourceInput::new(
+        "module.ts",
+        Arc::<str>::from(
+            "export function choose(value:string):string; \
+             export function choose(value:any):any{return value}",
+        ),
+    );
+    let script = SourceInput::new(
+        "script.ts",
+        Arc::<str>::from(
+            "declare function choose(value:number):number; \
+             const numeric:number=choose(1);",
+        ),
+    );
+    for roots in [
+        vec![overloaded_module.clone(), script.clone()],
+        vec![script.clone(), overloaded_module],
+    ] {
+        let output = Compiler::new().compile(
+            roots,
+            &CompilerOptions {
+                no_emit: true,
+                strict: true,
+                ..CompilerOptions::default()
+            },
+        );
+        assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+        assert_eq!(output.semantic_completion, SemanticCompletion::Complete);
+        assert_eq!(output.exit_status, CompileExitStatus::Success);
+    }
+
+    let module_local = Compiler::new().compile(
+        vec![
+            SourceInput::new(
+                "local.ts",
+                Arc::<str>::from(
+                    "export function choose(value:string):string{return value} \
+                     export const local:string=choose('ready');",
+                ),
+            ),
+            script,
+        ],
+        &CompilerOptions {
+            no_emit: true,
+            strict: true,
+            ..CompilerOptions::default()
+        },
+    );
+    assert!(module_local.diagnostics.is_empty());
+    assert_eq!(
+        module_local.semantic_completion,
+        SemanticCompletion::Complete
+    );
+    assert_eq!(module_local.exit_status, CompileExitStatus::Success);
+
+    let path_owned_module = SourceInput::new(
+        "path-owned.mts",
+        Arc::<str>::from(
+            "function choose(value:string):string; \
+             function choose(value:any):any{return value}",
+        ),
+    );
+    let path_script = SourceInput::new(
+        "path-script.ts",
+        Arc::<str>::from(
+            "declare function choose(value:number):number; \
+             const numeric:number=choose(1);",
+        ),
+    );
+    for roots in [
+        vec![path_owned_module.clone(), path_script.clone()],
+        vec![path_script, path_owned_module],
+    ] {
+        let output = Compiler::new().compile(
+            roots,
+            &CompilerOptions {
+                no_emit: true,
+                strict: true,
+                ..CompilerOptions::default()
+            },
+        );
+        assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+        assert_eq!(output.semantic_completion, SemanticCompletion::Complete);
+        assert_eq!(output.exit_status, CompileExitStatus::Success);
+    }
+}
+
+#[test]
+fn class_overload_compatibility_is_complete_only_for_the_bounded_owner() {
+    let unannotated = compile("class Vessel { method(); }");
+    assert_eq!(codes(&unannotated), vec![2391]);
+    assert_eq!(
+        unannotated.semantic_completion,
+        SemanticCompletion::Deferred
+    );
+
+    for source in [
+        "class Vessel { method(value:number):number; method(value:string):string{return value} }",
+        "class Vessel { constructor(value:number); constructor(value:string){} }",
+        "class Vessel { protected constructor(value:number); private constructor(value:any){} }",
+    ] {
+        let output = compile(source);
+        assert!(
+            output.diagnostics.is_empty(),
+            "{source}: {:?}",
+            output.diagnostics
+        );
+        assert_eq!(
+            output.semantic_completion,
+            SemanticCompletion::Deferred,
+            "{source}"
+        );
+    }
+}
+
+#[test]
+fn class_overload_promotion_requires_an_ordinary_empty_implementation() {
+    for source in [
+        "abstract class Shape { abstract convert(value:string):string; convert(value:any):any{} }",
+        "class DeclaredMember { declare convert(value:string):string; convert(value:any):any{} }",
+        "class AccessorHost { get value():string; get value(){return 'ready'} }",
+        "class AsyncHost { async convert(value:string):Promise<string>; async convert(value:any):Promise<any>{} }",
+        "class CheckedBody { convert(value:string):string; convert(value:any):any{return value} }",
+        "class CheckedConstructor { constructor(value:string); constructor(value:any){value=1} }",
+    ] {
+        let output = compile(source);
+        assert!(
+            output.diagnostics.is_empty(),
+            "{source}: {:?}",
+            output.diagnostics
+        );
+        assert_eq!(
+            output.semantic_completion,
+            SemanticCompletion::Deferred,
+            "{source}"
+        );
+        assert_eq!(
+            output.exit_status,
+            CompileExitStatus::SemanticIncomplete,
+            "{source}"
+        );
+    }
+
+    for source in [
+        "class OverrideHost { override method():void; }",
+        "class AccessorHost { accessor method():void; }",
+        "class DuplicateHost { public public method():void; }",
+        "class OptionalHost { method?():void; }",
+        "class DefiniteHost { method!():void; }",
+        "class StringHost { 'method'():void; }",
+        "class NumericHost { 1():void; }",
+        "class PrivateHost { #method():void; }",
+        "class ComputedHost { [method]():void; }",
+        "class PropertyHost { field=missingValue; method():void; }",
+        "class AutoAccessorHost { accessor value:number; method():void; }",
+        "class ThisHost { method(this:any,value:string):void; method(this:any,value:any):void{} }",
+        "class BindingHost { method({value}:any):void; method(value:any):void{} }",
+        "class BrokenConstructor { constructor?(); }",
+    ] {
+        let output = compile(source);
+        assert_eq!(
+            output.semantic_completion,
+            SemanticCompletion::Deferred,
+            "{source}: {:?}",
+            output.diagnostics
+        );
+        assert_ne!(output.exit_status, CompileExitStatus::Success, "{source}");
+    }
+}
+
+#[test]
+fn declaration_emit_blocks_unmodeled_overload_implementation_filtering() {
+    let source = concat!(
+        "export function select(value:string):string; ",
+        "export function select(value:any):any{return value} ",
+        "export class Vessel { ",
+        "constructor(value:string); constructor(value:any){} ",
+        "method(value:string):string; method(value:any):any{return value} ",
+        "}",
+    );
+    for no_check in [false, true] {
+        let output = Compiler::new().compile(
+            vec![SourceInput::new("overloads.ts", Arc::<str>::from(source))],
+            &CompilerOptions {
+                declaration: true,
+                no_check,
+                strict: true,
+                target: "esnext".to_string(),
+                module: "esnext".to_string(),
+                ..CompilerOptions::default()
+            },
+        );
+        assert_eq!(output.semantic_completion, SemanticCompletion::Deferred);
+        assert_eq!(output.exit_status, CompileExitStatus::SemanticIncomplete);
+        assert!(
+            !output.emitted_files.iter().any(|file| file.declaration),
+            "{no_check}: {:?}",
+            output.emitted_files
+        );
+        let javascript = output
+            .emitted_files
+            .iter()
+            .find(|file| !file.declaration)
+            .expect("runtime overload implementation");
+        assert_eq!(
+            javascript.text,
+            "export function select(value) {\n    return value;\n}\nexport class Vessel {\n    constructor(value) { }\n    method(value) {\n        return value;\n    }\n}\n"
+        );
+    }
+
+    let cross_file = Compiler::new().compile(
+        vec![
+            SourceInput::new(
+                "signature.ts",
+                Arc::<str>::from("function merged(value:string):string;"),
+            ),
+            SourceInput::new(
+                "implementation.ts",
+                Arc::<str>::from("function merged(value:any):any{return value}"),
+            ),
+        ],
+        &CompilerOptions {
+            declaration: true,
+            no_check: true,
+            strict: true,
+            ..CompilerOptions::default()
+        },
+    );
+    assert_eq!(cross_file.semantic_completion, SemanticCompletion::Deferred);
+    assert_eq!(
+        cross_file.exit_status,
+        CompileExitStatus::SemanticIncomplete
+    );
+    assert!(!cross_file.emitted_files.iter().any(|file| file.declaration));
+
+    let modules = [
+        SourceInput::new(
+            "a.ts",
+            Arc::<str>::from(
+                "export function shared(value:string):string; export function shared(value:any):any{return value}",
+            ),
+        ),
+        SourceInput::new(
+            "b.ts",
+            Arc::<str>::from("export function shared(value:number):number{return value}"),
+        ),
+    ];
+    let checked_modules = Compiler::new().compile(
+        modules.to_vec(),
+        &CompilerOptions {
+            no_emit: true,
+            strict: true,
+            ..CompilerOptions::default()
+        },
+    );
+    assert!(
+        checked_modules.diagnostics.is_empty(),
+        "{:?}",
+        checked_modules.diagnostics
+    );
+    assert_eq!(
+        checked_modules.semantic_completion,
+        SemanticCompletion::Complete
+    );
+
+    let module_products = Compiler::new().compile(
+        modules.to_vec(),
+        &CompilerOptions {
+            declaration: true,
+            no_check: true,
+            strict: true,
+            ..CompilerOptions::default()
+        },
+    );
+    assert_eq!(
+        module_products.semantic_completion,
+        SemanticCompletion::Deferred
+    );
+    assert_eq!(
+        module_products
+            .emitted_files
+            .iter()
+            .filter(|file| file.declaration)
+            .map(|file| file.path.to_string_lossy().to_string())
+            .collect::<Vec<_>>(),
+        ["b.d.ts"]
+    );
+}
+
+#[test]
+fn function_modifier_owners_and_products_fail_closed() {
+    for source in [
+        "async function delayed(value:string):number; async function delayed(value:any):any{return value}",
+        "abstract function impossible():void;",
+        "declare declare function repeated():void;",
+    ] {
+        let output = compile(source);
+        assert!(
+            output.diagnostics.is_empty(),
+            "{source}: {:?}",
+            output.diagnostics
+        );
+        assert_eq!(output.semantic_completion, SemanticCompletion::Deferred);
+        assert_eq!(output.exit_status, CompileExitStatus::SemanticIncomplete);
+    }
+
+    for source in [
+        "function receiver(this:any):void;",
+        "function implemented(this:any):void {}",
+        "function parameterProperty(public value:number):void;",
+        "function implementedProperty(public value:number):void {}",
+        "function recovered({value}:any):void;",
+    ] {
+        let output = compile(source);
+        assert_eq!(output.semantic_completion, SemanticCompletion::Deferred);
+        assert_ne!(output.exit_status, CompileExitStatus::Success);
+    }
+
+    let default_overload = concat!(
+        "export default function selected(value:string):string; ",
+        "export default function selected(value:any):any{return value}",
+    );
+    for product_source in [
+        default_overload,
+        "export function outer(){async async function inner():Promise<void>{}}",
+    ] {
+        for module in ["commonjs", "esnext"] {
+            for no_check in [false, true] {
+                let output = Compiler::new().compile(
+                    vec![SourceInput::new(
+                        "default.ts",
+                        Arc::<str>::from(product_source),
+                    )],
+                    &CompilerOptions {
+                        declaration: true,
+                        no_check,
+                        module: module.to_string(),
+                        target: "esnext".to_string(),
+                        ..CompilerOptions::default()
+                    },
+                );
+                assert_eq!(output.semantic_completion, SemanticCompletion::Deferred);
+                assert_eq!(output.exit_status, CompileExitStatus::SemanticIncomplete);
+                assert!(
+                    output.emitted_files.is_empty(),
+                    "{module}/{no_check}: {:?}",
+                    output.emitted_files
+                );
+            }
+        }
+    }
+
+    let abstract_product = Compiler::new().compile(
+        vec![SourceInput::new(
+            "abstract.ts",
+            Arc::<str>::from("abstract function impossible():void;"),
+        )],
+        &CompilerOptions {
+            declaration: true,
+            no_check: true,
+            ..CompilerOptions::default()
+        },
+    );
+    assert_eq!(
+        abstract_product.semantic_completion,
+        SemanticCompletion::Deferred
+    );
+    assert!(abstract_product.emitted_files.is_empty());
+
+    let recovered_product = Compiler::new().compile(
+        vec![SourceInput::new(
+            "recovered.ts",
+            Arc::<str>::from("function recovered({value}:any):void;"),
+        )],
+        &CompilerOptions {
+            declaration: true,
+            no_check: true,
+            ..CompilerOptions::default()
+        },
+    );
+    assert_eq!(
+        recovered_product.semantic_completion,
+        SemanticCompletion::Deferred
+    );
+    assert!(recovered_product.emitted_files.is_empty());
+
+    let async_product = Compiler::new().compile(
+        vec![SourceInput::new(
+            "async.ts",
+            Arc::<str>::from(
+                "async function delayed(value:string):Promise<string>; \
+                 async function delayed(value:any):Promise<any>{}",
+            ),
+        )],
+        &CompilerOptions {
+            declaration: true,
+            no_check: true,
+            target: "esnext".to_string(),
+            module: "esnext".to_string(),
+            ..CompilerOptions::default()
+        },
+    );
+    assert_eq!(
+        async_product.semantic_completion,
+        SemanticCompletion::Deferred
+    );
+    assert_eq!(
+        async_product
+            .emitted_files
+            .iter()
+            .filter(|file| file.declaration)
+            .count(),
+        0
+    );
+    assert_eq!(
+        async_product
+            .emitted_files
+            .iter()
+            .filter(|file| !file.declaration)
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn bodyless_class_method_declaration_emit_recovers_with_any() {
+    let output = Compiler::new().compile(
+        vec![SourceInput::new(
+            "loose.ts",
+            Arc::<str>::from("export class Loose { method(); }"),
+        )],
+        &CompilerOptions {
+            declaration: true,
+            no_check: true,
+            target: "esnext".to_string(),
+            module: "esnext".to_string(),
+            ..CompilerOptions::default()
+        },
+    );
+    assert_eq!(output.semantic_completion, SemanticCompletion::Complete);
+    assert_eq!(output.exit_status, CompileExitStatus::Success);
+    let javascript = output
+        .emitted_files
+        .iter()
+        .find(|file| !file.declaration)
+        .expect("runtime output");
+    assert_eq!(javascript.text, "export class Loose {\n}\n");
+    let declaration = output
+        .emitted_files
+        .iter()
+        .find(|file| file.declaration)
+        .expect("declaration output");
+    assert_eq!(
+        declaration.text,
+        "export declare class Loose {\n    method(): any;\n}\n"
+    );
+}
+
+#[test]
+fn class_product_preflight_blocks_unowned_member_syntax_in_every_mode() {
+    for source in [
+        "export class Vessel { accessor value:number; method():void; }",
+        "export function wrapped(){ class Nested { accessor value:number; } }",
+        "async class Vessel {}",
+        "export export class Vessel {}",
+        "export class Vessel { override method():void; }",
+        "export class Vessel { declare method():void; }",
+        "export abstract class Vessel { abstract method():void; }",
+        "export class Vessel { public public method():void; }",
+        "export class Vessel { method?():void; }",
+        "export class Vessel { method!():void; }",
+        "export class Vessel { method(:void; }",
+    ] {
+        for module in ["commonjs", "esnext"] {
+            for no_check in [false, true] {
+                let output = Compiler::new().compile(
+                    vec![SourceInput::new("case.ts", Arc::<str>::from(source))],
+                    &CompilerOptions {
+                        declaration: true,
+                        no_check,
+                        target: "esnext".to_string(),
+                        module: module.to_string(),
+                        ..CompilerOptions::default()
+                    },
+                );
+                assert_eq!(output.semantic_completion, SemanticCompletion::Deferred);
+                assert_eq!(output.exit_status, CompileExitStatus::SemanticIncomplete);
+                assert!(
+                    output.emitted_files.is_empty(),
+                    "{source}/{module}/{no_check}"
+                );
+            }
+        }
     }
 }
 

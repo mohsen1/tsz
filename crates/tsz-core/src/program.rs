@@ -118,6 +118,19 @@ pub struct ProgramFile {
     pub bindings: BoundFile,
 }
 
+impl ProgramFile {
+    /// Whether this source owns a module-local root scope. `.mts`/`.cts`
+    /// sources are modules by path even without authored import/export syntax.
+    #[must_use]
+    pub fn is_external_module(&self) -> bool {
+        self.syntax.is_external_module()
+            || self.source.path.extension().is_some_and(|extension| {
+                let extension = extension.to_string_lossy();
+                extension.eq_ignore_ascii_case("mts") || extension.eq_ignore_ascii_case("cts")
+            })
+    }
+}
+
 #[derive(Debug)]
 pub struct Program {
     /// Program traversal order, independent from path-sorted `FileId` storage.
@@ -462,6 +475,9 @@ impl Compiler {
         } else {
             EmitPlan::for_program(&program.files, options, &provenance)
         };
+        if emit_plan.has_incomplete_products() {
+            semantic_completion = semantic_completion.combine(SemanticCompletion::Deferred);
+        }
         diagnostics.extend(emit_plan.diagnostics().iter().cloned());
         // TypeScript's observable diagnostic order is a deterministic total
         // order, not root discovery order. `FileId` is assigned from the
@@ -636,6 +652,12 @@ fn build_program(
     let mut global_types: BTreeMap<String, Vec<DeclId>> = BTreeMap::new();
     for file_id in &source_order {
         let file = &files[file_id.0 as usize];
+        if file.is_external_module() {
+            // External-module roots are file-local binding scopes. They may
+            // fall back to the script global scope, but must never contribute
+            // their own declarations to that scope.
+            continue;
+        }
         let root = &file.bindings.scopes[0];
         for ids in root.names.values() {
             for id in ids {

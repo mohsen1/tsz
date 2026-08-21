@@ -11,7 +11,7 @@ use crate::syntax::{
     TypeMemberNameKind, TypeNode, TypeNodeKind, TypeParameterDeclaration, UnaryOperator,
 };
 
-use super::{Checker, type_member_grammar::ParameterGrammarHost};
+use super::{Checker, is_declaration_source, type_member_grammar::ParameterGrammarHost};
 
 #[derive(Debug, Clone, Copy)]
 enum TypeMemberContainerKind {
@@ -32,8 +32,14 @@ impl Checker<'_> {
         for file_id in &self.program.source_order {
             let file_id = *file_id;
             let statements = &self.program.files[file_id.0 as usize].syntax.statements;
-            for statement in statements {
-                self.visit_required_statement(file_id, ScopeId(0), statement, &empty);
+            for (index, statement) in statements.iter().enumerate() {
+                self.visit_required_statement(
+                    file_id,
+                    ScopeId(0),
+                    statement,
+                    statements.get(index + 1),
+                    &empty,
+                );
             }
         }
     }
@@ -53,7 +59,10 @@ impl Checker<'_> {
     }
 
     pub(super) fn require_function_signature(&mut self, id: DeclId) -> Option<TypeId> {
-        let declaration_completion = self.declaration_value_type(id);
+        // Checking an authored declaration validates that declaration's own
+        // signature. It is not a value-use query and therefore must not ask
+        // the overload gateway to select a callable signature.
+        let declaration_completion = self.declared_function_type(id);
         let signature_type = match self.require_completion(declaration_completion) {
             Completion::Complete(signature_type) => signature_type,
             Completion::Deferred | Completion::Cycle | Completion::Limit => return None,
@@ -76,6 +85,7 @@ impl Checker<'_> {
         file: FileId,
         scope: ScopeId,
         statement: &Statement,
+        next_statement: Option<&Statement>,
         type_parameters: &HashMap<String, TypeId>,
     ) {
         match &statement.kind {
@@ -98,7 +108,60 @@ impl Checker<'_> {
                 }
             }
             StatementKind::Function(declaration) => {
-                if !declaration.has_body && !declaration.declared {
+                if !declaration.overload_completion_supported {
+                    let _ = self.require_completion(Completion::<()>::Deferred);
+                }
+                if declaration.is_async || declaration.abstract_declaration {
+                    // Async return validation (TS1064) and the invalid
+                    // abstract-function modifier (TS1242) are not owned yet.
+                    // Preserve the parsed modifier and fail closed rather
+                    // than treating either host as an ordinary overload.
+                    let _ = self.require_completion(Completion::<()>::Deferred);
+                }
+                if !declaration.has_body
+                    && !declaration.declared
+                    && !declaration.abstract_declaration
+                    && !is_declaration_source(&self.program.files[file.0 as usize].source.path)
+                {
+                    match next_statement.map(|next| &next.kind) {
+                        Some(StatementKind::Function(next)) if next.name == declaration.name => {}
+                        Some(StatementKind::Function(next)) if next.has_body => {
+                            self.push_diagnostic(
+                                file,
+                                next.name_span,
+                                format!(
+                                    "Function implementation name must be '{}'.",
+                                    declaration.name
+                                ),
+                                2389,
+                            );
+                        }
+                        _ => {
+                            self.report_missing_function_implementation(file, declaration.name_span)
+                        }
+                    }
+                }
+                if !declaration.has_body
+                    && declaration.return_type.is_none()
+                    && !declaration.abstract_declaration
+                    && self.options.effective_no_implicit_any()
+                {
+                    self.push_diagnostic(
+                        file,
+                        declaration.name_span,
+                        format!(
+                            "'{}', which lacks return-type annotation, implicitly has an 'any' return type.",
+                            declaration.name
+                        ),
+                        7010,
+                    );
+                }
+                if !declaration.has_body
+                    && !declaration.declared
+                    && is_declaration_source(&self.program.files[file.0 as usize].source.path)
+                {
+                    // TS1046 is not owned yet. A declaration-file function
+                    // without `declare` must not become a false Complete.
                     let _ = self.require_completion(Completion::<()>::Deferred);
                 }
                 let function_scope = self.node_scope(file, statement.id, scope);
@@ -110,6 +173,7 @@ impl Checker<'_> {
                         &declaration.name,
                     )
                     .unwrap_or_else(|| synthetic_identity(file, declaration.name_span.start));
+                self.validate_function_overload_group(identity);
                 let function_types = self.extend_type_parameters(
                     identity,
                     &declaration.type_parameters,
@@ -144,12 +208,24 @@ impl Checker<'_> {
                         );
                     }
                 }
-                for nested in &declaration.body {
+                for (index, nested) in declaration.body.iter().enumerate() {
                     let nested_scope = self.node_scope(file, nested.id, function_scope);
-                    self.visit_required_statement(file, nested_scope, nested, &function_types);
+                    self.visit_required_statement(
+                        file,
+                        nested_scope,
+                        nested,
+                        declaration.body.get(index + 1),
+                        &function_types,
+                    );
                 }
             }
             StatementKind::Class(declaration) => {
+                if !declaration.declared
+                    && !is_declaration_source(&self.program.files[file.0 as usize].source.path)
+                    && !self.class_bodyless_hosts_are_modeled(file, declaration)
+                {
+                    let _ = self.require_completion(Completion::<()>::Deferred);
+                }
                 let class_scope = self.node_scope(file, statement.id, scope);
                 let identity = self
                     .find_declaration(
@@ -177,13 +253,7 @@ impl Checker<'_> {
                     self.visit_required_type_node(file, class_scope, heritage, &class_types);
                 }
                 for member in &declaration.members {
-                    self.visit_required_class_member(
-                        file,
-                        class_scope,
-                        member,
-                        &class_types,
-                        declaration.declared,
-                    );
+                    self.visit_required_class_member(file, class_scope, member, &class_types);
                 }
             }
             StatementKind::TypeAlias(declaration) => {
@@ -254,6 +324,7 @@ impl Checker<'_> {
                     file,
                     then_scope,
                     &control_flow.then_statement,
+                    None,
                     type_parameters,
                 );
                 if let Some(else_statement) = &control_flow.else_statement {
@@ -262,6 +333,7 @@ impl Checker<'_> {
                         file,
                         else_scope,
                         else_statement,
+                        None,
                         type_parameters,
                     );
                 }
@@ -283,9 +355,15 @@ impl Checker<'_> {
                             type_parameters,
                         );
                     }
-                    for nested in &clause.statements {
+                    for (index, nested) in clause.statements.iter().enumerate() {
                         let nested_scope = self.node_scope(file, nested.id, switch_scope);
-                        self.visit_required_statement(file, nested_scope, nested, type_parameters);
+                        self.visit_required_statement(
+                            file,
+                            nested_scope,
+                            nested,
+                            clause.statements.get(index + 1),
+                            type_parameters,
+                        );
                     }
                 }
             }
@@ -295,9 +373,15 @@ impl Checker<'_> {
                 }
             }
             StatementKind::Block(statements) => {
-                for nested in statements {
+                for (index, nested) in statements.iter().enumerate() {
                     let nested_scope = self.node_scope(file, nested.id, scope);
-                    self.visit_required_statement(file, nested_scope, nested, type_parameters);
+                    self.visit_required_statement(
+                        file,
+                        nested_scope,
+                        nested,
+                        statements.get(index + 1),
+                        type_parameters,
+                    );
                 }
             }
             StatementKind::Expression(expression) => {
@@ -312,7 +396,6 @@ impl Checker<'_> {
         class_scope: ScopeId,
         member: &crate::syntax::ClassMember,
         type_parameters: &HashMap<String, TypeId>,
-        ambient: bool,
     ) {
         match &member.kind {
             ClassMemberKind::Property {
@@ -332,9 +415,6 @@ impl Checker<'_> {
                 body,
                 has_body,
             } => {
-                if !*has_body && !ambient {
-                    let _ = self.require_completion(Completion::<()>::Deferred);
-                }
                 let member_scope = self.node_scope(file, member.id, class_scope);
                 self.visit_required_parameters(
                     file,
@@ -357,9 +437,6 @@ impl Checker<'_> {
                 has_body,
                 ..
             } => {
-                if !*has_body && !ambient {
-                    let _ = self.require_completion(Completion::<()>::Deferred);
-                }
                 let member_scope = self.node_scope(file, member.id, class_scope);
                 let method_types = self.extend_type_parameters(
                     synthetic_identity(file, member.name_span.start),
@@ -400,6 +477,160 @@ impl Checker<'_> {
         }
     }
 
+    fn class_bodyless_hosts_are_modeled(
+        &mut self,
+        file: FileId,
+        declaration: &crate::syntax::ClassDeclaration,
+    ) -> bool {
+        let has_bodyless = declaration.members.iter().any(|member| {
+            matches!(
+                member.kind,
+                ClassMemberKind::Constructor {
+                    has_body: false,
+                    ..
+                } | ClassMemberKind::Method {
+                    has_body: false,
+                    ..
+                }
+            )
+        });
+        if !has_bodyless {
+            return true;
+        }
+        if declaration.abstract_class || !declaration.type_parameters.is_empty() {
+            return false;
+        }
+
+        // `check_class` does not inspect bodies. This bounded promotion owns
+        // only ordinary, nongeneric overload syntax with an empty body; every
+        // other class host remains deferred until its diagnostics/body summary
+        // have a semantic owner.
+        for member in &declaration.members {
+            let supported_modifiers = !member.modifiers.readonly
+                && !member.modifiers.abstract_member
+                && !member.modifiers.declared
+                && !member.modifiers.async_member
+                && !member.modifiers.unsupported_for_overload_completion
+                && !(member.modifiers.public && member.modifiers.protected)
+                && !(member.modifiers.public && member.modifiers.private)
+                && !(member.modifiers.protected && member.modifiers.private);
+            match &member.kind {
+                ClassMemberKind::Constructor {
+                    parameters,
+                    body,
+                    has_body,
+                } => {
+                    if !supported_modifiers
+                        || !member.overload_completion_supported
+                        || member.modifiers.static_member
+                        || (*has_body && !body.is_empty())
+                        || !bounded_class_parameters(parameters, self.options)
+                    {
+                        return false;
+                    }
+                }
+                ClassMemberKind::Method {
+                    type_parameters,
+                    parameters,
+                    return_type,
+                    body,
+                    has_body,
+                    accessor,
+                } => {
+                    if !supported_modifiers
+                        || !member.overload_completion_supported
+                        || accessor.is_some()
+                        || !type_parameters.is_empty()
+                        || (*has_body && !body.is_empty())
+                        || (!*has_body
+                            && return_type.is_none()
+                            && self.options.effective_no_implicit_any())
+                        || !bounded_class_parameters(parameters, self.options)
+                    {
+                        return false;
+                    }
+                }
+                ClassMemberKind::Property { .. } => return false,
+            }
+        }
+
+        for (index, member) in declaration.members.iter().enumerate() {
+            match &member.kind {
+                ClassMemberKind::Constructor {
+                    has_body: false, ..
+                } => {
+                    let implementations = declaration.members[index + 1..]
+                        .iter()
+                        .take_while(|next| matches!(next.kind, ClassMemberKind::Constructor { .. }))
+                        .filter(|next| {
+                            matches!(
+                                next.kind,
+                                ClassMemberKind::Constructor { has_body: true, .. }
+                            )
+                        })
+                        .collect::<Vec<_>>();
+                    match implementations.as_slice() {
+                        [] => {}
+                        [implementation] => {
+                            if class_member_access(&member.modifiers)
+                                != class_member_access(&implementation.modifiers)
+                                || !self.class_overload_is_compatibly_modeled(
+                                    file,
+                                    member,
+                                    implementation,
+                                )
+                            {
+                                return false;
+                            }
+                        }
+                        _ => return false,
+                    }
+                }
+                ClassMemberKind::Method {
+                    has_body: false,
+                    accessor: None,
+                    ..
+                } => {
+                    let implementations = declaration.members[index + 1..]
+                        .iter()
+                        .take_while(|next| {
+                            matches!(
+                                &next.kind,
+                                ClassMemberKind::Method { accessor: None, .. }
+                                    if next.name == member.name
+                            )
+                        })
+                        .filter(|next| {
+                            matches!(next.kind, ClassMemberKind::Method { has_body: true, .. })
+                        })
+                        .collect::<Vec<_>>();
+                    match implementations.as_slice() {
+                        [] => {}
+                        [implementation] => {
+                            if class_member_access(&member.modifiers)
+                                != class_member_access(&implementation.modifiers)
+                                || member.modifiers.static_member
+                                    != implementation.modifiers.static_member
+                                || !self.class_overload_is_compatibly_modeled(
+                                    file,
+                                    member,
+                                    implementation,
+                                )
+                            {
+                                return false;
+                            }
+                        }
+                        _ => return false,
+                    }
+                }
+                ClassMemberKind::Constructor { .. }
+                | ClassMemberKind::Property { .. }
+                | ClassMemberKind::Method { .. } => {}
+            }
+        }
+        true
+    }
+
     fn visit_required_body(
         &mut self,
         file: FileId,
@@ -407,9 +638,15 @@ impl Checker<'_> {
         body: &[Statement],
         type_parameters: &HashMap<String, TypeId>,
     ) {
-        for statement in body {
+        for (index, statement) in body.iter().enumerate() {
             let statement_scope = self.node_scope(file, statement.id, scope);
-            self.visit_required_statement(file, statement_scope, statement, type_parameters);
+            self.visit_required_statement(
+                file,
+                statement_scope,
+                statement,
+                body.get(index + 1),
+                type_parameters,
+            );
         }
     }
 
@@ -1391,6 +1628,29 @@ impl Checker<'_> {
             let completion = self.visit_required_type(child, active);
             *state = state.combine(completion_state(&completion));
         }
+    }
+}
+
+fn bounded_class_parameters(
+    parameters: &[Parameter],
+    options: &crate::program::CompilerOptions,
+) -> bool {
+    parameters.iter().all(|parameter| {
+        !parameter.rest
+            && parameter.initializer.is_none()
+            && parameter.modifiers.is_empty()
+            && parameter.overload_completion_supported
+            && (!options.effective_no_implicit_any() || parameter.annotation.is_some())
+    })
+}
+
+const fn class_member_access(modifiers: &crate::syntax::ClassMemberModifiers) -> u8 {
+    if modifiers.private {
+        1
+    } else if modifiers.protected {
+        2
+    } else {
+        0
     }
 }
 

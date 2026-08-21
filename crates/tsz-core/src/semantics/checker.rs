@@ -405,7 +405,7 @@ impl<'a> Checker<'a> {
                     ..
                 } if !member.modifiers.abstract_member && !member.modifiers.declared => {
                     let Some(next) = declaration.members.get(index + 1) else {
-                        self.report_missing_method_implementation(file, member.name_span);
+                        self.report_missing_function_implementation(file, member.name_span);
                         continue;
                     };
                     let ClassMemberKind::Method {
@@ -414,7 +414,7 @@ impl<'a> Checker<'a> {
                         ..
                     } = &next.kind
                     else {
-                        self.report_missing_method_implementation(file, member.name_span);
+                        self.report_missing_function_implementation(file, member.name_span);
                         continue;
                     };
 
@@ -441,7 +441,7 @@ impl<'a> Checker<'a> {
                             2389,
                         );
                     } else {
-                        self.report_missing_method_implementation(file, member.name_span);
+                        self.report_missing_function_implementation(file, member.name_span);
                     }
                 }
                 ClassMemberKind::Constructor { .. }
@@ -451,7 +451,7 @@ impl<'a> Checker<'a> {
         }
     }
 
-    fn report_missing_method_implementation(&mut self, file: FileId, span: Span) {
+    fn report_missing_function_implementation(&mut self, file: FileId, span: Span) {
         self.push_diagnostic(
             file,
             span,
@@ -569,6 +569,12 @@ impl<'a> Checker<'a> {
 
     fn declaration_value_type(&mut self, id: DeclId) -> Completion<TypeId> {
         if self.program.standard_library_declaration(id).is_some() {
+            return Completion::Deferred;
+        }
+        // A reference to an overload group is a semantic demand: selecting a
+        // signature is not modeled yet. Declaration self-checking bypasses
+        // this gateway through `declared_function_type`.
+        if self.function_value_requires_overload_resolution(id) {
             return Completion::Deferred;
         }
         if self.deferred_anonymous_parameters.contains(&id) {

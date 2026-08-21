@@ -17,6 +17,7 @@ impl Parser<'_> {
     }
 
     pub(super) fn parse_parameter(&mut self) -> Parameter {
+        let diagnostic_count = self.diagnostics.len();
         let start = self.current().span.start as usize;
         let mut modifiers = Vec::new();
         while let Some(modifier) = parameter_modifier(self.kind()) {
@@ -31,6 +32,8 @@ impl Parser<'_> {
         }
         let rest_span = self.at(TokenKind::DotDotDot).then(|| self.bump().span);
         let rest = rest_span.is_some();
+        let name_kind = self.kind();
+        let ordinary_identifier = name_kind == TokenKind::Identifier;
         let (name, name_span) = self.parse_name();
         let optional_span = self.at(TokenKind::Question).then(|| self.bump().span);
         let optional = optional_span.is_some();
@@ -45,6 +48,12 @@ impl Parser<'_> {
         };
         let initializer = self.eat(TokenKind::Equals).then(|| self.parse_expression());
         let end = self.previous_end().max(start);
+        let overload_completion_supported = ordinary_identifier
+            && modifiers.is_empty()
+            && self.diagnostics.len() == diagnostic_count;
+        let function_implementation_completion_supported = name_kind.is_identifier()
+            && modifiers.is_empty()
+            && self.diagnostics.len() == diagnostic_count;
         Parameter {
             name,
             name_span,
@@ -55,6 +64,8 @@ impl Parser<'_> {
             rest,
             rest_span,
             modifiers,
+            overload_completion_supported,
+            function_implementation_completion_supported,
             span: Span::new(self.source.id, start, end),
         }
     }

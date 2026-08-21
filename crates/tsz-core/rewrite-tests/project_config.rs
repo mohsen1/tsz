@@ -1,12 +1,13 @@
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use tempfile::TempDir;
-use tsz::Compiler;
 use tsz::config::{ProjectRequest, ProjectSelection, resolve_project};
 use tsz::host::{HostEntry, ProgramHost, SystemHost};
+use tsz::{CompileExitStatus, Compiler, CompilerOptions, SemanticCompletion, SourceInput};
 
 struct CountingHost {
     inner: SystemHost,
@@ -541,6 +542,95 @@ fn project_directory_file_and_ancestor_search_share_core_resolution() {
         &ProjectRequest::new(ProjectSelection::Project(root.join("absent.json"))),
     );
     assert_eq!(codes(&no_file), [5058]);
+}
+
+#[cfg(unix)]
+#[test]
+fn transport_alias_realpaths_only_normalize_source_root_identity() {
+    let fixture = TempDir::new().expect("tempdir");
+    let fixture_root = fixture.path();
+    write(
+        fixture_root,
+        "real/tsconfig.json",
+        r#"{"compilerOptions":{"noEmit":true,"strict":true},"files":["test.ts"]}"#,
+    );
+    write(fixture_root, "real/test.ts", "function bodyless():void;\n");
+    std::os::unix::fs::symlink(
+        fixture_root.join("real"),
+        fixture_root.join("transport-alias"),
+    )
+    .expect("transport alias");
+    let canonical_root = fixture_root
+        .join("real")
+        .canonicalize()
+        .expect("canonical project root");
+    let host = SystemHost::new(canonical_root);
+    let resolved = resolve_project(
+        &host,
+        &ProjectRequest::new(ProjectSelection::Project(
+            fixture_root.join("transport-alias/tsconfig.json"),
+        )),
+    );
+    let options = resolved.options.clone();
+    let output = Compiler::new().compile_resolved(resolved, &options);
+
+    assert_eq!(output.program.files[0].source.path, Path::new("test.ts"));
+    assert_eq!(
+        output
+            .diagnostics
+            .iter()
+            .map(|diagnostic| diagnostic.code)
+            .collect::<Vec<_>>(),
+        [2391]
+    );
+    assert_eq!(output.diagnostics[0].file, "test.ts");
+}
+
+#[cfg(unix)]
+#[test]
+fn symlink_spelled_config_preserves_diagnostic_and_output_layout() {
+    let fixture = TempDir::new().expect("tempdir");
+    let root = fixture.path();
+    write(
+        root,
+        "real/project/tsconfig.json",
+        r#"{
+            "compilerOptions":{"rootDir":".","outDir":"dist","declaration":true},
+            "files":["entry.ts"]
+        }"#,
+    );
+    write(
+        root,
+        "real/project/entry.ts",
+        "export const value:number=1;\n",
+    );
+    std::os::unix::fs::symlink(root.join("real/project"), root.join("alias"))
+        .expect("project symlink");
+    let host = SystemHost::new(root);
+    let resolved = resolve_project(
+        &host,
+        &ProjectRequest::new(ProjectSelection::Project(root.join("alias/tsconfig.json"))),
+    );
+    assert_eq!(resolved.inputs[0].path, Path::new("alias/entry.ts"));
+    assert_eq!(resolved.options.out_dir, Some(root.join("alias/dist")));
+    let options = resolved.options.clone();
+    let output = Compiler::new().compile_resolved(resolved, &options);
+
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    // CompileOutput is an in-memory product and retains the authored config
+    // spelling. A filesystem adapter writes these paths to the same physical
+    // targets as `real/project/dist/*` through the symlink.
+    assert_eq!(
+        relative_paths(
+            root,
+            &output
+                .emitted_files
+                .iter()
+                .map(|file| file.path.clone())
+                .collect::<Vec<_>>(),
+        ),
+        ["alias/dist/entry.d.ts", "alias/dist/entry.js"]
+    );
 }
 
 #[test]
@@ -1442,4 +1532,42 @@ fn inherited_option_origins_follow_ts7_diagnostic_ownership() {
         .expect("TS5011");
     assert!(layout.file.is_empty());
     assert!(layout.render(None).starts_with("error TS5011:"));
+}
+
+#[test]
+fn commonjs_overloads_wait_for_hoisted_export_product_ownership() {
+    for source in [
+        "export function select(value:string):string;export function select(value:any):any{return value}",
+        "export class Vessel{method(value:string):string;method(value:any):any{return value}}",
+        "export class Vessel{method():void;}",
+        "export class Vessel{constructor();}",
+        "class Vessel{method():void;}export{Vessel};",
+        "export{Vessel};class Vessel{method():void;}",
+        "class Vessel{method():void;}export{Vessel as Ship};",
+    ] {
+        for (path, module) in [
+            ("overloads.ts", "commonjs"),
+            ("overloads.cts", "node16"),
+            ("overloads.cts", "nodenext"),
+        ] {
+            for no_check in [false, true] {
+                let output = Compiler::new().compile(
+                    vec![SourceInput::new(path, Arc::<str>::from(source))],
+                    &CompilerOptions {
+                        declaration: true,
+                        no_check,
+                        target: "esnext".to_string(),
+                        module: module.to_string(),
+                        ..CompilerOptions::default()
+                    },
+                );
+                assert_eq!(output.semantic_completion, SemanticCompletion::Deferred);
+                assert_eq!(output.exit_status, CompileExitStatus::SemanticIncomplete);
+                assert!(
+                    output.emitted_files.is_empty(),
+                    "{source}/{module}/{no_check}"
+                );
+            }
+        }
+    }
 }

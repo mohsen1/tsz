@@ -1,6 +1,7 @@
 use crate::diagnostics::Diagnostic;
 use crate::source::{NodeId, SourceText, Span};
 
+mod modifiers;
 mod parameters;
 mod type_members;
 mod type_parameters;
@@ -9,10 +10,11 @@ use super::{
     AccessorKind, ArrowBody, BinaryOperator, ClassDeclaration, ClassMember, ClassMemberKind,
     ClassMemberModifiers, ExportDeclaration, ExportSpecifier, Expression, ExpressionKind,
     FunctionDeclaration, IfStatement, ImportBinding, ImportDeclaration, InterfaceDeclaration,
-    JumpStatement, Literal, ObjectProperty, Parameter, Statement, StatementKind, SwitchClause,
-    SwitchClauseKind, SwitchStatement, Token, TokenKind, TypeAliasDeclaration, TypeNode,
-    TypeNodeKind, UnaryOperator, VariableDeclaration, VariableKind, scan_source,
+    JumpStatement, Literal, ObjectProperty, Parameter, ParameterModifier, Statement, StatementKind,
+    SwitchClause, SwitchClauseKind, SwitchStatement, Token, TokenKind, TypeAliasDeclaration,
+    TypeNode, TypeNodeKind, UnaryOperator, VariableDeclaration, VariableKind, scan_source,
 };
+use modifiers::{Modifiers, ProductCapabilities};
 
 #[derive(Debug)]
 pub struct ParseOutput {
@@ -24,16 +26,6 @@ pub fn parse_source(source: &SourceText) -> ParseOutput {
     let scanned = scan_source(source);
     Parser::new(source, scanned.tokens, scanned.diagnostics).parse()
 }
-
-#[derive(Debug, Clone, Copy, Default)]
-struct Modifiers {
-    exported: bool,
-    default_export: bool,
-    declared: bool,
-    is_async: bool,
-    abstract_declaration: bool,
-}
-
 struct Parser<'a> {
     source: &'a SourceText,
     tokens: Vec<Token>,
@@ -43,6 +35,7 @@ struct Parser<'a> {
     speculating: bool,
     speculative_token_rewrites: Vec<(usize, Token)>,
     type_member_recovery_code: u32,
+    product_capabilities: ProductCapabilities,
 }
 
 impl<'a> Parser<'a> {
@@ -56,6 +49,7 @@ impl<'a> Parser<'a> {
             speculating: false,
             speculative_token_rewrites: Vec::new(),
             type_member_recovery_code: 1128,
+            product_capabilities: ProductCapabilities::all_supported(),
         }
     }
 
@@ -73,6 +67,11 @@ impl<'a> Parser<'a> {
             unit: super::SourceUnit {
                 statements,
                 span: Span::new(self.source.id, 0, end),
+                function_products_supported: self.product_capabilities.functions_supported,
+                class_products_supported: self.product_capabilities.classes_supported,
+                commonjs_class_products_supported: self
+                    .product_capabilities
+                    .commonjs_classes_supported(),
             },
             diagnostics: self.diagnostics,
         }
@@ -242,33 +241,6 @@ impl<'a> Parser<'a> {
         JumpStatement { label, label_span }
     }
 
-    fn parse_modifiers(&mut self) -> Modifiers {
-        let mut modifiers = Modifiers::default();
-        loop {
-            match self.kind() {
-                TokenKind::Export => {
-                    modifiers.exported = true;
-                    self.bump();
-                    modifiers.default_export = self.eat(TokenKind::Default);
-                }
-                TokenKind::Declare => {
-                    modifiers.declared = true;
-                    self.bump();
-                }
-                TokenKind::Async => {
-                    modifiers.is_async = true;
-                    self.bump();
-                }
-                TokenKind::Abstract => {
-                    modifiers.abstract_declaration = true;
-                    self.bump();
-                }
-                _ => break,
-            }
-        }
-        modifiers
-    }
-
     fn starts_export_declaration(&self) -> bool {
         if !self.at(TokenKind::Export) {
             return false;
@@ -404,6 +376,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_export_declaration(&mut self) -> ExportDeclaration {
+        self.product_capabilities.observe_module_export();
         self.expect(TokenKind::Export, "'export' expected.", 1005);
         let default_export = self.eat(TokenKind::Default);
         if default_export || self.eat(TokenKind::Equals) {
@@ -550,6 +523,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_function(&mut self, modifiers: Modifiers) -> FunctionDeclaration {
+        let diagnostic_count = self.diagnostics.len();
         self.expect(TokenKind::Function, "'function' expected.", 1005);
         let (name, name_span) = self.parse_name();
         let type_parameters = self.parse_type_parameters();
@@ -562,6 +536,17 @@ impl<'a> Parser<'a> {
             self.eat(TokenKind::Semicolon);
             Vec::new()
         };
+        let overload_completion_supported = !modifiers.unsupported_for_overload_completion
+            && parameters.iter().all(|parameter| {
+                if has_body {
+                    parameter.function_implementation_completion_supported
+                } else {
+                    parameter.overload_completion_supported
+                }
+            })
+            && self.diagnostics.len() == diagnostic_count;
+        self.product_capabilities
+            .observe_function(modifiers, overload_completion_supported);
         FunctionDeclaration {
             name,
             name_span,
@@ -571,8 +556,11 @@ impl<'a> Parser<'a> {
             body,
             has_body,
             exported: modifiers.exported,
+            default_export: modifiers.default_export,
             is_async: modifiers.is_async,
             declared: modifiers.declared,
+            abstract_declaration: modifiers.abstract_declaration,
+            overload_completion_supported,
         }
     }
 
@@ -609,6 +597,7 @@ impl<'a> Parser<'a> {
             }
         }
         self.expect(TokenKind::RightBrace, "'}' expected.", 1005);
+        self.product_capabilities.observe_class(modifiers, &members);
         ClassDeclaration {
             name,
             name_span,
@@ -624,19 +613,21 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_class_member(&mut self) -> Option<ClassMember> {
+        let diagnostic_count = self.diagnostics.len();
         let start = self.current().span;
         let mut modifiers = ClassMemberModifiers::default();
         loop {
             match self.kind() {
-                TokenKind::Public => modifiers.public = true,
-                TokenKind::Protected => modifiers.protected = true,
-                TokenKind::Private => modifiers.private = true,
-                TokenKind::Readonly => modifiers.readonly = true,
-                TokenKind::Static => modifiers.static_member = true,
-                TokenKind::Abstract => modifiers.abstract_member = true,
-                TokenKind::Declare => modifiers.declared = true,
-                TokenKind::Async => modifiers.async_member = true,
-                TokenKind::Override | TokenKind::Accessor => {}
+                TokenKind::Public => modifiers.observe(ParameterModifier::Public),
+                TokenKind::Protected => modifiers.observe(ParameterModifier::Protected),
+                TokenKind::Private => modifiers.observe(ParameterModifier::Private),
+                TokenKind::Readonly => modifiers.observe(ParameterModifier::Readonly),
+                TokenKind::Static => modifiers.observe(ParameterModifier::Static),
+                TokenKind::Abstract => modifiers.observe(ParameterModifier::Abstract),
+                TokenKind::Declare => modifiers.observe(ParameterModifier::Declare),
+                TokenKind::Async => modifiers.observe(ParameterModifier::Async),
+                TokenKind::Override => modifiers.observe(ParameterModifier::Override),
+                TokenKind::Accessor => modifiers.observe(ParameterModifier::Accessor),
                 _ => break,
             }
             self.bump();
@@ -657,6 +648,10 @@ impl<'a> Parser<'a> {
                 name: "constructor".to_string(),
                 name_span,
                 span: start.merge(self.previous().span),
+                overload_completion_supported: !modifiers.unsupported_for_overload_completion
+                    && self.diagnostics.len() == diagnostic_count,
+                emit_products_supported: modifiers.constructor_products_supported()
+                    && self.diagnostics.len() == diagnostic_count,
                 modifiers,
                 kind: ClassMemberKind::Constructor {
                     parameters,
@@ -677,7 +672,7 @@ impl<'a> Parser<'a> {
             }
             _ => None,
         };
-        let (name, name_span) = self.parse_property_name();
+        let (name, name_span, identifier_name) = self.parse_property_name();
         let optional = self.eat(TokenKind::Question);
         let definite = self.eat(TokenKind::Bang);
         let type_parameters = self.parse_type_parameters();
@@ -696,6 +691,14 @@ impl<'a> Parser<'a> {
                 name,
                 name_span,
                 span: start.merge(self.previous().span),
+                overload_completion_supported: identifier_name
+                    && !optional
+                    && !definite
+                    && self.diagnostics.len() == diagnostic_count,
+                emit_products_supported: modifiers.method_products_supported()
+                    && !optional
+                    && !definite
+                    && self.diagnostics.len() == diagnostic_count,
                 modifiers,
                 kind: ClassMemberKind::Method {
                     type_parameters,
@@ -715,6 +718,9 @@ impl<'a> Parser<'a> {
             name,
             name_span,
             span: start.merge(self.previous().span),
+            overload_completion_supported: false,
+            emit_products_supported: modifiers.property_products_supported()
+                && self.diagnostics.len() == diagnostic_count,
             modifiers,
             kind: ClassMemberKind::Property {
                 annotation,
@@ -1364,6 +1370,8 @@ impl<'a> Parser<'a> {
                         rest: false,
                         rest_span: None,
                         modifiers: Vec::new(),
+                        overload_completion_supported: token.kind == TokenKind::Identifier,
+                        function_implementation_completion_supported: token.kind.is_identifier(),
                         span: token.span,
                     };
                     let body = self.parse_arrow_body();
@@ -1539,7 +1547,7 @@ impl<'a> Parser<'a> {
         let mut properties = Vec::new();
         while !self.at_any(&[TokenKind::RightBrace, TokenKind::EndOfFile]) {
             let start = self.current().span;
-            let (name, name_span) = self.parse_property_name();
+            let (name, name_span, _) = self.parse_property_name();
             let value = if self.eat(TokenKind::Colon) {
                 self.parse_expression()
             } else {
@@ -1628,7 +1636,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_property_name(&mut self) -> (String, Span) {
+    fn parse_property_name(&mut self) -> (String, Span, bool) {
         let token = *self.current();
         match token.kind {
             TokenKind::StringLiteral | TokenKind::NumericLiteral | TokenKind::PrivateIdentifier => {
@@ -1639,13 +1647,16 @@ impl<'a> Parser<'a> {
                 } else {
                     text.to_string()
                 };
-                (name, token.span)
+                (name, token.span, false)
             }
             _ if token_is_identifier_name(token.kind) => {
                 self.bump();
-                (self.text(token.span).to_string(), token.span)
+                (self.text(token.span).to_string(), token.span, true)
             }
-            _ => self.parse_name(),
+            _ => {
+                let (name, span) = self.parse_name();
+                (name, span, false)
+            }
         }
     }
 

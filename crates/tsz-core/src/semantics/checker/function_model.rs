@@ -1,13 +1,14 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::bind::ScopeId;
+use crate::bind::{DeclarationKind, Meaning, ScopeId};
 use crate::source::{DeclId, FileId, NodeId};
 use crate::syntax::{
-    ArrowBody, Expression, ExpressionKind, FunctionDeclaration, Parameter, Statement,
-    StatementKind, TypeNode,
+    ArrowBody, ClassMember, ClassMemberKind, Expression, ExpressionKind, FunctionDeclaration,
+    Parameter, Statement, StatementKind, TypeNode,
 };
 
-use super::Checker;
+use super::{Checker, DeclarationModel};
+use crate::semantics::relation::{RelationMode, RelationPropertyOrder, relate_with_property_order};
 use crate::semantics::types::{
     Completion, ParameterType, Signature, TypeId, TypeKind, UnionPolicy,
 };
@@ -24,6 +25,365 @@ struct ReturnAnalysis<'a> {
 }
 
 impl Checker<'_> {
+    pub(super) fn declared_function_type(&mut self, id: DeclId) -> Completion<TypeId> {
+        let Some(DeclarationModel::Function { declaration, scope }) = self.models.get(&id).copied()
+        else {
+            return Completion::Deferred;
+        };
+        self.function_type(id, declaration, scope)
+    }
+
+    pub(super) fn function_value_requires_overload_resolution(&self, id: DeclId) -> bool {
+        self.function_group_ids(id).into_iter().take(2).count() > 1
+    }
+
+    fn function_group_ids(&self, id: DeclId) -> Vec<DeclId> {
+        let bindings = &self.program.files[id.file.0 as usize].bindings;
+        let Some(declaration) = bindings.declaration(id) else {
+            return Vec::new();
+        };
+        if declaration.kind != DeclarationKind::Function || declaration.meaning != Meaning::Value {
+            return Vec::new();
+        }
+        let global_script_group = declaration.scope == ScopeId(0)
+            && !self.program.files[id.file.0 as usize].is_external_module();
+        let group = if global_script_group {
+            self.program.global_values.get(&declaration.name)
+        } else {
+            bindings
+                .scopes
+                .get(declaration.scope.0 as usize)
+                .and_then(|scope| scope.names.get(&declaration.name))
+        };
+        group
+            .into_iter()
+            .flatten()
+            .copied()
+            .filter(|candidate| {
+                let candidate_file = &self.program.files[candidate.file.0 as usize];
+                (!global_script_group || !candidate_file.is_external_module())
+                    && candidate_file
+                        .bindings
+                        .declaration(*candidate)
+                        .is_some_and(|candidate| {
+                            candidate.kind == DeclarationKind::Function
+                                && candidate.meaning == Meaning::Value
+                        })
+            })
+            .collect()
+    }
+
+    /// Validate only the overload owners modeled at this checkpoint. Calls
+    /// and projections still use the demand gateway above; an unsupported
+    /// compatibility owner makes the whole check an honest nonclaim.
+    pub(super) fn validate_function_overload_group(&mut self, id: DeclId) {
+        let group = self.function_group_ids(id);
+        if group.len() < 2 || group.first() != Some(&id) {
+            return;
+        }
+
+        if group.iter().any(|candidate| {
+            matches!(
+                self.models.get(candidate),
+                Some(DeclarationModel::Function { declaration, .. })
+                    if declaration.is_async
+                        || declaration.default_export
+                        || declaration.abstract_declaration
+                        || !declaration.overload_completion_supported
+            )
+        }) {
+            // TS1064, default-export overload ownership, and the invalid
+            // abstract-function modifier are not modeled by this bounded
+            // ordinary-overload checkpoint.
+            let _ = self.require_completion(Completion::<()>::Deferred);
+            return;
+        }
+
+        self.validate_function_overload_modifiers(&group);
+
+        let implementations = group
+            .iter()
+            .copied()
+            .filter(|candidate| {
+                matches!(
+                    self.models.get(candidate),
+                    Some(DeclarationModel::Function { declaration, .. }) if declaration.has_body
+                )
+            })
+            .collect::<Vec<_>>();
+        let [implementation] = implementations.as_slice() else {
+            if !implementations.is_empty() {
+                let _ = self.require_completion(Completion::<()>::Deferred);
+            }
+            return;
+        };
+
+        let overloads = group
+            .iter()
+            .copied()
+            .filter(|candidate| {
+                matches!(
+                    self.models.get(candidate),
+                    Some(DeclarationModel::Function { declaration, .. }) if !declaration.has_body
+                )
+            })
+            .collect::<Vec<_>>();
+        for overload in overloads {
+            if !self.function_overload_is_compatibly_modeled(*implementation, overload) {
+                // TS2394 requires the full erased-signature owner. Until that
+                // owner is modeled, do not cache or publish a Complete result.
+                let _ = self.require_completion(Completion::<()>::Deferred);
+                return;
+            }
+        }
+    }
+
+    fn validate_function_overload_modifiers(&mut self, group: &[DeclId]) {
+        let mut files = group.iter().map(|id| id.file).collect::<Vec<_>>();
+        files.sort_unstable();
+        files.dedup();
+        for file in files {
+            let declarations = group
+                .iter()
+                .copied()
+                .filter(|id| id.file == file)
+                .collect::<Vec<_>>();
+            let canonical = declarations
+                .iter()
+                .copied()
+                .find(|id| {
+                    matches!(
+                        self.models.get(id),
+                        Some(DeclarationModel::Function { declaration, .. }) if declaration.has_body
+                    )
+                })
+                .unwrap_or(declarations[0]);
+            let Some(DeclarationModel::Function {
+                declaration: canonical,
+                ..
+            }) = self.models.get(&canonical).copied()
+            else {
+                let _ = self.require_completion(Completion::<()>::Deferred);
+                continue;
+            };
+            let canonical_ambient = canonical.declared
+                || super::is_declaration_source(&self.program.files[file.0 as usize].source.path);
+            for id in declarations {
+                let Some(DeclarationModel::Function { declaration, .. }) =
+                    self.models.get(&id).copied()
+                else {
+                    let _ = self.require_completion(Completion::<()>::Deferred);
+                    continue;
+                };
+                if declaration.exported != canonical.exported {
+                    self.push_diagnostic(
+                        file,
+                        declaration.name_span,
+                        "Overload signatures must all be exported or non-exported.".to_string(),
+                        2383,
+                    );
+                } else {
+                    let ambient = declaration.declared
+                        || super::is_declaration_source(
+                            &self.program.files[file.0 as usize].source.path,
+                        );
+                    if ambient != canonical_ambient {
+                        self.push_diagnostic(
+                            file,
+                            declaration.name_span,
+                            "Overload signatures must all be ambient or non-ambient.".to_string(),
+                            2384,
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    fn function_overload_is_compatibly_modeled(
+        &mut self,
+        implementation: DeclId,
+        overload: DeclId,
+    ) -> bool {
+        let Some(DeclarationModel::Function {
+            declaration: implementation_declaration,
+            ..
+        }) = self.models.get(&implementation).copied()
+        else {
+            return false;
+        };
+        let Some(DeclarationModel::Function {
+            declaration: overload_declaration,
+            ..
+        }) = self.models.get(&overload).copied()
+        else {
+            return false;
+        };
+        if !implementation_declaration.type_parameters.is_empty()
+            || !overload_declaration.type_parameters.is_empty()
+            || implementation_declaration
+                .parameters
+                .iter()
+                .chain(&overload_declaration.parameters)
+                .any(|parameter| parameter.rest || parameter.initializer.is_some())
+        {
+            return false;
+        }
+
+        let Completion::Complete(implementation_type) = self.declared_function_type(implementation)
+        else {
+            return false;
+        };
+        let Completion::Complete(overload_type) = self.declared_function_type(overload) else {
+            return false;
+        };
+        let TypeKind::Function(implementation_signature) =
+            self.store.kind(implementation_type).clone()
+        else {
+            return false;
+        };
+        let TypeKind::Function(overload_signature) = self.store.kind(overload_type).clone() else {
+            return false;
+        };
+
+        self.signatures_are_compatibly_modeled(&implementation_signature, &overload_signature)
+    }
+
+    pub(super) fn class_overload_is_compatibly_modeled(
+        &mut self,
+        file: FileId,
+        overload: &ClassMember,
+        implementation: &ClassMember,
+    ) -> bool {
+        let overload_scope = self.program.files[file.0 as usize]
+            .bindings
+            .scope_for_node
+            .get(&overload.id)
+            .copied();
+        let implementation_scope = self.program.files[file.0 as usize]
+            .bindings
+            .scope_for_node
+            .get(&implementation.id)
+            .copied();
+        let (Some(overload_scope), Some(implementation_scope)) =
+            (overload_scope, implementation_scope)
+        else {
+            return false;
+        };
+        let (overload_parameters, overload_return) = match &overload.kind {
+            ClassMemberKind::Constructor { parameters, .. } => {
+                (parameters.as_slice(), self.store.builtins.void)
+            }
+            ClassMemberKind::Method {
+                parameters,
+                return_type,
+                ..
+            } => (
+                parameters.as_slice(),
+                return_type
+                    .as_ref()
+                    .map_or(self.store.builtins.any, |node| {
+                        self.resolve_type_node(file, overload_scope, node, &HashMap::new())
+                    }),
+            ),
+            ClassMemberKind::Property { .. } => return false,
+        };
+        let (implementation_parameters, implementation_return) = match &implementation.kind {
+            ClassMemberKind::Constructor { parameters, .. } => {
+                (parameters.as_slice(), self.store.builtins.void)
+            }
+            ClassMemberKind::Method {
+                parameters,
+                return_type,
+                ..
+            } => (
+                parameters.as_slice(),
+                return_type
+                    .as_ref()
+                    .map_or(self.store.builtins.void, |node| {
+                        self.resolve_type_node(file, implementation_scope, node, &HashMap::new())
+                    }),
+            ),
+            ClassMemberKind::Property { .. } => return false,
+        };
+        let Completion::Complete(overload_parameters) = self.anonymous_signature_parameters(
+            file,
+            overload_scope,
+            overload_parameters,
+            &HashMap::new(),
+        ) else {
+            return false;
+        };
+        let Completion::Complete(implementation_parameters) = self.anonymous_signature_parameters(
+            file,
+            implementation_scope,
+            implementation_parameters,
+            &HashMap::new(),
+        ) else {
+            return false;
+        };
+        self.signatures_are_compatibly_modeled(
+            &Signature {
+                parameters: implementation_parameters,
+                return_type: implementation_return,
+            },
+            &Signature {
+                parameters: overload_parameters,
+                return_type: overload_return,
+            },
+        )
+    }
+
+    fn signatures_are_compatibly_modeled(
+        &mut self,
+        implementation_signature: &Signature,
+        overload_signature: &Signature,
+    ) -> bool {
+        let implementation_required = implementation_signature
+            .parameters
+            .iter()
+            .filter(|parameter| !parameter.optional)
+            .count();
+        let overload_required = overload_signature
+            .parameters
+            .iter()
+            .filter(|parameter| !parameter.optional)
+            .count();
+        if implementation_required > overload_required {
+            return false;
+        }
+        for (implementation_parameter, overload_parameter) in implementation_signature
+            .parameters
+            .iter()
+            .zip(&overload_signature.parameters)
+        {
+            if !self.types_are_assignable(overload_parameter.ty, implementation_parameter.ty) {
+                return false;
+            }
+        }
+        matches!(
+            self.store.kind(overload_signature.return_type),
+            TypeKind::Void
+        ) || self.types_are_assignable(
+            overload_signature.return_type,
+            implementation_signature.return_type,
+        ) || self.types_are_assignable(
+            implementation_signature.return_type,
+            overload_signature.return_type,
+        )
+    }
+
+    fn types_are_assignable(&mut self, source: TypeId, target: TypeId) -> bool {
+        relate_with_property_order(
+            self,
+            source,
+            target,
+            RelationMode::Assignment,
+            RelationPropertyOrder::default(),
+        )
+        .is_ok()
+    }
+
     pub(super) fn infer_arrow_expression(
         &mut self,
         file: FileId,
@@ -224,9 +584,6 @@ impl Checker<'_> {
         declaration: &FunctionDeclaration,
         scope: ScopeId,
     ) -> Completion<TypeId> {
-        if !declaration.has_body && !declaration.declared {
-            return Completion::Deferred;
-        }
         let mut type_parameters = HashMap::new();
         let mut seen = HashSet::new();
         for (index, parameter) in declaration.type_parameters.iter().enumerate() {
@@ -271,6 +628,11 @@ impl Checker<'_> {
                 return Completion::Deferred;
             }
             self.resolve_type_node(id.file, scope, return_type, &type_parameters)
+        } else if !declaration.has_body {
+            // A signature without a body has no empty block from which to
+            // infer `void`. TS7010 owns the strict-mode diagnostic, while the
+            // authored callable signature recovers with an `any` return.
+            self.store.builtins.any
         } else {
             match self.infer_function_return(id, declaration, scope) {
                 Completion::Complete(return_type) => return_type,

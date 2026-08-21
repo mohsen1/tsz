@@ -371,7 +371,7 @@ impl NavigationIndex {
 
     fn collect_bound_declarations(&mut self, file: &ProgramFile, dual_globals: &BTreeSet<String>) {
         let file_name = normalize_path(&file.source.path.to_string_lossy());
-        let module_file = is_external_module(file);
+        let module_file = file.is_external_module();
         let syntax_metadata = syntax_declaration_metadata(file);
         let mut same_span: BTreeMap<(u32, u32), SymbolKey> = BTreeMap::new();
 
@@ -1183,36 +1183,13 @@ fn dual_global_names(program: &Program) -> BTreeSet<String> {
     program
         .files
         .iter()
-        .filter(|file| !is_external_module(file))
+        .filter(|file| !file.is_external_module())
         .flat_map(|file| &file.bindings.declarations)
         .filter(|declaration| {
             declaration.scope == ScopeId(0) && matches!(declaration.kind, DeclarationKind::Class)
         })
         .map(|declaration| declaration.name.clone())
         .collect()
-}
-
-fn is_external_module(file: &ProgramFile) -> bool {
-    file.syntax
-        .statements
-        .iter()
-        .any(|statement| match &statement.kind {
-            StatementKind::Import(_) | StatementKind::Export(_) => true,
-            StatementKind::Variable(declaration) => declaration.exported,
-            StatementKind::Function(declaration) => declaration.exported,
-            StatementKind::Class(declaration) => declaration.exported || declaration.default_export,
-            StatementKind::TypeAlias(declaration) => declaration.exported,
-            StatementKind::Interface(declaration) => declaration.exported,
-            StatementKind::If(_)
-            | StatementKind::Switch(_)
-            | StatementKind::Break(_)
-            | StatementKind::Continue(_)
-            | StatementKind::Return(_)
-            | StatementKind::Block(_)
-            | StatementKind::Expression(_)
-            | StatementKind::Empty
-            | StatementKind::Unknown => false,
-        })
 }
 
 #[derive(Debug, Clone)]

@@ -6,7 +6,7 @@
 mod reachability;
 mod type_members;
 
-use crate::emit_paths::{EmitFilePlan, EmitPlan, is_declaration_source};
+use crate::emit_paths::{EmitFilePlan, EmitPlan, is_declaration_source, is_effective_commonjs};
 use crate::program::{CompilerOptions, EmittedFile, ProgramFile};
 use crate::source::{SourceText, Span};
 use crate::syntax::{
@@ -57,7 +57,7 @@ pub(crate) fn emit_file_with_plan(
     }
 
     if let Some(declaration_path) = &plan.declaration
-        && !reachability::requires_checked_declaration_reachability(&file.syntax)
+        && !reachability::requires_checked_declaration_reachability(file)
     {
         let mut declarations = Printer::new(&file.source, options);
         declarations.emit_declarations(&file.syntax);
@@ -96,7 +96,6 @@ struct Printer<'a> {
 impl<'a> Printer<'a> {
     fn new(source: &'a SourceText, options: &CompilerOptions) -> Self {
         let target = options.target.trim().to_ascii_lowercase();
-        let module = options.module.trim().to_ascii_lowercase();
         let extension = source
             .path
             .extension()
@@ -108,9 +107,7 @@ impl<'a> Printer<'a> {
             source,
             output: String::new(),
             indent: 0,
-            module_format: if matches!(module.as_str(), "commonjs" | "cjs")
-                || (matches!(module.as_str(), "node16" | "nodenext") && extension == "cts")
-            {
+            module_format: if is_effective_commonjs(&source.path, &options.module) {
                 ModuleFormat::CommonJs
             } else {
                 ModuleFormat::EsModule
@@ -1116,6 +1113,8 @@ impl<'a> Printer<'a> {
                     type_parameters,
                     parameters,
                     return_type,
+                    body,
+                    has_body,
                     accessor,
                     ..
                 } => {
@@ -1131,7 +1130,12 @@ impl<'a> Printer<'a> {
                     self.output.push_str(": ");
                     if let Some(return_type) = return_type {
                         self.write_type(return_type, TYPE_PREC_LOWEST);
+                    } else if !has_body {
+                        self.output.push_str("any");
+                    } else if body.is_empty() {
+                        self.output.push_str("void");
                     } else {
+                        self.declaration_supported = false;
                         self.output.push_str("unknown");
                     }
                     self.output.push_str(";\n");

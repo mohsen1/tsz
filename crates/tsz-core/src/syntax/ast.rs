@@ -4,9 +4,41 @@ use crate::source::{NodeId, Span};
 pub struct SourceUnit {
     pub statements: Vec<Statement>,
     pub span: Span,
+    pub(crate) function_products_supported: bool,
+    pub(crate) class_products_supported: bool,
+    pub(crate) commonjs_class_products_supported: bool,
 }
 
 impl SourceUnit {
+    /// Whether this file owns a module-local root scope rather than
+    /// contributing declarations to the program's global script scope.
+    #[must_use]
+    pub fn is_external_module(&self) -> bool {
+        self.statements
+            .iter()
+            .any(|statement| match &statement.kind {
+                StatementKind::Import(_) | StatementKind::Export(_) => true,
+                StatementKind::Variable(declaration) => declaration.exported,
+                StatementKind::Function(declaration) => {
+                    declaration.exported || declaration.default_export
+                }
+                StatementKind::Class(declaration) => {
+                    declaration.exported || declaration.default_export
+                }
+                StatementKind::TypeAlias(declaration) => declaration.exported,
+                StatementKind::Interface(declaration) => declaration.exported,
+                StatementKind::If(_)
+                | StatementKind::Switch(_)
+                | StatementKind::Break(_)
+                | StatementKind::Continue(_)
+                | StatementKind::Return(_)
+                | StatementKind::Block(_)
+                | StatementKind::Expression(_)
+                | StatementKind::Empty
+                | StatementKind::Unknown => false,
+            })
+    }
+
     /// Whether parser recovery escaped an authored type-member list anywhere
     /// in this file. Emit blocks both products until the enclosing recovery
     /// syntax is represented explicitly.
@@ -15,6 +47,86 @@ impl SourceUnit {
         self.statements
             .iter()
             .any(Statement::contains_recovered_type_members)
+    }
+
+    /// Whether declaration emit needs an overload summary that the syntax
+    /// printer does not own yet. Runtime implementations must be omitted from
+    /// `.d.ts` output whenever a sibling signature exists.
+    #[must_use]
+    pub fn has_local_unmodeled_declaration_overloads(&self) -> bool {
+        self.statements
+            .iter()
+            .any(|statement| match &statement.kind {
+                StatementKind::Function(declaration) if !declaration.has_body => {
+                    self.statements.iter().any(|candidate| {
+                        matches!(
+                            &candidate.kind,
+                            StatementKind::Function(candidate)
+                                if candidate.has_body && candidate.name == declaration.name
+                        )
+                    })
+                }
+                StatementKind::Class(declaration) => declaration.members.iter().any(|member| {
+                    let bodyless = matches!(
+                        &member.kind,
+                        ClassMemberKind::Constructor {
+                            has_body: false,
+                            ..
+                        } | ClassMemberKind::Method {
+                            has_body: false,
+                            ..
+                        }
+                    );
+                    bodyless
+                        && declaration.members.iter().any(|candidate| {
+                            match (&member.kind, &candidate.kind) {
+                                (
+                                    ClassMemberKind::Constructor { .. },
+                                    ClassMemberKind::Constructor { has_body: true, .. },
+                                ) => true,
+                                (
+                                    ClassMemberKind::Method { .. },
+                                    ClassMemberKind::Method { has_body: true, .. },
+                                ) => candidate.name == member.name,
+                                _ => false,
+                            }
+                        })
+                }),
+                StatementKind::Import(_)
+                | StatementKind::Export(_)
+                | StatementKind::Variable(_)
+                | StatementKind::Function(_)
+                | StatementKind::TypeAlias(_)
+                | StatementKind::Interface(_)
+                | StatementKind::If(_)
+                | StatementKind::Switch(_)
+                | StatementKind::Break(_)
+                | StatementKind::Continue(_)
+                | StatementKind::Return(_)
+                | StatementKind::Block(_)
+                | StatementKind::Expression(_)
+                | StatementKind::Empty
+                | StatementKind::Unknown => false,
+            })
+    }
+
+    /// Whether emit would need function-modifier product ownership that the
+    /// syntax printer does not yet provide for every module target.
+    #[must_use]
+    pub const fn has_unmodeled_function_products(&self) -> bool {
+        !self.function_products_supported
+    }
+
+    /// Whether class emit needs syntax ownership that the printers do not
+    /// currently have in every checked and `noCheck` product mode.
+    #[must_use]
+    pub const fn has_unmodeled_class_products(&self) -> bool {
+        !self.class_products_supported
+    }
+
+    #[must_use]
+    pub const fn has_unmodeled_commonjs_class_products(&self) -> bool {
+        !self.commonjs_class_products_supported
     }
 }
 
@@ -275,8 +387,11 @@ pub struct FunctionDeclaration {
     pub body: Vec<Statement>,
     pub has_body: bool,
     pub exported: bool,
+    pub default_export: bool,
     pub is_async: bool,
     pub declared: bool,
+    pub abstract_declaration: bool,
+    pub overload_completion_supported: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -303,6 +418,61 @@ pub struct ClassMemberModifiers {
     pub abstract_member: bool,
     pub declared: bool,
     pub async_member: bool,
+    pub unsupported_for_overload_completion: bool,
+    pub unsupported_for_emit_products: bool,
+}
+
+impl ClassMemberModifiers {
+    pub(crate) const fn observe(&mut self, modifier: ParameterModifier) {
+        let slot = match modifier {
+            ParameterModifier::Public => &mut self.public,
+            ParameterModifier::Protected => &mut self.protected,
+            ParameterModifier::Private => &mut self.private,
+            ParameterModifier::Readonly => &mut self.readonly,
+            ParameterModifier::Static => &mut self.static_member,
+            ParameterModifier::Abstract => &mut self.abstract_member,
+            ParameterModifier::Declare => &mut self.declared,
+            ParameterModifier::Async => &mut self.async_member,
+            ParameterModifier::Override | ParameterModifier::Accessor => {
+                self.unsupported_for_overload_completion = true;
+                self.unsupported_for_emit_products = true;
+                return;
+            }
+            ParameterModifier::Const
+            | ParameterModifier::Default
+            | ParameterModifier::Export
+            | ParameterModifier::In
+            | ParameterModifier::Out => return,
+        };
+        if *slot {
+            self.unsupported_for_overload_completion = true;
+            self.unsupported_for_emit_products = true;
+        }
+        *slot = true;
+    }
+
+    pub(crate) const fn constructor_products_supported(&self) -> bool {
+        !self.unsupported_for_emit_products
+            && !self.readonly
+            && !self.static_member
+            && !self.abstract_member
+            && !self.declared
+            && !self.async_member
+    }
+
+    pub(crate) const fn method_products_supported(&self) -> bool {
+        !self.unsupported_for_emit_products
+            && !self.readonly
+            && !self.abstract_member
+            && !self.declared
+    }
+
+    pub(crate) const fn property_products_supported(&self) -> bool {
+        !self.unsupported_for_emit_products
+            && !self.abstract_member
+            && !self.declared
+            && !self.async_member
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -312,6 +482,8 @@ pub struct ClassMember {
     pub name_span: Span,
     pub span: Span,
     pub modifiers: ClassMemberModifiers,
+    pub overload_completion_supported: bool,
+    pub emit_products_supported: bool,
     pub kind: ClassMemberKind,
 }
 
@@ -374,6 +546,8 @@ pub struct Parameter {
     pub rest: bool,
     pub rest_span: Option<Span>,
     pub modifiers: Vec<ParameterModifierNode>,
+    pub overload_completion_supported: bool,
+    pub function_implementation_completion_supported: bool,
     pub span: Span,
 }
 
