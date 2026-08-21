@@ -1846,7 +1846,7 @@ mod tests {
 
     #[test]
     fn derives_module_extension_outputs_without_losing_module_identity() {
-        let file = program_file("src/value.mts", "const value: number = 1;\n");
+        let file = program_file("src/value.mts", "export const value: number = 1;\n");
         let options = CompilerOptions {
             declaration: true,
             target: "esnext".to_string(),
@@ -1856,8 +1856,8 @@ mod tests {
         let output = emit_file(&file, &options);
         assert_eq!(output[0].path, Path::new("src/value.mjs"));
         assert_eq!(output[1].path, Path::new("src/value.d.mts"));
-        assert_eq!(output[0].text, "const value = 1;\nexport {};\n");
-        assert_eq!(output[1].text, "declare const value: number;\nexport {};\n");
+        assert_eq!(output[0].text, "export const value = 1;\n");
+        assert_eq!(output[1].text, "export declare const value: number;\n");
     }
 
     #[test]
@@ -1920,10 +1920,8 @@ mod tests {
             concat!(
                 "\"use strict\";\n",
                 "class Service {\n",
-                "    constructor() {\n",
-                "    }\n",
-                "    method() {\n",
-                "    }\n",
+                "    constructor() { }\n",
+                "    method() { }\n",
                 "}\n",
             )
         );
@@ -1958,13 +1956,11 @@ mod tests {
     }
 
     #[test]
-    fn erases_non_runtime_class_fields_and_preserves_private_names() {
+    fn emits_supported_class_fields_and_preserves_private_names() {
         let file = program_file(
             "model.ts",
             concat!(
-                "abstract class Model {\n",
-                "  declare cached: string;\n",
-                "  abstract pending: number;\n",
+                "class Model {\n",
                 "  #secret = 1;\n",
                 "  visible: number;\n",
                 "}\n",

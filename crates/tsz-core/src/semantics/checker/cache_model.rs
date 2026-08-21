@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 
 use super::Checker;
-use crate::semantics::types::{TypeId, TypeKind};
+use crate::semantics::types::{ObjectShape, TypeId, TypeKind};
 
 impl Checker<'_> {
     /// Definitive caches may only retain graphs whose complete structure is
@@ -23,32 +23,16 @@ impl Checker<'_> {
             | TypeKind::Intersection(elements) => elements
                 .iter()
                 .all(|element| self.is_cacheable_type_inner(*element, active)),
-            TypeKind::Object(shape)
-            | TypeKind::ClassInstance {
-                properties: shape, ..
+            TypeKind::Object(shape) => self.is_cacheable_object_shape(shape, active),
+            TypeKind::ClassInstance {
+                arguments,
+                properties,
+                ..
             } => {
-                shape
-                    .properties
+                arguments
                     .iter()
-                    .all(|property| self.is_cacheable_type_inner(property.ty, active))
-                    && shape.call_signatures.iter().all(|signature| {
-                        signature
-                            .parameters
-                            .iter()
-                            .all(|parameter| self.is_cacheable_type_inner(parameter.ty, active))
-                            && self.is_cacheable_type_inner(signature.return_type, active)
-                    })
-                    && shape.construct_signatures.iter().all(|signature| {
-                        signature
-                            .parameters
-                            .iter()
-                            .all(|parameter| self.is_cacheable_type_inner(parameter.ty, active))
-                            && self.is_cacheable_type_inner(signature.return_type, active)
-                    })
-                    && shape
-                        .index_signatures
-                        .iter()
-                        .all(|index| self.is_cacheable_type_inner(index.value, active))
+                    .all(|argument| self.is_cacheable_type_inner(*argument, active))
+                    && self.is_cacheable_object_shape(properties, active)
             }
             TypeKind::Function(signature) => {
                 signature
@@ -84,5 +68,30 @@ impl Checker<'_> {
         };
         active.remove(&ty);
         cacheable
+    }
+
+    fn is_cacheable_object_shape(&self, shape: &ObjectShape, active: &mut HashSet<TypeId>) -> bool {
+        shape
+            .properties
+            .iter()
+            .all(|property| self.is_cacheable_type_inner(property.ty, active))
+            && shape.call_signatures.iter().all(|signature| {
+                signature
+                    .parameters
+                    .iter()
+                    .all(|parameter| self.is_cacheable_type_inner(parameter.ty, active))
+                    && self.is_cacheable_type_inner(signature.return_type, active)
+            })
+            && shape.construct_signatures.iter().all(|signature| {
+                signature
+                    .parameters
+                    .iter()
+                    .all(|parameter| self.is_cacheable_type_inner(parameter.ty, active))
+                    && self.is_cacheable_type_inner(signature.return_type, active)
+            })
+            && shape
+                .index_signatures
+                .iter()
+                .all(|index| self.is_cacheable_type_inner(index.value, active))
     }
 }

@@ -496,7 +496,7 @@ fn required_annotation_cycles_use_active_type_identity() {
     let complete_cases = [
         "interface Link { next:Link }",
         "interface Cedar { branch:{next:Cedar} }",
-        "type Node={next:Node}; let node:Node;",
+        "type Link={next:Link}; let link:Link;",
         "type Wrapped={edge:{next:Wrapped}};",
         "declare class Branch { next:Branch; }",
     ];
@@ -589,6 +589,108 @@ fn new_uses_the_canonical_bounded_class_instance() {
         renamed.diagnostics[0].message_text,
         "Type 'Parcel' is not assignable to type 'string'."
     );
+}
+
+#[test]
+fn empty_generic_class_construction_can_omit_type_arguments() {
+    let cases = [
+        "class Empty<Value> {} new Empty<number>(); new Empty(); new Empty;",
+        "class Vessel<Payload> {} const vessel:Vessel<string>=new Vessel();",
+    ];
+    for source in cases {
+        let output = compile(source);
+        assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+        assert_completion(&output, SemanticCompletion::Complete);
+    }
+
+    let runtime_arguments = compile("class Empty<Value> {} new Empty(1); new Empty<number>(2);");
+    assert_eq!(
+        codes(&runtime_arguments),
+        vec![2554, 2554],
+        "{:?}",
+        runtime_arguments.diagnostics
+    );
+    assert!(
+        runtime_arguments
+            .diagnostics
+            .iter()
+            .all(|diagnostic| { diagnostic.message_text == "Expected 0 arguments, but got 1." })
+    );
+    assert_completion(&runtime_arguments, SemanticCompletion::Complete);
+
+    let unsupported = [
+        "class Box<Value> { value:Value; } new Box();",
+        "class Base {} class Derived<Value> extends Base {} new Derived();",
+        "interface Contract {} class Implementing<Value> implements Contract {} new Implementing();",
+        "class Constrained<Value extends string> {} new Constrained();",
+        "class Defaulted<Value=string> {} new Defaulted();",
+        "abstract class AbstractEmpty<Value> {} new AbstractEmpty();",
+        "class Empty<Value> {} new Empty<string, number>();",
+        "class Merged<Value> {} interface Merged<Value> {} new Merged();",
+        "interface Merged<Value> {} class Merged<Value> {} new Merged();",
+        "function Merged() {} class Merged<Value> {} new Merged();",
+    ];
+    for source in unsupported {
+        let output = compile(source);
+        assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+        assert_completion(&output, SemanticCompletion::Deferred);
+    }
+}
+
+#[test]
+fn generic_class_instance_arguments_are_display_and_order_stable() {
+    let declarations = "class Empty<Value> {}";
+    let omitted = "const omitted:never=new Empty();";
+    let explicit = "const explicit:never=new Empty<number>();";
+    let forward_files = [
+        ("shared.ts", declarations),
+        ("a.ts", omitted),
+        ("b.ts", explicit),
+    ];
+    let reverse_files = [
+        ("b.ts", explicit),
+        ("a.ts", omitted),
+        ("shared.ts", declarations),
+    ];
+    let cold = compile_files(&forward_files);
+    let warm = compile_files(&forward_files);
+    let reversed = compile_files(&reverse_files);
+    let fingerprint = |output: &tsz::CompileOutput| {
+        (
+            serde_json::to_vec(&output.diagnostics).unwrap(),
+            output.semantic_completion,
+            output.exit_status,
+            output.stats.types,
+        )
+    };
+
+    assert_eq!(codes(&cold), vec![2322, 2322], "{:?}", cold.diagnostics);
+    assert_eq!(
+        cold.diagnostics
+            .iter()
+            .map(|diagnostic| diagnostic.message_text.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "Type 'Empty<unknown>' is not assignable to type 'never'.",
+            "Type 'Empty<number>' is not assignable to type 'never'.",
+        ]
+    );
+    assert_eq!(fingerprint(&cold), fingerprint(&warm));
+    assert_eq!(fingerprint(&cold), fingerprint(&reversed));
+    assert_completion(&cold, SemanticCompletion::Complete);
+    assert_completion(&warm, SemanticCompletion::Complete);
+    assert_completion(&reversed, SemanticCompletion::Complete);
+}
+
+#[test]
+fn phantom_generic_class_arguments_remain_typed_children() {
+    let output = compile(
+        "type Choice<T> = T extends string ? number : boolean; \
+         class Empty<Value> {} \
+         declare let holder:{value:Empty<Choice<unknown>>};",
+    );
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    assert_completion(&output, SemanticCompletion::Deferred);
 }
 
 #[test]

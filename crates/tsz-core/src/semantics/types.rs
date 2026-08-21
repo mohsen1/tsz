@@ -498,6 +498,7 @@ pub enum TypeKind {
     ClassInstance {
         declaration: DeclId,
         name: String,
+        arguments: Vec<TypeId>,
         properties: ObjectShape,
     },
     ClassConstructor {
@@ -544,7 +545,7 @@ enum TypeOrderKey {
         construct_signatures: Vec<SignatureOrderKey>,
         index_signatures: Vec<(IndexKeyKind, Box<TypeOrderKey>, bool)>,
     },
-    ClassInstance(DeclId, Vec<PropertyOrderKey>),
+    ClassInstance(DeclId, Vec<TypeOrderKey>, Vec<PropertyOrderKey>),
     ClassConstructor(DeclId),
     Function(Vec<ParameterOrderKey>, Box<TypeOrderKey>),
     ShapeFunction(Vec<ParameterOrderKey>, Box<TypeOrderKey>),
@@ -967,11 +968,14 @@ impl TypeStore {
             },
             TypeKind::ClassInstance {
                 declaration,
+                arguments,
                 properties: class_properties,
                 ..
-            } => {
-                TypeOrderKey::ClassInstance(*declaration, properties(&class_properties.properties))
-            }
+            } => TypeOrderKey::ClassInstance(
+                *declaration,
+                arguments.iter().map(|argument| nested(*argument)).collect(),
+                properties(&class_properties.properties),
+            ),
             TypeKind::ClassConstructor { declaration, .. } => {
                 TypeOrderKey::ClassConstructor(*declaration)
             }
@@ -1161,8 +1165,22 @@ impl TypeStore {
             TypeKind::LiteralBoolean(value, _) => value.to_string(),
             TypeKind::LiteralNumber(value, _) => value.display().to_string(),
             TypeKind::LiteralString(value, _) => format!("\"{value}\""),
-            TypeKind::TypeParameter { name, .. } | TypeKind::ClassInstance { name, .. } => {
-                name.clone()
+            TypeKind::TypeParameter { name, .. } => name.clone(),
+            TypeKind::ClassInstance {
+                name, arguments, ..
+            } => {
+                if arguments.is_empty() {
+                    name.clone()
+                } else {
+                    format!(
+                        "{name}<{}>",
+                        arguments
+                            .iter()
+                            .map(|argument| self.display_inner(*argument, depth + 1))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )
+                }
             }
             TypeKind::Array(element) => {
                 let element_name = self.display_inner(*element, depth + 1);

@@ -18,6 +18,8 @@ use crate::source::{DeclId, FileId, SourceText};
 use crate::standard_library::{StandardLibraryDeclaration, StandardLibraryEnvironment};
 use crate::syntax::{SourceUnit, parse_source};
 
+mod import_aliases;
+
 #[derive(Debug, Clone)]
 pub struct SourceInput {
     /// Logical path used in diagnostics, emit, and service responses.
@@ -143,6 +145,7 @@ pub struct Program {
     pub global_values: BTreeMap<String, Vec<DeclId>>,
     pub global_types: BTreeMap<String, Vec<DeclId>>,
     pub standard_library: StandardLibraryEnvironment,
+    import_aliases: import_aliases::ImportAliases,
 }
 
 impl Program {
@@ -648,6 +651,7 @@ fn build_program(
     source_order: Vec<FileId>,
     options: &CompilerOptions,
 ) -> Program {
+    let import_aliases = import_aliases::ImportAliases::build(&files, options.allow_js);
     let mut global_values: BTreeMap<String, Vec<DeclId>> = BTreeMap::new();
     let mut global_types: BTreeMap<String, Vec<DeclId>> = BTreeMap::new();
     for file_id in &source_order {
@@ -678,6 +682,7 @@ fn build_program(
         global_values,
         global_types,
         standard_library: StandardLibraryEnvironment::from_options(options),
+        import_aliases,
     }
 }
 

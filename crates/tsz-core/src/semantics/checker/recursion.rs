@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 
 use crate::bind::Meaning;
-use crate::semantics::types::{Completion, DeferredType, TypeId, TypeKind};
+use crate::semantics::types::{Completion, DeferredType, ObjectShape, TypeId, TypeKind};
 use crate::source::DeclId;
 use crate::syntax::{
     Parameter, TypeAliasDeclaration, TypeMember, TypeMemberKind, TypeNode, TypeNodeKind,
@@ -629,7 +629,7 @@ impl Checker<'_> {
         arguments: &[TypeId],
     ) -> bool {
         self.generative_reference_supported(declaration, arguments)
-            || self.narrow_interface_heritage_reference_supported(declaration, arguments)
+            || self.plain_property_interface_heritage_reference_supported(declaration, arguments)
     }
 
     /// Relation cutoffs need a stronger proof than shape admission. A finite
@@ -1071,25 +1071,14 @@ fn push_type_children(kind: TypeKind, pending: &mut Vec<TypeId>) {
         TypeKind::Tuple(children)
         | TypeKind::Union(children)
         | TypeKind::Intersection(children) => pending.extend(children),
-        TypeKind::Object(shape)
-        | TypeKind::ClassInstance {
-            properties: shape, ..
+        TypeKind::Object(shape) => push_object_shape_children(shape, pending),
+        TypeKind::ClassInstance {
+            arguments,
+            properties,
+            ..
         } => {
-            pending.extend(shape.properties.into_iter().map(|property| property.ty));
-            for signature in shape
-                .call_signatures
-                .into_iter()
-                .chain(shape.construct_signatures)
-            {
-                pending.extend(
-                    signature
-                        .parameters
-                        .into_iter()
-                        .map(|parameter| parameter.ty),
-                );
-                pending.push(signature.return_type);
-            }
-            pending.extend(shape.index_signatures.into_iter().map(|index| index.value));
+            pending.extend(arguments);
+            push_object_shape_children(properties, pending);
         }
         TypeKind::Function(signature) => {
             pending.extend(
@@ -1129,6 +1118,24 @@ fn push_type_children(kind: TypeKind, pending: &mut Vec<TypeId>) {
         | TypeKind::TypeParameter { .. }
         | TypeKind::ClassConstructor { .. } => {}
     }
+}
+
+fn push_object_shape_children(shape: ObjectShape, pending: &mut Vec<TypeId>) {
+    pending.extend(shape.properties.into_iter().map(|property| property.ty));
+    for signature in shape
+        .call_signatures
+        .into_iter()
+        .chain(shape.construct_signatures)
+    {
+        pending.extend(
+            signature
+                .parameters
+                .into_iter()
+                .map(|parameter| parameter.ty),
+        );
+        pending.push(signature.return_type);
+    }
+    pending.extend(shape.index_signatures.into_iter().map(|index| index.value));
 }
 
 fn push_deferred_children(deferred: DeferredType, pending: &mut Vec<TypeId>) {
@@ -1200,7 +1207,7 @@ mod tests {
             file: FileId(0),
             local: 1,
         };
-        let kinds = vec![
+        let kinds = [
             parameter(declaration, 0),
             TypeKind::Array(TypeId(0)),
             TypeKind::Array(TypeId(1)),

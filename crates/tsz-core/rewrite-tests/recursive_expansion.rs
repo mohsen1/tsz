@@ -20,6 +20,17 @@ fn compile(source: &str) -> tsz::CompileOutput {
     )
 }
 
+fn compile_with_strictness(source: &str, strict: bool) -> tsz::CompileOutput {
+    Compiler::new().compile(
+        vec![SourceInput::new("case.ts", Arc::<str>::from(source))],
+        &CompilerOptions {
+            no_emit: true,
+            strict,
+            ..CompilerOptions::default()
+        },
+    )
+}
+
 fn codes(output: &tsz::CompileOutput) -> Vec<u32> {
     output
         .diagnostics
@@ -298,8 +309,6 @@ fn generative_admission_validates_the_origin_and_every_active_frame() {
         // substitution can discard an argument.
         "type Ring<T>={next:Ring<T>};declare let ring:Ring<string,number>;",
         "class Chain<T>{next:Chain<T>;}declare let chain:Chain<string,number>;",
-        // Defaults are not instantiated by the current reference owner.
-        "interface Box<T=string>{value:T}declare let box:Box;box.value;",
     ];
 
     for source in cases {
@@ -743,7 +752,7 @@ fn recursive_results_are_cold_warm_and_root_order_independent() {
 }
 
 #[test]
-fn narrow_interface_heritage_is_complete_only_with_owned_merge_facts() {
+fn interface_heritage_rejects_shapes_outside_the_property_only_boundary() {
     let supported = compile(
         r#"
             interface Parent<Payload> { entry: Payload }
@@ -774,13 +783,8 @@ fn narrow_interface_heritage_is_complete_only_with_owned_merge_facts() {
     );
 
     let deferred = [
-        // Own members need TS2430 override ownership.
-        "interface B<T>{value:T} interface D<T> extends B<T>{own:T} declare let d:D<string>;",
-        // Multiple inherited properties need authored provenance and order.
-        "interface B<T>{first:T;second:T} interface D<T> extends B<T>{} declare let d:D<string>;",
-        // Transitive and multiple bases need a full base-list query.
+        // Transitive inheritance needs a recursive base-list query.
         "interface A<T>{value:T} interface B<T> extends A<T>{} interface D<T> extends B<T>{} declare let d:D<string>;",
-        "interface A<T>{a:T} interface B<T>{b:T} interface D<T> extends A<T>,B<T>{} declare let d:D<string>;",
         // Callable, index, and alias bases have separate relation owners.
         "interface B<T>{(value:T):T} interface D<T> extends B<T>{} declare let d:D<string>;",
         "interface B<T>{[key:string]:T} interface D<T> extends B<T>{} declare let d:D<string>;",
@@ -1242,6 +1246,83 @@ fn explicit_generic_calls_block_only_the_unowned_declaration_product() {
                 output.emitted_files[0].text, expected,
                 "{path}/{module}/{no_check}"
             );
+        }
+    }
+}
+
+#[test]
+fn productive_object_alias_completion_is_independent_of_strictness_and_declaration_form() {
+    let cases = [
+        ("alias-only", "type Link={next:Link};"),
+        ("ordinary-let", "type Link={next:Link}; let link:Link;"),
+        (
+            "ambient-let",
+            "type Link={next:Link}; declare let link:Link;",
+        ),
+        ("renamed", "type Branch={child:Branch}; let branch:Branch;"),
+        (
+            "nested-boundary",
+            "type Branch={edge:{child:Branch}}; let branch:Branch;",
+        ),
+    ];
+    let mut incomplete = Vec::new();
+    for strict in [false, true] {
+        for (name, source) in cases {
+            let output = compile_with_strictness(source, strict);
+            if !output.diagnostics.is_empty()
+                || output.semantic_completion != SemanticCompletion::Complete
+            {
+                incomplete.push((
+                    strict,
+                    name,
+                    codes(&output),
+                    output.semantic_completion,
+                    output.exit_status,
+                ));
+            }
+        }
+    }
+    assert!(incomplete.is_empty(), "incomplete cases: {incomplete:?}");
+}
+
+#[test]
+fn productive_aliases_do_not_bypass_ambient_merge_or_invalid_root_gates() {
+    // `Node` is already owned by the selected default DOM library. Pinned TS7
+    // reports TS2300 for this collision; duplicate-symbol diagnostics are not
+    // modeled yet, so the rewrite must stay Deferred instead of treating the
+    // program alias as a sole definitive recursion root.
+    for strict in [false, true] {
+        for source in [
+            "type Node={next:Node};",
+            "type Node={next:Node}; let node:Node;",
+            "type Node={next:Node}; declare let node:Node;",
+        ] {
+            let output = compile_with_strictness(source, strict);
+            assert!(output.diagnostics.is_empty(), "{strict}/{source}");
+            assert_eq!(
+                output.semantic_completion,
+                SemanticCompletion::Deferred,
+                "{strict}/{source}"
+            );
+            assert_eq!(output.exit_status, CompileExitStatus::SemanticIncomplete);
+        }
+
+        // Transparent self-cycles remain invalid independently of declaration
+        // form, binder spelling, and a nested alias-instantiation wrapper.
+        for source in [
+            "type Loop=Loop; let loop:Loop;",
+            "type Loop=Loop; declare let loop:Loop;",
+            "type Recurrence=Recurrence; let recurrence:Recurrence;",
+            "type Identity<Value>=Value; type Loop=Identity<Loop>; declare let loop:Loop;",
+        ] {
+            let output = compile_with_strictness(source, strict);
+            assert_eq!(codes(&output), vec![2456], "{strict}/{source}");
+            assert_eq!(
+                output.semantic_completion,
+                SemanticCompletion::Cycle,
+                "{strict}/{source}"
+            );
+            assert_eq!(output.exit_status, CompileExitStatus::SemanticIncomplete);
         }
     }
 }

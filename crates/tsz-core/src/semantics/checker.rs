@@ -5,9 +5,11 @@ use rustc_hash::FxHashMap;
 mod cache_model;
 mod class_model;
 mod function_model;
+mod import_alias;
 mod object_shape;
 mod projection_model;
 pub(super) mod recursion;
+mod reference_instantiation;
 mod relation_diagnostic;
 mod required_type;
 mod statement_model;
@@ -825,41 +827,7 @@ impl<'a> Checker<'a> {
                 name,
                 name_span,
                 segment_spans,
-            } => {
-                let mut segments = name.split('.');
-                let root_name = segments.next().unwrap_or(name);
-                let root_span = segment_spans.first().copied().unwrap_or(*name_span);
-                let Some(declaration) = self.resolve_name(file, scope, root_name, Meaning::Value)
-                else {
-                    self.push_diagnostic(
-                        file,
-                        root_span,
-                        format!("Cannot find name '{root_name}'."),
-                        2304,
-                    );
-                    return self.store.builtins.error;
-                };
-                let root = self
-                    .store
-                    .intern(TypeKind::Deferred(DeferredType::Value(declaration)));
-                let mut property_order = self.property_order_for_declaration(declaration);
-                segments
-                    .enumerate()
-                    .fold(root, |object, (index, property)| {
-                        let name_span = segment_spans.get(index + 1).copied().unwrap_or(*name_span);
-                        let receiver_order = property_order.clone();
-                        property_order = property_order
-                            .as_ref()
-                            .and_then(|order| order.property(property))
-                            .cloned();
-                        self.deferred_property_type_with_order(
-                            object,
-                            property,
-                            name_span,
-                            receiver_order,
-                        )
-                    })
-            }
+            } => self.resolve_type_query_node(file, scope, name, *name_span, segment_spans),
             TypeNodeKind::Infer {
                 name,
                 name_span,
@@ -1422,6 +1390,17 @@ impl<'a> Checker<'a> {
             self.report_complexity(&deferred);
             return Completion::Limit;
         }
+        let reference_instantiation = match &deferred {
+            DeferredType::Reference {
+                declaration,
+                arguments,
+            } => Some(self.reference_instantiation(*declaration, arguments)),
+            _ => None,
+        };
+        let reference_is_query_local = matches!(
+            &reference_instantiation,
+            Some(Completion::Complete(instantiation)) if instantiation.is_query_local()
+        );
         let reference_checkpoint = self.force_reference_stack.checkpoint();
         if let DeferredType::Reference {
             declaration,
@@ -1435,7 +1414,17 @@ impl<'a> Checker<'a> {
             DeferredType::Reference {
                 declaration,
                 arguments,
-            } => self.evaluate_reference(declaration, &arguments),
+            } => match reference_instantiation {
+                Some(Completion::Complete(
+                    reference_instantiation::ReferenceInstantiation::Exact,
+                )) => self.evaluate_reference(declaration, &arguments),
+                Some(Completion::Complete(
+                    reference_instantiation::ReferenceInstantiation::Defaulted { arguments },
+                )) => self.evaluate_defaulted_reference(declaration, &arguments),
+                Some(Completion::Deferred) | None => Completion::Deferred,
+                Some(Completion::Cycle) => Completion::Cycle,
+                Some(Completion::Limit) => Completion::Limit,
+            },
             DeferredType::Value(declaration) => self.declaration_value_type(declaration),
             DeferredType::Call {
                 callee,
@@ -1504,7 +1493,9 @@ impl<'a> Checker<'a> {
         };
         self.force_reference_stack.restore(reference_checkpoint);
         match result {
-            Completion::Complete(result) if self.is_cacheable_type(result) => {
+            Completion::Complete(result)
+                if !reference_is_query_local && self.is_cacheable_type(result) =>
+            {
                 self.force_queries.insert(ty, QueryState::Ready(result));
             }
             Completion::Complete(_) | Completion::Deferred | Completion::Cycle => {

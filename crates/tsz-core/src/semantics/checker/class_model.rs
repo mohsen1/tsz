@@ -2,6 +2,7 @@ use crate::bind::ScopeId;
 use crate::source::{DeclId, Span};
 use crate::syntax::{ClassDeclaration, ClassMemberKind, TypeNode};
 
+use super::object_shape::plain_type_parameters;
 use super::{Checker, ConstructOrigin, DeclarationModel};
 use crate::semantics::relation::RelationContext;
 use crate::semantics::types::{Completion, DeferredType, Property, TypeId, TypeKind};
@@ -90,11 +91,30 @@ impl Checker<'_> {
         match self.store.kind(callee).clone() {
             TypeKind::ClassConstructor { declaration, .. } => {
                 let Some(DeclarationModel::Class {
-                    declaration: class, ..
+                    identity,
+                    declaration: class,
+                    scope,
                 }) = self.models.get(&declaration).copied()
                 else {
                     return Completion::Deferred;
                 };
+                if type_arguments.is_empty()
+                    && !class.type_parameters.is_empty()
+                    && plain_type_parameters(&class.type_parameters)
+                    && self.is_single_type_symbol_declaration(declaration)
+                    && !class.abstract_class
+                    && class.extends.is_none()
+                    && class.implements.is_empty()
+                    && class.members.is_empty()
+                {
+                    // With no instance members or heritage, every instantiation
+                    // has the same empty structural shape. TypeScript still
+                    // records `unknown` for each omitted plain parameter so
+                    // diagnostics and later symbolic operations retain the
+                    // instantiated reference instead of only its shape.
+                    let arguments = vec![self.store.builtins.unknown; class.type_parameters.len()];
+                    return self.evaluate_class_instance(identity, class, scope, &arguments);
+                }
                 if !type_arguments.is_empty() && type_arguments.len() != class.type_parameters.len()
                 {
                     return Completion::Deferred;
@@ -189,6 +209,7 @@ impl Checker<'_> {
         Completion::Complete(self.store.intern(TypeKind::ClassInstance {
             declaration,
             name: class.name.clone(),
+            arguments: arguments.to_vec(),
             properties: properties.into(),
         }))
     }

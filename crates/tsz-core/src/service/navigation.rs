@@ -916,9 +916,13 @@ impl ReferenceVisitor<'_> {
                 }
             }
             TypeNodeKind::TypeQuery {
-                name, name_span, ..
+                name,
+                name_span,
+                segment_spans,
             } => {
-                self.record_name(name, *name_span, scope, Meaning::Value, false);
+                let root = name.split('.').next().unwrap_or(name);
+                let root_span = segment_spans.first().copied().unwrap_or(*name_span);
+                self.record_type_query_root(root, root_span, scope);
             }
             TypeNodeKind::Infer { constraint, .. } => {
                 if let Some(constraint) = constraint {
@@ -1163,6 +1167,32 @@ impl ReferenceVisitor<'_> {
             span: text_span(span),
             context_span: None,
             is_write_access: write,
+            is_declaration: false,
+        });
+    }
+
+    fn record_type_query_root(&mut self, name: &str, span: Span, scope: ScopeId) {
+        let local = self
+            .value_locals
+            .iter()
+            .rev()
+            .find_map(|locals| locals.get(name))
+            .cloned();
+        let key = local.or_else(|| {
+            self.program
+                .resolve_type_query_root(self.file.source.id, scope, name)
+                .map(|root| root.navigation_declaration())
+                .and_then(|declaration| self.index.declaration_keys.get(&declaration).cloned())
+        });
+        let Some(key) = key else {
+            return;
+        };
+        self.index.occurrences.push(Occurrence {
+            key,
+            file_name: self.file_name.clone(),
+            span: text_span(span),
+            context_span: None,
+            is_write_access: false,
             is_declaration: false,
         });
     }

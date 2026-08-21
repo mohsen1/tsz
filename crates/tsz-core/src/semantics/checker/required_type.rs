@@ -1452,15 +1452,35 @@ impl Checker<'_> {
             | TypeKind::Intersection(elements) => {
                 self.visit_required_children(ty, elements, active, references)
             }
-            TypeKind::Object(shape)
-            | TypeKind::ClassInstance {
-                properties: shape, ..
-            } => {
+            TypeKind::Object(shape) => {
                 let mut children = shape
                     .properties
                     .into_iter()
                     .map(|property| property.ty)
                     .collect::<Vec<_>>();
+                for signature in shape
+                    .call_signatures
+                    .into_iter()
+                    .chain(shape.construct_signatures)
+                {
+                    children.extend(
+                        signature
+                            .parameters
+                            .into_iter()
+                            .map(|parameter| parameter.ty),
+                    );
+                    children.push(signature.return_type);
+                }
+                children.extend(shape.index_signatures.into_iter().map(|index| index.value));
+                self.visit_required_children(ty, children, active, references)
+            }
+            TypeKind::ClassInstance {
+                arguments,
+                properties: shape,
+                ..
+            } => {
+                let mut children = arguments;
+                children.extend(shape.properties.into_iter().map(|property| property.ty));
                 for signature in shape
                     .call_signatures
                     .into_iter()

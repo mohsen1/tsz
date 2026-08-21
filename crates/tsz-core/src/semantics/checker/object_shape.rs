@@ -33,84 +33,94 @@ impl Checker<'_> {
             );
         }
 
-        // This is the deliberately narrow #1002 boundary. TSZ does not yet
-        // own interface merge provenance or TS2314/TS2320/TS2430 diagnostics,
-        // so only an empty, sole declaration may inherit one plain property
-        // through an exact positional generic pass-through.
-        let base_declaration = match self.narrow_interface_heritage_base(declaration) {
-            Completion::Complete(base) => base,
+        // This is the bounded property-only heritage boundary. TSZ does not
+        // yet own general base-type diagnostics, so every declaration in the
+        // one-hop graph must be sole and every member must be a required,
+        // unmodified property. Exact positional generic pass-through keeps
+        // substitution declaration-owned; transitive and transformed bases
+        // remain symbolic.
+        let base_declarations = match self.plain_property_interface_heritage_bases(declaration) {
+            Completion::Complete(bases) => bases,
             Completion::Deferred => return Completion::Deferred,
             Completion::Cycle => return Completion::Cycle,
             Completion::Limit => return Completion::Limit,
         };
-        let [heritage] = interface.extends.as_slice() else {
-            unreachable!("the narrow heritage query returned a base without an extends edge")
-        };
-        let TypeNodeKind::Reference {
-            arguments: heritage_arguments,
-            ..
-        } = &heritage.kind
-        else {
-            return Completion::Deferred;
-        };
-        if !positional_type_parameter_pass_through(&interface.type_parameters, heritage_arguments) {
-            return Completion::Deferred;
-        }
-        let Some(DeclarationModel::Interface {
-            declaration: base, ..
-        }) = self.models.get(&base_declaration).copied()
-        else {
-            // Type-alias heritage cannot borrow the object-member recursion
-            // rule; it remains symbolic until base-type diagnostics exist.
-            return Completion::Deferred;
-        };
-        if !base.extends.is_empty()
-            || base.members.len() != 1
-            || !plain_type_parameters(&base.type_parameters)
-            || base.type_parameters.len() != interface.type_parameters.len()
-            || !plain_required_property(&base.members[0])
-        {
-            return Completion::Deferred;
-        }
+        debug_assert_eq!(interface.extends.len(), base_declarations.len());
 
-        let base_reference =
-            self.resolve_type_node(declaration.file, scope, heritage, type_parameters);
-        let TypeKind::Deferred(deferred) = self.store.kind(base_reference).clone() else {
-            return Completion::Deferred;
-        };
-        let DeferredType::Reference {
-            declaration: resolved_base,
-            arguments,
-        } = &deferred
-        else {
-            return Completion::Deferred;
-        };
-        if *resolved_base != base_declaration || arguments.len() != base.type_parameters.len() {
-            return Completion::Deferred;
-        }
-        for argument in arguments {
-            match self.shape_child_type_supported(*argument, &mut HashSet::new()) {
-                Completion::Complete(()) => {}
+        let mut shape = ObjectShape::default();
+        let mut property_indices = HashMap::new();
+        for (heritage, base_declaration) in interface
+            .extends
+            .iter()
+            .zip(base_declarations.iter().copied())
+        {
+            let Some(DeclarationModel::Interface {
+                declaration: base,
+                scope: base_scope,
+            }) = self.models.get(&base_declaration).copied()
+            else {
+                return Completion::Deferred;
+            };
+            let base_reference =
+                self.resolve_type_node(declaration.file, scope, heritage, type_parameters);
+            let TypeKind::Deferred(deferred) = self.store.kind(base_reference).clone() else {
+                return Completion::Deferred;
+            };
+            let DeferredType::Reference {
+                declaration: resolved_base,
+                arguments,
+            } = deferred
+            else {
+                return Completion::Deferred;
+            };
+            if resolved_base != base_declaration || arguments.len() != base.type_parameters.len() {
+                return Completion::Deferred;
+            }
+            for argument in &arguments {
+                match self.shape_child_type_supported(*argument, &mut HashSet::new()) {
+                    Completion::Complete(()) => {}
+                    Completion::Deferred => return Completion::Deferred,
+                    Completion::Cycle => return Completion::Cycle,
+                    Completion::Limit => return Completion::Limit,
+                }
+            }
+
+            // Bases have already been proven sole and heritage-free. Resolve
+            // their authored members directly with the base declaration's
+            // parameter names instead of re-entering a base reference query.
+            // That permits a productive `Base<T> -> Derived<T> -> Base<T>`
+            // shape edge to close provisionally without converting the
+            // active base query into an illegal-heritage Cycle.
+            let base_parameters =
+                self.substitution(base_declaration, &base.type_parameters, &arguments);
+            let base_shape = match self.resolve_object_members(
+                base_declaration.file,
+                base_scope,
+                &base.members,
+                &base_parameters,
+            ) {
+                Completion::Complete(shape) => shape,
                 Completion::Deferred => return Completion::Deferred,
                 Completion::Cycle => return Completion::Cycle,
                 Completion::Limit => return Completion::Limit,
+            };
+            if !merge_plain_property_shape(&mut shape, &mut property_indices, base_shape) {
+                return Completion::Deferred;
             }
         }
 
-        let resolved = match self.force_deferred(base_reference, deferred, 0) {
-            Completion::Complete(resolved) => resolved,
+        let own_shape = match self.resolve_object_members(
+            declaration.file,
+            scope,
+            &interface.members,
+            type_parameters,
+        ) {
+            Completion::Complete(shape) => shape,
             Completion::Deferred => return Completion::Deferred,
             Completion::Cycle => return Completion::Cycle,
             Completion::Limit => return Completion::Limit,
         };
-        let TypeKind::Object(shape) = self.store.kind(resolved).clone() else {
-            return Completion::Deferred;
-        };
-        if shape.properties.len() != 1
-            || !shape.call_signatures.is_empty()
-            || !shape.construct_signatures.is_empty()
-            || !shape.index_signatures.is_empty()
-        {
+        if !merge_plain_property_shape(&mut shape, &mut property_indices, own_shape) {
             return Completion::Deferred;
         }
         Completion::Complete(shape)
@@ -244,13 +254,12 @@ impl Checker<'_> {
         })
     }
 
-    pub(super) fn narrow_interface_heritage_reference_supported(
+    pub(super) fn plain_property_interface_heritage_reference_supported(
         &self,
         declaration: DeclId,
         arguments: &[TypeId],
     ) -> bool {
-        let Completion::Complete(base_declaration) =
-            self.narrow_interface_heritage_base(declaration)
+        let Completion::Complete(_) = self.plain_property_interface_heritage_bases(declaration)
         else {
             return false;
         };
@@ -261,18 +270,63 @@ impl Checker<'_> {
         else {
             return false;
         };
-        let Some(DeclarationModel::Interface {
-            declaration: base, ..
-        }) = self.models.get(&base_declaration).copied()
-        else {
-            return false;
-        };
         arguments.len() == derived.type_parameters.len()
-            && base.extends.is_empty()
-            && base.members.len() == 1
-            && plain_type_parameters(&base.type_parameters)
-            && base.type_parameters.len() == derived.type_parameters.len()
-            && plain_required_property(&base.members[0])
+    }
+
+    /// Select a bounded one-hop interface base list for property assembly.
+    ///
+    /// This query does not force types. It proves that authored order and
+    /// substitution are sufficient to assemble the eventual object shape:
+    /// every declaration is sole, all parameters are plain, every heritage
+    /// argument is the corresponding derived parameter, and every member is
+    /// a required property. Conflicts are decided only after substitution.
+    pub(super) fn plain_property_interface_heritage_bases(
+        &self,
+        declaration: DeclId,
+    ) -> Completion<Vec<DeclId>> {
+        // Retain the existing typed result for the narrow direct and mutual
+        // illegal-heritage cycles. Broader/transitive graphs remain Deferred.
+        if matches!(
+            self.narrow_interface_heritage_base(declaration),
+            Completion::Cycle
+        ) {
+            return Completion::Cycle;
+        }
+
+        let Some((interface, scope)) = self.narrow_heritage_interface(declaration) else {
+            return Completion::Deferred;
+        };
+        if interface.extends.is_empty() || !interface.members.iter().all(plain_required_property) {
+            return Completion::Deferred;
+        }
+
+        let mut bases = Vec::with_capacity(interface.extends.len());
+        for heritage in &interface.extends {
+            let Some(base) =
+                self.interface_base_from_heritage(declaration.file, interface, scope, heritage)
+            else {
+                return Completion::Deferred;
+            };
+            if base == declaration {
+                return Completion::Deferred;
+            }
+            let Some(DeclarationModel::Interface {
+                declaration: base_interface,
+                ..
+            }) = self.models.get(&base).copied()
+            else {
+                return Completion::Deferred;
+            };
+            if !base_interface.extends.is_empty()
+                || !plain_type_parameters(&base_interface.type_parameters)
+                || base_interface.type_parameters.len() != interface.type_parameters.len()
+                || !base_interface.members.iter().all(plain_required_property)
+            {
+                return Completion::Deferred;
+            }
+            bases.push(base);
+        }
+        Completion::Complete(bases)
     }
 
     /// Validate the complete narrow heritage path before classifying a cycle.
@@ -347,6 +401,16 @@ impl Checker<'_> {
         let [heritage] = interface.extends.as_slice() else {
             return None;
         };
+        self.interface_base_from_heritage(declaration.file, interface, scope, heritage)
+    }
+
+    fn interface_base_from_heritage(
+        &self,
+        file: FileId,
+        interface: &InterfaceDeclaration,
+        scope: ScopeId,
+        heritage: &TypeNode,
+    ) -> Option<DeclId> {
         let TypeNodeKind::Reference {
             name, arguments, ..
         } = &heritage.kind
@@ -356,7 +420,7 @@ impl Checker<'_> {
         if !positional_type_parameter_pass_through(&interface.type_parameters, arguments) {
             return None;
         }
-        let base = self.sole_interface_reference(declaration.file, scope, name)?;
+        let base = self.sole_interface_reference(file, scope, name)?;
         let DeclarationModel::Interface {
             declaration: base_interface,
             ..
@@ -697,35 +761,19 @@ impl Checker<'_> {
                 }
                 Completion::Complete(())
             }
-            TypeKind::Object(shape)
-            | TypeKind::ClassInstance {
-                properties: shape, ..
+            TypeKind::Object(shape) => self.shape_children_supported(&shape, active),
+            TypeKind::ClassInstance {
+                arguments,
+                properties,
+                ..
             } => {
-                for child in shape
-                    .properties
-                    .iter()
-                    .map(|property| property.ty)
-                    .chain(
-                        shape
-                            .call_signatures
-                            .iter()
-                            .chain(&shape.construct_signatures)
-                            .flat_map(|signature| {
-                                signature
-                                    .parameters
-                                    .iter()
-                                    .map(|parameter| parameter.ty)
-                                    .chain(std::iter::once(signature.return_type))
-                            }),
-                    )
-                    .chain(shape.index_signatures.iter().map(|index| index.value))
-                {
-                    match self.shape_child_type_supported(child, active) {
+                for argument in arguments {
+                    match self.shape_child_type_supported(argument, active) {
                         Completion::Complete(()) => {}
                         other => return other,
                     }
                 }
-                Completion::Complete(())
+                self.shape_children_supported(&properties, active)
             }
             TypeKind::ShapeFunction(signature) => {
                 for child in signature
@@ -840,6 +888,38 @@ impl Checker<'_> {
         result
     }
 
+    fn shape_children_supported(
+        &mut self,
+        shape: &ObjectShape,
+        active: &mut HashSet<TypeId>,
+    ) -> Completion<()> {
+        for child in shape
+            .properties
+            .iter()
+            .map(|property| property.ty)
+            .chain(
+                shape
+                    .call_signatures
+                    .iter()
+                    .chain(&shape.construct_signatures)
+                    .flat_map(|signature| {
+                        signature
+                            .parameters
+                            .iter()
+                            .map(|parameter| parameter.ty)
+                            .chain(std::iter::once(signature.return_type))
+                    }),
+            )
+            .chain(shape.index_signatures.iter().map(|index| index.value))
+        {
+            match self.shape_child_type_supported(child, active) {
+                Completion::Complete(()) => {}
+                other => return other,
+            }
+        }
+        Completion::Complete(())
+    }
+
     fn force_reference_shape(
         &mut self,
         ty: TypeId,
@@ -868,6 +948,34 @@ impl Checker<'_> {
         self.force_reference_stack.restore(checkpoint);
         completion
     }
+}
+
+fn merge_plain_property_shape(
+    target: &mut ObjectShape,
+    property_indices: &mut HashMap<String, usize>,
+    source: ObjectShape,
+) -> bool {
+    if !source.call_signatures.is_empty()
+        || !source.construct_signatures.is_empty()
+        || !source.index_signatures.is_empty()
+    {
+        return false;
+    }
+
+    for property in source.properties {
+        if property.optional || property.readonly {
+            return false;
+        }
+        if let Some(index) = property_indices.get(&property.name).copied() {
+            if target.properties[index] != property {
+                return false;
+            }
+        } else {
+            property_indices.insert(property.name.clone(), target.properties.len());
+            target.properties.push(property);
+        }
+    }
+    true
 }
 
 pub(super) fn plain_type_parameters(parameters: &[TypeParameterDeclaration]) -> bool {

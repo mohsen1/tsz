@@ -57,5 +57,17 @@ path = "rewrite-tests/type_members.rs"
 name = "rewrite_recursive_expansion"
 path = "rewrite-tests/recursive_expansion.rs"
 
+[[test]]
+name = "rewrite_interface_heritage"
+path = "rewrite-tests/interface_heritage.rs"
+
+[[test]]
+name = "rewrite_import_aliases"
+path = "rewrite-tests/import_aliases.rs"
+
+[[test]]
+name = "rewrite_reference_instantiation"
+path = "rewrite-tests/reference_instantiation.rs"
+
 [lints]
 workspace = true

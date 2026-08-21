@@ -77,6 +77,60 @@ impl PropertyOrderTree {
             Self::Array(_) | Self::Tuple(_) | Self::AuthoredTypeName(_) | Self::Unknown => None,
         }
     }
+
+    fn substitute_authored_type_names(self, substitutions: &[(String, Self)]) -> Self {
+        match self {
+            Self::AuthoredTypeName(name) => substitutions
+                .iter()
+                .find(|(parameter, _)| parameter == &name)
+                .map(|(_, replacement)| replacement.clone())
+                .unwrap_or(Self::AuthoredTypeName(name)),
+            Self::Alias {
+                name,
+                declaration,
+                preserve_name,
+                target,
+            } => {
+                if let Some((_, replacement)) = substitutions
+                    .iter()
+                    .find(|(parameter, _)| parameter == &name)
+                {
+                    replacement.clone()
+                } else {
+                    Self::Alias {
+                        name,
+                        declaration,
+                        preserve_name,
+                        target: Box::new(target.substitute_authored_type_names(substitutions)),
+                    }
+                }
+            }
+            Self::Object(properties) => Self::Object(
+                properties
+                    .into_iter()
+                    .map(|(name, order)| {
+                        (name, order.substitute_authored_type_names(substitutions))
+                    })
+                    .collect(),
+            ),
+            Self::Array(element) => Self::Array(Box::new(
+                element.substitute_authored_type_names(substitutions),
+            )),
+            Self::Tuple(elements) => Self::Tuple(
+                elements
+                    .into_iter()
+                    .map(|element| element.substitute_authored_type_names(substitutions))
+                    .collect(),
+            ),
+            Self::Union(members) => Self::Union(
+                members
+                    .into_iter()
+                    .map(|member| member.substitute_authored_type_names(substitutions))
+                    .collect(),
+            ),
+            Self::Unknown => Self::Unknown,
+        }
+    }
 }
 
 impl Checker<'_> {
@@ -714,7 +768,11 @@ impl Checker<'_> {
         if !active.insert(declaration) {
             return None;
         }
-        let result = match self.models.get(&declaration).copied()? {
+        let Some(model) = self.models.get(&declaration).copied() else {
+            active.remove(&declaration);
+            return None;
+        };
+        let result = match model {
             DeclarationModel::Variable {
                 declaration: variable,
                 scope,
@@ -743,28 +801,87 @@ impl Checker<'_> {
             } => self.property_order_for_type_node(declaration.file, scope, &alias.ty, active),
             DeclarationModel::Interface {
                 declaration: interface,
-                ..
-            } => Some(PropertyOrderTree::Object(
-                interface
-                    .members
-                    .iter()
-                    .filter_map(|member| {
-                        let TypeMemberKind::Property { name, ty, .. } = &member.kind else {
-                            return None;
-                        };
-                        let name = name.semantic_name()?.to_string();
-                        let order = ty.as_ref().and_then(|ty| {
-                            self.property_order_for_type_node(
-                                declaration.file,
-                                ScopeId(0),
-                                ty,
-                                active,
-                            )
-                        });
-                        Some((name, order.unwrap_or(PropertyOrderTree::Unknown)))
-                    })
-                    .collect(),
-            )),
+                scope,
+            } => {
+                let mut properties = self.interface_member_property_order(
+                    declaration.file,
+                    scope,
+                    &interface.members,
+                    active,
+                );
+                if interface.extends.is_empty() {
+                    Some(PropertyOrderTree::Object(properties))
+                } else {
+                    match self.plain_property_interface_heritage_bases(declaration) {
+                        Completion::Complete(mut bases) => {
+                            // Pinned TS7 stable type ordering keeps the
+                            // declaration order of bases, independently of the
+                            // spelling order in the extends clause. Own members
+                            // precede every inherited member.
+                            bases.sort_unstable();
+                            let mut seen = properties
+                                .iter()
+                                .map(|(name, _)| name.clone())
+                                .collect::<HashSet<_>>();
+                            let mut base_properties: Vec<Vec<(String, PropertyOrderTree)>> =
+                                Vec::with_capacity(bases.len());
+                            let mut bases_complete = true;
+                            for base in bases {
+                                let Some(DeclarationModel::Interface {
+                                    declaration: base_interface,
+                                    scope: base_scope,
+                                }) = self.models.get(&base).copied()
+                                else {
+                                    bases_complete = false;
+                                    break;
+                                };
+                                let renamed_parameters = base_interface
+                                    .type_parameters
+                                    .iter()
+                                    .zip(&interface.type_parameters)
+                                    .map(|(base, derived)| {
+                                        (
+                                            base.name.clone(),
+                                            PropertyOrderTree::AuthoredTypeName(
+                                                derived.name.clone(),
+                                            ),
+                                        )
+                                    })
+                                    .collect::<Vec<_>>();
+                                base_properties.push(
+                                    self.interface_member_property_order(
+                                        base.file,
+                                        base_scope,
+                                        &base_interface.members,
+                                        active,
+                                    )
+                                    .into_iter()
+                                    .map(|(name, order)| {
+                                        (
+                                            name,
+                                            order.substitute_authored_type_names(
+                                                &renamed_parameters,
+                                            ),
+                                        )
+                                    })
+                                    .collect(),
+                                );
+                            }
+                            if !bases_complete {
+                                None
+                            } else {
+                                for (name, order) in base_properties.into_iter().flatten() {
+                                    if seen.insert(name.clone()) {
+                                        properties.push((name, order));
+                                    }
+                                }
+                                Some(PropertyOrderTree::Object(properties))
+                            }
+                        }
+                        Completion::Deferred | Completion::Cycle | Completion::Limit => None,
+                    }
+                }
+            }
             DeclarationModel::Class {
                 declaration: class,
                 scope,
@@ -810,6 +927,29 @@ impl Checker<'_> {
         };
         active.remove(&declaration);
         result
+    }
+
+    fn interface_member_property_order(
+        &self,
+        file: FileId,
+        scope: ScopeId,
+        members: &[crate::syntax::TypeMember],
+        active: &mut HashSet<DeclId>,
+    ) -> Vec<(String, PropertyOrderTree)> {
+        members
+            .iter()
+            .filter_map(|member| {
+                let TypeMemberKind::Property { name, ty, .. } = &member.kind else {
+                    return None;
+                };
+                let name = name.semantic_name()?.to_string();
+                let member_scope = self.node_scope(file, member.id, scope);
+                let order = ty.as_ref().and_then(|ty| {
+                    self.property_order_for_type_node(file, member_scope, ty, active)
+                });
+                Some((name, order.unwrap_or(PropertyOrderTree::Unknown)))
+            })
+            .collect()
     }
 
     fn property_order_for_type_node(
@@ -860,13 +1000,35 @@ impl Checker<'_> {
             TypeNodeKind::Parenthesized(inner) | TypeNodeKind::Readonly(inner) => {
                 self.property_order_for_type_node(file, scope, inner, active)
             }
-            TypeNodeKind::Reference { name, .. } => {
+            TypeNodeKind::Reference {
+                name, arguments, ..
+            } => {
                 let Some(declaration) = self.resolve_name(file, scope, name, Meaning::Type) else {
                     return Some(PropertyOrderTree::AuthoredTypeName(name.clone()));
                 };
-                let target = self
+                let mut target = self
                     .property_order_for_declaration_inner(declaration, active)
                     .unwrap_or(PropertyOrderTree::Unknown);
+                if let Some(DeclarationModel::Interface {
+                    declaration: interface,
+                    ..
+                }) = self.models.get(&declaration).copied()
+                    && interface.type_parameters.len() == arguments.len()
+                {
+                    let substitutions = interface
+                        .type_parameters
+                        .iter()
+                        .zip(arguments)
+                        .map(|(parameter, argument)| {
+                            (
+                                parameter.name.clone(),
+                                self.property_order_for_type_node(file, scope, argument, active)
+                                    .unwrap_or(PropertyOrderTree::Unknown),
+                            )
+                        })
+                        .collect::<Vec<_>>();
+                    target = target.substitute_authored_type_names(&substitutions);
+                }
                 Some(PropertyOrderTree::Alias {
                     name: name.clone(),
                     declaration,
@@ -877,12 +1039,19 @@ impl Checker<'_> {
             TypeNodeKind::TypeQuery { name, .. } => {
                 let mut segments = name.split('.');
                 let root = segments.next()?;
-                let declaration = self.resolve_name(file, scope, root, Meaning::Value)?;
+                let resolved = self.program.resolve_type_query_root(file, scope, root)?;
+                let declaration = resolved.semantic_declaration();
+                let imported = resolved.navigation_declaration() != declaration;
                 let mut shape = self.property_order_for_declaration_inner(declaration, active)?;
                 for property in segments {
                     shape = shape.property(property)?.clone();
                 }
-                Some(shape)
+                // A direct object with several absent properties needs TS2739,
+                // whose diagnostic owner is not implemented yet. Do not let
+                // resolving an import alias widen that case into a false
+                // TS2322; nested arrays/tuples retain their authored order for
+                // the already-owned TS2322 relation path.
+                (!imported || !matches!(shape, PropertyOrderTree::Object(_))).then_some(shape)
             }
             _ => None,
         }
