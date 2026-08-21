@@ -2,27 +2,9 @@
 //!
 //! High-performance Rust implementation for testing tsz TypeScript compiler.
 
-mod batch_pool;
-mod cache;
-mod cli;
-mod compiler_options;
-mod options_convert;
-mod process_rss;
-mod runner;
-mod server_pool;
-#[allow(dead_code)]
-mod test_directives;
-mod test_filter;
-mod test_parser;
-mod text_decode;
-mod tsc_results;
-mod tsz_wrapper;
-
 use clap::Parser;
-use std::sync::atomic::Ordering;
-
-use cli::Args;
-use runner::Runner;
+use tsz_conformance::cli::Args;
+use tsz_conformance::runner::Runner;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -47,7 +29,7 @@ async fn main() -> anyhow::Result<()> {
     }
 
     if let Some(shard_count) = args.plan {
-        let plan = runner::plan::build_shard_plan(&args, shard_count)?;
+        let plan = tsz_conformance::runner::plan::build_shard_plan(&args, shard_count)?;
         println!("{}", serde_json::to_string(&plan)?);
         return Ok(());
     }
@@ -57,7 +39,7 @@ async fn main() -> anyhow::Result<()> {
     let stats = runner.run().await?;
 
     // Exit with appropriate code
-    if stats.failed.load(Ordering::SeqCst) > 0 {
+    if !stats.has_result_bijection() || stats.has_terminal_failure() {
         std::process::exit(1);
     }
 
@@ -75,7 +57,8 @@ fn handle_cache_status(cache_path: &str) -> anyhow::Result<()> {
     }
 
     let content = std::fs::read_to_string(path)?;
-    let cache: HashMap<String, tsc_results::TscResult> = serde_json::from_str(&content)?;
+    let cache: HashMap<String, tsz_conformance::tsc_results::TscResult> =
+        serde_json::from_str(&content)?;
 
     println!("TSC Cache Status");
     println!("  File: {}", cache_path);

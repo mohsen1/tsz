@@ -11,6 +11,7 @@ import {
   PROJECT_ROWS_BY_NAME,
 } from "./project-rows.mjs";
 import { BENCH_RUNNER_EXCLUDED_ROWS } from "./project-row-summary.mjs";
+import { fixtureStubEvidenceFor } from "./lib/fixture-stub-inventory.mjs";
 
 // check-artifact-readiness.mjs cannot be imported directly (it runs its CLI,
 // including process.exit(), at module scope), so its RUNTIME_GATED_REQUIRED_ROWS
@@ -72,7 +73,8 @@ function writeJson(file, value) {
   fs.writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`, "utf8");
 }
 
-function makeCompatibility(state) {
+function makeCompatibility(state, projectName) {
+  const stubEvidence = fixtureStubEvidenceFor(ROOT, projectName);
   return {
     generated_at: "2026-05-19T01:02:03.000Z",
     source_commit: "abcdef1234567890",
@@ -89,6 +91,25 @@ function makeCompatibility(state) {
     phase: "check",
     last_successful_phase: "check",
     diagnostic_status: state === "green" ? "none" : state === "yellow" ? "diagnostic mismatch" : "none",
+    evidence_schema: 2,
+    semantic_completion: "complete",
+    root_files: 1,
+    source_files: 1,
+    root_file_fingerprint: "a".repeat(64),
+    source_file_fingerprint: "b".repeat(64),
+    oracle_root_files: 1,
+    oracle_source_files: 1,
+    oracle_root_file_fingerprint: "a".repeat(64),
+    oracle_source_file_fingerprint: "b".repeat(64),
+    diagnostic_records: 0,
+    diagnostic_fingerprint: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    oracle_diagnostic_records: 0,
+    oracle_diagnostic_fingerprint: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    stub_inventory_schema: stubEvidence.stubInventorySchema,
+    stubbed_modules: stubEvidence.stubbedModules,
+    stubbed_any_members: stubEvidence.stubbedAnyMembers,
+    stub_inventory_fingerprint: stubEvidence.stubInventoryFingerprint,
+    oracle_classification: "both-pass",
     diagnostic_deltas: [],
     diagnostic_subsystems: [],
     known_blockers: state === "green" ? [] : ["recursive alias instantiation"],
@@ -122,7 +143,7 @@ function makeRow(name, state = "green", opts = {}) {
     winner: Object.hasOwn(opts, "winner") ? opts.winner : "tsgo",
     ratio: 1.25,
     ...(opts.errorStatus ? { status: opts.errorStatus } : {}),
-    compatibility: makeCompatibility(state),
+    compatibility: makeCompatibility(state, name),
   };
 }
 
@@ -214,6 +235,16 @@ withTempDir((dir) => {
   assert.equal(parsed.metadata_clean, true, "all-green artifact should be metadata-clean");
   assert.equal(parsed.metadata_warnings_total, 0, "all-green artifact should not report metadata warnings");
   assert.deepEqual(parsed.non_green_required_rows, [], "all-green JSON should not report non-green rows");
+  const zeroStubRow = parsed.rows.find((row) => row.name === "utility-types-project");
+  const zeroStubEvidence = fixtureStubEvidenceFor(ROOT, "utility-types-project");
+  assert.equal(zeroStubRow.stub_inventory_schema, zeroStubEvidence.stubInventorySchema);
+  assert.equal(zeroStubRow.stubbed_modules, 0);
+  assert.equal(zeroStubRow.stubbed_any_members, 0);
+  assert.equal(
+    zeroStubRow.stub_inventory_fingerprint,
+    zeroStubEvidence.stubInventoryFingerprint,
+    "readiness must preserve the source-verified zero-stub fingerprint",
+  );
   assert.match(result.stderr, new RegExp(`green.*\\| ${REQUIRED_PROJECT_ROWS.length}`), "should show all green count");
   assert.match(result.stderr, /Measurement profile.*release-pgo/, "should show measurement profile mode");
   assert.match(result.stderr, /PGO profile.*abcdef123456/, "should show PGO profile fingerprint");
@@ -221,6 +252,69 @@ withTempDir((dir) => {
   assert.match(result.stderr, /Binary target CPU.*x86-64-v3/, "should show the binary codegen target CPU");
 });
 console.log("✅ complete all-green artifact exits 0");
+
+// A legacy phase-only green label is not project evidence. Readiness
+// independently rechecks schema-v2 graph, diagnostic, and exit parity instead
+// of trusting the producer's state string.
+withTempDir((dir) => {
+  const file = path.join(dir, "bench.json");
+  const rows = REQUIRED_PROJECT_ROWS.map((name) => makeRow(name, "green"));
+  delete rows[0].compatibility.evidence_schema;
+  delete rows[0].compatibility.root_file_fingerprint;
+  writeJson(file, makeArtifact(rows, { measurement_profile: SAMPLE_MEASUREMENT_PROFILE }));
+  const result = run(file, ["--json", "--require-green"]);
+  assert.equal(result.status, 1, "phase-only green metadata must fail readiness");
+  const parsed = JSON.parse(result.stdout.trim());
+  assert.equal(parsed.gray, 1);
+  assert.deepEqual(parsed.non_green_required_rows, [
+    { name: REQUIRED_PROJECT_ROWS[0], state: "gray" },
+  ]);
+});
+console.log("✅ readiness rejects green rows without exact schema-v2 evidence");
+
+withTempDir((dir) => {
+  const file = path.join(dir, "bench.json");
+  const rows = REQUIRED_PROJECT_ROWS.map((name) => makeRow(name, "green"));
+  rows[0].compatibility.oracle_source_file_fingerprint = "c".repeat(64);
+  writeJson(file, makeArtifact(rows, { measurement_profile: SAMPLE_MEASUREMENT_PROFILE }));
+  const result = run(file, ["--json", "--require-green"]);
+  assert.equal(result.status, 1, "equal counts with different source paths must fail readiness");
+  assert.equal(JSON.parse(result.stdout.trim()).gray, 1);
+});
+console.log("✅ readiness rechecks graph fingerprints, not counts alone");
+
+withTempDir((dir) => {
+  const file = path.join(dir, "bench.json");
+  const rows = REQUIRED_PROJECT_ROWS.map((name) => makeRow(name, "green"));
+  delete rows[0].compatibility.stub_inventory_schema;
+  delete rows[0].compatibility.stubbed_modules;
+  delete rows[0].compatibility.stubbed_any_members;
+  delete rows[0].compatibility.stub_inventory_fingerprint;
+  writeJson(file, makeArtifact(rows, { measurement_profile: SAMPLE_MEASUREMENT_PROFILE }));
+  const result = run(file, ["--json"]);
+  assert.equal(result.status, 1, "omitted stub evidence must fail readiness unconditionally");
+  assert.deepEqual(JSON.parse(result.stdout.trim()).invalid_project_evidence_rows, [rows[0].name]);
+});
+console.log("✅ readiness rejects green rows that omit fixture-stub evidence");
+
+withTempDir((dir) => {
+  const file = path.join(dir, "bench.json");
+  const rows = REQUIRED_PROJECT_ROWS.map((name) => makeRow(name, "green"));
+  const zero = fixtureStubEvidenceFor(ROOT, "utility-types-project");
+  const forgedNames = ["msw-project", "effect-project", "drizzle-orm-project"];
+  for (const name of forgedNames) {
+    const forged = makeRow(name, "green");
+    forged.compatibility.stubbed_modules = 0;
+    forged.compatibility.stubbed_any_members = 0;
+    forged.compatibility.stub_inventory_fingerprint = zero.stubInventoryFingerprint;
+    rows.push(forged);
+  }
+  writeJson(file, makeArtifact(rows, { measurement_profile: SAMPLE_MEASUREMENT_PROFILE }));
+  const result = run(file, ["--json"]);
+  assert.equal(result.status, 1, "forged zero-stub canary rows must fail readiness");
+  assert.deepEqual(JSON.parse(result.stdout.trim()).invalid_project_evidence_rows, forgedNames);
+});
+console.log("✅ readiness recomputes MSW/effect/drizzle stub truth and rejects forged zeros");
 
 // ---------------------------------------------------------------------------
 // Test: --require-project-timing-pairs accepts a present artifact with at least
@@ -1015,6 +1109,9 @@ withTempDir((dir) => {
   const file = path.join(dir, "bench.json");
   const incompleteStatusRow = makeRow(REQUIRED_PROJECT_ROWS[0], "red", {
     errorStatus: "tsz crashed before compatibility artifact",
+    tsz_ms: null,
+    tsgo_ms: null,
+    winner: "error",
   });
   delete incompleteStatusRow.compatibility;
   incompleteStatusRow.artifact_missing = true;

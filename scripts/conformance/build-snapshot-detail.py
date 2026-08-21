@@ -155,7 +155,7 @@ def build_aggregates(tests):
     }
 
 
-def build_snapshot_detail(tests, git_sha=None):
+def build_snapshot_detail(tests, git_sha=None, provenance=None):
     """Build the compact detail artifact with explicit runnable accounting."""
     aggregates = build_aggregates(tests)
 
@@ -165,6 +165,8 @@ def build_snapshot_detail(tests, git_sha=None):
         1 for result in tests.values() if result["status"] == "UNSUPPORTED"
     )
     skipped = sum(1 for result in tests.values() if result["status"] == "SKIP")
+    crashed = sum(1 for result in tests.values() if result["status"] == "CRASH")
+    timeout = sum(1 for result in tests.values() if result["status"] == "TIMEOUT")
     runnable = candidates - unsupported - skipped
     failed = runnable - passed
 
@@ -173,11 +175,15 @@ def build_snapshot_detail(tests, git_sha=None):
     # stable reason so they cannot be mistaken for either failures or skips.
     fail_detail = {}
     unsupported_detail = {}
+    terminal_detail = {}
     for path, result in sorted(tests.items()):
         if result["status"] == "UNSUPPORTED":
             unsupported_detail[path] = {
                 "reason": result.get("unsupported_reason", ""),
             }
+            continue
+        if result["status"] in ("CRASH", "TIMEOUT"):
+            terminal_detail[path] = {"status": result["status"]}
             continue
         if result["status"] not in ("FAIL", "XFAIL"):
             continue
@@ -209,6 +215,8 @@ def build_snapshot_detail(tests, git_sha=None):
             "failed": failed,
             "unsupported": unsupported,
             "skipped": skipped,
+            "crashed": crashed,
+            "timeout": timeout,
             "known_failures": sum(
                 1 for result in tests.values() if result["status"] == "XFAIL"
             ),
@@ -216,10 +224,13 @@ def build_snapshot_detail(tests, git_sha=None):
         "aggregates": aggregates,
         "failures": fail_detail,
         "unsupported": unsupported_detail,
+        "terminal_failures": terminal_detail,
     }
     # Stamp the measured tree so observational artifacts retain provenance.
     if git_sha and git_sha.lower() != "unknown":
         detail["git_sha"] = git_sha
+    if provenance is not None:
+        detail["provenance"] = provenance
     return detail
 
 
@@ -234,10 +245,23 @@ def main():
         "the artifact so consumers can distinguish a current reading "
         "from a stale local snapshot",
     )
+    parser.add_argument(
+        "--provenance",
+        default=None,
+        help="required clean-tree provenance JSON for tracked snapshots",
+    )
     args = parser.parse_args()
 
     tests = parse_runner_output(args.input_file)
-    output = build_snapshot_detail(tests, git_sha=args.git_sha)
+    if not tests:
+        raise SystemExit("runner output has no test identities")
+    provenance = None
+    if args.provenance:
+        with open(args.provenance, encoding="utf-8") as provenance_file:
+            provenance = json.load(provenance_file)
+    output = build_snapshot_detail(
+        tests, git_sha=args.git_sha, provenance=provenance
+    )
 
     with open(args.output, "w") as f:
         json.dump(output, f, separators=(",", ":"))

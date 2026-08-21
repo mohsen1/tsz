@@ -8,6 +8,14 @@ from pathlib import Path
 from typing import Any
 
 
+def _lower_hex(value: Any, length: int) -> bool:
+    return (
+        isinstance(value, str)
+        and len(value) == length
+        and all(character in "0123456789abcdef" for character in value)
+    )
+
+
 class CacheDomainValidationError(ValueError):
     """Raised when cache/domain artifacts do not describe one exact partition."""
 
@@ -115,6 +123,7 @@ def validate_cache_domain(
     missing_metadata: list[str] = []
     wrong_versions: list[tuple[str, Any]] = []
     invalid_results: list[str] = []
+    incomplete_evidence: list[str] = []
     for path, entry in cache.items():
         if not isinstance(path, str):
             continue
@@ -128,8 +137,11 @@ def validate_cache_domain(
             actual_version = metadata.get("typescript_version")
             if actual_version != pinned_version:
                 wrong_versions.append((path, actual_version))
+            if not _lower_hex(metadata.get("source_sha256"), 64):
+                invalid_results.append(path)
         error_codes = entry.get("error_codes")
         fingerprints = entry.get("diagnostic_fingerprints")
+        exits = entry.get("ordinary_exit_statuses")
         if (
             not isinstance(error_codes, list)
             or any(isinstance(code, bool) or not isinstance(code, int) for code in error_codes)
@@ -137,6 +149,19 @@ def validate_cache_domain(
             or any(not isinstance(fingerprint, dict) for fingerprint in fingerprints)
         ):
             invalid_results.append(path)
+        elif error_codes != [fingerprint.get("code") for fingerprint in fingerprints]:
+            invalid_results.append(path)
+        if entry.get("diagnostic_blocks_complete") is not True or (
+            not isinstance(exits, list)
+            or not exits
+            or any(
+                isinstance(status, bool)
+                or not isinstance(status, int)
+                or status not in (0, 1, 2)
+                for status in exits
+            )
+        ):
+            incomplete_evidence.append(path)
 
     if missing_metadata:
         errors.append(
@@ -154,12 +179,76 @@ def validate_cache_domain(
             f"{len(set(invalid_results))} cache entries have invalid result payloads; "
             f"first={sorted(set(invalid_results))[0]}"
         )
+    if incomplete_evidence:
+        errors.append(
+            f"{len(incomplete_evidence)} cache entries lack complete diagnostic blocks "
+            f"or exact ordinary exit status; first={sorted(incomplete_evidence)[0]}"
+        )
 
     domain_version = domain.get("typescript_version")
     if domain_version != pinned_version:
         errors.append(
             f"domain TypeScript version must be {pinned_version}, got {domain_version!r}"
         )
+    if domain.get("schema_version") != 2:
+        errors.append("domain schema_version must be 2")
+    if not _lower_hex(domain.get("corpus_commit"), 40):
+        errors.append("domain corpus_commit must be 40 lowercase hex bytes")
+    if not _lower_hex(domain.get("corpus_tree"), 40):
+        errors.append("domain corpus_tree must be 40 lowercase hex bytes")
+    if not _lower_hex(domain.get("candidate_content_sha256"), 64):
+        errors.append("domain candidate_content_sha256 must be 64 lowercase hex bytes")
+
+    oracle = domain.get("oracle")
+    if not isinstance(oracle, dict) or set(oracle) != {
+        "schemaVersion",
+        "manifestSha256",
+        "generator",
+    }:
+        errors.append("domain oracle evidence has an invalid envelope")
+    else:
+        if oracle.get("schemaVersion") != 1 or not _lower_hex(
+            oracle.get("manifestSha256"), 64
+        ):
+            errors.append("domain oracle manifest identity is invalid")
+        generator = oracle.get("generator")
+        expected_generator_keys = {
+            "schemaVersion",
+            "packageName",
+            "platformPackageName",
+            "version",
+            "gitHead",
+            "wrapperIntegrity",
+            "platformIntegrity",
+            "wrapperPackageJsonSha256",
+            "wrapperBinSha256",
+            "platformPackageJsonSha256",
+            "platformPackageTreeSha256",
+            "binarySha256",
+            "binaryPath",
+            "fingerprint",
+        }
+        if not isinstance(generator, dict) or set(generator) != expected_generator_keys:
+            errors.append("domain oracle generator provenance has an invalid schema")
+        else:
+            if generator.get("schemaVersion") != 1:
+                errors.append("domain oracle generator schemaVersion must be 1")
+            if generator.get("version") != pinned_version:
+                errors.append("domain oracle generator version does not match the pin")
+            for key in (
+                "wrapperPackageJsonSha256",
+                "wrapperBinSha256",
+                "platformPackageJsonSha256",
+                "platformPackageTreeSha256",
+                "binarySha256",
+            ):
+                if not _lower_hex(generator.get(key), 64):
+                    errors.append(f"domain oracle {key} must be 64 lowercase hex bytes")
+            fingerprint = generator.get("fingerprint")
+            if not isinstance(fingerprint, str) or not _lower_hex(
+                fingerprint.removeprefix("sha256:"), 64
+            ) or not fingerprint.startswith("sha256:"):
+                errors.append("domain oracle fingerprint is invalid")
 
     candidate_count = _count(domain, "candidate_count", errors)
     runnable_count = _count(domain, "runnable_count", errors)

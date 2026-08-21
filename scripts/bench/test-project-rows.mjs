@@ -178,6 +178,21 @@ printf '%s\\n' "\${_TSZ_PACKED_COMPAT_ROWS}"
   };
 }
 
+function shellApplicationTsconfig(rowName) {
+  const script = `
+set -euo pipefail
+source "${path.join(ROOT, "scripts/bench/project-fixtures.sh")}"
+tsz_project_application_tsconfig "${rowName}"
+`;
+  const result = runShellScript(script);
+  assert.equal(
+    result.status,
+    0,
+    `application tsconfig lookup failed for ${rowName}:\n${result.stderr}`,
+  );
+  return result.stdout.trim();
+}
+
 function sharedConfigWriterName(row) {
   if (row.generated_by !== undefined) return null;
   // Application rows compile with the app's OWN tsconfig (jsx + paths), not a
@@ -311,6 +326,32 @@ assert.deepEqual(
   projectCompileGuardRows,
   sortedUnique(without(allTrackedRows, PROJECT_COMPILE_GUARD_EXCLUDED_ROWS)),
   "project-compile-guard rows drifted from scripts/bench/project-rows.mjs",
+);
+
+const applicationRows = PROJECT_ROW_DEFINITIONS.filter(
+  (row) => row.category === "application",
+);
+for (const row of applicationRows) {
+  assert.equal(
+    shellApplicationTsconfig(row.name),
+    row.app_tsconfig,
+    `${row.name} guard tsconfig must come from project-rows.mjs metadata`,
+  );
+}
+assert.equal(
+  shellApplicationTsconfig("infisical-project"),
+  "frontend/tsconfig.app.json",
+  "Infisical must compile its leaf app config, not the zero-root solution config",
+);
+assert.equal(
+  (projectCompileGuardScript.match(/tsz_project_application_tsconfig "\$name"/g) || []).length,
+  applicationRows.length,
+  "every application guard row must consume the canonical metadata tsconfig",
+);
+assert.doesNotMatch(
+  projectCompileGuardScript,
+  /frontend\/tsconfig\.json/,
+  "the stale zero-root Infisical solution config must not reappear in the guard",
 );
 
 const fixtureSourceRows = extractFixtureSourceRows(

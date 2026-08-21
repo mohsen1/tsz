@@ -88,14 +88,6 @@ export default function (eleventyConfig) {
     }
   });
 
-  eleventyConfig.setServerOptions({
-    watch: ["static/playground-app.js", "static/playground-app.js.map"],
-  });
-
-  if (fs.existsSync("../../pkg/web")) {
-    eleventyConfig.addPassthroughCopy({ "../../pkg/web": "wasm" });
-  }
-
   eleventyConfig.on("eleventy.after", ({ dir }) => {
     if (!latestBenchmarkArtifact || !latestWinnerArtifact || fs.existsSync(latestWinnerArtifact)) {
       return;

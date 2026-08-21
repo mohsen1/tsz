@@ -84,12 +84,37 @@ fn default_library_contributes_generated_type_and_value_symbols() {
 }
 
 #[test]
-fn opaque_library_shapes_do_not_become_definitive_unknown() {
+fn structurally_indexed_library_records_check_object_property_values() {
     let output = compile(
         "const table: Record<string, number> = { one: 'wrong' };",
         CompilerOptions::default(),
     );
     assert_eq!(codes(&output), vec![2322]);
+    assert_eq!(
+        output.diagnostics[0].message_text,
+        "Type 'string' is not assignable to type 'number'."
+    );
+
+    let renamed = compile(
+        "const flags:Record<string,boolean> = { ready:true, done:false }; \
+         const broken:Record<string,boolean> = { ready:1 };",
+        CompilerOptions::default(),
+    );
+    assert_eq!(codes(&renamed), vec![2322]);
+    assert_eq!(
+        renamed.diagnostics[0].message_text,
+        "Type 'number' is not assignable to type 'boolean'."
+    );
+
+    let unsupported_key = compile(
+        "const exact:Record<'item',number> = { item:'wrong' };",
+        CompilerOptions::default(),
+    );
+    assert!(
+        unsupported_key.diagnostics.is_empty(),
+        "{:?}",
+        unsupported_key.diagnostics
+    );
 }
 
 #[test]

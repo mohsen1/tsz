@@ -3,7 +3,8 @@
 # TSZ Emit Test Runner
 # ====================
 #
-# Tests tsz JavaScript and declaration emit against TypeScript's baselines.
+# Tests TSZ emit against a fresh pinned TypeScript 7 process observation.
+# Checked-in baselines provide sources/directives/product domains, never bytes.
 #
 # Usage: ./run.sh [options]
 #
@@ -56,6 +57,7 @@ TSZ_WATCH_PATHS=(
 )
 RUNNER_WATCH_PATHS=(
     "$SCRIPT_DIR/src"
+    "$SCRIPT_DIR/oracle-manifest.json"
     "$SCRIPT_DIR/tsconfig.json"
     "$SCRIPT_DIR/../package.json"
     "$SCRIPT_DIR/../package-lock.json"
@@ -369,6 +371,20 @@ build_runner() {
     log_success "Runner built"
 }
 
+run_harness_contracts() {
+    log_step "Verifying canonical emit-harness contracts..."
+    python3 -m unittest "$SCRIPT_DIR/test_output_surgery_audit.py"
+    python3 "$SCRIPT_DIR/audit-output-surgery.py" --fail-on-warnings
+    [[ -f "$SCRIPT_DIR/dist/canonical-truth.test.js" ]] \
+        || die "Canonical emit truth test is not built; rerun without --skip-build"
+
+    local test_file
+    for test_file in "$SCRIPT_DIR"/dist/*.test.js; do
+        [[ -f "$test_file" ]] || die "Compiled emit harness test not found: $test_file"
+        node "$test_file"
+    done
+}
+
 # Main
 main() {
     local skip_build=0
@@ -405,6 +421,7 @@ main() {
         fi
     fi
 
+    run_harness_contracts
     log_step "Running emit tests..."
     echo ""
 

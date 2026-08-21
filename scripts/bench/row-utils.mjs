@@ -1,3 +1,12 @@
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+import {
+  computeFixtureStubInventory,
+  fixtureStubEvidenceFromInventory,
+} from "./lib/fixture-stub-inventory.mjs";
+import { PROJECT_ROWS_BY_NAME } from "./project-rows.mjs";
+
 // Fields that must be present in a compatibility object before a row
 // can be reported as a speed win. Missing any of these means the artifact
 // is incomplete and the row must render as gray/incomplete, not a win.
@@ -11,6 +20,74 @@ export const REQUIRED_PHASE_EXIT_FIELDS = [
 
 export function hasCompletePhaseMetadata(compatibility) {
   return REQUIRED_PHASE_EXIT_FIELDS.every((field) => Object.hasOwn(compatibility, field));
+}
+
+const SHA256_PATTERN = /^[0-9a-f]{64}$/;
+const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
+let FIXTURE_STUB_INVENTORY = null;
+try {
+  FIXTURE_STUB_INVENTORY = computeFixtureStubInventory(REPO_ROOT);
+} catch {
+  // Consumers fail closed below. Keeping the module importable lets single-file
+  // benchmarks render even when project inventory evidence is unavailable.
+}
+const ZERO_STUB_EVIDENCE = fixtureStubEvidenceFromInventory({}, "zero-stub-row");
+
+function exactOrdinaryExit(codes) {
+  if (!Array.isArray(codes) || codes.length !== 1) return null;
+  const value = Number(codes[0]);
+  return Number.isInteger(value) && value >= 0 && value <= 4 ? value : null;
+}
+
+// Schema-v2 project evidence proves what TSZ actually admitted and compares it
+// with pinned TypeScript 7. Counts alone are insufficient: ordered path-graph
+// fingerprints, length-delimited diagnostic-record fingerprints (including
+// multiplicity/continuation ownership), and ordinary exit parity must all agree.
+export function hasExactFixtureStubEvidence(compatibility, projectName) {
+  if (!FIXTURE_STUB_INVENTORY || typeof projectName !== "string" || !projectName) return false;
+  let expected;
+  try {
+    expected = fixtureStubEvidenceFromInventory(FIXTURE_STUB_INVENTORY, projectName);
+  } catch {
+    return false;
+  }
+  return compatibility?.stub_inventory_schema === expected.stubInventorySchema
+    && compatibility.stubbed_modules === expected.stubbedModules
+    && compatibility.stubbed_any_members === expected.stubbedAnyMembers
+    && compatibility.stub_inventory_fingerprint === expected.stubInventoryFingerprint
+    && expected.stubbedModules === 0
+    && expected.stubbedAnyMembers === 0;
+}
+
+export function hasExactProjectEvidence(compatibility, projectName) {
+  if (!compatibility || compatibility.evidence_schema !== 2) return false;
+  if (compatibility.semantic_completion !== "complete") return false;
+  if (!hasExactFixtureStubEvidence(compatibility, projectName)) return false;
+  const positiveInteger = (value) => Number.isInteger(value) && value > 0;
+  const nonnegativeInteger = (value) => Number.isInteger(value) && value >= 0;
+  if (!positiveInteger(compatibility.root_files)
+    || !positiveInteger(compatibility.source_files)
+    || compatibility.root_files !== compatibility.oracle_root_files
+    || compatibility.source_files !== compatibility.oracle_source_files
+    || compatibility.files_reached !== compatibility.source_files) {
+    return false;
+  }
+  for (const [actual, expected] of [
+    [compatibility.root_file_fingerprint, compatibility.oracle_root_file_fingerprint],
+    [compatibility.source_file_fingerprint, compatibility.oracle_source_file_fingerprint],
+    [compatibility.diagnostic_fingerprint, compatibility.oracle_diagnostic_fingerprint],
+  ]) {
+    if (!SHA256_PATTERN.test(actual || "") || actual !== expected) return false;
+  }
+  if (!nonnegativeInteger(compatibility.diagnostic_records)
+    || compatibility.diagnostic_records !== compatibility.oracle_diagnostic_records) {
+    return false;
+  }
+  const tszExit = exactOrdinaryExit(compatibility.exit_codes?.tsz);
+  const tscExit = exactOrdinaryExit(compatibility.exit_codes?.tsc);
+  if (tszExit === null || tscExit === null || tszExit !== tscExit) return false;
+  return compatibility.oracle_classification === "both-pass"
+    || compatibility.oracle_classification === "both-fail-same";
 }
 
 // The declared row names (from any benchmark_set/guard_set/corpus name list)
@@ -31,9 +108,10 @@ export function isGreen(row) {
   if (row.status) return false;
   if (row.artifact_missing === true) return false;
   const compatibility = row.compatibility;
-  if (!compatibility) return true;
+  if (!compatibility) return !Object.hasOwn(PROJECT_ROWS_BY_NAME, String(row?.name || ""));
   if (!hasCompletePhaseMetadata(compatibility)) return false;
   return (
+    hasExactProjectEvidence(compatibility, row.name) &&
     compatibility.state === "green" &&
     compatibility.exit_class === "exit success" &&
     compatibility.diagnostic_status === "none"
@@ -47,7 +125,7 @@ export function isIncompleteCompat(row) {
   if (row.status) return false;
   if (row.artifact_missing === true) return true;
   const compatibility = row.compatibility;
-  if (!compatibility) return false;
+  if (!compatibility) return Object.hasOwn(PROJECT_ROWS_BY_NAME, String(row?.name || ""));
   return !hasCompletePhaseMetadata(compatibility);
 }
 
@@ -119,6 +197,9 @@ export function isPositiveFiniteTiming(value) {
 export function isSpeedRatioEligible(row) {
   if (!row || row.status) return false;
   if (didNotFinish(row)) return false;
+  const knownProject = Object.hasOwn(PROJECT_ROWS_BY_NAME, String(row.name || ""));
+  if (knownProject && !row.compatibility) return false;
+  if (row.compatibility && !hasExactProjectEvidence(row.compatibility, row.name)) return false;
   return isPositiveFiniteTiming(row.tsz_ms) && isPositiveFiniteTiming(row.tsgo_ms);
 }
 
@@ -143,6 +224,27 @@ export const GREEN_COMPAT = {
   last_successful_phase: "check",
   exit_class: "exit success",
   diagnostic_status: "none",
+  evidence_schema: 2,
+  semantic_completion: "complete",
+  root_files: 1,
+  source_files: 1,
+  root_file_fingerprint: "a".repeat(64),
+  source_file_fingerprint: "b".repeat(64),
+  oracle_root_files: 1,
+  oracle_source_files: 1,
+  oracle_root_file_fingerprint: "a".repeat(64),
+  oracle_source_file_fingerprint: "b".repeat(64),
+  diagnostic_records: 0,
+  diagnostic_fingerprint: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  oracle_diagnostic_records: 0,
+  oracle_diagnostic_fingerprint: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  stub_inventory_schema: ZERO_STUB_EVIDENCE.stubInventorySchema,
+  stubbed_modules: ZERO_STUB_EVIDENCE.stubbedModules,
+  stubbed_any_members: ZERO_STUB_EVIDENCE.stubbedAnyMembers,
+  stub_inventory_fingerprint: ZERO_STUB_EVIDENCE.stubInventoryFingerprint,
+  oracle_classification: "both-pass",
+  files_reached: 1,
+  exit_codes: { tsc: [0], tsz: [0] },
 };
 
 export const YELLOW_COMPAT = {

@@ -3,8 +3,7 @@
 //! Emit is deliberately a syntax transform. It erases type-only syntax and
 //! prints runtime nodes; it does not validate types or recover semantic facts.
 
-use std::path::{Path, PathBuf};
-
+use crate::emit_paths::{EmitFilePlan, EmitPlan, is_declaration_source};
 use crate::program::{CompilerOptions, EmittedFile, ProgramFile};
 use crate::source::{SourceText, Span};
 use crate::syntax::{
@@ -21,28 +20,39 @@ use crate::syntax::{
 /// file, and the program layer performs the final path sort across files.
 #[must_use]
 pub fn emit_file(file: &ProgramFile, options: &CompilerOptions) -> Vec<EmittedFile> {
+    let plan = EmitPlan::for_program(
+        std::slice::from_ref(file),
+        options,
+        &crate::config::ProjectProvenance::default(),
+    );
+    emit_file_with_plan(file, options, plan.for_file(file.source.id))
+}
+
+pub(crate) fn emit_file_with_plan(
+    file: &ProgramFile,
+    options: &CompilerOptions,
+    plan: &EmitFilePlan,
+) -> Vec<EmittedFile> {
     if is_declaration_source(&file.source.path) {
         return Vec::new();
     }
 
-    let mut emitted = Vec::with_capacity(usize::from(options.declaration) + 1);
-    let mut javascript = Printer::new(&file.source, options);
-    javascript.emit_javascript(&file.syntax);
-    emitted.push(EmittedFile {
-        path: output_path(&file.source.path, options.out_dir.as_deref(), false),
-        text: javascript.finish(),
-        declaration: false,
-    });
+    let mut emitted = Vec::with_capacity(usize::from(plan.declaration.is_some()) + 1);
+    if let Some(javascript_path) = &plan.javascript {
+        let mut javascript = Printer::new(&file.source, options);
+        javascript.emit_javascript(&file.syntax);
+        emitted.push(EmittedFile {
+            path: javascript_path.clone(),
+            text: javascript.finish(),
+            declaration: false,
+        });
+    }
 
-    if options.declaration {
-        let directory = options
-            .declaration_dir
-            .as_deref()
-            .or(options.out_dir.as_deref());
+    if let Some(declaration_path) = &plan.declaration {
         let mut declarations = Printer::new(&file.source, options);
         declarations.emit_declarations(&file.syntax);
         emitted.push(EmittedFile {
-            path: output_path(&file.source.path, directory, true),
+            path: declaration_path.clone(),
             text: declarations.finish(),
             declaration: true,
         });
@@ -744,9 +754,14 @@ impl<'a> Printer<'a> {
                 }
                 self.output.push(')');
             }
-            ExpressionKind::New { callee, arguments } => {
+            ExpressionKind::New {
+                callee,
+                type_arguments,
+                arguments,
+            } => {
                 self.output.push_str("new ");
                 self.write_expression(callee, PREC_POSTFIX);
+                self.write_type_arguments(type_arguments);
                 self.output.push('(');
                 for (index, argument) in arguments.iter().enumerate() {
                     if index != 0 {
@@ -1119,7 +1134,7 @@ impl<'a> Printer<'a> {
         self.output.push(')');
     }
 
-    fn write_type_parameters(&mut self, parameters: &[String]) {
+    fn write_type_parameters(&mut self, parameters: &[crate::syntax::TypeParameterDeclaration]) {
         if parameters.is_empty() {
             return;
         }
@@ -1128,7 +1143,38 @@ impl<'a> Printer<'a> {
             if index != 0 {
                 self.output.push_str(", ");
             }
-            self.output.push_str(parameter);
+            if parameter.const_parameter {
+                self.output.push_str("const ");
+            }
+            if parameter.in_variance {
+                self.output.push_str("in ");
+            }
+            if parameter.out_variance {
+                self.output.push_str("out ");
+            }
+            self.output.push_str(&parameter.name);
+            if let Some(constraint) = &parameter.constraint {
+                self.output.push_str(" extends ");
+                self.write_type(constraint, TYPE_PREC_LOWEST);
+            }
+            if let Some(default) = &parameter.default {
+                self.output.push_str(" = ");
+                self.write_type(default, TYPE_PREC_LOWEST);
+            }
+        }
+        self.output.push('>');
+    }
+
+    fn write_type_arguments(&mut self, arguments: &[TypeNode]) {
+        if arguments.is_empty() {
+            return;
+        }
+        self.output.push('<');
+        for (index, argument) in arguments.iter().enumerate() {
+            if index != 0 {
+                self.output.push_str(", ");
+            }
+            self.write_type(argument, TYPE_PREC_LOWEST);
         }
         self.output.push('>');
     }
@@ -1554,49 +1600,6 @@ const fn keyword_type_text(keyword: KeywordType) -> &'static str {
     }
 }
 
-fn output_path(source: &Path, directory: Option<&Path>, declaration: bool) -> PathBuf {
-    let name = output_file_name(source, declaration);
-    match directory {
-        Some(root) => root.join(name),
-        None => source.with_file_name(name),
-    }
-}
-
-fn output_file_name(source: &Path, declaration: bool) -> String {
-    let stem = source
-        .file_stem()
-        .and_then(|stem| stem.to_str())
-        .filter(|stem| !stem.is_empty())
-        .unwrap_or("output");
-    let extension = source
-        .extension()
-        .and_then(|extension| extension.to_str())
-        .unwrap_or_default()
-        .to_ascii_lowercase();
-    if declaration {
-        match extension.as_str() {
-            "mts" => format!("{stem}.d.mts"),
-            "cts" => format!("{stem}.d.cts"),
-            _ => format!("{stem}.d.ts"),
-        }
-    } else {
-        match extension.as_str() {
-            "mts" => format!("{stem}.mjs"),
-            "cts" => format!("{stem}.cjs"),
-            _ => format!("{stem}.js"),
-        }
-    }
-}
-
-fn is_declaration_source(path: &Path) -> bool {
-    let name = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or_default()
-        .to_ascii_lowercase();
-    name.ends_with(".d.ts") || name.ends_with(".d.mts") || name.ends_with(".d.cts")
-}
-
 fn raw_is_property_name(raw: &str) -> bool {
     is_quoted(raw) || is_identifier_name(raw) || is_numeric_property_name(raw)
 }
@@ -1764,18 +1767,10 @@ mod tests {
     }
 
     #[test]
-    fn emits_basic_commonjs_at_the_ts7_default_target() {
+    fn preserves_es_modules_at_the_ts7_defaults() {
         let file = program_file("value.ts", "export const value: number = 1;\n");
         let output = emit_file(&file, &CompilerOptions::default());
-        assert_eq!(
-            output[0].text,
-            concat!(
-                "\"use strict\";\n",
-                "Object.defineProperty(exports, \"__esModule\", { value: true });\n",
-                "const value = 1;\n",
-                "exports.value = value;\n",
-            )
-        );
+        assert_eq!(output[0].text, "export const value = 1;\n");
     }
 
     #[test]

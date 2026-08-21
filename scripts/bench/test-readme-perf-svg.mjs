@@ -10,6 +10,7 @@ import {
   renderReadmePerfPng,
   renderReadmePerfSvg,
 } from "./readme-perf-svg.mjs";
+import { GREEN_COMPAT } from "./row-utils.mjs";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const SCRIPT = path.join(SCRIPT_DIR, "readme-perf-svg.mjs");
@@ -50,6 +51,7 @@ const artifact = {
       tsz_ms: 9000,
       tsgo_ms: 3000,
       winner: "tsgo",
+      compatibility: GREEN_COMPAT,
     },
     {
       // tsz is ~1.17x slower — within the 1.5x threshold, so this project row
@@ -59,6 +61,7 @@ const artifact = {
       tsz_ms: 3500,
       tsgo_ms: 3000,
       winner: "tsgo",
+      compatibility: GREEN_COMPAT,
     },
     {
       name: "failed-row",
@@ -152,7 +155,14 @@ assert.match(renderReadmePerfSvg(tieArtifact), /tsz and tsgo are even/);
   const dnfArtifact = {
     results: [
       // A healthy project row so the summary is otherwise non-empty.
-      { name: "rxjs-project", lines: 1500, tsz_ms: 3000, tsgo_ms: 3300, winner: "tsz" },
+      {
+        name: "rxjs-project",
+        lines: 1500,
+        tsz_ms: 3000,
+        tsgo_ms: 3300,
+        winner: "tsz",
+        compatibility: GREEN_COMPAT,
+      },
       // A short-ceiling timeout: tsz was KILLED at a 400ms ceiling (exit 124),
       // `winner` left "tsz", ceiling under 1.5x tsgo. Only the explicit DNF
       // guard excludes it.
@@ -178,7 +188,14 @@ assert.match(renderReadmePerfSvg(tieArtifact), /tsz and tsgo are even/);
   // A non-zero tsgo exit is equally DNF even when tsz itself completed cleanly.
   const tsgoErrArtifact = {
     results: [
-      { name: "rxjs-project", lines: 1500, tsz_ms: 3000, tsgo_ms: 3300, winner: "tsz" },
+      {
+        name: "rxjs-project",
+        lines: 1500,
+        tsz_ms: 3000,
+        tsgo_ms: 3300,
+        winner: "tsz",
+        compatibility: GREEN_COMPAT,
+      },
       {
         name: "large-ts-repo",
         lines: 200000,

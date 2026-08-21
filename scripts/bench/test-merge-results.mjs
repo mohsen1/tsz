@@ -24,6 +24,7 @@ assert.ok(
 );
 
 const SAMPLE_COMPATIBILITY = {
+  ...GREEN_COMPAT,
   generated_at: "2026-05-19T01:02:03.000Z",
   source_commit: "abcdef1234567890",
   workflow_name: "Bench",

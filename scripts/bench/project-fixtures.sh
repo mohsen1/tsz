@@ -109,6 +109,17 @@ _TSZ_PACKED_GUARD_REQUIRED_ROWS=""
 _TSZ_PACKED_CANARY_ROWS=""
 _TSZ_PACKED_COMPAT_ROWS=""
 
+# Return the canonical application tsconfig stored in project-rows.mjs. The
+# metadata loader exports one shell-safe variable per application row, avoiding
+# a second hard-coded config map in the compile guard.
+tsz_project_application_tsconfig() {
+  local row_name="$1"
+  local key variable
+  key="$(printf '%s' "$row_name" | tr '[:lower:]-' '[:upper:]_')"
+  variable="_TSZ_APP_TSCONFIG_${key}"
+  printf '%s\n' "${!variable:-}"
+}
+
 _tsz_unpack_row_groups() {
   IFS='|' read -ra TSZ_COMPILE_GUARD_REQUIRED_ROWS <<< "$_TSZ_PACKED_GUARD_REQUIRED_ROWS"
   IFS='|' read -ra TSZ_COMPILE_GUARD_CANARY_ROWS <<< "$_TSZ_PACKED_CANARY_ROWS"
@@ -230,6 +241,10 @@ for (const row of PROJECT_ROW_DEFINITIONS) {
     if (row[envField] && row[valueField] !== undefined) {
       process.stdout.write(row[envField] + "=" + row[valueField] + "\n");
     }
+  }
+  if (row.category === "application" && typeof row.app_tsconfig === "string") {
+    const key = row.name.replace(/[^A-Za-z0-9]/g, "_").toUpperCase();
+    process.stdout.write(`_TSZ_APP_TSCONFIG_${key}=${row.app_tsconfig}\n`);
   }
 }
 

@@ -9,10 +9,15 @@ assert.match(
   /workflow_dispatch:\s*\n\s*inputs:[\s\S]+filter:[\s\S]+full_suite:[\s\S]+redeploy_site:/,
   "Bench should be manually dispatchable with a selected row filter and site redeploy switch",
 );
+assert.match(
+  workflow,
+  /schedule:\s*\n[\s\S]+cron: "0 22 \* \* \*"/,
+  "Bench should run the full public observation once per day on GitHub-hosted infrastructure",
+);
 assert.doesNotMatch(
   workflow,
-  /workflow_run:\s*\n|schedule:\s*\n/,
-  "Bench must not auto-fan-out from CI or schedules while GCP spend is shut down",
+  /workflow_run:\s*\n/,
+  "Bench must not fan out automatically from every CI completion",
 );
 assert.match(
   workflow,

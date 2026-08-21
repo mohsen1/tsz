@@ -66,6 +66,28 @@ ACTIVE_RUST_ROOTS = (
     "crates/conformance",
 )
 
+# The retired compiler accumulated 111 TSZ_* behavior knobs.  The rewrite's
+# semantic result must be a function of typed program/service inputs, not the
+# parent process.  These CLI-only names may expose logging or counters; they
+# must never select compiler behavior.
+ACTIVE_COMPILER_RUST_ROOTS = (
+    "crates/tsz-core/src",
+    "crates/tsz-cli/src",
+)
+
+CLI_OBSERVABILITY_ENV_NAMES = frozenset(
+    {
+        "TSZ_LOG",
+        "TSZ_LOG_FORMAT",
+        "TSZ_PERF_COUNTERS",
+    }
+)
+
+# Process environment ownership is deliberately narrower than crate ownership.
+# Keeping the reads in one adapter module makes it reviewable that they only
+# configure observability and never influence compiler inputs or semantics.
+CLI_OBSERVABILITY_ENV_PATH = "crates/tsz-cli/src/telemetry.rs"
+
 # These documents explain why the retired surface must not return.  They are
 # the only places under the scanned roots where the historical name is useful.
 SOUND_HISTORY_ALLOWLIST = {
@@ -149,6 +171,17 @@ HARDCODING_PATTERNS = (
         re.compile(r"\b(?:Regex|RegexBuilder)::(?:new|default)\s*\("),
     ),
 )
+
+PROCESS_ENV_ACCESS = re.compile(
+    r"\b(?:std\s*::\s*)?env\s*::\s*(?:var|var_os|vars|vars_os)\b"
+)
+
+PROCESS_ENV_IMPORTS = (
+    re.compile(r"\buse\s+(?:::)?std\s*::\s*env\b"),
+    re.compile(r"\buse\s+(?:::)?std\s*::\s*\{[^;]{0,300}\benv\b", re.DOTALL),
+)
+
+TSZ_ENV_NAME = re.compile(r"\bTSZ_[A-Za-z0-9_]+\b")
 
 
 @dataclass(frozen=True, order=True)
@@ -566,11 +599,249 @@ def _is_semantic_source(path: Path, source_root: Path) -> bool:
     return bool(words & SEMANTIC_PATH_WORDS)
 
 
-def _production_prefix(text: str) -> str:
-    # Tests may assert exact messages and user spellings.  Only inspect the
-    # production portion before a conventional inline cfg(test) module.
-    marker = re.search(r"(?m)^\s*#\s*\[\s*cfg\s*\(\s*test\s*\)\s*\]\s*$", text)
-    return text[: marker.start()] if marker else text
+def _mask_non_newlines(characters: list[str], start: int, end: int) -> None:
+    for index in range(start, end):
+        if characters[index] != "\n":
+            characters[index] = " "
+
+
+def _rust_code_and_string_literals(text: str) -> tuple[str, list[tuple[int, str]]]:
+    """Return comment/string-masked Rust code and source string literals.
+
+    This is deliberately a small lexical scan, not a Rust parser.  It handles
+    nested block comments, ordinary strings, raw strings, and the character
+    literals that could otherwise make a quote look like a string opener.
+    Keeping offsets and newlines intact makes violations actionable.
+    """
+
+    characters = list(text)
+    literals: list[tuple[int, str]] = []
+    index = 0
+    length = len(text)
+    raw_start = re.compile(r'(?:br|r)(?P<hashes>#{0,255})"')
+
+    while index < length:
+        if text.startswith("//", index):
+            end = text.find("\n", index + 2)
+            end = length if end < 0 else end
+            _mask_non_newlines(characters, index, end)
+            index = end
+            continue
+
+        if text.startswith("/*", index):
+            depth = 1
+            end = index + 2
+            while end < length and depth:
+                if text.startswith("/*", end):
+                    depth += 1
+                    end += 2
+                elif text.startswith("*/", end):
+                    depth -= 1
+                    end += 2
+                else:
+                    end += 1
+            _mask_non_newlines(characters, index, end)
+            index = end
+            continue
+
+        raw = raw_start.match(text, index)
+        if raw and (index == 0 or not (text[index - 1].isalnum() or text[index - 1] == "_")):
+            hashes = raw.group("hashes")
+            content_start = raw.end()
+            terminator = '"' + hashes
+            content_end = text.find(terminator, content_start)
+            end = length if content_end < 0 else content_end + len(terminator)
+            literal_end = length if content_end < 0 else content_end
+            literals.append((content_start, text[content_start:literal_end]))
+            _mask_non_newlines(characters, index, end)
+            index = end
+            continue
+
+        if text[index] == '"':
+            content_start = index + 1
+            end = content_start
+            while end < length:
+                if text[end] == "\\":
+                    end += 2
+                    continue
+                if text[end] == '"':
+                    break
+                end += 1
+            literal_end = min(end, length)
+            literals.append((content_start, text[content_start:literal_end]))
+            end = length if end >= length else end + 1
+            _mask_non_newlines(characters, index, end)
+            index = end
+            continue
+
+        if text[index] == "'":
+            # Mask ordinary one-codepoint and escaped character literals.  A
+            # lifetime such as 'a has no nearby closing quote and is retained.
+            end = index + 1
+            if end < length and text[end] == "\\":
+                end += 1
+                while end < min(length, index + 16) and text[end] != "'":
+                    end += 1
+            else:
+                end += 1
+            if end < length and text[end] == "'":
+                end += 1
+                _mask_non_newlines(characters, index, end)
+                index = end
+                continue
+
+        index += 1
+
+    return "".join(characters), literals
+
+
+_CFG_TEST_MODULE = re.compile(
+    r"#\s*\[\s*cfg\s*\(\s*test\s*\)\s*\]\s*"
+    r"(?:#\s*\[[^]]*\]\s*)*"
+    r"(?:pub(?:\s*\([^)]*\))?\s+)?mod\s+[A-Za-z_][A-Za-z0-9_]*\s*"
+)
+
+
+def _without_cfg_test_modules(text: str) -> str:
+    """Mask inline `cfg(test)` modules without hiding later production items.
+
+    Keeping byte offsets and newlines stable lets every architecture check
+    report the original line.  The brace walk uses comment/string-masked Rust,
+    so nested test modules and braces inside fixtures cannot end the region
+    early.  External `mod tests;` declarations are masked as well; their files
+    are excluded separately by `_is_test_source`.
+    """
+
+    code, _ = _rust_code_and_string_literals(text)
+    characters = list(text)
+    search_from = 0
+    while match := _CFG_TEST_MODULE.search(code, search_from):
+        item_end = match.end()
+        if item_end < len(code) and code[item_end] == ";":
+            item_end += 1
+        elif item_end < len(code) and code[item_end] == "{":
+            depth = 1
+            item_end += 1
+            while item_end < len(code) and depth:
+                if code[item_end] == "{":
+                    depth += 1
+                elif code[item_end] == "}":
+                    depth -= 1
+                item_end += 1
+        else:
+            # A malformed attribute/item is compiler-invalid.  Advance rather
+            # than masking unrelated production code after it.
+            search_from = match.end()
+            continue
+        _mask_non_newlines(characters, match.start(), item_end)
+        search_from = item_end
+    return "".join(characters)
+
+
+def _is_test_source(path: Path, source_root: Path) -> bool:
+    parts = {
+        part.removesuffix(".rs").replace("-", "_")
+        for part in path.relative_to(source_root).parts
+    }
+    return bool(parts & {"test", "tests", "fixtures"})
+
+
+def check_ambient_behavior_switches(root: Path) -> list[Violation]:
+    violations: list[Violation] = []
+    for relative_root in ACTIVE_COMPILER_RUST_ROOTS:
+        source_root = root / relative_root
+        is_core = relative_root == "crates/tsz-core/src"
+        for path in _walk_files(root, source_root):
+            if path.suffix != ".rs" or _is_test_source(path, source_root):
+                continue
+            relative = _relative(root, path)
+            text = _without_cfg_test_modules(_read_text(path))
+            code, literals = _rust_code_and_string_literals(text)
+
+            env_accesses = list(PROCESS_ENV_ACCESS.finditer(code))
+            env_imports = [
+                match
+                for pattern in PROCESS_ENV_IMPORTS
+                for match in pattern.finditer(code)
+            ]
+            if is_core:
+                for match in [*env_accesses, *env_imports]:
+                    violations.append(
+                        Violation(
+                            relative,
+                            text.count("\n", 0, match.start()) + 1,
+                            "ambient-env",
+                            "tsz-core may not read or import process environment variables; "
+                            "pass typed inputs through the service/program boundary",
+                        )
+                    )
+            else:
+                # Imports and aliases make the selected variable impossible to
+                # audit with this deliberately small lexical guard.  Require a
+                # direct call with one literal name in the sole telemetry owner.
+                for match in env_imports:
+                    violations.append(
+                        Violation(
+                            relative,
+                            text.count("\n", 0, match.start()) + 1,
+                            "ambient-env",
+                            "tsz-cli process environment reads must be direct calls in "
+                            f"{CLI_OBSERVABILITY_ENV_PATH}",
+                        )
+                    )
+                for match in env_accesses:
+                    call_start = match.end()
+                    while call_start < len(code) and code[call_start].isspace():
+                        call_start += 1
+                    call_end = (
+                        code.find(")", call_start + 1)
+                        if call_start < len(code) and code[call_start] == "("
+                        else -1
+                    )
+                    literal = next(
+                        (
+                            value
+                            for start, value in literals
+                            if call_end >= 0
+                            and call_start < start < call_end
+                            and code[call_start + 1 : start - 1].strip() == ""
+                        ),
+                        None,
+                    )
+                    if (
+                        relative == CLI_OBSERVABILITY_ENV_PATH
+                        and literal in CLI_OBSERVABILITY_ENV_NAMES
+                    ):
+                        continue
+                    violations.append(
+                        Violation(
+                            relative,
+                            text.count("\n", 0, match.start()) + 1,
+                            "ambient-env",
+                            "tsz-cli may read only literal TSZ_LOG, TSZ_LOG_FORMAT, or "
+                            f"TSZ_PERF_COUNTERS in {CLI_OBSERVABILITY_ENV_PATH}",
+                        )
+                    )
+
+            for literal_start, literal in literals:
+                for match in TSZ_ENV_NAME.finditer(literal):
+                    name = match.group(0)
+                    if (
+                        not is_core
+                        and relative == CLI_OBSERVABILITY_ENV_PATH
+                        and name in CLI_OBSERVABILITY_ENV_NAMES
+                    ):
+                        continue
+                    violations.append(
+                        Violation(
+                            relative,
+                            text.count("\n", 0, literal_start + match.start()) + 1,
+                            "behavior-switch",
+                            f"ambient compiler switch {name!r} is forbidden; "
+                            "tsz-cli permits only observability-only logging/counter names",
+                        )
+                    )
+    return violations
 
 
 def check_semantic_hardcoding(root: Path) -> list[Violation]:
@@ -585,7 +856,7 @@ def check_semantic_hardcoding(root: Path) -> list[Violation]:
         }
         if relative_parts & {"test", "tests", "fixtures"}:
             continue
-        text = _production_prefix(_read_text(path))
+        text = _without_cfg_test_modules(_read_text(path))
         for code, pattern in HARDCODING_PATTERNS:
             for match in pattern.finditer(text):
                 violations.append(
@@ -599,13 +870,113 @@ def check_semantic_hardcoding(root: Path) -> list[Violation]:
     return violations
 
 
+def check_semantic_api_boundary(root: Path) -> list[Violation]:
+    """Keep allocation-order semantic handles inside the owning core universe."""
+
+    source_root = root / "crates/tsz-core/src"
+    violations: list[Violation] = []
+    public_module = re.compile(r"\bpub(?:\s*\([^)]*\))?\s+mod\s+semantics\b")
+    any_use = re.compile(
+        r"\b(?:pub(?:\s*\([^)]*\))?\s+)?use\b(?P<body>[^;]*);", re.DOTALL
+    )
+    any_type_alias = re.compile(
+        r"\b(?:pub(?:\s*\([^)]*\))?\s+)?type\s+"
+        r"(?P<name>[A-Za-z_][A-Za-z0-9_]*)\b[^=;]*=(?P<body>[^;]*);",
+        re.DOTALL,
+    )
+    public_use = re.compile(r"\bpub(?:\s*\([^)]*\))?\s+use\b(?P<body>[^;]*);", re.DOTALL)
+    public_signature = re.compile(
+        r"\bpub(?:\s*\([^)]*\))?\s+"
+        r"(?:type|fn|const|static|struct)\b(?P<body>[^;{]*)(?:;|\{)",
+        re.DOTALL,
+    )
+    public_field = re.compile(
+        r"\bpub(?:\s*\([^)]*\))?\s+[A-Za-z_][A-Za-z0-9_]*\s*:"
+        r"(?P<body>[^,;}]+)"
+    )
+    semantic_handle = re.compile(r"\b(?:TypeId|TypeKind|TypeStore)\b")
+    semantic_path = re.compile(r"\bsemantics\b")
+
+    def introduced_names(body: str) -> set[str]:
+        aliases = set(re.findall(r"\bas\s+([A-Za-z_][A-Za-z0-9_]*)\b", body))
+        # A simple `use path::Item;` introduces its final segment. Braced trees
+        # that rename an item are covered by `as`; direct handle leaves remain
+        # visible to `semantic_handle` at the eventual public surface.
+        if "{" not in body and "*" not in body and not aliases:
+            identifiers = re.findall(r"[A-Za-z_][A-Za-z0-9_]*", body)
+            if identifiers and identifiers[-1] not in {"crate", "self", "super"}:
+                aliases.add(identifiers[-1])
+        return aliases
+
+    def mentions_tainted(body: str, tainted: set[str]) -> bool:
+        return semantic_path.search(body) is not None or semantic_handle.search(body) is not None or any(
+            re.search(rf"\b{re.escape(name)}\b", body) for name in tainted
+        )
+
+    for path in _walk_files(root, source_root):
+        if path.suffix != ".rs" or _is_test_source(path, source_root):
+            continue
+        text = _without_cfg_test_modules(_read_text(path))
+        code, _ = _rust_code_and_string_literals(text)
+        use_matches = list(any_use.finditer(code))
+        type_alias_matches = list(any_type_alias.finditer(code))
+        tainted_names: set[str] = set()
+        changed = True
+        while changed:
+            changed = False
+            for use_match in use_matches:
+                body = use_match.group("body")
+                if not mentions_tainted(body, tainted_names):
+                    continue
+                before = len(tainted_names)
+                tainted_names.update(introduced_names(body))
+                changed = changed or len(tainted_names) != before
+            for type_alias_match in type_alias_matches:
+                if not mentions_tainted(type_alias_match.group("body"), tainted_names):
+                    continue
+                before = len(tainted_names)
+                tainted_names.add(type_alias_match.group("name"))
+                changed = changed or len(tainted_names) != before
+
+        matches = list(public_module.finditer(code))
+        matches.extend(
+            match
+            for match in public_use.finditer(code)
+            if mentions_tainted(match.group("body"), tainted_names)
+        )
+        # Re-exporting through `pub type`, a public return type, or a public
+        # field crosses the same universe boundary as `pub use`. Definitions
+        # inside the deliberately private semantics module are not external
+        # API, so only scan these surfaces outside that module.
+        if "semantics" not in path.relative_to(source_root).parts:
+            matches.extend(
+                match
+                for pattern in (public_signature, public_field)
+                for match in pattern.finditer(code)
+                if mentions_tainted(match.group("body"), tainted_names)
+            )
+        for match in matches:
+            violations.append(
+                Violation(
+                    _relative(root, path),
+                    text.count("\n", 0, match.start()) + 1,
+                    "semantic-universe-api",
+                    "semantic allocation handles must remain inside tsz-core; expose only "
+                    "program/service value artifacts",
+                )
+            )
+    return violations
+
+
 def check(root: Path) -> list[Violation]:
     checks: Iterable = (
         check_workspace,
         check_manifests,
         check_rust_line_limits,
         check_sound_mode,
+        check_ambient_behavior_switches,
         check_semantic_hardcoding,
+        check_semantic_api_boundary,
     )
     violations: list[Violation] = []
     for checker in checks:

@@ -330,6 +330,10 @@ main() {
     require_cmd node
     require_cmd npm
 
+    # Fail before building or running fixtures if the canonical worker regains
+    # an in-process oracle, fixture arbitration, or a non-failing xfail path.
+    node "$FOURSLASH_DIR/session-client-truth.test.cjs"
+
     # Ensure submodule is initialized
     ensure_submodule
 

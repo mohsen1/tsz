@@ -162,6 +162,13 @@ DTS_FAMILY_RULES = [
 ]
 
 
+TERMINAL_STATUSES = {"fail", "timeout", "unsupported", "crash", "incomplete"}
+
+
+def is_terminal_status(status):
+    return status in TERMINAL_STATUSES
+
+
 def load_detail():
     return load_snapshot(DETAIL_FILE, "Run: ./scripts/emit/run.sh --json-out")
 
@@ -245,19 +252,16 @@ def emit_detail_row_summary(data):
         dts_status = result.get("dtsStatus")
         if js_status == "pass":
             summary["jsPass"] += 1
-        elif js_status == "fail":
+        elif is_terminal_status(js_status):
             summary["jsFail"] += 1
-        elif js_status == "timeout":
-            summary["jsFail"] += 1
-            summary["jsTimeout"] += 1
+            if js_status == "timeout":
+                summary["jsTimeout"] += 1
         else:
             summary["jsSkip"] += 1
 
         if dts_status == "pass":
             summary["dtsPass"] += 1
-        elif dts_status == "fail":
-            summary["dtsFail"] += 1
-        elif dts_status == "timeout":
+        elif is_terminal_status(dts_status):
             summary["dtsFail"] += 1
         else:
             summary["dtsSkip"] += 1
@@ -295,6 +299,7 @@ def emit_detail_row_fingerprint(data):
     rows = []
     for result in results:
         rows.append({
+            "artifactState": result.get("artifactState"),
             "baselineFile": result.get("baselineFile"),
             "dtsError": result.get("dtsError"),
             "dtsStatus": result.get("dtsStatus"),
@@ -607,8 +612,8 @@ def show_overview(data):
     print()
 
     results = data["results"]
-    js_fails = [r for r in results if r["jsStatus"] == "fail"]
-    dts_fails = [r for r in results if r["dtsStatus"] == "fail"]
+    js_fails = [r for r in results if is_terminal_status(r["jsStatus"])]
+    dts_fails = [r for r in results if is_terminal_status(r["dtsStatus"])]
     timeouts = [r for r in results if r["jsStatus"] == "timeout" or r["dtsStatus"] == "timeout"]
 
     print(f"  {detail_label}JS failures: {len(js_fails)}")
@@ -617,14 +622,20 @@ def show_overview(data):
     print()
 
     # JS-pass but DTS-fail (close to full pass)
-    js_pass_dts_fail = [r for r in results if r["jsStatus"] == "pass" and r["dtsStatus"] == "fail"]
+    js_pass_dts_fail = [
+        r for r in results
+        if r["jsStatus"] == "pass" and is_terminal_status(r["dtsStatus"])
+    ]
     print(
         f"  {detail_label}JS pass + DTS fail (close to full pass): "
         f"{len(js_pass_dts_fail)}"
     )
 
     # DTS-pass but JS-fail
-    dts_pass_js_fail = [r for r in results if r["dtsStatus"] == "pass" and r["jsStatus"] == "fail"]
+    dts_pass_js_fail = [
+        r for r in results
+        if r["dtsStatus"] == "pass" and is_terminal_status(r["jsStatus"])
+    ]
     print(f"  {detail_label}DTS pass + JS fail: {len(dts_pass_js_fail)}")
     print()
 
@@ -648,7 +659,7 @@ def show_overview(data):
 
 def show_js_failures(data, top=40, paths_only=False):
     results = data["results"]
-    fails = [r for r in results if r["jsStatus"] == "fail"]
+    fails = [r for r in results if is_terminal_status(r["jsStatus"])]
     fails.sort(key=lambda r: r["name"])
 
     if paths_only:
@@ -665,7 +676,7 @@ def show_js_failures(data, top=40, paths_only=False):
 
 def show_dts_failures(data, top=40, paths_only=False):
     results = data["results"]
-    fails = [r for r in results if r["dtsStatus"] == "fail"]
+    fails = [r for r in results if is_terminal_status(r["dtsStatus"])]
     fails.sort(key=lambda r: r["name"])
 
     if paths_only:
@@ -696,7 +707,7 @@ def show_top_errors(data, top=20):
     print("Top JS error messages:")
     js_counter = Counter()
     for r in results:
-        if r["jsStatus"] == "fail" and r.get("jsError"):
+        if is_terminal_status(r["jsStatus"]) and r.get("jsError"):
             js_counter[r["jsError"][:100]] += 1
     print_top_counter(js_counter, top)
 
@@ -704,7 +715,7 @@ def show_top_errors(data, top=20):
     print("Top DTS error messages:")
     dts_counter = Counter()
     for r in results:
-        if r["dtsStatus"] == "fail" and r.get("dtsError"):
+        if is_terminal_status(r["dtsStatus"]) and r.get("dtsError"):
             dts_counter[r["dtsError"][:100]] += 1
     print_top_counter(dts_counter, top)
 
@@ -733,7 +744,7 @@ def classify_failure(result, surface):
 
 def collect_failures_by_family(data, surface):
     status_key = "jsStatus" if surface == "js" else "dtsStatus"
-    failures = [r for r in data["results"] if r.get(status_key) in ("fail", "timeout")]
+    failures = [r for r in data["results"] if is_terminal_status(r.get(status_key))]
     families = {}
     for result in failures:
         family = classify_failure(result, surface)

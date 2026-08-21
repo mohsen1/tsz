@@ -1,10 +1,11 @@
+# shellcheck shell=bash
 record_project_compatibility() {
     local name="$1"
     local exit_class="$2"
     local phase="$3"
     local diagnostic_status="$4"
     local diagnostic_delta="${5:-}"
-    local files_reached="${6:-0}"
+    local files_reached="${6-}"
     local peak_memory_bytes="${7:-}"
     local tsc_exit_codes="${8:-}"
     local tsz_exit_codes="${9:-}"
@@ -13,6 +14,7 @@ record_project_compatibility() {
     local source_root="${12:-}"
     local fixture_sources
     local tsz_command_env_prefix=""
+    local files_reached_reason=""
 
     [ -z "$PROJECT_COMPATIBILITY_JSONL" ] && return
     fixture_sources="$(tsz_project_fixture_sources "$name")"
@@ -27,6 +29,9 @@ record_project_compatibility() {
     fi
     if [ -n "${TSZ_RUST_MIN_STACK:-}" ]; then
         tsz_command_env_prefix="${tsz_command_env_prefix:+$tsz_command_env_prefix }RUST_MIN_STACK=$TSZ_RUST_MIN_STACK"
+    fi
+    if [ -z "$files_reached" ]; then
+        files_reached_reason="${PROJECT_EVIDENCE_FILES_REACHED_REASON:-runner did not count}"
     fi
 
     local peak_memory_bytes_reason=""
@@ -46,6 +51,7 @@ record_project_compatibility() {
     COMPAT_DIAGNOSTIC_STATUS="$diagnostic_status" \
     COMPAT_DIAGNOSTIC_DELTA="$diagnostic_delta" \
     COMPAT_FILES_REACHED="$files_reached" \
+    COMPAT_FILES_REACHED_REASON="$files_reached_reason" \
     COMPAT_PEAK_MEMORY_BYTES="$peak_memory_bytes" \
     COMPAT_PEAK_MEMORY_BYTES_REASON="$peak_memory_bytes_reason" \
     COMPAT_TSC_EXIT_CODES="$tsc_exit_codes" \
@@ -55,6 +61,24 @@ record_project_compatibility() {
     COMPAT_SOURCE_ROOT="$source_root" \
     COMPAT_TSZ_COMMAND_ENV_PREFIX="$tsz_command_env_prefix" \
     COMPAT_FIXTURE_SOURCES="$fixture_sources" \
+    COMPAT_EVIDENCE_SCHEMA="${PROJECT_EVIDENCE_SCHEMA:-}" \
+    COMPAT_SEMANTIC_COMPLETION="${PROJECT_EVIDENCE_SEMANTIC_COMPLETION:-}" \
+    COMPAT_ROOT_FILES="${PROJECT_EVIDENCE_TSZ_ROOT_FILES:-}" \
+    COMPAT_SOURCE_FILES="${PROJECT_EVIDENCE_TSZ_SOURCE_FILES:-}" \
+    COMPAT_ROOT_FILE_FINGERPRINT="${PROJECT_EVIDENCE_TSZ_ROOT_FINGERPRINT:-}" \
+    COMPAT_SOURCE_FILE_FINGERPRINT="${PROJECT_EVIDENCE_TSZ_SOURCE_FINGERPRINT:-}" \
+    COMPAT_ORACLE_ROOT_FILES="${PROJECT_EVIDENCE_TSC_ROOT_FILES:-}" \
+    COMPAT_ORACLE_SOURCE_FILES="${PROJECT_EVIDENCE_TSC_SOURCE_FILES:-}" \
+    COMPAT_ORACLE_ROOT_FILE_FINGERPRINT="${PROJECT_EVIDENCE_TSC_ROOT_FINGERPRINT:-}" \
+    COMPAT_ORACLE_SOURCE_FILE_FINGERPRINT="${PROJECT_EVIDENCE_TSC_SOURCE_FINGERPRINT:-}" \
+    COMPAT_DIAGNOSTIC_RECORDS="${PROJECT_EVIDENCE_TSZ_DIAGNOSTIC_RECORDS:-}" \
+    COMPAT_DIAGNOSTIC_FINGERPRINT="${PROJECT_EVIDENCE_TSZ_DIAGNOSTIC_FINGERPRINT:-}" \
+    COMPAT_ORACLE_DIAGNOSTIC_RECORDS="${PROJECT_EVIDENCE_TSC_DIAGNOSTIC_RECORDS:-}" \
+    COMPAT_ORACLE_DIAGNOSTIC_FINGERPRINT="${PROJECT_EVIDENCE_TSC_DIAGNOSTIC_FINGERPRINT:-}" \
+    COMPAT_STUB_INVENTORY_SCHEMA="${PROJECT_EVIDENCE_STUB_INVENTORY_SCHEMA:-}" \
+    COMPAT_STUBBED_MODULES="${PROJECT_EVIDENCE_STUBBED_MODULES:-}" \
+    COMPAT_STUBBED_ANY_MEMBERS="${PROJECT_EVIDENCE_STUBBED_ANY_MEMBERS:-}" \
+    COMPAT_STUB_INVENTORY_FINGERPRINT="${PROJECT_EVIDENCE_STUB_INVENTORY_FINGERPRINT:-}" \
     node "$PROJECT_ROOT/scripts/ci/project-compatibility.mjs" record
 }
 
@@ -418,156 +442,73 @@ run_project_benchmark() {
     local kb=$((bytes / 1024))
     local info="${lines} lines, ${kb}KB (${file_count} project files)"
 
-    # Integrity guard: a tsconfig that resolves zero input files under `-p`
-    # (e.g. a solution-style {"files":[],"references":[...]} config, whose
-    # references are only followed under `-b`) type-checks NOTHING, so every
-    # compiler "passes" trivially and the row would publish a meaningless ratio
-    # (the infisical "0 lines, tsz 24.6x faster" phantom). project_tsconfig_stats
-    # resolves files the same way the compilers do under -p
-    # (parseJsonConfigFileContent().fileNames), so file_count==0 means -p checks
-    # nothing. Record fixture-invalid (gray, advisory) and never a winner.
-    if ! [[ "${file_count:-0}" =~ ^[0-9]+$ ]] || [ "${file_count:-0}" -eq 0 ]; then
-        local zero_status="0 input files (references-only/empty tsconfig under -p)"
-        echo -e "${YELLOW}$name${NC} - ${YELLOW}SKIP${NC} (${zero_status})"
-        record_project_compatibility "$name" "fixture invalid" "fixture setup" \
-            "zero input files under -p" \
-            "tsconfig resolves 0 project files under -p; references are only followed under -b, so this is not a valid compile" \
-            "$file_count" "$peak_memory_bytes" "" "" "" "$tsconfig" "$src_dir"
-        RESULTS_CSV="${RESULTS_CSV}${name},${lines},${kb},ERR,ERR,N/A,N/A,error,0,${zero_status}\n"
-        return
-    fi
-
-    # Set project-level Node options for large-ts-repo so tsc/tsgo/tsz can
-    # run with a larger heap during compilation.
+    # Fixture-side line/file totals are display and throughput metadata only.
+    # Program admission comes exclusively from TSZ's fresh schema-v2 stats and
+    # the pinned TS7 graph below; a directory walk can never certify a row.
     local -a project_node_prefix=()
     if [ "$name" = "large-ts-repo" ] && [ -n "$LARGE_TS_NODE_OPTIONS" ]; then
         project_node_prefix=(env "NODE_OPTIONS=$LARGE_TS_NODE_OPTIONS")
     fi
-    local -a tsz_prefix=()
+
+    local -a PROJECT_EVIDENCE_TSC_CMD=("$TSC")
     if [ "${#project_node_prefix[@]}" -gt 0 ]; then
-        tsz_prefix=("${project_node_prefix[@]}")
+        PROJECT_EVIDENCE_TSC_CMD=("${project_node_prefix[@]}" "$TSC")
+    fi
+    local -a PROJECT_EVIDENCE_TSZ_CMD=(env)
+    if [ "$name" = "large-ts-repo" ] && [ -n "$LARGE_TS_NODE_OPTIONS" ]; then
+        PROJECT_EVIDENCE_TSZ_CMD+=("NODE_OPTIONS=$LARGE_TS_NODE_OPTIONS")
     fi
     if [ -n "${TSZ_LIB_DIR:-}" ]; then
-        tsz_prefix+=(env "TSZ_LIB_DIR=$TSZ_LIB_DIR")
+        PROJECT_EVIDENCE_TSZ_CMD+=("TSZ_LIB_DIR=$TSZ_LIB_DIR")
     fi
     if [ -n "${TSZ_RUST_MIN_STACK:-}" ]; then
-        tsz_prefix+=(env "RUST_MIN_STACK=$TSZ_RUST_MIN_STACK")
+        PROJECT_EVIDENCE_TSZ_CMD+=("RUST_MIN_STACK=$TSZ_RUST_MIN_STACK")
     fi
+    PROJECT_EVIDENCE_TSZ_CMD+=("$TSZ")
 
-    # For project fixtures (except large-ts-repo), require a clean tsc pass
-    # before benchmarking so green rows have oracle evidence. large-ts-repo is
-    # too expensive to validate twice, so its hyperfine result is validated via
-    # exit_codes before any timing is recorded as a valid compiler pass.
-    local tsc_exit_codes=""
-    if [ "$name" != "large-ts-repo" ]; then
-        local project_tsc_timeout
-        project_tsc_timeout=$((BENCH_TIMEOUT * 2))
-        local tsc_check=0
-        if [ "${#project_node_prefix[@]}" -gt 0 ]; then
-            run_with_timeout "$project_tsc_timeout" "${project_node_prefix[@]}" "$TSC" --noEmit -p "$tsconfig" >"$tsc_check_log" 2>&1 || tsc_check=$?
-            update_project_peak_memory
-        else
-            run_with_timeout "$project_tsc_timeout" "$TSC" --noEmit -p "$tsconfig" >"$tsc_check_log" 2>&1 || tsc_check=$?
-            update_project_peak_memory
-        fi
-        tsc_exit_codes="$tsc_check"
-        if [ "$tsc_check" -ne 0 ]; then
-            local status
-            local tsc_error=""
-            if [ "$tsc_check" -eq 124 ]; then
-                status="tsc timeout after ${project_tsc_timeout}s"
-                echo -e "${YELLOW}$name${NC} - ${YELLOW}SKIP${NC} (tsc timeout after ${project_tsc_timeout}s)"
-                tsc_error="tsc timed out after ${project_tsc_timeout}s"
-            else
-                status="tsc fixture error"
-                tsc_error="$(diagnostic_lines_from_file "tsc" "$tsc_check_log")"
-                echo -e "${YELLOW}$name${NC} - ${YELLOW}SKIP${NC} (tsc fixture error)"
-                echo -e "  ${CYAN}tsc error:${NC} $(first_line "$tsc_error")" >&2
-            fi
-            record_project_compatibility "$name" "fixture invalid" "fixture setup" "tsc fixture failed" "$tsc_error" "$file_count" "$peak_memory_bytes" "$tsc_exit_codes" "" "" "$tsconfig" "$src_dir"
-            RESULTS_CSV="${RESULTS_CSV}${name},${lines},${kb},ERR,ERR,N/A,N/A,error,0,${status}\n"
-            return
-        fi
-    fi
-
-    # Pre-validate with timeout: record errors/timeouts in summary table.
-    # Project-level benchmarks get a longer timeout since they check many files.
-    # large-ts-repo skips pre-validation entirely (the cold check itself takes
-    # several minutes for both compilers). Its measured run is rejected below
-    # unless hyperfine reports zero exit codes for every measured iteration.
+    # One TSZ proof run must expose the exact admitted program and agree with
+    # pinned TypeScript 7 before hyperfine is reachable. This applies equally to
+    # large-ts-repo: an expensive row without proof is gray, never a speed win.
     local project_timeout=$((BENCH_TIMEOUT * 2))
-    local tsz_check=0
+    local evidence_ok=0
+    collect_project_evidence "$name" "$tsconfig" "$src_dir" \
+        "$tsz_check_log" "$tsc_check_log" || evidence_ok=$?
+    update_project_peak_memory
+    local tsc_exit_codes="${PROJECT_EVIDENCE_TSC_RC:-}"
+    local tsz_check="${PROJECT_EVIDENCE_TSZ_RC:-70}"
     local tsgo_check=0
-    if [ "$name" != "large-ts-repo" ]; then
-        if [ "${#tsz_prefix[@]}" -gt 0 ]; then
-            run_with_timeout "$project_timeout" "${tsz_prefix[@]}" "$TSZ" --noEmit -p "$tsconfig" >"$tsz_check_log" 2>&1 || tsz_check=$?
-            update_project_peak_memory
-        else
-            run_with_timeout "$project_timeout" "$TSZ" --noEmit -p "$tsconfig" >"$tsz_check_log" 2>&1 || tsz_check=$?
-            update_project_peak_memory
-        fi
+    if [ "$evidence_ok" -eq 0 ]; then
         if [ "${#project_node_prefix[@]}" -gt 0 ]; then
-            run_with_timeout "$project_timeout" "${project_node_prefix[@]}" "$TSGO" --noEmit -p "$tsconfig" >"$tsgo_check_log" 2>&1 || tsgo_check=$?
-            update_project_peak_memory
+            run_with_timeout "$project_timeout" "${project_node_prefix[@]}" "$TSGO" \
+                --noEmit -p "$tsconfig" >"$tsgo_check_log" 2>&1 || tsgo_check=$?
         else
-            run_with_timeout "$project_timeout" "$TSGO" --noEmit -p "$tsconfig" >"$tsgo_check_log" 2>&1 || tsgo_check=$?
-            update_project_peak_memory
+            run_with_timeout "$project_timeout" "$TSGO" --noEmit -p "$tsconfig" \
+                >"$tsgo_check_log" 2>&1 || tsgo_check=$?
         fi
+        update_project_peak_memory
     fi
 
-    # `tsz_failed_expected` is reserved for fixtures where tsz is known to fail.
-    # large-ts-repo is no longer pre-validated (see comment above); the actual
-    # hyperfine run determines whether tsz produces a valid zero-exit timing.
-    local tsz_failed_expected=false
+    if [ "$evidence_ok" -ne 0 ]; then
+        local evidence_status="project evidence unavailable: ${PROJECT_EVIDENCE_REASON}"
+        evidence_status="${evidence_status//,/;}"
+        echo -e "${YELLOW}$name${NC} - ${YELLOW}NOT TIMED${NC} (${PROJECT_EVIDENCE_REASON})"
+        record_project_compatibility "$name" "$PROJECT_EVIDENCE_EXIT_CLASS" "check" \
+            "$PROJECT_EVIDENCE_DIAGNOSTIC_STATUS" "$PROJECT_EVIDENCE_DIAGNOSTIC_DELTA" \
+            "${PROJECT_EVIDENCE_TSZ_SOURCE_FILES:-}" "$peak_memory_bytes" \
+            "$tsc_exit_codes" "$tsz_check" "" "$tsconfig" "$src_dir"
+        RESULTS_CSV="${RESULTS_CSV}${name},${lines},${kb},ERR,ERR,N/A,N/A,error,0,${evidence_status}\n"
+        return
+    fi
 
-    if { [ "$tsz_check" -ne 0 ] && [ "$tsz_failed_expected" = false ]; } || [ "$tsgo_check" -ne 0 ]; then
-        local status=""
-        local tsz_ms="N/A"
-        local tsgo_ms="N/A"
-        local tsz_lps="N/A"
-        local tsgo_lps="N/A"
-        local winner="error"
-        local ratio="0"
-        local diagnostic_delta=""
-
-        echo -e "${YELLOW}$name${NC} - ${RED}ERROR${NC}"
-
-        if [ "$tsz_check" -eq 124 ]; then
-            status="tsz timeout"
-            tsz_ms="TIMEOUT"
-            diagnostic_delta="tsz timed out after ${project_timeout}s"
-            echo -e "  ${CYAN}tsz:${NC} timed out after ${project_timeout}s" >&2
-        elif [ "$tsz_check" -ne 0 ]; then
-            status="tsz error"
-            tsz_ms="ERR"
-            local tsz_error
-            tsz_error="$(diagnostic_lines_from_file "tsz" "$tsz_check_log")"
-            diagnostic_delta="$(append_diagnostic_delta "$diagnostic_delta" "$tsz_error")"
-            echo -e "  ${CYAN}tsz error:${NC} $(first_line "$tsz_error")" >&2
-        fi
-
-        if [ "$tsgo_check" -eq 124 ]; then
-            status="${status:+${status}; }tsgo timeout"
-            tsgo_ms="TIMEOUT"
-            diagnostic_delta="${diagnostic_delta:+${diagnostic_delta}; }tsgo timed out after ${project_timeout}s"
-            echo -e "  ${CYAN}tsgo:${NC} timed out after ${project_timeout}s" >&2
-        elif [ "$tsgo_check" -ne 0 ]; then
-            status="${status:+${status}; }tsgo error"
-            tsgo_ms="ERR"
-            local tsgo_error
-            tsgo_error="$(diagnostic_lines_from_file "tsgo" "$tsgo_check_log")"
-            diagnostic_delta="$(append_diagnostic_delta "$diagnostic_delta" "$tsgo_error")"
-            echo -e "  ${CYAN}tsgo error:${NC} $(first_line "$tsgo_error")" >&2
-        fi
-
-        if [ "$name" != "large-ts-repo" ]; then
-            status="${status:+${status}; }tsc ok"
-        fi
-
-        local exit_class
-        exit_class="$(project_failure_class "$status" "$tsz_check" "$tsgo_check")"
-        record_project_compatibility "$name" "$exit_class" "check" "$(project_failure_status "$exit_class")" "$diagnostic_delta" "$file_count" "$peak_memory_bytes" "$tsc_exit_codes" "$tsz_check" "$tsgo_check" "$tsconfig" "$src_dir"
-        RESULTS_CSV="${RESULTS_CSV}${name},${lines},${kb},${tsz_ms},${tsgo_ms},${tsz_lps},${tsgo_lps},${winner},${ratio},${status}\n"
+    if [ "$tsz_check" -ne 0 ] || [ "$tsgo_check" -ne 0 ]; then
+        echo -e "${YELLOW}$name${NC} - ${YELLOW}NOT TIMED${NC} (ordinary compiler exit is nonzero)"
+        record_project_compatibility "$name" "exit success" "check" "none" \
+            "$PROJECT_EVIDENCE_DIAGNOSTIC_DELTA" "$PROJECT_EVIDENCE_TSZ_SOURCE_FILES" \
+            "$peak_memory_bytes" "$tsc_exit_codes" "$tsz_check" "$tsgo_check" \
+            "$tsconfig" "$src_dir"
+        # Exact parity remains green compatibility, but nonzero execution is not
+        # a timing sample. `winner:error` keeps every speed consumer out.
+        RESULTS_CSV="${RESULTS_CSV}${name},${lines},${kb},ERR,ERR,N/A,N/A,error,0,\n"
         return
     fi
 
@@ -602,75 +543,25 @@ run_project_benchmark() {
     local json_file=$(mktemp)
     local tsz_cmd_prefix=""
     local tsgo_cmd_prefix=""
+    local tsz_env_assignments=""
     if [ "$name" = "large-ts-repo" ] && [ -n "$LARGE_TS_NODE_OPTIONS" ]; then
-        tsz_cmd_prefix="env NODE_OPTIONS=$LARGE_TS_NODE_OPTIONS "
+        tsz_env_assignments="NODE_OPTIONS=$LARGE_TS_NODE_OPTIONS"
         tsgo_cmd_prefix="env NODE_OPTIONS=$LARGE_TS_NODE_OPTIONS "
     fi
     if [ -n "${TSZ_LIB_DIR:-}" ]; then
-        tsz_cmd_prefix="${tsz_cmd_prefix}env TSZ_LIB_DIR=$TSZ_LIB_DIR "
+        tsz_env_assignments="${tsz_env_assignments:+$tsz_env_assignments }TSZ_LIB_DIR=$TSZ_LIB_DIR"
     fi
     if [ -n "${TSZ_RUST_MIN_STACK:-}" ]; then
-        tsz_cmd_prefix="${tsz_cmd_prefix}env RUST_MIN_STACK=$TSZ_RUST_MIN_STACK "
+        tsz_env_assignments="${tsz_env_assignments:+$tsz_env_assignments }RUST_MIN_STACK=$TSZ_RUST_MIN_STACK"
+    fi
+    if [ -n "$tsz_env_assignments" ]; then
+        tsz_cmd_prefix="env $tsz_env_assignments "
     fi
     local -a hyperfine_prepare_args=()
     if [[ "${BENCH_COLD:-0}" == "1" ]]; then
         local tsconfig_dir
         tsconfig_dir="$(dirname "$tsconfig")"
         hyperfine_prepare_args=(--prepare "find '${tsconfig_dir}' -name '*.tsbuildinfo' -delete 2>/dev/null; true")
-    fi
-
-    # When tsz is expected to fail (e.g. large-ts-repo OOMs), run tsgo-only.
-    if [ "$tsz_failed_expected" = true ]; then
-        echo -e "${YELLOW}$name${NC} ($info) — tsz unavailable, benchmarking tsgo only"
-        local hyperfine_tsz_unavailable_status=0
-        if [ "${#hyperfine_prepare_args[@]}" -gt 0 ]; then
-            hyperfine \
-                --warmup "$proj_warmup" \
-                --min-runs "$proj_min" \
-                --max-runs "$proj_max" \
-                --style full \
-                --ignore-failure \
-                --export-json "$json_file" \
-                "${hyperfine_prepare_args[@]}" \
-                -n "tsgo" "bash $BENCH_TIMEOUT_RUNNER $run_timeout -- ${tsgo_cmd_prefix}$TSGO --noEmit -p $tsconfig 2>/dev/null" || hyperfine_tsz_unavailable_status=$?
-        else
-            hyperfine \
-                --warmup "$proj_warmup" \
-                --min-runs "$proj_min" \
-                --max-runs "$proj_max" \
-                --style full \
-                --ignore-failure \
-                --export-json "$json_file" \
-                -n "tsgo" "bash $BENCH_TIMEOUT_RUNNER $run_timeout -- ${tsgo_cmd_prefix}$TSGO --noEmit -p $tsconfig 2>/dev/null" || hyperfine_tsz_unavailable_status=$?
-        fi
-        if [ "$hyperfine_tsz_unavailable_status" -ne 0 ]; then
-            record_project_compatibility "$name" "runner error" "timing" "hyperfine failed" "hyperfine failed while timing tsgo-only project row" "$file_count" "$peak_memory_bytes" "$tsc_exit_codes" "" "" "$tsconfig" "$src_dir"
-            RESULTS_CSV="${RESULTS_CSV}${name},${lines},${kb},N/A,ERR,N/A,N/A,tsgo,0,tsz unavailable; tsgo error\n"
-            rm -f "$json_file"
-            return
-        fi
-        if [ -f "$json_file" ] && command -v jq &>/dev/null; then
-            local tsgo_exit_status
-            tsgo_exit_status="$(hyperfine_exit_status_for "$json_file" "tsgo" || true)"
-            if [ "$tsgo_exit_status" != "ok" ]; then
-                record_project_compatibility "$name" "nonzero exit" "timing" "tsgo exit mismatch" "tsgo ${tsgo_exit_status}" "$file_count" "$peak_memory_bytes" "$tsc_exit_codes" "" "$tsgo_exit_status" "$tsconfig" "$src_dir"
-                RESULTS_CSV="${RESULTS_CSV}${name},${lines},${kb},N/A,ERR,N/A,N/A,error,0,tsz unavailable; tsgo ${tsgo_exit_status}\n"
-                rm -f "$json_file"
-                return
-            fi
-            local tsgo_mean
-            tsgo_mean=$(hyperfine_mean_for "$json_file" "tsgo")
-            if [ -n "$tsgo_mean" ] && [ "$tsgo_mean" != "0" ]; then
-                local tsgo_lps
-                tsgo_lps=$(printf "%.0f" "$(echo "$lines / $tsgo_mean" | bc -l 2>/dev/null)" 2>/dev/null || echo "N/A")
-                local tsgo_ms
-                tsgo_ms=$(printf "%.2f" "$(echo "$tsgo_mean * 1000" | bc -l 2>/dev/null)" 2>/dev/null || echo "N/A")
-                record_project_compatibility "$name" "tsz unavailable" "timing" "tsz skipped by runner" "tsz unavailable" "$file_count" "$peak_memory_bytes" "$tsc_exit_codes" "" "0" "$tsconfig" "$src_dir"
-                RESULTS_CSV="${RESULTS_CSV}${name},${lines},${kb},N/A,${tsgo_ms},N/A,${tsgo_lps},tsgo,0,tsz unavailable\n"
-            fi
-        fi
-        rm -f "$json_file"
-        return
     fi
 
     local hyperfine_status=0
@@ -700,7 +591,7 @@ run_project_benchmark() {
     if [ "$hyperfine_status" -ne 0 ]; then
         printf '%s\n' "$hyperfine_output"
         local status="hyperfine error"
-        record_project_compatibility "$name" "runner error" "timing" "hyperfine failed" "hyperfine failed while timing project row" "$file_count" "$peak_memory_bytes" "$tsc_exit_codes" "" "" "$tsconfig" "$src_dir"
+        record_project_compatibility "$name" "runner error" "timing" "hyperfine failed" "hyperfine failed while timing project row" "$PROJECT_EVIDENCE_TSZ_SOURCE_FILES" "$peak_memory_bytes" "$tsc_exit_codes" "" "" "$tsconfig" "$src_dir"
         RESULTS_CSV="${RESULTS_CSV}${name},${lines},${kb},ERR,ERR,N/A,N/A,error,0,${status}\n"
         rm -f "$json_file"
         return
@@ -723,7 +614,7 @@ run_project_benchmark() {
             echo -e "${YELLOW}$name${NC} - ${RED}ERROR${NC} (${status})" >&2
             local exit_class
             exit_class="$(project_failure_class "$status" $(exit_codes_from_status "$status"))"
-            record_project_compatibility "$name" "$exit_class" "timing" "$(project_failure_status "$exit_class")" "$status" "$file_count" "$peak_memory_bytes" "$tsc_exit_codes" "$tsz_exit_status" "$tsgo_exit_status" "$tsconfig" "$src_dir"
+            record_project_compatibility "$name" "$exit_class" "timing" "$(project_failure_status "$exit_class")" "$status" "$PROJECT_EVIDENCE_TSZ_SOURCE_FILES" "$peak_memory_bytes" "$tsc_exit_codes" "$tsz_exit_status" "$tsgo_exit_status" "$tsconfig" "$src_dir"
             RESULTS_CSV="${RESULTS_CSV}${name},${lines},${kb},ERR,ERR,N/A,N/A,error,0,${status}\n"
             rm -f "$json_file"
             return
@@ -747,17 +638,10 @@ run_project_benchmark() {
                 ratio=$(printf "%.2f" "$(echo "$tsz_mean / $tsgo_mean" | bc -l 2>/dev/null)" 2>/dev/null || echo "N/A")
             fi
 
-            local success_exit_class="exit success"
-            local success_phase="check"
-            local success_diagnostic_status="none"
-            local success_diagnostic_delta=""
-            if [ -z "$tsc_exit_codes" ]; then
-                success_exit_class="oracle unavailable"
-                success_phase="oracle"
-                success_diagnostic_status="tsc oracle unavailable"
-                success_diagnostic_delta="tsc oracle was not collected for this project row"
-            fi
-            record_project_compatibility "$name" "$success_exit_class" "$success_phase" "$success_diagnostic_status" "$success_diagnostic_delta" "$file_count" "$peak_memory_bytes" "$tsc_exit_codes" "0" "0" "$tsconfig" "$src_dir"
+            record_project_compatibility "$name" "exit success" "check" "none" \
+                "$PROJECT_EVIDENCE_DIAGNOSTIC_DELTA" \
+                "$PROJECT_EVIDENCE_TSZ_SOURCE_FILES" "$peak_memory_bytes" \
+                "$tsc_exit_codes" "0" "0" "$tsconfig" "$src_dir"
             RESULTS_CSV="${RESULTS_CSV}${name},${lines},${kb},${tsz_ms},${tsgo_ms},${tsz_lps},${tsgo_lps},${winner},${ratio},\n"
         fi
     else
@@ -825,10 +709,16 @@ export_results_json() {
     PROJECT_OWNER_FAMILIES_JSON_VALUE="$project_owner_families_json" \
     PROJECT_README_CANDIDATES_JSON_VALUE="$project_readme_candidates_json" \
     DIAGNOSTIC_SUBSYSTEMS_JSON_PATH="$PROJECT_ROOT/scripts/ci/diagnostic-subsystems.json" \
-    node - "$out_file" <<'NODE'
-const fs = require("node:fs");
-const os = require("node:os");
-const path = require("node:path");
+    ROW_UTILS_MODULE_PATH="$PROJECT_ROOT/scripts/bench/row-utils.mjs" \
+    node --input-type=module - "$out_file" <<'NODE'
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
+
+const { hasExactProjectEvidence } = await import(
+  pathToFileURL(process.env.ROW_UTILS_MODULE_PATH).href
+);
 const outFile = process.argv[2];
 const PROJECT_OWNER_FAMILIES = JSON.parse(process.env.PROJECT_OWNER_FAMILIES_JSON_VALUE || "{}");
 const projectOwnerFamilies = PROJECT_OWNER_FAMILIES;
@@ -1164,6 +1054,25 @@ function compatibilityFor(row, compatibilityRows) {
       phase: recorded.phase || "unknown",
       last_successful_phase: lastSuccessfulPhaseFrom(recorded),
       diagnostic_status: recorded.diagnostic_status || "unknown",
+      evidence_schema: recorded.evidence_schema ?? null,
+      semantic_completion: recorded.semantic_completion ?? null,
+      root_files: recorded.root_files ?? null,
+      source_files: recorded.source_files ?? null,
+      root_file_fingerprint: recorded.root_file_fingerprint ?? null,
+      source_file_fingerprint: recorded.source_file_fingerprint ?? null,
+      oracle_root_files: recorded.oracle_root_files ?? null,
+      oracle_source_files: recorded.oracle_source_files ?? null,
+      oracle_root_file_fingerprint: recorded.oracle_root_file_fingerprint ?? null,
+      oracle_source_file_fingerprint: recorded.oracle_source_file_fingerprint ?? null,
+      diagnostic_records: recorded.diagnostic_records ?? null,
+      diagnostic_fingerprint: recorded.diagnostic_fingerprint ?? null,
+      oracle_diagnostic_records: recorded.oracle_diagnostic_records ?? null,
+      oracle_diagnostic_fingerprint: recorded.oracle_diagnostic_fingerprint ?? null,
+      stub_inventory_schema: recorded.stub_inventory_schema ?? null,
+      stubbed_modules: recorded.stubbed_modules ?? null,
+      stubbed_any_members: recorded.stubbed_any_members ?? null,
+      stub_inventory_fingerprint: recorded.stub_inventory_fingerprint ?? null,
+      oracle_classification: recorded.oracle_classification ?? "unknown",
       diagnostic_deltas: diagnosticDeltas,
       diagnostic_codes: aggregate.codes,
       diagnostic_subsystems: diagnosticSubsystems,
@@ -1253,6 +1162,7 @@ function isGreenRow(row) {
   if (row.artifact_missing === true) return false;
   if (!row.compatibility) return true;
   return hasCompletePhaseMetadata(row.compatibility) &&
+    hasExactProjectEvidence(row.compatibility, row.name) &&
     row.compatibility.state === "green" &&
     row.compatibility.exit_class === "exit success" &&
     row.compatibility.diagnostic_status === "none";

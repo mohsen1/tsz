@@ -3,8 +3,7 @@
  *
  * Parses TypeScript's emit baseline files which contain:
  * - Source TypeScript code
- * - Expected JavaScript output
- * - Expected Declaration output (.d.ts)
+ * - JavaScript/declaration product markers (bytes are not canonical truth)
  *
  * Format:
  *   //// [tests/cases/path/to/test.ts] ////
@@ -19,6 +18,10 @@
  *   (Declaration output)
  */
 
+export interface BaselineEmitProduct {
+  name: string;
+}
+
 export interface BaselineContent {
   /** Path to the test file */
   testPath: string | null;
@@ -28,21 +31,25 @@ export interface BaselineContent {
   sourceFileName: string | null;
   /** All source files in this baseline (in declaration order) */
   sourceFiles: Array<{ name: string; content: string }>;
-  /** Expected JavaScript output */
+  /** Parsed legacy JavaScript section; never used as canonical expected bytes. */
   js: string | null;
   /** Expected JavaScript output file name */
   jsFileName: string | null;
-  /** Expected declaration output */
+  /** JavaScript product-name domain only; checked-in bytes are not an oracle. */
+  jsOutputs: BaselineEmitProduct[];
+  /** Parsed legacy declaration section; never used as canonical expected bytes. */
   dts: string | null;
   /** Expected declaration output file name */
   dtsFileName: string | null;
+  /** Declaration product-name domain only; checked-in bytes are not an oracle. */
+  dtsOutputs: BaselineEmitProduct[];
   /** All files in the baseline */
   files: Map<string, string>;
   /**
    * True when the baseline indicates that emit output is intentionally absent
    * in the original (type-checked) emit (e.g., "File X missing from original
-   * emit" when --noEmitOnError is set). The js/dts fields still contain the
-   * noCheck emit content for comparison in JS-only mode.
+   * emit" when --noEmitOnError is set). Canonical absence is observed from the
+   * pinned TypeScript 7 process; this annotation is inventory metadata only.
    */
   noEmitExpected: boolean;
   /** True when a JS (.js/.jsx/.mjs/.cjs) file is marked missing. */
@@ -62,8 +69,10 @@ export function parseBaseline(content: string): BaselineContent {
     sourceFiles: [],
     js: null,
     jsFileName: null,
+    jsOutputs: [],
     dts: null,
     dtsFileName: null,
+    dtsOutputs: [],
     files: new Map(),
     noEmitExpected: false,
     noJsEmitExpected: false,
@@ -167,8 +176,11 @@ export function parseBaseline(content: string): BaselineContent {
     return text.replace(/^(?:\r?\n)+/, '').replace(/(?:\r?\n)+$/, '');
   };
 
+  const isDtsLikeOutput = (name: string): boolean => {
+    return /\.d\.(ts|mts|cts)$/.test(name);
+  };
   const isTsSourceLike = (name: string): boolean => {
-    return /\.(ts|tsx|mts|cts)$/.test(name) && !name.endsWith('.d.ts');
+    return /\.(ts|tsx|mts|cts)$/.test(name) && !isDtsLikeOutput(name);
   };
   const isInputCodeFile = (name: string): boolean => {
     return /\.(ts|tsx|mts|cts|js|jsx|mjs|cjs|d\.ts)$/.test(name);
@@ -180,13 +192,17 @@ export function parseBaseline(content: string): BaselineContent {
     return /\.(js|jsx|mjs|cjs)$/.test(name);
   };
   const toSourceDtsOutputName = (name: string): string => {
-    return name.replace(/\.(ts|tsx|mts|cts)$/, '.d.ts');
+    if (/\.mts$/.test(name)) return name.replace(/\.mts$/, '.d.mts');
+    if (/\.cts$/.test(name)) return name.replace(/\.cts$/, '.d.cts');
+    return name.replace(/\.(ts|tsx)$/, '.d.ts');
   };
   const toJsOutputBase = (name: string): string => {
     return name.replace(/\.(js|jsx|mjs|cjs)$/, '');
   };
   const jsLikeOutputToDts = (name: string): string => {
     const stem = toJsOutputBase(name);
+    if (name.endsWith('.mjs')) return `${stem}.d.mts`;
+    if (name.endsWith('.cjs')) return `${stem}.d.cts`;
     return `${stem}.d.ts`;
   };
 
@@ -202,7 +218,17 @@ export function parseBaseline(content: string): BaselineContent {
   const segmentContent = (seg: BaselineSegment): string => {
     return trimSegmentBoundaryNewlines(content.slice(seg.start, seg.end));
   };
-  const selectDtsOutputSegment = (seg: BaselineSegment, fileContent = segmentContent(seg)): void => {
+  // Baseline file markers consume the separator after an emitted product. The
+  // TypeScript emitter's encoded product itself ends in one newline whenever
+  // it is non-empty, so restore that byte while parsing the container rather
+  // than trimming the compiler's actual product during comparison.
+  const emittedContent = (fileContent: string): string => {
+    return fileContent.length === 0 ? '' : `${fileContent}\n`;
+  };
+  const emittedSegmentContent = (seg: BaselineSegment): string => {
+    return emittedContent(segmentContent(seg));
+  };
+  const selectDtsOutputSegment = (seg: BaselineSegment, fileContent = emittedSegmentContent(seg)): void => {
     result.dts = fileContent;
     result.dtsFileName = seg.name.trim();
     selectedDtsOutputSegment = seg;
@@ -210,7 +236,7 @@ export function parseBaseline(content: string): BaselineContent {
   const findOriginalDtsOutputSegment = (fileName: string): BaselineSegment | undefined => {
     return outputSegments.find(seg => {
       return seg.name.trim() === fileName
-        && seg.name.trim().endsWith('.d.ts')
+        && isDtsLikeOutput(seg.name.trim())
         && !seg.missingFromOriginalEmit
         && !seg.differsFromOriginalEmit;
     });
@@ -255,7 +281,7 @@ export function parseBaseline(content: string): BaselineContent {
       // TypeScript source files (.ts/.tsx/.mts/.cts) and declaration files (.d.ts)
       // are never output files, so duplicates are still in the source section
       // (multi-package tests with same-named files across directories).
-      if (isTsSourceLike(name) || name.endsWith('.d.ts')) {
+      if (isTsSourceLike(name) || isDtsLikeOutput(name)) {
         continue;
       }
       outputStart = Math.min(outputStart, i);
@@ -268,7 +294,7 @@ export function parseBaseline(content: string): BaselineContent {
       // the JS file is the library's runtime (e.g., tslib.d.ts + tslib.js
       // in node_modules), not compiler output.
       const isTsOutput = seenTsSources.some(src => {
-        if (src.endsWith('.d.ts')) return false;
+        if (isDtsLikeOutput(src)) return false;
         const base = src.replace(/\.(ts|tsx|mts|cts)$/, '');
         return (
           name === `${base}.js` ||
@@ -296,9 +322,9 @@ export function parseBaseline(content: string): BaselineContent {
         outputStart = Math.min(outputStart, i);
         break;
       }
-    } else if (name.endsWith('.d.ts')) {
+    } else if (isDtsLikeOutput(name)) {
       const isDtsOutput = seenTsSources.some(src => {
-        if (src.endsWith('.d.ts')) return false;
+        if (isDtsLikeOutput(src)) return false;
         const base = src.replace(/\.(ts|tsx|mts|cts)$/, '');
         return name === `${base}.d.ts`;
       });
@@ -317,7 +343,7 @@ export function parseBaseline(content: string): BaselineContent {
           }
           const laterBase = toJsOutputBase(laterName);
           if (seenTsSources.some(src => {
-            if (src.endsWith('.d.ts')) return false;
+            if (isDtsLikeOutput(src)) return false;
             return src.replace(/\.(ts|tsx|mts|cts)$/, '') === laterBase;
           })) {
             return true;
@@ -383,7 +409,7 @@ export function parseBaseline(content: string): BaselineContent {
   }
 
   for (const sourceName of sourceLikeFiles.map((f) => f.name)) {
-    if (sourceName.endsWith('.d.ts')) continue;
+    if (isDtsLikeOutput(sourceName)) continue;
     dtsOutputCandidates.add(toSourceDtsOutputName(sourceName));
   }
   for (const seg of outputSegments) {
@@ -421,7 +447,7 @@ export function parseBaseline(content: string): BaselineContent {
       } else {
         result.sourceFiles.push({ name, content: fileContent });
       }
-      if (!result.source && fileContent.length > 0 && !name.endsWith('.d.ts') && !isAuxiliaryFile(name)) {
+      if (!result.source && fileContent.length > 0 && !isDtsLikeOutput(name) && !isAuxiliaryFile(name)) {
         // Keep the first non-empty, non-declaration source file as entry-point.
         result.source = fileContent;
         result.sourceFileName = name;
@@ -438,17 +464,23 @@ export function parseBaseline(content: string): BaselineContent {
       //
       // Files marked "missing from original emit" (e.g., --noEmitOnError with
       // type errors) are not expected to be produced by the compiler, so skip them.
+      const outputContent = emittedContent(fileContent);
+      result.files.set(name, outputContent);
+      result.jsOutputs.push({ name });
       if (!result.js || result.jsFileName === name) {
-        result.js = fileContent;
+        result.js = outputContent;
         result.jsFileName = name;
       }
-    } else if (segIndex >= outputStart && name.endsWith('.d.ts')) {
+    } else if (segIndex >= outputStart && isDtsLikeOutput(name)) {
       // Declaration segment: classify as emitted output when name matches an emitted d.ts path.
       if (dtsOutputCandidates.has(name)) {
+        const outputContent = emittedContent(fileContent);
+        result.files.set(name, outputContent);
+        result.dtsOutputs.push({ name });
         if (seg.missingFromOriginalEmit) {
-          missingOriginalDtsOutput ??= { segment: seg, content: fileContent };
+          missingOriginalDtsOutput ??= { segment: seg, content: outputContent };
         } else if (!result.dts || result.dtsFileName === name) {
-          selectDtsOutputSegment(seg, fileContent);
+          selectDtsOutputSegment(seg, outputContent);
         }
       } else {
         dtsSourceFiles.push({ name, content: fileContent });
@@ -499,7 +531,7 @@ export function parseBaseline(content: string): BaselineContent {
     } else if (!result.dts) {
       for (const seg of outputSegments) {
         const name = seg.name.trim();
-        if (!seg.missingFromOriginalEmit && !seg.differsFromOriginalEmit && name.endsWith('.d.ts')) {
+        if (!seg.missingFromOriginalEmit && !seg.differsFromOriginalEmit && isDtsLikeOutput(name)) {
           selectDtsOutputSegment(seg);
           break;
         }
@@ -543,7 +575,7 @@ export function parseBaseline(content: string): BaselineContent {
         break;
       }
 
-      const fileContent = content.slice(seg.start, end).trim();
+      const fileContent = emittedContent(content.slice(seg.start, end).trim());
       if (fileContent.length > 0) {
         result.js = fileContent;
         result.jsFileName = jsName;
@@ -556,23 +588,9 @@ export function parseBaseline(content: string): BaselineContent {
   return result;
 }
 
-/**
- * Prepare emit output for comparison.
- * Only normalizes line endings for cross-platform consistency.
- * NO other normalization - tsz output should match tsc exactly.
- */
-export function normalizeEmit(code: string): string {
-  return code
-    // Normalize line endings only
-    .replace(/\r\n/g, '\n')
-    .trim();
-}
-
-/**
- * Compare two emit outputs with normalization
- */
+/** Compare exact product bytes. */
 export function compareEmit(expected: string, actual: string): boolean {
-  return normalizeEmit(expected) === normalizeEmit(actual);
+  return expected === actual;
 }
 
 import * as Diff from 'diff';
@@ -582,14 +600,11 @@ import pc from 'picocolors';
  * Get a pretty-printed unified diff between expected and actual emit
  */
 export function getEmitDiff(expected: string, actual: string, maxLines: number = 30): string {
-  const normExpected = normalizeEmit(expected);
-  const normActual = normalizeEmit(actual);
-
-  if (normExpected === normActual) {
+  if (expected === actual) {
     return '';
   }
 
-  const patch = Diff.createPatch('output', normExpected, normActual, 'expected', 'actual');
+  const patch = Diff.createPatch('output', expected, actual, 'expected', 'actual');
 
   const lines = patch.split('\n');
   const colored: string[] = [];
@@ -623,14 +638,11 @@ export function getEmitDiff(expected: string, actual: string, maxLines: number =
  * Get a summary of differences (for non-verbose mode)
  */
 export function getEmitDiffSummary(expected: string, actual: string): string {
-  const normExpected = normalizeEmit(expected);
-  const normActual = normalizeEmit(actual);
-
-  if (normExpected === normActual) {
+  if (expected === actual) {
     return '';
   }
 
-  const changes = Diff.diffLines(normExpected, normActual);
+  const changes = Diff.diffLines(expected, actual);
   let added = 0, removed = 0;
 
   for (const change of changes) {

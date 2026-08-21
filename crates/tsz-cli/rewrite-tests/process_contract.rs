@@ -20,8 +20,8 @@ fn process_flags_preserve_the_harness_surface() {
     .collect::<Vec<_>>();
     let invocation = tsz_cli::driver::parse_arguments(&arguments).unwrap();
     assert_eq!(invocation.project.unwrap().to_string_lossy(), "fixture");
-    assert!(invocation.options.no_emit);
-    assert!(invocation.options.strict);
+    assert_eq!(invocation.options.no_emit, Some(true));
+    assert_eq!(invocation.options.strict, Some(true));
     assert!(!invocation.pretty);
     assert!(invocation.extended_diagnostics);
     assert!(invocation.unknown_options.is_empty());
@@ -95,6 +95,141 @@ fn tsserver_uses_content_length_and_reports_unsupported_commands_honestly() {
     assert_eq!(responses[6]["command"], "tsz/reset");
     assert_eq!(responses[6]["request_seq"], 7);
     assert_eq!(responses[6]["success"], true);
+}
+
+#[test]
+fn tsserver_semantic_diagnostics_fail_without_fabricating_a_diagnostic_body() {
+    let source = "const text:string=''; const textSize:number=text.length; \
+                  const values:number[]=[]; const count:number=values.length;";
+    let requests = [
+        json!({
+            "seq": 1,
+            "type": "request",
+            "command": "open",
+            "arguments": {"file": "case.ts", "fileContent": source}
+        }),
+        json!({
+            "seq": 2,
+            "type": "request",
+            "command": "syntacticDiagnosticsSync",
+            "arguments": {"file": "case.ts"}
+        }),
+        json!({
+            "seq": 3,
+            "type": "request",
+            "command": "semanticDiagnosticsSync",
+            "arguments": {"file": "case.ts"}
+        }),
+    ];
+    let mut input = Vec::new();
+    for request in requests {
+        let body = serde_json::to_vec(&request).unwrap();
+        input.extend_from_slice(format!("Content-Length: {}\r\n\r\n", body.len()).as_bytes());
+        input.extend_from_slice(&body);
+    }
+
+    let mut output = Vec::new();
+    tsz_cli::tsserver::run_tsserver(Cursor::new(input), &mut output).unwrap();
+    let responses = decode_messages(&output);
+    assert_eq!(responses.len(), 3);
+    assert_eq!(responses[1]["success"], true);
+    assert_eq!(responses[1]["body"], json!([]));
+    assert_eq!(responses[2]["success"], false);
+    assert!(responses[2].get("body").is_none());
+    assert_eq!(
+        responses[2]["message"],
+        "TSZ semantic diagnostics incomplete: deferred"
+    );
+}
+
+#[test]
+fn legacy_server_compiles_array_files_and_carries_semantic_completion() {
+    let requests = [
+        json!({
+            "id": 1,
+            "type": "check",
+            "files": [{
+                "path": "case.ts",
+                "content": "const text:string=''; const size:number=text.length;"
+            }],
+            "options": {"strict": true}
+        }),
+        json!({
+            "id": 2,
+            "type": "check",
+            "files": [{"path": "case.ts", "content": "const value:number=1;"}],
+            "options": {"strict": true}
+        }),
+    ];
+    let mut input = Vec::new();
+    for request in requests {
+        serde_json::to_writer(&mut input, &request).unwrap();
+        input.push(b'\n');
+    }
+    let mut output = Vec::new();
+    tsz_cli::tsserver::run_legacy_server(Cursor::new(input), &mut output).unwrap();
+    let responses = String::from_utf8(output)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).unwrap())
+        .collect::<Vec<_>>();
+
+    assert_eq!(responses[0]["codes"], json!([]));
+    assert_eq!(responses[0]["semantic_completion"], "deferred");
+    assert_eq!(responses[1]["codes"], json!([]));
+    assert_eq!(responses[1]["semantic_completion"], "complete");
+}
+
+#[test]
+fn tsserver_quickinfo_frames_exact_object_shapes_and_rejects_unsupported_inference() {
+    let requests = [
+        json!({
+            "seq": 1,
+            "type": "request",
+            "command": "open",
+            "arguments": {
+                "file": "case.ts",
+                "fileContent": "const item = { count: 1 };\nconst unresolved = create();"
+            }
+        }),
+        json!({
+            "seq": 2,
+            "type": "request",
+            "command": "quickinfo",
+            "arguments": {"file": "case.ts", "line": 1, "offset": 7}
+        }),
+        json!({
+            "seq": 3,
+            "type": "request",
+            "command": "quickinfo",
+            "arguments": {"file": "case.ts", "line": 2, "offset": 7}
+        }),
+    ];
+    let mut input = Vec::new();
+    for request in requests {
+        let body = serde_json::to_vec(&request).unwrap();
+        input.extend_from_slice(format!("Content-Length: {}\r\n\r\n", body.len()).as_bytes());
+        input.extend_from_slice(&body);
+    }
+
+    let mut output = Vec::new();
+    tsz_cli::tsserver::run_tsserver(Cursor::new(input), &mut output).unwrap();
+    let responses = decode_messages(&output);
+    assert_eq!(responses.len(), 3);
+    assert_eq!(responses[0]["success"], true);
+    assert_eq!(responses[1]["success"], true);
+    assert_eq!(
+        responses[1]["body"]["displayString"],
+        "const item: { count: number; }"
+    );
+    assert_eq!(responses[2]["success"], false);
+    assert!(responses[2].get("body").is_none());
+    assert!(
+        !responses[2]["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("unknown")
+    );
 }
 
 #[test]
@@ -360,6 +495,33 @@ fn every_native_binary_has_an_honest_help_surface() {
 }
 
 #[test]
+fn flat_cli_renders_array_relation_continuations_under_one_primary_diagnostic() {
+    let project = tempfile::tempdir().unwrap();
+    let source_path = project.path().join("array-relation.ts");
+    std::fs::write(
+        &source_path,
+        "const values=[\"other\"];\nconst target:\"seed\"[]=values;\n",
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_tsz"))
+        .args(["--strict", "--noEmit", "--pretty", "false"])
+        .arg(&source_path)
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(
+        stdout.contains(
+            "error TS2322: Type 'string[]' is not assignable to type '\"seed\"[]'.\n  Type 'string' is not assignable to type '\"seed\"'.\n"
+        ),
+        "{stdout:?}"
+    );
+    assert_eq!(stdout.matches("error TS2322:").count(), 1, "{stdout:?}");
+    assert!(output.stderr.is_empty());
+}
+
+#[test]
 fn batch_process_emits_one_exact_sentinel_per_project() {
     let project = tempfile::tempdir().unwrap();
     std::fs::write(
@@ -384,7 +546,84 @@ fn batch_process_emits_one_exact_sentinel_per_project() {
     assert!(output.status.success());
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert!(stdout.contains("error TS2322:"));
+    assert_eq!(
+        stdout
+            .matches("---TSZ-SEMANTIC-COMPLETION:complete---\n")
+            .count(),
+        1
+    );
     assert_eq!(stdout.matches("---TSZ-BATCH-DONE---\n").count(), 1);
+}
+
+#[test]
+fn semantic_nonclaims_use_exit_three_and_an_exact_batch_marker() {
+    let project = tempfile::tempdir().unwrap();
+    std::fs::write(
+        project.path().join("tsconfig.json"),
+        r#"{"compilerOptions":{"strict":true,"noEmit":true},"files":["case.ts"]}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        project.path().join("case.ts"),
+        "type Keys=keyof number; let key:Keys; const value:number=key;",
+    )
+    .unwrap();
+    let stats_path = project.path().join("stats.json");
+
+    let fresh = Command::new(env!("CARGO_BIN_EXE_tsz"))
+        .args([
+            "--project",
+            project.path().to_str().unwrap(),
+            "--noEmit",
+            "--pretty",
+            "false",
+            "--perf-counters-json",
+            stats_path.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(fresh.status.code(), Some(3));
+    assert!(
+        fresh.stdout.is_empty(),
+        "no protocol marker belongs on fresh CLI stdout"
+    );
+    assert!(fresh.stderr.is_empty());
+    let stats: Value = serde_json::from_slice(&std::fs::read(&stats_path).unwrap()).unwrap();
+    assert_eq!(stats["schema_version"], 2);
+    assert_eq!(stats["stats"]["semantic_completion"], "deferred");
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_tsz"))
+        .args(["--batch", "--noEmit", "--pretty", "false"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    writeln!(child.stdin.take().unwrap(), "{}", project.path().display()).unwrap();
+    let batch = child.wait_with_output().unwrap();
+    assert!(batch.status.success());
+    assert!(batch.stderr.is_empty());
+    assert_eq!(
+        String::from_utf8(batch.stdout).unwrap(),
+        "---TSZ-SEMANTIC-COMPLETION:deferred---\n---TSZ-BATCH-DONE---\n"
+    );
+
+    let unchecked_stats = project.path().join("unchecked-stats.json");
+    let unchecked = Command::new(env!("CARGO_BIN_EXE_tsz"))
+        .args([
+            "--project",
+            project.path().to_str().unwrap(),
+            "--noCheck",
+            "--noEmit",
+            "--pretty",
+            "false",
+            "--perf-counters-json",
+            unchecked_stats.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(unchecked.status.success());
+    let stats: Value = serde_json::from_slice(&std::fs::read(&unchecked_stats).unwrap()).unwrap();
+    assert_eq!(stats["stats"]["semantic_completion"], "complete");
 }
 
 #[test]

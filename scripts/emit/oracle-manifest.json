@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "packageName": "typescript",
+  "platformPackagePrefix": "@typescript/typescript-",
+  "version": "7.0.2",
+  "versionOutput": "Version 7.0.2",
+  "gitHead": "2bd066d87f5bafd315be9f40889d0a60b9e58e0b",
+  "wrapperIntegrity": "sha512-8FYau96o3NKOhbjKi/qNvG/W5jhzxkbdm5sj9AbZ/5T5sWqn3hJgLfGx27sRKZWTvyzCP8dLRBTf5tBTSRVUNA==",
+  "wrapperPackageJsonSha256": "3722b30210616a13a3213ded11575ba6b2dbab10c32a5ef67afca8513e27017e",
+  "wrapperBinSha256": "2219f428a7e55aaf1f7ad85b9b0f0cf5078aeb76ccc9a7c6036c92d48f492ffd",
+  "platforms": {
+    "darwin-arm64": {
+      "packageIntegrity": "sha512-gowzar9MwS/aRWp6f3a4KUqzRjAZjOsmGNCM6LcTgXum+dBfgsBVMN+AgvOCCbguXyick6LJhpBszxMebJ8syA==",
+      "packageJsonSha256": "e88558e22e3db6c4da920e15a60eb2bbea801732b94aedb67e972be2a7f485b8",
+      "packageTreeSha256": "60b00342e550785053df20bd84f708c6400ba68eea5e27fb8103c9e1a0aa900f",
+      "binarySha256": "a82f731365ad69d5c4c15f5e18fba4584bf3b7b839960172a76c3462b5114bf2"
+    },
+    "linux-x64": {
+      "packageIntegrity": "sha512-EYdf2cNg7rgCWJnxCdJ+F3V39O8ihb37eHAu1LK8oAFizgTQbPOK7zHHXbPt8rX24COqODXeI3sIf0fCXG7H/A==",
+      "packageJsonSha256": "d229521d1ab1d09e60eeb887c8be8e9454a1ea184fe801dcbfa276da3c569cf7",
+      "packageTreeSha256": "9e238e4281777ab1f61c28cd963616818f5ae961824dd444f913b06e95f30d49",
+      "binarySha256": "4f2de678286401759b3fb4475bafe35b8f32b4b3a07d92642bbf37eadc9b34a4"
+    }
+  }
+}

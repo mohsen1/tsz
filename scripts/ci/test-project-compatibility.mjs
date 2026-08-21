@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { fixtureStubEvidenceFor } from "../bench/lib/fixture-stub-inventory.mjs";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(SCRIPT_DIR, "..", "..");
@@ -32,6 +33,7 @@ withTempDir((dir) => {
   const tsconfig = path.join(dir, "fixture", "tsconfig.json");
   const sourceRoot = path.join(dir, "fixture", "src");
   fs.mkdirSync(sourceRoot, { recursive: true });
+  const stubEvidence = fixtureStubEvidenceFor(ROOT, "type-fest-project");
 
   const result = runProjectCompatibility(["record"], {
     COMPAT_JSONL_FILE: jsonl,
@@ -39,6 +41,7 @@ withTempDir((dir) => {
     COMPAT_EXIT_CLASS: "nonzero exit",
     COMPAT_PHASE: "check",
     COMPAT_DIAGNOSTIC_STATUS: "diagnostic mismatch or compiler error",
+    COMPAT_SEMANTIC_COMPLETION: "deferred",
     COMPAT_DIAGNOSTIC_DELTA: [
       `${path.join(sourceRoot, "index.ts")}(10,4): error TS2344: Type 'false' does not satisfy the constraint 'true'.`,
       "tsgo: internal runner note without a diagnostic code",
@@ -59,6 +62,10 @@ withTempDir((dir) => {
     COMPAT_WORKFLOW_RUN_URL: "https://github.com/tsz-org/tsz/actions/runs/12345",
     COMPAT_WORKFLOW_RUN_ATTEMPT: "2",
     COMPAT_RUN_STATUS: "completed",
+    COMPAT_STUB_INVENTORY_SCHEMA: String(stubEvidence.stubInventorySchema),
+    COMPAT_STUBBED_MODULES: String(stubEvidence.stubbedModules),
+    COMPAT_STUBBED_ANY_MEMBERS: String(stubEvidence.stubbedAnyMembers),
+    COMPAT_STUB_INVENTORY_FINGERPRINT: stubEvidence.stubInventoryFingerprint,
     COMPAT_FIXTURE_SOURCES: [
       "type-fest|https://github.com/sindresorhus/type-fest.git|4005f60",
       "type-fest|https://github.com/sindresorhus/type-fest.git|4005f60",
@@ -83,10 +90,15 @@ withTempDir((dir) => {
   assert.equal(row.owner_track, "Track 2/3 conditional, mapped, inference, instantiation");
   assert.equal(row.phase, "check");
   assert.equal(row.last_successful_phase, null);
+  assert.equal(row.semantic_completion, "deferred");
   assert.deepEqual(row.diagnostic_codes, ["TS2344"]);
   assert.deepEqual(row.exit_codes, { tsc: [0], tsz: [2], tsgo: [1] });
   assert.equal(row.files_reached, 42);
   assert.equal(row.files_reached_reason, null);
+  assert.equal(row.stub_inventory_schema, 1);
+  assert.equal(row.stubbed_modules, 0);
+  assert.equal(row.stubbed_any_members, 0);
+  assert.equal(row.stub_inventory_fingerprint, stubEvidence.stubInventoryFingerprint);
   assert.equal(row.peak_memory_bytes, 1048576);
   assert.equal(row.peak_memory_bytes_reason, null);
   assert.equal(row.repro.tsconfig_path, "tsconfig.json");
@@ -184,6 +196,14 @@ withTempDir((dir) => {
       expected: { oracle: "both-fail-same", state: "red", counts: { tsc: 0, tsz: 0, tsgo: 0 }, tscCodes: [], tszCodes: [] },
     }),
     makeOracleCase({
+      name: "both-fail-exit-different",
+      exitClass: "nonzero exit",
+      diagnosticStatus: "exact diagnostic mismatch or compiler-exit mismatch",
+      tscExit: "2",
+      tszExit: "1",
+      expected: { oracle: "both-fail-different", state: "yellow", counts: { tsc: 0, tsz: 0, tsgo: 0 }, tscCodes: [], tszCodes: [] },
+    }),
+    makeOracleCase({
       name: "both-fail-different",
       exitClass: "nonzero exit",
       diagnosticStatus: "diagnostic mismatch or compiler error",
@@ -260,10 +280,10 @@ withTempDir((dir) => {
   const jsonl = path.join(dir, "compat.jsonl");
 
   // (1) Parity: tsz reproduces tsc's diagnostic exactly. The guard cancels the
-  // tsz-only delta, normalizes tsz's exit to 0, sets exit_class "exit success"
-  // / status "none", and records both sides via tsc_and_tsz_oracle_delta. tsc
-  // itself still exited nonzero (it flagged the same error), so its exit code is
-  // carried through. This must score GREEN with oracle_classification both-fail-same.
+  // tsz-only delta, normalizes only the harness verdict, sets exit_class
+  // "exit success" / status "none", and records both sides via
+  // tsc_and_tsz_oracle_delta. Both real compiler exits remain nonzero and equal.
+  // This must score GREEN with oracle_classification both-fail-same.
   const parity = runProjectCompatibility(["record"], {
     COMPAT_JSONL_FILE: jsonl,
     COMPAT_NAME: "ts-belt-project",
@@ -274,7 +294,7 @@ withTempDir((dir) => {
       "tsc: src/Dict/Dict.ts(2,17): error TS2305: Module '\"../types\"' has no exported member 'NonNullable'.",
       "tsz: src/Dict/Dict.ts(2,17): error TS2305: Module '\"../types\"' has no exported member 'NonNullable'.",
     ].join("\n"),
-    COMPAT_TSZ_EXIT_CODES: "0",
+    COMPAT_TSZ_EXIT_CODES: "2",
     COMPAT_TSC_EXIT_CODES: "2",
   });
   assert.equal(parity.status, 0, parity.stderr);
@@ -309,7 +329,7 @@ withTempDir((dir) => {
   assert.deepEqual(parityRow.diagnostic_counts, { tsc: 1, tsz: 1, tsgo: 0 });
   assert.deepEqual(parityRow.tsc_diagnostic_codes, ["TS2305"]);
   assert.deepEqual(parityRow.tsz_diagnostic_codes, ["TS2305"]);
-  assert.deepEqual(parityRow.exit_codes, { tsc: [2], tsz: [0], tsgo: [] });
+  assert.deepEqual(parityRow.exit_codes, { tsc: [2], tsz: [2], tsgo: [] });
 
   assert.equal(tszOnlyRow.name, "tiny-invariant-project");
   assert.notEqual(tszOnlyRow.state, "green", "genuine tsz-only delta must not score green");
@@ -732,7 +752,7 @@ withTempDir((dir) => {
   assert.equal(result.status, 0, result.stderr);
   const [row] = fs.readFileSync(jsonl, "utf8").trim().split(/\r?\n/).map((line) => JSON.parse(line));
   assert.equal(row.name, "sample-project");
-  assert.equal(row.state, "red");
+  assert.equal(row.state, "gray");
   assert.equal(row.first_failure_class, "benchmark runner error");
   assert.deepEqual(row.known_blockers, [
     "benchmark runner error",

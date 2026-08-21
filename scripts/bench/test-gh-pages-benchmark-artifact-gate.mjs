@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 
 const workflow = fs.readFileSync(".github/workflows/gh-pages.yml", "utf8");
-const fullCi = fs.readFileSync("scripts/ci/full-ci.sh", "utf8");
+const unitGate = fs.readFileSync("scripts/ci/check-unit-gate-contracts.sh", "utf8");
 
 assert.match(
   workflow,
@@ -90,9 +90,9 @@ assert.match(
 );
 
 assert.match(
-  fullCi,
+  unitGate,
   /node scripts\/bench\/test-gh-pages-benchmark-artifact-gate\.mjs/,
-  "full-ci lint should run the benchmark artifact gate test",
+  "the strict rewrite unit gate should run the benchmark artifact gate test",
 );
 
 console.log("gh-pages benchmark artifact gate tests passed");

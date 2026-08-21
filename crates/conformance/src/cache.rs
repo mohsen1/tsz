@@ -5,11 +5,30 @@
 //! conformance test is a single file (multi-file tests use @filename directives).
 
 use crate::tsc_results::TscResult;
+use serde::Deserialize;
+use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::path::Path;
 
 /// TSC cache type: relative file path -> TSC result
 pub type TscCache = HashMap<String, TscResult>;
+
+/// Exact non-runnable partitions paired with a TSC cache.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ConformanceDomain {
+    pub schema_version: u32,
+    pub typescript_version: String,
+    pub corpus_commit: String,
+    pub corpus_tree: String,
+    pub candidate_content_sha256: String,
+    pub oracle: serde_json::Value,
+    pub candidate_count: usize,
+    pub runnable_count: usize,
+    pub unsupported_count: usize,
+    pub skipped_count: usize,
+    pub unsupported: BTreeMap<String, String>,
+    pub skipped: BTreeMap<String, String>,
+}
 
 /// Load TSC cache from JSON file
 ///
@@ -24,6 +43,40 @@ pub fn load_cache(cache_path: &Path) -> anyhow::Result<TscCache> {
         .map_err(|e| anyhow::anyhow!("Failed to parse cache JSON: {}", e))?;
 
     Ok(cache)
+}
+
+pub fn load_domain(path: &Path) -> anyhow::Result<ConformanceDomain> {
+    let reader = std::io::BufReader::new(std::fs::File::open(path)?);
+    serde_json::from_reader(reader)
+        .map_err(|error| anyhow::anyhow!("Failed to parse domain JSON: {error}"))
+}
+
+/// Reject old or partial oracle caches before any TSZ invocation.
+pub fn validate_runnable_evidence(cache: &TscCache) -> anyhow::Result<()> {
+    if cache.is_empty() {
+        anyhow::bail!("TSC cache has no runnable entries");
+    }
+    let invalid = cache.iter().find(|(_, result)| {
+        let fingerprint_codes = result
+            .diagnostic_fingerprints
+            .iter()
+            .map(|fingerprint| fingerprint.code)
+            .collect::<Vec<_>>();
+        !result.diagnostic_blocks_complete
+            || !crate::integrity::is_lower_hex(&result.metadata.source_sha256, 64)
+            || result.ordinary_exit_statuses.is_empty()
+            || result
+                .ordinary_exit_statuses
+                .iter()
+                .any(|status| *status > 2)
+            || result.error_codes != fingerprint_codes
+    });
+    if let Some((path, _)) = invalid {
+        anyhow::bail!(
+            "TSC cache entry {path} lacks complete diagnostic blocks or exact ordinary exit status"
+        );
+    }
+    Ok(())
 }
 
 /// Compute cache key for a test file: its path relative to the test directory.
@@ -64,9 +117,12 @@ mod tests {
                 mtime_ms: 123,
                 size: 456,
                 typescript_version: Some("5.4.0".to_string()),
+                source_sha256: "00".repeat(32),
             },
             error_codes: vec![2307, 2322],
             diagnostic_fingerprints: Vec::new(),
+            diagnostic_blocks_complete: true,
+            ordinary_exit_statuses: vec![1],
         }
     }
 
@@ -95,6 +151,23 @@ mod tests {
         let err = load_cache(file.path()).expect_err("cache load should fail");
         let message = format!("{err:#}");
         assert!(message.contains("Failed to parse cache JSON"));
+    }
+
+    #[test]
+    fn clean_rows_still_require_complete_blocks_and_exit_evidence() {
+        let mut result = sample_result();
+        result.error_codes.clear();
+        result.diagnostic_fingerprints.clear();
+        result.ordinary_exit_statuses = vec![0];
+        result.diagnostic_blocks_complete = false;
+        let cache = TscCache::from([("clean.ts".to_string(), result)]);
+        assert!(validate_runnable_evidence(&cache).is_err());
+    }
+
+    #[test]
+    fn code_only_rows_are_not_complete_oracle_evidence() {
+        let cache = TscCache::from([("code-only.ts".to_string(), sample_result())]);
+        assert!(validate_runnable_evidence(&cache).is_err());
     }
 
     #[test]

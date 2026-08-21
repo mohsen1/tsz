@@ -804,10 +804,6 @@ run_fourslash_aggregate() {
   echo "Fourslash aggregate: ${total_passed}/${total_tests} across ${shard_count}/${expected_shards} shards (timeout=${timed_out}, failed_shards=${failed_shards})"
   echo "Fourslash aggregate slowest tests:"
   jq -s -r '[.[] | (.slowest // .summary.slowest // [])[]] | sort_by(.elapsed) | reverse | .[:10][]? | "  \(.elapsed)ms \(.status) \(.name)"' "$tmp_dir"/shard-*.json || true
-  if [[ "$failed_shards" -gt 0 ]]; then
-    echo "warning: ${failed_shards} fourslash shard(s) returned non-zero; aggregate still applies the baseline floor" >&2
-  fi
-
   if [[ "$shard_count" -lt "$expected_shards" ]]; then
     echo "error: only ${shard_count}/${expected_shards} fourslash shards collected; some shards may have crashed" >&2
     return 1
@@ -817,17 +813,6 @@ run_fourslash_aggregate() {
     return 1
   fi
 
-  local baseline
-  baseline="$(jq -r '.summary.passed // .passed // (.pass | length) // 0' scripts/fourslash/fourslash-snapshot.json)"
-  if [[ "$baseline" -gt 0 ]]; then
-    local tolerance floor
-    tolerance="$(awk "BEGIN {printf \"%d\", $baseline * 0.001 + 1}")"
-    floor=$((baseline - tolerance))
-    if [[ "$total_passed" -lt "$floor" ]]; then
-      echo "error: fourslash regression: ${total_passed} < ${baseline} (floor=${floor})" >&2
-      return 1
-    fi
-  fi
   local pass_rate
   pass_rate="$(awk -v p="$total_passed" -v t="$total_tests" 'BEGIN { if (t > 0) printf "%.1f", (p / t) * 100; else print "0.0" }')"
   jq -n \
@@ -836,10 +821,16 @@ run_fourslash_aggregate() {
     --argjson passed "$total_passed" \
     --argjson total "$total_tests" \
     --argjson shards "$shard_count" \
-    '{suite:$suite, pass_rate:$pass_rate, passed:$passed, total:$total, shards:$shards}' \
+    --argjson failed_shards "$failed_shards" \
+    --argjson timed_out "$timed_out" \
+    '{suite:$suite, pass_rate:$pass_rate, passed:$passed, total:$total, shards:$shards, failed_shards:$failed_shards, timed_out:$timed_out, complete:($failed_shards == 0 and $timed_out == 0)}' \
     > "$METRICS_DIR/fourslash.json"
   publish_latest_metric fourslash "$METRICS_DIR/fourslash.json"
-  echo "Fourslash OK: ${total_passed}/${total_tests}"
+  if [[ "$failed_shards" -gt 0 || "$timed_out" -gt 0 ]]; then
+    echo "error: fourslash observation is incomplete: failed_shards=${failed_shards}, timed_out=${timed_out}" >&2
+    return 1
+  fi
+  echo "Fourslash observation complete: ${total_passed}/${total_tests}"
 }
 
 run_dist_binaries() {

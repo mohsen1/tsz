@@ -16,7 +16,10 @@ use crate::syntax::{
     SwitchClauseKind, TypeNode, TypeNodeKind, VariableKind,
 };
 
-use super::{TextSpan, display_type_node, display_variable_type, normalize_path};
+use super::{
+    TextSpan, display_parameter, display_parameter_type, display_type_node, display_variable_type,
+    normalize_path,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -677,9 +680,21 @@ impl ReferenceVisitor<'_> {
                     self.visit_expression(element, scope, false);
                 }
             }
-            ExpressionKind::Call { callee, arguments }
-            | ExpressionKind::New { callee, arguments } => {
+            ExpressionKind::Call { callee, arguments } => {
                 self.visit_expression(callee, scope, false);
+                for argument in arguments {
+                    self.visit_expression(argument, scope, false);
+                }
+            }
+            ExpressionKind::New {
+                callee,
+                type_arguments,
+                arguments,
+            } => {
+                self.visit_expression(callee, scope, false);
+                for type_argument in type_arguments {
+                    self.visit_type(type_argument, scope);
+                }
                 for argument in arguments {
                     self.visit_expression(argument, scope, false);
                 }
@@ -785,7 +800,9 @@ impl ReferenceVisitor<'_> {
                     self.visit_type(argument, scope);
                 }
             }
-            TypeNodeKind::TypeQuery { name, name_span } => {
+            TypeNodeKind::TypeQuery {
+                name, name_span, ..
+            } => {
                 self.record_name(name, *name_span, scope, Meaning::Value, false);
             }
             TypeNodeKind::Infer { constraint, .. } => {
@@ -885,15 +902,9 @@ impl ReferenceVisitor<'_> {
             start: parameter.name_span.start,
             meaning,
         };
-        let display = parameter.annotation.as_ref().map_or_else(
-            || format!("(parameter) {}: any", parameter.name),
-            |annotation| {
-                format!(
-                    "(parameter) {}: {}",
-                    parameter.name,
-                    display_type_node(annotation)
-                )
-            },
+        let display = display_parameter(parameter).map_or_else(
+            || format!("(parameter) {}", parameter.name),
+            |parameter| format!("(parameter) {parameter}"),
         );
         self.index
             .declarations
@@ -1069,7 +1080,10 @@ fn collect_statement_metadata(
                     VariableKind::Var => "var",
                 };
                 let ty = display_variable_type(declaration);
-                let display = format!("{kind} {}: {ty}", declaration.name);
+                let display = ty.as_ref().map_or_else(
+                    || format!("{kind} {}", declaration.name),
+                    |ty| format!("{kind} {}: {ty}", declaration.name),
+                );
                 metadata.insert(
                     (declaration.name_span.start, declaration.name_span.end),
                     SyntaxMetadata {
@@ -1078,7 +1092,11 @@ fn collect_statement_metadata(
                         exported: declaration.exported,
                         ambient: ambient_context,
                         display: display.clone(),
-                        display_parts: variable_display_parts(kind, &declaration.name, &ty),
+                        display_parts: variable_display_parts(
+                            kind,
+                            &declaration.name,
+                            ty.as_deref(),
+                        ),
                     },
                 );
             }
@@ -1086,20 +1104,16 @@ fn collect_statement_metadata(
                 let parameters = declaration
                     .parameters
                     .iter()
-                    .map(|parameter| {
-                        let ty = parameter
-                            .annotation
-                            .as_ref()
-                            .map_or_else(|| "any".to_string(), display_type_node);
-                        format!("{}: {ty}", parameter.name)
-                    })
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                let result = declaration
-                    .return_type
-                    .as_ref()
-                    .map_or_else(|| "any".to_string(), display_type_node);
-                let display = format!("function {}({parameters}): {result}", declaration.name);
+                    .map(display_parameter)
+                    .collect::<Option<Vec<_>>>()
+                    .map(|parameters| parameters.join(", "));
+                let result = declaration.return_type.as_ref().and_then(display_type_node);
+                let display = match (&parameters, &result) {
+                    (Some(parameters), Some(result)) => {
+                        format!("function {}({parameters}): {result}", declaration.name)
+                    }
+                    _ => format!("function {}", declaration.name),
+                };
                 metadata.insert(
                     (declaration.name_span.start, declaration.name_span.end),
                     SyntaxMetadata {
@@ -1167,8 +1181,10 @@ fn collect_statement_metadata(
                 }
             }
             StatementKind::TypeAlias(declaration) => {
-                let ty = display_type_node(&declaration.ty);
-                let display = format!("type {} = {ty}", declaration.name);
+                let display = display_type_node(&declaration.ty).map_or_else(
+                    || format!("type {}", declaration.name),
+                    |ty| format!("type {} = {ty}", declaration.name),
+                );
                 metadata.insert(
                     (declaration.name_span.start, declaration.name_span.end),
                     SyntaxMetadata {
@@ -1233,11 +1249,10 @@ fn insert_parameter_metadata(
     ambient: bool,
     metadata: &mut BTreeMap<(u32, u32), SyntaxMetadata>,
 ) {
-    let ty = parameter
-        .annotation
-        .as_ref()
-        .map_or_else(|| "any".to_string(), display_type_node);
-    let display = format!("(parameter) {}: {ty}", parameter.name);
+    let display = display_parameter(parameter).map_or_else(
+        || format!("(parameter) {}", parameter.name),
+        |parameter| format!("(parameter) {parameter}"),
+    );
     metadata.insert(
         (parameter.name_span.start, parameter.name_span.end),
         SyntaxMetadata {
@@ -1253,12 +1268,12 @@ fn insert_parameter_metadata(
 
 fn fallback_metadata(kind: DeclarationKind, name: &str) -> SyntaxMetadata {
     let (kind, display) = match kind {
-        DeclarationKind::Variable => ("var", format!("var {name}: any")),
-        DeclarationKind::Parameter => ("parameter", format!("(parameter) {name}: any")),
+        DeclarationKind::Variable => ("var", format!("var {name}")),
+        DeclarationKind::Parameter => ("parameter", format!("(parameter) {name}")),
         DeclarationKind::Import => ("alias", format!("(alias) {name}")),
-        DeclarationKind::Function => ("function", format!("function {name}(): any")),
+        DeclarationKind::Function => ("function", format!("function {name}")),
         DeclarationKind::Class => ("class", format!("class {name}")),
-        DeclarationKind::TypeAlias => ("type", format!("type {name} = unknown")),
+        DeclarationKind::TypeAlias => ("type", format!("type {name}")),
         DeclarationKind::Interface => ("interface", format!("interface {name}")),
     };
     SyntaxMetadata {
@@ -1276,15 +1291,18 @@ fn is_declaration_file(file: &ProgramFile) -> bool {
     path.ends_with(".d.ts") || path.ends_with(".d.mts") || path.ends_with(".d.cts")
 }
 
-fn variable_display_parts(kind: &str, name: &str, ty: &str) -> Vec<SymbolDisplayPart> {
-    vec![
+fn variable_display_parts(kind: &str, name: &str, ty: Option<&str>) -> Vec<SymbolDisplayPart> {
+    let mut parts = vec![
         display_part(kind, "keyword"),
         display_part(" ", "space"),
         display_part(name, "localName"),
-        display_part(":", "punctuation"),
-        display_part(" ", "space"),
-        display_part(ty, display_type_part_kind(ty)),
-    ]
+    ];
+    if let Some(ty) = ty {
+        parts.push(display_part(":", "punctuation"));
+        parts.push(display_part(" ", "space"));
+        parts.push(display_part(ty, display_type_part_kind(ty)));
+    }
+    parts
 }
 
 fn function_display_parts(
@@ -1301,19 +1319,29 @@ fn function_display_parts(
             parts.push(display_part(",", "punctuation"));
             parts.push(display_part(" ", "space"));
         }
-        let ty = parameter
-            .annotation
-            .as_ref()
-            .map_or_else(|| "any".to_string(), display_type_node);
+        let Some(ty) = display_parameter_type(parameter) else {
+            return vec![display_part(
+                &format!("function {}", declaration.name),
+                "text",
+            )];
+        };
+        if parameter.rest {
+            parts.push(display_part("...", "punctuation"));
+        }
         parts.push(display_part(&parameter.name, "parameterName"));
+        if parameter.optional {
+            parts.push(display_part("?", "punctuation"));
+        }
         parts.push(display_part(":", "punctuation"));
         parts.push(display_part(" ", "space"));
         parts.push(display_part(&ty, display_type_part_kind(&ty)));
     }
-    let result = declaration
-        .return_type
-        .as_ref()
-        .map_or_else(|| "any".to_string(), display_type_node);
+    let Some(result) = declaration.return_type.as_ref().and_then(display_type_node) else {
+        return vec![display_part(
+            &format!("function {}", declaration.name),
+            "text",
+        )];
+    };
     parts.push(display_part(")", "punctuation"));
     parts.push(display_part(":", "punctuation"));
     parts.push(display_part(" ", "space"));
@@ -1322,20 +1350,32 @@ fn function_display_parts(
 }
 
 fn parameter_display_parts(parameter: &Parameter) -> Vec<SymbolDisplayPart> {
-    let ty = parameter
-        .annotation
-        .as_ref()
-        .map_or_else(|| "any".to_string(), display_type_node);
-    vec![
+    let Some(ty) = display_parameter_type(parameter) else {
+        return vec![
+            display_part("(", "punctuation"),
+            display_part("parameter", "text"),
+            display_part(")", "punctuation"),
+            display_part(" ", "space"),
+            display_part(&parameter.name, "parameterName"),
+        ];
+    };
+    let mut parts = vec![
         display_part("(", "punctuation"),
         display_part("parameter", "text"),
         display_part(")", "punctuation"),
         display_part(" ", "space"),
-        display_part(&parameter.name, "parameterName"),
-        display_part(":", "punctuation"),
-        display_part(" ", "space"),
-        display_part(&ty, display_type_part_kind(&ty)),
-    ]
+    ];
+    if parameter.rest {
+        parts.push(display_part("...", "punctuation"));
+    }
+    parts.push(display_part(&parameter.name, "parameterName"));
+    if parameter.optional {
+        parts.push(display_part("?", "punctuation"));
+    }
+    parts.push(display_part(":", "punctuation"));
+    parts.push(display_part(" ", "space"));
+    parts.push(display_part(&ty, display_type_part_kind(&ty)));
+    parts
 }
 
 fn display_type_part_kind(ty: &str) -> &'static str {

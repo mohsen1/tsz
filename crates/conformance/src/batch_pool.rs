@@ -1,4 +1,8 @@
-//! Process pool for batch-mode tsz compilation.
+//! Noncanonical performance pool for batch-mode tsz compilation.
+//!
+//! Deliberately not linked into `tsz-conformance`: pooled stdout cannot own
+//! per-case stderr ordering or an ordinary process exit. This transport may be
+//! benchmarked, but it can never score parity or write canonical artifacts.
 //!
 //! Keeps N long-lived `tsz --batch` processes and multiplexes tests across them
 //! via stdin/stdout with a sentinel-line protocol. Crash and timeout recovery
@@ -235,9 +239,9 @@ impl ProcessPool {
         cmd.arg("--batch")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            // stderr is intentionally discarded: batch mode routes all diagnostics
-            // through stdout (via Reporter), and panics are detected via EOF on stdout
-            // which triggers crash recovery with automatic worker respawn.
+            // This benchmark-only transport discards stderr because it cannot
+            // attribute a shared worker stream to one case. That loss is the
+            // structural reason this module is barred from conformance scoring.
             .stderr(Stdio::null())
             .kill_on_drop(true);
 
@@ -273,8 +277,8 @@ impl ProcessPool {
         let mut child = cmd.spawn()?;
 
         // If the binary doesn't support batch mode, it can exit immediately.
-        // Surface this as pool initialization failure so the runner falls back
-        // to subprocess mode instead of reporting per-test crashes.
+        // Surface this as a benchmark-pool initialization failure. Canonical
+        // scoring never enters this module or retries through another mode.
         if let Some(status) = child.try_wait()? {
             anyhow::bail!("batch worker exited immediately with status: {status}");
         }

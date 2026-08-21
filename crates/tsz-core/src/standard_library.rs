@@ -36,6 +36,7 @@ struct GeneratedLibrary {
     references: &'static [&'static str],
     type_names: &'static [&'static str],
     value_names: &'static [&'static str],
+    string_record_type_names: &'static [&'static str],
 }
 
 include!(concat!(env!("OUT_DIR"), "/standard_library_data.rs"));
@@ -55,6 +56,9 @@ pub struct StandardLibraryEnvironment {
     declarations: Vec<StandardLibraryDeclaration>,
     type_names: BTreeMap<String, DeclId>,
     value_names: BTreeMap<String, DeclId>,
+    string_record_types: BTreeSet<DeclId>,
+    array_type: Option<DeclId>,
+    undefined_value: Option<DeclId>,
 }
 
 impl StandardLibraryEnvironment {
@@ -103,6 +107,21 @@ impl StandardLibraryEnvironment {
     }
 
     #[must_use]
+    pub(crate) fn is_string_record_type(&self, id: DeclId) -> bool {
+        self.string_record_types.contains(&id)
+    }
+
+    #[must_use]
+    pub(crate) fn is_array_type(&self, id: DeclId) -> bool {
+        self.array_type == Some(id)
+    }
+
+    #[must_use]
+    pub(crate) fn is_undefined_value(&self, id: DeclId) -> bool {
+        self.undefined_value == Some(id)
+    }
+
+    #[must_use]
     pub(crate) const fn essential_type_names() -> &'static [&'static str] {
         ESSENTIAL_GLOBAL_TYPES
     }
@@ -115,6 +134,7 @@ impl StandardLibraryEnvironment {
         }
 
         let mut names = BTreeSet::new();
+        let mut string_record_type_names = BTreeSet::new();
         for name in &selected_libraries {
             let Some(library) = library(name) else {
                 continue;
@@ -131,11 +151,20 @@ impl StandardLibraryEnvironment {
                     .iter()
                     .map(|name| ((*name).to_string(), 1_u8)),
             );
+            string_record_type_names.extend(
+                library
+                    .string_record_type_names
+                    .iter()
+                    .map(|name| (*name).to_string()),
+            );
         }
 
         let mut declarations = Vec::with_capacity(names.len());
         let mut type_names = BTreeMap::new();
         let mut value_names = BTreeMap::new();
+        let mut string_record_types = BTreeSet::new();
+        let mut array_type = None;
+        let mut undefined_value = None;
         for (name, meaning) in names {
             let meaning = if meaning == 0 {
                 Meaning::Type
@@ -147,10 +176,41 @@ impl StandardLibraryEnvironment {
                 local: declarations.len() as u32,
             };
             match meaning {
-                Meaning::Value => value_names.insert(name.clone(), id),
-                Meaning::Type => type_names.insert(name.clone(), id),
+                Meaning::Value => {
+                    if name == "undefined" {
+                        undefined_value = Some(id);
+                    }
+                    value_names.insert(name.clone(), id)
+                }
+                Meaning::Type => {
+                    if name == "Array" {
+                        array_type = Some(id);
+                    }
+                    if string_record_type_names.contains(&name) {
+                        string_record_types.insert(id);
+                    }
+                    type_names.insert(name.clone(), id)
+                }
             };
             declarations.push(StandardLibraryDeclaration { id, name, meaning });
+        }
+        // `undefined` is an intrinsic value in a normal TypeScript program,
+        // even though the pinned declaration libraries do not spell it as a
+        // top-level `var`. Give it program-owned identity so ordinary lexical
+        // shadowing wins before the checker recognizes the intrinsic.
+        if undefined_value.is_none() {
+            let name = "undefined".to_string();
+            let id = DeclId {
+                file: STANDARD_LIBRARY_FILE,
+                local: declarations.len() as u32,
+            };
+            value_names.insert(name.clone(), id);
+            declarations.push(StandardLibraryDeclaration {
+                id,
+                name,
+                meaning: Meaning::Value,
+            });
+            undefined_value = Some(id);
         }
 
         Self {
@@ -158,6 +218,9 @@ impl StandardLibraryEnvironment {
             declarations,
             type_names,
             value_names,
+            string_record_types,
+            array_type,
+            undefined_value,
         }
     }
 }

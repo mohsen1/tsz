@@ -40,13 +40,19 @@ def parse_runner_output(path):
     PASS/SKIP/UNSUPPORTED/CRASH/TIMEOUT records always have empty
     expected/actual lists.
     """
+    tests, _identity_counts = _parse_runner_output(path)
+    return tests
+
+
+def _parse_runner_output(path):
     tests = {}
+    identity_counts = Counter()
     current_path = None
     current_rec = None
 
     with open(path) as f:
         for line in f:
-            line = line.rstrip()
+            line = line.rstrip("\r\n")
 
             # PASS / SKIP / UNSUPPORTED / CRASH — single-line, no indented follow-up
             m = re.match(
@@ -55,6 +61,7 @@ def parse_runner_output(path):
             )
             if m:
                 status, test_path = m.group(1), m.group(2)
+                identity_counts[normalize_harness_path(test_path)] += 1
                 tests[test_path] = {
                     "status": status,
                     "expected": [],
@@ -73,6 +80,7 @@ def parse_runner_output(path):
             m = re.match(r"^(?:⏱️\s+)?TIMEOUT\s+(.+?)(?:\s+\(.+\))?$", line)
             if m:
                 test_path = m.group(1)
+                identity_counts[normalize_harness_path(test_path)] += 1
                 tests[test_path] = {
                     "status": "TIMEOUT",
                     "expected": [],
@@ -89,6 +97,7 @@ def parse_runner_output(path):
             m = re.match(r"^(FAIL|XFAIL)\s+(.+?)(?:\s+\((.+)\))?$", line)
             if m:
                 status, test_path = m.group(1), m.group(2)
+                identity_counts[normalize_harness_path(test_path)] += 1
                 known_failure = m.group(3) if status == "XFAIL" and m.group(3) else ""
                 current_rec = {
                     "status": status,
@@ -123,29 +132,37 @@ def parse_runner_output(path):
                     current_path = None
                     current_rec = None
 
-    return tests
+    return tests, identity_counts
 
 
 def summarize_runner_output(path):
     """Return candidate/runnable accounting from one runner output file."""
-    tests = parse_runner_output(path)
+    tests, identity_counts = _parse_runner_output(path)
     status_counts = Counter(record["status"] for record in tests.values())
 
     with open(path, encoding="utf-8", errors="replace") as f:
         text = f.read()
 
-    final = re.search(
+    final_matches = re.findall(
         r"FINAL RESULTS:\s+(\d+)/(\d+)\s+passed\s+\(([0-9.]+)%\)",
         text,
     )
+    final = final_matches[0] if len(final_matches) == 1 else None
 
     def reported_count(label):
-        matches = re.findall(rf"^\s*{re.escape(label)}:\s*(\d+)\s*$", text, re.MULTILINE)
-        return int(matches[-1]) if matches else None
+        prefix = r"(?:⏱️\s*)?" if label == "Timeout" else ""
+        suffix = r"(?:\s+\(.+\))?" if label == "Timeout" else ""
+        matches = re.findall(
+            rf"^\s*{prefix}{re.escape(label)}:\s*(\d+){suffix}\s*$",
+            text,
+            re.MULTILINE,
+        )
+        return int(matches[0]) if len(matches) == 1 else None
 
-    passed = int(final.group(1)) if final else status_counts["PASS"]
-    final_runnable = int(final.group(2)) if final else None
-    runnable = reported_count("Runnable")
+    passed = int(final[0]) if final else status_counts["PASS"]
+    final_runnable = int(final[1]) if final else None
+    reported_runnable = reported_count("Runnable")
+    runnable = reported_runnable
     if runnable is None:
         runnable = final_runnable
     if runnable is None:
@@ -154,13 +171,16 @@ def summarize_runner_output(path):
             for status in ("PASS", "FAIL", "XFAIL", "CRASH", "TIMEOUT")
         )
 
-    unsupported = reported_count("Unsupported")
+    reported_unsupported = reported_count("Unsupported")
+    unsupported = reported_unsupported
     if unsupported is None:
         unsupported = status_counts["UNSUPPORTED"]
-    skipped = reported_count("Skipped")
+    reported_skipped = reported_count("Skipped")
+    skipped = reported_skipped
     if skipped is None:
         skipped = status_counts["SKIP"]
-    candidates = reported_count("Candidates")
+    reported_candidates = reported_count("Candidates")
+    candidates = reported_candidates
     if candidates is None:
         candidates = runnable + unsupported + skipped
 
@@ -176,16 +196,101 @@ def summarize_runner_output(path):
         "runnable": runnable,
         "candidates": candidates,
         "passed": passed,
+        "status_passed": status_counts["PASS"],
         "failed": runnable - passed,
+        "diagnostic_failed": status_counts["FAIL"] + status_counts["XFAIL"],
+        "crashed": status_counts["CRASH"],
+        "timeout": status_counts["TIMEOUT"],
         "unsupported": unsupported,
         "skipped": skipped,
-        "rate": float(final.group(3)) if final else 0.0,
+        "known_failures": status_counts["XFAIL"],
+        "reported_crashed": reported_count("Crashed"),
+        "reported_timeout": reported_count("Timeout"),
+        "reported_known_failures": reported_count("Known failures"),
+        "rate": float(final[2]) if final else 0.0,
         "recorded": recorded_candidates,
         "recorded_candidates": recorded_candidates,
         "recorded_runnable": recorded_runnable,
         "has_final_results": final is not None,
+        "final_results_count": len(final_matches),
+        "final_runnable": final_runnable,
+        "reported_candidates": reported_candidates,
+        "reported_runnable": reported_runnable,
+        "reported_unsupported": reported_unsupported,
+        "reported_skipped": reported_skipped,
+        "duplicate_identities": sorted(
+            identity for identity, count in identity_counts.items() if count != 1
+        ),
         "partition_valid": candidates == runnable + unsupported + skipped,
     }
+
+
+def validate_runner_summary(summary, runner_status=None):
+    """Fail closed unless one runner observation is a complete result bijection."""
+    errors = []
+    if summary["final_results_count"] != 1:
+        errors.append("runner output must contain exactly one FINAL RESULTS summary")
+    for key, label in (
+        ("reported_candidates", "Candidates"),
+        ("reported_runnable", "Runnable"),
+        ("reported_unsupported", "Unsupported"),
+        ("reported_skipped", "Skipped"),
+    ):
+        if summary[key] is None:
+            errors.append(f"runner output must contain exactly one {label} count")
+    if summary["duplicate_identities"]:
+        errors.append(
+            "runner output repeats terminal identities: "
+            + ", ".join(summary["duplicate_identities"][:3])
+        )
+    if summary["candidates"] <= 0:
+        errors.append("runner selected no candidates")
+    if not summary["partition_valid"]:
+        errors.append("candidate partition arithmetic is inconsistent")
+    if summary["recorded_candidates"] != summary["candidates"]:
+        errors.append("candidate identities do not cover the reported selection")
+    if summary["recorded_runnable"] != summary["runnable"]:
+        errors.append("runnable identities do not cover the reported denominator")
+    if summary["final_runnable"] != summary["runnable"]:
+        errors.append("FINAL RESULTS denominator differs from Runnable")
+    if summary["passed"] != summary.get("status_passed", summary["passed"]):
+        errors.append("FINAL RESULTS pass count differs from PASS identities")
+    if summary["failed"] != (
+        summary["diagnostic_failed"] + summary["crashed"] + summary["timeout"]
+    ):
+        errors.append("runnable terminal status arithmetic is inconsistent")
+    for recorded, reported, label in (
+        (summary["crashed"], summary["reported_crashed"], "crashed"),
+        (summary["timeout"], summary["reported_timeout"], "timeout"),
+        (
+            summary["known_failures"],
+            summary["reported_known_failures"],
+            "known failures",
+        ),
+    ):
+        if reported is None or recorded != reported:
+            errors.append(f"{label} identities differ from the reported count")
+    expected_rate = 0.0
+    if summary["runnable"]:
+        expected_rate = round(100.0 * summary["passed"] / summary["runnable"], 1)
+    if summary["rate"] != expected_rate:
+        errors.append("FINAL RESULTS pass rate is arithmetically inconsistent")
+    terminal_failures = summary["failed"] > 0
+    if runner_status is not None:
+        expected_status = 1 if terminal_failures else 0
+        if runner_status != expected_status:
+            errors.append(
+                f"runner exit status must be exactly {expected_status} for these terminal results"
+            )
+        summary["runner_status"] = runner_status
+    if errors:
+        raise ValueError("; ".join(errors))
+    return summary
+
+
+def require_complete_runner_summary(path, runner_status=None):
+    summary = summarize_runner_output(path)
+    return validate_runner_summary(summary, runner_status)
 
 
 def compute_diff(expected, actual):

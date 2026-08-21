@@ -37,5 +37,17 @@ path = "rewrite-tests/foundation.rs"
 name = "rewrite_standard_library"
 path = "rewrite-tests/standard_library.rs"
 
+[[test]]
+name = "rewrite_project_config"
+path = "rewrite-tests/project_config.rs"
+
+[[test]]
+name = "rewrite_semantic_completion"
+path = "rewrite-tests/semantic_completion.rs"
+
+[[test]]
+name = "rewrite_emit_identifier_recovery"
+path = "rewrite-tests/emit_identifier_recovery.rs"
+
 [lints]
 workspace = true

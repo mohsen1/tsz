@@ -132,10 +132,13 @@ fn compile_test(
         Ok(Ok(diagnostics)) => {
             // Extract error codes from diagnostics
             let error_codes = extract_error_codes(&diagnostics);
+            let ordinary_exit = if error_codes.is_empty() { 0 } else { 1 };
             Ok(CompilationResult {
                 error_codes,
                 diagnostic_fingerprints: vec![],
                 crashed: false,
+                semantic_completion: SemanticCompletion::Complete,
+                ordinary_exit_statuses: vec![ordinary_exit],
                 options: options.clone(),
             })
         }
@@ -144,6 +147,8 @@ fn compile_test(
             error_codes: vec![],
             diagnostic_fingerprints: vec![],
             crashed: true,
+            semantic_completion: SemanticCompletion::Complete,
+            ordinary_exit_statuses: Vec::new(),
             options: options.clone(),
         }),
     }
@@ -250,7 +255,7 @@ fn test_prepare_test_dir_copies_root_tsconfig_to_root() {
     ];
     let options: HashMap<String, String> = HashMap::new();
 
-    let prepared = prepare_test_dir(content, &filenames, &options, None, &[], None).unwrap();
+    let prepared = prepare_test_dir(content, &filenames, &options, None, &[]).unwrap();
     let root_tsconfig = prepared.temp_dir.path().join("tsconfig.json");
     assert!(
         root_tsconfig.is_file(),
@@ -270,7 +275,7 @@ fn test_prepare_test_dir_does_not_copy_non_root_tsconfig_to_root() {
     ];
     let options: HashMap<String, String> = HashMap::new();
 
-    let prepared = prepare_test_dir(content, &filenames, &options, None, &[], None).unwrap();
+    let prepared = prepare_test_dir(content, &filenames, &options, None, &[]).unwrap();
     let root_tsconfig = prepared.temp_dir.path().join("tsconfig.json");
     assert!(
         !root_tsconfig.exists(),
@@ -279,17 +284,14 @@ fn test_prepare_test_dir_does_not_copy_non_root_tsconfig_to_root() {
 }
 
 #[test]
-fn test_normalize_message_paths_keeps_current_ts2883_node_modules_shape() {
+fn test_normalize_message_paths_preserves_ts2883_node_modules_shape() {
     let temp_dir = tempfile::TempDir::new().unwrap();
     let project_root = temp_dir.path();
     let message = "The inferred type of 'Form' cannot be named without a reference to 'HTMLAttributes' from './node_modules/react'. This is likely not portable. A type annotation is necessary.";
 
     let normalized = normalize_message_paths(message, project_root);
 
-    assert_eq!(
-        normalized,
-        "The inferred type of 'Form' cannot be named without a reference to 'HTMLAttributes' from '../../../../../..node_modules/react'. This is likely not portable. A type annotation is necessary."
-    );
+    assert_eq!(normalized, message);
 }
 
 #[test]
@@ -301,7 +303,7 @@ fn test_prepare_test_dir_preserves_explicit_allow_js_false_with_check_js() {
         ("allowJs".to_string(), "false".to_string()),
     ]);
 
-    let prepared = prepare_test_dir(content, &filenames, &options, None, &[], None).unwrap();
+    let prepared = prepare_test_dir(content, &filenames, &options, None, &[]).unwrap();
     let tsconfig_path = prepared.temp_dir.path().join("tsconfig.json");
     let tsconfig_raw = std::fs::read_to_string(tsconfig_path).unwrap();
     let tsconfig_json: serde_json::Value = serde_json::from_str(&tsconfig_raw).unwrap();
@@ -340,7 +342,7 @@ fn test_prepare_test_dir_no_implicit_references_uses_last_unit_as_root_file() {
     let options: HashMap<String, String> =
         HashMap::from([("noImplicitReferences".to_string(), "true".to_string())]);
 
-    let prepared = prepare_test_dir(content, &filenames, &options, None, &[], None).unwrap();
+    let prepared = prepare_test_dir(content, &filenames, &options, None, &[]).unwrap();
     let tsconfig_path = prepared.temp_dir.path().join("tsconfig.json");
     let tsconfig_raw = std::fs::read_to_string(tsconfig_path).unwrap();
     let tsconfig_json: serde_json::Value = serde_json::from_str(&tsconfig_raw).unwrap();
@@ -376,7 +378,7 @@ fn test_prepare_test_dir_merges_directives_into_current_directory_tsconfig() {
         ("types".to_string(), "*".to_string()),
     ]);
 
-    let prepared = prepare_test_dir(content, &filenames, &options, None, &[], None).unwrap();
+    let prepared = prepare_test_dir(content, &filenames, &options, None, &[]).unwrap();
     let tsconfig_path = prepared.project_dir.join("tsconfig.json");
     let tsconfig_raw = std::fs::read_to_string(tsconfig_path).unwrap();
     let tsconfig_json: serde_json::Value = serde_json::from_str(&tsconfig_raw).unwrap();
@@ -402,7 +404,7 @@ fn test_prepare_test_dir_no_implicit_references_keeps_authored_declaration_roots
     let options: HashMap<String, String> =
         HashMap::from([("noImplicitReferences".to_string(), "true".to_string())]);
 
-    let prepared = prepare_test_dir(content, &filenames, &options, None, &[], None).unwrap();
+    let prepared = prepare_test_dir(content, &filenames, &options, None, &[]).unwrap();
     let tsconfig_path = prepared.temp_dir.path().join("tsconfig.json");
     let tsconfig_raw = std::fs::read_to_string(tsconfig_path).unwrap();
     let tsconfig_json: serde_json::Value = serde_json::from_str(&tsconfig_raw).unwrap();
@@ -442,7 +444,7 @@ fn test_prepare_test_dir_no_implicit_references_keeps_type_roots_declarations() 
         ("typeRoots".to_string(), "/a/types".to_string()),
     ]);
 
-    let prepared = prepare_test_dir(content, &filenames, &options, None, &[], None).unwrap();
+    let prepared = prepare_test_dir(content, &filenames, &options, None, &[]).unwrap();
     let tsconfig_path = prepared.temp_dir.path().join("tsconfig.json");
     let tsconfig_raw = std::fs::read_to_string(tsconfig_path).unwrap();
     let tsconfig_json: serde_json::Value = serde_json::from_str(&tsconfig_raw).unwrap();
@@ -487,8 +489,7 @@ import { styles } from "package-a";
     let options: HashMap<String, String> =
         HashMap::from([("noImplicitReferences".to_string(), "true".to_string())]);
 
-    let prepared =
-        prepare_test_dir(content, &filenames, &options, None, &[], Some(&[2883])).unwrap();
+    let prepared = prepare_test_dir(content, &filenames, &options, None, &[]).unwrap();
     let tsconfig_path = prepared.temp_dir.path().join("tsconfig.json");
     let tsconfig_raw = std::fs::read_to_string(tsconfig_path).unwrap();
     let tsconfig_json: serde_json::Value = serde_json::from_str(&tsconfig_raw).unwrap();
@@ -525,7 +526,7 @@ fn test_prepare_test_dir_excludes_no_types_and_symbols_from_generated_tsconfig()
     let options: HashMap<String, String> =
         HashMap::from([("noTypesAndSymbols".to_string(), "true".to_string())]);
 
-    let prepared = prepare_test_dir(content, &filenames, &options, None, &[], None).unwrap();
+    let prepared = prepare_test_dir(content, &filenames, &options, None, &[]).unwrap();
     let tsconfig_path = prepared.temp_dir.path().join("tsconfig.json");
     let tsconfig_raw = std::fs::read_to_string(tsconfig_path).unwrap();
     let tsconfig_json: serde_json::Value = serde_json::from_str(&tsconfig_raw).unwrap();
@@ -558,7 +559,7 @@ fn test_prepare_test_dir_excludes_no_types_and_symbols_from_root_tsconfig_merge(
     let options: HashMap<String, String> =
         HashMap::from([("noTypesAndSymbols".to_string(), "true".to_string())]);
 
-    let prepared = prepare_test_dir(content, &filenames, &options, None, &[], None).unwrap();
+    let prepared = prepare_test_dir(content, &filenames, &options, None, &[]).unwrap();
     let tsconfig_path = prepared.temp_dir.path().join("tsconfig.json");
     let tsconfig_raw = std::fs::read_to_string(tsconfig_path).unwrap();
     let tsconfig_json: serde_json::Value = serde_json::from_str(&tsconfig_raw).unwrap();
@@ -594,7 +595,7 @@ fn test_prepare_test_dir_no_types_and_symbols_excludes_at_types_from_root_files(
     let options: HashMap<String, String> =
         HashMap::from([("noTypesAndSymbols".to_string(), "true".to_string())]);
 
-    let prepared = prepare_test_dir(content, &filenames, &options, None, &[], None).unwrap();
+    let prepared = prepare_test_dir(content, &filenames, &options, None, &[]).unwrap();
     let tsconfig_path = prepared.temp_dir.path().join("tsconfig.json");
     let tsconfig_raw = std::fs::read_to_string(&tsconfig_path).unwrap();
     let tsconfig_json: serde_json::Value = serde_json::from_str(&tsconfig_raw).unwrap();
@@ -724,8 +725,7 @@ class C<T> {
 }
 "#;
 
-    let prepared =
-        prepare_test_dir(content, &[], &HashMap::new(), None, &[], Some(&[2754])).unwrap();
+    let prepared = prepare_test_dir(content, &[], &HashMap::new(), None, &[]).unwrap();
     let tsconfig = std::fs::read_to_string(prepared.temp_dir.path().join("tsconfig.json"))
         .expect("tsconfig should be written");
     let parsed: serde_json::Value =
@@ -761,8 +761,7 @@ class C {
 }
 "#;
 
-    let prepared =
-        prepare_test_dir(content, &[], &HashMap::new(), None, &[], Some(&[2564])).unwrap();
+    let prepared = prepare_test_dir(content, &[], &HashMap::new(), None, &[]).unwrap();
     let tsconfig = std::fs::read_to_string(prepared.temp_dir.path().join("tsconfig.json"))
         .expect("tsconfig should be written");
     let parsed: serde_json::Value =
@@ -790,7 +789,7 @@ class C {
 #[test]
 fn test_prepare_test_dir_preserves_target_default_lib_resolution() {
     let options = HashMap::from([("target".to_string(), "esnext".to_string())]);
-    let prepared = prepare_test_dir("", &[], &options, Some("ts"), &[], Some(&[])).unwrap();
+    let prepared = prepare_test_dir("", &[], &options, Some("ts"), &[]).unwrap();
     let tsconfig = std::fs::read_to_string(prepared.temp_dir.path().join("tsconfig.json"))
         .expect("tsconfig should be written");
     let parsed: serde_json::Value =
@@ -961,7 +960,7 @@ fn test_prepare_test_dir_preserves_tsconfig() {
         ),
     ];
 
-    let prepared = prepare_test_dir("", &filenames, &HashMap::new(), None, &[], None).unwrap();
+    let prepared = prepare_test_dir("", &filenames, &HashMap::new(), None, &[]).unwrap();
     let tsconfig_path = prepared.temp_dir.path().join("tsconfig.json");
     let tsconfig_contents = std::fs::read_to_string(tsconfig_path).unwrap();
     let parsed: serde_json::Value = serde_json::from_str(&tsconfig_contents).unwrap();
@@ -990,7 +989,7 @@ fn test_prepare_test_dir_implicit_include_matches_tsc_harness() {
         ("checkjs".to_string(), "true".to_string()),
     ]);
 
-    let prepared = prepare_test_dir("", &filenames, &options, None, &[], None).unwrap();
+    let prepared = prepare_test_dir("", &filenames, &options, None, &[]).unwrap();
     let tsconfig_path = prepared.temp_dir.path().join("tsconfig.json");
     let tsconfig_contents = std::fs::read_to_string(tsconfig_path).unwrap();
     let parsed: serde_json::Value = serde_json::from_str(&tsconfig_contents).unwrap();
@@ -1048,7 +1047,7 @@ fn test_prepare_test_dir_implicit_include_matches_tsc_harness() {
 }
 
 #[test]
-fn test_prepare_test_dir_ts2883_keeps_node_modules_declarations_resolution_only() {
+fn test_prepare_test_dir_root_files_are_derived_from_corpus_inputs() {
     let filenames = vec![
         (
             "node_modules/pkg/index.d.ts".to_string(),
@@ -1060,8 +1059,7 @@ fn test_prepare_test_dir_ts2883_keeps_node_modules_declarations_resolution_only(
         ),
     ];
 
-    let prepared =
-        prepare_test_dir("", &filenames, &HashMap::new(), None, &[], Some(&[2883])).unwrap();
+    let prepared = prepare_test_dir("", &filenames, &HashMap::new(), None, &[]).unwrap();
     let tsconfig_path = prepared.temp_dir.path().join("tsconfig.json");
     let tsconfig_contents = std::fs::read_to_string(tsconfig_path).unwrap();
     let parsed: serde_json::Value = serde_json::from_str(&tsconfig_contents).unwrap();
@@ -1069,10 +1067,7 @@ fn test_prepare_test_dir_ts2883_keeps_node_modules_declarations_resolution_only(
     let file_values: Vec<_> = files.iter().filter_map(|v| v.as_str()).collect();
 
     assert!(file_values.contains(&"index.ts"));
-    assert!(
-        !file_values.contains(&"node_modules/pkg/index.d.ts"),
-        "TS2883 portability fixtures should resolve package declarations through imports, not root files"
-    );
+    assert!(file_values.contains(&"node_modules/pkg/index.d.ts"));
     assert!(
         prepared
             .temp_dir
@@ -1137,13 +1132,23 @@ fn test_normalize_diagnostic_path_handles_private_var_alias() {
 }
 
 #[test]
-fn test_normalize_message_paths_normalizes_ts5057_directory() {
+fn test_normalize_diagnostic_path_preserves_nontransport_separator_bytes() {
+    let root = std::path::Path::new("/tmp/tsz-test");
+    assert_eq!(
+        normalize_diagnostic_path(r"src\file.ts", root),
+        r"src\file.ts"
+    );
+    assert_ne!(
+        normalize_diagnostic_path(r"src\file.ts", root),
+        normalize_diagnostic_path("src/file.ts", root)
+    );
+}
+
+#[test]
+fn test_normalize_message_paths_preserves_ts5057_directory_fact() {
     let root = std::path::Path::new("/tmp/tsz-test");
     let raw = "Cannot find a tsconfig.json file at the specified directory: '/a/b/c'.";
-    assert_eq!(
-        normalize_message_paths(raw, root),
-        "Cannot find a tsconfig.json file at the specified directory: ''."
-    );
+    assert_eq!(normalize_message_paths(raw, root), raw);
 }
 
 #[test]
@@ -1177,7 +1182,7 @@ fn test_prepare_test_dir_skips_windows_absolute_path_files() {
     let options: HashMap<String, String> =
         HashMap::from([("target".to_string(), "es2015".to_string())]);
 
-    let prepared = prepare_test_dir("", &filenames, &options, None, &[], None).unwrap();
+    let prepared = prepare_test_dir("", &filenames, &options, None, &[]).unwrap();
     let dir = prepared.temp_dir.path();
 
     // Only tsconfig.json should exist, no source files
@@ -1205,7 +1210,7 @@ fn test_prepare_test_dir_keeps_mixed_path_files() {
     ];
     let options: HashMap<String, String> = HashMap::new();
 
-    let prepared = prepare_test_dir("", &filenames, &options, None, &[], None).unwrap();
+    let prepared = prepare_test_dir("", &filenames, &options, None, &[]).unwrap();
     let dir = prepared.temp_dir.path();
 
     // test.ts should be written
@@ -1223,7 +1228,7 @@ fn test_prepare_test_dir_applies_link_directives_as_symlinks() {
     )];
     let options: HashMap<String, String> = HashMap::new();
 
-    let prepared = prepare_test_dir(content, &filenames, &options, None, &[], None).unwrap();
+    let prepared = prepare_test_dir(content, &filenames, &options, None, &[]).unwrap();
     let link_path = prepared.temp_dir.path().join("node_modules/search");
     let target_path = prepared.temp_dir.path().join("packages/search");
 
@@ -1250,7 +1255,7 @@ fn test_prepare_test_dir_remaps_virtual_absolute_path_options() {
         ),
     ]);
 
-    let prepared = prepare_test_dir(content, &filenames, &options, None, &[], None).unwrap();
+    let prepared = prepare_test_dir(content, &filenames, &options, None, &[]).unwrap();
     let tsconfig_raw = std::fs::read_to_string(prepared.project_dir.join("tsconfig.json"))
         .expect("tsconfig should exist");
     let tsconfig_json: serde_json::Value = serde_json::from_str(&tsconfig_raw).unwrap();
@@ -1334,7 +1339,7 @@ export function thing(): void {}"#
         ("rootDir".to_string(), "/pkg/src".to_string()),
     ]);
 
-    let prepared = prepare_test_dir(content, &filenames, &options, None, &[], None).unwrap();
+    let prepared = prepare_test_dir(content, &filenames, &options, None, &[]).unwrap();
     assert_eq!(prepared.project_dir, prepared.temp_dir.path().join("pkg"));
     assert!(prepared.project_dir.join("tsconfig.json").is_file());
 }
@@ -1345,38 +1350,29 @@ fn test_normalize_message_paths_normalizes_ts5057_not_found() {
     let raw = "tsconfig not found at /tmp/tsz-test/tsconfig.json";
     assert_eq!(
         normalize_message_paths(raw, root),
-        "Cannot find a tsconfig.json file at the specified directory: ''."
+        "tsconfig not found at tsconfig.json"
     );
 }
 
 #[test]
-fn test_normalize_message_paths_normalizes_ts5057_specified_directory() {
+fn test_normalize_message_paths_preserves_ts5057_specified_directory() {
     let root = std::path::Path::new("/tmp/tsz-test");
     let raw = "Cannot find a tsconfig.json file at the specified directory: 'empty-dir'.";
-    assert_eq!(
-        normalize_message_paths(raw, root),
-        "Cannot find a tsconfig.json file at the specified directory: ''."
-    );
+    assert_eq!(normalize_message_paths(raw, root), raw);
 }
 
 #[test]
-fn test_normalize_message_paths_normalizes_ts5058_path_does_not_exist() {
+fn test_normalize_message_paths_preserves_ts5058_path_does_not_exist() {
     let root = std::path::Path::new("/tmp/tsz-test");
     let raw = "The specified path does not exist: 'missing/tsconfig.json'.";
-    assert_eq!(
-        normalize_message_paths(raw, root),
-        "The specified path does not exist: ''."
-    );
+    assert_eq!(normalize_message_paths(raw, root), raw);
 }
 
 #[test]
 fn test_normalize_message_paths_preserves_virtual_absolute_root_dir_prefix() {
     let root = std::path::Path::new("/tmp/tsz-test");
     let raw = "File 'packages/search/lib/index.d.ts' is not under 'rootDir' 'packages/search-prefix/src'. 'rootDir' is expected to contain all source files.";
-    assert_eq!(
-        normalize_message_paths(raw, root),
-        "File 'packages/search/lib/index.d.ts' is not under 'rootDir' '/packages/search-prefix/src'. 'rootDir' is expected to contain all source files."
-    );
+    assert_eq!(normalize_message_paths(raw, root), raw);
 }
 
 #[test]
@@ -1415,12 +1411,12 @@ fn test_parse_error_codes_ignores_indented_related_diagnostics() {
 }
 
 #[test]
-fn test_parse_error_codes_ignores_bare_no_pos_diagnostics() {
+fn test_parse_error_codes_preserves_bare_no_pos_diagnostics() {
     let output = "error TS2468: Cannot find global value 'Promise'.\n\
 : error TS5057: Cannot find a tsconfig.json file at the specified directory: ''.\n\
 test.ts(1,1): error TS2304: Cannot find name 'missing'.";
 
-    assert_eq!(parse_error_codes_from_text(output), vec![5057, 2304]);
+    assert_eq!(parse_error_codes_from_text(output), vec![2468, 5057, 2304]);
 }
 
 #[test]
@@ -1439,6 +1435,55 @@ fn test_parse_batch_output_does_not_synthesize_ts5110() {
         !result.error_codes.contains(&5110),
         "parse_batch_output should not inject synthetic TS5110"
     );
+}
+
+#[test]
+fn test_parse_batch_output_classifies_semantic_marker_without_a_diagnostic() {
+    let output = "test.ts(1,1): error TS2304: Cannot find name 'missing'.\n\
+---TSZ-SEMANTIC-COMPLETION:deferred---\n";
+    let root = std::path::Path::new("/tmp/tsz-test");
+
+    let result = parse_batch_output(output, root, HashMap::new());
+
+    assert_eq!(result.semantic_completion, SemanticCompletion::Deferred);
+    assert_eq!(result.error_codes, vec![2304]);
+    assert_eq!(result.diagnostic_fingerprints.len(), 1);
+    assert!(
+        result
+            .diagnostic_fingerprints
+            .iter()
+            .all(|fingerprint| fingerprint.code != 0),
+        "the protocol marker must never become a TypeScript diagnostic"
+    );
+}
+
+#[test]
+fn test_parse_batch_output_rejects_duplicate_completion_markers() {
+    let output = "---TSZ-SEMANTIC-COMPLETION:deferred---\n\
+---TSZ-SEMANTIC-COMPLETION:limit---\n";
+    let result = parse_batch_output(
+        output,
+        std::path::Path::new("/tmp/tsz-test"),
+        HashMap::new(),
+    );
+
+    assert_eq!(result.semantic_completion, SemanticCompletion::Incomplete);
+    assert!(result.error_codes.is_empty());
+    assert!(result.diagnostic_fingerprints.is_empty());
+}
+
+#[test]
+fn test_parse_batch_output_requires_exactly_one_completion_marker() {
+    let root = std::path::Path::new("/tmp/tsz-test");
+    let missing = parse_batch_output("", root, HashMap::new());
+    assert_eq!(missing.semantic_completion, SemanticCompletion::Incomplete);
+
+    let complete = parse_batch_output(
+        "---TSZ-SEMANTIC-COMPLETION:complete---\n",
+        root,
+        HashMap::new(),
+    );
+    assert_eq!(complete.semantic_completion, SemanticCompletion::Complete);
 }
 
 #[test]
@@ -1543,6 +1588,74 @@ fn test_parse_tsz_output_does_not_synthesize_ts5110() {
 }
 
 #[test]
+fn test_parse_tsz_output_exit_three_is_semantic_incomplete_not_a_crash() {
+    #[cfg(unix)]
+    use std::os::unix::process::ExitStatusExt;
+    #[cfg(windows)]
+    use std::os::windows::process::ExitStatusExt;
+
+    let output = std::process::Output {
+        status: {
+            #[cfg(unix)]
+            {
+                std::process::ExitStatus::from_raw(3 << 8)
+            }
+            #[cfg(windows)]
+            {
+                std::process::ExitStatus::from_raw(3)
+            }
+        },
+        stdout: Vec::new(),
+        stderr: Vec::new(),
+    };
+
+    let result = parse_tsz_output(
+        &output,
+        std::path::Path::new("/tmp/tsz-test"),
+        HashMap::new(),
+    );
+
+    assert_eq!(result.semantic_completion, SemanticCompletion::Incomplete);
+    assert!(!result.crashed);
+    assert!(result.error_codes.is_empty());
+    assert!(result.diagnostic_fingerprints.is_empty());
+}
+
+#[test]
+fn test_parse_tsz_output_success_with_diagnostic_preserves_wrong_exit_for_comparison() {
+    #[cfg(unix)]
+    use std::os::unix::process::ExitStatusExt;
+    #[cfg(windows)]
+    use std::os::windows::process::ExitStatusExt;
+
+    let output = std::process::Output {
+        status: {
+            #[cfg(unix)]
+            {
+                std::process::ExitStatus::from_raw(0)
+            }
+            #[cfg(windows)]
+            {
+                std::process::ExitStatus::from_raw(0)
+            }
+        },
+        stdout: b"test.ts(1,1): error TS2304: Cannot find name 'missing'.\n".to_vec(),
+        stderr: Vec::new(),
+    };
+
+    let result = parse_tsz_output(
+        &output,
+        std::path::Path::new("/tmp/tsz-test"),
+        HashMap::new(),
+    );
+
+    assert_eq!(result.error_codes, vec![2304]);
+    assert_eq!(result.semantic_completion, SemanticCompletion::Complete);
+    assert!(!result.crashed);
+    assert_eq!(result.ordinary_exit_statuses, vec![0]);
+}
+
+#[test]
 fn test_parse_tsz_output_retains_nonzero_message_diagnostic() {
     #[cfg(unix)]
     use std::os::unix::process::ExitStatusExt;
@@ -1574,13 +1687,17 @@ fn test_parse_tsz_output_retains_nonzero_message_diagnostic() {
 }
 
 #[test]
-fn test_parse_diagnostic_fingerprints_ignores_indented_related_diagnostics() {
+fn test_parse_diagnostic_fingerprints_owns_indented_related_diagnostics() {
     let root = std::path::Path::new("/tmp/tsz-test");
     let output = "test.ts(3,1): error TS2322: Type 'B' is not assignable to type 'A'.\n  test.ts(3,5): error TS2328: Types of parameters 'cb' and 'cb' are incompatible.";
 
     let fingerprints = parse_diagnostic_fingerprints_from_text(output, root);
     assert_eq!(fingerprints.len(), 1);
     assert_eq!(fingerprints[0].code, 2322);
+    assert_eq!(
+        fingerprints[0].continuations,
+        ["  test.ts(3,5): error TS2328: Types of parameters 'cb' and 'cb' are incompatible."]
+    );
 }
 
 #[test]
@@ -1592,7 +1709,7 @@ fn test_parse_diagnostic_fingerprints_from_text_handles_colon_prefixed_no_pos() 
     let fp = &fingerprints[0];
     assert_eq!(
         fp.display_key(),
-        "TS5057 <unknown>:0:0 Cannot find a tsconfig.json file at the specified directory: ''."
+        "TS5057 <unknown>:0:0 tsconfig not found at /var/tmp/tsconfig.json"
     );
 }
 
@@ -1625,7 +1742,7 @@ fn test_parse_nonpositioned_native_typescript_categories() {
 : suggestion TS1002: suggestion text\n\
 message TS1450: message text";
 
-    assert_eq!(parse_error_codes_from_text(output), [1002]);
+    assert_eq!(parse_error_codes_from_text(output), [1001, 1002, 1450]);
     assert_eq!(
         parse_diagnostic_fingerprints_from_text(output, root)
             .iter()
@@ -1636,14 +1753,15 @@ message TS1450: message text";
 }
 
 #[test]
-fn test_filter_lib_diagnostics_handles_non_error_categories() {
+fn test_parse_diagnostics_preserves_lib_diagnostics() {
     let root = std::path::Path::new("/tmp/project");
     let output = "/other/.lib/react16.d.ts(1,1): message TS1450: helper diagnostic\n\
 /other/source.ts(2,2): message TS1450: source diagnostic";
 
     assert_eq!(
-        filter_lib_diagnostics(output, root),
-        "/other/source.ts(2,2): message TS1450: source diagnostic"
+        parse_diagnostic_fingerprints_from_text(output, root).len(),
+        2,
+        "canonical parsing must not remove TSZ diagnostics based on their owner path"
     );
 }
 
@@ -1654,10 +1772,7 @@ fn test_parse_batch_output_retains_bare_no_pos_diagnostics() {
 
     let result = parse_batch_output(output, root, HashMap::new());
 
-    assert!(
-        result.error_codes.is_empty(),
-        "bare program-level diagnostics are compared as fingerprints, not code-list entries",
-    );
+    assert_eq!(result.error_codes, [2468]);
     assert_eq!(result.diagnostic_fingerprints.len(), 1);
     let fp = &result.diagnostic_fingerprints[0];
     assert_eq!(fp.code, 2468);
@@ -1704,145 +1819,26 @@ fn test_atypes_package_in_handles_subdir_paths() {
     );
 }
 
-// ── normalize_file_not_found_message_key ──────────────────────────────────────
-
 #[test]
-fn test_normalize_file_not_found_message_key_handles_windows_backslashes() {
-    // Triple-slash reference with Windows-style backslashes should normalize
-    // to a forward-slash relative path.
-    let msg = r"File '..\..\..\src\harness\external\mocha.d.ts' not found.";
-    assert_eq!(
-        normalize_file_not_found_message_key(msg),
-        "File 'src/harness/external/mocha.d.ts' not found."
+fn test_arbitrary_absolute_and_parent_paths_remain_distinct() {
+    let root = std::path::Path::new("/tmp/owned-project");
+    assert_ne!(
+        normalize_message_paths("File '/src/harness/a.d.ts' not found.", root),
+        normalize_message_paths("File '../../../src/harness/a.d.ts' not found.", root),
     );
 }
 
 #[test]
-fn test_normalize_file_not_found_message_key_strips_macos_var_folders() {
-    // Paths stored in the tsc cache on macOS include machine-specific
-    // /var/folders/XX/ prefixes that should be stripped.
-    // macOS CI temp dirs sit at /var/folders/XX/YYYY/T/test-ZZZ/. A reference
-    // path with 3x ../ lands at /var/folders/XX/ (one hash component above the
-    // meaningful path). The cache stores the resolved path with that one prefix.
-    let msg = "File '/var/folders/6z/src/harness/external/mocha.d.ts' not found.";
-    assert_eq!(
-        normalize_file_not_found_message_key(msg),
-        "File 'src/harness/external/mocha.d.ts' not found."
-    );
-}
-
-#[test]
-fn test_normalize_file_not_found_message_key_strips_private_var_folders() {
-    // macOS resolves /var/... to /private/var/... via symlink.
-    let msg = "File '/private/var/folders/6z/src/harness/external/mocha.d.ts' not found.";
-    assert_eq!(
-        normalize_file_not_found_message_key(msg),
-        "File 'src/harness/external/mocha.d.ts' not found."
-    );
-}
-
-#[test]
-fn test_normalize_file_not_found_message_key_strips_leading_slash_on_linux() {
-    // On Linux, an escaped temp path produces an absolute path at the filesystem
-    // root like /src/harness/... (when temp dir is only 1-2 levels deep).
-    let msg = "File '/src/harness/external/mocha.d.ts' not found.";
-    assert_eq!(
-        normalize_file_not_found_message_key(msg),
-        "File 'src/harness/external/mocha.d.ts' not found."
-    );
-}
-
-#[test]
-fn test_normalize_file_not_found_message_key_strips_leading_dotdot() {
-    // Relative paths with leading ../ should have those stripped.
-    let msg = "File '../../../src/harness/external/mocha.d.ts' not found.";
-    assert_eq!(
-        normalize_file_not_found_message_key(msg),
-        "File 'src/harness/external/mocha.d.ts' not found."
-    );
-}
-
-#[test]
-fn test_normalize_file_not_found_message_key_preserves_simple_relative_path() {
-    // A simple relative path (no escaping) should be left unchanged.
-    let msg = "File 'lib.d.ts' not found.";
-    assert_eq!(normalize_file_not_found_message_key(msg), msg);
-}
-
-#[test]
-fn test_normalize_file_not_found_message_key_preserves_project_relative_path() {
-    // A relative path within the project should be left unchanged.
-    let msg = "File 'src/utils.ts' not found.";
-    assert_eq!(normalize_file_not_found_message_key(msg), msg);
-}
-
-#[test]
-fn test_normalize_file_not_found_message_key_does_not_alter_non_file_not_found_messages() {
-    // Only "File 'X' not found." patterns should be normalized; other messages untouched.
-    let msg = "Cannot find name 'foo'.";
-    assert_eq!(normalize_file_not_found_message_key(msg), msg);
-}
-
-#[test]
-fn test_normalize_file_not_found_message_key_both_sides_converge() {
-    // The Linux actual output and macOS-cache expected output should normalize
-    // to the same canonical form, making fingerprint comparison succeed.
-    // linux_actual: resolved from /tmp/xxx/ going 3 levels up → /src/harness/...
-    // macos_cache:  as stored in the tsc CI cache (one hash component after /var/folders/)
-    // backslash_actual: tsz output before the directive.rs backslash-normalization fix
-    let linux_actual = "File '/src/harness/external/mocha.d.ts' not found.";
-    let macos_cache = "File '/var/folders/6z/src/harness/external/mocha.d.ts' not found.";
-    let backslash_actual = r"File '..\..\..\src\harness\external\mocha.d.ts' not found.";
-
-    let canonical = "File 'src/harness/external/mocha.d.ts' not found.";
-    assert_eq!(
-        normalize_file_not_found_message_key(linux_actual),
-        canonical
-    );
-    assert_eq!(normalize_file_not_found_message_key(macos_cache), canonical);
-    assert_eq!(
-        normalize_file_not_found_message_key(backslash_actual),
-        canonical
-    );
-}
-
-// ---------------------------------------------------------------------------
-// Hardcoded fingerprint suppressor guard (#8286)
-//
-// The wrapper should parse diagnostics as emitted. New ad-hoc `is_extra_*`
-// predicates in `tsz_wrapper.rs` recreate the §25 anti-pattern.
-// ---------------------------------------------------------------------------
-
-#[test]
-fn tsz_wrapper_has_no_ad_hoc_extra_fingerprint_helpers() {
-    // Match the function name regardless of visibility (`fn`, `pub fn`,
-    // `pub(crate) fn`, `pub(super) fn`, ...). The pattern is intentionally
-    // permissive so visibility renames or attribute-prefixed forms still
-    // trip the guard.
-    let source = include_str!("../src/tsz_wrapper.rs");
-    let needle = "fn is_extra_";
-    let mut ad_hoc = Vec::new();
-    for (start, _) in source.match_indices(needle) {
-        // Require the preceding character to be whitespace or a visibility
-        // marker so we don't match `is_extra_*` inside a doc string.
-        let preceded_by_decl_boundary = start == 0
-            || source[..start]
-                .chars()
-                .last()
-                .is_some_and(|c| c.is_whitespace() || c == ')');
-        if !preceded_by_decl_boundary {
-            continue;
-        }
-        let name = source[start + needle.len()..]
-            .split(|c: char| !c.is_alphanumeric() && c != '_')
-            .next()
-            .unwrap_or("");
-        ad_hoc.push(format!("is_extra_{name}"));
-    }
-    assert!(
-        ad_hoc.is_empty(),
-        "ad-hoc parity suppressor helpers found in crates/conformance/src/tsz_wrapper.rs: {:?}\n\
-         Fix the underlying structured diagnostic rule instead of filtering a rendered fingerprint.",
-        ad_hoc,
+fn test_ts2883_node_modules_paths_remain_distinct() {
+    let root = std::path::Path::new("/tmp/owned-project");
+    assert_ne!(
+        normalize_message_paths(
+            "Cannot find type definition file from './node_modules/a'.",
+            root
+        ),
+        normalize_message_paths(
+            "Cannot find type definition file from '../../../../../../node_modules/a'.",
+            root,
+        ),
     );
 }

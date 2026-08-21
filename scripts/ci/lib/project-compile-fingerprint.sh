@@ -10,14 +10,21 @@
 # that burn compile budget on unchanged rows) and *correct* (no stale hits),
 # the fingerprint must track exactly the inputs that determine the result:
 #   - the tsz binary (callers expose its hash as $_TSZ_BINARY_HASH),
-#   - the tsconfig content,
-#   - the compiled source tree's identity.
+#   - the entry tsconfig content,
+#   - the pinned tsc oracle protocol/content identity,
+#   - the fixture project's config/source identity (including extended configs
+#     and imported files outside the row's conventional source directory).
 #
 # Callers must set $_TSZ_BINARY_HASH before invoking compute_compile_fingerprint.
 
-# Source globs that participate in a project's compiled-source identity. Kept in
-# sync with count_ts_files plus the project tsconfigs (which also pull in JSON).
-TSZ_COMPILE_FINGERPRINT_SOURCE_GLOBS=('*.ts' '*.tsx' '*.mts' '*.cts' '*.json')
+# Source/config globs that participate in a project's compile-input identity.
+# JavaScript variants matter for allowJs projects; JSON covers tsconfig extends,
+# package exports/types metadata, and resolveJsonModule inputs.
+TSZ_COMPILE_FINGERPRINT_SOURCE_GLOBS=(
+  '*.ts' '*.tsx' '*.mts' '*.cts'
+  '*.js' '*.jsx' '*.mjs' '*.cjs'
+  '*.json'
+)
 
 # Stable sha256 of a file (Linux sha256sum / macOS shasum).
 sha256_of_file() {
@@ -49,7 +56,9 @@ tsz_fingerprint_resolve_physical() {
 # Content fingerprint of the compiled source tree under $1. Stable across
 # regenerations because it hashes file *content* and the relative path, never
 # mtime, so a regenerated-but-identical fixture keeps hitting the fast path.
-# Prunes node_modules/.next like count_ts_files. Echoes "absent" when the tree
+# Prunes only VCS metadata. Dependency and generated trees are compiler inputs
+# when a config/import names them explicitly, so globally excluding
+# `node_modules` or `.next` could replay a stale green result. Echoes "absent" when the tree
 # is missing so a still-missing tree stays a stable key rather than an error.
 hash_source_tree() {
   local dir="$1"
@@ -68,35 +77,89 @@ hash_source_tree() {
     fi
   done
 
-  {
-    find "$dir" \
-      \( -path '*/node_modules/*' -o -path '*/.next/*' \) -prune -o \
-      -type f \( "${find_name[@]}" \) -print 2>/dev/null || true
-  } \
-    | LC_ALL=C sort \
+  local listing digest
+  listing="$(mktemp)" || return 1
+  # Follow dependency symlinks so package-manager layouts cannot hide an
+  # explicitly compiled declaration outside the lexical row tree. A cycle or
+  # unreadable target must disable caching instead of hashing a partial walk.
+  if ! find -L "$dir" \
+    \( -path '*/.git/*' \) -prune -o \
+    -type f \( "${find_name[@]}" \) -print > "$listing" 2>/dev/null; then
+    rm -f "$listing"
+    return 1
+  fi
+  digest="$(LC_ALL=C sort "$listing" \
     | while IFS= read -r f; do
-        printf '%s  %s\n' "$(sha256_of_file "$f")" "${f#"$dir"/}"
+        file_digest="$(sha256_of_file "$f")"
+        [[ -n "$file_digest" ]] || exit 1
+        printf '%s  %s\n' "$file_digest" "${f#"$dir"/}"
       done \
-    | sha256_of_stdin
+    | sha256_of_stdin)" || {
+      rm -f "$listing"
+      return 1
+    }
+  rm -f "$listing"
+  [[ -n "$digest" ]] || return 1
+  printf '%s' "$digest"
+}
+
+# Resolve the per-row project boundary. Fixture rows live immediately under
+# FIXTURE_ROOT; nested app tsconfigs (e.g. repo/apps/web/tsconfig.json) must hash
+# from that row root so base configs and imported siblings cannot evade the key.
+tsz_fingerprint_project_root() {
+  local fixture_dir="$1" fixture_phys="" fixture_root_phys="" relative=""
+  fixture_phys="$(tsz_fingerprint_resolve_physical "$fixture_dir" 2>/dev/null || true)"
+  fixture_root_phys="$(tsz_fingerprint_resolve_physical "${FIXTURE_ROOT:-}" 2>/dev/null || true)"
+  if [[ -n "$fixture_phys" && -n "$fixture_root_phys" ]]; then
+    case "$fixture_phys" in
+      "$fixture_root_phys"/*)
+        relative="${fixture_phys#"$fixture_root_phys"/}"
+        printf '%s/%s\n' "$fixture_root_phys" "${relative%%/*}"
+        return 0
+        ;;
+    esac
+  fi
+  printf '%s\n' "${fixture_phys:-$fixture_dir}"
+}
+
+# Content-sensitive identity shared by result and tsc-oracle caches. An owned
+# fixture git repo is identified even when the entry tsconfig is nested below
+# its toplevel. Generated rows that merely live inside the outer tsz checkout
+# use their fixture-row content tree and never inherit the outer repository HEAD.
+tsz_compile_input_identity() {
+  local tsconfig="$1" src_dir="${2:-}"
+  local fixture_dir project_root project_root_phys toplevel=""
+  fixture_dir="$(dirname "$tsconfig")"
+  [[ -n "$src_dir" ]] || src_dir="$fixture_dir"
+  project_root="$(tsz_fingerprint_project_root "$fixture_dir")"
+  project_root_phys="$(tsz_fingerprint_resolve_physical "$project_root" 2>/dev/null || true)"
+  toplevel="$(git -C "$fixture_dir" rev-parse --show-toplevel 2>/dev/null || true)"
+
+  if [[ -n "$toplevel" && -n "$project_root_phys" && "$toplevel" == "$project_root_phys" ]]; then
+    local git_ref="" dirty_marker="" project_tree_marker=""
+    git_ref="$(git -C "$toplevel" rev-parse HEAD 2>/dev/null || true)"
+    dirty_marker="$(git -C "$toplevel" diff HEAD 2>/dev/null | sha256_of_stdin)"
+    project_tree_marker="$(hash_source_tree "$toplevel")" || return 1
+    [[ -n "$project_tree_marker" ]] || return 1
+    printf '%s' "git:${git_ref}:${dirty_marker}:tree:${project_tree_marker}"
+  else
+    local project_tree_marker=""
+    project_tree_marker="$(hash_source_tree "$project_root")" || return 1
+    [[ -n "$project_tree_marker" ]] || return 1
+    printf '%s' "tree:${project_tree_marker}"
+  fi
 }
 
 # Fingerprint for a check_project invocation:
-#   <name>|<tsz binary hash>|<tsconfig hash>|<source identity>
+#   <name>|<tsz binary hash>|<oracle hash>|<tsconfig hash>|<input identity>
 # Returns empty on failure so callers treat caching as unavailable.
 #
-# Source identity:
-#   - When the fixture directory is itself the toplevel of a git repository, use
-#     HEAD plus a content-sensitive dirty marker (git diff against HEAD) and the
-#     compiled source-tree content hash. A clean tree yields an empty, stable
-#     marker; uncommitted tracked edits and untracked compiled source files
-#     change the key, so a stale tree cannot falsely hit.
-#   - Otherwise fall back to a content hash of the compiled source tree. This is
-#     the case for generated-app rows, which have no per-fixture .git and live
-#     inside the tsz checkout: a bare `git rev-parse HEAD` there walks up into
-#     the tsz repository and reports the tsz toplevel/HEAD, which both ignores
-#     the generated sources and changes on every tsz commit -- so the no-op fast
-#     path would never be stable for those rows. Comparing the fixture directory
-#     against the repo toplevel rejects that inherited-repo case directly.
+# Input identity covers the whole fixture-row project boundary, not only the
+# caller's src_dir. Owned git fixtures (including nested app configs) use HEAD,
+# tracked dirty content, and relevant config/source content across the repo.
+# Generated rows use the same full row content tree without inheriting the outer
+# tsz repository HEAD. Caches remain opt-in because whole-row hashing is
+# intentionally conservative and can be expensive for installed applications.
 compute_compile_fingerprint() {
   local name="$1" tsconfig="$2" src_dir="${3:-}"
 
@@ -105,22 +168,9 @@ compute_compile_fingerprint() {
   [[ -f "$tsconfig" ]] && tsconfig_hash="$(sha256_of_file "$tsconfig")"
   [[ -f "$tsconfig" && -z "$tsconfig_hash" ]] && return
 
-  local fixture_dir fixture_phys
-  fixture_dir="$(dirname "$tsconfig")"
-  [[ -n "$src_dir" ]] || src_dir="$fixture_dir"
-  fixture_phys="$(tsz_fingerprint_resolve_physical "$fixture_dir" 2>/dev/null || true)"
+  local source_id=""
+  source_id="$(tsz_compile_input_identity "$tsconfig" "$src_dir")"
+  [[ -n "$source_id" ]] || return
 
-  local source_id="" toplevel=""
-  toplevel="$(git -C "$fixture_dir" rev-parse --show-toplevel 2>/dev/null || true)"
-  if [[ -n "$toplevel" && -n "$fixture_phys" && "$toplevel" == "$fixture_phys" ]]; then
-    local git_ref="" dirty_marker="" source_tree_marker=""
-    git_ref="$(git -C "$fixture_dir" rev-parse HEAD 2>/dev/null || true)"
-    dirty_marker="$(git -C "$fixture_dir" diff HEAD 2>/dev/null | sha256_of_stdin)"
-    source_tree_marker="$(hash_source_tree "$src_dir")"
-    source_id="git:${git_ref}:${dirty_marker}:tree:${source_tree_marker}"
-  else
-    source_id="tree:$(hash_source_tree "$src_dir")"
-  fi
-
-  printf '%s' "${name}|${_TSZ_BINARY_HASH}|${tsconfig_hash}|${source_id}"
+  printf '%s' "${name}|${_TSZ_BINARY_HASH}|${_TSZ_TSC_ORACLE_HASH:-unavailable}|${tsconfig_hash}|${source_id}"
 }

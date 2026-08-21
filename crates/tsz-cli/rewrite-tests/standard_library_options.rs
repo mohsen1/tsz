@@ -5,17 +5,26 @@ use std::process::Command;
 use serde_json::{Value, json};
 
 #[test]
-fn command_line_preserves_explicit_lib_and_no_lib() {
-    let arguments = ["--lib", "ES5, DOM", "--noLib", "false", "case.ts"]
-        .into_iter()
-        .map(OsString::from)
-        .collect::<Vec<_>>();
+fn command_line_preserves_explicit_lib_and_false_boolean_patches() {
+    let arguments = [
+        "--lib",
+        "ES5, DOM",
+        "--noLib",
+        "false",
+        "--allowJs",
+        "false",
+        "case.ts",
+    ]
+    .into_iter()
+    .map(OsString::from)
+    .collect::<Vec<_>>();
     let invocation = tsz_cli::driver::parse_arguments(&arguments).unwrap();
     assert_eq!(
         invocation.options.lib,
         Some(vec!["ES5".to_string(), "DOM".to_string()])
     );
-    assert!(!invocation.options.no_lib);
+    assert_eq!(invocation.options.no_lib, Some(false));
+    assert_eq!(invocation.options.allow_js, Some(false));
     assert!(invocation.unknown_options.is_empty());
 }
 
@@ -125,6 +134,66 @@ fn tsserver_preserves_target_and_explicit_lib_options() {
     let responses = decode_messages(&output);
     assert_eq!(responses[2]["body"], json!([]));
     assert_eq!(responses[5]["body"], json!([]));
+}
+
+#[test]
+fn tsserver_preserves_explicit_no_implicit_any_false_under_strict() {
+    let requests = [
+        json!({
+            "seq": 1,
+            "type": "request",
+            "command": "compilerOptionsForInferredProjects",
+            "arguments": {"options": {"strict": true, "noImplicitAny": false}}
+        }),
+        json!({
+            "seq": 2,
+            "type": "request",
+            "command": "open",
+            "arguments": {
+                "file": "opted-out.ts",
+                "fileContent": "function identity(value) { return value; }"
+            }
+        }),
+        json!({
+            "seq": 3,
+            "type": "request",
+            "command": "semanticDiagnosticsSync",
+            "arguments": {"file": "opted-out.ts"}
+        }),
+        json!({
+            "seq": 4,
+            "type": "request",
+            "command": "compilerOptionsForInferredProjects",
+            "arguments": {"options": {"strict": true}}
+        }),
+        json!({
+            "seq": 5,
+            "type": "request",
+            "command": "open",
+            "arguments": {
+                "file": "strict-default.ts",
+                "fileContent": "function identity(value) { return value; }"
+            }
+        }),
+        json!({
+            "seq": 6,
+            "type": "request",
+            "command": "semanticDiagnosticsSync",
+            "arguments": {"file": "strict-default.ts"}
+        }),
+    ];
+    let mut input = Vec::new();
+    for request in requests {
+        let body = serde_json::to_vec(&request).unwrap();
+        input.extend_from_slice(format!("Content-Length: {}\r\n\r\n", body.len()).as_bytes());
+        input.extend_from_slice(&body);
+    }
+
+    let mut output = Vec::new();
+    tsz_cli::tsserver::run_tsserver(Cursor::new(input), &mut output).unwrap();
+    let responses = decode_messages(&output);
+    assert_eq!(responses[2]["body"], json!([]));
+    assert_eq!(responses[5]["body"][0]["code"], 7006);
 }
 
 fn decode_messages(bytes: &[u8]) -> Vec<Value> {

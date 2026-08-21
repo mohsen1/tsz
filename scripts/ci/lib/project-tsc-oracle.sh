@@ -17,48 +17,95 @@
 # unchanged (a no-op) for the required rows. Rows where tsc also errors only
 # need tsz to agree on the tsc-flagged locations.
 #
-# Diagnostic identity is (basename, line, column, code): tsz and tsc both
-# receive the *same* guard tsconfig, so a diagnostic they agree on shares that
-# 4-tuple. We match on location+code rather than message text so wording
-# differences between the two compilers never manufacture or hide a delta, and
-# we basename-normalize the path so an absolute-vs-relative emit difference
-# between the compilers does not split an otherwise-identical diagnostic.
+# Diagnostic identity is exact normalized project-relative path, span, code, and
+# message. Global diagnostics use a synthetic path/span plus their message.
+# Keys are compared as multisets: missing diagnostics, extras, and duplicate
+# multiplicity all matter. This prevents basename collisions and strict-subset
+# false greens while allowing absolute/relative spellings of the same project
+# path to agree.
 #
 # Portability: every awk program here stays within POSIX awk (no gawk-only
 # 3-argument match()/gensym extensions) so the helpers behave identically under
 # the Linux gawk in CI and the BSD awk used for local verification on macOS.
 
 # The shared awk parser body. Defines a `parse(line)` function that sets the
-# globals _ok/_base/_line/_col/_code for a recognized diagnostic line, or
-# _ok=0 otherwise. Recognizes both formatter shapes tsc/tsz emit:
+# globals _ok/_base/_line/_col/_code/_message for a recognized diagnostic line,
+# or _ok=0 otherwise. Recognizes both formatter shapes tsc/tsz emit:
 #   path(line,col): error TSnnnn        (default, used when output is piped)
 #   path:line:col - error TSnnnn        (pretty formatter)
+#   error TSnnnn                        (global/config diagnostic)
 # Kept in one string so the identity-key and delta programs cannot drift.
 _TSZ_ORACLE_AWK_PARSER='
-function basename(p,   n, parts) {
-  n = split(p, parts, "/")
-  return parts[n]
+function normalize_path(p,   normalized_root, normalized_cwd, candidate) {
+  gsub(/\\/, "/", p)
+  sub(/^\.\//, "", p)
+  normalized_root = root
+  gsub(/\\/, "/", normalized_root)
+  sub(/\/$/, "", normalized_root)
+  normalized_cwd = cwd
+  gsub(/\\/, "/", normalized_cwd)
+  sub(/\/$/, "", normalized_cwd)
+  if (p !~ /^\// && normalized_cwd != "") {
+    candidate = normalized_cwd "/" p
+    if (normalized_root != "" && index(candidate, normalized_root "/") == 1) {
+      p = substr(candidate, length(normalized_root) + 2)
+    }
+  }
+  if (normalized_root != "" && index(p, normalized_root "/") == 1) {
+    p = substr(p, length(normalized_root) + 2)
+  }
+  return p
 }
-function parse(line,   loc, before, a, code) {
+function normalize_message(message) {
+  # The colon and one following ASCII space belong to the diagnostic transport
+  # shape. Every later byte is message identity: repeated spaces can be part of
+  # a quoted path/glob and must not be collapsed into a false parity match.
+  sub(/^: ?/, "", message)
+  return message
+}
+function identity_key(   key) {
+  key = _base "\t" _line "\t" _col "\t" _code
+  return key "\t" _message
+}
+function parse(line,   loc, before, a, code, message, diagnostic_end) {
   _ok = 0
+  _message = ""
+  # Global/config diagnostics have no source location. Give them a stable
+  # synthetic location and normalized message identity so TS18003 and its peers
+  # participate in oracle parity without conflating different config failures.
+  if (match(line, /^(error|warning) TS[0-9]+/)) {
+    loc = substr(line, RSTART, RLENGTH)
+    if (!match(loc, /TS[0-9]+/)) return
+    code = substr(loc, RSTART, RLENGTH)
+    message = normalize_message(substr(line, length(loc) + 1))
+    _base = "<global>"; _line = 0; _col = 0; _code = code
+    _message = message; _ok = 1
+    return
+  }
   # path(line,col): (error|warning) TSnnnn
   if (match(line, /\([0-9]+,[0-9]+\): (error|warning) TS[0-9]+/)) {
+    diagnostic_end = RSTART + RLENGTH
     loc = substr(line, RSTART, RLENGTH)
     before = substr(line, 1, RSTART - 1)
     split(loc, a, /[(,)]/)   # a[2]=line a[3]=col
     if (!match(loc, /TS[0-9]+/)) return
     code = substr(loc, RSTART, RLENGTH)
-    _base = basename(before); _line = a[2]; _col = a[3]; _code = code; _ok = 1
+    message = normalize_message(substr(line, diagnostic_end))
+    _base = normalize_path(before); _line = a[2]; _col = a[3]; _code = code
+    _message = message; _ok = 1
     return
   }
   # path:line:col - (error|warning) TSnnnn  (pretty formatter)
   if (match(line, /:[0-9]+:[0-9]+ - (error|warning) TS[0-9]+/)) {
+    diagnostic_end = RSTART + RLENGTH
     loc = substr(line, RSTART, RLENGTH)
     before = substr(line, 1, RSTART - 1)
     split(loc, a, /[: ]/)    # a[2]=line a[3]=col
     if (!match(loc, /TS[0-9]+/)) return
     code = substr(loc, RSTART, RLENGTH)
-    _base = basename(before); _line = a[2]; _col = a[3]; _code = code; _ok = 1
+    message = normalize_message(substr(line, diagnostic_end))
+    _base = normalize_path(before); _line = a[2]; _col = a[3]; _code = code
+    _message = message; _ok = 1
     return
   }
 }
@@ -104,22 +151,122 @@ tsz_project_oracle_tsc_command() {
   printf 'node\n%s\n' "$tsc_js"
 }
 
-# Emit the canonical identity key (basename<TAB>line<TAB>col<TAB>code) for every
-# parsable diagnostic line on stdin, one key per line. Unparsable lines
-# (banners, "Found N errors", blanks) are dropped.
+# Emit the canonical identity key for every parsable diagnostic line on stdin,
+# one key per line. Keys are path<TAB>line<TAB>col<TAB>code<TAB>message; global
+# keys use `<global><TAB>0<TAB>0`. Unparsable lines are dropped. The optional
+# argument is the project root used to normalize absolute paths.
 tsz_diagnostic_identity_keys() {
-  awk "$_TSZ_ORACLE_AWK_PARSER"'
+  local root="${1:-}"
+  awk -v root="$root" -v cwd="$PWD" "$_TSZ_ORACLE_AWK_PARSER"'
     {
       sub(/\r$/, "")
       parse($0)
-      if (_ok) print _base "\t" _line "\t" _col "\t" _code
+      if (_ok) print identity_key()
     }
   '
 }
 
 # Count parsable diagnostic lines on stdin.
 tsz_count_diagnostic_lines() {
-  tsz_diagnostic_identity_keys | awk 'END { print NR + 0 }'
+  tsz_diagnostic_identity_keys "${1:-}" | awk 'END { print NR + 0 }'
+}
+
+# Emit one length-delimited record per diagnostic, with every indented
+# continuation attached to its owning primary. A single record stays on one
+# output line, so sorting preserves duplicate multiplicity without letting two
+# diagnostics exchange reason chains. The optional argument is the project
+# root for path identity.
+tsz_diagnostic_record_keys() {
+  local root="${1:-}"
+  awk -v root="$root" -v cwd="$PWD" "$_TSZ_ORACLE_AWK_PARSER"'
+    function flush_record() {
+      if (in_diagnostic) print record
+      in_diagnostic = 0
+      record = ""
+    }
+    {
+      sub(/\r$/, "")
+      parse($0)
+      if (_ok) {
+        flush_record()
+        primary = identity_key()
+        record = length(primary) ":" primary
+        in_diagnostic = 1
+        next
+      }
+      if (in_diagnostic && $0 ~ /^[[:space:]]+/ && $0 !~ /^[[:space:]]*$/) {
+        record = record "\t" length($0) ":" $0
+        next
+      }
+      if ($0 !~ /^[[:space:]]*$/) flush_record()
+    }
+    END { flush_record() }
+  '
+}
+
+# Emit every nonblank line that is neither a parsed diagnostic, an attached
+# continuation, nor a known compiler summary. Agreement is never inferred from
+# output the harness did not understand.
+tsz_diagnostic_unparsed_lines() {
+  local root="${1:-}"
+  awk -v root="$root" -v cwd="$PWD" "$_TSZ_ORACLE_AWK_PARSER"'
+    {
+      sub(/\r$/, "")
+      parse($0)
+      if (_ok) { in_diagnostic = 1; next }
+      if (in_diagnostic && $0 ~ /^[[:space:]]+/ && $0 !~ /^[[:space:]]*$/) next
+      if ($0 ~ /^[[:space:]]*$/) next
+      in_diagnostic = 0
+      if ($0 ~ /^Found [0-9]+ errors?( in [0-9]+ files?)?\.$/) next
+      print
+    }
+  '
+}
+
+tsz_diagnostic_log_is_covered() {
+  local log="$1" root="${2:-}" unmatched
+  unmatched="$(tsz_diagnostic_unparsed_lines "$root" < "$log")"
+  [[ -z "$unmatched" ]]
+}
+
+tsz_diagnostic_multisets_agree() {
+  local tsz_log="$1" tsc_log="$2" root="${3:-}"
+  local tsz_keys_file tsc_keys_file tsz_unparsed_file tsc_unparsed_file
+  tsz_keys_file="$(mktemp)"
+  tsc_keys_file="$(mktemp)"
+  tsz_unparsed_file="$(mktemp)"
+  tsc_unparsed_file="$(mktemp)"
+  tsz_diagnostic_record_keys "$root" < "$tsz_log" | LC_ALL=C sort > "$tsz_keys_file"
+  tsz_diagnostic_record_keys "$root" < "$tsc_log" | LC_ALL=C sort > "$tsc_keys_file"
+  tsz_diagnostic_unparsed_lines "$root" < "$tsz_log" > "$tsz_unparsed_file"
+  tsz_diagnostic_unparsed_lines "$root" < "$tsc_log" > "$tsc_unparsed_file"
+  local rc=0
+  cmp -s "$tsz_keys_file" "$tsc_keys_file" || rc=$?
+  if [[ "$rc" -eq 0 && ( -s "$tsz_unparsed_file" || -s "$tsc_unparsed_file" ) ]]; then
+    rc=1
+  fi
+  rm -f "$tsz_keys_file" "$tsc_keys_file" \
+    "$tsz_unparsed_file" "$tsc_unparsed_file"
+  return "$rc"
+}
+
+# Emit `<record-count><TAB><sha256>` for the exact normalized diagnostic
+# records in a compiler log. The fingerprint covers sorted, length-delimited
+# records, so diagnostic multiplicity and continuation ownership remain part of
+# the persisted evidence rather than being reduced to a set of error codes.
+# `project-compile-fingerprint.sh` must be sourced first for sha256_of_file.
+tsz_diagnostic_record_stats() {
+  local log="$1" root="${2:-}" records count fingerprint
+  records="$(mktemp)" || return 1
+  if ! tsz_diagnostic_record_keys "$root" < "$log" | LC_ALL=C sort > "$records"; then
+    rm -f "$records"
+    return 1
+  fi
+  count="$(wc -l < "$records" | tr -d '[:space:]')"
+  fingerprint="$(sha256_of_file "$records")"
+  rm -f "$records"
+  [[ "$count" =~ ^(0|[1-9][0-9]*)$ && "$fingerprint" =~ ^[0-9a-f]{64}$ ]] || return 1
+  printf '%s\t%s\n' "$count" "$fingerprint"
 }
 
 # Write the tsz-only diagnostic delta to stdout: every parsable tsz diagnostic
@@ -130,18 +277,19 @@ tsz_count_diagnostic_lines() {
 tsz_only_delta_lines() {
   local tsz_log="$1"
   local tsc_log="$2"
+  local root="${3:-}"
   # Materialize the tsc identity keys to a temp file and feed both files to a
   # single awk via the portable FNR==NR two-file idiom. Passing a multi-line
   # value through `awk -v` is rejected by BSD awk ("newline in string"), so the
   # key set must arrive as a file, never as a variable.
   local tsc_keys_file
   tsc_keys_file="$(mktemp)"
-  tsz_diagnostic_identity_keys < "$tsc_log" > "$tsc_keys_file" 2>/dev/null || true
-  awk -v keyfile="$tsc_keys_file" "$_TSZ_ORACLE_AWK_PARSER"'
+  tsz_diagnostic_identity_keys "$root" < "$tsc_log" > "$tsc_keys_file" 2>/dev/null || true
+  awk -v keyfile="$tsc_keys_file" -v root="$root" -v cwd="$PWD" "$_TSZ_ORACLE_AWK_PARSER"'
     # First file (tsc identity keys): one TAB-joined key per line. Compared by
     # FILENAME (not FNR==NR) so an empty key file does not misclassify the first
     # tsz line as a key.
-    FILENAME == keyfile { if ($0 != "") seen[$0] = 1; next }
+    FILENAME == keyfile { if ($0 != "") seen[$0] += 1; next }
     # Second file (tsz log): emit only the tsz-only lines.
     {
       sub(/\r$/, "")
@@ -149,9 +297,10 @@ tsz_only_delta_lines() {
       parse($0)
       # Unparsable line: keep it (a banner or crash note must not be subtracted).
       if (!_ok) { print; next }
-      key = _base "\t" _line "\t" _col "\t" _code
-      # Parsable line: keep it only when tsc did not flag the same identity.
-      if (!(key in seen)) print
+      key = identity_key()
+      # Parsable line: subtract exactly one matching oracle occurrence.
+      if (seen[key] > 0) seen[key] -= 1
+      else print
     }
   ' "$tsc_keys_file" "$tsz_log" 2>/dev/null || true
   rm -f "$tsc_keys_file"
@@ -186,21 +335,30 @@ tsc_and_tsz_oracle_delta() {
   tsz_label_diagnostic_lines "tsz" "$tsz_log" 10
 }
 
-# Fail-case delta: the actionable tsz-only diagnostics (labelled `tsz:`) plus a
-# few tsc context lines (labelled `tsc:`) so triage sees both the divergence and
-# the tsc baseline it was measured against.
+# Fail-case delta: exact multiset differences in both directions. Extra tsz
+# diagnostics are labelled `tsz:`; diagnostics missing from tsz are `tsc:`.
 tsz_only_and_tsc_context_delta() {
-  local tsz_log="$1" tsc_log="$2"
-  tsz_only_delta_lines "$tsz_log" "$tsc_log" | awk '
+  local tsz_log="$1" tsc_log="$2" root="${3:-}"
+  tsz_only_delta_lines "$tsz_log" "$tsc_log" "$root" | awk '
     BEGIN { seen = 0 }
     {
       if ($0 ~ /^[[:space:]]*$/) next
       print "tsz: " $0
       seen += 1
-      if (seen >= 14) exit
+      if (seen >= 10) exit
     }
   '
-  tsz_label_diagnostic_lines "tsc" "$tsc_log" 6
+  # Symmetric missing-diagnostic side: reverse the multiset subtraction so a
+  # strict tsz subset remains visible instead of looking like an empty delta.
+  tsz_only_delta_lines "$tsc_log" "$tsz_log" "$root" | awk '
+    BEGIN { seen = 0 }
+    {
+      if ($0 ~ /^[[:space:]]*$/) next
+      print "tsc: " $0
+      seen += 1
+      if (seen >= 10) exit
+    }
+  '
 }
 
 # Oracle-cache fingerprint for a project row. Independent of the tsz binary
@@ -216,22 +374,9 @@ tsz_tsc_oracle_fingerprint() {
   [[ -f "$tsconfig" ]] && tsconfig_hash="$(sha256_of_file "$tsconfig")"
   [[ -f "$tsconfig" && -z "$tsconfig_hash" ]] && return
 
-  local fixture_dir fixture_phys
-  fixture_dir="$(dirname "$tsconfig")"
-  [[ -n "$src_dir" ]] || src_dir="$fixture_dir"
-  fixture_phys="$(tsz_fingerprint_resolve_physical "$fixture_dir" 2>/dev/null || true)"
-
-  local source_id="" toplevel=""
-  toplevel="$(git -C "$fixture_dir" rev-parse --show-toplevel 2>/dev/null || true)"
-  if [[ -n "$toplevel" && -n "$fixture_phys" && "$toplevel" == "$fixture_phys" ]]; then
-    local git_ref="" dirty_marker="" source_tree_marker=""
-    git_ref="$(git -C "$fixture_dir" rev-parse HEAD 2>/dev/null || true)"
-    dirty_marker="$(git -C "$fixture_dir" diff HEAD 2>/dev/null | sha256_of_stdin)"
-    source_tree_marker="$(hash_source_tree "$src_dir")"
-    source_id="git:${git_ref}:${dirty_marker}:tree:${source_tree_marker}"
-  else
-    source_id="tree:$(hash_source_tree "$src_dir")"
-  fi
+  local source_id=""
+  source_id="$(tsz_compile_input_identity "$tsconfig" "$src_dir")"
+  [[ -n "$source_id" ]] || return
 
   printf '%s' "${name}|tsc|${tsc_cmd_hash}|${tsconfig_hash}|${source_id}"
 }

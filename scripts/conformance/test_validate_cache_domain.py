@@ -27,9 +27,20 @@ def cache_entry(version: str = VERSION):
             "mtime_ms": 1,
             "size": 2,
             "typescript_version": version,
+            "source_sha256": "a" * 64,
         },
         "error_codes": [2322],
-        "diagnostic_fingerprints": [],
+        "diagnostic_fingerprints": [
+            {
+                "code": 2322,
+                "file": "a.ts",
+                "line": 1,
+                "column": 1,
+                "message_key": "mismatch",
+            }
+        ],
+        "diagnostic_blocks_complete": True,
+        "ordinary_exit_statuses": [1],
     }
 
 
@@ -39,7 +50,31 @@ def valid_artifacts():
         "compiler/b.ts": cache_entry(),
     }
     domain = {
+        "schema_version": 2,
         "typescript_version": VERSION,
+        "corpus_commit": "b" * 40,
+        "corpus_tree": "c" * 40,
+        "candidate_content_sha256": "d" * 64,
+        "oracle": {
+            "schemaVersion": 1,
+            "manifestSha256": "e" * 64,
+            "generator": {
+                "schemaVersion": 1,
+                "packageName": "typescript",
+                "platformPackageName": "@typescript/typescript-linux-x64",
+                "version": VERSION,
+                "gitHead": "f" * 40,
+                "wrapperIntegrity": "sha512-wrapper",
+                "platformIntegrity": "sha512-platform",
+                "wrapperPackageJsonSha256": "1" * 64,
+                "wrapperBinSha256": "2" * 64,
+                "platformPackageJsonSha256": "3" * 64,
+                "platformPackageTreeSha256": "4" * 64,
+                "binarySha256": "5" * 64,
+                "binaryPath": "scripts/node_modules/@typescript/typescript-linux-x64/lib/tsc",
+                "fingerprint": "sha256:" + "6" * 64,
+            },
+        },
         "candidate_count": 4,
         "runnable_count": 2,
         "unsupported_count": 1,
@@ -98,6 +133,39 @@ class CacheDomainValidationTests(unittest.TestCase):
             validate_cache_domain(cache, domain, VERSION)
 
         self.assertIn("invalid result payloads", str(context.exception))
+
+    def test_rejects_source_or_candidate_content_identity_drift(self):
+        cache, domain = valid_artifacts()
+        cache["compiler/a.ts"]["metadata"]["source_sha256"] = "not-a-hash"
+        domain["candidate_content_sha256"] = "0" * 63
+
+        with self.assertRaises(CacheDomainValidationError) as context:
+            validate_cache_domain(cache, domain, VERSION)
+
+        message = str(context.exception)
+        self.assertIn("invalid result payloads", message)
+        self.assertIn("candidate_content_sha256", message)
+
+    def test_rejects_incomplete_evidence_even_for_clean_rows(self):
+        cache, domain = valid_artifacts()
+        cache["compiler/a.ts"].update(
+            error_codes=[], diagnostic_fingerprints=[], ordinary_exit_statuses=[0]
+        )
+        cache["compiler/a.ts"]["diagnostic_blocks_complete"] = False
+
+        with self.assertRaises(CacheDomainValidationError) as context:
+            validate_cache_domain(cache, domain, VERSION)
+
+        self.assertIn("lack complete diagnostic blocks", str(context.exception))
+
+    def test_rejects_missing_or_nonordinary_exit_status(self):
+        for exits in ([], [3], [101]):
+            cache, domain = valid_artifacts()
+            cache["compiler/a.ts"]["ordinary_exit_statuses"] = exits
+            with self.subTest(exits=exits), self.assertRaises(
+                CacheDomainValidationError
+            ):
+                validate_cache_domain(cache, domain, VERSION)
 
     def test_resolves_version_only_from_current_mapping(self):
         versions = {

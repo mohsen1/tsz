@@ -1,9 +1,36 @@
 ---
 title: Playground
+browser_title: Playground status — tsz
+description: Status of the browser playground during the clean-slate rewrite.
 layout: layouts/base.njk
 permalink: /playground/index.html
-page_class: playground-page
-extra_head: <link rel="stylesheet" href="/playground.css">
-extra_scripts: <script src="/playground-app.js" type="module"></script>
 ---
-{% include "partials/playground.html" %}
+
+<style>
+  .playground-status { max-width: 760px; margin: 0 auto; padding: 2.5rem 1.25rem 5rem; }
+  .playground-status h1 { font-size: 2rem; margin: 0 0 1.25rem; }
+  .playground-status p { line-height: 1.65; }
+  .playground-status .notice {
+    color: var(--text-secondary, #59636e);
+    border: 1px solid var(--border-subtle, #e8ecf0);
+    border-radius: 6px;
+    padding: 1rem 1.25rem;
+    margin: 0 0 2rem;
+  }
+  .playground-status .notice strong { color: var(--text, #1f2328); }
+  .playground-status a { color: var(--link, #0969da); }
+</style>
+
+<section class="playground-status">
+  <h1>Playground status</h1>
+
+  <div class="notice" role="status">
+    <strong>Playground unavailable during the clean-slate rewrite.</strong>
+    The retired browser compiler and its generated bundle were removed. This page does not run tsz.
+  </div>
+
+  <p>
+    A browser build returns only after the replacement service API is stable and its compatibility surface is proven.
+    Follow the <a href="https://github.com/tsz-org/tsz/blob/main/docs/plan/ROADMAP.md">rewrite roadmap</a> for that milestone.
+  </p>
+</section>

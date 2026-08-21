@@ -37,6 +37,7 @@ const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(SCRIPT_DIR, "..", "..");
 const BENCH_SCRIPT = path.join(SCRIPT_DIR, "bench-vs-tsgo.sh");
 const BENCH_PREREQS_SCRIPT = path.join(SCRIPT_DIR, "lib", "bench-vs-tsgo-prereqs.sh");
+const BENCH_RESULTS_SCRIPT = path.join(SCRIPT_DIR, "lib", "bench-vs-tsgo-results.sh");
 
 function makeTempDir(prefix) {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -660,6 +661,33 @@ bench_project_file_stats_cache_dir
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
+}
+
+// Fixture stats are presentation metadata, never proof of compiler admission.
+// The integration suite pins the dynamic zero-display/nonzero-TSZ case; this
+// source contract prevents a future edit from routing `$file_count` back into
+// project compatibility records or restoring the old early-zero shortcut.
+{
+  const runner = fs.readFileSync(BENCH_RESULTS_SCRIPT, "utf8");
+  const projectRunner = runner.slice(
+    runner.indexOf("run_project_benchmark()"),
+    runner.indexOf("\nJSON_EXPORTED=false"),
+  );
+  assert.doesNotMatch(
+    projectRunner,
+    /record_project_compatibility[^\n]*(?:\\\n[^\n]*){0,5}\$file_count/,
+    "project compatibility files_reached must not come from fixture-side file_count",
+  );
+  assert.doesNotMatch(
+    projectRunner,
+    /file_count[^\n]*(?:-eq|==)[^\n]*0[^\n]*return/,
+    "a fixture-side zero count must not short-circuit schema-v2 compiler evidence",
+  );
+  assert.match(
+    projectRunner,
+    /PROJECT_EVIDENCE_TSZ_SOURCE_FILES/,
+    "project rows must record TSZ's admitted source count",
+  );
 }
 
 console.log("project-file-stats tests passed");

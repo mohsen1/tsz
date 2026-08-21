@@ -124,7 +124,7 @@ pub struct VariableDeclaration {
 pub struct FunctionDeclaration {
     pub name: String,
     pub name_span: Span,
-    pub type_parameters: Vec<String>,
+    pub type_parameters: Vec<TypeParameterDeclaration>,
     pub parameters: Vec<Parameter>,
     pub return_type: Option<TypeNode>,
     pub body: Vec<Statement>,
@@ -137,7 +137,7 @@ pub struct FunctionDeclaration {
 pub struct ClassDeclaration {
     pub name: String,
     pub name_span: Span,
-    pub type_parameters: Vec<String>,
+    pub type_parameters: Vec<TypeParameterDeclaration>,
     pub extends: Option<TypeNode>,
     pub implements: Vec<TypeNode>,
     pub members: Vec<ClassMember>,
@@ -161,6 +161,7 @@ pub struct ClassMemberModifiers {
 
 #[derive(Debug, Clone)]
 pub struct ClassMember {
+    pub id: NodeId,
     pub name: String,
     pub name_span: Span,
     pub span: Span,
@@ -182,7 +183,7 @@ pub enum ClassMemberKind {
         definite: bool,
     },
     Method {
-        type_parameters: Vec<String>,
+        type_parameters: Vec<TypeParameterDeclaration>,
         parameters: Vec<Parameter>,
         return_type: Option<TypeNode>,
         body: Vec<Statement>,
@@ -201,7 +202,7 @@ pub enum AccessorKind {
 pub struct TypeAliasDeclaration {
     pub name: String,
     pub name_span: Span,
-    pub type_parameters: Vec<String>,
+    pub type_parameters: Vec<TypeParameterDeclaration>,
     pub ty: TypeNode,
     pub exported: bool,
 }
@@ -210,7 +211,7 @@ pub struct TypeAliasDeclaration {
 pub struct InterfaceDeclaration {
     pub name: String,
     pub name_span: Span,
-    pub type_parameters: Vec<String>,
+    pub type_parameters: Vec<TypeParameterDeclaration>,
     pub extends: Vec<TypeNode>,
     pub properties: Vec<TypeProperty>,
     pub exported: bool,
@@ -224,6 +225,18 @@ pub struct Parameter {
     pub optional: bool,
     pub rest: bool,
     pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub struct TypeParameterDeclaration {
+    pub name: String,
+    pub name_span: Span,
+    pub span: Span,
+    pub constraint: Option<TypeNode>,
+    pub default: Option<TypeNode>,
+    pub const_parameter: bool,
+    pub in_variance: bool,
+    pub out_variance: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -284,6 +297,7 @@ pub enum TypeNodeKind {
     TypeQuery {
         name: String,
         name_span: Span,
+        segment_spans: Vec<Span>,
     },
     Infer {
         name: String,
@@ -343,6 +357,7 @@ pub enum ExpressionKind {
     },
     New {
         callee: Box<Expression>,
+        type_arguments: Vec<TypeNode>,
         arguments: Vec<Expression>,
     },
     Member {

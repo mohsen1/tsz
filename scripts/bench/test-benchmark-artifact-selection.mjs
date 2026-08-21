@@ -6,6 +6,7 @@ import path from "node:path";
 
 import { selectLatestBenchmarkArtifact } from "./benchmark-artifact-selection.mjs";
 import { PROJECT_ROW_DEFINITIONS } from "./project-rows.mjs";
+import { GREEN_COMPAT } from "./row-utils.mjs";
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "tsz-bench-artifacts-"));
 
@@ -24,6 +25,7 @@ function projectRow(name, state = "green") {
     winner: ok ? "tsz" : "error",
     status: ok ? null : "tsz error; tsc ok",
     compatibility: {
+      ...(ok ? GREEN_COMPAT : {}),
       state,
       phase: "check",
       last_successful_phase: ok ? "check" : null,
@@ -43,6 +45,7 @@ function applicationCompatibilityRows() {
       winner: "error",
       status: "compile canary tracked in CI; not timed by vs-tsgo benchmarks",
       compatibility: {
+        ...(index === 0 ? GREEN_COMPAT : {}),
         state: index === 0 ? "green" : index === 1 ? "yellow" : "red",
         phase: "check",
         last_successful_phase: index === 0 ? "check" : null,
@@ -91,6 +94,17 @@ try {
     selectLatestBenchmarkArtifact([goodProject, badProject], { minimumProjectTimingPairs: 1 })?.file,
     goodProject,
     "a newer artifact with no successful project timings should not mask older public project timing data",
+  );
+  const forgedStubbedProject = writeArtifact("forged-stubbed-project.json", "2026-06-01T01:00:00.000Z", [
+    projectRow("msw-project"),
+  ]);
+  assert.equal(
+    selectLatestBenchmarkArtifact(
+      [goodProject, forgedStubbedProject],
+      { minimumProjectTimingPairs: 1 },
+    )?.file,
+    goodProject,
+    "forged zero stub fields cannot make an MSW timing artifact selectable",
   );
   const olderWithApplications = writeArtifact("older-with-applications.json", "2026-06-02T00:00:00.000Z", [
     projectRow("utility-types-project"),

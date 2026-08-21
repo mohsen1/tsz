@@ -7,14 +7,16 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 
 use crate::diagnostics::Diagnostic;
-use crate::program::{CompileOutput, Compiler, CompilerOptions, SourceInput};
+use crate::program::{CompileOutput, Compiler, CompilerOptions, SemanticCompletion, SourceInput};
 use crate::source::Span;
-use crate::syntax::{
-    ExpressionKind, Literal, StatementKind, TypeNode, TypeNodeKind, VariableDeclaration,
-    VariableKind, parse_source,
-};
+use crate::syntax::{ClassMemberKind, Statement, StatementKind, VariableKind, parse_source};
 
+mod display;
 mod navigation;
+
+use display::{
+    display_parameter, display_parameter_type, display_type_node, display_variable_type,
+};
 
 pub use navigation::{
     DefinitionAndBoundSpan, DefinitionInfo, DocumentHighlights, HighlightSpan, ReferenceEntry,
@@ -39,6 +41,17 @@ pub struct QuickInfo {
 pub struct TextSpan {
     pub start: u32,
     pub length: u32,
+}
+
+/// Semantic diagnostics together with the checked program's completion truth.
+///
+/// An empty diagnostic list is a definitive answer only when
+/// `semantic_completion` is `Complete`.
+#[derive(Debug, Clone)]
+#[must_use = "semantic diagnostics are definitive only with their completion verdict"]
+pub struct SemanticDiagnosticResult {
+    pub diagnostics: Vec<Diagnostic>,
+    pub semantic_completion: SemanticCompletion,
 }
 
 #[derive(Debug, Default)]
@@ -116,8 +129,18 @@ impl LanguageService {
         self.diagnostics(path, |code| code < 2000)
     }
 
-    pub fn semantic_diagnostics(&self, path: &str) -> Vec<Diagnostic> {
-        self.diagnostics(path, |code| code >= 2000)
+    pub fn semantic_diagnostics(&self, path: &str) -> SemanticDiagnosticResult {
+        let normalized = normalize_path(path);
+        let output = self.compile();
+        SemanticDiagnosticResult {
+            diagnostics: output
+                .diagnostics
+                .into_iter()
+                .filter(|diagnostic| normalize_path(&diagnostic.file) == normalized)
+                .filter(|diagnostic| diagnostic.code >= 2000)
+                .collect(),
+            semantic_completion: output.semantic_completion,
+        }
     }
 
     fn diagnostics(&self, path: &str, include: impl Fn(u32) -> bool) -> Vec<Diagnostic> {
@@ -142,85 +165,7 @@ impl LanguageService {
             Arc::clone(&file.text),
         );
         let parsed = parse_source(&source);
-        for statement in &parsed.unit.statements {
-            match &statement.kind {
-                StatementKind::Variable(declaration) if contains(declaration.name_span, offset) => {
-                    let annotation = display_variable_type(declaration);
-                    let declaration_kind = match declaration.declaration_kind {
-                        VariableKind::Const => "const",
-                        VariableKind::Let => "let",
-                        VariableKind::Var => "var",
-                    };
-                    return Some(QuickInfo {
-                        kind: declaration_kind.to_string(),
-                        text_span: text_span(declaration.name_span),
-                        display: format!("{declaration_kind} {}: {annotation}", declaration.name),
-                    });
-                }
-                StatementKind::Function(declaration) if contains(declaration.name_span, offset) => {
-                    let parameters = declaration
-                        .parameters
-                        .iter()
-                        .map(|parameter| {
-                            let ty = parameter
-                                .annotation
-                                .as_ref()
-                                .map_or("any".to_string(), display_type_node);
-                            format!("{}: {ty}", parameter.name)
-                        })
-                        .collect::<Vec<_>>()
-                        .join(", ");
-                    let result = declaration
-                        .return_type
-                        .as_ref()
-                        .map_or("any".to_string(), display_type_node);
-                    return Some(QuickInfo {
-                        kind: "function".to_string(),
-                        text_span: text_span(declaration.name_span),
-                        display: format!("function {}({parameters}): {result}", declaration.name),
-                    });
-                }
-                StatementKind::TypeAlias(declaration)
-                    if contains(declaration.name_span, offset) =>
-                {
-                    return Some(QuickInfo {
-                        kind: "type".to_string(),
-                        text_span: text_span(declaration.name_span),
-                        display: format!(
-                            "type {} = {}",
-                            declaration.name,
-                            display_type_node(&declaration.ty)
-                        ),
-                    });
-                }
-                StatementKind::Interface(declaration)
-                    if contains(declaration.name_span, offset) =>
-                {
-                    return Some(QuickInfo {
-                        kind: "interface".to_string(),
-                        text_span: text_span(declaration.name_span),
-                        display: format!("interface {}", declaration.name),
-                    });
-                }
-                StatementKind::Import(_)
-                | StatementKind::Export(_)
-                | StatementKind::Class(_)
-                | StatementKind::If(_)
-                | StatementKind::Switch(_)
-                | StatementKind::Break(_)
-                | StatementKind::Continue(_)
-                | StatementKind::Return(_)
-                | StatementKind::Block(_)
-                | StatementKind::Expression(_)
-                | StatementKind::Empty
-                | StatementKind::Unknown
-                | StatementKind::Variable(_)
-                | StatementKind::Function(_)
-                | StatementKind::TypeAlias(_)
-                | StatementKind::Interface(_) => {}
-            }
-        }
-        None
+        quick_info_in_statements(&parsed.unit.statements, offset)
     }
 
     /// Resolve the declaration at `offset` together with the token span that
@@ -260,25 +205,123 @@ impl LanguageService {
     }
 }
 
-fn display_variable_type(declaration: &VariableDeclaration) -> String {
-    if let Some(annotation) = &declaration.annotation {
-        return display_type_node(annotation);
+fn quick_info_in_statements(statements: &[Statement], offset: u32) -> Option<QuickInfo> {
+    for statement in statements {
+        match &statement.kind {
+            StatementKind::Variable(declaration) if contains(declaration.name_span, offset) => {
+                let annotation = display_variable_type(declaration)?;
+                let declaration_kind = match declaration.declaration_kind {
+                    VariableKind::Const => "const",
+                    VariableKind::Let => "let",
+                    VariableKind::Var => "var",
+                };
+                return Some(QuickInfo {
+                    kind: declaration_kind.to_string(),
+                    text_span: text_span(declaration.name_span),
+                    display: format!("{declaration_kind} {}: {annotation}", declaration.name),
+                });
+            }
+            StatementKind::Function(declaration) if contains(declaration.name_span, offset) => {
+                if !declaration.type_parameters.is_empty() {
+                    return None;
+                }
+                let parameters = declaration
+                    .parameters
+                    .iter()
+                    .map(display_parameter)
+                    .collect::<Option<Vec<_>>>()?
+                    .join(", ");
+                let result = display_type_node(declaration.return_type.as_ref()?)?;
+                return Some(QuickInfo {
+                    kind: "function".to_string(),
+                    text_span: text_span(declaration.name_span),
+                    display: format!("function {}({parameters}): {result}", declaration.name),
+                });
+            }
+            StatementKind::TypeAlias(declaration) if contains(declaration.name_span, offset) => {
+                if !declaration.type_parameters.is_empty() {
+                    return None;
+                }
+                return Some(QuickInfo {
+                    kind: "type".to_string(),
+                    text_span: text_span(declaration.name_span),
+                    display: format!(
+                        "type {} = {}",
+                        declaration.name,
+                        display_type_node(&declaration.ty)?
+                    ),
+                });
+            }
+            StatementKind::Interface(declaration) if contains(declaration.name_span, offset) => {
+                if !declaration.type_parameters.is_empty() {
+                    return None;
+                }
+                return Some(QuickInfo {
+                    kind: "interface".to_string(),
+                    text_span: text_span(declaration.name_span),
+                    display: format!("interface {}", declaration.name),
+                });
+            }
+            StatementKind::Function(declaration) => {
+                if let Some(info) = quick_info_in_statements(&declaration.body, offset) {
+                    return Some(info);
+                }
+            }
+            StatementKind::Class(declaration) => {
+                for member in &declaration.members {
+                    match &member.kind {
+                        ClassMemberKind::Constructor { body, .. }
+                        | ClassMemberKind::Method { body, .. } => {
+                            if let Some(info) = quick_info_in_statements(body, offset) {
+                                return Some(info);
+                            }
+                        }
+                        ClassMemberKind::Property { .. } => {}
+                    }
+                }
+            }
+            StatementKind::Block(statements) => {
+                if let Some(info) = quick_info_in_statements(statements, offset) {
+                    return Some(info);
+                }
+            }
+            StatementKind::If(control_flow) => {
+                if let Some(info) = quick_info_in_statements(
+                    std::slice::from_ref(control_flow.then_statement.as_ref()),
+                    offset,
+                ) {
+                    return Some(info);
+                }
+                if let Some(else_statement) = &control_flow.else_statement
+                    && let Some(info) = quick_info_in_statements(
+                        std::slice::from_ref(else_statement.as_ref()),
+                        offset,
+                    )
+                {
+                    return Some(info);
+                }
+            }
+            StatementKind::Switch(control_flow) => {
+                for clause in &control_flow.clauses {
+                    if let Some(info) = quick_info_in_statements(&clause.statements, offset) {
+                        return Some(info);
+                    }
+                }
+            }
+            StatementKind::Import(_)
+            | StatementKind::Export(_)
+            | StatementKind::Break(_)
+            | StatementKind::Continue(_)
+            | StatementKind::Return(_)
+            | StatementKind::Expression(_)
+            | StatementKind::Empty
+            | StatementKind::Unknown
+            | StatementKind::Variable(_)
+            | StatementKind::TypeAlias(_)
+            | StatementKind::Interface(_) => {}
+        }
     }
-    let Some(initializer) = &declaration.initializer else {
-        return "any".to_string();
-    };
-    let ExpressionKind::Literal(literal) = &initializer.kind else {
-        return "unknown".to_string();
-    };
-    match (declaration.declaration_kind, literal) {
-        (VariableKind::Const, Literal::String(value)) => format!("\"{value}\""),
-        (VariableKind::Const, Literal::Number(value)) => value.clone(),
-        (VariableKind::Const, Literal::Boolean(value)) => value.to_string(),
-        (_, Literal::String(_)) => "string".to_string(),
-        (_, Literal::Number(_)) => "number".to_string(),
-        (_, Literal::Boolean(_)) => "boolean".to_string(),
-        (_, Literal::Null) => "null".to_string(),
-    }
+    None
 }
 
 fn normalize_path(path: &str) -> String {
@@ -293,64 +336,5 @@ const fn text_span(span: Span) -> TextSpan {
     TextSpan {
         start: span.start,
         length: span.len(),
-    }
-}
-
-fn display_type_node(node: &TypeNode) -> String {
-    match &node.kind {
-        TypeNodeKind::Keyword(keyword) => format!("{keyword:?}").to_ascii_lowercase(),
-        TypeNodeKind::Literal(crate::syntax::Literal::String(value)) => format!("\"{value}\""),
-        TypeNodeKind::Literal(crate::syntax::Literal::Number(value)) => value.clone(),
-        TypeNodeKind::Literal(crate::syntax::Literal::Boolean(value)) => value.to_string(),
-        TypeNodeKind::Literal(crate::syntax::Literal::Null) => "null".to_string(),
-        TypeNodeKind::Array(element) => format!("{}[]", display_type_node(element)),
-        TypeNodeKind::Tuple(elements) => format!(
-            "[{}]",
-            elements
-                .iter()
-                .map(display_type_node)
-                .collect::<Vec<_>>()
-                .join(", ")
-        ),
-        TypeNodeKind::Union(members) => members
-            .iter()
-            .map(display_type_node)
-            .collect::<Vec<_>>()
-            .join(" | "),
-        TypeNodeKind::Intersection(members) => members
-            .iter()
-            .map(display_type_node)
-            .collect::<Vec<_>>()
-            .join(" & "),
-        TypeNodeKind::Reference {
-            name, arguments, ..
-        } => {
-            if arguments.is_empty() {
-                name.clone()
-            } else {
-                format!(
-                    "{}<{}>",
-                    name,
-                    arguments
-                        .iter()
-                        .map(display_type_node)
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                )
-            }
-        }
-        TypeNodeKind::TypeQuery { name, .. } => format!("typeof {name}"),
-        TypeNodeKind::Infer { name, .. } => format!("infer {name}"),
-        TypeNodeKind::Object(_)
-        | TypeNodeKind::Function { .. }
-        | TypeNodeKind::Constructor { .. }
-        | TypeNodeKind::Predicate { .. }
-        | TypeNodeKind::KeyOf(_)
-        | TypeNodeKind::Readonly(_)
-        | TypeNodeKind::Conditional { .. }
-        | TypeNodeKind::Mapped { .. }
-        | TypeNodeKind::IndexedAccess { .. }
-        | TypeNodeKind::Parenthesized(_)
-        | TypeNodeKind::Missing => "unknown".to_string(),
     }
 }

@@ -1,30 +1,134 @@
 use std::ffi::OsString;
 use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use serde::Serialize;
-use serde_json::Value;
-use tsz::{CompileOutput, Compiler, CompilerOptions, SourceInput};
-use walkdir::WalkDir;
+use tsz::config::{
+    CompilerOptionKey, ProjectRequest, ProjectSelection, find_config_file, resolve_project,
+};
+use tsz::host::SystemHost;
+use tsz::{CompileOutput, Compiler, CompilerOptions, SemanticCompletion};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const BATCH_SENTINEL: &str = "---TSZ-BATCH-DONE---";
+const SEMANTIC_COMPLETION_MARKER_PREFIX: &str = "---TSZ-SEMANTIC-COMPLETION:";
 
 #[derive(Debug, Default, Clone)]
 pub struct Invocation {
-    pub options: CompilerOptions,
+    pub options: CompilerOptionPatch,
     pub project: Option<PathBuf>,
     pub files: Vec<PathBuf>,
     pub ignore_config: bool,
-    pub allow_js: bool,
     pub pretty: bool,
     pub batch: bool,
     pub extended_diagnostics: bool,
     pub diagnostics_json: Option<PathBuf>,
     pub perf_counters_json: Option<PathBuf>,
     pub unknown_options: Vec<String>,
+}
+
+/// Only command-line options the caller explicitly supplied.
+///
+/// Configuration is resolved by `tsz-core` first. Keeping absence distinct
+/// from a false/default value lets the command line override configuration
+/// without its defaults accidentally doing so.
+#[derive(Debug, Default, Clone)]
+pub struct CompilerOptionPatch {
+    pub strict: Option<bool>,
+    pub no_implicit_any: Option<bool>,
+    pub no_lib: Option<bool>,
+    pub lib: Option<Vec<String>>,
+    pub no_check: Option<bool>,
+    pub no_emit: Option<bool>,
+    pub no_emit_on_error: Option<bool>,
+    pub declaration: Option<bool>,
+    pub declaration_map: Option<bool>,
+    pub source_map: Option<bool>,
+    pub inline_source_map: Option<bool>,
+    pub remove_comments: Option<bool>,
+    pub allow_js: Option<bool>,
+    pub target: Option<String>,
+    pub module: Option<String>,
+    pub root_dir: Option<PathBuf>,
+    pub out_dir: Option<PathBuf>,
+    pub declaration_dir: Option<PathBuf>,
+}
+
+impl CompilerOptionPatch {
+    fn apply_to(&self, options: &mut CompilerOptions) {
+        macro_rules! apply_copy {
+            ($($field:ident),* $(,)?) => {
+                $(if let Some(value) = self.$field {
+                    options.$field = value;
+                })*
+            };
+        }
+        apply_copy!(
+            strict,
+            no_lib,
+            no_check,
+            no_emit,
+            no_emit_on_error,
+            declaration,
+            declaration_map,
+            source_map,
+            inline_source_map,
+            remove_comments,
+            allow_js,
+        );
+        if let Some(value) = self.no_implicit_any {
+            options.no_implicit_any = Some(value);
+        }
+        if let Some(value) = &self.lib {
+            options.lib = Some(value.clone());
+        }
+        if let Some(value) = &self.target {
+            options.target.clone_from(value);
+        }
+        if let Some(value) = &self.module {
+            options.module.clone_from(value);
+        }
+        if let Some(value) = &self.root_dir {
+            options.root_dir = Some(value.clone());
+        }
+        if let Some(value) = &self.out_dir {
+            options.out_dir = Some(value.clone());
+        }
+        if let Some(value) = &self.declaration_dir {
+            options.declaration_dir = Some(value.clone());
+        }
+    }
+
+    fn clear_overridden_origins(&self, project: &mut tsz::config::ResolvedProject) {
+        macro_rules! clear_present {
+            ($(($field:ident, $key:ident)),* $(,)?) => {
+                $(if self.$field.is_some() {
+                    project.mark_command_line_option(CompilerOptionKey::$key);
+                })*
+            };
+        }
+        clear_present!(
+            (strict, Strict),
+            (no_implicit_any, NoImplicitAny),
+            (no_lib, NoLib),
+            (lib, Lib),
+            (no_check, NoCheck),
+            (no_emit, NoEmit),
+            (no_emit_on_error, NoEmitOnError),
+            (declaration, Declaration),
+            (declaration_map, DeclarationMap),
+            (source_map, SourceMap),
+            (inline_source_map, InlineSourceMap),
+            (remove_comments, RemoveComments),
+            (allow_js, AllowJs),
+            (target, Target),
+            (module, Module),
+            (root_dir, RootDir),
+            (out_dir, OutDir),
+            (declaration_dir, DeclarationDir),
+        );
+    }
 }
 
 pub fn main_entry(arguments: impl IntoIterator<Item = OsString>) -> Result<i32> {
@@ -36,12 +140,11 @@ pub fn main_entry(arguments: impl IntoIterator<Item = OsString>) -> Result<i32> 
         println!("Version {VERSION}");
         return Ok(0);
     }
-    if arguments.is_empty()
-        || arguments
-            .iter()
-            .any(|argument| argument == "--help" || argument == "-h")
+    if arguments
+        .iter()
+        .any(|argument| argument == "--help" || argument == "-h")
     {
-        print_help();
+        render_help(&mut std::io::stdout().lock())?;
         return Ok(0);
     }
     let invocation = parse_arguments(&arguments)?;
@@ -84,50 +187,63 @@ pub fn parse_arguments(arguments: &[OsString]) -> Result<Invocation> {
         match name.as_str() {
             "p" | "project" => invocation.project = Some(PathBuf::from(take_value()?)),
             "batch" => invocation.batch = true,
-            "ignoreconfig" => invocation.ignore_config = true,
-            "noemit" => invocation.options.no_emit = true,
-            "noemitonerror" => invocation.options.no_emit_on_error = true,
-            "nocheck" => invocation.options.no_check = true,
+            "ignoreconfig" => {
+                invocation.ignore_config = optional_bool(arguments, &mut index, inline_value, true);
+            }
+            "noemit" => {
+                invocation.options.no_emit =
+                    Some(optional_bool(arguments, &mut index, inline_value, true));
+            }
+            "noemitonerror" => {
+                invocation.options.no_emit_on_error =
+                    Some(optional_bool(arguments, &mut index, inline_value, true));
+            }
+            "nocheck" => {
+                invocation.options.no_check =
+                    Some(optional_bool(arguments, &mut index, inline_value, true));
+            }
             "strict" => {
-                invocation.options.strict = optional_bool(arguments, &mut index, inline_value, true)
+                invocation.options.strict =
+                    Some(optional_bool(arguments, &mut index, inline_value, true));
             }
             "noimplicitany" => {
                 invocation.options.no_implicit_any =
-                    optional_bool(arguments, &mut index, inline_value, true);
+                    Some(optional_bool(arguments, &mut index, inline_value, true));
             }
             "nolib" => {
                 invocation.options.no_lib =
-                    optional_bool(arguments, &mut index, inline_value, true);
+                    Some(optional_bool(arguments, &mut index, inline_value, true));
             }
             "declaration" => {
                 invocation.options.declaration =
-                    optional_bool(arguments, &mut index, inline_value, true)
+                    Some(optional_bool(arguments, &mut index, inline_value, true));
             }
             "declarationmap" => {
                 invocation.options.declaration_map =
-                    optional_bool(arguments, &mut index, inline_value, true)
+                    Some(optional_bool(arguments, &mut index, inline_value, true));
             }
             "sourcemap" => {
                 invocation.options.source_map =
-                    optional_bool(arguments, &mut index, inline_value, true)
+                    Some(optional_bool(arguments, &mut index, inline_value, true));
             }
             "inlinesourcemap" => {
                 invocation.options.inline_source_map =
-                    optional_bool(arguments, &mut index, inline_value, true)
+                    Some(optional_bool(arguments, &mut index, inline_value, true));
             }
             "removecomments" => {
                 invocation.options.remove_comments =
-                    optional_bool(arguments, &mut index, inline_value, true)
+                    Some(optional_bool(arguments, &mut index, inline_value, true));
             }
             "allowjs" => {
-                invocation.allow_js = optional_bool(arguments, &mut index, inline_value, true)
+                invocation.options.allow_js =
+                    Some(optional_bool(arguments, &mut index, inline_value, true));
             }
             "pretty" => {
                 invocation.pretty = optional_bool(arguments, &mut index, inline_value, true)
             }
             "extendeddiagnostics" => invocation.extended_diagnostics = true,
-            "target" => invocation.options.target = take_value()?,
-            "module" => invocation.options.module = take_value()?,
+            "target" => invocation.options.target = Some(take_value()?),
+            "module" => invocation.options.module = Some(take_value()?),
             "lib" => {
                 invocation.options.lib = Some(
                     take_value()?
@@ -139,6 +255,7 @@ pub fn parse_arguments(arguments: &[OsString]) -> Result<Invocation> {
                 );
             }
             "outdir" => invocation.options.out_dir = Some(PathBuf::from(take_value()?)),
+            "rootdir" => invocation.options.root_dir = Some(PathBuf::from(take_value()?)),
             "declarationdir" => {
                 invocation.options.declaration_dir = Some(PathBuf::from(take_value()?));
             }
@@ -174,7 +291,6 @@ pub fn parse_arguments(arguments: &[OsString]) -> Result<Invocation> {
             | "importsnotusedasvalues"
             | "baseurl"
             | "outfile"
-            | "rootdir"
             | "usedefineforclassfields"
             | "strictnullchecks" => {
                 let _ = take_value()?;
@@ -236,9 +352,14 @@ fn run_batch(base: Invocation) -> Result<i32> {
         invocation.batch = false;
         invocation.project = Some(PathBuf::from(project.trim()));
         invocation.files.clear();
-        invocation.options.no_emit = true;
+        invocation.options.no_emit = Some(true);
         invocation.pretty = false;
-        let _ = run_once_with_writer(invocation, &mut stdout)?;
+        let outcome = run_once_with_writer(invocation, &mut stdout)?;
+        writeln!(
+            stdout,
+            "{SEMANTIC_COMPLETION_MARKER_PREFIX}{}---",
+            outcome.semantic_completion.as_str()
+        )?;
         writeln!(stdout, "{BATCH_SENTINEL}")?;
         stdout.flush()?;
     }
@@ -246,16 +367,39 @@ fn run_batch(base: Invocation) -> Result<i32> {
 }
 
 fn run_once(invocation: Invocation) -> Result<i32> {
-    run_once_with_writer(invocation, &mut std::io::stdout().lock())
+    Ok(run_once_with_writer(invocation, &mut std::io::stdout().lock())?.exit_code)
 }
 
-fn run_once_with_writer(invocation: Invocation, writer: &mut impl Write) -> Result<i32> {
+struct ProcessOutcome {
+    exit_code: i32,
+    semantic_completion: SemanticCompletion,
+}
+
+impl ProcessOutcome {
+    const fn complete(exit_code: i32) -> Self {
+        Self {
+            exit_code,
+            semantic_completion: SemanticCompletion::Complete,
+        }
+    }
+}
+
+fn run_once_with_writer(invocation: Invocation, writer: &mut impl Write) -> Result<ProcessOutcome> {
     if let Some(option) = invocation.unknown_options.first() {
         writeln!(writer, "error TS5023: Unknown compiler option '{option}'.")?;
-        return Ok(1);
+        return Ok(ProcessOutcome::complete(1));
     }
-    let (inputs, options) = load_invocation(&invocation)?;
-    let output = Compiler::new().compile(inputs, &options);
+    let output = match prepare_invocation(&invocation)? {
+        PreparedInvocation::Compile(output) => *output,
+        PreparedInvocation::Diagnostic { code, message } => {
+            writeln!(writer, "error TS{code}: {message}")?;
+            return Ok(ProcessOutcome::complete(1));
+        }
+        PreparedInvocation::Help => {
+            render_help(writer)?;
+            return Ok(ProcessOutcome::complete(1));
+        }
+    };
     render_diagnostics(&output, writer)?;
     write_emitted_files(&output)?;
     if invocation.extended_diagnostics {
@@ -268,163 +412,88 @@ fn run_once_with_writer(invocation: Invocation, writer: &mut impl Write) -> Resu
         write_json(
             path,
             &serde_json::json!({
-                "schema_version": 1,
+                "schema_version": 2,
                 "counters": {},
                 "stats": output.stats,
             }),
         )?;
     }
-    let has_errors = output
-        .diagnostics
-        .iter()
-        .any(|diagnostic| diagnostic.category == tsz::diagnostics::DiagnosticCategory::Error);
-    if !has_errors {
-        Ok(0)
-    } else if output.emitted_files.is_empty() {
-        Ok(1)
-    } else {
-        Ok(2)
-    }
+    Ok(ProcessOutcome {
+        exit_code: output.exit_status.code(),
+        semantic_completion: output.semantic_completion,
+    })
 }
 
-fn load_invocation(invocation: &Invocation) -> Result<(Vec<SourceInput>, CompilerOptions)> {
-    let mut options = invocation.options.clone();
-    let mut files = invocation.files.clone();
-    let project = if invocation.ignore_config {
-        None
+enum PreparedInvocation {
+    Compile(Box<CompileOutput>),
+    Diagnostic { code: u32, message: &'static str },
+    Help,
+}
+
+fn prepare_invocation(invocation: &Invocation) -> Result<PreparedInvocation> {
+    if invocation.project.is_some() && !invocation.files.is_empty() {
+        return Ok(PreparedInvocation::Diagnostic {
+            code: 5042,
+            message: "Option 'project' cannot be mixed with source files on a command line.",
+        });
+    }
+    let current_directory = std::env::current_dir()?;
+    let host = SystemHost::new(current_directory.clone());
+
+    if !invocation.ignore_config
+        && !invocation.files.is_empty()
+        && find_config_file(&host, &current_directory).is_some()
+    {
+        return Ok(PreparedInvocation::Diagnostic {
+            code: 5112,
+            message: concat!(
+                "tsconfig.json is present but will not be loaded if files are specified on ",
+                "commandline. Use '--ignoreConfig' to skip this error."
+            ),
+        });
+    }
+
+    let selection = if !invocation.files.is_empty() || invocation.ignore_config {
+        ProjectSelection::Files(invocation.files.clone())
     } else if let Some(project) = &invocation.project {
-        Some(resolve_config_path(project)?)
-    } else if files.is_empty() {
-        find_config(&std::env::current_dir()?)
+        ProjectSelection::Project(project.clone())
     } else {
-        None
+        ProjectSelection::Search(current_directory.clone())
     };
-    if let Some(config_path) = project {
-        let config = read_config(&config_path)?;
-        apply_config_options(&mut options, config.get("compilerOptions"));
-        if files.is_empty() {
-            files = config_files(&config_path, &config, invocation.allow_js)?;
-        }
+    let mut request = ProjectRequest::new(selection);
+    if let Some(allow_js) = invocation.options.allow_js {
+        request = request.with_allow_js(allow_js);
     }
-    if files.is_empty() {
-        bail!("error TS18003: No inputs were found in config file.");
+    if let Some(out_dir) = &invocation.options.out_dir {
+        request = request.with_out_dir(out_dir.clone());
     }
-    files.sort();
-    files.dedup();
-    let inputs = files
-        .into_iter()
-        .map(|path| {
-            let text = std::fs::read_to_string(&path)
-                .with_context(|| format!("Could not read '{}'.", path.display()))?;
-            Ok(SourceInput::new(path, Arc::<str>::from(text)))
-        })
-        .collect::<Result<Vec<_>>>()?;
-    Ok((inputs, options))
-}
-
-fn resolve_config_path(path: &Path) -> Result<PathBuf> {
-    let path = if path.is_dir() {
-        path.join("tsconfig.json")
-    } else {
-        path.to_path_buf()
-    };
-    if !path.is_file() {
-        bail!(
-            "error TS5057: Cannot find a tsconfig.json file at '{}'.",
-            path.display()
-        );
+    if let Some(declaration_dir) = &invocation.options.declaration_dir {
+        request = request.with_declaration_dir(declaration_dir.clone());
     }
-    Ok(path)
-}
-
-fn find_config(start: &Path) -> Option<PathBuf> {
-    start
-        .ancestors()
-        .map(|directory| directory.join("tsconfig.json"))
-        .find(|candidate| candidate.is_file())
-}
-
-fn read_config(path: &Path) -> Result<Value> {
-    let text = std::fs::read_to_string(path)?;
-    let text = strip_json_comments(&text);
-    let text = strip_trailing_commas(&text);
-    serde_json::from_str(&text).with_context(|| format!("Failed to parse '{}'.", path.display()))
-}
-
-fn apply_config_options(options: &mut CompilerOptions, value: Option<&Value>) {
-    let Some(value) = value.and_then(Value::as_object) else {
-        return;
-    };
-    options.strict = bool_option(value, "strict").unwrap_or(options.strict);
-    options.no_implicit_any =
-        bool_option(value, "noImplicitAny").unwrap_or(options.no_implicit_any);
-    options.no_lib = bool_option(value, "noLib").unwrap_or(options.no_lib);
-    options.no_check = bool_option(value, "noCheck").unwrap_or(options.no_check);
-    options.no_emit = bool_option(value, "noEmit").unwrap_or(options.no_emit);
-    options.no_emit_on_error =
-        bool_option(value, "noEmitOnError").unwrap_or(options.no_emit_on_error);
-    options.declaration = bool_option(value, "declaration").unwrap_or(options.declaration);
-    options.source_map = bool_option(value, "sourceMap").unwrap_or(options.source_map);
-    options.remove_comments =
-        bool_option(value, "removeComments").unwrap_or(options.remove_comments);
-    if let Some(target) = value.get("target").and_then(Value::as_str) {
-        options.target = target.to_string();
+    let mut resolved = resolve_project(&host, &request);
+    if invocation.project.is_none()
+        && invocation.files.is_empty()
+        && resolved.graph.entry.is_none()
+        && resolved.diagnostics.is_empty()
+    {
+        return Ok(PreparedInvocation::Help);
     }
-    if let Some(module) = value.get("module").and_then(Value::as_str) {
-        options.module = module.to_string();
+    invocation.options.clear_overridden_origins(&mut resolved);
+    let mut options = resolved.options.clone();
+    invocation.options.apply_to(&mut options);
+    if options
+        .root_dir
+        .as_ref()
+        .is_some_and(|path| path.is_relative())
+    {
+        options.root_dir = options
+            .root_dir
+            .as_ref()
+            .map(|path| current_directory.join(path));
     }
-    if let Some(libraries) = value.get("lib").and_then(Value::as_array) {
-        options.lib = Some(
-            libraries
-                .iter()
-                .filter_map(Value::as_str)
-                .map(str::to_string)
-                .collect(),
-        );
-    }
-    if let Some(out_dir) = value.get("outDir").and_then(Value::as_str) {
-        options.out_dir = Some(PathBuf::from(out_dir));
-    }
-    if let Some(declaration_dir) = value.get("declarationDir").and_then(Value::as_str) {
-        options.declaration_dir = Some(PathBuf::from(declaration_dir));
-    }
-}
-
-fn bool_option(options: &serde_json::Map<String, Value>, name: &str) -> Option<bool> {
-    options.get(name).and_then(Value::as_bool)
-}
-
-fn config_files(path: &Path, config: &Value, allow_js: bool) -> Result<Vec<PathBuf>> {
-    let root = path.parent().unwrap_or_else(|| Path::new("."));
-    if let Some(files) = config.get("files").and_then(Value::as_array) {
-        return Ok(files
-            .iter()
-            .filter_map(Value::as_str)
-            .map(|file| root.join(file))
-            .collect());
-    }
-    let mut files = Vec::new();
-    for entry in WalkDir::new(root).into_iter().filter_entry(|entry| {
-        let name = entry.file_name().to_string_lossy();
-        name != "node_modules" && name != ".git" && name != "target" && name != ".target"
-    }) {
-        let entry = entry?;
-        if !entry.file_type().is_file() {
-            continue;
-        }
-        let extension = entry
-            .path()
-            .extension()
-            .and_then(|extension| extension.to_str());
-        // Match the TypeScript harness's implicit include defaults exactly:
-        // module-specific extensions are roots only when explicitly listed.
-        let supported = matches!(extension, Some("ts" | "tsx"))
-            || (allow_js && matches!(extension, Some("js" | "jsx")));
-        if supported {
-            files.push(entry.into_path());
-        }
-    }
-    Ok(files)
+    Ok(PreparedInvocation::Compile(Box::new(
+        Compiler::new().compile_resolved(resolved, &options),
+    )))
 }
 
 fn render_diagnostics(output: &CompileOutput, writer: &mut impl Write) -> Result<()> {
@@ -449,6 +518,26 @@ fn write_emitted_files(output: &CompileOutput) -> Result<()> {
 
 fn render_extended_diagnostics(output: &CompileOutput, writer: &mut impl Write) -> Result<()> {
     let stats = &output.stats;
+    writeln!(
+        writer,
+        "Root files:                    {}",
+        stats.root_files
+    )?;
+    writeln!(
+        writer,
+        "Source files:                  {}",
+        stats.source_files
+    )?;
+    writeln!(
+        writer,
+        "Project configs:               {}",
+        stats.project_configs
+    )?;
+    writeln!(
+        writer,
+        "Project references:            {}",
+        stats.project_references
+    )?;
     writeln!(writer, "Files:                         {}", stats.files)?;
     writeln!(writer, "Lines:                         {}", stats.lines)?;
     writeln!(
@@ -494,72 +583,10 @@ fn write_json(path: &Path, value: &impl Serialize) -> Result<()> {
     Ok(())
 }
 
-fn strip_json_comments(input: &str) -> String {
-    let mut output = String::with_capacity(input.len());
-    let bytes = input.as_bytes();
-    let mut index = 0;
-    let mut quote = None;
-    while index < bytes.len() {
-        let byte = bytes[index];
-        if let Some(active_quote) = quote {
-            output.push(byte as char);
-            if byte == b'\\' && index + 1 < bytes.len() {
-                index += 1;
-                output.push(bytes[index] as char);
-            } else if byte == active_quote {
-                quote = None;
-            }
-            index += 1;
-            continue;
-        }
-        if byte == b'"' {
-            quote = Some(byte);
-            output.push(byte as char);
-            index += 1;
-        } else if bytes.get(index..index + 2) == Some(b"//") {
-            while index < bytes.len() && !matches!(bytes[index], b'\n' | b'\r') {
-                index += 1;
-            }
-        } else if bytes.get(index..index + 2) == Some(b"/*") {
-            index += 2;
-            while index + 1 < bytes.len() && bytes.get(index..index + 2) != Some(b"*/") {
-                index += 1;
-            }
-            index = (index + 2).min(bytes.len());
-        } else {
-            output.push(byte as char);
-            index += 1;
-        }
-    }
-    output
-}
-
-fn strip_trailing_commas(input: &str) -> String {
-    let mut output = String::with_capacity(input.len());
-    let bytes = input.as_bytes();
-    let mut index = 0;
-    while index < bytes.len() {
-        if bytes[index] == b',' {
-            let mut lookahead = index + 1;
-            while bytes
-                .get(lookahead)
-                .is_some_and(|byte| byte.is_ascii_whitespace())
-            {
-                lookahead += 1;
-            }
-            if matches!(bytes.get(lookahead), Some(b'}' | b']')) {
-                index += 1;
-                continue;
-            }
-        }
-        output.push(bytes[index] as char);
-        index += 1;
-    }
-    output
-}
-
-fn print_help() {
-    println!(
+fn render_help(writer: &mut impl Write) -> Result<()> {
+    writeln!(
+        writer,
         "tsz {VERSION}\n\nUsage: tsz [options] [file ...]\n\nOptions:\n  -p, --project <path>       Compile a project\n      --noEmit               Type-check without writing output\n      --noCheck              Emit without semantic checking\n      --declaration          Emit declaration files\n      --strict               Enable strict checking\n      --pretty <bool>        Enable pretty output\n      --extendedDiagnostics  Print phase timings\n      --batch                Read project paths from stdin"
-    );
+    )?;
+    Ok(())
 }

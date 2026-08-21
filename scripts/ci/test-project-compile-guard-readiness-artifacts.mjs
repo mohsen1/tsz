@@ -47,6 +47,59 @@ function writeExecutable(file, text) {
   fs.chmodSync(file, 0o755);
 }
 
+function successfulFakeTsz(body = "", rootFiles = 1, sourceFiles = rootFiles) {
+  return `#!/usr/bin/env bash
+set -euo pipefail
+${body}
+stats_file=""
+project_file=""
+while [[ "$#" -gt 0 ]]; do
+  if [[ "$1" == "--perf-counters-json" ]]; then
+    stats_file="$2"
+    shift 2
+    continue
+  fi
+  if [[ "$1" == "-p" || "$1" == "--project" ]]; then
+    project_file="$2"
+    shift 2
+    continue
+  fi
+  shift
+done
+[[ -n "$stats_file" ]]
+[[ -n "$project_file" ]]
+FAKE_STATS_FILE="$stats_file" FAKE_PROJECT_FILE="$project_file" \
+FAKE_ROOT_FILES="${rootFiles}" FAKE_SOURCE_FILES="${sourceFiles}" node -e '
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const files = [];
+  function walk(dir) {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+      if (entry.name === "node_modules") continue;
+      const file = path.join(dir, entry.name);
+      if (entry.isDirectory()) walk(file);
+      else if (/\\.(?:d\\.)?(?:m|c)?tsx?$/.test(entry.name)) files.push(file);
+    }
+  }
+  walk(path.dirname(process.env.FAKE_PROJECT_FILE));
+  const roots = files.slice(0, Number(process.env.FAKE_ROOT_FILES));
+  const sources = files.slice(0, Number(process.env.FAKE_SOURCE_FILES));
+  fs.writeFileSync(process.env.FAKE_STATS_FILE, JSON.stringify({
+    schema_version: 2,
+    stats: {
+      semantic_completion: "complete",
+      root_files: roots.length,
+      source_files: sources.length,
+      files: sources.length,
+      root_file_paths: roots,
+      source_file_paths: sources,
+    },
+  }) + "\\n");
+'
+exit 0
+`;
+}
+
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, {
     cwd: ROOT,
@@ -318,7 +371,7 @@ withTempDir((dir) => {
 
   writeFile(
     path.join(binDir, "tsz"),
-    `#!/usr/bin/env bash\ntouch ${JSON.stringify(tszTouched)}\nexit 0\n`,
+    successfulFakeTsz(`touch ${JSON.stringify(tszTouched)}`, 2),
     0o755,
   );
   writeFile(
@@ -384,7 +437,7 @@ withTempDir((dir) => {
 
   writeFile(
     path.join(binDir, "tsz"),
-    `#!/usr/bin/env bash\ntouch ${JSON.stringify(tszTouched)}\nexit 0\n`,
+    successfulFakeTsz(`touch ${JSON.stringify(tszTouched)}`, 2),
     0o755,
   );
   writeFile(
@@ -486,7 +539,7 @@ withTempDir((dir) => {
   assert.deepEqual(rows[0].exit_codes.tsz, []);
 });
 
-// Result cache: second guard run skips tsz when binary, tsconfig, and fixture ref are unchanged.
+// Opt-in result cache: second guard run skips tsz when every conservative input is unchanged.
 withTempDir((dir) => {
   const fixtureRoot = path.join(dir, "fixture-root");
   const fakeRepo = path.join(dir, "fake-utility-types");
@@ -499,12 +552,11 @@ withTempDir((dir) => {
 
   writeExecutable(
     fakeTsz,
-    `#!/usr/bin/env bash
+    successfulFakeTsz(`
 count=0
 [ -f ${JSON.stringify(runCountFile)} ] && count=$(cat ${JSON.stringify(runCountFile)})
 printf '%s' "$((count+1))" > ${JSON.stringify(runCountFile)}
-exit 0
-`,
+`),
   );
 
   const env = {
@@ -516,6 +568,7 @@ exit 0
     TSZ_PROJECT_COMPILE_SET: "required",
     TSZ_PROJECT_COMPILE_FILTER: "^utility-types-project$",
     TSZ_PROJECT_COMPILE_INCLUDE_GENERATED_APPS: "0",
+    TSZ_PROJECT_COMPILE_RESULT_CACHE: "1",
   };
 
   const r1 = spawnSync("bash", [GUARD_SCRIPT], { cwd: ROOT, encoding: "utf8", env });
@@ -557,12 +610,11 @@ withTempDir((dir) => {
 
   writeExecutable(
     fakeTsz,
-    `#!/usr/bin/env bash
+    successfulFakeTsz(`
 count=0
 [ -f ${JSON.stringify(runCountFile)} ] && count=$(cat ${JSON.stringify(runCountFile)})
 printf '%s' "$((count+1))" > ${JSON.stringify(runCountFile)}
-exit 0
-`,
+`),
   );
 
   const env = {
@@ -617,8 +669,9 @@ withTempDir((dir) => {
     "src/index.ts": "export type Id<T> = T;\n",
   });
 
-  const counterScript = (tag) =>
-    `#!/usr/bin/env bash\n# ${tag}\ncount=0\n[ -f ${JSON.stringify(runCountFile)} ] && count=$(cat ${JSON.stringify(runCountFile)})\nprintf '%s' "$((count+1))" > ${JSON.stringify(runCountFile)}\nexit 0\n`;
+  const counterScript = (tag) => successfulFakeTsz(
+    `# ${tag}\ncount=0\n[ -f ${JSON.stringify(runCountFile)} ] && count=$(cat ${JSON.stringify(runCountFile)})\nprintf '%s' "$((count+1))" > ${JSON.stringify(runCountFile)}`,
+  );
 
   writeExecutable(tszV1, counterScript("v1"));
   writeExecutable(tszV2, counterScript("v2"));
@@ -631,6 +684,7 @@ withTempDir((dir) => {
     TSZ_PROJECT_COMPILE_SET: "required",
     TSZ_PROJECT_COMPILE_FILTER: "^utility-types-project$",
     TSZ_PROJECT_COMPILE_INCLUDE_GENERATED_APPS: "0",
+    TSZ_PROJECT_COMPILE_RESULT_CACHE: "1",
   };
 
   // First run with v1 — cache miss, tsz runs.

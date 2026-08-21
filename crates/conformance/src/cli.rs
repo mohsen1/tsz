@@ -7,10 +7,12 @@ use clap::Parser;
 /// Backend mode for running conformance tests.
 #[derive(Clone, Debug, Default, PartialEq, Eq, clap::ValueEnum)]
 pub enum RunMode {
-    /// Use `tsz --batch` process pool (existing behavior).
+    /// Spawn one fresh TSZ process and capture both stdout and stderr.
     #[default]
-    Cli,
-    /// Use `tsz-server --protocol legacy` for cached lib loading.
+    Fresh,
+    /// Noncanonical pooled transport; retained only for performance harness work.
+    Batch,
+    /// Noncanonical server transport; retained only for performance harness work.
     Server,
 }
 
@@ -104,6 +106,10 @@ pub struct Args {
     #[arg(long, default_value = "./tsc-cache.json")]
     pub cache_file: String,
 
+    /// Exact candidate-domain manifest paired with the TSC cache.
+    #[arg(long, default_value = "./scripts/conformance/conformance-domain.json")]
+    pub domain_file: String,
+
     /// Path to tsz binary for compilation.
     /// When omitted (`tsz`), the runner prefers `./.target/dist-fast/tsz` if present.
     #[arg(long, default_value = "tsz")]
@@ -117,35 +123,9 @@ pub struct Args {
     #[arg(long)]
     pub print_fingerprints: bool,
 
-    /// Disable batch process pool and fall back to spawning a fresh tsz
-    /// process per test (slower but useful for debugging).
-    #[arg(long)]
-    pub no_batch: bool,
-
-    /// Max compilations per batch worker before recycling (0 = no limit).
-    /// Recycling kills the worker process and spawns a fresh one, returning all
-    /// accumulated memory (global caches, arena fragmentation) to the OS.
-    /// With 4 CI workers, 100 means first recycles happen at ~400 total tests,
-    /// keeping peak RSS well under the ~7GB CI runner limit.
-    #[arg(long, default_value_t = 100)]
-    pub max_compilations_per_worker: usize,
-
-    /// Max RSS (in MB) per batch worker before recycling (0 = no limit).
-    /// After each compilation, the worker's resident memory is checked. If it
-    /// exceeds this threshold, the worker is killed and respawned. This prevents
-    /// individual memory-hungry tests (JSX, JSDoc, large multi-file) from pushing
-    /// the total process tree past the CI runner's RAM limit.
-    #[arg(long, default_value_t = 1536)]
-    pub max_worker_rss_mb: usize,
-
-    /// Backend mode: "cli" (default, tsz --batch) or "server" (tsz-server --protocol legacy).
-    #[arg(long, default_value = "cli", value_enum)]
+    /// Backend mode. Only fresh mode is canonical and may produce parity claims.
+    #[arg(long, default_value = "fresh", value_enum)]
     pub mode: RunMode,
-
-    /// Path to tsz-server binary (used when --mode=server).
-    /// Defaults to tsz-server next to the tsz binary.
-    #[arg(long)]
-    pub server_binary: Option<String>,
 
     /// Write structured parity diff artifacts for failed tests.
     #[arg(long)]
@@ -159,6 +139,12 @@ pub struct Args {
 impl Args {
     /// Validate arguments and apply any post-processing
     pub fn validate(&self) -> anyhow::Result<()> {
+        if self.mode != RunMode::Fresh {
+            anyhow::bail!(
+                "--mode {:?} is a noncanonical performance transport and cannot score conformance",
+                self.mode
+            );
+        }
         if self.all {
             // --all flag just means use a very high max
             // No additional validation needed
@@ -172,19 +158,6 @@ impl Args {
             }
         }
         Ok(())
-    }
-
-    /// Resolve the tsz-server binary path.
-    pub fn resolved_server_binary(&self) -> String {
-        if let Some(ref bin) = self.server_binary {
-            return bin.clone();
-        }
-        let tsz = &self.tsz_binary;
-        if tsz.ends_with("/tsz") || tsz.ends_with("\\tsz") {
-            format!("{}-server", tsz)
-        } else {
-            "tsz-server".to_string()
-        }
     }
 
     /// Check if verbose mode should be enabled (either explicitly or via print_test_files)
@@ -225,6 +198,15 @@ mod tests {
     fn default_timeout_covers_slow_full_suite_fixtures() {
         let args = parse_args(&["tsz-conformance"]);
         assert_eq!(args.timeout, 90);
+        assert_eq!(args.mode, super::RunMode::Fresh);
+    }
+
+    #[test]
+    fn pooled_and_server_modes_are_explicit_nonclaims() {
+        for mode in ["batch", "server"] {
+            let args = parse_args(&["tsz-conformance", "--mode", mode]);
+            assert!(args.validate().is_err());
+        }
     }
 
     #[test]

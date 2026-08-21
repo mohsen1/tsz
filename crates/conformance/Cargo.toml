@@ -8,6 +8,10 @@ license.workspace = true
 autotests = false
 publish = false
 
+[[test]]
+name = "canonical_truth"
+path = "tests/canonical_truth.rs"
+
 [dependencies]
 # Async runtime
 tokio = { version = "1.44", features = ["full", "tracing"] }

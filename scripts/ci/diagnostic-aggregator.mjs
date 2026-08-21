@@ -16,6 +16,7 @@ const SOURCE_LABEL_PATTERN = /^([a-z][\w-]*):\s+(.*)$/;
 const DIAGNOSTIC_CODE_PATTERN = /\bTS\d{4,5}\b/g;
 const PAREN_LOCATION_PATTERN = /^(.+?)\((\d+),(\d+)\):\s+(?:error\s+)?(TS\d{4,5})/;
 const COLON_LOCATION_PATTERN = /^(.+?):(\d+):(\d+)(?:\s+-)?\s+(?:error\s+)?(TS\d{4,5})/;
+const GLOBAL_DIAGNOSTIC_PATTERN = /^(?:error|warning)\s+(TS\d{4,5})\b/;
 
 const CODE_LIMIT = 8;
 const SUBSYSTEM_EXAMPLE_LIMIT = 3;
@@ -23,8 +24,9 @@ const REDUCTION_LIMIT = 5;
 
 // Parses a single diagnostic delta line into the structured location it
 // describes, after stripping any `source: ` label prefix. Returns null when
-// the line is not a parsable `path(line,col): error TSnnnn` or
-// `path:line:col: error TSnnnn` shape. Exported so callers that need to
+// the line is not a parsable located diagnostic or pathless
+// `error TSnnnn`/`warning TSnnnn` global diagnostic. Global diagnostics use
+// null path/line/column fields. Exported so callers that need to
 // classify an individual line (e.g. summary subsystem lookup) reuse this
 // canonical parser rather than re-implementing the same two regexes.
 export function parseDiagnosticLine(rawLine) {
@@ -40,6 +42,10 @@ export function parseDiagnosticLine(rawLine) {
   const colon = body.match(COLON_LOCATION_PATTERN);
   if (colon) {
     return { path: colon[1], line: Number(colon[2]), column: Number(colon[3]), code: colon[4] };
+  }
+  const global = body.match(GLOBAL_DIAGNOSTIC_PATTERN);
+  if (global) {
+    return { path: null, line: null, column: null, code: global[1] };
   }
   return null;
 }
@@ -272,4 +278,3 @@ export function aggregateRowsForSummary(rows, options = {}) {
     residencyByRow,
   };
 }
-

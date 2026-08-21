@@ -5,8 +5,6 @@ on:
     branches: [main]
     paths:
       - 'crates/tsz-website/**'
-      - 'crates/**/*.rs'
-      - 'crates/**/Cargo.toml'
       - 'docs/**/*.md'
       - 'AGENTS.md'
       - 'scripts/conformance/conformance-snapshot.json'
@@ -151,8 +149,8 @@ jobs:
 
   build:
     needs: check
-    # R0 deliberately has no WASM package. The static website remains
-    # deployable; its playground renders its existing unavailable fallback.
+    # R0 publishes only the static site. The playground route is an explicit
+    # unavailable-status page and has no compiler runtime attached to it.
     if: ${{ needs.check.outputs.should_deploy == 'true' }}
     runs-on: ubuntu-latest
     steps:

@@ -8,6 +8,7 @@ struct LibraryIndex {
     references: Vec<String>,
     type_names: BTreeSet<String>,
     value_names: BTreeSet<String>,
+    string_record_type_names: BTreeSet<String>,
 }
 
 fn main() {
@@ -31,13 +32,14 @@ fn main() {
         let name = library_name(&path);
         let source = fs::read_to_string(&path).unwrap();
         let references = reference_libraries(&source);
-        let (type_names, value_names) = declaration_names(&source);
+        let (type_names, value_names, string_record_type_names) = declaration_names(&source);
         libraries.insert(
             name,
             LibraryIndex {
                 references,
                 type_names,
                 value_names,
+                string_record_type_names,
             },
         );
     }
@@ -78,11 +80,12 @@ fn reference_libraries(source: &str) -> Vec<String> {
     references
 }
 
-fn declaration_names(source: &str) -> (BTreeSet<String>, BTreeSet<String>) {
+fn declaration_names(source: &str) -> (BTreeSet<String>, BTreeSet<String>, BTreeSet<String>) {
     let tokens = tokens(source);
     let mut scopes = Vec::new();
     let mut type_names = BTreeSet::new();
     let mut value_names = BTreeSet::new();
+    let mut string_record_type_names = BTreeSet::new();
 
     for (index, token) in tokens.iter().enumerate() {
         match token.as_str() {
@@ -106,6 +109,9 @@ fn declaration_names(source: &str) -> (BTreeSet<String>, BTreeSet<String>) {
                 match token.as_str() {
                     "interface" | "type" => {
                         type_names.insert(name.clone());
+                        if token == "type" && is_homogeneous_string_record_alias(&tokens, index) {
+                            string_record_type_names.insert(name.clone());
+                        }
                     }
                     "class" | "enum" | "namespace" | "module" => {
                         type_names.insert(name.clone());
@@ -124,7 +130,39 @@ fn declaration_names(source: &str) -> (BTreeSet<String>, BTreeSet<String>) {
         }
     }
 
-    (type_names, value_names)
+    (type_names, value_names, string_record_type_names)
+}
+
+/// Recognize the pinned-library declaration shape
+/// `<K extends keyof any, V> = { [P in K]: V }` without using its binder names.
+fn is_homogeneous_string_record_alias(tokens: &[String], start: usize) -> bool {
+    let Some(shape) = tokens.get(start..start + 21) else {
+        return false;
+    };
+    let key_parameter = &shape[3];
+    let value_parameter = &shape[8];
+    let mapped_parameter = &shape[13];
+    shape[0] == "type"
+        && is_identifier(&shape[1])
+        && shape[2] == "<"
+        && is_identifier(key_parameter)
+        && shape[4] == "extends"
+        && shape[5] == "keyof"
+        && shape[6] == "any"
+        && shape[7] == ","
+        && is_identifier(value_parameter)
+        && shape[9] == ">"
+        && shape[10] == "="
+        && shape[11] == "{"
+        && shape[12] == "["
+        && is_identifier(mapped_parameter)
+        && shape[14] == "in"
+        && shape[15] == *key_parameter
+        && shape[16] == "]"
+        && shape[17] == ":"
+        && shape[18] == *value_parameter
+        && shape[19] == ";"
+        && shape[20] == "}"
 }
 
 fn is_declaration_scope(scopes: &[bool]) -> bool {
@@ -165,7 +203,7 @@ fn tokens(source: &str) -> Vec<String> {
                     }
                 }
             }
-            b'{' | b'}' => {
+            b'{' | b'}' | b'[' | b']' | b'<' | b'>' | b',' | b':' | b';' | b'=' => {
                 tokens.push(char::from(bytes[index]).to_string());
                 index += 1;
             }
@@ -215,6 +253,8 @@ fn generated_source(libraries: &BTreeMap<String, LibraryIndex>) -> String {
         output.push_str(&render_strings(&library.type_names));
         output.push_str(", value_names: &");
         output.push_str(&render_strings(&library.value_names));
+        output.push_str(", string_record_type_names: &");
+        output.push_str(&render_strings(&library.string_record_type_names));
         output.push_str(" },\n");
     }
     output.push_str("];\n");

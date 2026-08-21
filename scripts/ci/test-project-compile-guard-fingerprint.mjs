@@ -24,6 +24,7 @@ import { fileURLToPath } from "node:url";
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(SCRIPT_DIR, "..", "..");
 const LIB = path.join(ROOT, "scripts", "ci", "lib", "project-compile-fingerprint.sh");
+const ORACLE_LIB = path.join(ROOT, "scripts", "ci", "lib", "project-tsc-oracle.sh");
 
 assert.ok(fs.existsSync(LIB), `fingerprint library missing: ${LIB}`);
 
@@ -32,10 +33,12 @@ assert.ok(fs.existsSync(LIB), `fingerprint library missing: ${LIB}`);
 const harness = String.raw`
 set -Eeuo pipefail
 source "$LIB_PATH"
+source "$ORACLE_LIB_PATH"
 
 # A fixed stand-in for the tsz binary hash; the real guard derives this from the
 # built binary. Holding it constant isolates the source-identity behaviour.
 export _TSZ_BINARY_HASH="deadbeef"
+export _TSZ_TSC_ORACLE_HASH="oracle-v1"
 
 git_quiet() { git -c init.defaultBranch=main -c user.email=t@t -c user.name=t -c commit.gpgsign=false "$@" >/dev/null 2>&1; }
 
@@ -70,6 +73,10 @@ emit A_AFTER_OUTER_COMMIT "$(compute_compile_fingerprint gen-app "$GEN/tsconfig.
 printf 'export const x: number = 2;\n' > "$GEN/src/main.ts"
 emit A_AFTER_SRC_EDIT "$(compute_compile_fingerprint gen-app "$GEN/tsconfig.json" "$GEN/src")"
 
+export _TSZ_TSC_ORACLE_HASH="unavailable"
+emit A_AFTER_ORACLE_CHANGE "$(compute_compile_fingerprint gen-app "$GEN/tsconfig.json" "$GEN/src")"
+export _TSZ_TSC_ORACLE_HASH="oracle-v1"
+
 # Capture the outer HEAD so the test can assert it never leaks into the key.
 emit OUTER_HEAD "$(git -C "$OUTER" rev-parse HEAD)"
 
@@ -103,11 +110,57 @@ emit B_DIRTY "$(compute_compile_fingerprint git-fixture "$FIX/tsconfig.json" "$F
 git_quiet -C "$FIX" add -A
 git_quiet -C "$FIX" commit -m "fixture v2"
 emit B_AFTER_COMMIT "$(compute_compile_fingerprint git-fixture "$FIX/tsconfig.json" "$FIX/src")"
+
+# A nested application config may extend a base config and import sources
+# outside the conventional src_dir. Both live inputs must invalidate caches.
+mkdir -p "$FIX/apps/web/src" "$FIX/shared"
+printf '{"compilerOptions":{"strict":true}}\n' > "$FIX/tsconfig.base.json"
+printf '{"extends":"../../tsconfig.base.json","files":["src/main.ts"]}\n' > "$FIX/apps/web/tsconfig.json"
+printf 'import "../../../shared/imported";\n' > "$FIX/apps/web/src/main.ts"
+printf 'export const imported = 1;\n' > "$FIX/shared/imported.ts"
+emit C_FIRST "$(compute_compile_fingerprint nested-app "$FIX/apps/web/tsconfig.json" "$FIX/apps/web/src")"
+emit C_ORACLE_FIRST "$(tsz_tsc_oracle_fingerprint nested-app "$FIX/apps/web/tsconfig.json" "$FIX/apps/web/src" oracle-v1)"
+
+printf '{"compilerOptions":{"strict":false}}\n' > "$FIX/tsconfig.base.json"
+emit C_BASE_EDIT "$(compute_compile_fingerprint nested-app "$FIX/apps/web/tsconfig.json" "$FIX/apps/web/src")"
+emit C_ORACLE_BASE_EDIT "$(tsz_tsc_oracle_fingerprint nested-app "$FIX/apps/web/tsconfig.json" "$FIX/apps/web/src" oracle-v1)"
+
+printf 'export const imported = 2;\n' > "$FIX/shared/imported.ts"
+emit C_EXTERNAL_EDIT "$(compute_compile_fingerprint nested-app "$FIX/apps/web/tsconfig.json" "$FIX/apps/web/src")"
+emit C_ORACLE_EXTERNAL_EDIT "$(tsz_tsc_oracle_fingerprint nested-app "$FIX/apps/web/tsconfig.json" "$FIX/apps/web/src" oracle-v1)"
+
+# Installed declarations and generated Next types can be explicit compiler
+# inputs. Both result and oracle cache keys must move when either tree changes.
+mkdir -p "$FIX/node_modules/pkg" "$FIX/.next/types"
+printf '{"name":"pkg","types":"index.d.ts"}\n' > "$FIX/node_modules/pkg/package.json"
+printf 'export declare const dependency: 1;\n' > "$FIX/node_modules/pkg/index.d.ts"
+printf 'export declare const route: "/a";\n' > "$FIX/.next/types/routes.d.ts"
+emit D_FIRST "$(compute_compile_fingerprint dependency-app "$FIX/apps/web/tsconfig.json" "$FIX/apps/web/src")"
+emit D_ORACLE_FIRST "$(tsz_tsc_oracle_fingerprint dependency-app "$FIX/apps/web/tsconfig.json" "$FIX/apps/web/src" oracle-v1)"
+printf 'export declare const dependency: 2;\n' > "$FIX/node_modules/pkg/index.d.ts"
+emit D_NODE_MODULE_EDIT "$(compute_compile_fingerprint dependency-app "$FIX/apps/web/tsconfig.json" "$FIX/apps/web/src")"
+emit D_ORACLE_NODE_MODULE_EDIT "$(tsz_tsc_oracle_fingerprint dependency-app "$FIX/apps/web/tsconfig.json" "$FIX/apps/web/src" oracle-v1)"
+printf 'export declare const route: "/b";\n' > "$FIX/.next/types/routes.d.ts"
+emit D_NEXT_EDIT "$(compute_compile_fingerprint dependency-app "$FIX/apps/web/tsconfig.json" "$FIX/apps/web/src")"
+emit D_ORACLE_NEXT_EDIT "$(tsz_tsc_oracle_fingerprint dependency-app "$FIX/apps/web/tsconfig.json" "$FIX/apps/web/src" oracle-v1)"
+
+# A failed dependency-tree traversal must fail closed: partial tree hashes are
+# never cache keys.
+CYCLE="$FIXTURE_ROOT/cycle-row"
+mkdir -p "$CYCLE/src"
+printf '{"files":["src/main.ts"]}\n' > "$CYCLE/tsconfig.json"
+printf 'export const main = 1;\n' > "$CYCLE/src/main.ts"
+find() { return 1; }
+cycle_result="$(compute_compile_fingerprint cycle-row "$CYCLE/tsconfig.json" "$CYCLE/src" 2>/dev/null || true)"
+cycle_oracle="$(tsz_tsc_oracle_fingerprint cycle-row "$CYCLE/tsconfig.json" "$CYCLE/src" oracle-v1 2>/dev/null || true)"
+unset -f find
+emit E_RESULT_LENGTH "$(printf '%s' "$cycle_result" | wc -c | tr -d ' ')"
+emit E_ORACLE_LENGTH "$(printf '%s' "$cycle_oracle" | wc -c | tr -d ' ')"
 `;
 
 const result = spawnSync("bash", ["-c", harness], {
   encoding: "utf8",
-  env: { ...process.env, LIB_PATH: LIB },
+  env: { ...process.env, LIB_PATH: LIB, ORACLE_LIB_PATH: ORACLE_LIB },
 });
 assert.equal(result.status, 0, `harness failed: ${result.stderr}`);
 
@@ -125,12 +178,27 @@ for (const key of [
   "A_FIRST",
   "A_AFTER_OUTER_COMMIT",
   "A_AFTER_SRC_EDIT",
+  "A_AFTER_ORACLE_CHANGE",
   "OUTER_HEAD",
   "B_FIRST",
   "B_AFTER_OUTER_COMMIT",
   "B_UNTRACKED",
   "B_DIRTY",
   "B_AFTER_COMMIT",
+  "C_FIRST",
+  "C_BASE_EDIT",
+  "C_EXTERNAL_EDIT",
+  "C_ORACLE_FIRST",
+  "C_ORACLE_BASE_EDIT",
+  "C_ORACLE_EXTERNAL_EDIT",
+  "D_FIRST",
+  "D_ORACLE_FIRST",
+  "D_NODE_MODULE_EDIT",
+  "D_ORACLE_NODE_MODULE_EDIT",
+  "D_NEXT_EDIT",
+  "D_ORACLE_NEXT_EDIT",
+  "E_RESULT_LENGTH",
+  "E_ORACLE_LENGTH",
 ]) {
   assert.ok(kv[key], `missing harness output: ${key}\n${result.stdout}`);
 }
@@ -145,6 +213,11 @@ assert.notEqual(
   kv.A_FIRST,
   kv.A_AFTER_SRC_EDIT,
   "generated-app fingerprint must change when a compiled source file changes",
+);
+assert.notEqual(
+  kv.A_AFTER_SRC_EDIT,
+  kv.A_AFTER_ORACLE_CHANGE,
+  "result cache fingerprint must change when pinned oracle evidence becomes unavailable",
 );
 assert.ok(
   kv.A_FIRST.includes("|tree:"),
@@ -186,5 +259,51 @@ assert.notEqual(
   kv.B_AFTER_COMMIT,
   "committing a dirty edit must not collide with the dirty-tree fingerprint",
 );
+
+// --- Case C: nested app config and imported source outside src_dir ----------
+assert.notEqual(
+  kv.C_FIRST,
+  kv.C_BASE_EDIT,
+  "nested app fingerprint must include extended/base config content",
+);
+assert.notEqual(
+  kv.C_BASE_EDIT,
+  kv.C_EXTERNAL_EDIT,
+  "nested app fingerprint must include imported sources outside the declared src_dir",
+);
+assert.notEqual(
+  kv.C_ORACLE_FIRST,
+  kv.C_ORACLE_BASE_EDIT,
+  "tsc-oracle cache fingerprint must include extended/base config content",
+);
+assert.notEqual(
+  kv.C_ORACLE_BASE_EDIT,
+  kv.C_ORACLE_EXTERNAL_EDIT,
+  "tsc-oracle cache fingerprint must include imported sources outside src_dir",
+);
+
+// --- Case D/E: dependency/generated inputs and fail-closed traversal --------
+assert.notEqual(
+  kv.D_FIRST,
+  kv.D_NODE_MODULE_EDIT,
+  "result cache fingerprint must include node_modules declarations",
+);
+assert.notEqual(
+  kv.D_ORACLE_FIRST,
+  kv.D_ORACLE_NODE_MODULE_EDIT,
+  "tsc-oracle fingerprint must include node_modules declarations",
+);
+assert.notEqual(
+  kv.D_NODE_MODULE_EDIT,
+  kv.D_NEXT_EDIT,
+  "result cache fingerprint must include .next generated types",
+);
+assert.notEqual(
+  kv.D_ORACLE_NODE_MODULE_EDIT,
+  kv.D_ORACLE_NEXT_EDIT,
+  "tsc-oracle fingerprint must include .next generated types",
+);
+assert.equal(kv.E_RESULT_LENGTH, "0", "symlink traversal failure disables result caching");
+assert.equal(kv.E_ORACLE_LENGTH, "0", "symlink traversal failure disables oracle caching");
 
 console.log("project-compile-guard fingerprint: ok");

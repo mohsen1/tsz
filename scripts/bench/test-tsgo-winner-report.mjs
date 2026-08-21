@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { GREEN_COMPAT } from "./row-utils.mjs";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(SCRIPT_DIR, "..", "..");
@@ -24,8 +25,35 @@ function withTempDir(fn) {
 }
 
 function writeJson(file, value) {
+  const serialized = Array.isArray(value?.results)
+    ? {
+        ...value,
+        results: value.results.map((row) => row?.compatibility?.state === "green"
+          ? { ...row, compatibility: greenCompatibility(row.compatibility) }
+          : row),
+      }
+    : value;
   fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`);
+  fs.writeFileSync(file, `${JSON.stringify(serialized, null, 2)}\n`);
+}
+
+function greenCompatibility(overrides = {}) {
+  const {
+    state: _state,
+    phase: _phase,
+    last_successful_phase: _lastSuccessfulPhase,
+    exit_class: _exitClass,
+    diagnostic_status: _diagnosticStatus,
+    ...evidence
+  } = GREEN_COMPAT;
+  const sourceFiles = overrides.files_reached ?? GREEN_COMPAT.source_files;
+  return {
+    ...evidence,
+    source_files: sourceFiles,
+    oracle_source_files: sourceFiles,
+    files_reached: sourceFiles,
+    ...overrides,
+  };
 }
 
 const { createTsgoWinnerReport, renderMissingAttributionPlanMarkdown } = await import(
@@ -37,16 +65,11 @@ const { createTsgoWinnerReport, renderMissingAttributionPlanMarkdown } = await i
     JSON.parse(fs.readFileSync(WEBSITE_BENCH_SNAPSHOT, "utf8")),
     WEBSITE_BENCH_SNAPSHOT,
   );
-  assert.equal(report.two_x_target.rows_below_target, 18);
+  assert.equal(report.two_x_target.project_eligible_green_rows, 0);
   assert.equal(
-    report.two_x_target.rows_with_attribution_command,
     report.two_x_target.rows_below_target,
-  );
-  assert.deepEqual(
-    report.two_x_target.missing_attribution_plan
-      .filter((row) => !row.attribution_command)
-      .map((row) => row.name),
-    [],
+    7,
+    "legacy website project rows without schema-v2 proof are not speed evidence",
   );
 }
 

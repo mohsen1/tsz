@@ -160,10 +160,25 @@ pub enum TokenKind {
 }
 
 impl TokenKind {
-    pub(crate) const fn is_contextual_identifier(self) -> bool {
+    /// Whether this token can be represented as an identifier node.
+    ///
+    /// TypeScript preserves strict-mode future-reserved words in the tree and
+    /// diagnoses their legality later, when the surrounding strict/yield/await
+    /// context is known. Keeping the spelling here also lets emit recover the
+    /// source faithfully after a diagnostic.
+    pub(crate) const fn is_identifier(self) -> bool {
         matches!(
             self,
             Self::Identifier
+                | Self::Implements
+                | Self::Interface
+                | Self::Let
+                | Self::Package
+                | Self::Private
+                | Self::Protected
+                | Self::Public
+                | Self::Static
+                | Self::Yield
                 | Self::Abstract
                 | Self::Accessor
                 | Self::As

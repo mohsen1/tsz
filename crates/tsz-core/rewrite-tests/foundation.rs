@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use tsz::service::LanguageService;
-use tsz::{Compiler, CompilerOptions, SourceInput};
+use tsz::{CompileExitStatus, Compiler, CompilerOptions, SemanticCompletion, SourceInput};
 
 fn compile(source: &str) -> tsz::CompileOutput {
     Compiler::new().compile(
@@ -107,6 +107,11 @@ fn seed_diagnostics_match_the_pinned_ts7_oracle() {
 
     for (source, expected) in cases {
         let output = compile(source);
+        assert_eq!(
+            output.semantic_completion,
+            SemanticCompletion::Complete,
+            "pinned TS7 seed did not reach a definitive semantic result for {source:?}"
+        );
         match expected {
             Some((code, start, length, message)) => {
                 let [diagnostic] = output.diagnostics.as_slice() else {
@@ -159,6 +164,8 @@ fn deferred_generic_aliases_are_forced_by_one_gateway() {
 #[test]
 fn direct_alias_cycles_have_a_typed_cycle_result() {
     let output = compile("type Loop = Loop;");
+    assert_eq!(output.semantic_completion, SemanticCompletion::Cycle);
+    assert_eq!(output.exit_status, CompileExitStatus::SemanticIncomplete);
     assert_eq!(codes(&output), vec![2456]);
     assert_eq!(
         output.diagnostics[0].message_text,
@@ -181,11 +188,30 @@ fn no_check_is_an_explicit_emit_mode() {
         },
     );
     assert!(output.diagnostics.is_empty());
+    assert_eq!(output.semantic_completion, SemanticCompletion::Complete);
     assert_eq!(output.emitted_files.len(), 1);
     assert_eq!(
         output.emitted_files[0].text,
         "\"use strict\";\nconst count = \"wrong\";\n"
     );
+}
+
+#[test]
+fn language_service_keeps_semantic_completion_separate_from_diagnostics() {
+    let mut service = LanguageService::new(CompilerOptions {
+        no_emit: true,
+        strict: true,
+        ..CompilerOptions::default()
+    });
+    service.open(
+        "case.ts",
+        Arc::<str>::from("const text:string=''; const size:number=text.length;"),
+    );
+
+    assert!(service.syntactic_diagnostics("case.ts").is_empty());
+    let semantic = service.semantic_diagnostics("case.ts");
+    assert!(semantic.diagnostics.is_empty());
+    assert_eq!(semantic.semantic_completion, SemanticCompletion::Deferred);
 }
 
 #[test]
@@ -211,13 +237,18 @@ fn ten_repeated_runs_and_both_source_orders_have_one_fingerprint() {
             })
             .collect::<Vec<_>>()
     };
-    let expected =
-        fingerprint(&Compiler::new().compile(vec![first.clone(), second.clone()], &options));
+    let forward = vec![first.clone(), second.clone()];
+    let reverse = vec![second, first];
+    let expected = fingerprint(&Compiler::new().compile(forward.clone(), &options));
+    assert_eq!(
+        expected
+            .iter()
+            .map(|diagnostic| diagnostic.0.as_str())
+            .collect::<Vec<_>>(),
+        ["a.ts", "b.ts"]
+    );
     for iteration in 0..10 {
-        for inputs in [
-            vec![first.clone(), second.clone()],
-            vec![second.clone(), first.clone()],
-        ] {
+        for inputs in [forward.clone(), reverse.clone()] {
             let actual = fingerprint(&Compiler::new().compile(inputs, &options));
             assert_eq!(
                 actual, expected,
@@ -252,6 +283,188 @@ fn quick_info_preserves_const_literals_and_widens_let_literals() {
     assert_eq!(
         service.quick_info("case.ts", 21).unwrap().display,
         "let changing: number"
+    );
+}
+
+#[test]
+fn quick_info_infers_widened_object_literals_at_top_level_and_in_nested_scopes() {
+    for (name, property) in [("item", "count"), ("renamed", "total")] {
+        let source = format!(
+            "const {name} = {{ {property}: 1 }};\nfunction scope(): void {{ const nested = {{ {name}: {{ label: \"ok\" }}, ready: true }}; }}"
+        );
+        let mut service = LanguageService::new(CompilerOptions::default());
+        service.open("case.ts", Arc::<str>::from(source.clone()));
+
+        let declaration = source.find(name).unwrap() as u32;
+        assert_eq!(
+            service
+                .quick_info("case.ts", declaration + 1)
+                .unwrap()
+                .display,
+            format!("const {name}: {{ {property}: number; }}")
+        );
+
+        let nested = source.find("nested").unwrap() as u32;
+        assert_eq!(
+            service.quick_info("case.ts", nested + 1).unwrap().display,
+            format!("const nested: {{ {name}: {{ label: string; }}; ready: boolean; }}")
+        );
+    }
+}
+
+#[test]
+fn fresh_const_aliases_widen_at_mutable_object_properties_but_annotations_do_not() {
+    // Structural rule: when an inferred const literal flows through a mutable
+    // object property, TypeScript 7 widens its fresh provenance. A literal
+    // annotation is regular provenance and remains literal through the same
+    // shorthand/nested shapes. `TypeStore` owns that distinction.
+    for (text_name, number_name, boolean_name) in
+        [("text", "count", "ready"), ("label", "total", "enabled")]
+    {
+        let source = format!(
+            r#"
+            const {text_name} = "seed";
+            const {number_name} = 1;
+            const {boolean_name} = true;
+            const exactText: "seed" = "seed";
+            const exactNumber: 1 = 1;
+            const exactBoolean: true = true;
+            const mutable = {{
+                {text_name},
+                {number_name},
+                {boolean_name},
+                nested: {{ {text_name} }},
+                renamed: {text_name}
+            }};
+            const annotated = {{ exactText, exactNumber, exactBoolean }};
+            const badText: "seed" = mutable.{text_name};
+            const badNumber: 1 = mutable.{number_name};
+            const badBoolean: true = mutable.{boolean_name};
+            const badNested: "seed" = mutable.nested.{text_name};
+            const goodText: "seed" = annotated.exactText;
+            const goodNumber: 1 = annotated.exactNumber;
+            const goodBoolean: true = annotated.exactBoolean;
+            "#
+        );
+        let output = compile(&source);
+        assert_eq!(codes(&output), vec![2322, 2322, 2322, 2322]);
+        assert_eq!(
+            output
+                .diagnostics
+                .iter()
+                .map(|diagnostic| diagnostic.message_text.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "Type 'string' is not assignable to type '\"seed\"'.",
+                "Type 'number' is not assignable to type '1'.",
+                "Type 'boolean' is not assignable to type 'true'.",
+                "Type 'string' is not assignable to type '\"seed\"'.",
+            ],
+            "wrong provenance result for renamed binders {text_name}/{number_name}/{boolean_name}"
+        );
+        assert_eq!(output.semantic_completion, SemanticCompletion::Complete);
+    }
+}
+
+#[test]
+fn fresh_array_elements_widen_through_the_same_provenance_gateway() {
+    for (fresh_name, regular_name) in [("seed", "fixed"), ("label", "pinned")] {
+        let source = format!(
+            r#"
+            const {fresh_name} = "start";
+            const {regular_name}: "start" = "start";
+            const direct = ["a", "b"];
+            const fromFresh = [{fresh_name}];
+            const fromRegular = [{regular_name}];
+            const narrowDirect: ("a" | "b")[] = direct;
+            const narrowFresh: "start"[] = fromFresh;
+            const exactRegular: "start"[] = fromRegular;
+            "#
+        );
+        let output = compile(&source);
+        assert_eq!(codes(&output), vec![2322, 2322], "{:?}", output.diagnostics);
+        assert_eq!(output.semantic_completion, SemanticCompletion::Complete);
+    }
+}
+
+#[test]
+fn quick_info_renders_parsed_type_shapes_without_unknown_placeholders() {
+    let cases = [
+        (
+            "ObjectShape",
+            "type ObjectShape = { readonly count?: number; label: string };",
+            "type ObjectShape = { readonly count?: number; label: string; }",
+        ),
+        (
+            "Callback",
+            "type Callback = (value: string, ...indexes: number[]) => boolean;",
+            "type Callback = (value: string, ...indexes: number[]) => boolean",
+        ),
+        (
+            "Builder",
+            "type Builder = abstract new (value: number) => Box;",
+            "type Builder = abstract new (value: number) => Box",
+        ),
+        (
+            "Keys",
+            "type Keys = keyof ObjectShape;",
+            "type Keys = keyof ObjectShape",
+        ),
+        (
+            "Choice",
+            "type Choice = string extends number ? true : false;",
+            "type Choice = string extends number ? true : false",
+        ),
+        (
+            "Projection",
+            "type Projection = { -readonly [P in keyof ObjectShape]-?: ObjectShape[P] };",
+            "type Projection = { -readonly [P in keyof ObjectShape]-?: ObjectShape[P]; }",
+        ),
+        (
+            "Indexed",
+            "type Indexed = ObjectShape[\"count\"];",
+            "type Indexed = ObjectShape[\"count\"]",
+        ),
+        (
+            "Grouped",
+            "type Grouped = (string | number);",
+            "type Grouped = (string | number)",
+        ),
+    ];
+
+    for (name, source, expected) in cases {
+        let mut service = LanguageService::new(CompilerOptions::default());
+        service.open("case.ts", Arc::<str>::from(source));
+        let offset = source.find(name).unwrap() as u32;
+        let info = service.quick_info("case.ts", offset + 1).unwrap();
+        assert_eq!(info.display, expected, "wrong display for {name}");
+        assert!(!info.display.ends_with("unknown"));
+    }
+}
+
+#[test]
+fn quick_info_returns_none_when_initializer_or_type_display_needs_missing_semantics() {
+    let source = concat!(
+        "const fromCall = createValue();\n",
+        "const list = [1, 2];\n",
+        "const explicit: unknown = fromCall;\n",
+        "type Broken = ;\n",
+    );
+    let mut service = LanguageService::new(CompilerOptions::default());
+    service.open("case.ts", Arc::<str>::from(source));
+
+    for name in ["fromCall", "list", "Broken"] {
+        let offset = source.find(name).unwrap() as u32;
+        assert!(
+            service.quick_info("case.ts", offset + 1).is_none(),
+            "unsupported {name} received confident quickinfo"
+        );
+    }
+
+    let explicit = source.find("explicit").unwrap() as u32;
+    assert_eq!(
+        service.quick_info("case.ts", explicit + 1).unwrap().display,
+        "const explicit: unknown"
     );
 }
 
@@ -601,7 +814,7 @@ fn logical_and_unary_queries_complete_only_when_their_operands_decide_the_result
 }
 
 #[test]
-fn unsupported_deferred_forms_fail_conservatively_instead_of_becoming_error_success() {
+fn unsupported_deferred_forms_stay_typed_without_fabricated_diagnostics() {
     let conditional = compile(
         r#"
         type Choice<T> = T extends string ? number : boolean;
@@ -609,7 +822,7 @@ fn unsupported_deferred_forms_fail_conservatively_instead_of_becoming_error_succ
         choice = "wrong";
         "#,
     );
-    assert_eq!(codes(&conditional), vec![2322]);
+    assert!(conditional.diagnostics.is_empty());
 
     let mapped = compile(
         r#"
@@ -618,7 +831,7 @@ fn unsupported_deferred_forms_fail_conservatively_instead_of_becoming_error_succ
         flags = "wrong";
         "#,
     );
-    assert_eq!(codes(&mapped), vec![2322]);
+    assert!(mapped.diagnostics.is_empty());
 
     let type_query = compile(
         r#"
@@ -626,7 +839,7 @@ fn unsupported_deferred_forms_fail_conservatively_instead_of_becoming_error_succ
         math = 1;
         "#,
     );
-    assert_eq!(codes(&type_query), vec![2322]);
+    assert!(type_query.diagnostics.is_empty());
 
     let identifier = compile(
         r#"
@@ -635,14 +848,14 @@ fn unsupported_deferred_forms_fail_conservatively_instead_of_becoming_error_succ
         const count: number = value;
         "#,
     );
-    assert_eq!(codes(&identifier), vec![2322]);
+    assert!(identifier.diagnostics.is_empty());
 
     let call_and_member = compile(
         r#"
         const text: string = Math.max(1, 2);
         "#,
     );
-    assert_eq!(codes(&call_and_member), vec![2322]);
+    assert!(call_and_member.diagnostics.is_empty());
 }
 
 #[test]

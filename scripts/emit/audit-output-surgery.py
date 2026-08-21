@@ -1,10 +1,16 @@
 #!/usr/bin/env python3
-"""Audit emitter output-surgery rewrites.
+"""Audit emitter and emit-harness output-surgery rewrites.
 
 This script is intentionally conservative: harmless string-data cleanup is
 allowed automatically, while semantic rewrites over already-emitted JS/DTS are
 treated as ratcheted debt. Current debt is listed in
 `output-surgery-allowlist.txt` by file, category, max count, and reason.
+
+The retained emit harness is part of the truth perimeter. Its canonical row
+runs TSZ once and the pinned TypeScript 7 oracle once with the same authored
+options, then compares their complete product maps byte-for-byte. Retrying with
+weaker flags, using checked-in baseline bytes,
+repairing output, or promoting tolerant comparisons to passes is forbidden.
 """
 
 from __future__ import annotations
@@ -23,6 +29,22 @@ from typing import Optional
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 SOURCE_ROOT = ROOT / "crates" / "tsz-core" / "src" / "emit.rs"
 ALLOWLIST_PATH = ROOT / "scripts" / "emit" / "output-surgery-allowlist.txt"
+HARNESS_TRUTH_SOURCES = (
+    ROOT / "scripts" / "emit" / "src" / "cli-transpiler.ts",
+    ROOT / "scripts" / "emit" / "src" / "runner.ts",
+    ROOT / "scripts" / "emit" / "src" / "baseline-parser.ts",
+    ROOT / "scripts" / "emit" / "src" / "canonical-products.ts",
+    ROOT / "scripts" / "emit" / "src" / "canonical-support.ts",
+    ROOT / "scripts" / "emit" / "src" / "authored-options.ts",
+    ROOT / "scripts" / "emit" / "src" / "source-test.ts",
+    ROOT / "scripts" / "emit" / "src" / "artifact-state.ts",
+    ROOT / "scripts" / "emit" / "src" / "oracle.ts",
+    ROOT / "scripts" / "emit" / "oracle-manifest.json",
+    ROOT / "scripts" / "emit" / "query-emit.py",
+)
+HARNESS_TRUTH_REL_PATHS = {
+    path.relative_to(ROOT).as_posix() for path in HARNESS_TRUTH_SOURCES
+}
 
 REPLACE_CALL_RE = re.compile(r"(?:\.\s*)?(replace|replacen|replace_range)\s*\(")
 MANUAL_DEBT_MARKER_RE = re.compile(r"OUTPUT_SURGERY_DEBT\b")
@@ -32,6 +54,251 @@ UNALLOWLISTED_FAILURE_RE = re.compile(
 OVER_ALLOWLIST_FAILURE_RE = re.compile(
     r": (?P<count>\d+) output-surgery call\(s\), allowlist max is (?P<max_count>\d+)"
 )
+
+HARNESS_BYPASS_RULES: dict[str, tuple[tuple[str, re.Pattern[str]], ...]] = {
+    "cli-transpiler.ts": (
+        (
+            "altered-invocation-retry",
+            re.compile(r"\b(?:retryArgs|shouldRetryDeclarationFastPath)\b"),
+        ),
+        (
+            "expected-content-control",
+            re.compile(r"\b(?:expectedJsContent|expectedDtsContent|normalizeComparableOutput)\b"),
+        ),
+        (
+            "candidate-output-search",
+            re.compile(r"\b(?:jsCandidates|dtsCandidates|stemMatches|basenameMatches)\b"),
+        ),
+        (
+            "actual-output-compensation",
+            re.compile(
+                r"\b(?:dedupeUseStrictPreamble|hasUseStrictPreamble|normalizeLeadingTripleSlashSpacing)\b"
+            ),
+        ),
+        (
+            "single-product-election",
+            re.compile(
+                r"\b(?:expectedJsFileName|expectedDtsFileName|"
+                r"readCanonicalOutput|resolveCanonicalOutputPath)\b"
+            ),
+        ),
+        (
+            "arbitrary-rejection-absence-pass",
+            re.compile(r"\bexpectedNoProducts\b"),
+        ),
+        (
+            "synthesized-unchecked-invocation",
+            re.compile(
+                r"if\s*\(\s*!declarationRequested\s*\)\s*\{?"
+                r"(?:(?!\n\s*\}).){0,300}--no(?:Check|Lib)",
+                re.DOTALL,
+            ),
+        ),
+        (
+            "staged-files-used-as-root-arguments",
+            re.compile(r"args\.push\(\.\.\.inputFiles\)"),
+        ),
+        (
+            "synthesized-allow-js",
+            re.compile(r"\b(?:hasJsInput|effectiveAllowJs)\b|allowJs\s*\?\?"),
+        ),
+    ),
+    "runner.ts": (
+        (
+            "actual-output-compensation",
+            re.compile(r"\b(?:stripSourceMapUrl|dedupeUseStrict)\b"),
+        ),
+        (
+            "tolerant-comparison-pass",
+            re.compile(
+                r"\b(?:normalizeComments|normalizeWhitespace)\b|"
+                r"(?:comment|whitespace)-only difference"
+            ),
+        ),
+        (
+            "canonical-result-cache",
+            re.compile(r"\b(?:getCacheKey|loadCache|saveCache|buildSourceKey)\b|emit-cache\.json"),
+        ),
+        (
+            "single-product-comparison",
+            re.compile(
+                r"\b(?:expectedJs|expectedDts|expectedJsFileName|expectedDtsFileName)\b|"
+                r"transpileResult\.(?:js|dts)\b"
+            ),
+        ),
+        (
+            "silent-candidate-drop",
+            re.compile(r"maxTests\s*\*\s*2|return\s+results\.filter\s*\("),
+        ),
+        (
+            "legacy-baseline-byte-oracle",
+            re.compile(
+                r"\bnoCheckContent\b|\bexpected(?:Js|Dts)Products\b|"
+                r"baseline\.(?:js|dts)\s*=|\bTSZ_EMIT_BASELINES_OVERLAY\b|"
+                r"\bOVERLAY_DIR\b|baselines-ts7"
+            ),
+        ),
+        (
+            "strict-family-approximation",
+            re.compile(
+                r"strictNullChecks\s*=\s*[^;\n]*\bstrict\b|"
+                r"\bstrict\b\s*===\s*false[^;\n]*strictNullChecks"
+            ),
+        ),
+        (
+            "baseline-derived-declaration-flag",
+            re.compile(r"declaration\s*:\s*[^,\n]*dtsProductDomain|declaration\s*\?\?[^\n]*dtsProductDomain"),
+        ),
+        (
+            "ignored-embedded-config-error",
+            re.compile(r"catch\s*\{\s*/\*\s*ignore parse errors", re.IGNORECASE),
+        ),
+    ),
+    "baseline-parser.ts": (
+        (
+            "non-line-ending-normalization",
+            re.compile(
+                r"export function normalizeEmit\([^)]*\)[^{]*\{"
+                r"(?:(?!\n\}).)*?\.trim\s*\(",
+                re.DOTALL,
+            ),
+        ),
+        (
+            "product-line-ending-normalization",
+            re.compile(r"\bnormalizeEmit\b"),
+        ),
+    ),
+    "canonical-products.ts": (
+        (
+            "product-line-ending-normalization",
+            re.compile(r"\b(?:compareEmit|normalizeEmit)\b"),
+        ),
+        (
+            "nonzero-outcome-match",
+            re.compile(r"oracle\.exitCode\s*!==\s*product\.exitCode"),
+        ),
+    ),
+    "authored-options.ts": (
+        (
+            "provenance-erasing-boolean-coercion",
+            re.compile(r"(?:option\.)?value\.trim\(\)\.toLowerCase\(\)"),
+        ),
+    ),
+    "source-test.ts": (
+        (
+            "source-byte-trim",
+            re.compile(r"(?:sourceBytes|singleFileContent)[^;\n]*\.trim\s*\("),
+        ),
+        (
+            "historical-source-fallback",
+            re.compile(r"\bgit\b[^;\n]{0,160}\bshow\b|\bHEAD:"),
+        ),
+    ),
+}
+
+HARNESS_REQUIRED_RULES: dict[str, tuple[tuple[str, re.Pattern[str]], ...]] = {
+    "cli-transpiler.ts": (
+        ("missing-complete-product-collection", re.compile(r"\bcollectActualProducts\b")),
+        ("missing-emit-declaration-only-forwarding", re.compile(r"--emitDeclarationOnly")),
+        ("missing-authored-no-check-forwarding", re.compile(r"booleanFlag\('--noCheck', opts\.noCheck\)")),
+        ("missing-authored-no-lib-forwarding", re.compile(r"booleanFlag\('--noLib', opts\.noLib\)")),
+        ("missing-explicit-false-forwarding", re.compile(r"args\.push\(name, String\(value\)\)")),
+        ("missing-authored-allow-js-forwarding", re.compile(
+            r"booleanFlag\('--allowJs', opts\.allowJs\)"
+        )),
+        ("missing-staged-root-separation", re.compile(r"\brootInputFiles\b")),
+        ("missing-explicit-root-vector", re.compile(r"\brootFileNames\b")),
+        ("missing-lossless-product-byte-read", re.compile(r"toString\('latin1'\)")),
+    ),
+    "runner.ts": (
+        ("missing-complete-product-comparison", re.compile(r"\bcompareCanonicalProductSets\b")),
+        ("missing-compiler-outcome-comparison", re.compile(r"\bcompareCompilerOutcomes\b")),
+        ("missing-pinned-oracle-resolution", re.compile(r"\bresolvePinnedOracle\b")),
+        ("missing-independent-dual-invocation", re.compile(r"Promise\.all\s*\(\s*\[\s*oracleTranspiler\.transpile")),
+        ("missing-oracle-result-provenance", re.compile(r"oracle:\s*oracle\.provenance")),
+        ("missing-js-domain-only-projection", re.compile(r"baseline\.jsOutputs\.map\(product => product\.name\)")),
+        ("missing-dts-domain-only-projection", re.compile(r"baseline\.dtsOutputs\.map\(product => product\.name\)")),
+        ("missing-terminal-unsupported-row", re.compile(r"UNSUPPORTED_CANONICAL_EMIT")),
+        ("missing-non-vacuity-guard", re.compile(r"No canonical emit test cases selected")),
+        ("missing-authored-option-resolution", re.compile(r"\bresolveAuthoredOptions\b")),
+        ("missing-authored-option-failure-boundary", re.compile(r"\bauthoredOptionFailureReasons\b")),
+        ("missing-embedded-config-failure", re.compile(r"embeddedConfig\.reasons")),
+        ("missing-unrepresented-declaration-domain-failure", re.compile(
+            r"declaration-product-domain-without-authored-declaration"
+        )),
+        ("missing-mutually-exclusive-mode-guard", re.compile(
+            r"config\.jsOnly\s*&&\s*config\.dtsOnly"
+        )),
+        ("missing-all-null-result-guard", re.compile(r"\bensureMeasuredArtifact\b")),
+        ("missing-explicit-artifact-status", re.compile(r"\bartifactStatus\b")),
+    ),
+    "baseline-parser.ts": (
+        ("missing-js-product-inventory", re.compile(r"\bjsOutputs\b")),
+        ("missing-dts-product-inventory", re.compile(r"\bdtsOutputs\b")),
+        ("missing-byte-exact-compare", re.compile(r"return expected === actual")),
+    ),
+    "canonical-products.ts": (
+        ("missing-path-to-bytes-comparison", re.compile(r"\bcompareCanonicalProductSets\b")),
+        ("missing-byte-exact-product-compare", re.compile(r"oracleContent !== actualContent")),
+        ("missing-oracle-nonzero-rejection", re.compile(r"oracle\.exitCode !== 0")),
+        ("missing-product-nonzero-rejection", re.compile(r"product\.exitCode !== 0")),
+    ),
+    "canonical-support.ts": (
+        ("missing-source-map-quarantine", re.compile(r"source-map-products-not-compared")),
+        ("missing-inventory-retention", re.compile(r"\bretainCanonicalInventory\b")),
+    ),
+    "authored-options.ts": (
+        ("missing-option-disposition", re.compile(r"\bauthoredOptionDisposition\b")),
+        ("missing-filename-variant-accounting", re.compile(r"\bextractAuthoredVariantFromFilename\b")),
+        ("missing-option-precedence", re.compile(
+            r"merge\(sources\.embeddedConfig[^\n]+\n\s*"
+            r"merge\(sources\.directives[^\n]+\n\s*"
+            r"merge\(sources\.variant"
+        )),
+        ("missing-invalid-option-accounting", re.compile(r"\binvalidAuthoredOptions\b")),
+        ("missing-invalid-authored-option-failure", re.compile(r"invalid-authored-option:")),
+        ("missing-unhandled-authored-option-failure", re.compile(r"unhandled-authored-option:")),
+        ("missing-jsonc-error-accounting", re.compile(r"embedded-tsconfig-jsonc-parse-error")),
+        ("missing-config-conflict-accounting", re.compile(r"conflicting-embedded-tsconfigs")),
+        ("missing-config-field-accounting", re.compile(r"unhandled-embedded-tsconfig-field")),
+        ("missing-provenance-strict-boolean", re.compile(r"option\.source === 'filename-variant'")),
+        ("missing-embedded-lib-array-check", re.compile(
+            r"option\.source === 'embedded-config'[^\n]+\n\s*return Array\.isArray"
+        )),
+    ),
+    "source-test.ts": (
+        ("missing-exact-source-byte-assembly", re.compile(r"sourceBytes\.join\(''\)")),
+        ("missing-live-corpus-read", re.compile(r"fs\.promises\.readFile")),
+        ("missing-harness-root-selection", re.compile(r"\bselectHarnessRootFiles\b")),
+        ("missing-last-unit-root-model", re.compile(r"last-unit-no-implicit-references")),
+        ("missing-config-root-quarantine", re.compile(r"embedded-tsconfig-root-selection-not-modeled")),
+    ),
+    "artifact-state.ts": (
+        ("missing-artifact-state-domain", re.compile(
+            r"'unsupported'\s*\|\s*'timeout'\s*\|\s*'crash'\s*\|\s*'incomplete'"
+        )),
+        ("missing-compiler-artifact-classification", re.compile(r"\bcompilerArtifactState\b")),
+        ("missing-vacuous-artifact-failure", re.compile(r"INCOMPLETE_CANONICAL_EMIT")),
+    ),
+    "oracle.ts": (
+        ("missing-version-probe", re.compile(r"verifyOracleExecutable")),
+        ("missing-trusted-binary-hash", re.compile(r"trustedPlatform\.binarySha256")),
+        ("missing-trusted-package-tree-hash", re.compile(r"trustedPlatform\.packageTreeSha256")),
+        ("missing-trusted-package-integrity", re.compile(r"trustedPlatform\.packageIntegrity")),
+    ),
+    "oracle-manifest.json": (
+        ("missing-local-platform-pin", re.compile(r'"darwin-arm64"')),
+        ("missing-ci-platform-pin", re.compile(r'"linux-x64"')),
+    ),
+    "query-emit.py": (
+        ("missing-terminal-artifact-statuses", re.compile(
+            r"TERMINAL_STATUSES\s*=\s*\{[^}]*\"unsupported\"[^}]*\"crash\"[^}]*\"incomplete\""
+        )),
+        ("missing-artifact-state-fingerprint", re.compile(
+            r'"artifactState":\s*result\.get\("artifactState"\)'
+        )),
+    ),
+}
 
 
 @dataclasses.dataclass(frozen=True)
@@ -126,6 +393,51 @@ def is_auto_allowed_data_cleanup(path: str, line: str) -> bool:
     return False
 
 
+def scan_harness_truth(
+    paths: Optional[tuple[pathlib.Path, ...]] = None,
+    *,
+    enforce_required: Optional[bool] = None,
+) -> list[Finding]:
+    if paths is None:
+        paths = HARNESS_TRUTH_SOURCES
+        if enforce_required is None:
+            enforce_required = True
+    elif enforce_required is None:
+        enforce_required = False
+    findings: list[Finding] = []
+    for path in paths:
+        if not path.is_file():
+            raise FileNotFoundError(f"emit harness truth source does not exist: {path}")
+        rules = HARNESS_BYPASS_RULES.get(path.name, ())
+        text = path.read_text(encoding="utf-8")
+        lines = text.splitlines()
+        for category, pattern in rules:
+            for match in pattern.finditer(text):
+                line_no = text.count("\n", 0, match.start()) + 1
+                line = lines[line_no - 1].strip() if line_no <= len(lines) else ""
+                findings.append(
+                    Finding(
+                        path=path.relative_to(ROOT).as_posix(),
+                        line_no=line_no,
+                        call=category,
+                        text=line,
+                    )
+                )
+        if enforce_required:
+            for category, pattern in HARNESS_REQUIRED_RULES.get(path.name, ()):
+                if pattern.search(text):
+                    continue
+                findings.append(
+                    Finding(
+                        path=path.relative_to(ROOT).as_posix(),
+                        line_no=1,
+                        call=category,
+                        text=f"required canonical emit contract missing: {category}",
+                    )
+                )
+    return findings
+
+
 def scan(base: pathlib.Path = SOURCE_ROOT) -> list[Finding]:
     findings: list[Finding] = []
     for path in iter_rust_files(base):
@@ -151,6 +463,8 @@ def scan(base: pathlib.Path = SOURCE_ROOT) -> list[Finding]:
                         text=line.strip(),
                     )
                 )
+    if base == SOURCE_ROOT:
+        findings.extend(scan_harness_truth())
     return findings
 
 
@@ -184,6 +498,11 @@ def audit(findings: list[Finding], allowlist: dict[str, AllowEntry]) -> list[str
     failures: list[str] = []
     counts = grouped_counts(findings)
     for path, count in sorted(counts.items()):
+        if path in HARNESS_TRUTH_REL_PATHS or pathlib.PurePath(path).name in HARNESS_BYPASS_RULES:
+            failures.append(
+                f"{path}: {count} forbidden canonical-emit truth bypass(es)"
+            )
+            continue
         entry = allowlist.get(path)
         if entry is None:
             failures.append(f"{path}: {count} unallowlisted output-surgery call(s)")
@@ -193,6 +512,8 @@ def audit(findings: list[Finding], allowlist: dict[str, AllowEntry]) -> list[str
             )
     for path in sorted(set(allowlist) - set(counts)):
         failures.append(f"{path}: allowlist entry is stale; no matching calls remain")
+    for path in sorted(set(allowlist) & HARNESS_TRUTH_REL_PATHS):
+        failures.append(f"{path}: canonical-emit truth bypasses may not be allowlisted")
     return failures
 
 

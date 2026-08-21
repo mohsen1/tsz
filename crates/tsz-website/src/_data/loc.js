@@ -22,7 +22,6 @@ const FILE_GLOBS = [
   "crates/*/tests/*.rs",
   "crates/*/benches/*.rs",
   "crates/*/build.rs",
-  "crates/tsz-website/rust/*.rs",
 ];
 
 const CC = {

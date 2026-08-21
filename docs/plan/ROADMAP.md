@@ -110,6 +110,13 @@ isolation evidence.
 10. **Determinism precedes parallelism.** The reference path is single-threaded.
     A parallel stage graduates only after repeated, file-order, cold/warm, and
     thread-count diagnostic-set agreement.
+11. **Freshness is typed once.** Literal freshness and regular structural type
+    are distinct semantic facts. Mutable observation points consume the shared
+    widening query; diagnostic display provenance does not decide assignability.
+12. **Validation never repairs the product.** Canonical harnesses consume only
+    TSZ output from the original invocation. Oracle answers, altered retries,
+    output surgery, omitted rows, and fixture stubs cannot count as parity or
+    performance evidence.
 
 ## Execution Milestones
 

@@ -72,7 +72,10 @@ impl Span {
 #[derive(Debug, Clone)]
 pub struct SourceText {
     pub id: FileId,
+    /// Logical path used for user-facing products.
     pub path: PathBuf,
+    /// Host path retained for module and filesystem resolution.
+    pub host_path: PathBuf,
     pub text: Arc<str>,
     line_starts: Vec<u32>,
 }
@@ -80,6 +83,16 @@ pub struct SourceText {
 impl SourceText {
     #[must_use]
     pub fn new(id: FileId, path: PathBuf, text: Arc<str>) -> Self {
+        Self::new_with_host_path(id, path.clone(), path, text)
+    }
+
+    #[must_use]
+    pub fn new_with_host_path(
+        id: FileId,
+        path: PathBuf,
+        host_path: PathBuf,
+        text: Arc<str>,
+    ) -> Self {
         let mut line_starts = vec![0];
         for (offset, byte) in text.bytes().enumerate() {
             if byte == b'\n' {
@@ -89,6 +102,7 @@ impl SourceText {
         Self {
             id,
             path,
+            host_path,
             text,
             line_starts,
         }

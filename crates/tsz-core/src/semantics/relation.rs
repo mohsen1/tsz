@@ -1,232 +1,670 @@
-use super::{Completion, TypeId, TypeKind};
+use std::collections::{HashMap, HashSet};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+use super::types::{Completion, Property, TypeId, TypeKind};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum RelationMode {
     Subtype,
     Assignment,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum RelationFailureKind {
     Incompatible,
     MissingProperty(String),
+    MissingProperties(Vec<String>),
     Property(String),
+    Object,
+    ArrayElement,
+    TupleElement(usize),
+    ArrayToTupleLength { required: usize },
+    UnionMember,
+    AliasExpansion,
     Parameter(usize),
     Return,
+    InvalidProjection,
     Cycle,
     ComplexityLimit,
     Deferred,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+impl RelationFailureKind {
+    const fn propagates_unchanged(&self) -> bool {
+        matches!(
+            self,
+            Self::InvalidProjection | Self::Cycle | Self::ComplexityLimit | Self::Deferred
+        )
+    }
+
+    /// Priority for incomplete failures observed while trying alternatives.
+    /// An invalid projection already owns a concrete diagnostic elsewhere;
+    /// it must not hide a semantic nonclaim. The completion verdict follows
+    /// the public deterministic dominance `Deferred < Cycle < Limit`.
+    const fn propagation_priority(&self) -> u8 {
+        match self {
+            Self::Deferred => 1,
+            Self::Cycle => 2,
+            Self::ComplexityLimit => 3,
+            Self::InvalidProjection
+            | Self::Incompatible
+            | Self::MissingProperty(_)
+            | Self::MissingProperties(_)
+            | Self::Property(_)
+            | Self::Object
+            | Self::ArrayElement
+            | Self::TupleElement(_)
+            | Self::ArrayToTupleLength { .. }
+            | Self::UnionMember
+            | Self::AliasExpansion
+            | Self::Parameter(_)
+            | Self::Return => 0,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct RelationFailure {
     pub source: TypeId,
     pub target: TypeId,
     pub kind: RelationFailureKind,
+    pub child: Option<Box<RelationFailure>>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub(crate) struct RelationPropertyOrder {
+    orders: HashMap<TypeId, Vec<String>>,
+    union_orders: HashMap<TypeId, Vec<crate::source::DeclId>>,
+}
+
+impl RelationPropertyOrder {
+    pub(crate) fn insert(&mut self, ty: TypeId, names: Vec<String>) {
+        self.orders.insert(ty, names);
+    }
+
+    fn get(&self, ty: TypeId) -> Option<&[String]> {
+        self.orders.get(&ty).map(Vec::as_slice)
+    }
+
+    pub(crate) fn insert_union(&mut self, ty: TypeId, declarations: Vec<crate::source::DeclId>) {
+        self.union_orders.insert(ty, declarations);
+    }
+
+    fn union_members<C: RelationContext>(
+        &self,
+        ty: TypeId,
+        members: &[TypeId],
+        context: &C,
+    ) -> Vec<TypeId> {
+        let Some(declarations) = self.union_orders.get(&ty) else {
+            return members.to_vec();
+        };
+        let mut ordered = Vec::with_capacity(members.len());
+        for declaration in declarations {
+            if let Some(member) = members.iter().find(|member| {
+                matches!(
+                    context.type_kind(**member),
+                    TypeKind::Deferred(super::types::DeferredType::Reference {
+                        declaration: candidate,
+                        ..
+                    }) if candidate == *declaration
+                )
+            }) {
+                ordered.push(*member);
+            }
+        }
+        for member in members {
+            if !ordered.contains(member) {
+                ordered.push(*member);
+            }
+        }
+        ordered
+    }
 }
 
 pub(crate) trait RelationContext {
     fn force_type(&mut self, ty: TypeId, depth: usize) -> Completion<TypeId>;
     fn type_kind(&self, ty: TypeId) -> TypeKind;
     fn strict_null_checks(&self) -> bool;
+    fn canonical_union(&mut self, members: &[TypeId]) -> TypeId;
 }
 
+/// Relate two types in one query-local session.
+///
+/// TypeScript's recursive structural comparison is coinductive: a repeated
+/// active `(source, target, mode)` pair is provisionally related. Keeping that
+/// identity before forcing deferred references lets recursive symbolic shapes
+/// meet the same active pair instead of materializing without a bound.
+#[cfg(test)]
 pub(crate) fn relate<C: RelationContext>(
     context: &mut C,
     source: TypeId,
     target: TypeId,
     mode: RelationMode,
 ) -> Result<(), RelationFailure> {
-    relate_inner(context, source, target, mode, 0)
+    relate_with_property_order(
+        context,
+        source,
+        target,
+        mode,
+        RelationPropertyOrder::default(),
+    )
 }
 
-fn relate_inner<C: RelationContext>(
+pub(crate) fn relate_with_property_order<C: RelationContext>(
     context: &mut C,
     source: TypeId,
     target: TypeId,
     mode: RelationMode,
-    depth: usize,
+    property_order: RelationPropertyOrder,
 ) -> Result<(), RelationFailure> {
-    if depth > 100 {
-        return Err(failure(
-            source,
-            target,
-            RelationFailureKind::ComplexityLimit,
-        ));
+    Relation {
+        context,
+        active: HashSet::new(),
+        property_order,
     }
-    let source = force(context, source, target, depth)?;
-    let target = force(context, target, source, depth)?;
-    if source == target {
-        return Ok(());
+    .relate_inner(source, target, mode, 0)
+}
+
+struct Relation<'a, C> {
+    context: &'a mut C,
+    active: HashSet<(TypeId, TypeId, RelationMode)>,
+    property_order: RelationPropertyOrder,
+}
+
+impl<C: RelationContext> Relation<'_, C> {
+    fn relate_inner(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        mode: RelationMode,
+        depth: usize,
+    ) -> Result<(), RelationFailure> {
+        if source == target {
+            return Ok(());
+        }
+        // Relation nesting is a query-local structural budget, distinct from
+        // the evaluator-expansion budget owned by deferred forcing.
+        if depth > 100 {
+            return Err(failure(
+                source,
+                target,
+                RelationFailureKind::ComplexityLimit,
+            ));
+        }
+
+        let key = (source, target, mode);
+        if !self.active.insert(key) {
+            return Ok(());
+        }
+        let result = self.relate_active(source, target, mode, depth);
+        self.active.remove(&key);
+        result
     }
 
-    let source_kind = context.type_kind(source);
-    let target_kind = context.type_kind(target);
-    if matches!(source_kind, TypeKind::Error) || matches!(target_kind, TypeKind::Error) {
-        return Ok(());
-    }
-    if matches!(source_kind, TypeKind::Never) || matches!(target_kind, TypeKind::Unknown) {
-        return Ok(());
-    }
-    if mode == RelationMode::Assignment
-        && (matches!(source_kind, TypeKind::Any) || matches!(target_kind, TypeKind::Any))
-    {
-        return Ok(());
-    }
-    if !context.strict_null_checks() && matches!(source_kind, TypeKind::Null | TypeKind::Undefined)
-    {
-        return Ok(());
-    }
+    fn relate_active(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        mode: RelationMode,
+        depth: usize,
+    ) -> Result<(), RelationFailure> {
+        let forced_source = self.force(source, source, target, depth)?;
+        let forced_target = self.force(target, source, target, depth)?;
+        if forced_source != source || forced_target != target {
+            return self.relate_inner(forced_source, forced_target, mode, depth + 1);
+        }
 
-    match (&source_kind, &target_kind) {
-        (TypeKind::LiteralString(_), TypeKind::String)
-        | (TypeKind::LiteralNumber(_), TypeKind::Number)
-        | (TypeKind::LiteralBoolean(_), TypeKind::Boolean)
-        | (
-            TypeKind::Object(_) | TypeKind::Array(_) | TypeKind::Tuple(_) | TypeKind::Function(_),
-            TypeKind::ObjectKeyword,
-        ) => Ok(()),
-        (TypeKind::LiteralString(left), TypeKind::LiteralString(right)) if left == right => Ok(()),
-        (TypeKind::LiteralNumber(left), TypeKind::LiteralNumber(right)) if left == right => Ok(()),
-        (TypeKind::LiteralBoolean(left), TypeKind::LiteralBoolean(right)) if left == right => {
-            Ok(())
+        let source_kind = self.context.type_kind(source);
+        let target_kind = self.context.type_kind(target);
+        if matches!(source_kind, TypeKind::Invalid(_))
+            || matches!(target_kind, TypeKind::Invalid(_))
+        {
+            return Err(failure(
+                source,
+                target,
+                RelationFailureKind::InvalidProjection,
+            ));
         }
-        (TypeKind::Union(members), _) => {
-            for member in members {
-                relate_inner(context, *member, target, mode, depth + 1)?;
+        if matches!(source_kind, TypeKind::Error) || matches!(target_kind, TypeKind::Error) {
+            return Ok(());
+        }
+        if matches!(source_kind, TypeKind::Never) || matches!(target_kind, TypeKind::Unknown) {
+            return Ok(());
+        }
+        if mode == RelationMode::Assignment
+            && (matches!(source_kind, TypeKind::Any) || matches!(target_kind, TypeKind::Any))
+        {
+            return Ok(());
+        }
+        if !self.context.strict_null_checks()
+            && matches!(source_kind, TypeKind::Null | TypeKind::Undefined)
+        {
+            return Ok(());
+        }
+
+        match (&source_kind, &target_kind) {
+            (TypeKind::LiteralString(_, _), TypeKind::String)
+            | (TypeKind::LiteralNumber(_, _), TypeKind::Number)
+            | (TypeKind::LiteralBoolean(_, _), TypeKind::Boolean)
+            | (
+                TypeKind::Object(_)
+                | TypeKind::ClassInstance { .. }
+                | TypeKind::ClassConstructor { .. }
+                | TypeKind::Array(_)
+                | TypeKind::Tuple(_)
+                | TypeKind::StringIndex(_)
+                | TypeKind::Function(_),
+                TypeKind::ObjectKeyword,
+            ) => Ok(()),
+            (TypeKind::LiteralString(left, _), TypeKind::LiteralString(right, _))
+                if left == right =>
+            {
+                Ok(())
             }
-            Ok(())
-        }
-        (_, TypeKind::Union(members)) => {
-            let mut last_failure = None;
-            for member in members {
-                match relate_inner(context, source, *member, mode, depth + 1) {
-                    Ok(()) => return Ok(()),
-                    Err(error) => last_failure = Some(error),
-                }
+            (TypeKind::LiteralNumber(left, _), TypeKind::LiteralNumber(right, _))
+                if left == right =>
+            {
+                Ok(())
             }
-            Err(last_failure
-                .unwrap_or_else(|| failure(source, target, RelationFailureKind::Incompatible)))
-        }
-        (_, TypeKind::Intersection(members)) => {
-            for member in members {
-                relate_inner(context, source, *member, mode, depth + 1)?;
+            (TypeKind::LiteralBoolean(left, _), TypeKind::LiteralBoolean(right, _))
+                if left == right =>
+            {
+                Ok(())
             }
-            Ok(())
-        }
-        (TypeKind::Intersection(members), _) => {
-            let mut last_failure = None;
-            for member in members {
-                match relate_inner(context, *member, target, mode, depth + 1) {
-                    Ok(()) => return Ok(()),
-                    Err(error) => last_failure = Some(error),
-                }
-            }
-            Err(last_failure
-                .unwrap_or_else(|| failure(source, target, RelationFailureKind::Incompatible)))
-        }
-        (TypeKind::Array(left), TypeKind::Array(right)) => {
-            relate_inner(context, *left, *right, mode, depth + 1)
-        }
-        (TypeKind::Tuple(left), TypeKind::Tuple(right)) if left.len() == right.len() => {
-            for (left, right) in left.iter().zip(right) {
-                relate_inner(context, *left, *right, mode, depth + 1)?;
-            }
-            Ok(())
-        }
-        (TypeKind::Tuple(elements), TypeKind::Array(element)) => {
-            for source_element in elements {
-                relate_inner(context, *source_element, *element, mode, depth + 1)?;
-            }
-            Ok(())
-        }
-        (TypeKind::Object(source_properties), TypeKind::Object(target_properties)) => {
-            for target_property in target_properties {
-                let Some(source_property) = source_properties
-                    .iter()
-                    .find(|property| property.name == target_property.name)
-                else {
-                    if target_property.optional {
-                        continue;
+            (TypeKind::Union(members), _) => {
+                let mut relation_members = members.clone();
+                relation_members.sort_by_key(|member| match self.context.type_kind(*member) {
+                    TypeKind::Undefined => 0,
+                    TypeKind::Null => 1,
+                    _ => 2,
+                });
+                for member in &relation_members {
+                    if let Err(error) = self.relate_inner(*member, target, mode, depth + 1) {
+                        return Err(wrap_failure(
+                            source,
+                            target,
+                            RelationFailureKind::UnionMember,
+                            error,
+                        ));
                     }
-                    return Err(failure(
-                        source,
-                        target,
-                        RelationFailureKind::MissingProperty(target_property.name.clone()),
-                    ));
-                };
-                if let Err(mut error) = relate_inner(
-                    context,
-                    source_property.ty,
-                    target_property.ty,
+                }
+                Ok(())
+            }
+            (_, TypeKind::Union(members)) => {
+                let members = self
+                    .property_order
+                    .union_members(target, members, self.context);
+                self.relate_to_alternative(source, target, &members, mode, depth)
+            }
+            (_, TypeKind::Intersection(members)) => {
+                for member in members {
+                    self.relate_inner(source, *member, mode, depth + 1)?;
+                }
+                Ok(())
+            }
+            (TypeKind::Intersection(members), _) => {
+                self.relate_from_alternative(source, target, members, mode, depth)
+            }
+            (TypeKind::Array(left), TypeKind::Array(right)) => self
+                .relate_inner(*left, *right, mode, depth + 1)
+                .map_err(|error| {
+                    wrap_failure(source, target, RelationFailureKind::ArrayElement, error)
+                }),
+            (TypeKind::Array(_), TypeKind::Object(properties)) if properties.is_empty() => Ok(()),
+            (TypeKind::Tuple(left), TypeKind::Tuple(right)) if left.len() == right.len() => {
+                for (index, (left_element, right_element)) in left.iter().zip(right).enumerate() {
+                    if let Err(error) =
+                        self.relate_inner(*left_element, *right_element, mode, depth + 1)
+                    {
+                        return Err(wrap_failure(
+                            source,
+                            target,
+                            RelationFailureKind::TupleElement(index),
+                            error,
+                        ));
+                    }
+                }
+                Ok(())
+            }
+            (TypeKind::Tuple(elements), TypeKind::Array(element)) => {
+                let source_element = self.context.canonical_union(elements);
+                self.relate_inner(source_element, *element, mode, depth + 1)
+                    .map_err(|error| {
+                        wrap_failure(source, target, RelationFailureKind::ArrayElement, error)
+                    })
+            }
+            (TypeKind::Array(_), TypeKind::Tuple(required)) => Err(failure(
+                source,
+                target,
+                RelationFailureKind::ArrayToTupleLength {
+                    required: required.len(),
+                },
+            )),
+            (TypeKind::Object(source_properties), TypeKind::StringIndex(target_value)) => {
+                for source_property in source_properties {
+                    if let Err(error) =
+                        self.relate_inner(source_property.ty, *target_value, mode, depth + 1)
+                    {
+                        let property = wrap_failure(
+                            source_property.ty,
+                            *target_value,
+                            RelationFailureKind::Property(source_property.name.clone()),
+                            error,
+                        );
+                        return Err(wrap_failure(
+                            source,
+                            target,
+                            RelationFailureKind::Object,
+                            property,
+                        ));
+                    }
+                }
+                Ok(())
+            }
+            (TypeKind::StringIndex(source_value), TypeKind::StringIndex(target_value)) => self
+                .relate_inner(*source_value, *target_value, mode, depth + 1)
+                .map_err(|error| wrap_failure(source, target, RelationFailureKind::Object, error)),
+            (TypeKind::Object(source_properties), TypeKind::Object(target_properties))
+            | (
+                TypeKind::ClassInstance {
+                    properties: source_properties,
+                    ..
+                },
+                TypeKind::ClassInstance {
+                    properties: target_properties,
+                    ..
+                },
+            )
+            | (
+                TypeKind::ClassInstance {
+                    properties: source_properties,
+                    ..
+                },
+                TypeKind::Object(target_properties),
+            )
+            | (
+                TypeKind::Object(source_properties),
+                TypeKind::ClassInstance {
+                    properties: target_properties,
+                    ..
+                },
+            ) => self.relate_properties(
+                source,
+                target,
+                Some(source_properties),
+                target_properties,
+                mode,
+                depth,
+            ),
+            (
+                _,
+                TypeKind::ClassInstance {
+                    properties: target_properties,
+                    ..
+                },
+            ) => self.relate_properties(source, target, None, target_properties, mode, depth),
+            (TypeKind::Function(source_signature), TypeKind::Function(target_signature)) => {
+                let target_required = target_signature
+                    .parameters
+                    .iter()
+                    .filter(|parameter| !parameter.optional && !parameter.rest)
+                    .count();
+                if source_signature.parameters.len() < target_required {
+                    return Err(failure(source, target, RelationFailureKind::Incompatible));
+                }
+                for (index, (source_parameter, target_parameter)) in source_signature
+                    .parameters
+                    .iter()
+                    .zip(&target_signature.parameters)
+                    .enumerate()
+                {
+                    self.relate_inner(
+                        target_parameter.ty,
+                        source_parameter.ty,
+                        RelationMode::Subtype,
+                        depth + 1,
+                    )
+                    .map_err(|error| {
+                        wrap_failure(source, target, RelationFailureKind::Parameter(index), error)
+                    })?;
+                }
+                if matches!(
+                    self.context.type_kind(target_signature.return_type),
+                    TypeKind::Void
+                ) {
+                    return Ok(());
+                }
+                self.relate_inner(
+                    source_signature.return_type,
+                    target_signature.return_type,
                     mode,
                     depth + 1,
-                ) {
-                    error.kind = RelationFailureKind::Property(target_property.name.clone());
-                    return Err(error);
-                }
+                )
+                .map_err(|error| wrap_failure(source, target, RelationFailureKind::Return, error))
             }
-            Ok(())
+            (TypeKind::Array(_), TypeKind::Object(_))
+            | (_, TypeKind::StringIndex(_))
+            | (TypeKind::StringIndex(_), _) => {
+                Err(failure(source, target, RelationFailureKind::Deferred))
+            }
+            _ => Err(failure(source, target, RelationFailureKind::Incompatible)),
         }
-        (TypeKind::Function(source_signature), TypeKind::Function(target_signature)) => {
-            let target_required = target_signature
-                .parameters
-                .iter()
-                .filter(|parameter| !parameter.optional && !parameter.rest)
-                .count();
-            if source_signature.parameters.len() < target_required {
-                return Err(failure(source, target, RelationFailureKind::Incompatible));
-            }
-            for (index, (source_parameter, target_parameter)) in source_signature
-                .parameters
-                .iter()
-                .zip(&target_signature.parameters)
-                .enumerate()
-            {
-                if let Err(mut error) = relate_inner(
-                    context,
-                    target_parameter.ty,
-                    source_parameter.ty,
-                    RelationMode::Subtype,
-                    depth + 1,
-                ) {
-                    error.kind = RelationFailureKind::Parameter(index);
-                    return Err(error);
+    }
+
+    fn relate_properties(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        source_properties: Option<&[Property]>,
+        target_properties: &[Property],
+        mode: RelationMode,
+        depth: usize,
+    ) -> Result<(), RelationFailure> {
+        let authored_order = self.property_order.get(target).map(<[_]>::to_vec);
+        let mut ordered_properties = Vec::with_capacity(target_properties.len());
+        if let Some(names) = &authored_order {
+            for name in names {
+                if let Some(property) = target_properties
+                    .iter()
+                    .find(|property| &property.name == name)
+                {
+                    ordered_properties.push(property);
                 }
             }
-            if matches!(
-                context.type_kind(target_signature.return_type),
-                TypeKind::Void
-            ) {
-                return Ok(());
+            for property in target_properties {
+                if !names.iter().any(|name| name == &property.name) {
+                    ordered_properties.push(property);
+                }
             }
-            relate_inner(
-                context,
-                source_signature.return_type,
-                target_signature.return_type,
-                mode,
-                depth + 1,
-            )
-            .map_err(|mut error| {
-                error.kind = RelationFailureKind::Return;
-                error
+        } else {
+            ordered_properties.extend(target_properties);
+        }
+
+        let missing = ordered_properties
+            .iter()
+            .filter(|target_property| {
+                !target_property.optional
+                    && source_properties.is_none_or(|properties| {
+                        !properties
+                            .iter()
+                            .any(|property| property.name == target_property.name)
+                    })
             })
+            .map(|property| property.name.clone())
+            .collect::<Vec<_>>();
+        if !missing.is_empty() {
+            if authored_order.is_none() && missing.len() > 1 {
+                return Err(failure(source, target, RelationFailureKind::Deferred));
+            }
+            let missing = failure(
+                source,
+                target,
+                if missing.len() == 1 {
+                    RelationFailureKind::MissingProperty(missing[0].clone())
+                } else {
+                    RelationFailureKind::MissingProperties(missing)
+                },
+            );
+            return Err(wrap_failure(
+                source,
+                target,
+                RelationFailureKind::Object,
+                missing,
+            ));
         }
-        _ => Err(failure(source, target, RelationFailureKind::Incompatible)),
+
+        let mut definitive_failure = None;
+        for target_property in ordered_properties {
+            let source_property = source_properties.and_then(|properties| {
+                properties
+                    .iter()
+                    .find(|property| property.name == target_property.name)
+            });
+            let Some(source_property) = source_property else {
+                continue;
+            };
+            if let Err(error) =
+                self.relate_inner(source_property.ty, target_property.ty, mode, depth + 1)
+            {
+                if error.kind.propagates_unchanged() {
+                    return Err(error);
+                }
+                let property = wrap_failure(
+                    source_property.ty,
+                    target_property.ty,
+                    RelationFailureKind::Property(target_property.name.clone()),
+                    error,
+                );
+                let property = wrap_failure(source, target, RelationFailureKind::Object, property);
+                if authored_order.is_some() {
+                    return Err(property);
+                }
+                if definitive_failure.is_some() {
+                    return Err(failure(source, target, RelationFailureKind::Deferred));
+                }
+                definitive_failure = Some(property);
+            }
+        }
+        definitive_failure.map_or(Ok(()), Err)
+    }
+
+    fn relate_to_alternative(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        members: &[TypeId],
+        mode: RelationMode,
+        depth: usize,
+    ) -> Result<(), RelationFailure> {
+        let mut first_failure = None;
+        let mut propagated = None;
+        for member in members {
+            match self.relate_inner(source, *member, mode, depth + 1) {
+                Ok(()) => return Ok(()),
+                Err(error) if error.kind.propagates_unchanged() => {
+                    if propagated.as_ref().is_none_or(|current: &RelationFailure| {
+                        current.kind.propagation_priority() < error.kind.propagation_priority()
+                    }) {
+                        propagated = Some(error);
+                    }
+                }
+                Err(error) => {
+                    if first_failure.is_none() {
+                        first_failure = Some((*member, error));
+                    }
+                }
+            }
+        }
+        if let Some(propagated) = propagated {
+            return Err(propagated);
+        }
+        let (member, selected) = first_failure.unwrap_or_else(|| {
+            (
+                target,
+                failure(source, target, RelationFailureKind::Incompatible),
+            )
+        });
+        let selected = if selected.target == member {
+            selected
+        } else {
+            wrap_failure(
+                source,
+                member,
+                RelationFailureKind::AliasExpansion,
+                selected,
+            )
+        };
+        Err(wrap_failure(
+            source,
+            target,
+            RelationFailureKind::UnionMember,
+            selected,
+        ))
+    }
+
+    fn relate_from_alternative(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        members: &[TypeId],
+        mode: RelationMode,
+        depth: usize,
+    ) -> Result<(), RelationFailure> {
+        let mut last_failure = None;
+        let mut propagated = None;
+        for member in members {
+            match self.relate_inner(*member, target, mode, depth + 1) {
+                Ok(()) => return Ok(()),
+                Err(error) if error.kind.propagates_unchanged() => {
+                    if propagated.as_ref().is_none_or(|current: &RelationFailure| {
+                        current.kind.propagation_priority() < error.kind.propagation_priority()
+                    }) {
+                        propagated = Some(error);
+                    }
+                }
+                Err(error) => last_failure = Some(error),
+            }
+        }
+        Err(propagated
+            .or(last_failure)
+            .unwrap_or_else(|| failure(source, target, RelationFailureKind::Incompatible)))
+    }
+
+    fn force(
+        &mut self,
+        ty: TypeId,
+        source: TypeId,
+        target: TypeId,
+        depth: usize,
+    ) -> Result<TypeId, RelationFailure> {
+        match self.context.force_type(ty, depth) {
+            Completion::Complete(value) => Ok(value),
+            Completion::Cycle => Err(failure(source, target, RelationFailureKind::Cycle)),
+            Completion::Limit => Err(failure(
+                source,
+                target,
+                RelationFailureKind::ComplexityLimit,
+            )),
+            Completion::Deferred => Err(failure(source, target, RelationFailureKind::Deferred)),
+        }
     }
 }
 
-fn force<C: RelationContext>(
-    context: &mut C,
-    ty: TypeId,
-    other: TypeId,
-    depth: usize,
-) -> Result<TypeId, RelationFailure> {
-    match context.force_type(ty, depth) {
-        Completion::Complete(value) => Ok(value),
-        Completion::Cycle => Err(failure(ty, other, RelationFailureKind::Cycle)),
-        Completion::Limit => Err(failure(ty, other, RelationFailureKind::ComplexityLimit)),
-        Completion::Deferred => Err(failure(ty, other, RelationFailureKind::Deferred)),
+fn wrap_failure(
+    source: TypeId,
+    target: TypeId,
+    path: RelationFailureKind,
+    child: RelationFailure,
+) -> RelationFailure {
+    if child.kind.propagates_unchanged() {
+        child
+    } else {
+        RelationFailure {
+            source,
+            target,
+            kind: path,
+            child: Some(Box::new(child)),
+        }
     }
 }
 
@@ -235,5 +673,308 @@ const fn failure(source: TypeId, target: TypeId, kind: RelationFailureKind) -> R
         source,
         target,
         kind,
+        child: None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use crate::source::{DeclId, FileId};
+
+    use super::*;
+    use crate::semantics::types::{DeferredType, InvalidType, LiteralProvenance};
+
+    struct TestContext {
+        kinds: Vec<TypeKind>,
+        completions: HashMap<TypeId, Completion<TypeId>>,
+    }
+
+    impl RelationContext for TestContext {
+        fn force_type(&mut self, ty: TypeId, _depth: usize) -> Completion<TypeId> {
+            self.completions
+                .get(&ty)
+                .cloned()
+                .unwrap_or(Completion::Complete(ty))
+        }
+
+        fn type_kind(&self, ty: TypeId) -> TypeKind {
+            self.kinds[ty.0 as usize].clone()
+        }
+
+        fn strict_null_checks(&self) -> bool {
+            true
+        }
+
+        fn canonical_union(&mut self, members: &[TypeId]) -> TypeId {
+            if let [only] = members {
+                return *only;
+            }
+            let id = TypeId(self.kinds.len() as u32);
+            self.kinds.push(TypeKind::Union(members.to_vec()));
+            id
+        }
+    }
+
+    fn property(name: &str, ty: u32) -> Property {
+        Property {
+            name: name.to_string(),
+            ty: TypeId(ty),
+            optional: false,
+            readonly: false,
+        }
+    }
+
+    #[test]
+    fn recursive_deferred_shapes_stop_at_the_active_pair() {
+        let declaration_a = DeclId {
+            file: FileId(0),
+            local: 0,
+        };
+        let declaration_b = DeclId {
+            file: FileId(0),
+            local: 1,
+        };
+        let mut context = TestContext {
+            kinds: vec![
+                TypeKind::Deferred(DeferredType::Reference {
+                    declaration: declaration_a,
+                    arguments: Vec::new(),
+                }),
+                TypeKind::Deferred(DeferredType::Reference {
+                    declaration: declaration_b,
+                    arguments: Vec::new(),
+                }),
+                TypeKind::Object(vec![property("next", 0)]),
+                TypeKind::Object(vec![property("next", 1)]),
+            ],
+            completions: HashMap::from([
+                (TypeId(0), Completion::Complete(TypeId(2))),
+                (TypeId(1), Completion::Complete(TypeId(3))),
+            ]),
+        };
+
+        assert_eq!(
+            relate(&mut context, TypeId(0), TypeId(1), RelationMode::Assignment),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn nested_array_failures_keep_each_structural_pair() {
+        let mut context = TestContext {
+            kinds: vec![
+                TypeKind::Array(TypeId(2)),
+                TypeKind::Array(TypeId(3)),
+                TypeKind::Array(TypeId(4)),
+                TypeKind::Array(TypeId(5)),
+                TypeKind::LiteralString("other".to_string(), LiteralProvenance::Fresh),
+                TypeKind::LiteralString("seed".to_string(), LiteralProvenance::Regular),
+            ],
+            completions: HashMap::new(),
+        };
+
+        let failure =
+            relate(&mut context, TypeId(0), TypeId(1), RelationMode::Assignment).unwrap_err();
+        assert_eq!(
+            (failure.source, failure.target, &failure.kind),
+            (TypeId(0), TypeId(1), &RelationFailureKind::ArrayElement)
+        );
+        let child = failure.child.as_deref().unwrap();
+        assert_eq!(
+            (child.source, child.target, &child.kind),
+            (TypeId(2), TypeId(3), &RelationFailureKind::ArrayElement)
+        );
+        let leaf = child.child.as_deref().unwrap();
+        assert_eq!(
+            (leaf.source, leaf.target, &leaf.kind),
+            (TypeId(4), TypeId(5), &RelationFailureKind::Incompatible)
+        );
+        assert!(leaf.child.is_none());
+    }
+
+    #[test]
+    fn target_union_failures_keep_the_outer_pair_and_first_member_cause() {
+        let mut context = TestContext {
+            kinds: vec![
+                TypeKind::String,
+                TypeKind::Array(TypeId(0)),
+                TypeKind::LiteralString("a".to_string(), LiteralProvenance::Regular),
+                TypeKind::Array(TypeId(2)),
+                TypeKind::LiteralString("b".to_string(), LiteralProvenance::Regular),
+                TypeKind::Array(TypeId(4)),
+                TypeKind::Union(vec![TypeId(3), TypeId(5)]),
+            ],
+            completions: HashMap::new(),
+        };
+
+        let failure =
+            relate(&mut context, TypeId(1), TypeId(6), RelationMode::Assignment).unwrap_err();
+        assert_eq!(
+            (failure.source, failure.target, &failure.kind),
+            (TypeId(1), TypeId(6), &RelationFailureKind::UnionMember)
+        );
+        let member = failure.child.as_deref().unwrap();
+        assert_eq!(
+            (member.source, member.target, &member.kind),
+            (TypeId(1), TypeId(3), &RelationFailureKind::ArrayElement)
+        );
+        let leaf = member.child.as_deref().unwrap();
+        assert_eq!(
+            (leaf.source, leaf.target, &leaf.kind),
+            (TypeId(0), TypeId(2), &RelationFailureKind::Incompatible)
+        );
+    }
+
+    #[test]
+    fn object_property_failures_keep_object_property_and_leaf_pairs() {
+        let mut context = TestContext {
+            kinds: vec![
+                TypeKind::Object(vec![property("kind", 2)]),
+                TypeKind::Object(vec![property("kind", 3)]),
+                TypeKind::LiteralString("b".to_string(), LiteralProvenance::Regular),
+                TypeKind::LiteralString("a".to_string(), LiteralProvenance::Regular),
+            ],
+            completions: HashMap::new(),
+        };
+
+        let failure =
+            relate(&mut context, TypeId(0), TypeId(1), RelationMode::Assignment).unwrap_err();
+        assert_eq!(
+            (failure.source, failure.target, &failure.kind),
+            (TypeId(0), TypeId(1), &RelationFailureKind::Object)
+        );
+        let property = failure.child.as_deref().unwrap();
+        assert_eq!(
+            (property.source, property.target, &property.kind),
+            (
+                TypeId(2),
+                TypeId(3),
+                &RelationFailureKind::Property("kind".to_string())
+            )
+        );
+        let leaf = property.child.as_deref().unwrap();
+        assert_eq!(
+            (leaf.source, leaf.target, &leaf.kind),
+            (TypeId(2), TypeId(3), &RelationFailureKind::Incompatible)
+        );
+    }
+
+    #[test]
+    fn tuple_array_failures_keep_combined_element_and_length_causes() {
+        let mut context = TestContext {
+            kinds: vec![
+                TypeKind::Tuple(vec![TypeId(2), TypeId(3)]),
+                TypeKind::Array(TypeId(4)),
+                TypeKind::LiteralString("first".to_string(), LiteralProvenance::Regular),
+                TypeKind::LiteralString("second".to_string(), LiteralProvenance::Regular),
+                TypeKind::LiteralString("seed".to_string(), LiteralProvenance::Regular),
+            ],
+            completions: HashMap::new(),
+        };
+        let element_failure =
+            relate(&mut context, TypeId(0), TypeId(1), RelationMode::Assignment).unwrap_err();
+        assert_eq!(element_failure.kind, RelationFailureKind::ArrayElement);
+        let combined = element_failure.child.as_deref().unwrap();
+        assert!(matches!(
+            context.kinds[combined.source.0 as usize],
+            TypeKind::Union(_)
+        ));
+
+        let mut reverse_context = TestContext {
+            kinds: vec![
+                TypeKind::Array(TypeId(2)),
+                TypeKind::Tuple(vec![TypeId(3)]),
+                TypeKind::String,
+                TypeKind::LiteralString("seed".to_string(), LiteralProvenance::Regular),
+            ],
+            completions: HashMap::new(),
+        };
+        let length_failure = relate(
+            &mut reverse_context,
+            TypeId(0),
+            TypeId(1),
+            RelationMode::Assignment,
+        )
+        .unwrap_err();
+        assert_eq!(
+            length_failure.kind,
+            RelationFailureKind::ArrayToTupleLength { required: 1 }
+        );
+    }
+
+    #[test]
+    fn incomplete_nested_relations_are_not_rewritten_as_property_failures() {
+        for (completion, expected) in [
+            (Completion::Deferred, RelationFailureKind::Deferred),
+            (Completion::Cycle, RelationFailureKind::Cycle),
+            (Completion::Limit, RelationFailureKind::ComplexityLimit),
+        ] {
+            let mut context = TestContext {
+                kinds: vec![
+                    TypeKind::Object(vec![property("item", 2)]),
+                    TypeKind::Object(vec![property("item", 3)]),
+                    TypeKind::Number,
+                    TypeKind::Deferred(DeferredType::Value(DeclId {
+                        file: FileId(0),
+                        local: 3,
+                    })),
+                ],
+                completions: HashMap::from([(TypeId(3), completion)]),
+            };
+
+            let failure =
+                relate(&mut context, TypeId(0), TypeId(1), RelationMode::Assignment).unwrap_err();
+            assert_eq!(failure.kind, expected);
+        }
+    }
+
+    #[test]
+    fn alternative_failures_use_semantic_completion_dominance() {
+        let declaration = |local| DeclId {
+            file: FileId(0),
+            local,
+        };
+        let mut context = TestContext {
+            kinds: vec![
+                TypeKind::Number,
+                TypeKind::Union(vec![TypeId(2), TypeId(3), TypeId(4), TypeId(5)]),
+                TypeKind::Invalid(InvalidType::MissingProperty {
+                    object: TypeId(0),
+                    name: "missing".to_string(),
+                }),
+                TypeKind::Deferred(DeferredType::Value(declaration(3))),
+                TypeKind::Deferred(DeferredType::Value(declaration(4))),
+                TypeKind::Deferred(DeferredType::Value(declaration(5))),
+            ],
+            completions: HashMap::from([
+                (TypeId(3), Completion::Deferred),
+                (TypeId(4), Completion::Cycle),
+                (TypeId(5), Completion::Limit),
+            ]),
+        };
+
+        let failure =
+            relate(&mut context, TypeId(0), TypeId(1), RelationMode::Assignment).unwrap_err();
+        assert_eq!(failure.kind, RelationFailureKind::ComplexityLimit);
+    }
+
+    #[test]
+    fn invalid_projection_is_a_relation_failure_not_a_success_type() {
+        let mut context = TestContext {
+            kinds: vec![
+                TypeKind::Invalid(InvalidType::MissingProperty {
+                    object: TypeId(1),
+                    name: "missing".to_string(),
+                }),
+                TypeKind::Number,
+            ],
+            completions: HashMap::new(),
+        };
+
+        let failure =
+            relate(&mut context, TypeId(0), TypeId(1), RelationMode::Assignment).unwrap_err();
+        assert_eq!(failure.kind, RelationFailureKind::InvalidProjection);
     }
 }

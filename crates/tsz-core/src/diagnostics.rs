@@ -1,6 +1,7 @@
 //! Structured diagnostics. Rendering is a process-adapter concern.
 
 use std::cmp::Ordering;
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
@@ -34,6 +35,23 @@ pub struct RelatedInformation {
     pub length: u32,
     pub message_text: String,
     pub code: u32,
+    /// One-based nesting within the primary diagnostic's message chain.
+    #[serde(default)]
+    pub depth: u32,
+}
+
+impl RelatedInformation {
+    #[must_use]
+    pub fn unlocated(message_text: impl Into<String>, code: u32, depth: u32) -> Self {
+        Self {
+            file: String::new(),
+            start: 0,
+            length: 0,
+            message_text: message_text.into(),
+            code,
+            depth,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -48,6 +66,11 @@ pub struct Diagnostic {
     pub related_information: Vec<RelatedInformation>,
     #[serde(skip)]
     pub(crate) file_id: Option<FileId>,
+    /// Text for a diagnostic owned by a non-program input such as
+    /// `tsconfig.json`. This keeps byte spans structured while still allowing
+    /// the process adapter to render line and column information.
+    #[serde(skip)]
+    external_source: Option<Arc<str>>,
 }
 
 impl Diagnostic {
@@ -73,6 +96,29 @@ impl Diagnostic {
             code,
             related_information: Vec::new(),
             file_id: None,
+            external_source: None,
+        }
+    }
+
+    #[must_use]
+    pub const fn error_at_text(
+        file: String,
+        start: u32,
+        length: u32,
+        source_text: Arc<str>,
+        message_text: String,
+        code: u32,
+    ) -> Self {
+        Self {
+            file,
+            start,
+            length,
+            message_text,
+            category: DiagnosticCategory::Error,
+            code,
+            related_information: Vec::new(),
+            file_id: None,
+            external_source: Some(source_text),
         }
     }
 
@@ -87,6 +133,7 @@ impl Diagnostic {
             code,
             related_information: Vec::new(),
             file_id: Some(source.id),
+            external_source: None,
         }
     }
 
@@ -96,12 +143,30 @@ impl Diagnostic {
     }
 
     #[must_use]
+    pub fn with_related_information(
+        mut self,
+        related_information: Vec<RelatedInformation>,
+    ) -> Self {
+        self.related_information = related_information;
+        self
+    }
+
+    #[must_use]
     pub fn render(&self, source: Option<&SourceText>) -> String {
-        if let Some(source) = source {
+        let mut rendered = if let Some(source) = source {
             let (line, column) = source.line_and_column(self.start);
             format!(
                 "{}({line},{column}): {} TS{}: {}",
                 source.path.to_string_lossy().replace('\\', "/"),
+                self.category.as_str(),
+                self.code,
+                self.message_text
+            )
+        } else if let Some(source_text) = &self.external_source {
+            let (line, column) = line_and_column(source_text, self.start);
+            format!(
+                "{}({line},{column}): {} TS{}: {}",
+                self.file,
                 self.category.as_str(),
                 self.code,
                 self.message_text
@@ -121,25 +186,44 @@ impl Diagnostic {
                 self.code,
                 self.message_text
             )
+        };
+        for related in &self.related_information {
+            rendered.push('\n');
+            let depth = related.depth.max(1) as usize;
+            rendered.push_str(&"  ".repeat(depth));
+            rendered.push_str(&related.message_text);
         }
-    }
-
-    fn sort_key(&self) -> (Option<FileId>, &str, u32, u32, DiagnosticCategory, &str) {
-        (
-            self.file_id,
-            &self.file,
-            self.start,
-            self.code,
-            self.category,
-            &self.message_text,
-        )
+        rendered
     }
 }
 
 /// Merge worker-private diagnostic buffers under one deterministic total key.
 pub fn sort_and_deduplicate(diagnostics: &mut Vec<Diagnostic>) {
+    sort_and_deduplicate_by(diagnostics, |diagnostic| diagnostic.file_id);
+}
+
+fn sort_and_deduplicate_by<K: Ord>(
+    diagnostics: &mut Vec<Diagnostic>,
+    file_key: impl Fn(&Diagnostic) -> Option<K>,
+) {
     diagnostics.sort_by(|left, right| {
-        let ordering = left.sort_key().cmp(&right.sort_key());
+        let left_key = (
+            file_key(left),
+            &left.file,
+            left.start,
+            left.code,
+            left.category,
+            &left.message_text,
+        );
+        let right_key = (
+            file_key(right),
+            &right.file,
+            right.start,
+            right.code,
+            right.category,
+            &right.message_text,
+        );
+        let ordering = left_key.cmp(&right_key);
         if ordering == Ordering::Equal {
             left.length.cmp(&right.length)
         } else {
@@ -153,5 +237,15 @@ pub fn sort_and_deduplicate(diagnostics: &mut Vec<Diagnostic>) {
             && left.code == right.code
             && left.category == right.category
             && left.message_text == right.message_text
+            && left.related_information == right.related_information
     });
+}
+
+fn line_and_column(text: &str, offset: u32) -> (u32, u32) {
+    let offset = (offset as usize).min(text.len());
+    let prefix = &text[..offset];
+    let line_start = prefix.rfind('\n').map_or(0, |index| index + 1);
+    let line = prefix.bytes().filter(|byte| *byte == b'\n').count() as u32 + 1;
+    let column = text[line_start..offset].encode_utf16().count() as u32 + 1;
+    (line, column)
 }

@@ -2,7 +2,7 @@
 # Conformance Test Runner
 # Usage: ./scripts/conformance/conformance.sh [generate|run|all] [options]
 
-set -e
+set -euo pipefail
 
 # Get the repository root directory
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -21,13 +21,13 @@ TSZ_BIN="$REPO_ROOT/.target/dist-fast/tsz"
 SERVER_BIN="$REPO_ROOT/.target/dist-fast/tsz-server"
 CACHE_GEN_BIN="$REPO_ROOT/.target/dist-fast/generate-tsc-cache"
 RUNNER_BIN="$REPO_ROOT/.target/dist-fast/tsz-conformance"
+BUILD_MANIFEST="$REPO_ROOT/.target/dist-fast/conformance-build-manifest.json"
 
 WORKERS=16
 
-# TSZ_LIB_DIR (the pinned-version lib.*.d.ts set tsz must type-check against so
-# its fingerprints match the cache) is resolved inside run_tests via
-# corpus-lib-dir.sh, after ensure_scripts_deps installs
-# scripts/node_modules/typescript as a fallback (#13400).
+# TSZ_LIB_DIR is derived from the same verified pinned native-oracle package
+# used to generate the cache. Ambient overrides and alternate lib trees are not
+# canonical inputs.
 
 # Colors
 GREEN='\033[0;32m'
@@ -66,7 +66,7 @@ Run options:
   --profile NAME    Cargo build profile (default: dist-fast)
   --test-dir PATH   Override TypeScript test corpus path
   --no-cache        Force cache regeneration even if cache exists
-  --force           Override snapshot safety guards (dirty-tree + regression check)
+  --force           Override snapshot regression guards (never provenance/coverage guards)
 
 Analyze options:
   --campaigns       Show recommended root-cause campaigns
@@ -113,110 +113,19 @@ Note: Fingerprint comparison (code + location + message) is always enabled.
 EOF
 }
 
-# Cross-platform file modification time (seconds since epoch)
-# Linux: stat -c %Y, macOS: stat -f %m
-file_mtime() {
-    if stat -c %Y /dev/null >/dev/null 2>&1; then
-        stat -c %Y "$1" 2>/dev/null
-    else
-        stat -f %m "$1" 2>/dev/null
-    fi
-}
-
-# Check if binaries are up-to-date with source code
-# Returns 0 if binaries are fresh (up-to-date), 1 if they need rebuilding
-binaries_exist() {
-    [ -x "$TSZ_BIN" ] &&
-        [ -x "$SERVER_BIN" ] &&
-        [ -x "$CACHE_GEN_BIN" ] &&
-        [ -x "$RUNNER_BIN" ]
-}
-
 binaries_are_fresh() {
-    local binary_dir="$REPO_ROOT/.target/$BUILD_PROFILE"
-    local tsz_bin="$binary_dir/tsz"
-    local conformance_bin="$binary_dir/tsz-conformance"
-    local cache_gen_bin="$binary_dir/generate-tsc-cache"
-    
-    # Check if all binaries exist
-    if [ ! -f "$tsz_bin" ] || [ ! -f "$conformance_bin" ] || [ ! -f "$cache_gen_bin" ]; then
-        return 1
-    fi
-    
-    # Find the newest binary modification time
-    local newest_binary_mtime=$(for f in "$tsz_bin" "$conformance_bin" "$cache_gen_bin"; do file_mtime "$f"; done | sort -n | tail -1)
-    
-    # Check if any Rust source file in the relevant crates is newer than the binaries
-    # These are the three active clean-slate workspace crates.
-    local crates_to_check=(
-        "tsz-cli"
-        "tsz-core"
-        "conformance"
-    )
-    
-    local crates_dir="$REPO_ROOT/crates"
-    
-    for crate_name in "${crates_to_check[@]}"; do
-        local crate_dir="$crates_dir/$crate_name"
-        
-        # Check source files
-        if [ -d "$crate_dir/src" ]; then
-            while IFS= read -r -d '' src_file; do
-                local src_mtime=$(file_mtime "$src_file")
-                if [ "$src_mtime" -gt "$newest_binary_mtime" ]; then
-                    return 1
-                fi
-            done < <(find "$crate_dir/src" -name "*.rs" -print0 2>/dev/null)
-        fi
-        
-        # Check Cargo.toml
-        if [ -f "$crate_dir/Cargo.toml" ]; then
-            local toml_mtime=$(file_mtime "$crate_dir/Cargo.toml")
-            if [ "$toml_mtime" -gt "$newest_binary_mtime" ]; then
-                return 1
-            fi
-        fi
-    done
-    
-    # Check root workspace src/ directory for any root-level crate sources.
-    if [ -d "$REPO_ROOT/src" ]; then
-        while IFS= read -r -d '' src_file; do
-            local src_mtime=$(file_mtime "$src_file")
-            if [ "$src_mtime" -gt "$newest_binary_mtime" ]; then
-                return 1
-            fi
-        done < <(find "$REPO_ROOT/src" -name "*.rs" -print0 2>/dev/null)
-    fi
-
-    # Check root Cargo.toml and Cargo.lock
-    if [ -f "$REPO_ROOT/Cargo.toml" ]; then
-        local root_toml_mtime=$(file_mtime "$REPO_ROOT/Cargo.toml")
-        if [ "$root_toml_mtime" -gt "$newest_binary_mtime" ]; then
-            return 1
-        fi
-    fi
-    if [ -f "$REPO_ROOT/Cargo.lock" ]; then
-        local lock_mtime=$(file_mtime "$REPO_ROOT/Cargo.lock")
-        if [ "$lock_mtime" -gt "$newest_binary_mtime" ]; then
-            return 1
-        fi
-    fi
-    
-    return 0
+    python3 "$REPO_ROOT/scripts/conformance/build-manifest.py" verify \
+        --repo "$REPO_ROOT" \
+        --manifest "$BUILD_MANIFEST" \
+        --binary "tsz=$TSZ_BIN" \
+        --binary "tsz-server=$SERVER_BIN" \
+        --binary "generate-tsc-cache=$CACHE_GEN_BIN" \
+        --binary "tsz-conformance=$RUNNER_BIN"
 }
 
 # Build binaries if source has changed (cargo handles incremental compilation)
 ensure_binaries() {
     export RUST_BACKTRACE=1
-
-    # CI conformance shards download an exact-SHA dist-fast artifact built by
-    # the dist-binaries job. The checkout in each shard can have newer mtimes
-    # than that artifact, so the generic freshness check would rebuild in every
-    # shard even though the artifact is the intended binary source.
-    if [[ "$BUILD_PROFILE" == "dist-fast" && "${TSZ_CI_TRUST_DIST_FAST_CACHE:-0}" == "1" ]] && binaries_exist; then
-        echo -e "${GREEN}Using trusted dist-fast binaries from CI artifact${NC}"
-        return 0
-    fi
 
     # Fast path: check if binaries are already fresh
     if binaries_are_fresh; then
@@ -239,27 +148,18 @@ ensure_binaries() {
     CARGO_TARGET_DIR="$TARGET_DIR" \
     CARGO_INCREMENTAL="$cargo_incremental" \
     cargo build --target-dir "$TARGET_DIR" --profile "$BUILD_PROFILE" -p tsz-cli -p tsz-conformance
+
+    python3 "$REPO_ROOT/scripts/conformance/build-manifest.py" write \
+        --repo "$REPO_ROOT" \
+        --manifest "$BUILD_MANIFEST" \
+        --binary "tsz=$TSZ_BIN" \
+        --binary "tsz-server=$SERVER_BIN" \
+        --binary "generate-tsc-cache=$CACHE_GEN_BIN" \
+        --binary "tsz-conformance=$RUNNER_BIN"
+    binaries_are_fresh
     
     echo ""
 }
-
-    # Check whether the current conformance runner supports a CLI flag.
-    # This keeps the shell wrapper compatible with slightly older runner builds
-    # that may not expose newer optional arguments yet.
-    runner_supports_flag() {
-        local flag="$1"
-        "$RUNNER_BIN" --help 2>&1 | grep -q -- "$flag"
-    }
-
-    # NOTE: do NOT pass --mode server in CI. The legacy server protocol in
-    # crates/conformance/src/server_pool.rs returns only error codes — it
-    # does NOT carry diagnostic fingerprints (code + file + line + column
-    # + message_key). The runner falls back to code-only comparison via
-    # use_fingerprint_compare() in runner.rs:42, which silently skips the
-    # fingerprint-level regression detection that conformance-baseline.txt
-    # is built around. Enabling server mode here is a coverage regression.
-    # Re-enable only after the server protocol carries fingerprints (or
-    # gate it behind an opt-in env var that's off in CI).
 
 # Ensure the exact pinned compiler and its platform standard libraries exist.
 ensure_scripts_deps() {
@@ -267,6 +167,25 @@ ensure_scripts_deps() {
         echo -e "${YELLOW}Pinned TypeScript compiler or standard libraries are unavailable.${NC}" >&2
         exit 1
     fi
+}
+
+resolve_tsz_lib_dir() {
+    ensure_scripts_deps
+    local oracle_json
+    local resolved_lib_dir
+    oracle_json="$(node --experimental-strip-types \
+        "$REPO_ROOT/scripts/emit/resolve-oracle.mjs" --root "$REPO_ROOT")" \
+        || { echo "error: conformance could not verify the pinned native TypeScript oracle." >&2; return 1; }
+    resolved_lib_dir="$(python3 -c \
+        'import json,pathlib,sys; print(pathlib.Path(json.loads(sys.argv[1])["binaryPath"]).resolve(strict=True).parent)' \
+        "$oracle_json")" \
+        || { echo "error: verified TypeScript oracle returned no usable library directory." >&2; return 1; }
+    if [ ! -f "$resolved_lib_dir/lib.d.ts" ] || [ ! -f "$resolved_lib_dir/lib.es5.d.ts" ]; then
+        echo "error: verified native TypeScript package has no complete standard-library tree: $resolved_lib_dir" >&2
+        return 1
+    fi
+    export TSZ_LIB_DIR="$resolved_lib_dir"
+    echo "Lib dir: ${TSZ_LIB_DIR}"
 }
 
 generate_cache() {
@@ -299,6 +218,7 @@ generate_cache() {
 
     cd "$REPO_ROOT"
     $CACHE_GEN_BIN \
+        --repo-root "$REPO_ROOT" \
         --test-dir "$TEST_DIR" \
         --output "$CACHE_FILE" \
         --domain-output "$DOMAIN_FILE" \
@@ -324,7 +244,7 @@ ensure_cache() {
     fi
 
     local pinned_version=""
-    if ! pinned_version="$(node -e "const fs = require('fs'); const cfg = JSON.parse(fs.readFileSync('$REPO_ROOT/scripts/conformance/typescript-versions.json', 'utf8')); const current = cfg.current; const mapping = current && cfg.mappings && cfg.mappings[current] && cfg.mappings[current].npm; const fallback = cfg.default && cfg.default.npm; process.stdout.write(mapping || fallback || '');")"; then
+    if ! pinned_version="$(node -e "const fs = require('fs'); const cfg = JSON.parse(fs.readFileSync('$REPO_ROOT/scripts/conformance/typescript-versions.json', 'utf8')); const current = cfg.current; const mapping = current && cfg.mappings && cfg.mappings[current] && cfg.mappings[current].npm; process.stdout.write(mapping || '');")"; then
         echo -e "${YELLOW}ERROR: Failed to read pinned TypeScript version from scripts/conformance/typescript-versions.json${NC}" >&2
         return 1
     fi
@@ -345,9 +265,22 @@ let mismatch = 0;
 let samplePath = '';
 let sampleVersion = '';
 let checked = 0;
+let incompleteDiagnosticEvidence = 0;
+let evidenceSample = '';
 
 for (const [path, entry] of Object.entries(cache)) {
   checked += 1;
+  const exits = entry && entry.ordinary_exit_statuses;
+  if (
+    !entry ||
+    entry.diagnostic_blocks_complete !== true ||
+    !Array.isArray(exits) ||
+    exits.length === 0 ||
+    exits.some(status => !Number.isInteger(status) || status < 0 || status > 2)
+  ) {
+    incompleteDiagnosticEvidence += 1;
+    if (!evidenceSample) evidenceSample = path;
+  }
   const actual = entry && entry.metadata && entry.metadata.typescript_version;
   if (!actual) {
     missing += 1;
@@ -372,7 +305,12 @@ if (checked === 0) {
 }
 
 if (missing > 0 || mismatch > 0) {
-  console.log(`missing=${missing},mismatch=${mismatch},sample=${samplePath},sampleVersion=${sampleVersion}`);
+  console.log(`VERSION:missing=${missing},mismatch=${mismatch},sample=${samplePath},sampleVersion=${sampleVersion}`);
+  process.exit(1);
+}
+
+if (incompleteDiagnosticEvidence > 0) {
+  console.log(`EVIDENCE:incomplete=${incompleteDiagnosticEvidence},sample=${evidenceSample}`);
   process.exit(1);
 }
 
@@ -386,10 +324,16 @@ EOF
     fi
 
     if [ "$cache_report" != "ok" ]; then
-        echo -e "${YELLOW}ERROR: TypeScript cache does not match the pinned TypeScript version:${NC}" >&2
-        echo "  Pinned version: $pinned_version" >&2
-        echo "  Cache check: ${cache_report:-unknown}" >&2
-        echo -e "${YELLOW}Re-run with --no-cache to regenerate cache, or update the cache file to match pinned tsc.${NC}" >&2
+        if [[ "$cache_report" == EVIDENCE:* ]]; then
+            echo -e "${YELLOW}ERROR: TypeScript cache lacks complete grouped diagnostic-block evidence:${NC}" >&2
+            echo "  Cache check: $cache_report" >&2
+            echo -e "${YELLOW}Regenerate once with: scripts/safe-run.sh --limit 75% -- ./scripts/conformance/conformance.sh generate --no-cache --workers $WORKERS${NC}" >&2
+        else
+            echo -e "${YELLOW}ERROR: TypeScript cache does not match the pinned TypeScript version:${NC}" >&2
+            echo "  Pinned version: $pinned_version" >&2
+            echo "  Cache check: ${cache_report:-unknown}" >&2
+            echo -e "${YELLOW}Re-run with --no-cache to regenerate cache, or update the cache file to match pinned tsc.${NC}" >&2
+        fi
         return 1
     fi
 
@@ -406,20 +350,9 @@ EOF
 }
 
 run_tests() {
-    # TypeScript lib files are needed for type checking (resolved via scripts/node_modules/typescript/lib)
-    ensure_scripts_deps
-
-    # Pin tsz to the same pinned-version lib.*.d.ts set the cache was generated
-    # against, deterministically, so local and CI produce identical fingerprints
-    # (#13400). Done here (not at script top) so the scripts/node_modules
-    # fallback installed by ensure_scripts_deps above is visible to the resolver.
-    if [ -z "${TSZ_LIB_DIR:-}" ]; then
-        local resolved_lib_dir
-        resolved_lib_dir="$("$REPO_ROOT/scripts/conformance/corpus-lib-dir.sh" --repo-root "$REPO_ROOT")" \
-            || { echo "error: conformance could not resolve the pinned TypeScript lib directory (see above)." >&2; exit 1; }
-        export TSZ_LIB_DIR="$resolved_lib_dir"
-    fi
-    echo "Lib dir: ${TSZ_LIB_DIR}"
+    # Pin TSZ to the exact native-oracle library tree for every invocation;
+    # ambient TSZ_LIB_DIR values never select canonical inputs.
+    resolve_tsz_lib_dir
 
     echo -e "${GREEN}Running conformance tests...${NC}"
     echo "Cache file: $CACHE_FILE"
@@ -467,24 +400,38 @@ run_tests() {
     local last_run="$REPO_ROOT/scripts/conformance/conformance-last-run.txt"
     local tmpout
     tmpout=$(mktemp)
-    local runner_compat_flags=()
-    if runner_supports_flag "--server-binary"; then
-        runner_compat_flags+=(--server-binary "$SERVER_BIN")
-    fi
-
-    # Run with --print-test to get PASS/FAIL per test line
+    # Run with --print-test to get PASS/FAIL per test line. Preserve the
+    # runner's status across tee so fatal/incomplete runs cannot become green.
+    local runner_status=0
+    set +e
     $RUNNER_BIN \
         --test-dir "$TEST_DIR" \
         --cache-file "$CACHE_FILE" \
+        --domain-file "$DOMAIN_FILE" \
         --tsz-binary "$TSZ_BIN" \
-        "${runner_compat_flags[@]}" \
         --workers $WORKERS \
         --print-test \
         "${runner_flags[@]}" \
-        "${extra_args[@]}" 2>/dev/null | tee "$tmpout" || true
+        "${extra_args[@]}" 2>&1 | tee "$tmpout"
+    runner_status=${PIPESTATUS[0]}
+    set -e
 
-    # Extract sorted PASS/FAIL lines with expected/actual codes for diffing
-    python3 "$REPO_ROOT/scripts/conformance/extract-baseline.py" "$tmpout" > "$last_run" 2>/dev/null || true
+    if ! python3 "$REPO_ROOT/scripts/conformance/validate-runner-output.py" \
+        "$tmpout" --runner-status "$runner_status" >/dev/null; then
+        rm -f "$tmpout"
+        echo "ERROR: conformance runner output failed canonical accounting validation" >&2
+        return 1
+    fi
+
+    # Never overwrite the last complete observation with an extraction failure.
+    local last_run_tmp
+    last_run_tmp=$(mktemp)
+    if ! python3 "$REPO_ROOT/scripts/conformance/extract-baseline.py" "$tmpout" > "$last_run_tmp"; then
+        rm -f "$tmpout" "$last_run_tmp"
+        echo "ERROR: failed to extract conformance baseline" >&2
+        return 1
+    fi
+    mv "$last_run_tmp" "$last_run"
     rm -f "$tmpout"
 
     # Auto-diff against baseline if it exists and this was an unfiltered run
@@ -501,6 +448,7 @@ run_tests() {
         echo ""
         diff_results "$baseline" "$last_run"
     fi
+    return "$runner_status"
 }
 
 analyze_tests() {
@@ -514,6 +462,7 @@ analyze_tests() {
 }
 
 areas_analysis() {
+    resolve_tsz_lib_dir
     local depth=""
     local min_tests=""
     local drilldown=""
@@ -551,19 +500,14 @@ areas_analysis() {
     local tmpfile
     tmpfile=$(mktemp)
     trap "rm -f '$tmpfile'" EXIT
-    local runner_compat_flags=()
-    if runner_supports_flag "--server-binary"; then
-        runner_compat_flags+=(--server-binary "$SERVER_BIN")
-    fi
-
     $RUNNER_BIN \
         --test-dir "$TEST_DIR" \
         --cache-file "$CACHE_FILE" \
+        --domain-file "$DOMAIN_FILE" \
         --tsz-binary "$TSZ_BIN" \
-        "${runner_compat_flags[@]}" \
         --workers $WORKERS \
         --print-test \
-        "${extra_args[@]}" > "$tmpfile" 2>/dev/null || true
+        "${extra_args[@]}" > "$tmpfile" 2>&1
 
     # Use python to analyze by area
     python3 "$REPO_ROOT/scripts/conformance/analyze-conformance-areas.py" "$tmpfile" \
@@ -584,18 +528,17 @@ import sys
 
 def parse_result_file(path):
     \"\"\"Parse a result file into {test_path: status} dict.
-    Handles PASS/FAIL/XFAIL path rows and detailed failure rows
-    (FAIL path | expected:[...] actual:[...]). XFAIL counts as FAIL
-    for regression math so known debt is never treated as a raw pass.\"\"\"
+    Handles PASS/FAIL/XFAIL/CRASH/TIMEOUT rows and detailed failure rows.
+    Every terminal non-pass counts as FAIL for regression math.\"\"\"
     results = {}
     with open(path) as f:
         for line in f:
             line = line.strip()
             parts = line.split(' ', 1)
-            if len(parts) == 2 and parts[0] in ('PASS', 'FAIL', 'XFAIL'):
+            if len(parts) == 2 and parts[0] in ('PASS', 'FAIL', 'XFAIL', 'CRASH', 'TIMEOUT'):
                 # Strip ' | expected:... actual:...' suffix if present
                 test_path = parts[1].split(' | ')[0]
-                results[test_path] = 'FAIL' if parts[0] == 'XFAIL' else parts[0]
+                results[test_path] = 'PASS' if parts[0] == 'PASS' else 'FAIL'
     return results
 
 baseline = parse_result_file(sys.argv[1])
@@ -648,7 +591,10 @@ check_submodule_clean() {
     local expected_sha
     expected_sha=$(tr -d '[:space:]' < "$REPO_ROOT/scripts/ci/typescript-submodule-ref")
     local actual_sha
-    actual_sha=$(cd "$ts_dir" && git rev-parse HEAD 2>/dev/null || true)
+    if ! actual_sha=$(cd "$ts_dir" && git rev-parse HEAD 2>/dev/null); then
+        echo -e "${YELLOW}ERROR: Could not read TypeScript corpus HEAD.${NC}" >&2
+        return 1
+    fi
     if [ "$expected_sha" != "$actual_sha" ]; then
         echo -e "${YELLOW}ERROR: TypeScript corpus SHA mismatch after reset.${NC}" >&2
         echo "  Expected: $expected_sha" >&2
@@ -673,23 +619,69 @@ check_submodule_clean() {
     echo ""
 }
 
+validate_snapshot_selection() {
+    # Tracked snapshots are full-domain evidence, never subset observations.
+    if [ "$NO_CACHE" = "true" ]; then
+        echo -e "${YELLOW}ERROR: snapshot --no-cache is not atomic; generate and review the oracle cache separately.${NC}" >&2
+        return 1
+    fi
+    if [ "$CUSTOM_TEST_DIR" = "true" ]; then
+        echo -e "${YELLOW}ERROR: tracked snapshots require the pinned default test directory.${NC}" >&2
+        return 1
+    fi
+    local arg
+    for arg in "${REMAINING_ARGS[@]}"; do
+        case "$arg" in
+            -v)
+                # The only safe short option in tracked snapshot mode.
+                ;;
+            --filter|--filter=*|--max|--max=*|-m|-m=*|-m[0-9]*|--offset|--offset=*|-o|-o=*|-o[0-9]*|--shard|--shard=*|--plan|--plan=*|--error-code|--error-code=*|--cache-file|--cache-file=*|--domain-file|--domain-file=*|--tsz-binary|--tsz-binary=*|--mode|--mode=*|--cache-clear|--cache-status|--timings-file|--timings-file=*|--write-diff-artifacts|--diff-artifacts-dir|--diff-artifacts-dir=*)
+                echo -e "${YELLOW}ERROR: tracked snapshots reject subset/custom runner argument: $arg.${NC}" >&2
+                return 1
+                ;;
+            -*)
+                echo -e "${YELLOW}ERROR: tracked snapshots reject clustered/unknown short runner argument: $arg.${NC}" >&2
+                return 1
+                ;;
+        esac
+    done
+}
+
 snapshot_tests() {
     local snapshot_file="$REPO_ROOT/scripts/conformance/conformance-snapshot.json"
-    local git_sha
-    git_sha="$(cd "$REPO_ROOT" && git rev-parse HEAD 2>/dev/null || echo 'unknown')"
     local prev_pass=0
 
-    # Guard 1: Dirty-tree check — prevent snapshots from uncommitted or worktree builds
-    if [ "$FORCE_SNAPSHOT" != "true" ]; then
-        local dirty
-        dirty="$(cd "$REPO_ROOT" && git status --porcelain -- crates/ src/ Cargo.toml Cargo.lock 2>/dev/null | head -1)"
-        if [ -n "$dirty" ]; then
-            echo -e "${YELLOW}ERROR: Working tree has uncommitted changes to source files.${NC}"
-            echo -e "${YELLOW}Snapshot would record a score that doesn't match any commit.${NC}"
-            echo -e "${YELLOW}Commit or stash your changes first, or use --force to override.${NC}"
-            return 1
-        fi
-    fi
+    validate_snapshot_selection || return 1
+    resolve_tsz_lib_dir || return 1
+    local provenance_json
+    provenance_json=$(mktemp)
+    capture_snapshot_provenance() {
+        local output_path="$1"
+        local provenance_args=(
+            --repo "$REPO_ROOT"
+            --test-dir "$TEST_DIR"
+            --cache "$CACHE_FILE"
+            --domain "$DOMAIN_FILE"
+            --build-manifest "$BUILD_MANIFEST"
+            --binary "tsz=$TSZ_BIN"
+            --binary "tsz-server=$SERVER_BIN"
+            --binary "generate-tsc-cache=$CACHE_GEN_BIN"
+            --binary "tsz-conformance=$RUNNER_BIN"
+            --workers "$WORKERS"
+            --output "$output_path"
+        )
+        local runner_arg
+        for runner_arg in "${REMAINING_ARGS[@]}"; do
+            provenance_args+=("--runner-arg=$runner_arg")
+        done
+        python3 "$REPO_ROOT/scripts/conformance/snapshot-provenance.py" \
+            "${provenance_args[@]}"
+    }
+    capture_snapshot_provenance "$provenance_json" || return 1
+    local git_sha
+    git_sha=$(python3 -c \
+        "import json,sys; print(json.load(open(sys.argv[1]))['git']['commit'])" \
+        "$provenance_json")
 
     echo -e "${GREEN}Running full conformance snapshot (run + analyze + areas)...${NC}"
 
@@ -698,11 +690,8 @@ snapshot_tests() {
     if [ -f "$snapshot_file" ]; then
         prev_pass=$(python3 -c "
 import json, sys
-try:
-    d = json.load(open(sys.argv[1]))
-    print(d.get('summary', {}).get('passed', 0))
-except Exception:
-    print(0)
+d = json.load(open(sys.argv[1]))
+print(d['summary']['passed'])
 " "$snapshot_file")
     fi
 
@@ -711,12 +700,7 @@ except Exception:
     tmpfile=$(mktemp)
     local summary_json
     summary_json=$(mktemp)
-    trap "rm -f '$tmpfile' '$summary_json'" RETURN
-    local runner_compat_flags=()
-    if runner_supports_flag "--server-binary"; then
-        runner_compat_flags+=(--server-binary "$SERVER_BIN")
-    fi
-
+    trap "rm -f '$tmpfile' '$summary_json' '$provenance_json'" RETURN
     run_snapshot_once() {
         rm -f "$tmpfile"
         tmpfile=$(mktemp)
@@ -728,11 +712,11 @@ except Exception:
         $RUNNER_BIN \
             --test-dir "$TEST_DIR" \
             --cache-file "$CACHE_FILE" \
+            --domain-file "$DOMAIN_FILE" \
             --tsz-binary "$TSZ_BIN" \
-            "${runner_compat_flags[@]}" \
             --workers $WORKERS \
             --print-test \
-            "${REMAINING_ARGS[@]}" > "$tmpfile" 2>/dev/null
+            "${REMAINING_ARGS[@]}" > "$tmpfile" 2>&1
         runner_status=$?
         set -e
 
@@ -742,81 +726,61 @@ except Exception:
             return 1
         fi
 
-        # 2) Extract the runnable pass denominator and the complete candidate
-        #    partition via the canonical runner-output parser.
-        python3 -c "
-import json, os, sys
-sys.path.insert(0, os.path.join(sys.argv[3], 'scripts', 'conformance'))
-from lib.results import summarize_runner_output
-summary = summarize_runner_output(sys.argv[1])
-summary['runner_status'] = int(sys.argv[2])
-json.dump(summary, sys.stdout)
-" "$tmpfile" "$runner_status" "$REPO_ROOT" > "$summary_json"
+        # 2) Validate the exact same identity/accounting contract used by `run`.
+        python3 "$REPO_ROOT/scripts/conformance/validate-runner-output.py" \
+            "$tmpfile" --runner-status "$runner_status" --output "$summary_json"
     }
 
     local candidate_tests total_tests unsupported_tests skipped_tests
-    local passed failed pass_rate recorded_results recorded_runnable
+    local passed failed crashed timeout pass_rate recorded_results recorded_runnable
     local has_final_results partition_valid runner_status
-    local attempt max_attempts=3
-    for attempt in $(seq 1 "$max_attempts"); do
-        run_snapshot_once || return 1
+    run_snapshot_once || return 1
 
-        # Read values from JSON (no eval)
-        total_tests=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d['total'])" "$summary_json")
-        candidate_tests=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d['candidates'])" "$summary_json")
-        unsupported_tests=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d['unsupported'])" "$summary_json")
-        skipped_tests=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d['skipped'])" "$summary_json")
-        passed=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d['passed'])" "$summary_json")
-        failed=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d['failed'])" "$summary_json")
-        pass_rate=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d['rate'])" "$summary_json")
-        recorded_results=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d.get('recorded_candidates', 0))" "$summary_json")
-        recorded_runnable=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d.get('recorded_runnable', 0))" "$summary_json")
-        has_final_results=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print('true' if d.get('has_final_results') else 'false')" "$summary_json")
-        partition_valid=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print('true' if d.get('partition_valid') else 'false')" "$summary_json")
-        runner_status=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d.get('runner_status', 0))" "$summary_json")
+    # Read values from the first and only canonical invocation (no retry/election).
+    total_tests=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d['total'])" "$summary_json")
+    candidate_tests=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d['candidates'])" "$summary_json")
+    unsupported_tests=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d['unsupported'])" "$summary_json")
+    skipped_tests=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d['skipped'])" "$summary_json")
+    passed=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d['passed'])" "$summary_json")
+    failed=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d['failed'])" "$summary_json")
+    crashed=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d.get('crashed', 0))" "$summary_json")
+    timeout=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d.get('timeout', 0))" "$summary_json")
+    pass_rate=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d['rate'])" "$summary_json")
+    recorded_results=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d.get('recorded_candidates', 0))" "$summary_json")
+    recorded_runnable=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d.get('recorded_runnable', 0))" "$summary_json")
+    has_final_results=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print('true' if d.get('has_final_results') else 'false')" "$summary_json")
+    partition_valid=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print('true' if d.get('partition_valid') else 'false')" "$summary_json")
+    runner_status=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d.get('runner_status', 0))" "$summary_json")
 
-        if [ "$has_final_results" != "true" ]; then
-            echo -e "${YELLOW}ERROR: Snapshot run missing FINAL RESULTS summary (runner exit: $runner_status).${NC}"
-            return 1
-        fi
+    if [ "$has_final_results" != "true" ]; then
+        echo -e "${YELLOW}ERROR: Snapshot run missing FINAL RESULTS summary (runner exit: $runner_status).${NC}"
+        return 1
+    fi
 
-        if [ "$partition_valid" != "true" ]; then
-            echo -e "${YELLOW}ERROR: Snapshot candidate partition is inconsistent: ${candidate_tests} != ${total_tests} runnable + ${unsupported_tests} unsupported + ${skipped_tests} skipped.${NC}"
-            return 1
-        fi
+    if [ "$partition_valid" != "true" ]; then
+        echo -e "${YELLOW}ERROR: Snapshot candidate partition is inconsistent: ${candidate_tests} != ${total_tests} runnable + ${unsupported_tests} unsupported + ${skipped_tests} skipped.${NC}"
+        return 1
+    fi
 
-        if [ "$recorded_results" -ne "$candidate_tests" ] || [ "$recorded_runnable" -ne "$total_tests" ]; then
-            if [ "$attempt" -lt "$max_attempts" ]; then
-                echo -e "${YELLOW}Snapshot run incomplete: recorded ${recorded_results}/${candidate_tests} candidates and ${recorded_runnable}/${total_tests} runnable rows. Retrying (${attempt}/${max_attempts})...${NC}"
-                continue
-            fi
-            echo -e "${YELLOW}ERROR: Snapshot run remained incomplete after $max_attempts attempts (${recorded_results}/${candidate_tests} candidates, ${recorded_runnable}/${total_tests} runnable).${NC}"
-            echo -e "${YELLOW}Incomplete candidate coverage cannot be saved, including with --force.${NC}"
-            return 1
-        fi
+    if [ "$recorded_results" -ne "$candidate_tests" ] || [ "$recorded_runnable" -ne "$total_tests" ]; then
+        echo -e "${YELLOW}ERROR: Snapshot run was incomplete (${recorded_results}/${candidate_tests} candidates, ${recorded_runnable}/${total_tests} runnable).${NC}"
+        echo -e "${YELLOW}Incomplete candidate coverage cannot be saved, including with --force.${NC}"
+        return 1
+    fi
 
-        if [ "$FORCE_SNAPSHOT" != "true" ] && [ "$prev_pass" -gt 0 ] && [ "$passed" -lt "$prev_pass" ]; then
-            if [ "$attempt" -lt "$max_attempts" ]; then
-                echo -e "${YELLOW}Snapshot run regressed vs previous snapshot ($passed vs $prev_pass passes). Retrying (${attempt}/${max_attempts})...${NC}"
-                continue
-            fi
-            echo -e "${YELLOW}ERROR: Snapshot run still regressed after $max_attempts attempts ($passed vs $prev_pass passes).${NC}"
-            echo -e "${YELLOW}Investigate before saving, or use --force to override.${NC}"
-            return 1
-        fi
-
-        break
-    done
+    if [ "$FORCE_SNAPSHOT" != "true" ] && [ "$prev_pass" -gt 0 ] && [ "$passed" -lt "$prev_pass" ]; then
+        echo -e "${YELLOW}ERROR: Snapshot run regressed vs previous snapshot ($passed vs $prev_pass passes).${NC}"
+        echo -e "${YELLOW}Investigate before saving, or use --force to override.${NC}"
+        return 1
+    fi
 
     # Guard 2: Regression check — abort if score dropped >5% from previous snapshot
     if [ "$FORCE_SNAPSHOT" != "true" ] && [ -f "$snapshot_file" ]; then
         local prev_rate
         prev_rate=$(python3 -c "
 import json, sys
-try:
-    d = json.load(open(sys.argv[1]))
-    print(d['summary']['pass_rate'])
-except: print(0)
+d = json.load(open(sys.argv[1]))
+print(d['summary']['pass_rate'])
 " "$snapshot_file")
         local drop
         drop=$(python3 -c "
@@ -835,26 +799,33 @@ print(f'{prev - curr:.1f}')
 
     # 3) Build per-test detail snapshot (compact JSON with all failure data)
     local detail_file="$REPO_ROOT/scripts/conformance/conformance-detail.json"
+    local detail_tmp
+    detail_tmp=$(mktemp)
     python3 "$REPO_ROOT/scripts/conformance/build-snapshot-detail.py" "$tmpfile" \
-        --output "$detail_file" \
+        --output "$detail_tmp" \
         --git-sha "$git_sha" \
+        --provenance "$provenance_json" \
         || { echo "ERROR: failed to build conformance detail snapshot"; return 1; }
 
     # 4) Run analyze with JSON output
     local analyze_json
     analyze_json=$(mktemp)
     python3 "$REPO_ROOT/scripts/conformance/analyze-conformance.py" "$tmpfile" \
-        --json-output "$analyze_json" || true
+        --json-output "$analyze_json" \
+        || { echo "ERROR: failed to analyze conformance snapshot"; return 1; }
 
     # 5) Run areas with JSON output (depth 2, min 10 tests)
     local areas_json
     areas_json=$(mktemp)
     python3 "$REPO_ROOT/scripts/conformance/analyze-conformance-areas.py" "$tmpfile" \
-        --depth 2 --min-tests 10 --json-output "$areas_json" || true
+        --depth 2 --min-tests 10 --json-output "$areas_json" \
+        || { echo "ERROR: failed to analyze conformance areas"; return 1; }
 
     # 6) Assemble snapshot JSON (all data passed as arguments, not interpolated)
     local timestamp
     timestamp="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+    local snapshot_tmp
+    snapshot_tmp=$(mktemp)
 
     python3 -c "
 import json, sys
@@ -863,19 +834,23 @@ timestamp, git_sha = sys.argv[1], sys.argv[2]
 candidates, runnable = int(sys.argv[3]), int(sys.argv[4])
 passed, failed = int(sys.argv[5]), int(sys.argv[6])
 unsupported, skipped = int(sys.argv[7]), int(sys.argv[8])
-rate = float(sys.argv[9])
-analyze_path, areas_path, detail_path, out_path = sys.argv[10], sys.argv[11], sys.argv[12], sys.argv[13]
+crashed, timeout = int(sys.argv[9]), int(sys.argv[10])
+rate = float(sys.argv[11])
+analyze_path, areas_path, detail_path, provenance_path, out_path = sys.argv[12:17]
 
 analyze, areas, detail = {}, {}, {}
 try:
     with open(analyze_path) as f: analyze = json.load(f)
-except: pass
+except Exception as error: raise SystemExit(f'cannot load analysis artifact: {error}')
 try:
     with open(areas_path) as f: areas = json.load(f)
-except: pass
+except Exception as error: raise SystemExit(f'cannot load areas artifact: {error}')
 try:
     with open(detail_path) as f: detail = json.load(f)
-except: pass
+except Exception as error: raise SystemExit(f'cannot load detail artifact: {error}')
+try:
+    with open(provenance_path) as f: provenance = json.load(f)
+except Exception as error: raise SystemExit(f'cannot load provenance artifact: {error}')
 
 # Pull richer aggregates from the detail file when available
 aggregates = detail.get('aggregates', {})
@@ -887,6 +862,8 @@ expected_detail = {
     'failed': failed,
     'unsupported': unsupported,
     'skipped': skipped,
+    'crashed': crashed,
+    'timeout': timeout,
 }
 actual_detail = {
     'candidates': int(detail_summary.get('candidates', -1)),
@@ -895,6 +872,8 @@ actual_detail = {
     'failed': int(detail_summary.get('failed', -1)),
     'unsupported': int(detail_summary.get('unsupported', -1)),
     'skipped': int(detail_summary.get('skipped', -1)),
+    'crashed': int(detail_summary.get('crashed', -1)),
+    'timeout': int(detail_summary.get('timeout', -1)),
 }
 if actual_detail != expected_detail:
     raise SystemExit(
@@ -908,6 +887,7 @@ if candidates != runnable + unsupported + skipped:
 snapshot = {
     'timestamp': timestamp,
     'git_sha': git_sha,
+    'provenance': provenance,
     'summary': {
         'candidates': candidates,
         'total_tests': runnable,
@@ -916,6 +896,8 @@ snapshot = {
         'failed': failed,
         'unsupported': unsupported,
         'skipped': skipped,
+        'crashed': actual_detail['crashed'],
+        'timeout': actual_detail['timeout'],
         'pass_rate': rate,
     },
     'areas_by_pass_rate': areas.get('areas', []),
@@ -928,6 +910,7 @@ snapshot = {
     'top_missing_codes': aggregates.get('top_missing_codes', []),
     'top_extra_codes': aggregates.get('top_extra_codes', []),
     'categories': aggregates.get('categories', {}),
+    'terminal_failures': detail.get('terminal_failures', {}),
 }
 
 with open(out_path, 'w') as f:
@@ -940,18 +923,39 @@ print(
 print(f'Git SHA: {git_sha}')
 print(f'Areas ranked: {len(snapshot[\"areas_by_pass_rate\"])}')
 " "$timestamp" "$git_sha" "$candidate_tests" "$total_tests" "$passed" "$failed" \
-  "$unsupported_tests" "$skipped_tests" "$pass_rate" "$analyze_json" "$areas_json" \
-  "$detail_file" "$snapshot_file" \
+  "$unsupported_tests" "$skipped_tests" "$crashed" "$timeout" "$pass_rate" "$analyze_json" "$areas_json" \
+  "$detail_tmp" "$provenance_json" "$snapshot_tmp" \
   || { echo "ERROR: failed to assemble snapshot JSON"; return 1; }
 
     rm -f "$summary_json" "$analyze_json" "$areas_json"
 
     # Verify snapshot is valid JSON
-    python3 -m json.tool "$snapshot_file" > /dev/null || { echo "ERROR: snapshot is not valid JSON"; return 1; }
+    python3 -m json.tool "$snapshot_tmp" > /dev/null || { echo "ERROR: snapshot is not valid JSON"; return 1; }
 
     # 6) Save per-test baseline for regression diffing (with expected/actual codes)
     local baseline_file="$REPO_ROOT/scripts/conformance/conformance-baseline.txt"
-    python3 "$REPO_ROOT/scripts/conformance/extract-baseline.py" "$tmpfile" > "$baseline_file" 2>/dev/null || true
+    local baseline_tmp
+    baseline_tmp=$(mktemp)
+    if ! python3 "$REPO_ROOT/scripts/conformance/extract-baseline.py" "$tmpfile" > "$baseline_tmp"; then
+        echo "ERROR: failed to extract snapshot baseline" >&2
+        return 1
+    fi
+
+    # Re-capture every immutable input after the compiler run and artifact
+    # assembly. Nothing is published if HEAD, cleanliness, build inputs,
+    # binaries, corpus, oracle, cache, domain, or CLI selection changed.
+    local provenance_after
+    provenance_after=$(mktemp)
+    capture_snapshot_provenance "$provenance_after" || return 1
+    if ! cmp -s "$provenance_json" "$provenance_after"; then
+        echo "ERROR: snapshot provenance changed during the canonical run" >&2
+        return 1
+    fi
+    rm -f "$provenance_after"
+
+    mv "$detail_tmp" "$detail_file"
+    mv "$snapshot_tmp" "$snapshot_file"
+    mv "$baseline_tmp" "$baseline_file"
     local baseline_count
     baseline_count=$(wc -l < "$baseline_file" | tr -d ' ')
     echo -e "${GREEN}Baseline saved: $baseline_file ($baseline_count tests)${NC}"
@@ -959,24 +963,28 @@ print(f'Areas ranked: {len(snapshot[\"areas_by_pass_rate\"])}')
     echo -e "${GREEN}Detail written to: $detail_file${NC}"
     echo -e "${GREEN}Snapshot written to: $snapshot_file${NC}"
     echo -e "${GREEN}Query offline: python3 scripts/conformance/query-conformance.py${NC}"
+    return "$runner_status"
 }
 
 # Parse arguments
 # Check for help flags first
 if [[ "${1:-}" == "help" ]] || [[ "${1:-}" == "--help" ]] || [[ "${1:-}" == "-h" ]]; then
     COMMAND="help"
-    shift || true
+    shift
 # If first argument starts with --, assume user meant 'run' command
 elif [[ "${1:-}" == --* ]]; then
     COMMAND="run"
 else
     COMMAND="${1:-all}"
-    shift || true
+    if [ "$#" -gt 0 ]; then
+        shift
+    fi
 fi
 
 # Check for flags
 NO_CACHE=false
 FORCE_SNAPSHOT=false
+CUSTOM_TEST_DIR=false
 REMAINING_ARGS=()
 i=0
 while [ $i -lt ${#@} ]; do
@@ -991,8 +999,10 @@ while [ $i -lt ${#@} ]; do
     elif [ "$arg" = "--test-dir" ]; then
         i=$((i + 1))
         TEST_DIR="${@:$((i+1)):1}"
+        CUSTOM_TEST_DIR=true
     elif [[ "$arg" == --test-dir=* ]]; then
         TEST_DIR="${arg#--test-dir=}"
+        CUSTOM_TEST_DIR=true
     elif [ "$arg" = "--profile" ]; then
         i=$((i + 1))
         BUILD_PROFILE="${@:$((i+1)):1}"
@@ -1000,11 +1010,17 @@ while [ $i -lt ${#@} ]; do
         SERVER_BIN="$REPO_ROOT/.target/$BUILD_PROFILE/tsz-server"
         CACHE_GEN_BIN="$REPO_ROOT/.target/$BUILD_PROFILE/generate-tsc-cache"
         RUNNER_BIN="$REPO_ROOT/.target/$BUILD_PROFILE/tsz-conformance"
+        BUILD_MANIFEST="$REPO_ROOT/.target/$BUILD_PROFILE/conformance-build-manifest.json"
     else
         REMAINING_ARGS+=("$arg")
     fi
     i=$((i + 1))
 done
+
+# Reject subset snapshot requests before cache generation or any tracked write.
+if [ "$COMMAND" = "snapshot" ]; then
+    validate_snapshot_selection || exit 1
+fi
 
 case "$COMMAND" in
     generate)
@@ -1018,13 +1034,14 @@ case "$COMMAND" in
         ;;
     run)
         check_submodule_clean
-        ensure_binaries
         if [ "$NO_CACHE" = "true" ]; then
+            ensure_binaries
             echo -e "${YELLOW}--no-cache flag set, regenerating cache...${NC}"
             generate_cache "true"
             echo ""
         else
             ensure_cache
+            ensure_binaries
         fi
         run_tests "${REMAINING_ARGS[@]}"
         ;;
@@ -1036,11 +1053,12 @@ case "$COMMAND" in
         ;;
     areas)
         check_submodule_clean
-        ensure_binaries
         if [ "$NO_CACHE" = "true" ]; then
+            ensure_binaries
             generate_cache "true"
         else
             ensure_cache
+            ensure_binaries
         fi
         areas_analysis "${REMAINING_ARGS[@]}"
         ;;
@@ -1060,22 +1078,24 @@ case "$COMMAND" in
         ;;
     all)
         check_submodule_clean
-        ensure_binaries
         if [ "$NO_CACHE" = "true" ]; then
+            ensure_binaries
             generate_cache "true"
         else
             ensure_cache
+            ensure_binaries
         fi
         echo ""
         run_tests "${REMAINING_ARGS[@]}"
         ;;
     snapshot)
         check_submodule_clean
-        ensure_binaries
         if [ "$NO_CACHE" = "true" ]; then
+            ensure_binaries
             generate_cache "true"
         else
             ensure_cache
+            ensure_binaries
         fi
         snapshot_tests
         ;;

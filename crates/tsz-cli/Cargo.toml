@@ -41,7 +41,6 @@ serde_json.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 tsz.workspace = true
-walkdir.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
@@ -53,6 +52,10 @@ path = "rewrite-tests/process_contract.rs"
 [[test]]
 name = "rewrite_standard_library_options"
 path = "rewrite-tests/standard_library_options.rs"
+
+[[test]]
+name = "rewrite_project_config"
+path = "rewrite-tests/project_config.rs"
 
 [lints]
 workspace = true

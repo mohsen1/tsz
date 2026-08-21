@@ -318,6 +318,49 @@ after
         self.assertEqual(self.mod.emit_detail_row_summary(data), data["summary"])
         self.assertTrue(self.mod.emit_detail_rows_match_summary(data))
 
+    def test_terminal_artifact_states_are_failures_not_skips(self):
+        results = []
+        for index, status in enumerate(("unsupported", "timeout", "crash", "incomplete")):
+            results.append(
+                {
+                    "name": f"case-{index}",
+                    "baselineFile": f"case-{index}.js",
+                    "testPath": f"tests/cases/compiler/case-{index}.ts",
+                    "artifactState": status,
+                    "jsStatus": status,
+                    "dtsStatus": status,
+                    "jsError": status,
+                    "dtsError": status,
+                }
+            )
+        data = {"results": results}
+
+        summary = self.mod.emit_detail_row_summary(data)
+        self.assertEqual(summary["jsFail"], 4)
+        self.assertEqual(summary["jsSkip"], 0)
+        self.assertEqual(summary["dtsFail"], 4)
+        self.assertEqual(summary["dtsSkip"], 0)
+        self.assertEqual(
+            sum(len(rows) for rows in self.mod.collect_failures_by_family(data, "js").values()),
+            4,
+        )
+
+    def test_artifact_state_is_part_of_detail_fingerprint(self):
+        row = {
+            "name": "case",
+            "baselineFile": "case.js",
+            "testPath": "tests/cases/compiler/case.ts",
+            "artifactState": "complete",
+            "jsStatus": "pass",
+            "dtsStatus": "skip",
+        }
+        complete = self.mod.emit_detail_row_fingerprint({"results": [row]})
+        incomplete = self.mod.emit_detail_row_fingerprint(
+            {"results": [{**row, "artifactState": "incomplete", "jsStatus": "incomplete"}]}
+        )
+
+        self.assertNotEqual(complete, incomplete)
+
     def test_freshness_note_ignores_different_emit_domains(self):
         note = self.mod.emit_freshness_note(
             {
@@ -391,31 +434,14 @@ after
             with self.subTest(state=state):
                 self.assertFalse(self.mod.emit_detail_is_current({"state": state}))
 
-    def test_committed_emit_detail_is_not_stale(self):
-        """Guard against the committed emit-detail.json silently drifting behind
-        the public README aggregate.
+    def test_rewrite_readme_makes_no_current_emit_aggregate_claim(self):
+        """R0 keeps broad emit artifacts observational and fail-closed.
 
-        The 2026-05-19 -> 2026-06-03 drift left ``--families`` reporting ~413
-        phantom JS and ~55 phantom DTS failures that every lane then triaged.
-        When this fails, refresh ``scripts/emit/emit-detail.json`` and
-        ``scripts/emit/emit-snapshot.json`` from the CI ``emit-details`` artifact
-        (per-test ``ci-metrics/emit-detail-*.json``).
+        The only README numbers are explicitly frozen legacy history. They must
+        not be parsed as a current aggregate or used to validate/refresh the
+        clean-slate rewrite's committed detail artifact.
         """
-        detail_summary = self.mod.emit_summary(self.mod.load_detail())
-        public_summary = self.mod.emit_summary_from_readme()
-        self.assertIsNotNone(
-            public_summary,
-            "README emit aggregate block missing; cannot evaluate freshness",
-        )
-        status = self.mod.emit_freshness_status(detail_summary, public_summary)
-        self.assertIn(
-            status["state"],
-            ("aggregate-match", "detail-ahead"),
-            "committed scripts/emit/emit-detail.json is "
-            f"'{status['state']}' relative to the README emit aggregate "
-            f"({status}); refresh emit-detail.json + emit-snapshot.json from "
-            "the CI emit-details artifact before landing emit metric claims.",
-        )
+        self.assertIsNone(self.mod.emit_summary_from_readme())
 
     def test_stale_failure_family_heading_names_public_remaining_count(self):
         detail_summary = {

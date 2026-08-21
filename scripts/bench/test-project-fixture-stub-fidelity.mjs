@@ -31,6 +31,10 @@ import {
   toBaseline,
   BASELINE_PATH,
 } from "./project-fixture-stub-fidelity.mjs";
+import {
+  computeFixtureStubInventory,
+  fixtureStubEvidenceFor,
+} from "./lib/fixture-stub-inventory.mjs";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(SCRIPT_DIR, "..", "..");
@@ -183,6 +187,33 @@ test("checkAgainstBaseline reports a removed writer without failing", () => {
 
 const liveAudit = auditStubFidelity(ROOT);
 const liveBaseline = loadBaseline();
+
+test("row inventory identifies stubbed canaries and exact zero-stub rows", () => {
+  const inventory = computeFixtureStubInventory(ROOT);
+  for (const name of ["msw-project", "effect-project", "drizzle-orm-project"]) {
+    assert.ok(inventory[name], `${name} must be structurally linked to its stub writer`);
+    assert.ok(
+      inventory[name].stubbedModules > 0 || inventory[name].stubbedAnyMembers > 0,
+      `${name} must not collapse to a forged zero-stub row`,
+    );
+  }
+  const zero = fixtureStubEvidenceFor(ROOT, "utility-types-project");
+  assert.equal(zero.stubbedModules, 0);
+  assert.equal(zero.stubbedAnyMembers, 0);
+  assert.match(zero.stubInventoryFingerprint, /^[0-9a-f]{64}$/);
+});
+
+test("row inventory fails closed when its source model is unavailable", () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "tsz-stub-inventory-miss-"));
+  try {
+    assert.throws(
+      () => computeFixtureStubInventory(tmp),
+      /fixture stub inventory source missing/,
+    );
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
 
 test("committed baseline file exists and is well-formed", () => {
   assert.ok(fs.existsSync(BASELINE_PATH), "baseline JSON is committed");

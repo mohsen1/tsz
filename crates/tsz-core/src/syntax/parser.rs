@@ -1,6 +1,8 @@
 use crate::diagnostics::Diagnostic;
 use crate::source::{NodeId, SourceText, Span};
 
+mod type_parameters;
+
 use super::{
     AccessorKind, ArrowBody, BinaryOperator, ClassDeclaration, ClassMember, ClassMemberKind,
     ClassMemberModifiers, ExportDeclaration, ExportSpecifier, Expression, ExpressionKind,
@@ -37,6 +39,8 @@ struct Parser<'a> {
     index: usize,
     next_node: u32,
     diagnostics: Vec<Diagnostic>,
+    speculating: bool,
+    speculative_token_rewrites: Vec<(usize, Token)>,
 }
 
 impl<'a> Parser<'a> {
@@ -47,6 +51,8 @@ impl<'a> Parser<'a> {
             index: 0,
             next_node: 0,
             diagnostics,
+            speculating: false,
+            speculative_token_rewrites: Vec::new(),
         }
     }
 
@@ -642,6 +648,7 @@ impl<'a> Parser<'a> {
                 Vec::new()
             };
             return Some(ClassMember {
+                id: self.alloc_node(),
                 name: "constructor".to_string(),
                 name_span,
                 span: start.merge(self.previous().span),
@@ -680,6 +687,7 @@ impl<'a> Parser<'a> {
                 Vec::new()
             };
             return Some(ClassMember {
+                id: self.alloc_node(),
                 name,
                 name_span,
                 span: start.merge(self.previous().span),
@@ -698,6 +706,7 @@ impl<'a> Parser<'a> {
         let initializer = self.eat(TokenKind::Equals).then(|| self.parse_expression());
         self.eat(TokenKind::Semicolon);
         Some(ClassMember {
+            id: self.alloc_node(),
             name,
             name_span,
             span: start.merge(self.previous().span),
@@ -793,31 +802,6 @@ impl<'a> Parser<'a> {
             rest,
             span: Span::new(self.source.id, start, end),
         }
-    }
-
-    fn parse_type_parameters(&mut self) -> Vec<String> {
-        if !self.eat(TokenKind::LessThan) {
-            return Vec::new();
-        }
-        let mut parameters = Vec::new();
-        while !self.at_type_close() && !self.at(TokenKind::EndOfFile) {
-            self.eat(TokenKind::Const);
-            self.eat(TokenKind::In);
-            self.eat(TokenKind::Out);
-            let (name, _) = self.parse_name();
-            parameters.push(name);
-            if self.eat(TokenKind::Extends) {
-                let _ = self.parse_type();
-            }
-            if self.eat(TokenKind::Equals) {
-                let _ = self.parse_type();
-            }
-            if !self.eat(TokenKind::Comma) {
-                break;
-            }
-        }
-        self.expect_type_close();
-        parameters
     }
 
     fn parse_type(&mut self) -> TypeNode {
@@ -1005,10 +989,14 @@ impl<'a> Parser<'a> {
             }
             TokenKind::TypeOf => {
                 let start = self.bump().span;
-                let (name, name_span) = self.parse_entity_name();
+                let (name, name_span, segment_spans) = self.parse_entity_name();
                 TypeNode {
                     span: start.merge(name_span),
-                    kind: TypeNodeKind::TypeQuery { name, name_span },
+                    kind: TypeNodeKind::TypeQuery {
+                        name,
+                        name_span,
+                        segment_spans,
+                    },
                 }
             }
             TokenKind::Infer => {
@@ -1045,8 +1033,8 @@ impl<'a> Parser<'a> {
                     },
                 }
             }
-            _ if token.kind == TokenKind::This || token.kind.is_contextual_identifier() => {
-                let (name, name_span) = self.parse_entity_name();
+            _ if token.kind == TokenKind::This || token.kind.is_identifier() => {
+                let (name, name_span, _) = self.parse_entity_name();
                 let arguments = self.parse_type_arguments();
                 let end = arguments.last().map_or(name_span, |argument| argument.span);
                 TypeNode {
@@ -1395,7 +1383,7 @@ impl<'a> Parser<'a> {
             _ if matches!(
                 token.kind,
                 TokenKind::Import | TokenKind::This | TokenKind::Super
-            ) || token.kind.is_contextual_identifier() =>
+            ) || token.kind.is_identifier() =>
             {
                 self.bump();
                 let name = self.text(token.span).to_string();
@@ -1432,9 +1420,11 @@ impl<'a> Parser<'a> {
             TokenKind::New => {
                 let left = self.bump().span;
                 let callee = self.parse_primary_expression();
-                if self.at(TokenKind::LessThan) {
-                    let _ = self.parse_type_arguments();
-                }
+                let type_arguments = if self.at(TokenKind::LessThan) {
+                    self.parse_type_arguments()
+                } else {
+                    Vec::new()
+                };
                 let mut arguments = Vec::new();
                 let mut end = callee.span;
                 if self.eat(TokenKind::LeftParen) {
@@ -1452,6 +1442,7 @@ impl<'a> Parser<'a> {
                     span: left.merge(end),
                     kind: ExpressionKind::New {
                         callee: Box::new(callee),
+                        type_arguments,
                         arguments,
                     },
                 }
@@ -1525,7 +1516,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn paren_expression_is_arrow(&self) -> bool {
+    fn paren_expression_is_arrow(&mut self) -> bool {
         if !self.at(TokenKind::LeftParen) {
             return false;
         }
@@ -1536,23 +1527,14 @@ impl<'a> Parser<'a> {
                 TokenKind::RightParen => {
                     depth = depth.saturating_sub(1);
                     if depth == 0 {
-                        let next = self.tokens.get(cursor + 1).map(|token| token.kind);
-                        if next == Some(TokenKind::FatArrow) {
+                        let following = self.tokens.get(cursor + 1).map(|token| token.kind);
+                        if following == Some(TokenKind::FatArrow) {
                             return true;
                         }
-                        if next != Some(TokenKind::Colon) {
+                        if following != Some(TokenKind::Colon) {
                             return false;
                         }
-                        for following in &self.tokens[cursor + 2..] {
-                            match following.kind {
-                                TokenKind::FatArrow => return true,
-                                TokenKind::Semicolon
-                                | TokenKind::RightBrace
-                                | TokenKind::EndOfFile => return false,
-                                _ => {}
-                            }
-                        }
-                        return false;
+                        return self.type_annotation_is_followed_by_arrow(cursor + 2);
                     }
                 }
                 TokenKind::EndOfFile => break,
@@ -1560,6 +1542,24 @@ impl<'a> Parser<'a> {
             }
         }
         false
+    }
+
+    fn type_annotation_is_followed_by_arrow(&mut self, start: usize) -> bool {
+        let saved_index = self.index;
+        let saved_next_node = self.next_node;
+        let saved_diagnostics = self.diagnostics.len();
+        self.index = start;
+        self.speculating = true;
+        let _ = self.parse_type();
+        let followed_by_arrow = self.at(TokenKind::FatArrow);
+        for (index, token) in self.speculative_token_rewrites.drain(..).rev() {
+            self.tokens[index] = token;
+        }
+        self.speculating = false;
+        self.index = saved_index;
+        self.next_node = saved_next_node;
+        self.diagnostics.truncate(saved_diagnostics);
+        followed_by_arrow
     }
 
     fn parse_object_literal(&mut self) -> Expression {
@@ -1630,15 +1630,17 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_entity_name(&mut self) -> (String, Span) {
+    fn parse_entity_name(&mut self) -> (String, Span, Vec<Span>) {
         let (mut name, mut span) = self.parse_identifier_name();
+        let mut segment_spans = vec![span];
         while self.eat(TokenKind::Dot) {
             let (right, right_span) = self.parse_identifier_name();
             name.push('.');
             name.push_str(&right);
             span = span.merge(right_span);
+            segment_spans.push(right_span);
         }
-        (name, span)
+        (name, span, segment_spans)
     }
 
     fn parse_identifier_name(&mut self) -> (String, Span) {
@@ -1730,6 +1732,10 @@ impl<'a> Parser<'a> {
                 true
             }
             TokenKind::GreaterThanGreaterThan => {
+                if self.speculating {
+                    self.speculative_token_rewrites
+                        .push((self.index, self.tokens[self.index]));
+                }
                 self.tokens[self.index] = Token {
                     kind: TokenKind::GreaterThan,
                     span: Span {
@@ -1741,6 +1747,10 @@ impl<'a> Parser<'a> {
                 true
             }
             TokenKind::GreaterThanGreaterThanGreaterThan => {
+                if self.speculating {
+                    self.speculative_token_rewrites
+                        .push((self.index, self.tokens[self.index]));
+                }
                 self.tokens[self.index] = Token {
                     kind: TokenKind::GreaterThanGreaterThan,
                     span: Span {
@@ -1877,7 +1887,7 @@ const fn binary_operator(kind: TokenKind) -> Option<(BinaryOperator, u8)> {
 }
 
 const fn token_is_binding_identifier(kind: TokenKind) -> bool {
-    kind.is_contextual_identifier()
+    kind.is_identifier()
 }
 
 const fn token_is_identifier_name(kind: TokenKind) -> bool {

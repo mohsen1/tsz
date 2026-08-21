@@ -108,8 +108,14 @@ impl<R: Read, W: Write> Server<R, W> {
             }
             "semanticDiagnosticsSync" => {
                 let path = file_argument(arguments)?;
-                let diagnostics = self.service.semantic_diagnostics(path);
-                Ok(Some(self.diagnostics_body(path, diagnostics)))
+                let result = self.service.semantic_diagnostics(path);
+                if !result.semantic_completion.is_complete() {
+                    return Err(format!(
+                        "TSZ semantic diagnostics incomplete: {}",
+                        result.semantic_completion.as_str()
+                    ));
+                }
+                Ok(Some(self.diagnostics_body(path, result.diagnostics)))
             }
             "quickinfo" => {
                 let path = file_argument(arguments)?;
@@ -607,28 +613,30 @@ fn number_argument(arguments: &Value, name: &str) -> Result<u64, String> {
 }
 
 fn compiler_options(value: &Value) -> CompilerOptions {
-    let mut options = CompilerOptions::default();
-    options.strict = value
-        .get("strict")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
-    options.no_implicit_any = value
-        .get("noImplicitAny")
-        .and_then(Value::as_bool)
-        .unwrap_or(options.strict);
-    options.no_lib = value.get("noLib").and_then(Value::as_bool).unwrap_or(false);
-    options.lib = value.get("lib").and_then(Value::as_array).map(|libraries| {
+    let defaults = CompilerOptions::default();
+    let target = value
+        .get("target")
+        .and_then(Value::as_str)
+        .map_or_else(|| defaults.target.clone(), str::to_string);
+    let lib = value.get("lib").and_then(Value::as_array).map(|libraries| {
         libraries
             .iter()
             .filter_map(Value::as_str)
             .map(str::to_string)
             .collect()
     });
-    if let Some(target) = value.get("target").and_then(Value::as_str) {
-        options.target = target.to_string();
+    CompilerOptions {
+        strict: value
+            .get("strict")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        no_implicit_any: value.get("noImplicitAny").and_then(Value::as_bool),
+        no_lib: value.get("noLib").and_then(Value::as_bool).unwrap_or(false),
+        lib,
+        target,
+        no_emit: true,
+        ..defaults
     }
-    options.no_emit = true;
-    options
 }
 
 fn position_to_offset(text: &str, line: u32, offset: u32) -> Option<u32> {
@@ -741,34 +749,7 @@ pub fn run_legacy_server(input: impl Read, mut output: impl Write) -> Result<()>
         let id = request.get("id").cloned().unwrap_or(Value::Null);
         let kind = request.get("type").and_then(Value::as_str).unwrap_or("");
         let response = match kind {
-            "check" => {
-                service.reset();
-                if let Some(files) = request.get("files").and_then(Value::as_array) {
-                    for file in files {
-                        let Some(path) = file
-                            .get("path")
-                            .or_else(|| file.get("file"))
-                            .and_then(Value::as_str)
-                        else {
-                            continue;
-                        };
-                        let content = file.get("content").and_then(Value::as_str).unwrap_or("");
-                        service.open(path, Arc::<str>::from(content));
-                    }
-                }
-                let started = std::time::Instant::now();
-                let output_result = service.compile();
-                let codes = output_result
-                    .diagnostics
-                    .iter()
-                    .map(|diagnostic| diagnostic.code)
-                    .collect::<Vec<_>>();
-                json!({
-                    "id": id,
-                    "codes": codes,
-                    "elapsed_ms": started.elapsed().as_secs_f64() * 1_000.0,
-                })
-            }
+            "check" => legacy_check_response(&mut service, &request, id),
             "status" => json!({
                 "id": id,
                 "memory_bytes": 0,
@@ -790,4 +771,48 @@ pub fn run_legacy_server(input: impl Read, mut output: impl Write) -> Result<()>
         output.flush()?;
     }
     Ok(())
+}
+
+fn legacy_check_response(service: &mut LanguageService, request: &Value, id: Value) -> Value {
+    let Some(files) = request.get("files").and_then(Value::as_array) else {
+        return json!({
+            "id": id,
+            "error": "check request files must be an array",
+        });
+    };
+    let mut inputs = Vec::with_capacity(files.len());
+    for file in files {
+        let Some(path) = file
+            .get("path")
+            .or_else(|| file.get("file"))
+            .and_then(Value::as_str)
+        else {
+            return json!({"id": id, "error": "check request file has no path"});
+        };
+        let Some(content) = file.get("content").and_then(Value::as_str) else {
+            return json!({"id": id, "error": "check request file has no content"});
+        };
+        inputs.push((path.to_string(), Arc::<str>::from(content)));
+    }
+
+    service.reset();
+    let mut options = compiler_options(request.get("options").unwrap_or(&Value::Null));
+    options.no_emit = true;
+    service.configure(options);
+    for (path, content) in inputs {
+        service.open(path, content);
+    }
+    let started = std::time::Instant::now();
+    let output_result = service.compile();
+    let codes = output_result
+        .diagnostics
+        .iter()
+        .map(|diagnostic| diagnostic.code)
+        .collect::<Vec<_>>();
+    json!({
+        "id": id,
+        "codes": codes,
+        "semantic_completion": output_result.semantic_completion,
+        "elapsed_ms": started.elapsed().as_secs_f64() * 1_000.0,
+    })
 }

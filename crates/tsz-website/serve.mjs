@@ -18,7 +18,6 @@ const MIME_TYPES = {
   ".js": "application/javascript; charset=utf-8",
   ".json": "application/json; charset=utf-8",
   ".svg": "image/svg+xml",
-  ".wasm": "application/wasm",
   ".ts": "text/plain; charset=utf-8",
   ".png": "image/png",
   ".ico": "image/x-icon",
@@ -42,14 +41,7 @@ const server = http.createServer((req, res) => {
   const ext = path.extname(filePath);
   const contentType = MIME_TYPES[ext] || "application/octet-stream";
 
-  // WASM needs special CORS headers
-  const headers = { "Content-Type": contentType };
-  if (ext === ".wasm") {
-    headers["Cross-Origin-Opener-Policy"] = "same-origin";
-    headers["Cross-Origin-Embedder-Policy"] = "require-corp";
-  }
-
-  res.writeHead(200, headers);
+  res.writeHead(200, { "Content-Type": contentType });
   fs.createReadStream(filePath).pipe(res);
 });
 

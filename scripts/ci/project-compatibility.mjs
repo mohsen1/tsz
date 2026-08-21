@@ -35,6 +35,11 @@ const FILES_REACHED_REASONS = new Set([
   "runner did not count",
   "not in scope",
   "process exited before counting",
+  "compiler stats missing",
+  "compiler stats malformed",
+  "zero source files processed",
+  "fixture dependency stubs present",
+  "fixture stub inventory unavailable",
 ]);
 const PEAK_MEMORY_BYTES_REASONS = new Set([
   "not measured on platform",
@@ -55,6 +60,16 @@ function toNumber(value) {
   if (value === undefined || value === null || value === "") return null;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+function toNonnegativeInteger(value) {
+  const parsed = toNumber(value);
+  return Number.isInteger(parsed) && parsed >= 0 ? parsed : null;
+}
+
+function toSha256(value) {
+  const fingerprint = String(value || "").trim().toLowerCase();
+  return /^[0-9a-f]{64}$/.test(fingerprint) ? fingerprint : null;
 }
 
 function residencyReason(value, rawReason, vocabulary, fallback, fieldName) {
@@ -150,9 +165,16 @@ function oracleClassificationFrom({ tscExitCodes, tszExitCodes, tscDiagnosticCod
 
   const tscSet = new Set(tscDiagnosticCodes);
   const tszSet = new Set(tszDiagnosticCodes);
+  const tscExitSet = new Set(tscExitCodes);
+  const tszExitSet = new Set(tszExitCodes);
   // Empty=empty counts as "same" so two failures with only exit-code signals
-  // (crashes, timeouts, etc.) classify together rather than as a divergence.
-  if (tscSet.size === tszSet.size && [...tscSet].every((code) => tszSet.has(code))) {
+  // classify together only when their ordinary exit status also agrees.
+  if (
+    tscSet.size === tszSet.size &&
+    [...tscSet].every((code) => tszSet.has(code)) &&
+    tscExitSet.size === tszExitSet.size &&
+    [...tscExitSet].every((code) => tszExitSet.has(code))
+  ) {
     return "both-fail-same";
   }
   return "both-fail-different";
@@ -311,6 +333,7 @@ function rowStateFrom({ exitClass, diagnosticStatus }) {
   if (exitClass === "exit success" && diagnosticStatus === "none") return "green";
   if (
     exitClass === "fixture invalid" ||
+    exitClass === "runner error" ||
     exitClass === "tsz unavailable" ||
     exitClass === "oracle unavailable"
   ) return "gray";
@@ -322,8 +345,7 @@ function rowStateFrom({ exitClass, diagnosticStatus }) {
     exitClass === "timeout" ||
     exitClass === "oom" ||
     exitClass === "crash" ||
-    exitClass === "slowdown" ||
-    exitClass === "runner error"
+    exitClass === "slowdown"
   ) {
     return "red";
   }
@@ -536,6 +558,8 @@ function record() {
 
   const filesReached = toNumber(process.env.COMPAT_FILES_REACHED);
   const peakMemoryBytes = toNumber(process.env.COMPAT_PEAK_MEMORY_BYTES);
+  const evidenceSchema = toNonnegativeInteger(process.env.COMPAT_EVIDENCE_SCHEMA);
+  const stubInventorySchema = toNonnegativeInteger(process.env.COMPAT_STUB_INVENTORY_SCHEMA);
   const filesReachedReason = residencyReason(
     filesReached,
     process.env.COMPAT_FILES_REACHED_REASON,
@@ -561,6 +585,24 @@ function record() {
     phase: process.env.COMPAT_PHASE || "unknown",
     last_successful_phase: lastSuccessfulPhaseFrom({ exitClass, diagnosticStatus }),
     diagnostic_status: diagnosticStatus,
+    evidence_schema: evidenceSchema === 2 ? 2 : null,
+    semantic_completion: String(process.env.COMPAT_SEMANTIC_COMPLETION || "").trim() || null,
+    root_files: toNonnegativeInteger(process.env.COMPAT_ROOT_FILES),
+    source_files: toNonnegativeInteger(process.env.COMPAT_SOURCE_FILES),
+    root_file_fingerprint: toSha256(process.env.COMPAT_ROOT_FILE_FINGERPRINT),
+    source_file_fingerprint: toSha256(process.env.COMPAT_SOURCE_FILE_FINGERPRINT),
+    oracle_root_files: toNonnegativeInteger(process.env.COMPAT_ORACLE_ROOT_FILES),
+    oracle_source_files: toNonnegativeInteger(process.env.COMPAT_ORACLE_SOURCE_FILES),
+    oracle_root_file_fingerprint: toSha256(process.env.COMPAT_ORACLE_ROOT_FILE_FINGERPRINT),
+    oracle_source_file_fingerprint: toSha256(process.env.COMPAT_ORACLE_SOURCE_FILE_FINGERPRINT),
+    diagnostic_records: toNonnegativeInteger(process.env.COMPAT_DIAGNOSTIC_RECORDS),
+    diagnostic_fingerprint: toSha256(process.env.COMPAT_DIAGNOSTIC_FINGERPRINT),
+    oracle_diagnostic_records: toNonnegativeInteger(process.env.COMPAT_ORACLE_DIAGNOSTIC_RECORDS),
+    oracle_diagnostic_fingerprint: toSha256(process.env.COMPAT_ORACLE_DIAGNOSTIC_FINGERPRINT),
+    stub_inventory_schema: stubInventorySchema === 1 ? 1 : null,
+    stubbed_modules: toNonnegativeInteger(process.env.COMPAT_STUBBED_MODULES),
+    stubbed_any_members: toNonnegativeInteger(process.env.COMPAT_STUBBED_ANY_MEMBERS),
+    stub_inventory_fingerprint: toSha256(process.env.COMPAT_STUB_INVENTORY_FINGERPRINT),
     oracle_classification: oracleClassification,
     diagnostic_deltas: diagnosticDeltas,
     diagnostic_subsystems: diagnosticSubsystems,

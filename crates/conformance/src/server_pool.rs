@@ -1,4 +1,8 @@
-//! Process pool for server-mode tsz compilation.
+//! Noncanonical performance pool for server-mode tsz compilation.
+//!
+//! Deliberately not linked into `tsz-conformance`: pooled protocol responses
+//! cannot attribute raw stderr and an ordinary exit to one case. This transport
+//! may be benchmarked, but it can never score parity or write canonical artifacts.
 //!
 //! Keeps N long-lived `tsz-server --protocol legacy` processes and multiplexes
 //! tests across them via JSON on stdin/stdout. Crash and timeout recovery
@@ -17,6 +21,7 @@ use tokio::sync::Mutex;
 
 use crate::options_convert::directives_to_check_options;
 use crate::process_rss::get_process_rss;
+use crate::tsz_wrapper::SemanticCompletion;
 
 /// A single long-lived `tsz-server --protocol legacy` worker process.
 struct ServerWorker {
@@ -27,8 +32,11 @@ struct ServerWorker {
 
 /// Outcome of a single server check request.
 pub enum ServerOutcome {
-    /// Normal completion — sorted, deduplicated error codes.
-    Done(Vec<u32>),
+    /// Normal completion — diagnostic codes in server response order.
+    Done {
+        codes: Vec<u32>,
+        semantic_completion: SemanticCompletion,
+    },
     /// The worker process crashed (EOF on stdout).
     Crashed,
     /// The check exceeded the timeout.
@@ -42,6 +50,9 @@ pub enum ServerOutcome {
 struct ServerResponse {
     codes: Option<Vec<i32>>,
     error: Option<String>,
+    /// Missing/unknown completion is a capability nonclaim, never success.
+    #[serde(default)]
+    semantic_completion: SemanticCompletion,
 }
 
 /// Pool of `tsz-server --protocol legacy` worker processes.
@@ -145,13 +156,7 @@ impl ServerPool {
 
         // Build the JSON request
         let request_id = self.next_request_id.fetch_add(1, Ordering::Relaxed);
-        let options = directives_to_check_options(directives);
-        let request = json!({
-            "type": "check",
-            "id": request_id,
-            "files": files,
-            "options": options,
-        });
+        let request = check_request(request_id, files, directives);
 
         // Write request as a single JSON line
         let mut request_bytes = serde_json::to_vec(&request)?;
@@ -277,14 +282,42 @@ fn parse_response(resp: ServerResponse) -> ServerOutcome {
         return ServerOutcome::Error(error);
     }
 
-    let codes = resp.codes.unwrap_or_default();
-    let mut result: Vec<u32> = codes
+    let Some(codes) = resp.codes else {
+        return ServerOutcome::Error("server response is missing diagnostic codes".to_string());
+    };
+    if codes.iter().any(|code| *code < 0) {
+        return ServerOutcome::Error(
+            "server response contains a negative diagnostic code".to_string(),
+        );
+    }
+    let result = codes.into_iter().map(|code| code as u32).collect();
+    ServerOutcome::Done {
+        codes: result,
+        semantic_completion: resp.semantic_completion,
+    }
+}
+
+fn check_request(
+    request_id: u64,
+    files: HashMap<String, String>,
+    directives: &HashMap<String, String>,
+) -> serde_json::Value {
+    let mut files = files
         .into_iter()
-        .filter_map(|c| if c >= 0 { Some(c as u32) } else { None })
-        .collect();
-    result.sort_unstable();
-    result.dedup();
-    ServerOutcome::Done(result)
+        .map(|(path, content)| json!({"path": path, "content": content}))
+        .collect::<Vec<_>>();
+    files.sort_by(|left, right| {
+        left["path"]
+            .as_str()
+            .unwrap_or_default()
+            .cmp(right["path"].as_str().unwrap_or_default())
+    });
+    json!({
+        "type": "check",
+        "id": request_id,
+        "files": files,
+        "options": directives_to_check_options(directives),
+    })
 }
 
 /// Read a single JSON response line from the worker's stdout.
@@ -312,14 +345,86 @@ mod tests {
     use super::*;
 
     #[test]
-    fn server_response_ignores_legacy_id_field() {
-        let resp: ServerResponse =
-            serde_json::from_str(r#"{"id":7,"codes":[2322,2322,-1],"error":null}"#)
-                .expect("legacy server response should deserialize");
+    fn server_response_preserves_completion_and_ignores_legacy_id_field() {
+        let resp: ServerResponse = serde_json::from_str(
+            r#"{"id":7,"codes":[2322,2322],"error":null,"semantic_completion":"complete"}"#,
+        )
+        .expect("legacy server response should deserialize");
 
         match parse_response(resp) {
-            ServerOutcome::Done(codes) => assert_eq!(codes, vec![2322]),
+            ServerOutcome::Done {
+                codes,
+                semantic_completion,
+            } => {
+                assert_eq!(codes, vec![2322, 2322]);
+                assert_eq!(semantic_completion, SemanticCompletion::Complete);
+            }
             _ => panic!("expected normal server response"),
         }
+    }
+
+    #[test]
+    fn server_response_rejects_negative_codes_instead_of_dropping_them() {
+        let response: ServerResponse =
+            serde_json::from_str(r#"{"codes":[-1],"semantic_completion":"complete"}"#).unwrap();
+        match parse_response(response) {
+            ServerOutcome::Error(message) => {
+                assert_eq!(
+                    message,
+                    "server response contains a negative diagnostic code"
+                );
+            }
+            _ => panic!("negative server codes must not become empty success"),
+        }
+    }
+
+    #[test]
+    fn server_response_missing_or_unknown_completion_fails_closed() {
+        for body in [
+            r#"{"codes":[]}"#,
+            r#"{"codes":[],"semantic_completion":"future-verdict"}"#,
+        ] {
+            let response: ServerResponse = serde_json::from_str(body).unwrap();
+            match parse_response(response) {
+                ServerOutcome::Done {
+                    codes,
+                    semantic_completion,
+                } => {
+                    assert!(codes.is_empty());
+                    assert_eq!(semantic_completion, SemanticCompletion::Incomplete);
+                }
+                _ => panic!("missing completion must be a semantic nonclaim"),
+            }
+        }
+    }
+
+    #[test]
+    fn server_response_missing_codes_is_not_empty_success() {
+        let response: ServerResponse =
+            serde_json::from_str(r#"{"semantic_completion":"complete"}"#).unwrap();
+        match parse_response(response) {
+            ServerOutcome::Error(message) => {
+                assert_eq!(message, "server response is missing diagnostic codes");
+            }
+            _ => panic!("missing diagnostic codes must not become empty success"),
+        }
+    }
+
+    #[test]
+    fn server_request_uses_the_legacy_array_shape_in_stable_path_order() {
+        let request = check_request(
+            9,
+            HashMap::from([
+                ("z.ts".to_string(), "const z=1;".to_string()),
+                ("a.ts".to_string(), "const a=1;".to_string()),
+            ]),
+            &HashMap::from([("strict".to_string(), "true".to_string())]),
+        );
+
+        assert_eq!(request["id"], 9);
+        assert_eq!(request["files"][0]["path"], "a.ts");
+        assert_eq!(request["files"][0]["content"], "const a=1;");
+        assert_eq!(request["files"][1]["path"], "z.ts");
+        assert_eq!(request["options"]["strict"], true);
     }
 }

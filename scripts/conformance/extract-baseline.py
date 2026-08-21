@@ -13,19 +13,29 @@ import sys
 import os
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from lib.results import normalize_harness_path, parse_runner_output
+from lib.results import (
+    normalize_harness_path,
+    parse_runner_output,
+    require_complete_runner_summary,
+)
 
 
 def extract(input_path):
     tests = parse_runner_output(input_path)
+    if not tests:
+        raise ValueError("runner output is incomplete; refusing baseline extraction")
+    require_complete_runner_summary(input_path)
     results = []
     for path, rec in tests.items():
         path = normalize_harness_path(path)
         status = rec["status"]
         exp = rec["expected"]
         act = rec["actual"]
-        if status == "PASS":
-            results.append("PASS " + path)
+        if status in ("PASS", "SKIP", "UNSUPPORTED", "CRASH", "TIMEOUT"):
+            suffix = ""
+            if status == "UNSUPPORTED" and rec.get("unsupported_reason"):
+                suffix = f" ({rec['unsupported_reason']})"
+            results.append(f"{status} {path}{suffix}")
         elif status in ("FAIL", "XFAIL"):
             if exp or act:
                 results.append(
@@ -42,4 +52,8 @@ if __name__ == "__main__":
     if len(sys.argv) != 2:
         print(f"Usage: {sys.argv[0]} <runner-output-file>", file=sys.stderr)
         sys.exit(1)
-    extract(sys.argv[1])
+    try:
+        extract(sys.argv[1])
+    except (OSError, ValueError) as error:
+        print(f"runner output is incomplete; refusing baseline extraction: {error}", file=sys.stderr)
+        sys.exit(1)

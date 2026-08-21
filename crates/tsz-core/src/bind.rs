@@ -6,7 +6,10 @@ use std::collections::BTreeMap;
 use rustc_hash::FxHashMap;
 
 use crate::source::{DeclId, FileId, NodeId, Span};
-use crate::syntax::{ClassDeclaration, FunctionDeclaration, SourceUnit, Statement, StatementKind};
+use crate::syntax::{
+    ArrowBody, ClassDeclaration, ClassMemberKind, Expression, ExpressionKind, FunctionDeclaration,
+    SourceUnit, Statement, StatementKind, SwitchClauseKind,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ScopeId(pub u32);
@@ -145,6 +148,9 @@ impl Binder {
                     DeclarationKind::Variable,
                     Meaning::Value,
                 );
+                if let Some(initializer) = &declaration.initializer {
+                    self.bind_expression(initializer, scope);
+                }
             }
             StatementKind::Function(declaration) => {
                 self.declare(
@@ -203,6 +209,7 @@ impl Binder {
                 }
             }
             StatementKind::If(control_flow) => {
+                self.bind_expression(&control_flow.condition, scope);
                 self.bind_statement(&control_flow.then_statement, scope);
                 if let Some(else_statement) = &control_flow.else_statement {
                     self.bind_statement(else_statement, scope);
@@ -211,17 +218,29 @@ impl Binder {
             StatementKind::Switch(control_flow) => {
                 let child = self.new_scope(scope, statement.id);
                 self.scope_for_node.insert(statement.id, child);
+                self.bind_expression(&control_flow.expression, child);
                 for clause in &control_flow.clauses {
+                    if let SwitchClauseKind::Case(expression) = &clause.kind {
+                        self.bind_expression(expression, child);
+                    }
                     for nested in &clause.statements {
                         self.bind_statement(nested, child);
                     }
                 }
             }
-            StatementKind::Export(_)
-            | StatementKind::Break(_)
+            StatementKind::Export(declaration) => {
+                if let Some(assignment) = &declaration.assignment {
+                    self.bind_expression(assignment, scope);
+                }
+            }
+            StatementKind::Return(expression) => {
+                if let Some(expression) = expression {
+                    self.bind_expression(expression, scope);
+                }
+            }
+            StatementKind::Expression(expression) => self.bind_expression(expression, scope),
+            StatementKind::Break(_)
             | StatementKind::Continue(_)
-            | StatementKind::Return(_)
-            | StatementKind::Expression(_)
             | StatementKind::Empty
             | StatementKind::Unknown => {}
         }
@@ -232,19 +251,25 @@ impl Binder {
         self.scope_for_node.insert(owner, class_scope);
         for member in &declaration.members {
             let (parameters, body) = match &member.kind {
-                crate::syntax::ClassMemberKind::Constructor {
+                ClassMemberKind::Constructor {
                     parameters, body, ..
                 }
-                | crate::syntax::ClassMemberKind::Method {
+                | ClassMemberKind::Method {
                     parameters, body, ..
                 } => (parameters.as_slice(), body.as_slice()),
-                crate::syntax::ClassMemberKind::Property { .. } => continue,
+                ClassMemberKind::Property { initializer, .. } => {
+                    if let Some(initializer) = initializer {
+                        self.bind_expression(initializer, class_scope);
+                    }
+                    continue;
+                }
             };
-            let member_scope = self.new_scope(class_scope, owner);
+            let member_scope = self.new_scope(class_scope, member.id);
+            self.scope_for_node.insert(member.id, member_scope);
             for parameter in parameters {
                 self.declare(
                     member_scope,
-                    owner,
+                    member.id,
                     &parameter.name,
                     parameter.name_span,
                     DeclarationKind::Parameter,
@@ -253,6 +278,71 @@ impl Binder {
             }
             for statement in body {
                 self.bind_statement(statement, member_scope);
+            }
+        }
+    }
+
+    fn bind_expression(&mut self, expression: &Expression, scope: ScopeId) {
+        self.scope_for_node.insert(expression.id, scope);
+        match &expression.kind {
+            ExpressionKind::Identifier { .. }
+            | ExpressionKind::Literal(_)
+            | ExpressionKind::Missing => {}
+            ExpressionKind::Object(properties) => {
+                for property in properties {
+                    self.bind_expression(&property.value, scope);
+                }
+            }
+            ExpressionKind::Array(elements) => {
+                for element in elements {
+                    self.bind_expression(element, scope);
+                }
+            }
+            ExpressionKind::Call { callee, arguments }
+            | ExpressionKind::New {
+                callee, arguments, ..
+            } => {
+                self.bind_expression(callee, scope);
+                for argument in arguments {
+                    self.bind_expression(argument, scope);
+                }
+            }
+            ExpressionKind::Member { object, .. }
+            | ExpressionKind::Unary {
+                operand: object, ..
+            }
+            | ExpressionKind::As {
+                expression: object, ..
+            }
+            | ExpressionKind::Parenthesized(object) => self.bind_expression(object, scope),
+            ExpressionKind::Arrow {
+                parameters, body, ..
+            } => {
+                let arrow_scope = self.new_scope(scope, expression.id);
+                self.scope_for_node.insert(expression.id, arrow_scope);
+                for parameter in parameters {
+                    self.declare(
+                        arrow_scope,
+                        expression.id,
+                        &parameter.name,
+                        parameter.name_span,
+                        DeclarationKind::Parameter,
+                        Meaning::Value,
+                    );
+                }
+                match body {
+                    ArrowBody::Expression(body) => self.bind_expression(body, arrow_scope),
+                    ArrowBody::Block(statements) => {
+                        for statement in statements {
+                            self.bind_statement(statement, arrow_scope);
+                        }
+                    }
+                }
+            }
+            ExpressionKind::Binary { left, right, .. }
+            | ExpressionKind::Assignment { left, right } => {
+                self.bind_expression(left, scope);
+                self.bind_expression(right, scope);
             }
         }
     }

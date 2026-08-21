@@ -13,7 +13,6 @@ set -euo pipefail
 #   2. Existing CI artifact                      — reused when refresh is unavailable
 #
 # Other env vars:
-#   TSZ_WEBSITE_BUILD_WASM=1  — rejected until WASM returns at R4
 #   TSZ_WEBSITE_BENCH_REFRESH=0 — skip CI benchmark refresh
 #   TSZ_WEBSITE_BENCH_URL=https://... — override benchmark data URL
 
@@ -110,11 +109,6 @@ prepare_benchmarks
 
 if [ "${1:-}" = "--prepare-only" ]; then
   exit 0
-fi
-
-if [ "${TSZ_WEBSITE_BUILD_WASM:-0}" = "1" ]; then
-  echo "error: website WASM builds are unavailable during the clean-slate rewrite; WASM returns at R4." >&2
-  exit 1
 fi
 
 cd "$WEBSITE_DIR"

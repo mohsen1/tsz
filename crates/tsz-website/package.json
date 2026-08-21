@@ -4,20 +4,15 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "node scripts/sync-docs.mjs && node scripts/build-playground.mjs && eleventy",
-    "build:playground": "node scripts/build-playground.mjs",
+    "build": "node scripts/sync-docs.mjs && eleventy && node scripts/rewrite-surface-smoke.mjs --dist",
     "test:benchmarks": "node scripts/benchmark-data-smoke.mjs",
     "test:loc": "node scripts/loc-smoke.mjs",
+    "test:rewrite-surface": "node scripts/rewrite-surface-smoke.mjs",
     "dev": "node scripts/dev.mjs"
   },
   "dependencies": {
     "@11ty/eleventy": "^3.0.0",
     "marked": "^15.0.0",
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1",
     "sharp": "^0.34.5"
-  },
-  "devDependencies": {
-    "esbuild": "^0.25.2"
   }
 }

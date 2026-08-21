@@ -5,13 +5,20 @@
 //! phases return deterministic values that are merged only at phase barriers.
 
 pub mod bind;
+pub mod config;
 pub mod diagnostics;
 pub mod emit;
+mod emit_paths;
+pub mod host;
 pub mod program;
-pub mod semantics;
+pub mod project_graph;
+mod semantics;
 pub mod service;
 pub mod source;
 pub mod standard_library;
 pub mod syntax;
 
-pub use program::{CompileOutput, Compiler, CompilerOptions, EmittedFile, SourceInput};
+pub use program::{
+    CompileExitStatus, CompileOutput, Compiler, CompilerOptions, EmittedFile, SemanticCompletion,
+    SourceInput,
+};
