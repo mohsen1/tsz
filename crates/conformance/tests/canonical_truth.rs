@@ -37,6 +37,7 @@ fn canonical_tsz_boundary_has_no_result_repair_hooks() {
         ("cache.rs", include_str!("../src/cache.rs")),
         ("corpus.rs", include_str!("../src/corpus.rs")),
         ("integrity.rs", include_str!("../src/integrity.rs")),
+        ("jsonc.rs", include_str!("../src/jsonc.rs")),
         ("oracle.rs", include_str!("../src/oracle.rs")),
         ("cli.rs", include_str!("../src/cli.rs")),
         (
@@ -129,6 +130,7 @@ fn canonical_tsz_boundary_has_no_result_repair_hooks() {
         "filter_map(std::result::Result::ok)",
         "hasDiagnostics",
         "TSZ_CI_TRUST_DIST_FAST_CACHE",
+        "unwrap_or_else(|_| serde_json::json!({}))",
     ];
 
     let mut violations = Vec::new();
@@ -236,6 +238,19 @@ fn cache_generator_has_no_unverified_oracle_fallback() {
             "unverified oracle fallback survived: {forbidden}"
         );
     }
+}
+
+#[test]
+fn trace_resolution_products_are_terminal_nonclaims_before_oracle_execution() {
+    let parser = include_str!("../src/test_parser.rs");
+    let generator = include_str!("../src/bin/generate-tsc-cache.rs");
+    let runner = include_str!("../src/runner.rs");
+
+    assert!(parser.contains("TraceResolutionOutputNotCompared"));
+    assert!(parser.contains("crate::jsonc::parse_jsonc(content)"));
+    assert!(generator.contains("TestDisposition::Unsupported(reason)"));
+    assert!(generator.contains("ProcessOutcome::Unsupported"));
+    assert!(runner.contains("TestDisposition::Unsupported(reason)"));
 }
 
 #[test]

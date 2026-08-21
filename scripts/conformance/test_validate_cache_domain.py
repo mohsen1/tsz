@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
 import sys
@@ -14,11 +15,84 @@ from lib.cache_domain import (
     CacheDomainValidationError,
     resolve_pinned_typescript_version,
     validate_cache_domain,
+    validate_portable_oracle_evidence,
 )
 
 
 VERSION = "7.0.2"
 SCRIPT = Path(__file__).with_name("validate-cache-domain.py")
+FINGERPRINT_KEYS = (
+    "schemaVersion",
+    "packageName",
+    "platformPackageName",
+    "version",
+    "gitHead",
+    "wrapperIntegrity",
+    "platformIntegrity",
+    "wrapperPackageJsonSha256",
+    "wrapperBinSha256",
+    "platformPackageJsonSha256",
+    "platformPackageTreeSha256",
+    "binarySha256",
+    "binaryPath",
+)
+
+
+def oracle_manifest():
+    return {
+        "schemaVersion": 1,
+        "packageName": "typescript",
+        "platformPackagePrefix": "@typescript/typescript-",
+        "version": VERSION,
+        "gitHead": "f" * 40,
+        "wrapperIntegrity": "sha512-wrapper",
+        "wrapperPackageJsonSha256": "1" * 64,
+        "wrapperBinSha256": "2" * 64,
+        "platforms": {
+            "linux-x64": {
+                "packageIntegrity": "sha512-linux",
+                "packageJsonSha256": "3" * 64,
+                "packageTreeSha256": "4" * 64,
+                "binarySha256": "5" * 64,
+            },
+            "darwin-arm64": {
+                "packageIntegrity": "sha512-darwin",
+                "packageJsonSha256": "7" * 64,
+                "packageTreeSha256": "8" * 64,
+                "binarySha256": "9" * 64,
+            },
+        },
+    }
+
+
+def oracle_evidence(platform: str, manifest_sha256: str):
+    manifest = oracle_manifest()
+    platform_manifest = manifest["platforms"][platform]
+    package_name = manifest["platformPackagePrefix"] + platform
+    executable = "tsc.exe" if platform.startswith("win32-") else "tsc"
+    generator = {
+        "schemaVersion": 1,
+        "packageName": manifest["packageName"],
+        "platformPackageName": package_name,
+        "version": manifest["version"],
+        "gitHead": manifest["gitHead"],
+        "wrapperIntegrity": manifest["wrapperIntegrity"],
+        "platformIntegrity": platform_manifest["packageIntegrity"],
+        "wrapperPackageJsonSha256": manifest["wrapperPackageJsonSha256"],
+        "wrapperBinSha256": manifest["wrapperBinSha256"],
+        "platformPackageJsonSha256": platform_manifest["packageJsonSha256"],
+        "platformPackageTreeSha256": platform_manifest["packageTreeSha256"],
+        "binarySha256": platform_manifest["binarySha256"],
+        "binaryPath": f"scripts/node_modules/{package_name}/lib/{executable}",
+    }
+    fingerprint_base = {key: generator[key] for key in FINGERPRINT_KEYS}
+    encoded = json.dumps(fingerprint_base, separators=(",", ":")).encode()
+    generator["fingerprint"] = "sha256:" + hashlib.sha256(encoded).hexdigest()
+    return {
+        "schemaVersion": 1,
+        "manifestSha256": manifest_sha256,
+        "generator": generator,
+    }
 
 
 def cache_entry(version: str = VERSION):
@@ -176,6 +250,52 @@ class CacheDomainValidationTests(unittest.TestCase):
 
         self.assertEqual(VERSION, resolve_pinned_typescript_version(versions))
 
+    def test_portable_oracle_evidence_validates_recorded_platform_from_manifest(self):
+        manifest_sha256 = "e" * 64
+        evidence = oracle_evidence("linux-x64", manifest_sha256)
+
+        identity = validate_portable_oracle_evidence(
+            evidence,
+            oracle_manifest(),
+            manifest_sha256,
+            VERSION,
+        )
+
+        self.assertEqual("typescript", identity["packageName"])
+        self.assertEqual(VERSION, identity["version"])
+        self.assertNotIn("platformPackageName", identity)
+        self.assertNotIn("binarySha256", identity)
+
+    def test_portable_oracle_evidence_rejects_recorded_platform_tampering(self):
+        manifest_sha256 = "e" * 64
+        evidence = oracle_evidence("linux-x64", manifest_sha256)
+        evidence["generator"]["binarySha256"] = "9" * 64
+
+        with self.assertRaises(CacheDomainValidationError) as context:
+            validate_portable_oracle_evidence(
+                evidence,
+                oracle_manifest(),
+                manifest_sha256,
+                VERSION,
+            )
+
+        message = str(context.exception)
+        self.assertIn("binarySha256 disagrees with manifest", message)
+        self.assertIn("fingerprint is invalid", message)
+
+    def test_portable_oracle_evidence_rejects_manifest_substitution(self):
+        evidence = oracle_evidence("linux-x64", "e" * 64)
+
+        with self.assertRaises(CacheDomainValidationError) as context:
+            validate_portable_oracle_evidence(
+                evidence,
+                oracle_manifest(),
+                "a" * 64,
+                VERSION,
+            )
+
+        self.assertIn("manifest hash does not match", str(context.exception))
+
     def test_cli_reports_stable_partition_summary(self):
         cache, domain = valid_artifacts()
         versions = {
@@ -187,9 +307,19 @@ class CacheDomainValidationTests(unittest.TestCase):
             cache_path = root / "cache.json"
             domain_path = root / "domain.json"
             versions_path = root / "versions.json"
+            oracle_manifest_path = root / "oracle-manifest.json"
             cache_path.write_text(json.dumps(cache), encoding="utf-8")
-            domain_path.write_text(json.dumps(domain), encoding="utf-8")
             versions_path.write_text(json.dumps(versions), encoding="utf-8")
+            oracle_manifest_path.write_text(
+                json.dumps(oracle_manifest()), encoding="utf-8"
+            )
+            oracle_manifest_sha256 = hashlib.sha256(
+                oracle_manifest_path.read_bytes()
+            ).hexdigest()
+            domain["oracle"] = oracle_evidence(
+                "linux-x64", oracle_manifest_sha256
+            )
+            domain_path.write_text(json.dumps(domain), encoding="utf-8")
 
             result = subprocess.run(
                 [
@@ -201,6 +331,8 @@ class CacheDomainValidationTests(unittest.TestCase):
                     str(domain_path),
                     "--versions",
                     str(versions_path),
+                    "--oracle-manifest",
+                    str(oracle_manifest_path),
                 ],
                 text=True,
                 capture_output=True,

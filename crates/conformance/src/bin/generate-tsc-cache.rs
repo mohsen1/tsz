@@ -91,6 +91,7 @@ struct FileMetadata {
 
 enum ProcessOutcome {
     Cached(String, TscCacheEntry),
+    Unsupported(String, UnsupportedReason, String),
     Skipped(String, &'static str, String),
 }
 
@@ -247,7 +248,7 @@ fn main() -> Result<()> {
     let observed_sources: Mutex<HashMap<String, String>> = Mutex::new(HashMap::new());
     let processed = AtomicUsize::new(0);
     let errors = AtomicUsize::new(0);
-    let skipped = AtomicUsize::new(0);
+    let non_runnable = AtomicUsize::new(0);
     let total = test_files.len();
     let tsc_path_ref = tsc_path.as_path();
     let node_semaphore = Arc::new(CountingSemaphore::new(max_node));
@@ -270,26 +271,27 @@ fn main() -> Result<()> {
                     .insert(key.clone(), entry.metadata.source_sha256.clone());
                 cache.lock().unwrap().insert(key, entry);
             }
+            Ok(ProcessOutcome::Unsupported(key, reason, source_sha256)) => {
+                observed_sources
+                    .lock()
+                    .unwrap()
+                    .insert(key.clone(), source_sha256);
+                unsupported
+                    .lock()
+                    .unwrap()
+                    .insert(key, reason.code().to_string());
+                non_runnable.fetch_add(1, Ordering::SeqCst);
+            }
             Ok(ProcessOutcome::Skipped(key, reason, source_sha256)) => {
                 observed_sources
                     .lock()
                     .unwrap()
                     .insert(key.clone(), source_sha256);
-                let target = if reason == "unsupported by TypeScript 7" {
-                    &unsupported
-                } else {
-                    &explicitly_skipped
-                };
-                let stable_reason = if reason == "unsupported by TypeScript 7" {
-                    UnsupportedReason::TypeScript7Configuration.code()
-                } else {
-                    reason
-                };
-                target
+                explicitly_skipped
                     .lock()
                     .unwrap()
-                    .insert(key, stable_reason.to_string());
-                skipped.fetch_add(1, Ordering::SeqCst);
+                    .insert(key, reason.to_string());
+                non_runnable.fetch_add(1, Ordering::SeqCst);
             }
             Err(e) => {
                 eprintln!("✗ Error processing {}: {e:#}", path.display());
@@ -300,13 +302,13 @@ fn main() -> Result<()> {
         let count = processed.fetch_add(1, Ordering::SeqCst) + 1;
         if count.is_multiple_of(100) {
             let err_count = errors.load(Ordering::SeqCst);
-            let skip_count = skipped.load(Ordering::SeqCst);
+            let non_runnable_count = non_runnable.load(Ordering::SeqCst);
             let elapsed = start.elapsed().as_secs_f64();
             let rate = count as f64 / elapsed;
             let remaining = (total - count) as f64 / rate;
             eprint!(
-                "\r[{}/{}] {:.0} tests/sec, ETA {:.0}s ({} errors, {} skipped)    ",
-                count, total, rate, remaining, err_count, skip_count
+                "\r[{}/{}] {:.0} tests/sec, ETA {:.0}s ({} errors, {} non-runnable)    ",
+                count, total, rate, remaining, err_count, non_runnable_count
             );
         }
     });
@@ -325,7 +327,8 @@ fn main() -> Result<()> {
 
     println!("  Processed: {}", processed.load(Ordering::SeqCst));
     println!("  Cached: {}", cache.len());
-    println!("  Skipped: {}", skipped.load(Ordering::SeqCst));
+    println!("  Unsupported: {}", unsupported.len());
+    println!("  Skipped: {}", explicitly_skipped.len());
     println!("  Errors: {error_count}");
 
     if error_count != 0 {
@@ -460,10 +463,14 @@ fn process_test_file(
     let (content, filenames, option_variants, option_order, binary_bytes) = match decoded {
         DecodedSourceText::Text(content) => {
             let parsed = tsz_conformance::test_parser::parse_test_file(&content)?;
-            if let Some(reason) =
-                tsz_conformance::test_parser::should_skip_test_at_path(path, &parsed.directives)
-            {
-                return Ok(ProcessOutcome::Skipped(key, reason, source_sha256));
+            match tsz_conformance::test_parser::test_disposition_at_path(path, &parsed.directives) {
+                tsz_conformance::test_parser::TestDisposition::Runnable => {}
+                tsz_conformance::test_parser::TestDisposition::Unsupported(reason) => {
+                    return Ok(ProcessOutcome::Unsupported(key, reason, source_sha256));
+                }
+                tsz_conformance::test_parser::TestDisposition::Skipped(reason) => {
+                    return Ok(ProcessOutcome::Skipped(key, reason, source_sha256));
+                }
             }
             let option_variants =
                 tsz_conformance::test_parser::select_ts7_oracle_configurations(&parsed.directives)
@@ -478,10 +485,14 @@ fn process_test_file(
         }
         DecodedSourceText::TextWithOriginalBytes(content, original) => {
             let parsed = tsz_conformance::test_parser::parse_test_file(&content)?;
-            if let Some(reason) =
-                tsz_conformance::test_parser::should_skip_test_at_path(path, &parsed.directives)
-            {
-                return Ok(ProcessOutcome::Skipped(key, reason, source_sha256));
+            match tsz_conformance::test_parser::test_disposition_at_path(path, &parsed.directives) {
+                tsz_conformance::test_parser::TestDisposition::Runnable => {}
+                tsz_conformance::test_parser::TestDisposition::Unsupported(reason) => {
+                    return Ok(ProcessOutcome::Unsupported(key, reason, source_sha256));
+                }
+                tsz_conformance::test_parser::TestDisposition::Skipped(reason) => {
+                    return Ok(ProcessOutcome::Skipped(key, reason, source_sha256));
+                }
             }
             let option_variants =
                 tsz_conformance::test_parser::select_ts7_oracle_configurations(&parsed.directives)

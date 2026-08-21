@@ -392,6 +392,56 @@ fn test_prepare_test_dir_merges_directives_into_current_directory_tsconfig() {
 }
 
 #[test]
+fn test_prepare_test_dir_merges_directives_into_jsonc_without_erasing_authored_options() {
+    let filenames = vec![
+        (
+            "tsconfig.json".to_string(),
+            r#"{
+                // TypeScript configuration is JSONC, not strict JSON.
+                "compilerOptions": {
+                    "traceResolution": false,
+                    "module": "esnext",
+                },
+            }"#
+            .to_string(),
+        ),
+        ("a.ts".to_string(), "export {};".to_string()),
+    ];
+    let options = HashMap::from([("strict".to_string(), "true".to_string())]);
+
+    let prepared = prepare_test_dir("", &filenames, &options, None, &[]).unwrap();
+    let tsconfig_raw = std::fs::read_to_string(prepared.project_dir.join("tsconfig.json")).unwrap();
+    let tsconfig: serde_json::Value = serde_json::from_str(&tsconfig_raw).unwrap();
+
+    assert_eq!(tsconfig["compilerOptions"]["module"], "esnext");
+    assert_eq!(tsconfig["compilerOptions"]["traceResolution"], false);
+    assert_eq!(tsconfig["compilerOptions"]["strict"], true);
+}
+
+#[test]
+fn test_prepare_test_dir_rejects_malformed_authored_config_instead_of_replacing_it() {
+    let filenames = vec![
+        (
+            "tsconfig.json".to_string(),
+            r#"{"compilerOptions":{"module":"esnext""#.to_string(),
+        ),
+        ("a.ts".to_string(), "export {};".to_string()),
+    ];
+    let options = HashMap::from([("strict".to_string(), "true".to_string())]);
+
+    let error = match prepare_test_dir("", &filenames, &options, None, &[]) {
+        Ok(_) => panic!("malformed authored JSONC must not become an empty config"),
+        Err(error) => error,
+    };
+    assert!(
+        error
+            .to_string()
+            .contains("cannot parse authored project config"),
+        "unexpected error: {error:#}"
+    );
+}
+
+#[test]
 fn test_prepare_test_dir_no_implicit_references_keeps_authored_declaration_roots() {
     let content = "";
     let filenames = vec![

@@ -205,6 +205,34 @@ pub fn validate_evidence(repo_root: &Path, evidence: &serde_json::Value) -> anyh
     Ok(())
 }
 
+/// Verify that cache-generating oracle evidence and the current native oracle
+/// belong to the same manifest-pinned TypeScript release.
+///
+/// The generator platform is deliberately allowed to differ from the runtime
+/// platform. The evidence envelope pins every generator byte through the
+/// checked-in cross-platform manifest; the locally resolved oracle is verified
+/// independently before this function is called. Requiring the two platform
+/// payloads to be byte-identical would make a Linux-generated cache unusable on
+/// macOS even though both native packages implement the same pinned release.
+pub fn validate_runtime_evidence(
+    repo_root: &Path,
+    evidence: &serde_json::Value,
+    runtime_oracle: &VerifiedOracle,
+) -> anyhow::Result<()> {
+    validate_evidence(repo_root, evidence)?;
+    let generator = evidence
+        .get("generator")
+        .context("oracle evidence has no generator provenance")?;
+    let generator_version = value_str(generator, "version")?;
+    let runtime_version = runtime_oracle.version()?;
+    if generator_version != runtime_version {
+        anyhow::bail!(
+            "cache generator TypeScript version {generator_version} differs from runtime {runtime_version}"
+        );
+    }
+    Ok(())
+}
+
 impl VerifiedOracle {
     pub fn version(&self) -> anyhow::Result<&str> {
         self.provenance
@@ -403,6 +431,24 @@ mod tests {
         validate_evidence(&root, &evidence).expect("pinned linux evidence");
         evidence["generator"]["binarySha256"] = serde_json::Value::String("0".repeat(64));
         assert!(validate_evidence(&root, &evidence).is_err());
+    }
+
+    #[test]
+    fn manifest_pinned_cache_evidence_is_portable_across_runtime_platforms() {
+        let root = repo_root();
+        let evidence = linux_evidence(&root);
+        let runtime_oracle = VerifiedOracle {
+            binary_path: PathBuf::new(),
+            provenance: serde_json::json!({ "version": "7.0.2" }),
+        };
+        validate_runtime_evidence(&root, &evidence, &runtime_oracle)
+            .expect("linux cache evidence is valid on another pinned runtime platform");
+
+        let wrong_runtime = VerifiedOracle {
+            binary_path: PathBuf::new(),
+            provenance: serde_json::json!({ "version": "7.0.3" }),
+        };
+        assert!(validate_runtime_evidence(&root, &evidence, &wrong_runtime).is_err());
     }
 
     #[test]

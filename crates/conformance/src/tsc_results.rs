@@ -166,6 +166,10 @@ pub enum UnsupportedReason {
     /// No compiler-option configuration selected by the TypeScript 7 harness
     /// is supported by the pinned native compiler.
     TypeScript7Configuration,
+    /// The authored invocation requests module-resolution trace output. The
+    /// diagnostic conformance lane does not compare that second product yet,
+    /// so the row must remain visible but cannot enter the runnable domain.
+    TraceResolutionOutputNotCompared,
     /// TSZ could not complete a semantic operation required to decide the
     /// checked result. This is a capability nonclaim, not a compiler crash or
     /// a synthetic TypeScript diagnostic.
@@ -180,6 +184,7 @@ impl UnsupportedReason {
     pub const fn code(self) -> &'static str {
         match self {
             Self::TypeScript7Configuration => "typescript-7-unsupported-configuration",
+            Self::TraceResolutionOutputNotCompared => "trace-resolution-output-not-compared",
             Self::SemanticIncomplete => "tsz-semantic-incomplete",
             Self::OracleDiagnosticEvidenceIncomplete => {
                 "typescript-7-diagnostic-evidence-incomplete"
@@ -449,6 +454,10 @@ mod tests {
         assert_eq!(
             UnsupportedReason::TypeScript7Configuration.code(),
             "typescript-7-unsupported-configuration"
+        );
+        assert_eq!(
+            UnsupportedReason::TraceResolutionOutputNotCompared.code(),
+            "trace-resolution-output-not-compared"
         );
         assert_eq!(
             UnsupportedReason::SemanticIncomplete.code(),

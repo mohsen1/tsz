@@ -5,6 +5,7 @@ pub mod cli;
 pub mod compiler_options;
 pub mod corpus;
 pub mod integrity;
+pub mod jsonc;
 pub mod oracle;
 pub mod runner;
 pub mod test_directives;

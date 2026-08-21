@@ -5,7 +5,8 @@
 use crate::cache::{self, load_cache, load_domain};
 use crate::cli::Args;
 use crate::test_parser::{
-    parse_test_file, select_ts7_oracle_configurations, should_skip_test_at_path, TestDirectives,
+    parse_test_file, select_ts7_oracle_configurations, test_disposition_at_path, TestDirectives,
+    TestDisposition,
 };
 use crate::text_decode::{decode_source_text, DecodedSourceText};
 use crate::tsc_results::{
@@ -42,13 +43,10 @@ enum FreshTextOutcome {
 }
 
 fn directive_non_runnable_result(path: &Path, directives: &TestDirectives) -> Option<TestResult> {
-    let reason = should_skip_test_at_path(path, directives)?;
-    if reason == "unsupported by TypeScript 7" {
-        Some(TestResult::Unsupported(
-            UnsupportedReason::TypeScript7Configuration,
-        ))
-    } else {
-        Some(TestResult::Skipped(reason))
+    match test_disposition_at_path(path, directives) {
+        TestDisposition::Runnable => None,
+        TestDisposition::Unsupported(reason) => Some(TestResult::Unsupported(reason)),
+        TestDisposition::Skipped(reason) => Some(TestResult::Skipped(reason)),
     }
 }
 
@@ -236,14 +234,8 @@ impl Runner {
         {
             anyhow::bail!("cache/domain corpus identity does not match the pinned pristine corpus");
         }
-        crate::oracle::validate_evidence(&repo_root, &domain.oracle)?;
         let local_oracle = crate::oracle::resolve_verified_oracle(&repo_root)?;
-        let local_oracle_evidence = crate::oracle::evidence(&repo_root, &local_oracle)?;
-        if domain.oracle != local_oracle_evidence {
-            anyhow::bail!(
-                "cache/domain native oracle platform differs from the verified runtime platform"
-            );
-        }
+        crate::oracle::validate_runtime_evidence(&repo_root, &domain.oracle, &local_oracle)?;
         if local_oracle.version()? != domain.typescript_version {
             anyhow::bail!("cache/domain TypeScript version differs from verified native oracle");
         }
@@ -998,6 +990,25 @@ mod tests {
             result,
             TestResult::Unsupported(UnsupportedReason::TypeScript7Configuration)
         );
+    }
+
+    #[tokio::test]
+    async fn run_test_classifies_trace_products_before_cache_lookup() {
+        for source in [
+            b"// @traceResolution: true\nlet value = 1;\n".as_slice(),
+            b"// @filename: tsconfig.json\n{\"compilerOptions\":{\"traceResolution\":true}}\n// @filename: input.ts\nimport 'pkg';\n"
+                .as_slice(),
+        ] {
+            let result = run_test_with_empty_cache(source)
+                .await
+                .expect("trace product should not require a diagnostic cache row");
+            assert_eq!(
+                result,
+                TestResult::Unsupported(
+                    UnsupportedReason::TraceResolutionOutputNotCompared
+                )
+            );
+        }
     }
 
     #[tokio::test]

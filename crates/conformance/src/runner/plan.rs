@@ -1,8 +1,6 @@
 use crate::cli::{Args, ShardStrategy};
 use crate::test_filter::{is_conformance_source_file, matches_path_filter};
-use crate::test_parser::{
-    parse_test_file, select_ts7_oracle_configurations, should_skip_test_at_path,
-};
+use crate::test_parser::{parse_test_file, test_disposition_at_path, TestDisposition};
 use crate::text_decode::{decode_source_text, DecodedSourceText};
 use anyhow::Context;
 use serde::Serialize;
@@ -293,15 +291,11 @@ fn plan_path_disposition(path: &Path) -> anyhow::Result<PlanDisposition> {
     };
     let parsed = parse_test_file(&content)
         .with_context(|| format!("failed to parse test directives in {}", path.display()))?;
-    let Some(reason) = should_skip_test_at_path(path, &parsed.directives) else {
-        return Ok(PlanDisposition::Runnable);
-    };
-    if reason == "unsupported by TypeScript 7"
-        && select_ts7_oracle_configurations(&parsed.directives).is_err()
-    {
-        return Ok(PlanDisposition::Unsupported);
+    match test_disposition_at_path(path, &parsed.directives) {
+        TestDisposition::Runnable => Ok(PlanDisposition::Runnable),
+        TestDisposition::Unsupported(_) => Ok(PlanDisposition::Unsupported),
+        TestDisposition::Skipped(_) => Ok(PlanDisposition::Skipped),
     }
-    Ok(PlanDisposition::Skipped)
 }
 
 fn disposition_identity(path: &Path) -> anyhow::Result<String> {
@@ -315,18 +309,11 @@ fn disposition_identity(path: &Path) -> anyhow::Result<String> {
     };
     let parsed = parse_test_file(&content)
         .with_context(|| format!("failed to parse test directives in {}", path.display()))?;
-    let Some(reason) = should_skip_test_at_path(path, &parsed.directives) else {
-        return Ok("runnable".to_string());
-    };
-    if reason == "unsupported by TypeScript 7"
-        && select_ts7_oracle_configurations(&parsed.directives).is_err()
-    {
-        return Ok(format!(
-            "unsupported:{}",
-            crate::tsc_results::UnsupportedReason::TypeScript7Configuration.code()
-        ));
+    match test_disposition_at_path(path, &parsed.directives) {
+        TestDisposition::Runnable => Ok("runnable".to_string()),
+        TestDisposition::Unsupported(reason) => Ok(format!("unsupported:{}", reason.code())),
+        TestDisposition::Skipped(reason) => Ok(format!("skipped:{reason}")),
     }
-    Ok(format!("skipped:{reason}"))
 }
 
 /// Bind live corpus discovery and selector classification exactly to the
@@ -535,6 +522,10 @@ mod tests {
             &cases.join("compiler/unsupported.ts"),
             "// @target: es5\nlet value = 1;\n",
         );
+        write(
+            &cases.join("compiler/trace.ts"),
+            "// @traceResolution: true\nimport 'pkg';\n",
+        );
         let args = parse_args(&[
             "tsz-conformance",
             "--test-dir",
@@ -547,10 +538,12 @@ mod tests {
         )]);
         let skip_path = cases.join("compiler/skip.ts");
         let unsupported_path = cases.join("compiler/unsupported.ts");
+        let trace_path = cases.join("compiler/trace.ts");
         let records = [
             (&run_path, "compiler/run.ts"),
             (&skip_path, "compiler/skip.ts"),
             (&unsupported_path, "compiler/unsupported.ts"),
+            (&trace_path, "compiler/trace.ts"),
         ]
         .into_iter()
         .map(|(path, key)| {
@@ -569,16 +562,24 @@ mod tests {
             corpus_tree: "1".repeat(40),
             candidate_content_sha256: crate::integrity::candidate_content_sha256(&records),
             oracle: serde_json::json!({}),
-            candidate_count: 3,
+            candidate_count: 4,
             runnable_count: 1,
-            unsupported_count: 1,
+            unsupported_count: 2,
             skipped_count: 1,
-            unsupported: BTreeMap::from([(
-                "compiler/unsupported.ts".to_string(),
-                crate::tsc_results::UnsupportedReason::TypeScript7Configuration
-                    .code()
-                    .to_string(),
-            )]),
+            unsupported: BTreeMap::from([
+                (
+                    "compiler/unsupported.ts".to_string(),
+                    crate::tsc_results::UnsupportedReason::TypeScript7Configuration
+                        .code()
+                        .to_string(),
+                ),
+                (
+                    "compiler/trace.ts".to_string(),
+                    crate::tsc_results::UnsupportedReason::TraceResolutionOutputNotCompared
+                        .code()
+                        .to_string(),
+                ),
+            ]),
             skipped: BTreeMap::from([("compiler/skip.ts".to_string(), "@skip".to_string())]),
         };
 
@@ -621,6 +622,10 @@ mod tests {
             "// @target: es5\nlet unsupported = 1;\n",
         );
         write(
+            &cases.join("compiler/trace.ts"),
+            "// @traceResolution: true\nimport 'pkg';\n",
+        );
+        write(
             &cases.join("compiler/lib.d.ts"),
             "declare const ignored: string;\n",
         );
@@ -633,7 +638,8 @@ mod tests {
             "PASS TypeScript/tests/cases/compiler/pass.ts\n\
              FAIL TypeScript/tests/cases/compiler/fail.js\n\
              PASS TypeScript/tests/cases/compiler/skipped.ts\n\
-             PASS TypeScript/tests/cases/compiler/unsupported.ts\n",
+             PASS TypeScript/tests/cases/compiler/unsupported.ts\n\
+             PASS TypeScript/tests/cases/compiler/trace.ts\n",
         );
 
         let args = parse_args(&[
@@ -646,10 +652,10 @@ mod tests {
         let plan = build_shard_plan_with_baseline(&args, 2, &baseline).unwrap();
 
         assert_eq!(plan.shard_count, 2);
-        assert_eq!(plan.candidates, 4);
+        assert_eq!(plan.candidates, 5);
         assert_eq!(plan.total, 2);
         assert_eq!(plan.runnable, 2);
-        assert_eq!(plan.unsupported, 1);
+        assert_eq!(plan.unsupported, 2);
         assert_eq!(plan.skipped, 1);
         assert_eq!(
             plan.candidates,
@@ -663,7 +669,7 @@ mod tests {
                 .iter()
                 .map(|shard| shard.candidates)
                 .sum::<usize>(),
-            4
+            5
         );
         assert_eq!(
             plan.shards.iter().map(|shard| shard.total).sum::<usize>(),

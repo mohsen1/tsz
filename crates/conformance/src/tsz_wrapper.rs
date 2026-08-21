@@ -4,6 +4,7 @@
 
 use crate::compiler_options::directives_to_tsconfig;
 use crate::tsc_results::DiagnosticFingerprint;
+use anyhow::Context;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -1084,8 +1085,8 @@ fn copy_tsconfig_to_project_if_needed(
 
     // Merge directive options into a root tsconfig's compilerOptions
     if has_directive_opts {
-        let mut tsconfig: serde_json::Value =
-            serde_json::from_str(base_content).unwrap_or_else(|_| serde_json::json!({}));
+        let mut tsconfig = crate::jsonc::parse_jsonc(base_content)
+            .with_context(|| format!("cannot parse authored project config {filename} as JSONC"))?;
         if let serde_json::Value::Object(ref mut root) = tsconfig {
             let compiler_options = root
                 .entry("compilerOptions")

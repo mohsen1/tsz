@@ -4,14 +4,17 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import sys
 from pathlib import Path
 
 from lib.cache_domain import (
     CacheDomainValidationError,
     load_json_object,
+    load_json_object_bytes,
     resolve_pinned_typescript_version,
     validate_cache_domain,
+    validate_portable_oracle_evidence,
 )
 
 
@@ -40,14 +43,30 @@ def main(argv: list[str] | None = None) -> int:
         default=HERE / "typescript-versions.json",
         help="Pinned TypeScript version manifest",
     )
+    parser.add_argument(
+        "--oracle-manifest",
+        type=Path,
+        default=HERE.parent / "emit/oracle-manifest.json",
+        help="Cross-platform pinned native-oracle manifest",
+    )
     args = parser.parse_args(argv)
 
     try:
         cache = load_json_object(args.cache, "TSC cache")
         domain = load_json_object(args.domain, "conformance domain")
         versions = load_json_object(args.versions, "TypeScript version manifest")
+        oracle_manifest, oracle_manifest_bytes = load_json_object_bytes(
+            args.oracle_manifest, "oracle manifest"
+        )
+        oracle_manifest_sha256 = hashlib.sha256(oracle_manifest_bytes).hexdigest()
         pinned_version = resolve_pinned_typescript_version(versions)
         summary = validate_cache_domain(cache, domain, pinned_version)
+        validate_portable_oracle_evidence(
+            domain.get("oracle"),
+            oracle_manifest,
+            oracle_manifest_sha256,
+            pinned_version,
+        )
     except CacheDomainValidationError as error:
         for message in error.errors:
             print(f"error: {message}", file=sys.stderr)

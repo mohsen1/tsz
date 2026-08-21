@@ -12,6 +12,8 @@ import sys
 import tempfile
 from pathlib import Path
 
+from lib.cache_domain import load_json_object_bytes, validate_portable_oracle_evidence
+
 EXPECTED_BINARY_NAMES = {
     "generate-tsc-cache",
     "tsz",
@@ -120,6 +122,38 @@ def verify_build_manifest(root: Path, manifest_path: Path, binary_specs: list[st
     return manifest
 
 
+def validate_portable_oracle_boundary(
+    domain_oracle: object,
+    runtime_oracle: object,
+    oracle_manifest: dict,
+    oracle_manifest_sha256: str,
+    pinned_version: str,
+) -> None:
+    """Bind cache and runtime oracles to one release, not one native package."""
+
+    domain_identity = validate_portable_oracle_evidence(
+        domain_oracle,
+        oracle_manifest,
+        oracle_manifest_sha256,
+        pinned_version,
+    )
+    runtime_evidence = {
+        "schemaVersion": 1,
+        "manifestSha256": oracle_manifest_sha256,
+        "generator": runtime_oracle,
+    }
+    runtime_identity = validate_portable_oracle_evidence(
+        runtime_evidence,
+        oracle_manifest,
+        oracle_manifest_sha256,
+        pinned_version,
+    )
+    if domain_identity != runtime_identity:
+        raise ValueError(
+            "domain and runtime oracles have different platform-neutral identities"
+        )
+
+
 def capture(args) -> dict:
     root = Path(args.repo).resolve(strict=True)
     test_dir = Path(args.test_dir).resolve(strict=True)
@@ -178,6 +212,17 @@ def capture(args) -> dict:
     ):
         raise ValueError("domain corpus/content identity is incomplete or stale")
 
+    manifest_path = root / "scripts/emit/oracle-manifest.json"
+    oracle_manifest, oracle_manifest_bytes = load_json_object_bytes(
+        manifest_path, "oracle manifest"
+    )
+    oracle_manifest_sha256 = hashlib.sha256(oracle_manifest_bytes).hexdigest()
+    pinned_version = oracle_manifest.get("version")
+    if not isinstance(pinned_version, str) or not pinned_version:
+        raise ValueError("checked-in oracle manifest has no pinned TypeScript version")
+    if domain.get("typescript_version") != pinned_version:
+        raise ValueError("domain TypeScript version differs from the oracle manifest")
+
     resolver = root / "scripts/emit/resolve-oracle.mjs"
     oracle = json.loads(
         run_text(
@@ -202,17 +247,14 @@ def capture(args) -> dict:
     lib_path = Path(configured_lib).resolve(strict=True)
     if lib_path != Path(binary_path).resolve(strict=True).parent:
         raise ValueError("TSZ_LIB_DIR is not the verified native oracle library tree")
-    manifest_path = root / "scripts/emit/oracle-manifest.json"
-    oracle_manifest_sha256 = sha256_file(manifest_path)
     domain_oracle = domain.get("oracle")
-    if (
-        not isinstance(domain_oracle, dict)
-        or domain_oracle.get("manifestSha256") != oracle_manifest_sha256
-        or domain_oracle.get("generator") != oracle_provenance
-    ):
-        raise ValueError(
-            "domain oracle is not the verified native oracle for this exact platform"
-        )
+    validate_portable_oracle_boundary(
+        domain_oracle,
+        oracle_provenance,
+        oracle_manifest,
+        oracle_manifest_sha256,
+        pinned_version,
+    )
 
     return {
         "schema_version": 2,
