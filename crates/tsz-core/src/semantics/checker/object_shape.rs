@@ -1,18 +1,410 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::bind::{ScopeId, TypeMemberSymbol};
-use crate::source::FileId;
+use crate::bind::{DeclarationKind, Meaning, ScopeId, TypeMemberSymbol};
+use crate::source::{DeclId, FileId};
 use crate::syntax::{
-    KeywordType, Parameter, TypeMember, TypeMemberKind, TypeMemberModifiers, TypeNode, TypeNodeKind,
+    InterfaceDeclaration, KeywordType, Parameter, TypeMember, TypeMemberKind, TypeMemberModifiers,
+    TypeNode, TypeNodeKind, TypeParameterDeclaration,
 };
 
-use super::{Checker, QueryState};
+use super::{
+    Checker, DeclarationModel,
+    recursion::{AliasRecursionProductivity, ReferenceRecursion},
+};
 use crate::semantics::types::{
     Completion, DeferredType, IndexKeyKind, IndexSignature, ObjectShape, Property, ShapeParameter,
     ShapeSignature, TypeId, TypeKind,
 };
 
 impl Checker<'_> {
+    pub(super) fn resolve_interface_shape(
+        &mut self,
+        declaration: DeclId,
+        interface: &InterfaceDeclaration,
+        scope: ScopeId,
+        type_parameters: &HashMap<String, TypeId>,
+    ) -> Completion<ObjectShape> {
+        if interface.extends.is_empty() {
+            return self.resolve_object_members(
+                declaration.file,
+                scope,
+                &interface.members,
+                type_parameters,
+            );
+        }
+
+        // This is the deliberately narrow #1002 boundary. TSZ does not yet
+        // own interface merge provenance or TS2314/TS2320/TS2430 diagnostics,
+        // so only an empty, sole declaration may inherit one plain property
+        // through an exact positional generic pass-through.
+        let base_declaration = match self.narrow_interface_heritage_base(declaration) {
+            Completion::Complete(base) => base,
+            Completion::Deferred => return Completion::Deferred,
+            Completion::Cycle => return Completion::Cycle,
+            Completion::Limit => return Completion::Limit,
+        };
+        let [heritage] = interface.extends.as_slice() else {
+            unreachable!("the narrow heritage query returned a base without an extends edge")
+        };
+        let TypeNodeKind::Reference {
+            arguments: heritage_arguments,
+            ..
+        } = &heritage.kind
+        else {
+            return Completion::Deferred;
+        };
+        if !positional_type_parameter_pass_through(&interface.type_parameters, heritage_arguments) {
+            return Completion::Deferred;
+        }
+        let Some(DeclarationModel::Interface {
+            declaration: base, ..
+        }) = self.models.get(&base_declaration).copied()
+        else {
+            // Type-alias heritage cannot borrow the object-member recursion
+            // rule; it remains symbolic until base-type diagnostics exist.
+            return Completion::Deferred;
+        };
+        if !base.extends.is_empty()
+            || base.members.len() != 1
+            || !plain_type_parameters(&base.type_parameters)
+            || base.type_parameters.len() != interface.type_parameters.len()
+            || !plain_required_property(&base.members[0])
+        {
+            return Completion::Deferred;
+        }
+
+        let base_reference =
+            self.resolve_type_node(declaration.file, scope, heritage, type_parameters);
+        let TypeKind::Deferred(deferred) = self.store.kind(base_reference).clone() else {
+            return Completion::Deferred;
+        };
+        let DeferredType::Reference {
+            declaration: resolved_base,
+            arguments,
+        } = &deferred
+        else {
+            return Completion::Deferred;
+        };
+        if *resolved_base != base_declaration || arguments.len() != base.type_parameters.len() {
+            return Completion::Deferred;
+        }
+        for argument in arguments {
+            match self.shape_child_type_supported(*argument, &mut HashSet::new()) {
+                Completion::Complete(()) => {}
+                Completion::Deferred => return Completion::Deferred,
+                Completion::Cycle => return Completion::Cycle,
+                Completion::Limit => return Completion::Limit,
+            }
+        }
+
+        let resolved = match self.force_deferred(base_reference, deferred, 0) {
+            Completion::Complete(resolved) => resolved,
+            Completion::Deferred => return Completion::Deferred,
+            Completion::Cycle => return Completion::Cycle,
+            Completion::Limit => return Completion::Limit,
+        };
+        let TypeKind::Object(shape) = self.store.kind(resolved).clone() else {
+            return Completion::Deferred;
+        };
+        if shape.properties.len() != 1
+            || !shape.call_signatures.is_empty()
+            || !shape.construct_signatures.is_empty()
+            || !shape.index_signatures.is_empty()
+        {
+            return Completion::Deferred;
+        }
+        Completion::Complete(shape)
+    }
+
+    pub(super) fn is_single_interface_declaration(&self, declaration: DeclId) -> bool {
+        let Some(file) = self.program.file(declaration.file) else {
+            return false;
+        };
+        let Some(bound) = file.bindings.declaration(declaration) else {
+            return false;
+        };
+        bound.kind == DeclarationKind::Interface
+            && self.is_single_type_symbol_declaration(declaration)
+            && matches!(
+                self.models.get(&declaration),
+                Some(DeclarationModel::Interface { .. })
+            )
+    }
+
+    pub(super) fn is_single_type_symbol_declaration(&self, declaration: DeclId) -> bool {
+        let Some(file) = self.program.file(declaration.file) else {
+            return false;
+        };
+        let Some(bound) = file.bindings.declaration(declaration) else {
+            return false;
+        };
+        let declaration = match (bound.meaning, bound.kind) {
+            (Meaning::Type, _) => declaration,
+            (Meaning::Value, DeclarationKind::Class) => {
+                let mut counterparts = file.bindings.declarations.iter().filter(|candidate| {
+                    candidate.owner == bound.owner
+                        && candidate.kind == DeclarationKind::Class
+                        && candidate.meaning == Meaning::Type
+                });
+                let Some(counterpart) = counterparts.next() else {
+                    return false;
+                };
+                if counterparts.next().is_some() {
+                    return false;
+                }
+                counterpart.id
+            }
+            (Meaning::Value, _) => return false,
+        };
+        let Some(bound) = file.bindings.declaration(declaration) else {
+            return false;
+        };
+        let is_global = bound.scope == ScopeId(0) && !file.is_external_module();
+        if is_global
+            && self
+                .program
+                .standard_library
+                .resolve(&bound.name, Meaning::Type)
+                .is_some()
+        {
+            return false;
+        }
+        if bound.kind == DeclarationKind::Class
+            && !self.is_single_class_value_declaration(file, bound, is_global)
+        {
+            return false;
+        }
+        let declarations = if is_global {
+            self.program
+                .global_types
+                .get(&bound.name)
+                .map(Vec::as_slice)
+        } else {
+            file.bindings
+                .scopes
+                .get(bound.scope.0 as usize)
+                .and_then(|scope| scope.names.get(&bound.name))
+                .map(Vec::as_slice)
+        };
+        declarations.is_some_and(|declarations| {
+            let mut type_declarations = declarations.iter().copied().filter(|candidate| {
+                self.program
+                    .file(candidate.file)
+                    .and_then(|candidate_file| candidate_file.bindings.declaration(*candidate))
+                    .is_some_and(|candidate| candidate.meaning == Meaning::Type)
+            });
+            type_declarations.next() == Some(declaration) && type_declarations.next().is_none()
+        })
+    }
+
+    fn is_single_class_value_declaration(
+        &self,
+        file: &crate::program::ProgramFile,
+        class_type: &crate::bind::BoundDeclaration,
+        is_global: bool,
+    ) -> bool {
+        let mut counterparts = file.bindings.declarations.iter().filter(|candidate| {
+            candidate.owner == class_type.owner
+                && candidate.kind == DeclarationKind::Class
+                && candidate.meaning == Meaning::Value
+        });
+        let Some(counterpart) = counterparts.next() else {
+            return false;
+        };
+        if counterparts.next().is_some()
+            || is_global
+                && self
+                    .program
+                    .standard_library
+                    .resolve(&class_type.name, Meaning::Value)
+                    .is_some()
+        {
+            return false;
+        }
+        let declarations = if is_global {
+            self.program
+                .global_values
+                .get(&class_type.name)
+                .map(Vec::as_slice)
+        } else {
+            file.bindings
+                .scopes
+                .get(class_type.scope.0 as usize)
+                .and_then(|scope| scope.names.get(&class_type.name))
+                .map(Vec::as_slice)
+        };
+        declarations.is_some_and(|declarations| {
+            let mut value_declarations = declarations.iter().copied().filter(|candidate| {
+                self.program
+                    .file(candidate.file)
+                    .and_then(|candidate_file| candidate_file.bindings.declaration(*candidate))
+                    .is_some_and(|candidate| candidate.meaning == Meaning::Value)
+            });
+            value_declarations.next() == Some(counterpart.id) && value_declarations.next().is_none()
+        })
+    }
+
+    pub(super) fn narrow_interface_heritage_reference_supported(
+        &self,
+        declaration: DeclId,
+        arguments: &[TypeId],
+    ) -> bool {
+        let Completion::Complete(base_declaration) =
+            self.narrow_interface_heritage_base(declaration)
+        else {
+            return false;
+        };
+        let Some(DeclarationModel::Interface {
+            declaration: derived,
+            ..
+        }) = self.models.get(&declaration).copied()
+        else {
+            return false;
+        };
+        let Some(DeclarationModel::Interface {
+            declaration: base, ..
+        }) = self.models.get(&base_declaration).copied()
+        else {
+            return false;
+        };
+        arguments.len() == derived.type_parameters.len()
+            && base.extends.is_empty()
+            && base.members.len() == 1
+            && plain_type_parameters(&base.type_parameters)
+            && base.type_parameters.len() == derived.type_parameters.len()
+            && plain_required_property(&base.members[0])
+    }
+
+    /// Validate the complete narrow heritage path before classifying a cycle.
+    ///
+    /// This is bounded and declaration-keyed: merged symbols cannot be
+    /// selected by root order, and a long or diamond-shaped base graph cannot
+    /// recurse or be rescanned quadratically. Only one direct
+    /// empty-derived/plain-base edge is a supported acyclic result. Direct and
+    /// mutual validated revisits retain the separate illegal-heritage Cycle.
+    fn narrow_interface_heritage_base(&self, declaration: DeclId) -> Completion<DeclId> {
+        let Some((interface, scope)) = self.narrow_heritage_interface(declaration) else {
+            return Completion::Deferred;
+        };
+        if !interface.members.is_empty() {
+            return Completion::Deferred;
+        }
+        let Some(base) = self.direct_interface_base(declaration, interface, scope) else {
+            return Completion::Deferred;
+        };
+        if base == declaration {
+            return Completion::Cycle;
+        }
+        let Some((base_interface, base_scope)) = self.narrow_heritage_interface(base) else {
+            return Completion::Deferred;
+        };
+        if base_interface.type_parameters.len() != interface.type_parameters.len() {
+            return Completion::Deferred;
+        }
+        if base_interface.extends.is_empty() {
+            return Completion::Complete(base);
+        }
+        if !base_interface.members.is_empty() {
+            return Completion::Deferred;
+        }
+
+        // Transitive inheritance is outside the narrow merge. Inspect only
+        // one more validated edge so direct/mutual TS2310-family cycles do not
+        // become successful shapes, then fail closed without walking a chain.
+        let Some(next) = self.direct_interface_base(base, base_interface, base_scope) else {
+            return Completion::Deferred;
+        };
+        if next == declaration || next == base {
+            Completion::Cycle
+        } else {
+            Completion::Deferred
+        }
+    }
+
+    fn narrow_heritage_interface(
+        &self,
+        declaration: DeclId,
+    ) -> Option<(&InterfaceDeclaration, ScopeId)> {
+        if !self.is_single_interface_declaration(declaration) {
+            return None;
+        }
+        let DeclarationModel::Interface {
+            declaration: interface,
+            scope,
+        } = self.models.get(&declaration).copied()?
+        else {
+            return None;
+        };
+        plain_type_parameters(&interface.type_parameters).then_some((interface, scope))
+    }
+
+    fn direct_interface_base(
+        &self,
+        declaration: DeclId,
+        interface: &InterfaceDeclaration,
+        scope: ScopeId,
+    ) -> Option<DeclId> {
+        let [heritage] = interface.extends.as_slice() else {
+            return None;
+        };
+        let TypeNodeKind::Reference {
+            name, arguments, ..
+        } = &heritage.kind
+        else {
+            return None;
+        };
+        if !positional_type_parameter_pass_through(&interface.type_parameters, arguments) {
+            return None;
+        }
+        let base = self.sole_interface_reference(declaration.file, scope, name)?;
+        let DeclarationModel::Interface {
+            declaration: base_interface,
+            ..
+        } = self.models.get(&base).copied()?
+        else {
+            return None;
+        };
+        (base_interface.type_parameters.len() == interface.type_parameters.len()).then_some(base)
+    }
+
+    fn sole_interface_reference(
+        &self,
+        file: FileId,
+        mut scope: ScopeId,
+        name: &str,
+    ) -> Option<DeclId> {
+        let bound = &self.program.files[file.0 as usize].bindings;
+        loop {
+            let current = bound.scopes.get(scope.0 as usize)?;
+            if let Some(declarations) = current.names.get(name) {
+                let declarations = declarations
+                    .iter()
+                    .copied()
+                    .filter(|candidate| {
+                        bound
+                            .declaration(*candidate)
+                            .is_some_and(|declaration| declaration.meaning == Meaning::Type)
+                    })
+                    .collect::<Vec<_>>();
+                if !declarations.is_empty() {
+                    return match declarations.as_slice() {
+                        [only] if self.is_single_interface_declaration(*only) => Some(*only),
+                        _ => None,
+                    };
+                }
+            }
+            let Some(parent) = current.parent else {
+                break;
+            };
+            scope = parent;
+        }
+
+        match self.program.global_types.get(name).map(Vec::as_slice) {
+            Some([only]) if self.is_single_interface_declaration(*only) => Some(*only),
+            _ => None,
+        }
+    }
+
     pub(super) fn resolve_object_members(
         &mut self,
         file: FileId,
@@ -350,18 +742,63 @@ impl Checker<'_> {
                 Completion::Complete(())
             }
             TypeKind::Deferred(deferred @ DeferredType::Reference { .. }) => {
-                if matches!(self.force_queries.get(&ty), Some(QueryState::Computing)) {
-                    // Productive recursive object aliases revisit the
-                    // declaration reference while its shape is assembled.
-                    Completion::Complete(())
-                } else {
-                    match self.force_deferred(ty, deferred, 0) {
-                        Completion::Complete(resolved) if resolved != ty => {
-                            self.shape_child_type_supported(resolved, active)
+                let DeferredType::Reference {
+                    declaration,
+                    arguments,
+                } = &deferred
+                else {
+                    unreachable!()
+                };
+                // A provisional recursive edge cannot hide an unsupported
+                // callable or another incomplete form inside its arguments.
+                for argument in arguments {
+                    match self.shape_child_type_supported(*argument, active) {
+                        Completion::Complete(()) => {}
+                        other => return other,
+                    }
+                }
+                match self.shape_reference_recursion(ty, *declaration, arguments) {
+                    ReferenceRecursion::Exact => {
+                        // Productive recursive object aliases revisit the
+                        // exact reference while its shape is assembled.
+                        match self.models.get(declaration) {
+                            Some(DeclarationModel::TypeAlias { .. }) => {
+                                match self.alias_recursion_productivity(*declaration) {
+                                    AliasRecursionProductivity::Productive => {
+                                        Completion::Complete(())
+                                    }
+                                    AliasRecursionProductivity::Unproductive => Completion::Cycle,
+                                    AliasRecursionProductivity::Acyclic
+                                    | AliasRecursionProductivity::Unsupported => {
+                                        Completion::Deferred
+                                    }
+                                }
+                            }
+                            Some(DeclarationModel::Interface { .. })
+                                if self.reference_expansion_frame_supported(
+                                    *declaration,
+                                    arguments,
+                                ) =>
+                            {
+                                Completion::Complete(())
+                            }
+                            _ => Completion::Deferred,
                         }
-                        Completion::Complete(_) | Completion::Deferred => Completion::Deferred,
-                        Completion::Cycle => Completion::Cycle,
-                        Completion::Limit => Completion::Limit,
+                    }
+                    ReferenceRecursion::Generative => {
+                        // Pinned TS7 treats a repeatedly instantiated generic
+                        // origin as provisional recursion. This edge remains
+                        // symbolic and non-cacheable; enclosing siblings still
+                        // have to complete before the shape succeeds.
+                        if self.generative_reference_supported(*declaration, arguments) {
+                            Completion::Complete(())
+                        } else {
+                            Completion::Deferred
+                        }
+                    }
+                    ReferenceRecursion::UnsupportedGenerative => Completion::Deferred,
+                    ReferenceRecursion::Distinct => {
+                        self.force_reference_shape(ty, deferred, active)
                     }
                 }
             }
@@ -402,6 +839,78 @@ impl Checker<'_> {
         active.remove(&ty);
         result
     }
+
+    fn force_reference_shape(
+        &mut self,
+        ty: TypeId,
+        deferred: DeferredType,
+        active: &mut HashSet<TypeId>,
+    ) -> Completion<()> {
+        let DeferredType::Reference {
+            declaration,
+            arguments,
+        } = &deferred
+        else {
+            unreachable!()
+        };
+        let declaration = *declaration;
+        let arguments = arguments.clone();
+        let checkpoint = self.force_reference_stack.checkpoint();
+        self.force_reference_stack.push(ty, declaration, &arguments);
+        let completion = match self.force_deferred(ty, deferred, 0) {
+            Completion::Complete(resolved) if resolved != ty => {
+                self.shape_child_type_supported(resolved, active)
+            }
+            Completion::Complete(_) | Completion::Deferred => Completion::Deferred,
+            Completion::Cycle => Completion::Cycle,
+            Completion::Limit => Completion::Limit,
+        };
+        self.force_reference_stack.restore(checkpoint);
+        completion
+    }
+}
+
+pub(super) fn plain_type_parameters(parameters: &[TypeParameterDeclaration]) -> bool {
+    let mut names = HashSet::new();
+    parameters.iter().all(|parameter| {
+        names.insert(parameter.name.as_str())
+            && parameter.constraint.is_none()
+            && parameter.default.is_none()
+            && !parameter.const_parameter
+            && !parameter.in_variance
+            && !parameter.out_variance
+    })
+}
+
+fn positional_type_parameter_pass_through(
+    parameters: &[TypeParameterDeclaration],
+    arguments: &[TypeNode],
+) -> bool {
+    parameters.len() == arguments.len()
+        && parameters
+            .iter()
+            .zip(arguments)
+            .all(|(parameter, argument)| {
+                matches!(
+                    &argument.kind,
+                    TypeNodeKind::Reference { name, arguments, .. }
+                        if name == &parameter.name && arguments.is_empty()
+                )
+            })
+}
+
+pub(super) fn plain_required_property(member: &TypeMember) -> bool {
+    !member.recovered
+        && member.modifiers.nodes.is_empty()
+        && matches!(
+            &member.kind,
+            TypeMemberKind::Property {
+                name,
+                ty: Some(_),
+                optional: false,
+                initializer: None,
+            } if name.semantic_name().is_some()
+        )
 }
 
 fn unsupported_modifiers(modifiers: &TypeMemberModifiers) -> bool {

@@ -548,7 +548,7 @@ impl ReferenceVisitor<'_> {
                 }
             }
             StatementKind::Function(declaration) => {
-                self.visit_signature_types_with_host(
+                let retained_type_locals = self.visit_signature_types_with_host(
                     statement.id,
                     scope,
                     &declaration.type_parameters,
@@ -571,8 +571,13 @@ impl ReferenceVisitor<'_> {
                     }
                 }
                 self.visit_bound_statements(&declaration.body, function_scope);
+                if retained_type_locals {
+                    self.type_locals.pop();
+                }
             }
             StatementKind::Class(declaration) => {
+                self.push_type_parameter_locals(&declaration.type_parameters);
+                self.visit_type_parameter_bounds(&declaration.type_parameters, scope);
                 let class_scope = self
                     .file
                     .bindings
@@ -605,7 +610,7 @@ impl ReferenceVisitor<'_> {
                             body,
                             has_body,
                         } => {
-                            self.visit_signature_types_with_host(
+                            let retained_type_locals = self.visit_signature_types_with_host(
                                 member.id,
                                 class_scope,
                                 &[],
@@ -628,6 +633,9 @@ impl ReferenceVisitor<'_> {
                                 }
                             }
                             self.visit_bound_statements(body, member_scope);
+                            if retained_type_locals {
+                                self.type_locals.pop();
+                            }
                         }
                         ClassMemberKind::Method {
                             type_parameters,
@@ -637,7 +645,7 @@ impl ReferenceVisitor<'_> {
                             has_body,
                             ..
                         } => {
-                            self.visit_signature_types_with_host(
+                            let retained_type_locals = self.visit_signature_types_with_host(
                                 member.id,
                                 class_scope,
                                 type_parameters,
@@ -660,9 +668,13 @@ impl ReferenceVisitor<'_> {
                                 }
                             }
                             self.visit_bound_statements(body, member_scope);
+                            if retained_type_locals {
+                                self.type_locals.pop();
+                            }
                         }
                     }
                 }
+                self.type_locals.pop();
             }
             StatementKind::TypeAlias(declaration) => {
                 self.push_type_parameter_locals(&declaration.type_parameters);
@@ -767,8 +779,15 @@ impl ReferenceVisitor<'_> {
                     self.visit_expression(element, scope, false);
                 }
             }
-            ExpressionKind::Call { callee, arguments } => {
+            ExpressionKind::Call {
+                callee,
+                type_arguments,
+                arguments,
+            } => {
                 self.visit_expression(callee, scope, false);
+                for type_argument in type_arguments.iter().flatten() {
+                    self.visit_type(type_argument, scope);
+                }
                 for argument in arguments {
                     self.visit_expression(argument, scope, false);
                 }
@@ -1057,9 +1076,9 @@ impl ReferenceVisitor<'_> {
         parameters: &[Parameter],
         return_type: Option<&TypeNode>,
         implementation: bool,
-    ) {
+    ) -> bool {
         let Some(signature_scope) = self.file.bindings.scope_for_node.get(&owner).copied() else {
-            return;
+            return false;
         };
         self.push_type_parameter_locals(type_parameters);
         self.visit_type_parameter_bounds(type_parameters, enclosing_scope);
@@ -1078,7 +1097,10 @@ impl ReferenceVisitor<'_> {
         {
             self.visit_type(return_type, signature_scope);
         }
-        self.type_locals.pop();
+        if !implementation {
+            self.type_locals.pop();
+        }
+        implementation
     }
 
     fn push_type_parameter_locals(&mut self, parameters: &[TypeParameterDeclaration]) {

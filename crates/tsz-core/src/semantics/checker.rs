@@ -7,6 +7,7 @@ mod class_model;
 mod function_model;
 mod object_shape;
 mod projection_model;
+pub(super) mod recursion;
 mod relation_diagnostic;
 mod required_type;
 mod statement_model;
@@ -121,6 +122,7 @@ struct Checker<'a> {
     forbidden_default_type_parameters: Vec<HashSet<TypeId>>,
     value_queries: FxHashMap<DeclId, QueryState>,
     force_queries: FxHashMap<TypeId, QueryState>,
+    force_reference_stack: recursion::ReferenceExpansionStack,
     // Syntax contexts and diagnostic origins are session data. Neither is
     // part of semantic interning or query identity.
     required_type_contexts: FxHashMap<Span, HashMap<String, TypeId>>,
@@ -150,6 +152,9 @@ impl<'a> Checker<'a> {
             forbidden_default_type_parameters: Vec::new(),
             value_queries: FxHashMap::default(),
             force_queries: FxHashMap::default(),
+            force_reference_stack: recursion::ReferenceExpansionStack::new(
+                recursion::ReferenceDemand::ShapeSupport,
+            ),
             required_type_contexts: FxHashMap::default(),
             complete_required_type_nodes: HashSet::new(),
             property_query_origins: Vec::new(),
@@ -1089,7 +1094,11 @@ impl<'a> Checker<'a> {
                 let element = self.store.union(elements, UnionPolicy::Canonical);
                 self.store.intern(TypeKind::Array(element))
             }
-            ExpressionKind::Call { callee, arguments } => {
+            ExpressionKind::Call {
+                callee,
+                type_arguments,
+                arguments,
+            } => {
                 let callee_type = if let ExpressionKind::Member {
                     object,
                     name,
@@ -1103,6 +1112,18 @@ impl<'a> Checker<'a> {
                 } else {
                     self.infer_expression(file, scope, callee, None)
                 };
+                if type_arguments.is_some() {
+                    // Binding/navigation retain the authored type syntax, but
+                    // signature instantiation and its TS2345/TS2347/TS2558/
+                    // TS2749 diagnostics are not modeled yet. The operand-free
+                    // marker cannot later force or cache an ordinary call.
+                    self.semantic_completion = self
+                        .semantic_completion
+                        .combine(SemanticCompletion::Deferred);
+                    return self
+                        .store
+                        .intern(TypeKind::Deferred(DeferredType::GenericCall));
+                }
                 let completion = self.force_type(callee_type, 0);
                 let callee_type = match self.require_completion(completion) {
                     Completion::Complete(callee_type) => callee_type,
@@ -1391,10 +1412,7 @@ impl<'a> Checker<'a> {
     ) -> Completion<TypeId> {
         match self.force_queries.get(&ty).copied() {
             Some(QueryState::Ready(result)) => return Completion::Complete(result),
-            Some(QueryState::Computing) => {
-                self.report_deferred_cycle(&deferred);
-                return Completion::Cycle;
-            }
+            Some(QueryState::Computing) => return Completion::Cycle,
             None => {}
         }
         // This is the sole evaluator-expansion budget. Declaration lookup and
@@ -1403,6 +1421,14 @@ impl<'a> Checker<'a> {
         if depth > 100 {
             self.report_complexity(&deferred);
             return Completion::Limit;
+        }
+        let reference_checkpoint = self.force_reference_stack.checkpoint();
+        if let DeferredType::Reference {
+            declaration,
+            arguments,
+        } = &deferred
+        {
+            self.force_reference_stack.push(ty, *declaration, arguments);
         }
         self.force_queries.insert(ty, QueryState::Computing);
         let result = match deferred.clone() {
@@ -1453,6 +1479,7 @@ impl<'a> Checker<'a> {
             DeferredType::Predicate { .. }
             | DeferredType::Conditional { .. }
             | DeferredType::Mapped { .. }
+            | DeferredType::GenericCall
             | DeferredType::BigIntLiteral
             | DeferredType::UniqueSymbol
             | DeferredType::GenericFunction
@@ -1463,22 +1490,25 @@ impl<'a> Checker<'a> {
         };
         let result = match result {
             Completion::Complete(result)
+                if matches!(self.store.kind(result), TypeKind::Deferred(_))
+                    && self.productive_alias_edge_is_provisional(&deferred, result) =>
+            {
+                Completion::Deferred
+            }
+            Completion::Complete(result)
                 if matches!(self.store.kind(result), TypeKind::Deferred(_)) =>
             {
                 self.force_type(result, depth + 1)
             }
             other => other,
         };
+        self.force_reference_stack.restore(reference_checkpoint);
         match result {
             Completion::Complete(result) if self.is_cacheable_type(result) => {
                 self.force_queries.insert(ty, QueryState::Ready(result));
             }
-            Completion::Complete(_) | Completion::Deferred => {
+            Completion::Complete(_) | Completion::Deferred | Completion::Cycle => {
                 self.force_queries.remove(&ty);
-            }
-            Completion::Cycle => {
-                self.force_queries.remove(&ty);
-                self.report_deferred_cycle(&deferred);
             }
             Completion::Limit => {
                 self.force_queries.remove(&ty);
@@ -1522,31 +1552,51 @@ impl<'a> Checker<'a> {
         let Some(model) = self.models.get(&declaration).copied() else {
             return Completion::Deferred;
         };
+        if matches!(
+            model,
+            DeclarationModel::TypeAlias { .. }
+                | DeclarationModel::Interface { .. }
+                | DeclarationModel::Class { .. }
+        ) && !self.is_single_type_symbol_declaration(declaration)
+        {
+            return Completion::Deferred;
+        }
+        let reference_parameters = match model {
+            DeclarationModel::TypeAlias {
+                declaration: alias, ..
+            } => Some(alias.type_parameters.as_slice()),
+            DeclarationModel::Interface {
+                declaration: interface,
+                ..
+            } => Some(interface.type_parameters.as_slice()),
+            DeclarationModel::Class {
+                declaration: class, ..
+            } => Some(class.type_parameters.as_slice()),
+            DeclarationModel::Variable { .. }
+            | DeclarationModel::Parameter { .. }
+            | DeclarationModel::Function { .. } => None,
+        };
+        if reference_parameters.is_some_and(|parameters| {
+            arguments.len() != parameters.len() || !object_shape::plain_type_parameters(parameters)
+        }) {
+            // Defaults, constraints, and generic arity diagnostics are not
+            // yet instantiated by the reference owner. Dropping any of those
+            // facts before substitution can poison an exact or generative
+            // recursive cache entry.
+            return Completion::Deferred;
+        }
         match model {
             DeclarationModel::TypeAlias {
                 declaration: alias,
                 scope,
-            } => {
-                let parameters = self.substitution(declaration, &alias.type_parameters, arguments);
-                Completion::Complete(self.resolve_type_node(
-                    declaration.file,
-                    scope,
-                    &alias.ty,
-                    &parameters,
-                ))
-            }
+            } => self.evaluate_type_alias_reference(declaration, alias, scope, arguments),
             DeclarationModel::Interface {
                 declaration: interface,
                 scope,
             } => {
                 let parameters =
                     self.substitution(declaration, &interface.type_parameters, arguments);
-                match self.resolve_object_members(
-                    declaration.file,
-                    scope,
-                    &interface.members,
-                    &parameters,
-                ) {
+                match self.resolve_interface_shape(declaration, interface, scope, &parameters) {
                     Completion::Complete(shape) => {
                         Completion::Complete(self.store.object_shape(shape))
                     }
@@ -1816,6 +1866,7 @@ impl<'a> Checker<'a> {
                 })
             }
             DeferredType::Call { .. }
+            | DeferredType::GenericCall
             | DeferredType::Construct { .. }
             | DeferredType::Property { .. }
             | DeferredType::Predicate { .. }
@@ -1912,6 +1963,18 @@ impl RelationContext for Checker<'_> {
 
     fn type_kind(&self, ty: TypeId) -> TypeKind {
         self.store.kind(ty).clone()
+    }
+
+    fn generative_reference_supported(&self, declaration: DeclId, arguments: &[TypeId]) -> bool {
+        Checker::generative_reference_supported(self, declaration, arguments)
+    }
+
+    fn generative_relation_frame_supported(
+        &self,
+        declaration: DeclId,
+        arguments: &[TypeId],
+    ) -> bool {
+        Checker::generative_relation_frame_supported(self, declaration, arguments)
     }
 
     fn strict_null_checks(&self) -> bool {

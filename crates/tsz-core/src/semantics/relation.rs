@@ -1,6 +1,9 @@
 use std::collections::{HashMap, HashSet};
 
-use super::types::{Completion, Property, ShapeSignature, Signature, TypeId, TypeKind};
+use super::checker::recursion::{ReferenceDemand, ReferenceExpansionStack};
+use super::types::{
+    Completion, DeferredType, Property, ShapeSignature, Signature, TypeId, TypeKind,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum RelationMode {
@@ -124,6 +127,16 @@ impl RelationPropertyOrder {
 pub(crate) trait RelationContext {
     fn force_type(&mut self, ty: TypeId, depth: usize) -> Completion<TypeId>;
     fn type_kind(&self, ty: TypeId) -> TypeKind;
+    fn generative_reference_supported(
+        &self,
+        declaration: crate::source::DeclId,
+        arguments: &[TypeId],
+    ) -> bool;
+    fn generative_relation_frame_supported(
+        &self,
+        declaration: crate::source::DeclId,
+        arguments: &[TypeId],
+    ) -> bool;
     fn strict_null_checks(&self) -> bool;
     fn canonical_union(&mut self, members: &[TypeId]) -> TypeId;
 }
@@ -160,6 +173,8 @@ pub(crate) fn relate_with_property_order<C: RelationContext>(
     Relation {
         context,
         active: HashSet::new(),
+        source_references: ReferenceExpansionStack::new(ReferenceDemand::RelationSource),
+        target_references: ReferenceExpansionStack::new(ReferenceDemand::RelationTarget),
         property_order,
     }
     .relate_inner(source, target, mode, 0)
@@ -167,8 +182,17 @@ pub(crate) fn relate_with_property_order<C: RelationContext>(
 
 struct Relation<'a, C> {
     context: &'a mut C,
-    active: HashSet<(TypeId, TypeId, RelationMode)>,
+    active: HashSet<RelationQueryKey>,
+    source_references: ReferenceExpansionStack,
+    target_references: ReferenceExpansionStack,
     property_order: RelationPropertyOrder,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct RelationQueryKey {
+    source: TypeId,
+    target: TypeId,
+    mode: RelationMode,
 }
 
 impl<C: RelationContext> Relation<'_, C> {
@@ -192,12 +216,113 @@ impl<C: RelationContext> Relation<'_, C> {
             ));
         }
 
-        let key = (source, target, mode);
+        let key = RelationQueryKey {
+            source,
+            target,
+            mode,
+        };
         if !self.active.insert(key) {
             return Ok(());
         }
-        let result = self.relate_active(source, target, mode, depth);
+        let result = self.relate_with_reference_stacks(source, target, mode, depth);
         self.active.remove(&key);
+        result
+    }
+
+    fn relate_with_reference_stacks(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        mode: RelationMode,
+        depth: usize,
+    ) -> Result<(), RelationFailure> {
+        let source_reference = deferred_reference(self.context.type_kind(source));
+        let target_reference = deferred_reference(self.context.type_kind(target));
+        let source_expansion = source_reference
+            .as_ref()
+            .and_then(|(declaration, arguments)| {
+                self.source_references.generative_expansion(
+                    source,
+                    *declaration,
+                    arguments,
+                    &|ty| self.context.type_kind(ty),
+                )
+            });
+        let target_expansion = target_reference
+            .as_ref()
+            .and_then(|(declaration, arguments)| {
+                self.target_references.generative_expansion(
+                    target,
+                    *declaration,
+                    arguments,
+                    &|ty| self.context.type_kind(ty),
+                )
+            });
+        if source_expansion.is_some() && target_expansion.is_some() {
+            let supported = match (
+                &source_reference,
+                &target_reference,
+                &source_expansion,
+                &target_expansion,
+            ) {
+                (
+                    Some((source_declaration, source_arguments)),
+                    Some((target_declaration, target_arguments)),
+                    Some(source_expansion),
+                    Some(target_expansion),
+                ) => {
+                    source_declaration == target_declaration
+                        && self
+                            .context
+                            .generative_reference_supported(*source_declaration, source_arguments)
+                        && self
+                            .context
+                            .generative_reference_supported(*target_declaration, target_arguments)
+                        && self.source_references.expansion_segment_supports(
+                            source_expansion,
+                            |frame_declaration, frame_arguments| {
+                                frame_declaration == *source_declaration
+                                    && self.context.generative_relation_frame_supported(
+                                        frame_declaration,
+                                        frame_arguments,
+                                    )
+                            },
+                        )
+                        && self.target_references.expansion_segment_supports(
+                            target_expansion,
+                            |frame_declaration, frame_arguments| {
+                                frame_declaration == *target_declaration
+                                    && self.context.generative_relation_frame_supported(
+                                        frame_declaration,
+                                        frame_arguments,
+                                    )
+                            },
+                        )
+                        && source_expansion.same_supported_transform(target_expansion)
+                }
+                _ => false,
+            };
+            if !supported {
+                return Err(failure(source, target, RelationFailureKind::Deferred));
+            }
+            // Pinned TS7's `recursiveTypeRelatedTo` returns a provisional
+            // `Maybe` only when both sides expand through the same supported
+            // origin and positional transform. This query has no persistent
+            // result cache, so the assumption cannot escape the root.
+            return Ok(());
+        }
+
+        let source_checkpoint = self.source_references.checkpoint();
+        let target_checkpoint = self.target_references.checkpoint();
+        if let Some((declaration, arguments)) = &source_reference {
+            self.source_references.push(source, *declaration, arguments);
+        }
+        if let Some((declaration, arguments)) = &target_reference {
+            self.target_references.push(target, *declaration, arguments);
+        }
+        let result = self.relate_active(source, target, mode, depth);
+        self.source_references.restore(source_checkpoint);
+        self.target_references.restore(target_checkpoint);
         result
     }
 
@@ -739,6 +864,17 @@ impl<C: RelationContext> Relation<'_, C> {
     }
 }
 
+fn deferred_reference(kind: TypeKind) -> Option<(crate::source::DeclId, Vec<TypeId>)> {
+    let TypeKind::Deferred(DeferredType::Reference {
+        declaration,
+        arguments,
+    }) = kind
+    else {
+        return None;
+    };
+    Some((declaration, arguments))
+}
+
 #[derive(Debug, Clone)]
 struct RelationParameter {
     ty: TypeId,
@@ -845,6 +981,22 @@ mod tests {
 
         fn type_kind(&self, ty: TypeId) -> TypeKind {
             self.kinds[ty.0 as usize].clone()
+        }
+
+        fn generative_reference_supported(
+            &self,
+            _declaration: DeclId,
+            _arguments: &[TypeId],
+        ) -> bool {
+            true
+        }
+
+        fn generative_relation_frame_supported(
+            &self,
+            _declaration: DeclId,
+            _arguments: &[TypeId],
+        ) -> bool {
+            true
         }
 
         fn strict_null_checks(&self) -> bool {

@@ -53,5 +53,9 @@ path = "rewrite-tests/emit_identifier_recovery.rs"
 name = "rewrite_type_members"
 path = "rewrite-tests/type_members.rs"
 
+[[test]]
+name = "rewrite_recursive_expansion"
+path = "rewrite-tests/recursive_expansion.rs"
+
 [lints]
 workspace = true

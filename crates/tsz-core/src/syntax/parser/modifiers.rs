@@ -15,6 +15,7 @@ pub(super) struct Modifiers {
 pub(super) struct ProductCapabilities {
     pub(super) functions_supported: bool,
     pub(super) classes_supported: bool,
+    pub(super) declarations_supported: bool,
     pub(super) commonjs_classes_supported: bool,
     has_bodyless_class: bool,
     has_module_export: bool,
@@ -25,6 +26,7 @@ impl ProductCapabilities {
         Self {
             functions_supported: true,
             classes_supported: true,
+            declarations_supported: true,
             commonjs_classes_supported: true,
             has_bodyless_class: false,
             has_module_export: false,
@@ -39,6 +41,10 @@ impl ProductCapabilities {
     pub(super) const fn observe_module_export(&mut self) {
         self.has_module_export = true;
         self.commonjs_classes_supported &= !self.has_bodyless_class;
+    }
+
+    pub(super) const fn observe_explicit_call_type_arguments(&mut self) {
+        self.declarations_supported = false;
     }
 
     pub(super) const fn commonjs_classes_supported(&self) -> bool {

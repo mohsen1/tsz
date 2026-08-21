@@ -6,6 +6,7 @@ pub struct SourceUnit {
     pub span: Span,
     pub(crate) function_products_supported: bool,
     pub(crate) class_products_supported: bool,
+    pub(crate) declaration_products_supported: bool,
     pub(crate) commonjs_class_products_supported: bool,
 }
 
@@ -122,6 +123,11 @@ impl SourceUnit {
     #[must_use]
     pub const fn has_unmodeled_class_products(&self) -> bool {
         !self.class_products_supported
+    }
+
+    #[must_use]
+    pub const fn has_unmodeled_declaration_products(&self) -> bool {
+        !self.declaration_products_supported
     }
 
     #[must_use]
@@ -1155,6 +1161,7 @@ pub enum ExpressionKind {
     Array(Vec<Expression>),
     Call {
         callee: Box<Expression>,
+        type_arguments: Option<Vec<TypeNode>>,
         arguments: Vec<Expression>,
     },
     New {
@@ -1206,8 +1213,16 @@ impl Expression {
             ExpressionKind::Array(elements) => elements
                 .iter()
                 .any(Expression::contains_recovered_type_members),
-            ExpressionKind::Call { callee, arguments } => {
+            ExpressionKind::Call {
+                callee,
+                type_arguments,
+                arguments,
+            } => {
                 callee.contains_recovered_type_members()
+                    || type_arguments
+                        .iter()
+                        .flatten()
+                        .any(TypeNode::contains_recovered_type_members)
                     || arguments
                         .iter()
                         .any(Expression::contains_recovered_type_members)

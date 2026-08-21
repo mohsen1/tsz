@@ -775,7 +775,9 @@ impl<'a> Printer<'a> {
                 }
                 self.output.push(']');
             }
-            ExpressionKind::Call { callee, arguments } => {
+            ExpressionKind::Call {
+                callee, arguments, ..
+            } => {
                 self.write_expression(callee, PREC_POSTFIX);
                 self.output.push('(');
                 for (index, argument) in arguments.iter().enumerate() {

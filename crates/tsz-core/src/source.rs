@@ -80,7 +80,41 @@ pub struct SourceText {
     line_starts: Vec<u32>,
 }
 
+/// Syntax family selected from the logical source extension.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SourceKind {
+    TypeScript,
+    TypeScriptJsx,
+    JavaScript,
+    JavaScriptJsx,
+}
+
+impl SourceKind {
+    /// JavaScript inputs keep `<` and `>` in the expression grammar even
+    /// when `allowJs` admits them to a TypeScript program.
+    #[must_use]
+    pub const fn supports_expression_type_arguments(self) -> bool {
+        matches!(self, Self::TypeScript | Self::TypeScriptJsx)
+    }
+}
+
 impl SourceText {
+    #[must_use]
+    pub fn kind(&self) -> SourceKind {
+        match self
+            .path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .map(str::to_ascii_lowercase)
+            .as_deref()
+        {
+            Some("js" | "mjs" | "cjs") => SourceKind::JavaScript,
+            Some("jsx") => SourceKind::JavaScriptJsx,
+            Some("tsx") => SourceKind::TypeScriptJsx,
+            _ => SourceKind::TypeScript,
+        }
+    }
+
     #[must_use]
     pub fn new(id: FileId, path: PathBuf, text: Arc<str>) -> Self {
         Self::new_with_host_path(id, path.clone(), path, text)

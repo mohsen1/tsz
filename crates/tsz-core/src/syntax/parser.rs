@@ -3,6 +3,7 @@ use crate::source::{NodeId, SourceText, Span};
 
 mod modifiers;
 mod parameters;
+mod type_arguments;
 mod type_members;
 mod type_parameters;
 
@@ -69,6 +70,7 @@ impl<'a> Parser<'a> {
                 span: Span::new(self.source.id, 0, end),
                 function_products_supported: self.product_capabilities.functions_supported,
                 class_products_supported: self.product_capabilities.classes_supported,
+                declaration_products_supported: self.product_capabilities.declarations_supported,
                 commonjs_class_products_supported: self
                     .product_capabilities
                     .commonjs_classes_supported(),
@@ -1210,21 +1212,6 @@ impl<'a> Parser<'a> {
         false
     }
 
-    fn parse_type_arguments(&mut self) -> Vec<TypeNode> {
-        if !self.eat(TokenKind::LessThan) {
-            return Vec::new();
-        }
-        let mut arguments = Vec::new();
-        while !self.at_type_close() && !self.at(TokenKind::EndOfFile) {
-            arguments.push(self.parse_type());
-            if !self.eat(TokenKind::Comma) {
-                break;
-            }
-        }
-        self.expect_type_close();
-        arguments
-    }
-
     fn parse_expression(&mut self) -> Expression {
         self.parse_assignment_expression()
     }
@@ -1300,7 +1287,16 @@ impl<'a> Parser<'a> {
     fn parse_postfix_expression(&mut self) -> Expression {
         let mut expression = self.parse_primary_expression();
         loop {
-            if self.eat(TokenKind::LeftParen) {
+            let has_type_arguments = self.call_type_arguments_are_followed_by_left_paren();
+            if has_type_arguments || self.at(TokenKind::LeftParen) {
+                let type_arguments = if has_type_arguments {
+                    self.product_capabilities
+                        .observe_explicit_call_type_arguments();
+                    Some(self.parse_type_arguments())
+                } else {
+                    None
+                };
+                self.expect(TokenKind::LeftParen, "'(' expected.", 1005);
                 let mut arguments = Vec::new();
                 while !self.at_any(&[TokenKind::RightParen, TokenKind::EndOfFile]) {
                     arguments.push(self.parse_expression());
@@ -1316,6 +1312,7 @@ impl<'a> Parser<'a> {
                     span,
                     kind: ExpressionKind::Call {
                         callee: Box::new(expression),
+                        type_arguments,
                         arguments,
                     },
                 };

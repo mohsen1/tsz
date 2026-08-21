@@ -6,7 +6,10 @@ use crate::syntax::{
     ClassMemberKind, Expression, ExpressionKind, TypeMemberKind, TypeNode, TypeNodeKind,
 };
 
-use super::{Checker, DeclarationModel, IndexedAccessOrigin, PropertyQueryOrigin};
+use super::{
+    Checker, DeclarationModel, IndexedAccessOrigin, PropertyQueryOrigin,
+    recursion::{ReferenceDemand, ReferenceExpansionStack},
+};
 use crate::semantics::relation::RelationContext;
 use crate::semantics::types::{
     Completion, DeferredType, IndexKeyKind, InvalidType, LiteralProvenance, TypeId, TypeKind,
@@ -82,7 +85,8 @@ impl Checker<'_> {
     /// Incomplete wrappers stay typed nonclaims instead of being printed with
     /// synthetic parameter or index names.
     pub(super) fn requires_authored_shape_display(&mut self, ty: TypeId) -> Completion<bool> {
-        self.requires_authored_shape_display_inner(ty, &mut HashSet::new())
+        let mut references = ReferenceExpansionStack::new(ReferenceDemand::AuthoredDisplay);
+        self.requires_authored_shape_display_inner(ty, &mut HashSet::new(), &mut references)
     }
 
     pub(super) fn authored_shape_display_is_unavailable(&mut self, ty: TypeId) -> bool {
@@ -107,6 +111,7 @@ impl Checker<'_> {
         &mut self,
         ty: TypeId,
         active: &mut HashSet<TypeId>,
+        references: &mut ReferenceExpansionStack,
     ) -> Completion<bool> {
         if !active.insert(ty) {
             return Completion::Complete(false);
@@ -129,7 +134,11 @@ impl Checker<'_> {
                 } else {
                     let mut found = false;
                     for property in shape.properties {
-                        match self.requires_authored_shape_display_inner(property.ty, active) {
+                        match self.requires_authored_shape_display_inner(
+                            property.ty,
+                            active,
+                            references,
+                        ) {
                             Completion::Complete(true) => {
                                 found = true;
                                 break;
@@ -143,13 +152,15 @@ impl Checker<'_> {
                     Completion::Complete(found)
                 }
             }
-            TypeKind::Array(element) => self.requires_authored_shape_display_inner(element, active),
+            TypeKind::Array(element) => {
+                self.requires_authored_shape_display_inner(element, active, references)
+            }
             TypeKind::Tuple(members)
             | TypeKind::Union(members)
             | TypeKind::Intersection(members) => {
                 let mut found = false;
                 for member in members {
-                    match self.requires_authored_shape_display_inner(member, active) {
+                    match self.requires_authored_shape_display_inner(member, active, references) {
                         Completion::Complete(true) => {
                             found = true;
                             break;
@@ -171,7 +182,7 @@ impl Checker<'_> {
                 members.push(signature.return_type);
                 let mut found = false;
                 for member in members {
-                    match self.requires_authored_shape_display_inner(member, active) {
+                    match self.requires_authored_shape_display_inner(member, active, references) {
                         Completion::Complete(true) => {
                             found = true;
                             break;
@@ -184,9 +195,67 @@ impl Checker<'_> {
                 }
                 Completion::Complete(found)
             }
+            TypeKind::Deferred(deferred @ DeferredType::Reference { .. }) => {
+                let DeferredType::Reference {
+                    declaration,
+                    arguments,
+                } = &deferred
+                else {
+                    unreachable!()
+                };
+                let mut requires_authored = false;
+                for argument in arguments {
+                    match self.requires_authored_shape_display_inner(*argument, active, references)
+                    {
+                        Completion::Complete(true) => requires_authored = true,
+                        Completion::Complete(false) => {}
+                        Completion::Deferred => return Completion::Deferred,
+                        Completion::Cycle => return Completion::Cycle,
+                        Completion::Limit => return Completion::Limit,
+                    }
+                }
+                if requires_authored {
+                    Completion::Complete(true)
+                } else if let Some(expansion) =
+                    references.generative_expansion(ty, *declaration, arguments, &|ty| {
+                        self.store.kind(ty).clone()
+                    })
+                {
+                    // The growing edge needs no authored signature text. The
+                    // enclosing display query still examines every sibling.
+                    if self.generative_reference_supported(*declaration, arguments)
+                        && references.expansion_segment_supports(
+                            &expansion,
+                            |frame_declaration, frame_arguments| {
+                                self.reference_expansion_frame_supported(
+                                    frame_declaration,
+                                    frame_arguments,
+                                )
+                            },
+                        )
+                    {
+                        Completion::Complete(false)
+                    } else {
+                        Completion::Deferred
+                    }
+                } else {
+                    let checkpoint = references.checkpoint();
+                    references.push(ty, *declaration, arguments);
+                    let result = match self.force_type(ty, 0) {
+                        Completion::Complete(resolved) if resolved != ty => {
+                            self.requires_authored_shape_display_inner(resolved, active, references)
+                        }
+                        Completion::Complete(_) | Completion::Deferred => Completion::Deferred,
+                        Completion::Cycle => Completion::Cycle,
+                        Completion::Limit => Completion::Limit,
+                    };
+                    references.restore(checkpoint);
+                    result
+                }
+            }
             TypeKind::Deferred(_) => match self.force_type(ty, 0) {
                 Completion::Complete(resolved) if resolved != ty => {
-                    self.requires_authored_shape_display_inner(resolved, active)
+                    self.requires_authored_shape_display_inner(resolved, active, references)
                 }
                 Completion::Complete(_) | Completion::Deferred => Completion::Deferred,
                 Completion::Cycle => Completion::Cycle,
@@ -194,7 +263,7 @@ impl Checker<'_> {
             },
             TypeKind::Invalid(InvalidType::MissingProperty { object, .. })
             | TypeKind::Invalid(InvalidType::MissingProperties { object, .. }) => {
-                self.requires_authored_shape_display_inner(object, active)
+                self.requires_authored_shape_display_inner(object, active, references)
             }
             TypeKind::Error
             | TypeKind::Any

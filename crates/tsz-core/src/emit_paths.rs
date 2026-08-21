@@ -52,7 +52,14 @@ impl EmitPlan {
         let config_path = provenance.entry_config_path();
         let configured_root = config_path.and_then(Path::parent);
         let paths = EmitPaths::for_program(files, configured_root, options.root_dir.as_deref());
-        let incomplete_declarations = unmodeled_declaration_overload_files(files);
+        let incomplete_commonjs_declarations = unmodeled_declaration_overload_files(files);
+        let mut incomplete_declarations = incomplete_commonjs_declarations.clone();
+        incomplete_declarations.extend(
+            files
+                .iter()
+                .filter(|file| file.syntax.has_unmodeled_declaration_products())
+                .map(|file| file.source.id),
+        );
         let incomplete_file_products = files
             .iter()
             .filter(|file| {
@@ -89,7 +96,7 @@ impl EmitPlan {
                 continue;
             }
             if is_effective_commonjs(&file.source.path, &options.module)
-                && (incomplete_declarations.contains(&file.source.id)
+                && (incomplete_commonjs_declarations.contains(&file.source.id)
                     || file.syntax.has_unmodeled_commonjs_class_products())
             {
                 // CommonJS needs hoisted export predeclarations for promoted

@@ -11,7 +11,11 @@ use crate::syntax::{
     TypeMemberNameKind, TypeNode, TypeNodeKind, TypeParameterDeclaration, UnaryOperator,
 };
 
-use super::{Checker, is_declaration_source, type_member_grammar::ParameterGrammarHost};
+use super::{
+    Checker, is_declaration_source,
+    recursion::{ReferenceDemand, ReferenceExpansionStack},
+    type_member_grammar::ParameterGrammarHost,
+};
 
 #[derive(Debug, Clone, Copy)]
 enum TypeMemberContainerKind {
@@ -54,7 +58,8 @@ impl Checker<'_> {
     /// second depth or fuel policy. Deferred evaluation keeps its own budget.
     pub(super) fn require_type_completion(&mut self, ty: TypeId) -> Completion<TypeId> {
         let mut active = HashSet::new();
-        let completion = self.visit_required_type(ty, &mut active);
+        let mut references = ReferenceExpansionStack::new(ReferenceDemand::RequiredType);
+        let completion = self.visit_required_type(ty, &mut active, &mut references);
         self.require_completion(completion)
     }
 
@@ -671,8 +676,17 @@ impl Checker<'_> {
                     self.visit_required_expression(file, scope, element, type_parameters);
                 }
             }
-            ExpressionKind::Call { callee, arguments } => {
+            ExpressionKind::Call {
+                callee,
+                type_arguments: _,
+                arguments,
+            } => {
                 self.visit_required_expression(file, scope, callee, type_parameters);
+                // Explicit call type arguments are bound and navigable syntax,
+                // but generic signature instantiation is not yet an owned
+                // semantic query. Resolving them here can emit the wrong
+                // diagnostic family (for example TS2304 instead of TS2749),
+                // so the call itself supplies the typed Deferred boundary.
                 for argument in arguments {
                     self.visit_required_expression(file, scope, argument, type_parameters);
                 }
@@ -1424,16 +1438,19 @@ impl Checker<'_> {
         &mut self,
         ty: TypeId,
         active: &mut HashSet<TypeId>,
+        references: &mut ReferenceExpansionStack,
     ) -> Completion<TypeId> {
         if !active.insert(ty) {
             return Completion::Complete(ty);
         }
         let completion = match self.store.kind(ty).clone() {
-            TypeKind::Array(element) => self.visit_required_children(ty, [element], active),
+            TypeKind::Array(element) => {
+                self.visit_required_children(ty, [element], active, references)
+            }
             TypeKind::Tuple(elements)
             | TypeKind::Union(elements)
             | TypeKind::Intersection(elements) => {
-                self.visit_required_children(ty, elements, active)
+                self.visit_required_children(ty, elements, active, references)
             }
             TypeKind::Object(shape)
             | TypeKind::ClassInstance {
@@ -1458,7 +1475,7 @@ impl Checker<'_> {
                     children.push(signature.return_type);
                 }
                 children.extend(shape.index_signatures.into_iter().map(|index| index.value));
-                self.visit_required_children(ty, children, active)
+                self.visit_required_children(ty, children, active, references)
             }
             TypeKind::Function(signature) => {
                 let children = signature
@@ -1466,7 +1483,7 @@ impl Checker<'_> {
                     .into_iter()
                     .map(|parameter| parameter.ty)
                     .chain(std::iter::once(signature.return_type));
-                self.visit_required_children(ty, children, active)
+                self.visit_required_children(ty, children, active, references)
             }
             TypeKind::ShapeFunction(signature) => {
                 let children = signature
@@ -1474,9 +1491,11 @@ impl Checker<'_> {
                     .into_iter()
                     .map(|parameter| parameter.ty)
                     .chain(std::iter::once(signature.return_type));
-                self.visit_required_children(ty, children, active)
+                self.visit_required_children(ty, children, active, references)
             }
-            TypeKind::Deferred(deferred) => self.visit_required_deferred(ty, deferred, active),
+            TypeKind::Deferred(deferred) => {
+                self.visit_required_deferred(ty, deferred, active, references)
+            }
             TypeKind::Error
             | TypeKind::Invalid(_)
             | TypeKind::Any
@@ -1506,16 +1525,17 @@ impl Checker<'_> {
         ty: TypeId,
         deferred: DeferredType,
         active: &mut HashSet<TypeId>,
+        references: &mut ReferenceExpansionStack,
     ) -> Completion<TypeId> {
         let mut state = SemanticCompletion::Complete;
-        self.visit_deferred_operands(&deferred, active, &mut state);
+        self.visit_deferred_operands(&deferred, active, references, &mut state);
 
         // Conditional, mapped, and predicate nodes are authored symbolic
         // owners. Requiring their declaration position validates every child,
         // but does not itself demand evaluation of the owner. A later
         // relation or inference query remains responsible for forcing it.
         if matches!(
-            deferred,
+            &deferred,
             DeferredType::Conditional { .. }
                 | DeferredType::Mapped { .. }
                 | DeferredType::Predicate {
@@ -1526,16 +1546,53 @@ impl Checker<'_> {
             return completion_from_state(state, ty);
         }
 
+        let reference = match &deferred {
+            DeferredType::Reference {
+                declaration,
+                arguments,
+            } => Some((*declaration, arguments.as_slice())),
+            _ => None,
+        };
+        if let Some((declaration, arguments)) = reference
+            && let Some(expansion) =
+                references.generative_expansion(ty, declaration, arguments, &|ty| {
+                    self.store.kind(ty).clone()
+                })
+        {
+            // The arguments were required above. Only a supported sole
+            // interface origin may keep the growing edge symbolic; an
+            // unsupported generative revisit is a typed nonclaim and must not
+            // be forced or cached.
+            return if self.generative_reference_supported(declaration, arguments)
+                && references.expansion_segment_supports(
+                    &expansion,
+                    |frame_declaration, frame_arguments| {
+                        self.reference_expansion_frame_supported(frame_declaration, frame_arguments)
+                    },
+                ) {
+                completion_from_state(state, ty)
+            } else {
+                completion_from_state(state.combine(SemanticCompletion::Deferred), ty)
+            };
+        }
+
+        let checkpoint = references.checkpoint();
+        if let Some((declaration, arguments)) = reference {
+            references.push(ty, declaration, arguments);
+        }
         let mut resolved = ty;
         match self.force_type(ty, 0) {
             Completion::Complete(forced) => {
                 resolved = forced;
-                state = state.combine(completion_state(&self.visit_required_type(forced, active)));
+                state = state.combine(completion_state(
+                    &self.visit_required_type(forced, active, references),
+                ));
             }
             Completion::Deferred => state = state.combine(SemanticCompletion::Deferred),
             Completion::Cycle => state = state.combine(SemanticCompletion::Cycle),
             Completion::Limit => state = state.combine(SemanticCompletion::Limit),
         }
+        references.restore(checkpoint);
         let completion = completion_from_state(state, resolved);
         if !matches!(completion, Completion::Complete(_)) {
             self.force_queries.remove(&ty);
@@ -1547,15 +1604,22 @@ impl Checker<'_> {
         &mut self,
         deferred: &DeferredType,
         active: &mut HashSet<TypeId>,
+        references: &mut ReferenceExpansionStack,
         state: &mut SemanticCompletion,
     ) {
         match deferred {
             DeferredType::Reference { arguments, .. } => {
-                self.combine_required_children(arguments.iter().copied(), active, state);
+                self.combine_required_children(
+                    arguments.iter().copied(),
+                    active,
+                    references,
+                    state,
+                );
             }
             DeferredType::Value(_)
             | DeferredType::BigIntLiteral
             | DeferredType::UniqueSymbol
+            | DeferredType::GenericCall
             | DeferredType::GenericFunction
             | DeferredType::ObjectShape => {}
             DeferredType::Call { callee, .. }
@@ -1564,21 +1628,26 @@ impl Checker<'_> {
             }
             | DeferredType::KeyOf(callee)
             | DeferredType::Property { object: callee, .. } => {
-                self.combine_required_children([*callee], active, state);
+                self.combine_required_children([*callee], active, references, state);
             }
             DeferredType::Construct {
                 callee,
                 type_arguments,
                 ..
             } => {
-                self.combine_required_children([*callee], active, state);
-                self.combine_required_children(type_arguments.iter().copied(), active, state);
+                self.combine_required_children([*callee], active, references, state);
+                self.combine_required_children(
+                    type_arguments.iter().copied(),
+                    active,
+                    references,
+                    state,
+                );
             }
             DeferredType::Predicate { asserted, .. } => {
-                self.combine_required_children(asserted.iter().copied(), active, state);
+                self.combine_required_children(asserted.iter().copied(), active, references, state);
             }
             DeferredType::Logical { left, right, .. } => {
-                self.combine_required_children([*left, *right], active, state);
+                self.combine_required_children([*left, *right], active, references, state);
             }
             DeferredType::Conditional {
                 check,
@@ -1589,6 +1658,7 @@ impl Checker<'_> {
                 self.combine_required_children(
                     [*check, *extends, *when_true, *when_false],
                     active,
+                    references,
                     state,
                 );
             }
@@ -1598,11 +1668,16 @@ impl Checker<'_> {
                 value,
                 ..
             } => {
-                self.combine_required_children([*constraint, *value], active, state);
-                self.combine_required_children(name_type.iter().copied(), active, state);
+                self.combine_required_children([*constraint, *value], active, references, state);
+                self.combine_required_children(
+                    name_type.iter().copied(),
+                    active,
+                    references,
+                    state,
+                );
             }
             DeferredType::IndexedAccess { object, index, .. } => {
-                self.combine_required_children([*object, *index], active, state);
+                self.combine_required_children([*object, *index], active, references, state);
             }
         }
     }
@@ -1612,9 +1687,10 @@ impl Checker<'_> {
         owner: TypeId,
         children: impl IntoIterator<Item = TypeId>,
         active: &mut HashSet<TypeId>,
+        references: &mut ReferenceExpansionStack,
     ) -> Completion<TypeId> {
         let mut state = SemanticCompletion::Complete;
-        self.combine_required_children(children, active, &mut state);
+        self.combine_required_children(children, active, references, &mut state);
         completion_from_state(state, owner)
     }
 
@@ -1622,10 +1698,11 @@ impl Checker<'_> {
         &mut self,
         children: impl IntoIterator<Item = TypeId>,
         active: &mut HashSet<TypeId>,
+        references: &mut ReferenceExpansionStack,
         state: &mut SemanticCompletion,
     ) {
         for child in children {
-            let completion = self.visit_required_type(child, active);
+            let completion = self.visit_required_type(child, active, references);
             *state = state.combine(completion_state(&completion));
         }
     }

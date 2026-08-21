@@ -664,11 +664,28 @@ impl Binder {
                     self.bind_expression(element, scope);
                 }
             }
-            ExpressionKind::Call { callee, arguments }
-            | ExpressionKind::New {
-                callee, arguments, ..
+            ExpressionKind::Call {
+                callee,
+                type_arguments,
+                arguments,
             } => {
                 self.bind_expression(callee, scope);
+                for type_argument in type_arguments.iter().flatten() {
+                    self.bind_type_node(type_argument, scope);
+                }
+                for argument in arguments {
+                    self.bind_expression(argument, scope);
+                }
+            }
+            ExpressionKind::New {
+                callee,
+                type_arguments,
+                arguments,
+            } => {
+                self.bind_expression(callee, scope);
+                for type_argument in type_arguments {
+                    self.bind_type_node(type_argument, scope);
+                }
                 for argument in arguments {
                     self.bind_expression(argument, scope);
                 }

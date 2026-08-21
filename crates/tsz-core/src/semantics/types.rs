@@ -109,6 +109,7 @@ pub enum DeferredType {
         callee: TypeId,
         argument_count: usize,
     },
+    GenericCall,
     Construct {
         callee: TypeId,
         type_arguments: Vec<TypeId>,
@@ -577,6 +578,7 @@ enum DeferredOrderKey {
     Reference(DeclId, Vec<TypeOrderKey>),
     Value(DeclId),
     Call(Box<TypeOrderKey>, usize),
+    GenericCall,
     Construct(Box<TypeOrderKey>, Vec<TypeOrderKey>, usize),
     Property(Box<TypeOrderKey>, String),
     Predicate(String, Option<Box<TypeOrderKey>>, bool, bool),
@@ -1018,6 +1020,7 @@ impl TypeStore {
                 callee,
                 argument_count,
             } => DeferredOrderKey::Call(Box::new(nested(*callee)), *argument_count),
+            DeferredType::GenericCall => DeferredOrderKey::GenericCall,
             DeferredType::Construct {
                 callee,
                 type_arguments,
@@ -1261,6 +1264,7 @@ impl TypeStore {
             TypeKind::Deferred(DeferredType::Call { callee, .. }) => {
                 format!("call {}", self.display_inner(*callee, depth + 1))
             }
+            TypeKind::Deferred(DeferredType::GenericCall) => "deferred-generic-call".to_string(),
             TypeKind::Deferred(DeferredType::Construct {
                 callee,
                 type_arguments,
