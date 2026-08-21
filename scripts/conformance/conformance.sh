@@ -411,8 +411,8 @@ run_tests() {
         --tsz-binary "$TSZ_BIN" \
         --workers $WORKERS \
         --print-test \
-        "${runner_flags[@]}" \
-        "${extra_args[@]}" 2>&1 | tee "$tmpout"
+        "${runner_flags[@]+"${runner_flags[@]}"}" \
+        "${extra_args[@]+"${extra_args[@]}"}" 2>&1 | tee "$tmpout"
     runner_status=${PIPESTATUS[0]}
     set -e
 
@@ -437,7 +437,7 @@ run_tests() {
     # Auto-diff against baseline if it exists and this was an unfiltered run
     local baseline="$REPO_ROOT/scripts/conformance/conformance-baseline.txt"
     local has_filter=false
-    for arg in "${extra_args[@]}"; do
+    for arg in "${extra_args[@]+"${extra_args[@]}"}"; do
         if [[ "$arg" == "--filter" ]] || [[ "$arg" == --filter=* ]]; then
             has_filter=true
             break
@@ -507,7 +507,7 @@ areas_analysis() {
         --tsz-binary "$TSZ_BIN" \
         --workers $WORKERS \
         --print-test \
-        "${extra_args[@]}" > "$tmpfile" 2>&1
+        "${extra_args[@]+"${extra_args[@]}"}" > "$tmpfile" 2>&1
 
     # Use python to analyze by area
     python3 "$REPO_ROOT/scripts/conformance/analyze-conformance-areas.py" "$tmpfile" \

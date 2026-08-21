@@ -109,11 +109,21 @@ class SnapshotAccountingContractTests(unittest.TestCase):
                 )
                 self.assertNotIn("TypeScript corpus", result.stdout)
 
-    def test_empty_remaining_args_are_nounset_safe(self):
-        unsafe = '"${REMAINING_ARGS[@]}"'
-        safe = '"${REMAINING_ARGS[@]+"${REMAINING_ARGS[@]}"}"'
-        self.assertGreaterEqual(self.script.count(safe), 8)
-        self.assertNotIn(unsafe, self.script.replace(safe, ""))
+    def test_empty_forwarded_arrays_are_nounset_safe(self):
+        expected_safe_expansions = {
+            "REMAINING_ARGS": 8,
+            "runner_flags": 1,
+            "extra_args": 3,
+        }
+        script_without_safe_expansions = self.script
+        for name, expected_count in expected_safe_expansions.items():
+            unsafe = f'"${{{name}[@]}}"'
+            safe = f'"${{{name}[@]+"${{{name}[@]}}"}}"'
+            self.assertEqual(self.script.count(safe), expected_count)
+            script_without_safe_expansions = script_without_safe_expansions.replace(
+                safe, ""
+            )
+            self.assertNotIn(unsafe, script_without_safe_expansions)
 
         result = subprocess.run(
             [
