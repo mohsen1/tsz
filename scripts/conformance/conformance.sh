@@ -630,7 +630,7 @@ validate_snapshot_selection() {
         return 1
     fi
     local arg
-    for arg in "${REMAINING_ARGS[@]}"; do
+    for arg in "${REMAINING_ARGS[@]+"${REMAINING_ARGS[@]}"}"; do
         case "$arg" in
             -v)
                 # The only safe short option in tracked snapshot mode.
@@ -671,7 +671,7 @@ snapshot_tests() {
             --output "$output_path"
         )
         local runner_arg
-        for runner_arg in "${REMAINING_ARGS[@]}"; do
+        for runner_arg in "${REMAINING_ARGS[@]+"${REMAINING_ARGS[@]}"}"; do
             provenance_args+=("--runner-arg=$runner_arg")
         done
         python3 "$REPO_ROOT/scripts/conformance/snapshot-provenance.py" \
@@ -716,7 +716,7 @@ print(d['summary']['passed'])
             --tsz-binary "$TSZ_BIN" \
             --workers $WORKERS \
             --print-test \
-            "${REMAINING_ARGS[@]}" > "$tmpfile" 2>&1
+            "${REMAINING_ARGS[@]+"${REMAINING_ARGS[@]}"}" > "$tmpfile" 2>&1
         runner_status=$?
         set -e
 
@@ -1043,13 +1043,14 @@ case "$COMMAND" in
             ensure_cache
             ensure_binaries
         fi
-        run_tests "${REMAINING_ARGS[@]}"
+        run_tests "${REMAINING_ARGS[@]+"${REMAINING_ARGS[@]}"}"
         ;;
     analyze)
-        analyze_tests "${REMAINING_ARGS[@]}"
+        analyze_tests "${REMAINING_ARGS[@]+"${REMAINING_ARGS[@]}"}"
         ;;
     render-corpus)
-        python3 "$REPO_ROOT/scripts/conformance/classify-render-corpus.py" "${REMAINING_ARGS[@]}"
+        python3 "$REPO_ROOT/scripts/conformance/classify-render-corpus.py" \
+            "${REMAINING_ARGS[@]+"${REMAINING_ARGS[@]}"}"
         ;;
     areas)
         check_submodule_clean
@@ -1060,7 +1061,7 @@ case "$COMMAND" in
             ensure_cache
             ensure_binaries
         fi
-        areas_analysis "${REMAINING_ARGS[@]}"
+        areas_analysis "${REMAINING_ARGS[@]+"${REMAINING_ARGS[@]}"}"
         ;;
     diff)
         # Diff last run against baseline (no need to re-run tests)
@@ -1086,7 +1087,7 @@ case "$COMMAND" in
             ensure_binaries
         fi
         echo ""
-        run_tests "${REMAINING_ARGS[@]}"
+        run_tests "${REMAINING_ARGS[@]+"${REMAINING_ARGS[@]}"}"
         ;;
     snapshot)
         check_submodule_clean

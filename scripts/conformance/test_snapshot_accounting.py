@@ -109,6 +109,33 @@ class SnapshotAccountingContractTests(unittest.TestCase):
                 )
                 self.assertNotIn("TypeScript corpus", result.stdout)
 
+    def test_empty_remaining_args_are_nounset_safe(self):
+        unsafe = '"${REMAINING_ARGS[@]}"'
+        safe = '"${REMAINING_ARGS[@]+"${REMAINING_ARGS[@]}"}"'
+        self.assertGreaterEqual(self.script.count(safe), 8)
+        self.assertNotIn(unsafe, self.script.replace(safe, ""))
+
+        result = subprocess.run(
+            [
+                "/bin/bash",
+                "-uc",
+                """
+REMAINING_ARGS=()
+set -- "${REMAINING_ARGS[@]+"${REMAINING_ARGS[@]}"}"
+[ "$#" -eq 0 ]
+REMAINING_ARGS=("alpha beta" "--verbose")
+set -- "${REMAINING_ARGS[@]+"${REMAINING_ARGS[@]}"}"
+[ "$#" -eq 2 ]
+[ "$1" = "alpha beta" ]
+[ "$2" = "--verbose" ]
+""",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_force_never_weakens_clean_tree_provenance(self):
         snapshot = self.script[
             self.script.index("snapshot_tests()") : self.script.index("# Parse arguments")
