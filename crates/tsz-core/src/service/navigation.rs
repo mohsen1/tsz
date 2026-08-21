@@ -10,10 +10,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::bind::{DeclarationKind, Meaning, ScopeId};
 use crate::program::{Program, ProgramFile};
-use crate::source::{DeclId, FileId, Span};
+use crate::source::{DeclId, FileId, NodeId, Span};
 use crate::syntax::{
     ArrowBody, ClassMemberKind, Expression, ExpressionKind, Parameter, Statement, StatementKind,
-    SwitchClauseKind, TypeNode, TypeNodeKind, VariableKind,
+    SwitchClauseKind, TypeMember, TypeMemberKind, TypeMemberNameKind, TypeNode, TypeNodeKind,
+    TypeParameterDeclaration, VariableKind,
 };
 
 use super::{
@@ -375,6 +376,16 @@ impl NavigationIndex {
         let mut same_span: BTreeMap<(u32, u32), SymbolKey> = BTreeMap::new();
 
         for declaration in &file.bindings.declarations {
+            // Type-member groups are binder facts for checking. Until the
+            // service owns merged overload/call/index display provenance,
+            // exposing each declaration as an independent property would be
+            // a false quickinfo/rename success.
+            if matches!(
+                declaration.kind,
+                DeclarationKind::TypeMember | DeclarationKind::AnonymousSignature
+            ) {
+                continue;
+            }
             let span_key = (declaration.name_span.start, declaration.name_span.end);
             let key = if let Some(key) = same_span.get(&span_key) {
                 key.clone()
@@ -494,6 +505,19 @@ impl ReferenceVisitor<'_> {
         }
     }
 
+    fn visit_bound_statements(&mut self, statements: &[Statement], scope: ScopeId) {
+        for statement in statements {
+            let statement_scope = self
+                .file
+                .bindings
+                .scope_for_node
+                .get(&statement.id)
+                .copied()
+                .unwrap_or(scope);
+            self.visit_statement(statement, statement_scope);
+        }
+    }
+
     fn visit_statement(&mut self, statement: &Statement, scope: ScopeId) {
         match &statement.kind {
             StatementKind::Export(declaration) => {
@@ -524,6 +548,14 @@ impl ReferenceVisitor<'_> {
                 }
             }
             StatementKind::Function(declaration) => {
+                self.visit_signature_types_with_host(
+                    statement.id,
+                    scope,
+                    &declaration.type_parameters,
+                    &declaration.parameters,
+                    declaration.return_type.as_ref(),
+                    declaration.has_body,
+                );
                 let function_scope = self
                     .file
                     .bindings
@@ -531,15 +563,14 @@ impl ReferenceVisitor<'_> {
                     .get(&statement.id)
                     .copied()
                     .unwrap_or(scope);
-                for parameter in &declaration.parameters {
-                    if let Some(annotation) = &parameter.annotation {
-                        self.visit_type(annotation, function_scope);
+                if declaration.has_body {
+                    for parameter in &declaration.parameters {
+                        if let Some(initializer) = &parameter.initializer {
+                            self.visit_expression(initializer, function_scope, false);
+                        }
                     }
                 }
-                if let Some(return_type) = &declaration.return_type {
-                    self.visit_type(return_type, function_scope);
-                }
-                self.visit_statements(&declaration.body, function_scope);
+                self.visit_bound_statements(&declaration.body, function_scope);
             }
             StatementKind::Class(declaration) => {
                 let class_scope = self
@@ -570,36 +601,85 @@ impl ReferenceVisitor<'_> {
                             }
                         }
                         ClassMemberKind::Constructor {
-                            parameters, body, ..
-                        }
-                        | ClassMemberKind::Method {
-                            parameters, body, ..
+                            parameters,
+                            body,
+                            has_body,
                         } => {
-                            let member_scope =
-                                self.scope_for_parameters(parameters, body, class_scope);
-                            for parameter in parameters {
-                                if let Some(annotation) = &parameter.annotation {
-                                    self.visit_type(annotation, member_scope);
+                            self.visit_signature_types_with_host(
+                                member.id,
+                                class_scope,
+                                &[],
+                                parameters,
+                                None,
+                                *has_body,
+                            );
+                            let member_scope = self
+                                .file
+                                .bindings
+                                .scope_for_node
+                                .get(&member.id)
+                                .copied()
+                                .unwrap_or(class_scope);
+                            if *has_body {
+                                for parameter in parameters {
+                                    if let Some(initializer) = &parameter.initializer {
+                                        self.visit_expression(initializer, member_scope, false);
+                                    }
                                 }
                             }
-                            if let ClassMemberKind::Method { return_type, .. } = &member.kind
-                                && let Some(return_type) = return_type
-                            {
-                                self.visit_type(return_type, member_scope);
+                            self.visit_bound_statements(body, member_scope);
+                        }
+                        ClassMemberKind::Method {
+                            type_parameters,
+                            parameters,
+                            return_type,
+                            body,
+                            has_body,
+                            ..
+                        } => {
+                            self.visit_signature_types_with_host(
+                                member.id,
+                                class_scope,
+                                type_parameters,
+                                parameters,
+                                return_type.as_ref(),
+                                *has_body,
+                            );
+                            let member_scope = self
+                                .file
+                                .bindings
+                                .scope_for_node
+                                .get(&member.id)
+                                .copied()
+                                .unwrap_or(class_scope);
+                            if *has_body {
+                                for parameter in parameters {
+                                    if let Some(initializer) = &parameter.initializer {
+                                        self.visit_expression(initializer, member_scope, false);
+                                    }
+                                }
                             }
-                            self.visit_statements(body, member_scope);
+                            self.visit_bound_statements(body, member_scope);
                         }
                     }
                 }
             }
-            StatementKind::TypeAlias(declaration) => self.visit_type(&declaration.ty, scope),
+            StatementKind::TypeAlias(declaration) => {
+                self.push_type_parameter_locals(&declaration.type_parameters);
+                self.visit_type_parameter_bounds(&declaration.type_parameters, scope);
+                self.visit_type(&declaration.ty, scope);
+                self.type_locals.pop();
+            }
             StatementKind::Interface(declaration) => {
+                self.push_type_parameter_locals(&declaration.type_parameters);
+                self.visit_type_parameter_bounds(&declaration.type_parameters, scope);
                 for extended in &declaration.extends {
                     self.visit_type(extended, scope);
                 }
-                for property in &declaration.properties {
-                    self.visit_type(&property.ty, scope);
+                for member in &declaration.members {
+                    self.visit_type_member(member, scope);
                 }
+                self.type_locals.pop();
             }
             StatementKind::Return(expression) => {
                 if let Some(expression) = expression {
@@ -666,7 +746,14 @@ impl ReferenceVisitor<'_> {
 
     fn visit_expression(&mut self, expression: &Expression, scope: ScopeId, write: bool) {
         match &expression.kind {
-            ExpressionKind::Identifier { name, name_span } => {
+            ExpressionKind::Identifier {
+                name,
+                name_span,
+                entity_name,
+            } => {
+                if !entity_name {
+                    return;
+                }
                 self.record_name(name, *name_span, scope, Meaning::Value, write);
             }
             ExpressionKind::Literal(_) | ExpressionKind::Missing => {}
@@ -707,32 +794,36 @@ impl ReferenceVisitor<'_> {
                 return_type,
                 body,
             } => {
-                let mut locals = BTreeMap::new();
+                let arrow_scope = self
+                    .file
+                    .bindings
+                    .scope_for_node
+                    .get(&expression.id)
+                    .copied()
+                    .unwrap_or(scope);
                 for parameter in parameters {
-                    let key = self.synthetic_declaration(
-                        parameter,
-                        "parameter",
-                        NavigationMeaning::Value,
-                    );
-                    locals.insert(parameter.name.clone(), key);
-                    if let Some(annotation) = &parameter.annotation {
-                        self.visit_type(annotation, scope);
+                    if let Some(annotation) = &parameter.annotation
+                        && !annotation.contains_type_query()
+                    {
+                        self.visit_type(annotation, arrow_scope);
+                    }
+                    if let Some(initializer) = &parameter.initializer {
+                        self.visit_expression(initializer, arrow_scope, false);
                     }
                 }
-                if let Some(return_type) = return_type {
-                    self.visit_type(return_type, scope);
+                if let Some(return_type) = return_type
+                    && !return_type.contains_type_query()
+                {
+                    self.visit_type(return_type, arrow_scope);
                 }
-                self.value_locals.push(locals);
                 match body {
                     ArrowBody::Expression(expression) => {
-                        self.visit_expression(expression, scope, false);
+                        self.visit_expression(expression, arrow_scope, false);
                     }
-                    // The binder does not own arrow-block scopes yet. Omitting
-                    // their body is safer than attaching a shadowed identifier
-                    // to an outer same-spelling declaration.
-                    ArrowBody::Block(_) => {}
+                    ArrowBody::Block(statements) => {
+                        self.visit_bound_statements(statements, arrow_scope)
+                    }
                 }
-                self.value_locals.pop();
             }
             ExpressionKind::Binary { left, right, .. } => {
                 self.visit_expression(left, scope, false);
@@ -769,26 +860,31 @@ impl ReferenceVisitor<'_> {
                     self.visit_type(element, scope);
                 }
             }
-            TypeNodeKind::Object(properties) => {
-                for property in properties {
-                    self.visit_type(&property.ty, scope);
+            TypeNodeKind::Object(members) => {
+                for member in members {
+                    self.visit_type_member(member, scope);
                 }
             }
             TypeNodeKind::Function {
+                id,
+                type_parameters,
                 parameters,
                 return_type,
             }
             | TypeNodeKind::Constructor {
+                id,
+                type_parameters,
                 parameters,
                 return_type,
                 ..
             } => {
-                for parameter in parameters {
-                    if let Some(annotation) = &parameter.annotation {
-                        self.visit_type(annotation, scope);
-                    }
-                }
-                self.visit_type(return_type, scope);
+                self.visit_signature_types(
+                    *id,
+                    scope,
+                    type_parameters,
+                    parameters,
+                    Some(return_type),
+                );
             }
             TypeNodeKind::Reference {
                 name,
@@ -832,6 +928,7 @@ impl ReferenceVisitor<'_> {
                 constraint,
                 name_type,
                 value_type,
+                members,
                 ..
             } => {
                 self.visit_type(constraint, scope);
@@ -842,11 +939,168 @@ impl ReferenceVisitor<'_> {
                     self.visit_type(name_type, scope);
                 }
                 self.visit_type(value_type, scope);
+                for member in members {
+                    self.visit_type_member(member, scope);
+                }
                 self.type_locals.pop();
             }
             TypeNodeKind::IndexedAccess { object, index } => {
                 self.visit_type(object, scope);
                 self.visit_type(index, scope);
+            }
+        }
+    }
+
+    fn visit_type_member(&mut self, member: &TypeMember, scope: ScopeId) {
+        if member.recovered {
+            return;
+        }
+        let member_scope = self.file.bindings.scope_for_node.get(&member.id).copied();
+        match &member.kind {
+            TypeMemberKind::Property {
+                name,
+                ty,
+                initializer,
+                ..
+            } => {
+                if let TypeMemberNameKind::Computed(expression) = &name.kind {
+                    self.visit_expression(expression, scope, false);
+                }
+                if let Some(member_scope) = member_scope {
+                    if let Some(ty) = ty {
+                        self.visit_type(ty, member_scope);
+                    }
+                    if let Some(initializer) = initializer {
+                        self.visit_expression(initializer, member_scope, false);
+                    }
+                }
+            }
+            TypeMemberKind::Method {
+                name,
+                type_parameters,
+                parameters,
+                return_type,
+                ..
+            } => {
+                if let TypeMemberNameKind::Computed(expression) = &name.kind {
+                    self.visit_expression(expression, scope, false);
+                }
+                self.visit_signature_types(
+                    member.id,
+                    scope,
+                    type_parameters,
+                    parameters,
+                    return_type.as_ref(),
+                );
+            }
+            TypeMemberKind::Accessor {
+                name,
+                parameters,
+                return_type,
+                ..
+            } => {
+                if let TypeMemberNameKind::Computed(expression) = &name.kind {
+                    self.visit_expression(expression, scope, false);
+                }
+                self.visit_signature_types(member.id, scope, &[], parameters, return_type.as_ref());
+            }
+            TypeMemberKind::Call {
+                type_parameters,
+                parameters,
+                return_type,
+            }
+            | TypeMemberKind::Construct {
+                type_parameters,
+                parameters,
+                return_type,
+            } => {
+                self.visit_signature_types(
+                    member.id,
+                    scope,
+                    type_parameters,
+                    parameters,
+                    return_type.as_ref(),
+                );
+            }
+            TypeMemberKind::Index {
+                parameters,
+                value_type,
+            } => {
+                self.visit_signature_types(member.id, scope, &[], parameters, value_type.as_ref());
+            }
+        }
+    }
+
+    fn visit_signature_types(
+        &mut self,
+        owner: NodeId,
+        enclosing_scope: ScopeId,
+        type_parameters: &[TypeParameterDeclaration],
+        parameters: &[Parameter],
+        return_type: Option<&TypeNode>,
+    ) {
+        self.visit_signature_types_with_host(
+            owner,
+            enclosing_scope,
+            type_parameters,
+            parameters,
+            return_type,
+            false,
+        );
+    }
+
+    fn visit_signature_types_with_host(
+        &mut self,
+        owner: NodeId,
+        enclosing_scope: ScopeId,
+        type_parameters: &[TypeParameterDeclaration],
+        parameters: &[Parameter],
+        return_type: Option<&TypeNode>,
+        implementation: bool,
+    ) {
+        let Some(signature_scope) = self.file.bindings.scope_for_node.get(&owner).copied() else {
+            return;
+        };
+        self.push_type_parameter_locals(type_parameters);
+        self.visit_type_parameter_bounds(type_parameters, enclosing_scope);
+        for parameter in parameters {
+            if let Some(annotation) = &parameter.annotation
+                && (!implementation || !annotation.contains_type_query())
+            {
+                self.visit_type(annotation, signature_scope);
+            }
+            if !implementation && let Some(initializer) = &parameter.initializer {
+                self.visit_expression(initializer, signature_scope, false);
+            }
+        }
+        if let Some(return_type) = return_type
+            && (!implementation || !return_type.contains_type_query())
+        {
+            self.visit_type(return_type, signature_scope);
+        }
+        self.type_locals.pop();
+    }
+
+    fn push_type_parameter_locals(&mut self, parameters: &[TypeParameterDeclaration]) {
+        let mut locals = BTreeMap::new();
+        for parameter in parameters {
+            let key = self.synthetic_type_parameter(&parameter.name, parameter.name_span);
+            locals.entry(parameter.name.clone()).or_insert(key);
+        }
+        self.type_locals.push(locals);
+    }
+
+    fn visit_type_parameter_bounds(
+        &mut self,
+        parameters: &[TypeParameterDeclaration],
+        scope: ScopeId,
+    ) {
+        for parameter in parameters {
+            if let Some(constraint) = &parameter.constraint {
+                self.visit_type(constraint, scope);
+            }
+            if let Some(default) = &parameter.default {
+                self.visit_type(default, scope);
             }
         }
     }
@@ -891,47 +1145,6 @@ impl ReferenceVisitor<'_> {
         });
     }
 
-    fn synthetic_declaration(
-        &mut self,
-        parameter: &Parameter,
-        kind: &str,
-        meaning: NavigationMeaning,
-    ) -> SymbolKey {
-        let key = SymbolKey::Synthetic {
-            file: self.file.source.id,
-            start: parameter.name_span.start,
-            meaning,
-        };
-        let display = display_parameter(parameter).map_or_else(
-            || format!("(parameter) {}", parameter.name),
-            |parameter| format!("(parameter) {parameter}"),
-        );
-        self.index
-            .declarations
-            .entry(key.clone())
-            .or_default()
-            .push(DeclarationMetadata {
-                file_name: self.file_name.clone(),
-                name: parameter.name.clone(),
-                kind: kind.to_string(),
-                span: text_span(parameter.name_span),
-                context_span: Some(text_span(parameter.span)),
-                is_local: true,
-                is_ambient: false,
-                display,
-                display_parts: parameter_display_parts(parameter),
-            });
-        self.index.occurrences.push(Occurrence {
-            key: key.clone(),
-            file_name: self.file_name.clone(),
-            span: text_span(parameter.name_span),
-            context_span: Some(text_span(parameter.span)),
-            is_write_access: true,
-            is_declaration: true,
-        });
-        key
-    }
-
     fn synthetic_type_parameter(&mut self, name: &str, span: Span) -> SymbolKey {
         let key = SymbolKey::Synthetic {
             file: self.file.source.id,
@@ -963,34 +1176,6 @@ impl ReferenceVisitor<'_> {
             is_declaration: true,
         });
         key
-    }
-
-    fn scope_for_parameters(
-        &self,
-        parameters: &[Parameter],
-        body: &[Statement],
-        fallback: ScopeId,
-    ) -> ScopeId {
-        parameters
-            .iter()
-            .find_map(|parameter| {
-                self.file
-                    .bindings
-                    .declarations
-                    .iter()
-                    .find(|declaration| declaration.name_span == parameter.name_span)
-                    .map(|declaration| declaration.scope)
-            })
-            .or_else(|| {
-                body.first().and_then(|statement| {
-                    self.file
-                        .bindings
-                        .scope_for_node
-                        .get(&statement.id)
-                        .copied()
-                })
-            })
-            .unwrap_or(fallback)
     }
 }
 
@@ -1275,6 +1460,8 @@ fn fallback_metadata(kind: DeclarationKind, name: &str) -> SyntaxMetadata {
         DeclarationKind::Class => ("class", format!("class {name}")),
         DeclarationKind::TypeAlias => ("type", format!("type {name}")),
         DeclarationKind::Interface => ("interface", format!("interface {name}")),
+        DeclarationKind::TypeMember => ("property", format!("(property) {name}")),
+        DeclarationKind::AnonymousSignature => ("type", "(anonymous signature)".to_string()),
     };
     SyntaxMetadata {
         kind: kind.to_string(),
@@ -1329,7 +1516,7 @@ fn function_display_parts(
             parts.push(display_part("...", "punctuation"));
         }
         parts.push(display_part(&parameter.name, "parameterName"));
-        if parameter.optional {
+        if parameter.optional || parameter.initializer.is_some() {
             parts.push(display_part("?", "punctuation"));
         }
         parts.push(display_part(":", "punctuation"));
@@ -1369,7 +1556,7 @@ fn parameter_display_parts(parameter: &Parameter) -> Vec<SymbolDisplayPart> {
         parts.push(display_part("...", "punctuation"));
     }
     parts.push(display_part(&parameter.name, "parameterName"));
-    if parameter.optional {
+    if parameter.optional || parameter.initializer.is_some() {
         parts.push(display_part("?", "punctuation"));
     }
     parts.push(display_part(":", "punctuation"));

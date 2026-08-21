@@ -5,19 +5,23 @@ use rustc_hash::FxHashMap;
 mod cache_model;
 mod class_model;
 mod function_model;
+mod object_shape;
 mod projection_model;
 mod relation_diagnostic;
 mod required_type;
 mod statement_model;
+mod type_member_grammar;
 
-use relation_diagnostic::{ContextualPropertyType, RelationDiagnosticStyle};
+use relation_diagnostic::{
+    ContextualPropertyType, RelationDiagnosticOutcome, RelationDiagnosticStyle,
+};
 
 use crate::bind::{DeclarationKind, Meaning, ScopeId};
 use crate::diagnostics::Diagnostic;
 use crate::program::{CompilerOptions, Program, SemanticCompletion};
 use crate::source::{DeclId, FileId, NodeId, Span};
 use crate::syntax::{
-    ArrowBody, BinaryOperator, ClassDeclaration, ClassMemberKind, Expression, ExpressionKind,
+    BinaryOperator, ClassDeclaration, ClassMemberKind, Expression, ExpressionKind,
     FunctionDeclaration, InterfaceDeclaration, KeywordType, Literal, Parameter, Statement,
     StatementKind, TypeAliasDeclaration, TypeNode, TypeNodeKind, UnaryOperator,
     VariableDeclaration, VariableKind,
@@ -25,9 +29,9 @@ use crate::syntax::{
 
 use super::relation::{RelationContext, RelationMode};
 use super::types::{
-    Completion, DeferredLogicalOperator, DeferredType, DeferredUnaryOperator, InvalidType,
-    LiteralProvenance, ParameterType, Property, Signature, TypeId, TypeKind, TypeStore,
-    UnionPolicy,
+    Completion, DeferredLogicalOperator, DeferredType, DeferredUnaryOperator, IndexKeyKind,
+    IndexSignature, LiteralProvenance, ObjectShape, Property, ShapeParameter, ShapeSignature,
+    Signature, TypeId, TypeKind, TypeStore, UnionPolicy,
 };
 
 #[derive(Debug)]
@@ -112,6 +116,9 @@ struct Checker<'a> {
     options: &'a CompilerOptions,
     store: TypeStore,
     models: FxHashMap<DeclId, DeclarationModel<'a>>,
+    parameter_type_overrides: FxHashMap<DeclId, TypeId>,
+    deferred_anonymous_parameters: HashSet<DeclId>,
+    forbidden_default_type_parameters: Vec<HashSet<TypeId>>,
     value_queries: FxHashMap<DeclId, QueryState>,
     force_queries: FxHashMap<TypeId, QueryState>,
     // Syntax contexts and diagnostic origins are session data. Neither is
@@ -138,6 +145,9 @@ impl<'a> Checker<'a> {
             options,
             store: TypeStore::new(),
             models: FxHashMap::default(),
+            parameter_type_overrides: FxHashMap::default(),
+            deferred_anonymous_parameters: HashSet::new(),
+            forbidden_default_type_parameters: Vec::new(),
             value_queries: FxHashMap::default(),
             force_queries: FxHashMap::default(),
             required_type_contexts: FxHashMap::default(),
@@ -216,7 +226,12 @@ impl<'a> Checker<'a> {
                         },
                     );
                 }
-                for parameter in &declaration.parameters {
+                let mut seen_parameters = HashSet::new();
+                for parameter in declaration
+                    .parameters
+                    .iter()
+                    .filter(|parameter| seen_parameters.insert(parameter.name.as_str()))
+                {
                     if let Some(id) = self.find_declaration(
                         file,
                         statement.id,
@@ -520,7 +535,10 @@ impl<'a> Checker<'a> {
             self.property_order_for_type_node_root(file, scope, return_type)
         });
         for parameter in &declaration.parameters {
-            if parameter.annotation.is_none() && self.options.effective_no_implicit_any() {
+            if parameter.annotation.is_none()
+                && parameter.initializer.is_none()
+                && self.options.effective_no_implicit_any()
+            {
                 self.push_diagnostic(
                     file,
                     parameter.name_span,
@@ -552,6 +570,12 @@ impl<'a> Checker<'a> {
     fn declaration_value_type(&mut self, id: DeclId) -> Completion<TypeId> {
         if self.program.standard_library_declaration(id).is_some() {
             return Completion::Deferred;
+        }
+        if self.deferred_anonymous_parameters.contains(&id) {
+            return Completion::Deferred;
+        }
+        if let Some(ty) = self.parameter_type_overrides.get(&id) {
+            return Completion::Complete(*ty);
         }
         match self.value_queries.get(&id).copied() {
             Some(QueryState::Ready(ty)) => return Completion::Complete(ty),
@@ -585,12 +609,7 @@ impl<'a> Checker<'a> {
                 }
             }
             DeclarationModel::Parameter { parameter, scope } => {
-                Completion::Complete(parameter.annotation.as_ref().map_or(
-                    self.store.builtins.any,
-                    |annotation| {
-                        self.resolve_type_node(id.file, scope, annotation, &HashMap::new())
-                    },
-                ))
+                self.parameter_value_type(id.file, scope, parameter)
             }
             DeclarationModel::Function { declaration, scope } => {
                 self.function_type(id, declaration, scope)
@@ -651,6 +670,7 @@ impl<'a> Checker<'a> {
                 KeywordType::BigInt => self.store.builtins.bigint,
                 KeywordType::Object => self.store.builtins.object,
                 KeywordType::Symbol => self.store.builtins.symbol,
+                KeywordType::UniqueSymbol => self.store.deferred_unique_symbol(),
             },
             TypeNodeKind::Literal(literal) => {
                 self.literal_type(literal, LiteralProvenance::Regular)
@@ -685,36 +705,36 @@ impl<'a> Checker<'a> {
                     .collect::<Vec<_>>();
                 self.store.intersection(members)
             }
-            TypeNodeKind::Object(properties) => {
-                let properties = properties
-                    .iter()
-                    .map(|property| Property {
-                        name: property.name.clone(),
-                        ty: self.resolve_type_node(file, scope, &property.ty, type_parameters),
-                        optional: property.optional,
-                        readonly: property.readonly,
-                    })
-                    .collect();
-                self.store.object(properties)
+            TypeNodeKind::Object(members) => {
+                match self.resolve_object_members(file, scope, members, type_parameters) {
+                    Completion::Complete(shape) => self.store.object_shape(shape),
+                    Completion::Deferred | Completion::Cycle | Completion::Limit => {
+                        self.store.deferred_object_shape()
+                    }
+                }
             }
             TypeNodeKind::Function {
+                id,
+                type_parameters: signature_type_parameters,
                 parameters,
                 return_type,
             } => {
-                let parameters = parameters
-                    .iter()
-                    .map(|parameter| ParameterType {
-                        name: parameter.name.clone(),
-                        ty: parameter.annotation.as_ref().map_or(
-                            self.store.builtins.any,
-                            |annotation| {
-                                self.resolve_type_node(file, scope, annotation, type_parameters)
-                            },
-                        ),
-                        optional: parameter.optional,
-                        rest: parameter.rest,
-                    })
-                    .collect();
+                if !signature_type_parameters.is_empty() {
+                    return self.store.deferred_generic_function();
+                }
+                let scope = self.node_scope(file, *id, scope);
+                self.register_anonymous_parameter_types(file, scope, parameters, type_parameters);
+                let parameters = match self.anonymous_signature_parameters(
+                    file,
+                    scope,
+                    parameters,
+                    type_parameters,
+                ) {
+                    Completion::Complete(parameters) => parameters,
+                    Completion::Deferred | Completion::Cycle | Completion::Limit => {
+                        return self.store.deferred_generic_function();
+                    }
+                };
                 let return_type = self.resolve_type_node(file, scope, return_type, type_parameters);
                 self.store.intern(TypeKind::Function(Signature {
                     parameters,
@@ -722,24 +742,28 @@ impl<'a> Checker<'a> {
                 }))
             }
             TypeNodeKind::Constructor {
+                id,
+                type_parameters: signature_type_parameters,
                 parameters,
                 return_type,
                 ..
             } => {
-                let parameters = parameters
-                    .iter()
-                    .map(|parameter| ParameterType {
-                        name: parameter.name.clone(),
-                        ty: parameter.annotation.as_ref().map_or(
-                            self.store.builtins.any,
-                            |annotation| {
-                                self.resolve_type_node(file, scope, annotation, type_parameters)
-                            },
-                        ),
-                        optional: parameter.optional,
-                        rest: parameter.rest,
-                    })
-                    .collect();
+                if !signature_type_parameters.is_empty() {
+                    return self.store.deferred_generic_function();
+                }
+                let scope = self.node_scope(file, *id, scope);
+                self.register_anonymous_parameter_types(file, scope, parameters, type_parameters);
+                let parameters = match self.anonymous_signature_parameters(
+                    file,
+                    scope,
+                    parameters,
+                    type_parameters,
+                ) {
+                    Completion::Complete(parameters) => parameters,
+                    Completion::Deferred | Completion::Cycle | Completion::Limit => {
+                        return self.store.deferred_generic_function();
+                    }
+                };
                 let return_type = self.resolve_type_node(file, scope, return_type, type_parameters);
                 self.store.intern(TypeKind::Function(Signature {
                     parameters,
@@ -752,6 +776,15 @@ impl<'a> Checker<'a> {
                 arguments,
             } => {
                 if let Some(ty) = type_parameters.get(name) {
+                    if !arguments.is_empty() {
+                        self.push_diagnostic(
+                            file,
+                            node.span,
+                            format!("Type '{name}' is not generic."),
+                            2315,
+                        );
+                        return self.store.builtins.error;
+                    }
                     return *ty;
                 }
                 let arguments = arguments
@@ -893,6 +926,7 @@ impl<'a> Checker<'a> {
                 value_type,
                 readonly,
                 optional,
+                ..
             } => {
                 let constraint = self.resolve_type_node(file, scope, constraint, type_parameters);
                 let parameter_type = self.store.intern(TypeKind::TypeParameter {
@@ -961,7 +995,17 @@ impl<'a> Checker<'a> {
         expected: Option<TypeId>,
     ) -> TypeId {
         match &expression.kind {
-            ExpressionKind::Identifier { name, name_span } => {
+            ExpressionKind::Identifier {
+                name,
+                name_span,
+                entity_name,
+            } => {
+                if !entity_name {
+                    self.semantic_completion = self
+                        .semantic_completion
+                        .combine(SemanticCompletion::Deferred);
+                    return self.store.builtins.error;
+                }
                 let Some(declaration) = self.resolve_name(file, scope, name, Meaning::Value) else {
                     self.push_diagnostic(
                         file,
@@ -1040,7 +1084,19 @@ impl<'a> Checker<'a> {
                 self.store.intern(TypeKind::Array(element))
             }
             ExpressionKind::Call { callee, arguments } => {
-                let callee_type = self.infer_expression(file, scope, callee, None);
+                let callee_type = if let ExpressionKind::Member {
+                    object,
+                    name,
+                    name_span,
+                } = &callee.kind
+                {
+                    let ty =
+                        self.infer_member_expression(file, scope, object, name, *name_span, true);
+                    self.expression_type_origins.insert((file, callee.id), ty);
+                    ty
+                } else {
+                    self.infer_expression(file, scope, callee, None)
+                };
                 let completion = self.force_type(callee_type, 0);
                 let callee_type = match self.require_completion(completion) {
                     Completion::Complete(callee_type) => callee_type,
@@ -1048,12 +1104,22 @@ impl<'a> Checker<'a> {
                         for argument in arguments {
                             let _ = self.infer_expression(file, scope, argument, None);
                         }
-                        return self
-                            .store
-                            .intern(TypeKind::Deferred(DeferredType::Call(callee_type)));
+                        return self.store.intern(TypeKind::Deferred(DeferredType::Call {
+                            callee: callee_type,
+                            argument_count: arguments.len(),
+                        }));
                     }
                 };
-                let TypeKind::Function(signature) = self.store.kind(callee_type).clone() else {
+                let Some(signature) = self.callable_signature(callee_type) else {
+                    if self.authored_shape_display_is_unavailable(callee_type) {
+                        for argument in arguments {
+                            let _ = self.infer_expression(file, scope, argument, None);
+                        }
+                        return self.store.intern(TypeKind::Deferred(DeferredType::Call {
+                            callee: callee_type,
+                            argument_count: arguments.len(),
+                        }));
+                    }
                     if !matches!(
                         self.store.kind(callee_type),
                         TypeKind::Any | TypeKind::Error
@@ -1085,9 +1151,9 @@ impl<'a> Checker<'a> {
                             _ => None,
                         }
                     });
-                if arguments.len() < required
-                    || maximum.is_some_and(|maximum| arguments.len() > maximum)
-                {
+                let too_few = arguments.len() < required;
+                let too_many = maximum.is_some_and(|maximum| arguments.len() > maximum);
+                if too_few || too_many {
                     let expected_count = if maximum.is_none() {
                         format!("at least {required}")
                     } else if maximum == Some(required) {
@@ -1097,7 +1163,11 @@ impl<'a> Checker<'a> {
                     };
                     self.push_diagnostic(
                         file,
-                        expression.span,
+                        if too_many {
+                            arguments[maximum.unwrap_or(arguments.len())].span
+                        } else {
+                            callee.span
+                        },
                         format!(
                             "Expected {expected_count} arguments, but got {}.",
                             arguments.len()
@@ -1105,6 +1175,7 @@ impl<'a> Checker<'a> {
                         2554,
                     );
                 }
+                let mut stopped_argument_relations = too_few || too_many;
                 for (index, argument) in arguments.iter().enumerate() {
                     let Some(parameter) = signature.parameters.get(index).or_else(|| {
                         rest_index.and_then(|rest_index| signature.parameters.get(rest_index))
@@ -1133,15 +1204,20 @@ impl<'a> Checker<'a> {
                         index,
                         parameter.rest,
                     );
-                    self.report_relation(
-                        actual,
-                        expected,
-                        argument.span,
-                        Some(argument),
-                        target_order,
-                        RelationMode::Assignment,
-                        RelationDiagnosticStyle::Argument,
-                    );
+                    if !stopped_argument_relations {
+                        stopped_argument_relations = !matches!(
+                            self.report_relation(
+                                actual,
+                                expected,
+                                argument.span,
+                                Some(argument),
+                                target_order,
+                                RelationMode::Assignment,
+                                RelationDiagnosticStyle::Argument,
+                            ),
+                            RelationDiagnosticOutcome::Compatible
+                        );
+                    }
                 }
                 signature.return_type
             }
@@ -1178,133 +1254,20 @@ impl<'a> Checker<'a> {
                 object,
                 name,
                 name_span,
-            } => {
-                let object_type = self.infer_expression(file, scope, object, None);
-                let property_order = self.property_order_for_expression(file, scope, object);
-                let completion = self.property_type(object_type, name);
-                match self.require_completion(completion) {
-                    Completion::Complete(Some(ty)) => ty,
-                    Completion::Complete(None) => {
-                        let complete_object =
-                            self.complete_type(object_type).unwrap_or(object_type);
-                        let object_name = self.display_type_with_property_order(
-                            complete_object,
-                            property_order.as_ref(),
-                            0,
-                        );
-                        self.push_diagnostic(
-                            file,
-                            *name_span,
-                            format!("Property '{name}' does not exist on type '{object_name}'."),
-                            2339,
-                        );
-                        self.store
-                            .intern(TypeKind::Invalid(InvalidType::MissingProperty {
-                                object: object_type,
-                                name: name.clone(),
-                            }))
-                    }
-                    Completion::Deferred | Completion::Cycle | Completion::Limit => self
-                        .deferred_property_type_with_order(
-                            object_type,
-                            name,
-                            *name_span,
-                            property_order,
-                        ),
-                }
-            }
+            } => self.infer_member_expression(file, scope, object, name, *name_span, false),
             ExpressionKind::Arrow {
                 parameters,
                 return_type: annotation,
                 body,
-            } => {
-                let arrow_scope = self.program.files[file.0 as usize]
-                    .bindings
-                    .scope_for_node
-                    .get(&expression.id)
-                    .copied()
-                    .unwrap_or(scope);
-                let expected_signature = expected
-                    .and_then(|expected| self.complete_type(expected))
-                    .and_then(|expected| match self.store.kind(expected) {
-                        TypeKind::Function(signature) => Some(signature.clone()),
-                        _ => None,
-                    });
-                let parameter_types = parameters
-                    .iter()
-                    .enumerate()
-                    .map(|(index, parameter)| {
-                        let ty = if let Some(annotation) = &parameter.annotation {
-                            self.resolve_type_node(file, arrow_scope, annotation, &HashMap::new())
-                        } else {
-                            expected_signature
-                                .as_ref()
-                                .and_then(|signature| signature.parameters.get(index))
-                                .map_or(self.store.builtins.any, |parameter| parameter.ty)
-                        };
-                        if parameter.annotation.is_none()
-                            && expected_signature.is_none()
-                            && self.options.effective_no_implicit_any()
-                        {
-                            self.push_diagnostic(
-                                file,
-                                parameter.name_span,
-                                format!(
-                                    "Parameter '{}' implicitly has an 'any' type.",
-                                    parameter.name
-                                ),
-                                7006,
-                            );
-                        }
-                        ParameterType {
-                            name: parameter.name.clone(),
-                            ty,
-                            optional: parameter.optional,
-                            rest: parameter.rest,
-                        }
-                    })
-                    .collect::<Vec<_>>();
-                let expected_return = annotation
-                    .as_ref()
-                    .map(|annotation| {
-                        self.resolve_type_node(file, arrow_scope, annotation, &HashMap::new())
-                    })
-                    .or_else(|| {
-                        expected_signature
-                            .as_ref()
-                            .map(|signature| signature.return_type)
-                    });
-                let expected_return_order = annotation.as_ref().and_then(|annotation| {
-                    self.property_order_for_type_node_root(file, arrow_scope, annotation)
-                });
-                let return_type = match body {
-                    ArrowBody::Expression(body) => {
-                        self.infer_expression(file, arrow_scope, body, expected_return)
-                    }
-                    ArrowBody::Block(statements) => {
-                        for statement in statements {
-                            let statement_scope = self.program.files[file.0 as usize]
-                                .bindings
-                                .scope_for_node
-                                .get(&statement.id)
-                                .copied()
-                                .unwrap_or(arrow_scope);
-                            self.check_statement(
-                                file,
-                                statement_scope,
-                                statement,
-                                expected_return,
-                                expected_return_order.as_ref(),
-                            );
-                        }
-                        expected_return.unwrap_or(self.store.builtins.void)
-                    }
-                };
-                self.store.intern(TypeKind::Function(Signature {
-                    parameters: parameter_types,
-                    return_type,
-                }))
-            }
+            } => self.infer_arrow_expression(
+                file,
+                scope,
+                expression.id,
+                parameters,
+                annotation.as_ref(),
+                body,
+                expected,
+            ),
             ExpressionKind::Binary {
                 left,
                 operator,
@@ -1442,7 +1405,10 @@ impl<'a> Checker<'a> {
                 arguments,
             } => self.evaluate_reference(declaration, &arguments),
             DeferredType::Value(declaration) => self.declaration_value_type(declaration),
-            DeferredType::Call(callee) => self.evaluate_call(callee, depth + 1),
+            DeferredType::Call {
+                callee,
+                argument_count,
+            } => self.evaluate_call(callee, argument_count, depth + 1),
             DeferredType::Construct {
                 callee,
                 type_arguments,
@@ -1480,7 +1446,11 @@ impl<'a> Checker<'a> {
             }
             DeferredType::Predicate { .. }
             | DeferredType::Conditional { .. }
-            | DeferredType::Mapped { .. } => Completion::Deferred,
+            | DeferredType::Mapped { .. }
+            | DeferredType::BigIntLiteral
+            | DeferredType::UniqueSymbol
+            | DeferredType::GenericFunction
+            | DeferredType::ObjectShape => Completion::Deferred,
             DeferredType::IndexedAccess { object, index } => {
                 self.evaluate_indexed_access(object, index, depth + 1)
             }
@@ -1531,7 +1501,14 @@ impl<'a> Checker<'a> {
                     return Completion::Deferred;
                 };
                 if matches!(self.store.kind(*key), TypeKind::String) {
-                    return Completion::Complete(self.store.intern(TypeKind::StringIndex(*value)));
+                    return Completion::Complete(self.store.object_shape(ObjectShape {
+                        index_signatures: vec![IndexSignature {
+                            key: IndexKeyKind::String,
+                            value: *value,
+                            readonly: false,
+                        }],
+                        ..ObjectShape::default()
+                    }));
                 }
             }
             return Completion::Deferred;
@@ -1558,22 +1535,19 @@ impl<'a> Checker<'a> {
             } => {
                 let parameters =
                     self.substitution(declaration, &interface.type_parameters, arguments);
-                let properties = interface
-                    .properties
-                    .iter()
-                    .map(|property| Property {
-                        name: property.name.clone(),
-                        ty: self.resolve_type_node(
-                            declaration.file,
-                            scope,
-                            &property.ty,
-                            &parameters,
-                        ),
-                        optional: property.optional,
-                        readonly: property.readonly,
-                    })
-                    .collect();
-                Completion::Complete(self.store.object(properties))
+                match self.resolve_object_members(
+                    declaration.file,
+                    scope,
+                    &interface.members,
+                    &parameters,
+                ) {
+                    Completion::Complete(shape) => {
+                        Completion::Complete(self.store.object_shape(shape))
+                    }
+                    Completion::Deferred => Completion::Deferred,
+                    Completion::Cycle => Completion::Cycle,
+                    Completion::Limit => Completion::Limit,
+                }
             }
             DeclarationModel::Class {
                 identity,
@@ -1608,7 +1582,12 @@ impl<'a> Checker<'a> {
             .collect()
     }
 
-    fn evaluate_call(&mut self, callee: TypeId, depth: usize) -> Completion<TypeId> {
+    fn evaluate_call(
+        &mut self,
+        callee: TypeId,
+        argument_count: usize,
+        depth: usize,
+    ) -> Completion<TypeId> {
         let callee = match self.force_type(callee, depth) {
             Completion::Complete(callee) => callee,
             Completion::Deferred => return Completion::Deferred,
@@ -1616,7 +1595,23 @@ impl<'a> Checker<'a> {
             Completion::Limit => return Completion::Limit,
         };
         match self.store.kind(callee) {
-            TypeKind::Function(signature) => Completion::Complete(signature.return_type),
+            TypeKind::Function(signature)
+                if argument_count == 0 && signature.parameters.is_empty() =>
+            {
+                Completion::Complete(signature.return_type)
+            }
+            TypeKind::ShapeFunction(signature)
+                if argument_count == 0 && signature.parameters.is_empty() =>
+            {
+                Completion::Complete(signature.return_type)
+            }
+            TypeKind::Object(shape)
+                if argument_count == 0
+                    && shape.call_signatures.len() == 1
+                    && shape.call_signatures[0].parameters.is_empty() =>
+            {
+                Completion::Complete(shape.call_signatures[0].return_type)
+            }
             TypeKind::Any => Completion::Complete(self.store.builtins.any),
             TypeKind::Error | TypeKind::Invalid(_) => Completion::Complete(callee),
             _ => Completion::Deferred,
@@ -1728,25 +1723,25 @@ impl<'a> Checker<'a> {
         completion
     }
 
-    fn property_type(&mut self, object: TypeId, name: &str) -> Completion<Option<TypeId>> {
-        let object = match self.force_type(object, 0) {
-            Completion::Complete(object) => object,
-            Completion::Deferred => return Completion::Deferred,
-            Completion::Cycle => return Completion::Cycle,
-            Completion::Limit => return Completion::Limit,
-        };
-        match self.store.kind(object) {
-            TypeKind::Object(properties) | TypeKind::ClassInstance { properties, .. } => {
-                Completion::Complete(
-                    properties
-                        .iter()
-                        .find(|property| property.name == name)
-                        .map(|property| property.ty),
-                )
+    fn callable_signature(&self, ty: TypeId) -> Option<ShapeSignature> {
+        match self.store.kind(ty) {
+            TypeKind::Function(signature) => Some(ShapeSignature {
+                parameters: signature
+                    .parameters
+                    .iter()
+                    .map(|parameter| ShapeParameter {
+                        ty: parameter.ty,
+                        optional: parameter.optional,
+                        rest: parameter.rest,
+                    })
+                    .collect(),
+                return_type: signature.return_type,
+            }),
+            TypeKind::ShapeFunction(signature) => Some(signature.clone()),
+            TypeKind::Object(shape) if shape.call_signatures.len() == 1 => {
+                shape.call_signatures.first().cloned()
             }
-            TypeKind::Any => Completion::Complete(Some(self.store.builtins.any)),
-            TypeKind::Error | TypeKind::Invalid(_) => Completion::Complete(Some(object)),
-            _ => Completion::Deferred,
+            _ => None,
         }
     }
 
@@ -1756,6 +1751,7 @@ impl<'a> Checker<'a> {
                 .store
                 .intern(TypeKind::LiteralString(value.clone(), provenance)),
             Literal::Number(value) => self.store.numeric_literal(value, provenance),
+            Literal::BigInt(_) => self.store.deferred_bigint_literal(),
             Literal::Boolean(value) => self
                 .store
                 .intern(TypeKind::LiteralBoolean(*value, provenance)),
@@ -1813,7 +1809,7 @@ impl<'a> Checker<'a> {
                     DeclarationModel::Class { declaration, .. } => declaration.name_span,
                 })
             }
-            DeferredType::Call(_)
+            DeferredType::Call { .. }
             | DeferredType::Construct { .. }
             | DeferredType::Property { .. }
             | DeferredType::Predicate { .. }
@@ -1822,7 +1818,11 @@ impl<'a> Checker<'a> {
             | DeferredType::KeyOf(_)
             | DeferredType::Conditional { .. }
             | DeferredType::Mapped { .. }
-            | DeferredType::IndexedAccess { .. } => None,
+            | DeferredType::IndexedAccess { .. }
+            | DeferredType::BigIntLiteral
+            | DeferredType::UniqueSymbol
+            | DeferredType::GenericFunction
+            | DeferredType::ObjectShape => None,
         };
         if let Some(span) = span {
             self.push_diagnostic(
@@ -1868,8 +1868,8 @@ fn known_truthiness(kind: &TypeKind) -> Option<bool> {
         | TypeKind::Array(_)
         | TypeKind::Tuple(_)
         | TypeKind::Object(_)
-        | TypeKind::StringIndex(_)
-        | TypeKind::Function(_) => Some(true),
+        | TypeKind::Function(_)
+        | TypeKind::ShapeFunction(_) => Some(true),
         TypeKind::LiteralString(value, _) => Some(!value.is_empty()),
         TypeKind::LiteralNumber(value, _) => Some(value.is_truthy()),
         _ => None,

@@ -17,18 +17,47 @@ impl Checker<'_> {
         }
         let cacheable = match self.store.kind(ty) {
             TypeKind::Error | TypeKind::Invalid(_) | TypeKind::Deferred(_) => false,
-            TypeKind::Array(element) | TypeKind::StringIndex(element) => {
-                self.is_cacheable_type_inner(*element, active)
-            }
+            TypeKind::Array(element) => self.is_cacheable_type_inner(*element, active),
             TypeKind::Tuple(elements)
             | TypeKind::Union(elements)
             | TypeKind::Intersection(elements) => elements
                 .iter()
                 .all(|element| self.is_cacheable_type_inner(*element, active)),
-            TypeKind::Object(properties) | TypeKind::ClassInstance { properties, .. } => properties
-                .iter()
-                .all(|property| self.is_cacheable_type_inner(property.ty, active)),
+            TypeKind::Object(shape)
+            | TypeKind::ClassInstance {
+                properties: shape, ..
+            } => {
+                shape
+                    .properties
+                    .iter()
+                    .all(|property| self.is_cacheable_type_inner(property.ty, active))
+                    && shape.call_signatures.iter().all(|signature| {
+                        signature
+                            .parameters
+                            .iter()
+                            .all(|parameter| self.is_cacheable_type_inner(parameter.ty, active))
+                            && self.is_cacheable_type_inner(signature.return_type, active)
+                    })
+                    && shape.construct_signatures.iter().all(|signature| {
+                        signature
+                            .parameters
+                            .iter()
+                            .all(|parameter| self.is_cacheable_type_inner(parameter.ty, active))
+                            && self.is_cacheable_type_inner(signature.return_type, active)
+                    })
+                    && shape
+                        .index_signatures
+                        .iter()
+                        .all(|index| self.is_cacheable_type_inner(index.value, active))
+            }
             TypeKind::Function(signature) => {
+                signature
+                    .parameters
+                    .iter()
+                    .all(|parameter| self.is_cacheable_type_inner(parameter.ty, active))
+                    && self.is_cacheable_type_inner(signature.return_type, active)
+            }
+            TypeKind::ShapeFunction(signature) => {
                 signature
                     .parameters
                     .iter()

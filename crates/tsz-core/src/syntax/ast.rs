@@ -6,6 +6,18 @@ pub struct SourceUnit {
     pub span: Span,
 }
 
+impl SourceUnit {
+    /// Whether parser recovery escaped an authored type-member list anywhere
+    /// in this file. Emit blocks both products until the enclosing recovery
+    /// syntax is represented explicitly.
+    #[must_use]
+    pub fn contains_recovered_type_members(&self) -> bool {
+        self.statements
+            .iter()
+            .any(Statement::contains_recovered_type_members)
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Statement {
     pub id: NodeId,
@@ -31,6 +43,139 @@ pub enum StatementKind {
     Expression(Expression),
     Empty,
     Unknown,
+}
+
+impl Statement {
+    fn contains_recovered_type_members(&self) -> bool {
+        match &self.kind {
+            StatementKind::Import(_)
+            | StatementKind::Break(_)
+            | StatementKind::Continue(_)
+            | StatementKind::Empty
+            | StatementKind::Unknown => false,
+            StatementKind::Export(declaration) => declaration
+                .assignment
+                .as_ref()
+                .is_some_and(Expression::contains_recovered_type_members),
+            StatementKind::Variable(declaration) => {
+                declaration
+                    .annotation
+                    .as_ref()
+                    .is_some_and(TypeNode::contains_recovered_type_members)
+                    || declaration
+                        .initializer
+                        .as_ref()
+                        .is_some_and(Expression::contains_recovered_type_members)
+            }
+            StatementKind::Function(declaration) => {
+                type_parameters_contain_recovery(&declaration.type_parameters)
+                    || parameters_contain_recovery(&declaration.parameters)
+                    || declaration
+                        .return_type
+                        .as_ref()
+                        .is_some_and(TypeNode::contains_recovered_type_members)
+                    || declaration
+                        .body
+                        .iter()
+                        .any(Statement::contains_recovered_type_members)
+            }
+            StatementKind::Class(declaration) => {
+                type_parameters_contain_recovery(&declaration.type_parameters)
+                    || declaration
+                        .extends
+                        .as_ref()
+                        .is_some_and(TypeNode::contains_recovered_type_members)
+                    || declaration
+                        .implements
+                        .iter()
+                        .any(TypeNode::contains_recovered_type_members)
+                    || declaration
+                        .members
+                        .iter()
+                        .any(class_member_contains_recovery)
+            }
+            StatementKind::TypeAlias(declaration) => {
+                type_parameters_contain_recovery(&declaration.type_parameters)
+                    || declaration.ty.contains_recovered_type_members()
+            }
+            StatementKind::Interface(declaration) => {
+                type_parameters_contain_recovery(&declaration.type_parameters)
+                    || declaration
+                        .extends
+                        .iter()
+                        .any(TypeNode::contains_recovered_type_members)
+                    || declaration
+                        .members
+                        .iter()
+                        .any(|member| member.recovered || member.contains_recovered_type_members())
+            }
+            StatementKind::If(statement) => {
+                statement.condition.contains_recovered_type_members()
+                    || statement.then_statement.contains_recovered_type_members()
+                    || statement
+                        .else_statement
+                        .as_deref()
+                        .is_some_and(Statement::contains_recovered_type_members)
+            }
+            StatementKind::Switch(statement) => {
+                statement.expression.contains_recovered_type_members()
+                    || statement.clauses.iter().any(|clause| {
+                        matches!(
+                            &clause.kind,
+                            SwitchClauseKind::Case(expression)
+                                if expression.contains_recovered_type_members()
+                        ) || clause
+                            .statements
+                            .iter()
+                            .any(Statement::contains_recovered_type_members)
+                    })
+            }
+            StatementKind::Return(expression) => expression
+                .as_ref()
+                .is_some_and(Expression::contains_recovered_type_members),
+            StatementKind::Block(statements) => statements
+                .iter()
+                .any(Statement::contains_recovered_type_members),
+            StatementKind::Expression(expression) => expression.contains_recovered_type_members(),
+        }
+    }
+}
+
+fn class_member_contains_recovery(member: &ClassMember) -> bool {
+    match &member.kind {
+        ClassMemberKind::Constructor {
+            parameters, body, ..
+        } => {
+            parameters_contain_recovery(parameters)
+                || body.iter().any(Statement::contains_recovered_type_members)
+        }
+        ClassMemberKind::Property {
+            annotation,
+            initializer,
+            ..
+        } => {
+            annotation
+                .as_ref()
+                .is_some_and(TypeNode::contains_recovered_type_members)
+                || initializer
+                    .as_ref()
+                    .is_some_and(Expression::contains_recovered_type_members)
+        }
+        ClassMemberKind::Method {
+            type_parameters,
+            parameters,
+            return_type,
+            body,
+            ..
+        } => {
+            type_parameters_contain_recovery(type_parameters)
+                || parameters_contain_recovery(parameters)
+                || return_type
+                    .as_ref()
+                    .is_some_and(TypeNode::contains_recovered_type_members)
+                || body.iter().any(Statement::contains_recovered_type_members)
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -128,6 +273,7 @@ pub struct FunctionDeclaration {
     pub parameters: Vec<Parameter>,
     pub return_type: Option<TypeNode>,
     pub body: Vec<Statement>,
+    pub has_body: bool,
     pub exported: bool,
     pub is_async: bool,
     pub declared: bool,
@@ -213,7 +359,7 @@ pub struct InterfaceDeclaration {
     pub name_span: Span,
     pub type_parameters: Vec<TypeParameterDeclaration>,
     pub extends: Vec<TypeNode>,
-    pub properties: Vec<TypeProperty>,
+    pub members: Vec<TypeMember>,
     pub exported: bool,
 }
 
@@ -222,9 +368,38 @@ pub struct Parameter {
     pub name: String,
     pub name_span: Span,
     pub annotation: Option<TypeNode>,
+    pub initializer: Option<Expression>,
     pub optional: bool,
+    pub optional_span: Option<Span>,
     pub rest: bool,
+    pub rest_span: Option<Span>,
+    pub modifiers: Vec<ParameterModifierNode>,
     pub span: Span,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ParameterModifierNode {
+    pub kind: ParameterModifier,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ParameterModifier {
+    Abstract,
+    Accessor,
+    Async,
+    Const,
+    Declare,
+    Default,
+    Export,
+    In,
+    Out,
+    Override,
+    Public,
+    Protected,
+    Private,
+    Readonly,
+    Static,
 }
 
 #[derive(Debug, Clone)]
@@ -240,13 +415,130 @@ pub struct TypeParameterDeclaration {
 }
 
 #[derive(Debug, Clone)]
-pub struct TypeProperty {
-    pub name: String,
-    pub name_span: Span,
-    pub ty: TypeNode,
-    pub optional: bool,
-    pub readonly: bool,
+pub struct TypeMember {
+    pub id: NodeId,
     pub span: Span,
+    pub recovered: bool,
+    pub recovery_incomplete: bool,
+    pub modifiers: TypeMemberModifiers,
+    pub kind: TypeMemberKind,
+}
+
+#[derive(Debug, Clone)]
+pub struct TypeMemberName {
+    pub span: Span,
+    pub kind: TypeMemberNameKind,
+}
+
+#[derive(Debug, Clone)]
+pub enum TypeMemberNameKind {
+    Identifier(String),
+    StringLiteral(String),
+    NumericLiteral(String),
+    BigIntLiteral(String),
+    Computed(Expression),
+}
+
+impl TypeMemberName {
+    /// Canonical named-member spelling when syntax already supplies one.
+    ///
+    /// String and numeric literals need scanner-cooked/canonical property-key
+    /// values before they can safely participate in semantic identity. Until
+    /// that boundary exists, they remain typed syntax and force the object
+    /// shape query to defer. Computed expressions likewise never become a key
+    /// by rendering or slicing their source.
+    #[must_use]
+    pub fn semantic_name(&self) -> Option<&str> {
+        match &self.kind {
+            TypeMemberNameKind::Identifier(name) => Some(name),
+            TypeMemberNameKind::StringLiteral(_)
+            | TypeMemberNameKind::NumericLiteral(_)
+            | TypeMemberNameKind::BigIntLiteral(_)
+            | TypeMemberNameKind::Computed(_) => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct TypeMemberModifiers {
+    pub nodes: Vec<TypeMemberModifierNode>,
+    pub public: bool,
+    pub protected: bool,
+    pub private: bool,
+    pub readonly: bool,
+    pub static_member: bool,
+    pub abstract_member: bool,
+    pub declared: bool,
+    pub accessor: bool,
+    pub async_member: bool,
+    pub const_member: bool,
+    pub default_member: bool,
+    pub exported: bool,
+    pub in_variance: bool,
+    pub out_variance: bool,
+    pub override_member: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TypeMemberModifierNode {
+    pub kind: TypeMemberModifier,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TypeMemberModifier {
+    Public,
+    Protected,
+    Private,
+    Readonly,
+    Static,
+    Abstract,
+    Declare,
+    Accessor,
+    Async,
+    Const,
+    Default,
+    Export,
+    In,
+    Out,
+    Override,
+}
+
+#[derive(Debug, Clone)]
+pub enum TypeMemberKind {
+    Property {
+        name: TypeMemberName,
+        ty: Option<TypeNode>,
+        optional: bool,
+        initializer: Option<Expression>,
+    },
+    Method {
+        name: TypeMemberName,
+        optional: bool,
+        type_parameters: Vec<TypeParameterDeclaration>,
+        parameters: Vec<Parameter>,
+        return_type: Option<TypeNode>,
+    },
+    Accessor {
+        name: TypeMemberName,
+        accessor: AccessorKind,
+        parameters: Vec<Parameter>,
+        return_type: Option<TypeNode>,
+    },
+    Call {
+        type_parameters: Vec<TypeParameterDeclaration>,
+        parameters: Vec<Parameter>,
+        return_type: Option<TypeNode>,
+    },
+    Construct {
+        type_parameters: Vec<TypeParameterDeclaration>,
+        parameters: Vec<Parameter>,
+        return_type: Option<TypeNode>,
+    },
+    Index {
+        parameters: Vec<Parameter>,
+        value_type: Option<TypeNode>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -269,6 +561,7 @@ pub enum KeywordType {
     BigInt,
     Object,
     Symbol,
+    UniqueSymbol,
 }
 
 #[derive(Debug, Clone)]
@@ -279,12 +572,16 @@ pub enum TypeNodeKind {
     Tuple(Vec<TypeNode>),
     Union(Vec<TypeNode>),
     Intersection(Vec<TypeNode>),
-    Object(Vec<TypeProperty>),
+    Object(Vec<TypeMember>),
     Function {
+        id: NodeId,
+        type_parameters: Vec<TypeParameterDeclaration>,
         parameters: Vec<Parameter>,
         return_type: Box<TypeNode>,
     },
     Constructor {
+        id: NodeId,
+        type_parameters: Vec<TypeParameterDeclaration>,
         parameters: Vec<Parameter>,
         return_type: Box<TypeNode>,
         abstract_constructor: bool,
@@ -326,6 +623,7 @@ pub enum TypeNodeKind {
         value_type: Box<TypeNode>,
         readonly: Option<bool>,
         optional: Option<bool>,
+        members: Vec<TypeMember>,
     },
     IndexedAccess {
         object: Box<TypeNode>,
@@ -333,6 +631,335 @@ pub enum TypeNodeKind {
     },
     Parenthesized(Box<TypeNode>),
     Missing,
+}
+
+impl TypeNode {
+    /// Whether this written type contains a value-space `typeof` query.
+    /// Function implementations need a symbol-kind-aware lookup filter for
+    /// these positions; callers that do not own that filter fail closed.
+    #[must_use]
+    pub fn contains_type_query(&self) -> bool {
+        match &self.kind {
+            TypeNodeKind::TypeQuery { .. } => true,
+            TypeNodeKind::Array(inner)
+            | TypeNodeKind::KeyOf(inner)
+            | TypeNodeKind::Readonly(inner)
+            | TypeNodeKind::Parenthesized(inner) => inner.contains_type_query(),
+            TypeNodeKind::Tuple(types)
+            | TypeNodeKind::Union(types)
+            | TypeNodeKind::Intersection(types) => types.iter().any(TypeNode::contains_type_query),
+            TypeNodeKind::Object(members) => members.iter().any(TypeMember::contains_type_query),
+            TypeNodeKind::Function {
+                type_parameters,
+                parameters,
+                return_type,
+                ..
+            }
+            | TypeNodeKind::Constructor {
+                type_parameters,
+                parameters,
+                return_type,
+                ..
+            } => {
+                type_parameters.iter().any(type_parameter_contains_query)
+                    || parameters.iter().any(parameter_contains_query)
+                    || return_type.contains_type_query()
+            }
+            TypeNodeKind::Reference { arguments, .. } => {
+                arguments.iter().any(TypeNode::contains_type_query)
+            }
+            TypeNodeKind::Infer { constraint, .. } => constraint
+                .as_deref()
+                .is_some_and(TypeNode::contains_type_query),
+            TypeNodeKind::Predicate { ty, .. } => {
+                ty.as_deref().is_some_and(TypeNode::contains_type_query)
+            }
+            TypeNodeKind::Conditional {
+                check_type,
+                extends_type,
+                true_type,
+                false_type,
+            } => {
+                check_type.contains_type_query()
+                    || extends_type.contains_type_query()
+                    || true_type.contains_type_query()
+                    || false_type.contains_type_query()
+            }
+            TypeNodeKind::Mapped {
+                constraint,
+                name_type,
+                value_type,
+                members,
+                ..
+            } => {
+                constraint.contains_type_query()
+                    || name_type
+                        .as_deref()
+                        .is_some_and(TypeNode::contains_type_query)
+                    || value_type.contains_type_query()
+                    || members.iter().any(TypeMember::contains_type_query)
+            }
+            TypeNodeKind::IndexedAccess { object, index } => {
+                object.contains_type_query() || index.contains_type_query()
+            }
+            TypeNodeKind::Keyword(_) | TypeNodeKind::Literal(_) | TypeNodeKind::Missing => false,
+        }
+    }
+
+    /// Whether declaration/runtime recovery for this type escaped an authored
+    /// `TypeElement` list. Emitters use this to block a host product until the
+    /// enclosing declarator/parameter recovery is represented structurally.
+    #[must_use]
+    pub fn contains_recovered_type_members(&self) -> bool {
+        match &self.kind {
+            TypeNodeKind::Array(inner)
+            | TypeNodeKind::KeyOf(inner)
+            | TypeNodeKind::Readonly(inner)
+            | TypeNodeKind::Parenthesized(inner) => inner.contains_recovered_type_members(),
+            TypeNodeKind::Tuple(types)
+            | TypeNodeKind::Union(types)
+            | TypeNodeKind::Intersection(types) => {
+                types.iter().any(TypeNode::contains_recovered_type_members)
+            }
+            TypeNodeKind::Object(members) => members
+                .iter()
+                .any(|member| member.recovered || member.contains_recovered_type_members()),
+            TypeNodeKind::Function {
+                type_parameters,
+                parameters,
+                return_type,
+                ..
+            }
+            | TypeNodeKind::Constructor {
+                type_parameters,
+                parameters,
+                return_type,
+                ..
+            } => {
+                type_parameters_contain_recovery(type_parameters)
+                    || parameters.iter().any(parameter_contains_recovery)
+                    || return_type.contains_recovered_type_members()
+            }
+            TypeNodeKind::Reference { arguments, .. } => arguments
+                .iter()
+                .any(TypeNode::contains_recovered_type_members),
+            TypeNodeKind::Infer { constraint, .. } => constraint
+                .as_deref()
+                .is_some_and(TypeNode::contains_recovered_type_members),
+            TypeNodeKind::Predicate { ty, .. } => ty
+                .as_deref()
+                .is_some_and(TypeNode::contains_recovered_type_members),
+            TypeNodeKind::Conditional {
+                check_type,
+                extends_type,
+                true_type,
+                false_type,
+            } => {
+                check_type.contains_recovered_type_members()
+                    || extends_type.contains_recovered_type_members()
+                    || true_type.contains_recovered_type_members()
+                    || false_type.contains_recovered_type_members()
+            }
+            TypeNodeKind::Mapped {
+                constraint,
+                name_type,
+                value_type,
+                members,
+                ..
+            } => {
+                constraint.contains_recovered_type_members()
+                    || name_type
+                        .as_deref()
+                        .is_some_and(TypeNode::contains_recovered_type_members)
+                    || value_type.contains_recovered_type_members()
+                    || members
+                        .iter()
+                        .any(|member| member.recovered || member.contains_recovered_type_members())
+            }
+            TypeNodeKind::IndexedAccess { object, index } => {
+                object.contains_recovered_type_members() || index.contains_recovered_type_members()
+            }
+            TypeNodeKind::Keyword(_)
+            | TypeNodeKind::Literal(_)
+            | TypeNodeKind::TypeQuery { .. }
+            | TypeNodeKind::Missing => false,
+        }
+    }
+}
+
+impl TypeMember {
+    fn contains_type_query(&self) -> bool {
+        if self.recovered {
+            return false;
+        }
+        match &self.kind {
+            TypeMemberKind::Property { ty, .. } => {
+                ty.as_ref().is_some_and(TypeNode::contains_type_query)
+            }
+            TypeMemberKind::Method {
+                type_parameters,
+                parameters,
+                return_type,
+                ..
+            }
+            | TypeMemberKind::Call {
+                type_parameters,
+                parameters,
+                return_type,
+            }
+            | TypeMemberKind::Construct {
+                type_parameters,
+                parameters,
+                return_type,
+            } => {
+                type_parameters.iter().any(type_parameter_contains_query)
+                    || parameters.iter().any(parameter_contains_query)
+                    || return_type
+                        .as_ref()
+                        .is_some_and(TypeNode::contains_type_query)
+            }
+            TypeMemberKind::Accessor {
+                parameters,
+                return_type,
+                ..
+            } => {
+                parameters.iter().any(parameter_contains_query)
+                    || return_type
+                        .as_ref()
+                        .is_some_and(TypeNode::contains_type_query)
+            }
+            TypeMemberKind::Index {
+                parameters,
+                value_type,
+            } => {
+                parameters.iter().any(parameter_contains_query)
+                    || value_type
+                        .as_ref()
+                        .is_some_and(TypeNode::contains_type_query)
+            }
+        }
+    }
+
+    fn contains_recovered_type_members(&self) -> bool {
+        if self.recovered {
+            return true;
+        }
+        let name_contains_recovery = match &self.kind {
+            TypeMemberKind::Property { name, .. }
+            | TypeMemberKind::Method { name, .. }
+            | TypeMemberKind::Accessor { name, .. } => matches!(
+                &name.kind,
+                TypeMemberNameKind::Computed(expression)
+                    if expression.contains_recovered_type_members()
+            ),
+            TypeMemberKind::Call { .. }
+            | TypeMemberKind::Construct { .. }
+            | TypeMemberKind::Index { .. } => false,
+        };
+        if name_contains_recovery {
+            return true;
+        }
+        match &self.kind {
+            TypeMemberKind::Property {
+                ty, initializer, ..
+            } => {
+                ty.as_ref()
+                    .is_some_and(TypeNode::contains_recovered_type_members)
+                    || initializer
+                        .as_ref()
+                        .is_some_and(Expression::contains_recovered_type_members)
+            }
+            TypeMemberKind::Method {
+                type_parameters,
+                parameters,
+                return_type,
+                ..
+            }
+            | TypeMemberKind::Call {
+                type_parameters,
+                parameters,
+                return_type,
+                ..
+            }
+            | TypeMemberKind::Construct {
+                type_parameters,
+                parameters,
+                return_type,
+                ..
+            } => {
+                type_parameters_contain_recovery(type_parameters)
+                    || parameters.iter().any(parameter_contains_recovery)
+                    || return_type
+                        .as_ref()
+                        .is_some_and(TypeNode::contains_recovered_type_members)
+            }
+            TypeMemberKind::Accessor {
+                parameters,
+                return_type,
+                ..
+            } => {
+                parameters.iter().any(parameter_contains_recovery)
+                    || return_type
+                        .as_ref()
+                        .is_some_and(TypeNode::contains_recovered_type_members)
+            }
+            TypeMemberKind::Index {
+                parameters,
+                value_type,
+            } => {
+                parameters.iter().any(parameter_contains_recovery)
+                    || value_type
+                        .as_ref()
+                        .is_some_and(TypeNode::contains_recovered_type_members)
+            }
+        }
+    }
+}
+
+fn type_parameter_contains_query(parameter: &TypeParameterDeclaration) -> bool {
+    parameter
+        .constraint
+        .as_ref()
+        .is_some_and(TypeNode::contains_type_query)
+        || parameter
+            .default
+            .as_ref()
+            .is_some_and(TypeNode::contains_type_query)
+}
+
+fn parameter_contains_query(parameter: &Parameter) -> bool {
+    parameter
+        .annotation
+        .as_ref()
+        .is_some_and(TypeNode::contains_type_query)
+}
+
+fn parameter_contains_recovery(parameter: &Parameter) -> bool {
+    parameter
+        .annotation
+        .as_ref()
+        .is_some_and(TypeNode::contains_recovered_type_members)
+        || parameter
+            .initializer
+            .as_ref()
+            .is_some_and(Expression::contains_recovered_type_members)
+}
+
+fn parameters_contain_recovery(parameters: &[Parameter]) -> bool {
+    parameters.iter().any(parameter_contains_recovery)
+}
+
+fn type_parameters_contain_recovery(parameters: &[TypeParameterDeclaration]) -> bool {
+    parameters.iter().any(|parameter| {
+        parameter
+            .constraint
+            .as_ref()
+            .is_some_and(TypeNode::contains_recovered_type_members)
+            || parameter
+                .default
+                .as_ref()
+                .is_some_and(TypeNode::contains_recovered_type_members)
+    })
 }
 
 #[derive(Debug, Clone)]
@@ -347,6 +974,7 @@ pub enum ExpressionKind {
     Identifier {
         name: String,
         name_span: Span,
+        entity_name: bool,
     },
     Literal(Literal),
     Object(Vec<ObjectProperty>),
@@ -391,6 +1019,72 @@ pub enum ExpressionKind {
     Missing,
 }
 
+impl Expression {
+    #[must_use]
+    pub fn contains_recovered_type_members(&self) -> bool {
+        match &self.kind {
+            ExpressionKind::Identifier { .. }
+            | ExpressionKind::Literal(_)
+            | ExpressionKind::Missing => false,
+            ExpressionKind::Object(properties) => properties
+                .iter()
+                .any(|property| property.value.contains_recovered_type_members()),
+            ExpressionKind::Array(elements) => elements
+                .iter()
+                .any(Expression::contains_recovered_type_members),
+            ExpressionKind::Call { callee, arguments } => {
+                callee.contains_recovered_type_members()
+                    || arguments
+                        .iter()
+                        .any(Expression::contains_recovered_type_members)
+            }
+            ExpressionKind::New {
+                callee,
+                type_arguments,
+                arguments,
+            } => {
+                callee.contains_recovered_type_members()
+                    || type_arguments
+                        .iter()
+                        .any(TypeNode::contains_recovered_type_members)
+                    || arguments
+                        .iter()
+                        .any(Expression::contains_recovered_type_members)
+            }
+            ExpressionKind::Member { object, .. }
+            | ExpressionKind::Unary {
+                operand: object, ..
+            }
+            | ExpressionKind::Parenthesized(object) => object.contains_recovered_type_members(),
+            ExpressionKind::Arrow {
+                parameters,
+                return_type,
+                body,
+            } => {
+                parameters_contain_recovery(parameters)
+                    || return_type
+                        .as_ref()
+                        .is_some_and(TypeNode::contains_recovered_type_members)
+                    || match body {
+                        ArrowBody::Expression(expression) => {
+                            expression.contains_recovered_type_members()
+                        }
+                        ArrowBody::Block(statements) => statements
+                            .iter()
+                            .any(Statement::contains_recovered_type_members),
+                    }
+            }
+            ExpressionKind::Binary { left, right, .. }
+            | ExpressionKind::Assignment { left, right } => {
+                left.contains_recovered_type_members() || right.contains_recovered_type_members()
+            }
+            ExpressionKind::As { expression, ty } => {
+                expression.contains_recovered_type_members() || ty.contains_recovered_type_members()
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum ArrowBody {
     Expression(Box<Expression>),
@@ -409,6 +1103,7 @@ pub struct ObjectProperty {
 pub enum Literal {
     String(String),
     Number(String),
+    BigInt(String),
     Boolean(bool),
     Null,
 }

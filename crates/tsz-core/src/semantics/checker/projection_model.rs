@@ -2,12 +2,15 @@ use std::collections::HashSet;
 
 use crate::bind::{Meaning, ScopeId};
 use crate::source::{DeclId, FileId, Span};
-use crate::syntax::{ClassMemberKind, Expression, ExpressionKind, TypeNode, TypeNodeKind};
+use crate::syntax::{
+    ClassMemberKind, Expression, ExpressionKind, TypeMemberKind, TypeNode, TypeNodeKind,
+};
 
 use super::{Checker, DeclarationModel, IndexedAccessOrigin, PropertyQueryOrigin};
 use crate::semantics::relation::RelationContext;
 use crate::semantics::types::{
-    Completion, DeferredType, InvalidType, LiteralProvenance, TypeId, TypeKind, UnionPolicy,
+    Completion, DeferredType, IndexKeyKind, InvalidType, LiteralProvenance, TypeId, TypeKind,
+    UnionPolicy,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -74,6 +77,242 @@ impl PropertyOrderTree {
 }
 
 impl Checker<'_> {
+    /// Whether rendering this semantic type would require authored object-
+    /// signature provenance that is intentionally absent from `TypeKind`.
+    /// Incomplete wrappers stay typed nonclaims instead of being printed with
+    /// synthetic parameter or index names.
+    pub(super) fn requires_authored_shape_display(&mut self, ty: TypeId) -> Completion<bool> {
+        self.requires_authored_shape_display_inner(ty, &mut HashSet::new())
+    }
+
+    pub(super) fn authored_shape_display_is_unavailable(&mut self, ty: TypeId) -> bool {
+        match self.requires_authored_shape_display(ty) {
+            Completion::Complete(false) => false,
+            Completion::Complete(true) | Completion::Deferred => {
+                let _ = self.require_completion(Completion::<()>::Deferred);
+                true
+            }
+            Completion::Cycle => {
+                let _ = self.require_completion(Completion::<()>::Cycle);
+                true
+            }
+            Completion::Limit => {
+                let _ = self.require_completion(Completion::<()>::Limit);
+                true
+            }
+        }
+    }
+
+    fn requires_authored_shape_display_inner(
+        &mut self,
+        ty: TypeId,
+        active: &mut HashSet<TypeId>,
+    ) -> Completion<bool> {
+        if !active.insert(ty) {
+            return Completion::Complete(false);
+        }
+        let kind = self.store.kind(ty).clone();
+        let result = match kind {
+            TypeKind::ShapeFunction(_) => Completion::Complete(true),
+            TypeKind::Object(shape)
+            | TypeKind::ClassInstance {
+                properties: shape, ..
+            } => {
+                if !shape.call_signatures.is_empty()
+                    || !shape.construct_signatures.is_empty()
+                    || !shape.index_signatures.is_empty()
+                    || shape.properties.iter().any(|property| {
+                        matches!(self.store.kind(property.ty), TypeKind::ShapeFunction(_))
+                    })
+                {
+                    Completion::Complete(true)
+                } else {
+                    let mut found = false;
+                    for property in shape.properties {
+                        match self.requires_authored_shape_display_inner(property.ty, active) {
+                            Completion::Complete(true) => {
+                                found = true;
+                                break;
+                            }
+                            Completion::Complete(false) => {}
+                            Completion::Deferred => return Completion::Deferred,
+                            Completion::Cycle => return Completion::Cycle,
+                            Completion::Limit => return Completion::Limit,
+                        }
+                    }
+                    Completion::Complete(found)
+                }
+            }
+            TypeKind::Array(element) => self.requires_authored_shape_display_inner(element, active),
+            TypeKind::Tuple(members)
+            | TypeKind::Union(members)
+            | TypeKind::Intersection(members) => {
+                let mut found = false;
+                for member in members {
+                    match self.requires_authored_shape_display_inner(member, active) {
+                        Completion::Complete(true) => {
+                            found = true;
+                            break;
+                        }
+                        Completion::Complete(false) => {}
+                        Completion::Deferred => return Completion::Deferred,
+                        Completion::Cycle => return Completion::Cycle,
+                        Completion::Limit => return Completion::Limit,
+                    }
+                }
+                Completion::Complete(found)
+            }
+            TypeKind::Function(signature) => {
+                let mut members = signature
+                    .parameters
+                    .into_iter()
+                    .map(|parameter| parameter.ty)
+                    .collect::<Vec<_>>();
+                members.push(signature.return_type);
+                let mut found = false;
+                for member in members {
+                    match self.requires_authored_shape_display_inner(member, active) {
+                        Completion::Complete(true) => {
+                            found = true;
+                            break;
+                        }
+                        Completion::Complete(false) => {}
+                        Completion::Deferred => return Completion::Deferred,
+                        Completion::Cycle => return Completion::Cycle,
+                        Completion::Limit => return Completion::Limit,
+                    }
+                }
+                Completion::Complete(found)
+            }
+            TypeKind::Deferred(_) => match self.force_type(ty, 0) {
+                Completion::Complete(resolved) if resolved != ty => {
+                    self.requires_authored_shape_display_inner(resolved, active)
+                }
+                Completion::Complete(_) | Completion::Deferred => Completion::Deferred,
+                Completion::Cycle => Completion::Cycle,
+                Completion::Limit => Completion::Limit,
+            },
+            TypeKind::Invalid(InvalidType::MissingProperty { object, .. })
+            | TypeKind::Invalid(InvalidType::MissingProperties { object, .. }) => {
+                self.requires_authored_shape_display_inner(object, active)
+            }
+            TypeKind::Error
+            | TypeKind::Any
+            | TypeKind::Unknown
+            | TypeKind::Never
+            | TypeKind::Void
+            | TypeKind::Undefined
+            | TypeKind::Null
+            | TypeKind::Boolean
+            | TypeKind::Number
+            | TypeKind::String
+            | TypeKind::BigInt
+            | TypeKind::ObjectKeyword
+            | TypeKind::Symbol
+            | TypeKind::LiteralBoolean(_, _)
+            | TypeKind::LiteralNumber(_, _)
+            | TypeKind::LiteralString(_, _)
+            | TypeKind::TypeParameter { .. }
+            | TypeKind::ClassConstructor { .. } => Completion::Complete(false),
+        };
+        active.remove(&ty);
+        result
+    }
+
+    pub(super) fn infer_member_expression(
+        &mut self,
+        file: FileId,
+        scope: ScopeId,
+        object: &Expression,
+        name: &str,
+        name_span: Span,
+        allow_shape_callable: bool,
+    ) -> TypeId {
+        let object_type = self.infer_expression(file, scope, object, None);
+        let property_order = self.property_order_for_expression(file, scope, object);
+        let completion = self.property_type(object_type, name, allow_shape_callable);
+        match self.require_completion(completion) {
+            Completion::Complete(Some(ty)) => ty,
+            Completion::Complete(None) => {
+                let complete_object = self.complete_type(object_type).unwrap_or(object_type);
+                let object_name = self.display_type_with_property_order(
+                    complete_object,
+                    property_order.as_ref(),
+                    0,
+                );
+                self.push_diagnostic(
+                    file,
+                    name_span,
+                    format!("Property '{name}' does not exist on type '{object_name}'."),
+                    2339,
+                );
+                self.store
+                    .intern(TypeKind::Invalid(InvalidType::MissingProperty {
+                        object: object_type,
+                        name: name.to_string(),
+                    }))
+            }
+            Completion::Deferred | Completion::Cycle | Completion::Limit => {
+                self.deferred_property_type_with_order(object_type, name, name_span, property_order)
+            }
+        }
+    }
+
+    fn property_type(
+        &mut self,
+        object: TypeId,
+        name: &str,
+        allow_shape_callable: bool,
+    ) -> Completion<Option<TypeId>> {
+        let object = match self.force_type(object, 0) {
+            Completion::Complete(object) => object,
+            Completion::Deferred => return Completion::Deferred,
+            Completion::Cycle => return Completion::Cycle,
+            Completion::Limit => return Completion::Limit,
+        };
+        match self.store.kind(object) {
+            TypeKind::Object(shape)
+            | TypeKind::ClassInstance {
+                properties: shape, ..
+            } => {
+                let property = shape
+                    .properties
+                    .iter()
+                    .find(|property| property.name == name);
+                if !allow_shape_callable
+                    && property.is_some_and(|property| {
+                        matches!(self.store.kind(property.ty), TypeKind::ShapeFunction(_))
+                    })
+                {
+                    return Completion::Deferred;
+                }
+                if let Some(property) = property {
+                    return Completion::Complete(Some(property.ty));
+                }
+                if let Some(index) = shape.index(IndexKeyKind::String) {
+                    if !allow_shape_callable
+                        && matches!(self.store.kind(index.value), TypeKind::ShapeFunction(_))
+                    {
+                        return Completion::Deferred;
+                    }
+                    return Completion::Complete(Some(index.value));
+                }
+                match self.requires_authored_shape_display(object) {
+                    Completion::Complete(false) => {}
+                    Completion::Complete(true) | Completion::Deferred => {
+                        return Completion::Deferred;
+                    }
+                    Completion::Cycle => return Completion::Cycle,
+                    Completion::Limit => return Completion::Limit,
+                }
+                Completion::Complete(None)
+            }
+            TypeKind::Any => Completion::Complete(Some(self.store.builtins.any)),
+            TypeKind::Error | TypeKind::Invalid(_) => Completion::Complete(Some(object)),
+            _ => Completion::Deferred,
+        }
+    }
+
     pub(super) fn relation_order_for_call_argument(
         &self,
         file: FileId,
@@ -173,9 +412,38 @@ impl Checker<'_> {
             Completion::Limit => return Completion::Limit,
         };
         match self.store.kind(object).clone() {
-            TypeKind::Object(properties) | TypeKind::ClassInstance { properties, .. } => {
-                if let Some(property) = properties.iter().find(|property| property.name == name) {
+            TypeKind::Object(shape)
+            | TypeKind::ClassInstance {
+                properties: shape, ..
+            } => {
+                if let Some(property) = shape
+                    .properties
+                    .iter()
+                    .find(|property| property.name == name)
+                {
+                    if matches!(self.store.kind(property.ty), TypeKind::ShapeFunction(_)) {
+                        // Object-member signatures intentionally erase authored
+                        // parameter names from semantic identity. Until the
+                        // property-query origin carries signature display
+                        // provenance, exposing this as a definitive callable
+                        // would fabricate `arg0` in diagnostics/quickinfo.
+                        return Completion::Deferred;
+                    }
                     return Completion::Complete(property.ty);
+                }
+                if let Some(index) = shape.index(IndexKeyKind::String) {
+                    if matches!(self.store.kind(index.value), TypeKind::ShapeFunction(_)) {
+                        return Completion::Deferred;
+                    }
+                    return Completion::Complete(index.value);
+                }
+                match self.requires_authored_shape_display(object) {
+                    Completion::Complete(false) => {}
+                    Completion::Complete(true) | Completion::Deferred => {
+                        return Completion::Deferred;
+                    }
+                    Completion::Cycle => return Completion::Cycle,
+                    Completion::Limit => return Completion::Limit,
                 }
                 Completion::Complete(self.store.intern(TypeKind::Invalid(
                     InvalidType::MissingProperty {
@@ -320,9 +588,16 @@ impl Checker<'_> {
                 names.join(" | ")
             }
             Some(PropertyOrderTree::Object(order)) => {
-                let TypeKind::Object(properties) = self.store.kind(ty) else {
+                let TypeKind::Object(shape) = self.store.kind(ty) else {
                     return self.store.display(ty);
                 };
+                if !shape.call_signatures.is_empty()
+                    || !shape.construct_signatures.is_empty()
+                    || !shape.index_signatures.is_empty()
+                {
+                    return self.store.display(ty);
+                }
+                let properties = &shape.properties;
                 if properties.is_empty() {
                     return "{}".to_string();
                 }
@@ -402,19 +677,22 @@ impl Checker<'_> {
                 ..
             } => Some(PropertyOrderTree::Object(
                 interface
-                    .properties
+                    .members
                     .iter()
-                    .map(|property| {
-                        (
-                            property.name.clone(),
+                    .filter_map(|member| {
+                        let TypeMemberKind::Property { name, ty, .. } = &member.kind else {
+                            return None;
+                        };
+                        let name = name.semantic_name()?.to_string();
+                        let order = ty.as_ref().and_then(|ty| {
                             self.property_order_for_type_node(
                                 declaration.file,
                                 ScopeId(0),
-                                &property.ty,
+                                ty,
                                 active,
                             )
-                            .unwrap_or(PropertyOrderTree::Unknown),
-                        )
+                        });
+                        Some((name, order.unwrap_or(PropertyOrderTree::Unknown)))
                     })
                     .collect(),
             )),
@@ -473,15 +751,18 @@ impl Checker<'_> {
         active: &mut HashSet<DeclId>,
     ) -> Option<PropertyOrderTree> {
         match &node.kind {
-            TypeNodeKind::Object(properties) => Some(PropertyOrderTree::Object(
-                properties
+            TypeNodeKind::Object(members) => Some(PropertyOrderTree::Object(
+                members
                     .iter()
-                    .map(|property| {
-                        (
-                            property.name.clone(),
-                            self.property_order_for_type_node(file, scope, &property.ty, active)
-                                .unwrap_or(PropertyOrderTree::Unknown),
-                        )
+                    .filter_map(|member| {
+                        let TypeMemberKind::Property { name, ty, .. } = &member.kind else {
+                            return None;
+                        };
+                        let name = name.semantic_name()?.to_string();
+                        let order = ty.as_ref().and_then(|ty| {
+                            self.property_order_for_type_node(file, scope, ty, active)
+                        });
+                        Some((name, order.unwrap_or(PropertyOrderTree::Unknown)))
                     })
                     .collect(),
             )),
@@ -589,7 +870,6 @@ impl Checker<'_> {
             ExpressionKind::Identifier { name, .. } => {
                 let declaration = self.resolve_name(file, scope, name, Meaning::Value)?;
                 self.property_order_for_declaration_inner(declaration, active)
-                    .map(PropertyOrderTree::without_root_alias)
             }
             ExpressionKind::Member { object, name, .. } => self
                 .property_order_for_expression_inner(file, scope, object, active)?
@@ -613,7 +893,10 @@ impl Checker<'_> {
             Completion::Limit => return Completion::Limit,
         };
         let properties = match self.store.kind(operand).clone() {
-            TypeKind::Object(properties) | TypeKind::ClassInstance { properties, .. } => properties,
+            TypeKind::Object(shape)
+            | TypeKind::ClassInstance {
+                properties: shape, ..
+            } => shape,
             TypeKind::Any | TypeKind::Never | TypeKind::Error => {
                 return self.property_key_type();
             }
@@ -632,17 +915,18 @@ impl Checker<'_> {
             | TypeKind::TypeParameter { .. }
             | TypeKind::Array(_)
             | TypeKind::Tuple(_)
-            | TypeKind::StringIndex(_)
             | TypeKind::Union(_)
             | TypeKind::Intersection(_)
             | TypeKind::ClassConstructor { .. }
             | TypeKind::Function(_)
+            | TypeKind::ShapeFunction(_)
             | TypeKind::Deferred(_)
             | TypeKind::Void
             | TypeKind::Undefined
             | TypeKind::Null => return Completion::Deferred,
         };
-        let keys = properties
+        let mut keys = properties
+            .properties
             .into_iter()
             .map(|property| {
                 self.store.intern(TypeKind::LiteralString(
@@ -651,6 +935,15 @@ impl Checker<'_> {
                 ))
             })
             .collect::<Vec<_>>();
+        for index in properties.index_signatures {
+            match index.key {
+                IndexKeyKind::String => {
+                    keys.push(self.store.builtins.string);
+                    keys.push(self.store.builtins.number);
+                }
+                IndexKeyKind::Number => keys.push(self.store.builtins.number),
+            }
+        }
         Completion::Complete(self.store.union(keys, UnionPolicy::Canonical))
     }
 
@@ -684,7 +977,10 @@ impl Checker<'_> {
             Completion::Limit => return Completion::Limit,
         };
         let properties = match self.store.kind(object).clone() {
-            TypeKind::Object(properties) | TypeKind::ClassInstance { properties, .. } => properties,
+            TypeKind::Object(shape)
+            | TypeKind::ClassInstance {
+                properties: shape, ..
+            } => shape,
             TypeKind::Any => return Completion::Complete(self.store.builtins.any),
             TypeKind::Error => return Completion::Complete(self.store.builtins.error),
             TypeKind::Invalid(_) => return Completion::Complete(object),
@@ -708,16 +1004,33 @@ impl Checker<'_> {
         let mut missing = Vec::new();
         for key in keys {
             let value = properties
+                .properties
                 .iter()
                 .find(|property| property.name == key)
-                .map(|property| property.ty);
+                .map(|property| property.ty)
+                .or_else(|| {
+                    properties
+                        .index(IndexKeyKind::String)
+                        .map(|index| index.value)
+                });
             if let Some(value) = value {
+                if matches!(self.store.kind(value), TypeKind::ShapeFunction(_)) {
+                    return Completion::Deferred;
+                }
                 values.push(value);
             } else {
                 missing.push(key);
             }
         }
         if !missing.is_empty() {
+            match self.requires_authored_shape_display(object) {
+                Completion::Complete(false) => {}
+                Completion::Complete(true) | Completion::Deferred => {
+                    return Completion::Deferred;
+                }
+                Completion::Cycle => return Completion::Cycle,
+                Completion::Limit => return Completion::Limit,
+            }
             return Completion::Complete(self.store.intern(TypeKind::Invalid(
                 InvalidType::MissingProperties {
                     object,
@@ -775,15 +1088,6 @@ impl Checker<'_> {
             TypeKind::BigInt => "BigInt".to_string(),
             TypeKind::Symbol => "Symbol".to_string(),
             _ => self.display_type_with_property_order(object, receiver_order, 0),
-        }
-    }
-}
-
-impl PropertyOrderTree {
-    fn without_root_alias(self) -> Self {
-        match self {
-            Self::Alias { target, .. } => *target,
-            other => other,
         }
     }
 }

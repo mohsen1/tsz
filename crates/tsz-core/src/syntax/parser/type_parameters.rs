@@ -1,7 +1,35 @@
 use super::Parser;
-use crate::syntax::{TokenKind, TypeParameterDeclaration};
+use crate::syntax::{KeywordType, TokenKind, TypeNode, TypeNodeKind, TypeParameterDeclaration};
 
 impl Parser<'_> {
+    pub(super) fn parse_keyword_type(&mut self) -> Option<TypeNode> {
+        let first = *self.current();
+        let keyword = match first.kind {
+            TokenKind::Any => KeywordType::Any,
+            TokenKind::Unknown => KeywordType::Unknown,
+            TokenKind::Never => KeywordType::Never,
+            TokenKind::Void => KeywordType::Void,
+            TokenKind::Undefined => KeywordType::Undefined,
+            TokenKind::Null => KeywordType::Null,
+            TokenKind::Boolean => KeywordType::Boolean,
+            TokenKind::Number => KeywordType::Number,
+            TokenKind::String => KeywordType::String,
+            TokenKind::BigInt => KeywordType::BigInt,
+            TokenKind::Object => KeywordType::Object,
+            TokenKind::Symbol => KeywordType::Symbol,
+            TokenKind::Unique if self.peek_kind(1) == TokenKind::Symbol => {
+                self.bump();
+                KeywordType::UniqueSymbol
+            }
+            _ => return None,
+        };
+        let last = self.bump();
+        Some(TypeNode {
+            span: first.span.merge(last.span),
+            kind: TypeNodeKind::Keyword(keyword),
+        })
+    }
+
     pub(super) fn parse_type_parameters(&mut self) -> Vec<TypeParameterDeclaration> {
         if !self.eat(TokenKind::LessThan) {
             return Vec::new();

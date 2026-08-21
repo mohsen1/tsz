@@ -49,5 +49,9 @@ path = "rewrite-tests/semantic_completion.rs"
 name = "rewrite_emit_identifier_recovery"
 path = "rewrite-tests/emit_identifier_recovery.rs"
 
+[[test]]
+name = "rewrite_type_members"
+path = "rewrite-tests/type_members.rs"
+
 [lints]
 workspace = true

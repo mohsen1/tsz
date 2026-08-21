@@ -28,6 +28,61 @@ pub struct Signature {
     pub return_type: TypeId,
 }
 
+/// Name-free callable structure used inside object shapes.
+///
+/// Authored parameter names remain syntax/display provenance. They cannot
+/// participate in semantic interning because renaming a binder does not
+/// change a callable type.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ShapeParameter {
+    pub ty: TypeId,
+    pub optional: bool,
+    pub rest: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ShapeSignature {
+    pub parameters: Vec<ShapeParameter>,
+    pub return_type: TypeId,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum IndexKeyKind {
+    String,
+    Number,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct IndexSignature {
+    pub key: IndexKeyKind,
+    pub value: TypeId,
+    pub readonly: bool,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
+pub struct ObjectShape {
+    pub properties: Vec<Property>,
+    pub call_signatures: Vec<ShapeSignature>,
+    pub construct_signatures: Vec<ShapeSignature>,
+    pub index_signatures: Vec<IndexSignature>,
+}
+
+impl ObjectShape {
+    #[must_use]
+    pub fn index(&self, key: IndexKeyKind) -> Option<&IndexSignature> {
+        self.index_signatures.iter().find(|index| index.key == key)
+    }
+}
+
+impl From<Vec<Property>> for ObjectShape {
+    fn from(properties: Vec<Property>) -> Self {
+        Self {
+            properties,
+            ..Self::default()
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum DeferredLogicalOperator {
     And,
@@ -50,7 +105,10 @@ pub enum DeferredType {
         arguments: Vec<TypeId>,
     },
     Value(DeclId),
-    Call(TypeId),
+    Call {
+        callee: TypeId,
+        argument_count: usize,
+    },
     Construct {
         callee: TypeId,
         type_arguments: Vec<TypeId>,
@@ -93,6 +151,10 @@ pub enum DeferredType {
         object: TypeId,
         index: TypeId,
     },
+    BigIntLiteral,
+    UniqueSymbol,
+    GenericFunction,
+    ObjectShape,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -431,18 +493,18 @@ pub enum TypeKind {
     Tuple(Vec<TypeId>),
     Union(Vec<TypeId>),
     Intersection(Vec<TypeId>),
-    Object(Vec<Property>),
-    StringIndex(TypeId),
+    Object(ObjectShape),
     ClassInstance {
         declaration: DeclId,
         name: String,
-        properties: Vec<Property>,
+        properties: ObjectShape,
     },
     ClassConstructor {
         declaration: DeclId,
         name: String,
     },
     Function(Signature),
+    ShapeFunction(ShapeSignature),
     Deferred(DeferredType),
 }
 
@@ -475,11 +537,16 @@ enum TypeOrderKey {
     Tuple(Vec<TypeOrderKey>),
     Union(Vec<TypeOrderKey>),
     Intersection(Vec<TypeOrderKey>),
-    Object(Vec<PropertyOrderKey>),
-    StringIndex(Box<TypeOrderKey>),
+    Object {
+        properties: Vec<PropertyOrderKey>,
+        call_signatures: Vec<SignatureOrderKey>,
+        construct_signatures: Vec<SignatureOrderKey>,
+        index_signatures: Vec<(IndexKeyKind, Box<TypeOrderKey>, bool)>,
+    },
     ClassInstance(DeclId, Vec<PropertyOrderKey>),
     ClassConstructor(DeclId),
     Function(Vec<ParameterOrderKey>, Box<TypeOrderKey>),
+    ShapeFunction(Vec<ParameterOrderKey>, Box<TypeOrderKey>),
     Deferred(DeferredOrderKey),
     Truncated,
 }
@@ -500,10 +567,16 @@ struct ParameterOrderKey {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct SignatureOrderKey {
+    parameters: Vec<ParameterOrderKey>,
+    return_type: Box<TypeOrderKey>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 enum DeferredOrderKey {
     Reference(DeclId, Vec<TypeOrderKey>),
     Value(DeclId),
-    Call(Box<TypeOrderKey>),
+    Call(Box<TypeOrderKey>, usize),
     Construct(Box<TypeOrderKey>, Vec<TypeOrderKey>, usize),
     Property(Box<TypeOrderKey>, String),
     Predicate(String, Option<Box<TypeOrderKey>>, bool, bool),
@@ -524,6 +597,10 @@ enum DeferredOrderKey {
         Option<bool>,
     ),
     IndexedAccess(Box<TypeOrderKey>, Box<TypeOrderKey>),
+    BigIntLiteral,
+    UniqueSymbol,
+    GenericFunction,
+    ObjectShape,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -619,6 +696,43 @@ impl TypeStore {
         let id = TypeId(self.kinds.len() as u32);
         self.kinds.push(kind.clone());
         self.interned.insert(kind, id);
+        id
+    }
+
+    /// Allocate an incomplete anonymous shape without giving it interned
+    /// semantic identity. Required boundaries always force this to
+    /// `Completion::Deferred`, and definitive caches reject it.
+    pub fn deferred_object_shape(&mut self) -> TypeId {
+        let id = TypeId(self.kinds.len() as u32);
+        self.kinds
+            .push(TypeKind::Deferred(DeferredType::ObjectShape));
+        id
+    }
+
+    /// Allocate an identity-free nonclaim for generic function/constructor
+    /// syntax until a binder-owned function-type declaration identity exists.
+    pub fn deferred_generic_function(&mut self) -> TypeId {
+        let id = TypeId(self.kinds.len() as u32);
+        self.kinds
+            .push(TypeKind::Deferred(DeferredType::GenericFunction));
+        id
+    }
+
+    /// Allocate a source-free nonclaim for `unique symbol` until its
+    /// declaration-owned nominal identity and host grammar are modeled.
+    pub fn deferred_unique_symbol(&mut self) -> TypeId {
+        let id = TypeId(self.kinds.len() as u32);
+        self.kinds
+            .push(TypeKind::Deferred(DeferredType::UniqueSymbol));
+        id
+    }
+
+    /// Preserve `BigInt` literal syntax without collapsing distinct values to
+    /// `bigint` before canonical arbitrary-precision identity is modeled.
+    pub fn deferred_bigint_literal(&mut self) -> TypeId {
+        let id = TypeId(self.kinds.len() as u32);
+        self.kinds
+            .push(TypeKind::Deferred(DeferredType::BigIntLiteral));
         id
     }
 
@@ -735,7 +849,18 @@ impl TypeStore {
 
     pub fn object(&mut self, mut properties: Vec<Property>) -> TypeId {
         properties.sort_by(|left, right| left.name.cmp(&right.name));
-        self.intern(TypeKind::Object(properties))
+        self.object_shape(ObjectShape {
+            properties,
+            ..ObjectShape::default()
+        })
+    }
+
+    pub fn object_shape(&mut self, mut shape: ObjectShape) -> TypeId {
+        shape
+            .properties
+            .sort_by(|left, right| left.name.cmp(&right.name));
+        shape.index_signatures.sort_by_key(|index| index.key);
+        self.intern(TypeKind::Object(shape))
     }
 
     fn stable_order_key(&self, id: TypeId, depth: usize) -> TypeOrderKey {
@@ -798,19 +923,69 @@ impl TypeStore {
             TypeKind::Intersection(members) => {
                 TypeOrderKey::Intersection(members.iter().map(|member| nested(*member)).collect())
             }
-            TypeKind::Object(object_properties) => {
-                TypeOrderKey::Object(properties(object_properties))
-            }
-            TypeKind::StringIndex(value) => TypeOrderKey::StringIndex(Box::new(nested(*value))),
+            TypeKind::Object(shape) => TypeOrderKey::Object {
+                properties: properties(&shape.properties),
+                call_signatures: shape
+                    .call_signatures
+                    .iter()
+                    .map(|signature| SignatureOrderKey {
+                        parameters: signature
+                            .parameters
+                            .iter()
+                            .map(|parameter| ParameterOrderKey {
+                                ty: nested(parameter.ty),
+                                optional: parameter.optional,
+                                rest: parameter.rest,
+                            })
+                            .collect(),
+                        return_type: Box::new(nested(signature.return_type)),
+                    })
+                    .collect(),
+                construct_signatures: shape
+                    .construct_signatures
+                    .iter()
+                    .map(|signature| SignatureOrderKey {
+                        parameters: signature
+                            .parameters
+                            .iter()
+                            .map(|parameter| ParameterOrderKey {
+                                ty: nested(parameter.ty),
+                                optional: parameter.optional,
+                                rest: parameter.rest,
+                            })
+                            .collect(),
+                        return_type: Box::new(nested(signature.return_type)),
+                    })
+                    .collect(),
+                index_signatures: shape
+                    .index_signatures
+                    .iter()
+                    .map(|index| (index.key, Box::new(nested(index.value)), index.readonly))
+                    .collect(),
+            },
             TypeKind::ClassInstance {
                 declaration,
                 properties: class_properties,
                 ..
-            } => TypeOrderKey::ClassInstance(*declaration, properties(class_properties)),
+            } => {
+                TypeOrderKey::ClassInstance(*declaration, properties(&class_properties.properties))
+            }
             TypeKind::ClassConstructor { declaration, .. } => {
                 TypeOrderKey::ClassConstructor(*declaration)
             }
             TypeKind::Function(signature) => TypeOrderKey::Function(
+                signature
+                    .parameters
+                    .iter()
+                    .map(|parameter| ParameterOrderKey {
+                        ty: nested(parameter.ty),
+                        optional: parameter.optional,
+                        rest: parameter.rest,
+                    })
+                    .collect(),
+                Box::new(nested(signature.return_type)),
+            ),
+            TypeKind::ShapeFunction(signature) => TypeOrderKey::ShapeFunction(
                 signature
                     .parameters
                     .iter()
@@ -839,7 +1014,10 @@ impl TypeStore {
                 arguments.iter().map(|argument| nested(*argument)).collect(),
             ),
             DeferredType::Value(declaration) => DeferredOrderKey::Value(*declaration),
-            DeferredType::Call(callee) => DeferredOrderKey::Call(Box::new(nested(*callee))),
+            DeferredType::Call {
+                callee,
+                argument_count,
+            } => DeferredOrderKey::Call(Box::new(nested(*callee)), *argument_count),
             DeferredType::Construct {
                 callee,
                 type_arguments,
@@ -916,6 +1094,10 @@ impl TypeStore {
             DeferredType::IndexedAccess { object, index } => {
                 DeferredOrderKey::IndexedAccess(Box::new(nested(*object)), Box::new(nested(*index)))
             }
+            DeferredType::BigIntLiteral => DeferredOrderKey::BigIntLiteral,
+            DeferredType::UniqueSymbol => DeferredOrderKey::UniqueSymbol,
+            DeferredType::GenericFunction => DeferredOrderKey::GenericFunction,
+            DeferredType::ObjectShape => DeferredOrderKey::ObjectShape,
         }
     }
 
@@ -1008,29 +1190,45 @@ impl TypeStore {
                 .map(|member| self.display_inner(*member, depth + 1))
                 .collect::<Vec<_>>()
                 .join(" & "),
-            TypeKind::Object(properties) => {
-                if properties.is_empty() {
+            TypeKind::Object(shape) => {
+                if shape.properties.is_empty()
+                    && shape.call_signatures.is_empty()
+                    && shape.construct_signatures.is_empty()
+                    && shape.index_signatures.is_empty()
+                {
                     "{}".to_owned()
                 } else {
-                    format!(
-                        "{{ {}; }}",
-                        properties
-                            .iter()
-                            .map(|property| format!(
+                    let mut members = shape
+                        .properties
+                        .iter()
+                        .map(|property| {
+                            format!(
                                 "{}{}: {}",
                                 property.name,
                                 if property.optional { "?" } else { "" },
                                 self.display_inner(property.ty, depth + 1)
-                            ))
-                            .collect::<Vec<_>>()
-                            .join("; ")
-                    )
+                            )
+                        })
+                        .collect::<Vec<_>>();
+                    members.extend(shape.call_signatures.iter().map(|signature| {
+                        self.display_shape_signature(signature, depth + 1, "", ": ")
+                    }));
+                    members.extend(shape.construct_signatures.iter().map(|signature| {
+                        self.display_shape_signature(signature, depth + 1, "new ", ": ")
+                    }));
+                    members.extend(shape.index_signatures.iter().map(|index| {
+                        format!(
+                            "[key: {}]: {}",
+                            match index.key {
+                                IndexKeyKind::String => "string",
+                                IndexKeyKind::Number => "number",
+                            },
+                            self.display_inner(index.value, depth + 1)
+                        )
+                    }));
+                    format!("{{ {}; }}", members.join("; "))
                 }
             }
-            TypeKind::StringIndex(value) => format!(
-                "{{ [key: string]: {}; }}",
-                self.display_inner(*value, depth + 1)
-            ),
             TypeKind::ClassConstructor { name, .. } => format!("typeof {name}"),
             TypeKind::Function(signature) => format!(
                 "({}) => {}",
@@ -1051,13 +1249,16 @@ impl TypeStore {
                     .join(", "),
                 self.display_inner(signature.return_type, depth + 1)
             ),
+            TypeKind::ShapeFunction(signature) => {
+                self.display_shape_signature(signature, depth + 1, "", " => ")
+            }
             TypeKind::Deferred(DeferredType::Reference { declaration, .. }) => {
                 format!("deferred#{}:{}", declaration.file.0, declaration.local)
             }
             TypeKind::Deferred(DeferredType::Value(declaration)) => {
                 format!("value#{}:{}", declaration.file.0, declaration.local)
             }
-            TypeKind::Deferred(DeferredType::Call(callee)) => {
+            TypeKind::Deferred(DeferredType::Call { callee, .. }) => {
                 format!("call {}", self.display_inner(*callee, depth + 1))
             }
             TypeKind::Deferred(DeferredType::Construct {
@@ -1165,7 +1366,38 @@ impl TypeStore {
                 self.display_inner(*object, depth + 1),
                 self.display_inner(*index, depth + 1)
             ),
+            TypeKind::Deferred(DeferredType::BigIntLiteral) => "bigint-literal".to_string(),
+            TypeKind::Deferred(DeferredType::UniqueSymbol) => "unique symbol".to_string(),
+            TypeKind::Deferred(DeferredType::GenericFunction) => {
+                "deferred-generic-function".to_string()
+            }
+            TypeKind::Deferred(DeferredType::ObjectShape) => "deferred-object".to_string(),
         }
+    }
+
+    fn display_shape_signature(
+        &self,
+        signature: &ShapeSignature,
+        depth: usize,
+        prefix: &str,
+        return_separator: &str,
+    ) -> String {
+        format!(
+            "{prefix}({}){return_separator}{}",
+            signature
+                .parameters
+                .iter()
+                .enumerate()
+                .map(|(index, parameter)| format!(
+                    "{}arg{index}{}: {}",
+                    if parameter.rest { "..." } else { "" },
+                    if parameter.optional { "?" } else { "" },
+                    self.display_inner(parameter.ty, depth + 1)
+                ))
+                .collect::<Vec<_>>()
+                .join(", "),
+            self.display_inner(signature.return_type, depth + 1)
+        )
     }
 }
 

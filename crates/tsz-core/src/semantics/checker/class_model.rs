@@ -78,7 +78,7 @@ impl Checker<'_> {
         &mut self,
         callee: TypeId,
         type_arguments: &[TypeId],
-        _argument_count: usize,
+        argument_count: usize,
         depth: usize,
     ) -> Completion<TypeId> {
         let callee = match self.force_type(callee, depth) {
@@ -100,6 +100,15 @@ impl Checker<'_> {
                     return Completion::Deferred;
                 }
                 self.evaluate_reference(declaration, type_arguments)
+            }
+            TypeKind::Object(shape)
+                if type_arguments.is_empty() && shape.construct_signatures.len() == 1 =>
+            {
+                let signature = &shape.construct_signatures[0];
+                if argument_count != 0 || !signature.parameters.is_empty() {
+                    return Completion::Deferred;
+                }
+                Completion::Complete(signature.return_type)
             }
             TypeKind::Any => Completion::Complete(self.store.builtins.any),
             TypeKind::Error | TypeKind::Invalid(_) => Completion::Complete(callee),
@@ -180,7 +189,7 @@ impl Checker<'_> {
         Completion::Complete(self.store.intern(TypeKind::ClassInstance {
             declaration,
             name: class.name.clone(),
-            properties,
+            properties: properties.into(),
         }))
     }
 }

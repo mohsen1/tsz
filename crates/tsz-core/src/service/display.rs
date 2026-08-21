@@ -6,8 +6,9 @@
 //! `None` instead of a plausible-looking semantic answer.
 
 use crate::syntax::{
-    Expression, ExpressionKind, KeywordType, Literal, Parameter, TypeNode, TypeNodeKind,
-    VariableDeclaration, VariableKind,
+    AccessorKind, Expression, ExpressionKind, KeywordType, Literal, Parameter, TypeMember,
+    TypeMemberKind, TypeMemberName, TypeMemberNameKind, TypeNode, TypeNodeKind,
+    TypeParameterDeclaration, VariableDeclaration, VariableKind,
 };
 
 const MAX_DISPLAY_DEPTH: usize = 64;
@@ -81,10 +82,11 @@ fn display_expression_type(
 fn display_inferred_literal(literal: &Literal, preserve_literal: bool) -> String {
     match (preserve_literal, literal) {
         (true, Literal::String(value)) => display_string_literal(value),
-        (true, Literal::Number(value)) => value.clone(),
+        (true, Literal::Number(value) | Literal::BigInt(value)) => value.clone(),
         (true, Literal::Boolean(value)) => value.to_string(),
         (_, Literal::String(_)) => "string".to_string(),
         (_, Literal::Number(_)) => "number".to_string(),
+        (_, Literal::BigInt(_)) => "bigint".to_string(),
         (_, Literal::Boolean(_)) => "boolean".to_string(),
         (_, Literal::Null) => "null".to_string(),
     }
@@ -95,7 +97,9 @@ fn display_type_node_at_depth(node: &TypeNode, depth: usize) -> Option<String> {
     match &node.kind {
         TypeNodeKind::Keyword(keyword) => Some(display_keyword(*keyword).to_string()),
         TypeNodeKind::Literal(Literal::String(value)) => Some(display_string_literal(value)),
-        TypeNodeKind::Literal(Literal::Number(value)) => Some(value.clone()),
+        TypeNodeKind::Literal(Literal::Number(value) | Literal::BigInt(value)) => {
+            Some(value.clone())
+        }
         TypeNodeKind::Literal(Literal::Boolean(value)) => Some(value.to_string()),
         TypeNodeKind::Literal(Literal::Null) => Some("null".to_string()),
         TypeNodeKind::Array(element) => {
@@ -106,34 +110,36 @@ fn display_type_node_at_depth(node: &TypeNode, depth: usize) -> Option<String> {
         }
         TypeNodeKind::Union(members) => display_type_nodes(members, " | ", depth),
         TypeNodeKind::Intersection(members) => display_type_nodes(members, " & ", depth),
-        TypeNodeKind::Object(properties) => {
-            if properties.is_empty() {
+        TypeNodeKind::Object(members) => {
+            if members.is_empty() {
                 return Some("{}".to_string());
             }
-            let mut rendered = Vec::with_capacity(properties.len());
-            for property in properties {
-                let readonly = if property.readonly { "readonly " } else { "" };
-                let optional = if property.optional { "?" } else { "" };
-                let ty = display_type_node_at_depth(&property.ty, depth)?;
-                rendered.push(format!(
-                    "{readonly}{}{optional}: {ty};",
-                    display_property_name(&property.name)
-                ));
+            if !type_member_list_is_displayable(members) {
+                return None;
             }
+            let rendered = members
+                .iter()
+                .map(|member| display_type_member(member, depth))
+                .collect::<Option<Vec<_>>>()?;
             Some(format!("{{ {} }}", rendered.join(" ")))
         }
         TypeNodeKind::Function {
+            type_parameters,
             parameters,
             return_type,
+            ..
         } => Some(format!(
-            "({}) => {}",
+            "{}({}) => {}",
+            display_type_parameters(type_parameters, depth)?,
             display_parameters(parameters, depth)?,
             display_type_node_at_depth(return_type, depth)?
         )),
         TypeNodeKind::Constructor {
+            type_parameters,
             parameters,
             return_type,
             abstract_constructor,
+            ..
         } => {
             let prefix = if *abstract_constructor {
                 "abstract new"
@@ -141,7 +147,8 @@ fn display_type_node_at_depth(node: &TypeNode, depth: usize) -> Option<String> {
                 "new"
             };
             Some(format!(
-                "{prefix} ({}) => {}",
+                "{prefix} {}({}) => {}",
+                display_type_parameters(type_parameters, depth)?,
                 display_parameters(parameters, depth)?,
                 display_type_node_at_depth(return_type, depth)?
             ))
@@ -211,8 +218,12 @@ fn display_type_node_at_depth(node: &TypeNode, depth: usize) -> Option<String> {
             value_type,
             readonly,
             optional,
+            members,
             ..
         } => {
+            if !members.is_empty() {
+                return None;
+            }
             let readonly = match readonly {
                 Some(true) => "readonly ",
                 Some(false) => "-readonly ",
@@ -250,6 +261,191 @@ fn display_type_node_at_depth(node: &TypeNode, depth: usize) -> Option<String> {
     }
 }
 
+fn type_member_list_is_displayable(members: &[TypeMember]) -> bool {
+    let mut names = Vec::<&str>::new();
+    for member in members {
+        if member.recovered {
+            return false;
+        }
+        if (!matches!(member.kind, TypeMemberKind::Property { .. })
+            && !member.modifiers.nodes.is_empty())
+            || member
+                .modifiers
+                .nodes
+                .iter()
+                .enumerate()
+                .any(|(index, modifier)| {
+                    !matches!(modifier.kind, crate::syntax::TypeMemberModifier::Readonly)
+                        || member.modifiers.nodes[..index]
+                            .iter()
+                            .any(|prior| prior.kind == modifier.kind)
+                })
+        {
+            return false;
+        }
+        let name = match &member.kind {
+            TypeMemberKind::Property { name, .. } | TypeMemberKind::Method { name, .. } => name,
+            TypeMemberKind::Accessor { .. }
+            | TypeMemberKind::Call { .. }
+            | TypeMemberKind::Construct { .. }
+            | TypeMemberKind::Index { .. } => return false,
+        };
+        let TypeMemberNameKind::Identifier(name) = &name.kind else {
+            return false;
+        };
+        if names.contains(&name.as_str()) {
+            return false;
+        }
+        names.push(name);
+    }
+    true
+}
+
+fn display_type_member(member: &TypeMember, depth: usize) -> Option<String> {
+    let readonly = if member.modifiers.readonly {
+        "readonly "
+    } else {
+        ""
+    };
+    Some(match &member.kind {
+        TypeMemberKind::Property {
+            name,
+            ty,
+            optional,
+            initializer,
+        } => {
+            if initializer.is_some() {
+                return None;
+            }
+            format!(
+                "{readonly}{}{}: {};",
+                display_type_member_name(name)?,
+                if *optional { "?" } else { "" },
+                ty.as_ref().map_or_else(
+                    || Some("any".to_string()),
+                    |ty| display_type_node_at_depth(ty, depth)
+                )?
+            )
+        }
+        TypeMemberKind::Method {
+            name,
+            optional,
+            type_parameters,
+            parameters,
+            return_type,
+        } => format!(
+            "{}{}{}({}): {};",
+            display_type_member_name(name)?,
+            if *optional { "?" } else { "" },
+            display_type_parameters(type_parameters, depth)?,
+            display_parameters(parameters, depth)?,
+            return_type.as_ref().map_or_else(
+                || Some("any".to_string()),
+                |ty| display_type_node_at_depth(ty, depth)
+            )?
+        ),
+        TypeMemberKind::Call {
+            type_parameters,
+            parameters,
+            return_type,
+        } => format!(
+            "{}({}): {};",
+            display_type_parameters(type_parameters, depth)?,
+            display_parameters(parameters, depth)?,
+            return_type.as_ref().map_or_else(
+                || Some("any".to_string()),
+                |ty| display_type_node_at_depth(ty, depth)
+            )?
+        ),
+        TypeMemberKind::Construct {
+            type_parameters,
+            parameters,
+            return_type,
+        } => format!(
+            "new {}({}): {};",
+            display_type_parameters(type_parameters, depth)?,
+            display_parameters(parameters, depth)?,
+            return_type.as_ref().map_or_else(
+                || Some("any".to_string()),
+                |ty| display_type_node_at_depth(ty, depth)
+            )?
+        ),
+        TypeMemberKind::Index {
+            parameters,
+            value_type,
+        } => format!(
+            "{readonly}[{}]: {};",
+            display_parameters(parameters, depth)?,
+            display_type_node_at_depth(value_type.as_ref()?, depth)?
+        ),
+        TypeMemberKind::Accessor {
+            name,
+            accessor,
+            parameters,
+            return_type,
+        } => format!(
+            "{} {}({}){};",
+            match accessor {
+                AccessorKind::Get => "get",
+                AccessorKind::Set => "set",
+            },
+            display_type_member_name(name)?,
+            display_parameters(parameters, depth)?,
+            return_type.as_ref().map_or_else(
+                || Some(String::new()),
+                |ty| Some(format!(": {}", display_type_node_at_depth(ty, depth)?))
+            )?
+        ),
+    })
+}
+
+fn display_type_member_name(name: &TypeMemberName) -> Option<String> {
+    match &name.kind {
+        TypeMemberNameKind::Identifier(name)
+        | TypeMemberNameKind::NumericLiteral(name)
+        | TypeMemberNameKind::BigIntLiteral(name) => Some(name.clone()),
+        TypeMemberNameKind::StringLiteral(name) => Some(display_string_literal(name)),
+        TypeMemberNameKind::Computed(_) => None,
+    }
+}
+
+fn display_type_parameters(
+    parameters: &[TypeParameterDeclaration],
+    depth: usize,
+) -> Option<String> {
+    if parameters.is_empty() {
+        return Some(String::new());
+    }
+    parameters
+        .iter()
+        .map(|parameter| {
+            if parameter.const_parameter || parameter.in_variance || parameter.out_variance {
+                return None;
+            }
+            let constraint = parameter.constraint.as_ref().map_or_else(
+                || Some(String::new()),
+                |constraint| {
+                    Some(format!(
+                        " extends {}",
+                        display_type_node_at_depth(constraint, depth)?
+                    ))
+                },
+            )?;
+            let default = parameter.default.as_ref().map_or_else(
+                || Some(String::new()),
+                |default| {
+                    Some(format!(
+                        " = {}",
+                        display_type_node_at_depth(default, depth)?
+                    ))
+                },
+            )?;
+            Some(format!("{}{constraint}{default}", parameter.name))
+        })
+        .collect::<Option<Vec<_>>>()
+        .map(|parameters| format!("<{}>", parameters.join(", ")))
+}
+
 fn display_type_nodes(nodes: &[TypeNode], separator: &str, depth: usize) -> Option<String> {
     nodes
         .iter()
@@ -267,6 +463,9 @@ fn display_parameters(parameters: &[Parameter], depth: usize) -> Option<String> 
 }
 
 fn display_parameter_at_depth(parameter: &Parameter, depth: usize) -> Option<String> {
+    if parameter.initializer.is_some() || !parameter.modifiers.is_empty() {
+        return None;
+    }
     let annotation = display_parameter_type_at_depth(parameter, depth)?;
     let rest = if parameter.rest { "..." } else { "" };
     let optional = if parameter.optional { "?" } else { "" };
@@ -274,6 +473,11 @@ fn display_parameter_at_depth(parameter: &Parameter, depth: usize) -> Option<Str
 }
 
 fn display_parameter_type_at_depth(parameter: &Parameter, depth: usize) -> Option<String> {
+    if !parameter.modifiers.is_empty()
+        || (parameter.initializer.is_some() && parameter.annotation.is_none())
+    {
+        return None;
+    }
     parameter.annotation.as_ref().map_or_else(
         || Some("any".to_string()),
         |annotation| display_type_node_at_depth(annotation, depth),
@@ -294,6 +498,7 @@ const fn display_keyword(keyword: KeywordType) -> &'static str {
         KeywordType::BigInt => "bigint",
         KeywordType::Object => "object",
         KeywordType::Symbol => "symbol",
+        KeywordType::UniqueSymbol => "unique symbol",
     }
 }
 

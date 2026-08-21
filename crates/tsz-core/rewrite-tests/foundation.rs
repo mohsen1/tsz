@@ -1051,13 +1051,23 @@ fn readonly_object_members_require_complete_mapped_type_lookahead() {
     let tsz::syntax::StatementKind::TypeAlias(ordinary) = &statements[0].kind else {
         panic!("ordinary type alias was not represented structurally");
     };
-    let tsz::syntax::TypeNodeKind::Object(properties) = &ordinary.ty.kind else {
+    let tsz::syntax::TypeNodeKind::Object(members) = &ordinary.ty.kind else {
         panic!("ordinary readonly members were parsed as a mapped type");
     };
     assert_eq!(
-        properties
+        members
             .iter()
-            .map(|property| (property.name.as_str(), property.readonly, property.optional))
+            .map(|member| {
+                let tsz::syntax::TypeMemberKind::Property { name, optional, .. } = &member.kind
+                else {
+                    panic!("ordinary member was not a property signature");
+                };
+                (
+                    name.semantic_name().expect("identifier member name"),
+                    member.modifiers.readonly,
+                    *optional,
+                )
+            })
             .collect::<Vec<_>>(),
         [
             ("foo", true, false),
@@ -1122,4 +1132,59 @@ fn dynamic_import_and_import_meta_stay_on_the_expression_path() {
         statements[4].kind,
         tsz::syntax::StatementKind::Import(_)
     ));
+}
+
+#[test]
+fn emit_blocks_unchecked_module_reachability_and_formats_empty_bodies() {
+    let source = "class B{x=0} export class D extends B{constructor(override x:number){super()}}";
+    for no_check in [false, true] {
+        let output = Compiler::new().compile(
+            vec![SourceInput::new("case.ts", Arc::<str>::from(source))],
+            &CompilerOptions {
+                declaration: true,
+                no_check,
+                target: "esnext".to_string(),
+                module: "esnext".to_string(),
+                ..CompilerOptions::default()
+            },
+        );
+        assert_eq!(output.semantic_completion, SemanticCompletion::Deferred);
+        assert_eq!(output.emitted_files.len(), 1);
+        assert!(!output.emitted_files[0].declaration);
+        assert_eq!(
+            output.emitted_files[0].text,
+            "class B {\n    x = 0;\n}\nexport class D extends B {\n    x;\n    constructor(x) {\n        super();\n        this.x = x;\n    }\n}\n"
+        );
+    }
+
+    let ambient = Compiler::new().compile(
+        vec![SourceInput::new(
+            "case.ts",
+            Arc::<str>::from("declare function work():void;export class C{m(){work()}}"),
+        )],
+        &CompilerOptions {
+            declaration: true,
+            target: "esnext".to_string(),
+            module: "esnext".to_string(),
+            ..CompilerOptions::default()
+        },
+    );
+    assert_eq!(ambient.semantic_completion, SemanticCompletion::Deferred);
+    assert!(ambient.emitted_files.iter().all(|file| !file.declaration));
+
+    let output = Compiler::new().compile(
+        vec![SourceInput::new(
+            "case.ts",
+            Arc::<str>::from("export function f(){} export class C{m(){}constructor(){}}"),
+        )],
+        &CompilerOptions {
+            target: "esnext".to_string(),
+            module: "esnext".to_string(),
+            ..CompilerOptions::default()
+        },
+    );
+    assert_eq!(
+        output.emitted_files[0].text,
+        "export function f() { }\nexport class C {\n    m() { }\n    constructor() { }\n}\n"
+    );
 }

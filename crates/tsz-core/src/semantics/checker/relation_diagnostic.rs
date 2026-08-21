@@ -9,12 +9,36 @@ use crate::semantics::relation::{
     RelationFailure, RelationFailureKind, RelationMode, RelationPropertyOrder,
     relate_with_property_order,
 };
-use crate::semantics::types::{TypeId, TypeKind, UnionPolicy};
+use crate::semantics::types::{Completion, IndexKeyKind, TypeId, TypeKind, UnionPolicy};
 
 #[derive(Clone, Copy)]
 pub(super) enum RelationDiagnosticStyle {
     Type,
     Argument,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum RelationDiagnosticOutcome {
+    Compatible,
+    Reported,
+    Deferred,
+}
+
+const fn combine_diagnostic_outcomes(
+    left: RelationDiagnosticOutcome,
+    right: RelationDiagnosticOutcome,
+) -> RelationDiagnosticOutcome {
+    if matches!(left, RelationDiagnosticOutcome::Reported)
+        || matches!(right, RelationDiagnosticOutcome::Reported)
+    {
+        RelationDiagnosticOutcome::Reported
+    } else if matches!(left, RelationDiagnosticOutcome::Deferred)
+        || matches!(right, RelationDiagnosticOutcome::Deferred)
+    {
+        RelationDiagnosticOutcome::Deferred
+    } else {
+        RelationDiagnosticOutcome::Compatible
+    }
 }
 
 pub(super) enum ContextualPropertyType {
@@ -42,25 +66,47 @@ impl Checker<'_> {
         target_order: Option<PropertyOrderTree>,
         mode: RelationMode,
         style: RelationDiagnosticStyle,
-    ) {
+    ) -> RelationDiagnosticOutcome {
         let (property_order, target_origins) = self.relation_origins(target, target_order.as_ref());
         let Err(failure) = relate_with_property_order(self, source, target, mode, property_order)
         else {
-            return;
+            return RelationDiagnosticOutcome::Compatible;
         };
+        if let Some(expression) = source_expression {
+            for outcome in [
+                self.report_contextual_array_elements(
+                    expression,
+                    target,
+                    target_order.as_ref(),
+                    mode,
+                ),
+                self.report_contextual_object_properties(
+                    expression,
+                    target,
+                    target_order.as_ref(),
+                    mode,
+                ),
+            ] {
+                if !matches!(outcome, RelationDiagnosticOutcome::Compatible) {
+                    return outcome;
+                }
+            }
+        }
         match failure.kind {
             RelationFailureKind::Deferred => {
                 self.semantic_completion = self
                     .semantic_completion
                     .combine(SemanticCompletion::Deferred);
-                return;
+                return RelationDiagnosticOutcome::Deferred;
             }
             RelationFailureKind::Cycle => {
                 self.semantic_completion =
                     self.semantic_completion.combine(SemanticCompletion::Cycle);
-                return;
+                return RelationDiagnosticOutcome::Deferred;
             }
-            RelationFailureKind::InvalidProjection => return,
+            RelationFailureKind::InvalidProjection => {
+                return RelationDiagnosticOutcome::Deferred;
+            }
             RelationFailureKind::ComplexityLimit => {
                 self.semantic_completion =
                     self.semantic_completion.combine(SemanticCompletion::Limit);
@@ -70,7 +116,7 @@ impl Checker<'_> {
                     "Type instantiation is excessively deep and possibly infinite.".to_string(),
                     2589,
                 );
-                return;
+                return RelationDiagnosticOutcome::Reported;
             }
             RelationFailureKind::Incompatible
             | RelationFailureKind::MissingProperty(_)
@@ -86,16 +132,26 @@ impl Checker<'_> {
             | RelationFailureKind::Return => {}
         }
 
-        if source_expression.is_some_and(|expression| {
-            self.report_contextual_array_elements(expression, target, target_order.as_ref(), mode)
-                || self.report_contextual_object_properties(
-                    expression,
-                    target,
-                    target_order.as_ref(),
-                    mode,
-                )
-        }) {
-            return;
+        for ty in [source, target] {
+            match self.requires_authored_shape_display(ty) {
+                Completion::Complete(false) => {}
+                Completion::Complete(true) | Completion::Deferred => {
+                    self.semantic_completion = self
+                        .semantic_completion
+                        .combine(SemanticCompletion::Deferred);
+                    return RelationDiagnosticOutcome::Deferred;
+                }
+                Completion::Cycle => {
+                    self.semantic_completion =
+                        self.semantic_completion.combine(SemanticCompletion::Cycle);
+                    return RelationDiagnosticOutcome::Deferred;
+                }
+                Completion::Limit => {
+                    self.semantic_completion =
+                        self.semantic_completion.combine(SemanticCompletion::Limit);
+                    return RelationDiagnosticOutcome::Deferred;
+                }
+            }
         }
 
         let diagnostic_span = source_expression
@@ -132,6 +188,7 @@ impl Checker<'_> {
             related,
             primary.clone(),
         );
+        RelationDiagnosticOutcome::Reported
     }
 
     fn relation_origins(
@@ -180,6 +237,7 @@ impl Checker<'_> {
                 );
                 for (name, child) in properties {
                     if let Some(property) = semantic_properties
+                        .properties
                         .iter()
                         .find(|property| &property.name == name)
                     {
@@ -288,13 +346,13 @@ impl Checker<'_> {
         target: TypeId,
         target_order: Option<&PropertyOrderTree>,
         mode: RelationMode,
-    ) -> bool {
+    ) -> RelationDiagnosticOutcome {
         let expression = peel_parentheses(expression);
         let ExpressionKind::Array(elements) = &expression.kind else {
-            return false;
+            return RelationDiagnosticOutcome::Compatible;
         };
         let Some(target_element) = self.contextual_array_element_type(target) else {
-            return false;
+            return RelationDiagnosticOutcome::Compatible;
         };
         let Some(element_types) = elements
             .iter()
@@ -305,12 +363,13 @@ impl Checker<'_> {
             })
             .collect::<Option<Vec<_>>>()
         else {
-            return false;
+            return RelationDiagnosticOutcome::Compatible;
         };
 
+        let mut outcome = RelationDiagnosticOutcome::Compatible;
         for (element, source_element) in elements.iter().zip(element_types) {
             let diagnostic_expression = peel_parentheses(element);
-            self.report_relation(
+            let child = self.report_relation(
                 source_element,
                 target_element,
                 diagnostic_expression.span,
@@ -319,8 +378,9 @@ impl Checker<'_> {
                 mode,
                 RelationDiagnosticStyle::Type,
             );
+            outcome = combine_diagnostic_outcomes(outcome, child);
         }
-        true
+        outcome
     }
 
     /// An array target supplies its element type as context. A union made
@@ -363,22 +423,31 @@ impl Checker<'_> {
             return ContextualPropertyType::Deferred;
         };
         match self.store.kind(target).clone() {
-            TypeKind::Object(properties) | TypeKind::ClassInstance { properties, .. } => properties
-                .into_iter()
+            TypeKind::Object(shape)
+            | TypeKind::ClassInstance {
+                properties: shape, ..
+            } => shape
+                .properties
+                .iter()
                 .find(|property| property.name == name)
-                .map_or(ContextualPropertyType::Absent, |property| {
-                    ContextualPropertyType::Known(property.ty)
-                }),
-            TypeKind::StringIndex(value) => ContextualPropertyType::Known(value),
+                .map(|property| ContextualPropertyType::Known(property.ty))
+                .or_else(|| {
+                    shape
+                        .index(IndexKeyKind::String)
+                        .map(|index| ContextualPropertyType::Known(index.value))
+                })
+                .unwrap_or(ContextualPropertyType::Absent),
             TypeKind::Union(members) => {
                 let Some(member_properties) = members
                     .into_iter()
                     .map(|member| {
                         let member = self.complete_type(member)?;
                         match self.store.kind(member) {
-                            TypeKind::Object(properties)
-                            | TypeKind::ClassInstance { properties, .. } => {
-                                Some(properties.clone())
+                            TypeKind::Object(shape)
+                            | TypeKind::ClassInstance {
+                                properties: shape, ..
+                            } if shape.index_signatures.is_empty() => {
+                                Some(shape.properties.clone())
                             }
                             _ => None,
                         }
@@ -513,8 +582,8 @@ impl Checker<'_> {
                 };
                 Some(left == &right)
             }
+            (Literal::BigInt(_), TypeKind::BigInt) | (Literal::Null, TypeKind::Null) => Some(true),
             (Literal::Boolean(left), TypeKind::LiteralBoolean(right, _)) => Some(*left == right),
-            (Literal::Null, TypeKind::Null) => Some(true),
             (_, TypeKind::Union(members)) => {
                 for member in members {
                     if self.literal_matches_type(literal, member)? {
@@ -524,7 +593,11 @@ impl Checker<'_> {
                 Some(false)
             }
             (
-                Literal::String(_) | Literal::Number(_) | Literal::Boolean(_) | Literal::Null,
+                Literal::String(_)
+                | Literal::Number(_)
+                | Literal::BigInt(_)
+                | Literal::Boolean(_)
+                | Literal::Null,
                 TypeKind::LiteralString(_, _)
                 | TypeKind::LiteralNumber(_, _)
                 | TypeKind::LiteralBoolean(_, _)
@@ -540,13 +613,12 @@ impl Checker<'_> {
         target: TypeId,
         target_order: Option<&PropertyOrderTree>,
         mode: RelationMode,
-    ) -> bool {
+    ) -> RelationDiagnosticOutcome {
         let expression = peel_parentheses(expression);
         let ExpressionKind::Object(properties) = &expression.kind else {
-            return false;
+            return RelationDiagnosticOutcome::Compatible;
         };
-        let reported_before = self.diagnostics.len();
-        let mut deferred = false;
+        let mut outcome = RelationDiagnosticOutcome::Compatible;
         for property in properties {
             let target_property = match self.contextual_object_property_type(
                 target,
@@ -556,7 +628,8 @@ impl Checker<'_> {
                 ContextualPropertyType::Known(target_property) => target_property,
                 ContextualPropertyType::Absent => continue,
                 ContextualPropertyType::Deferred => {
-                    deferred = true;
+                    outcome =
+                        combine_diagnostic_outcomes(outcome, RelationDiagnosticOutcome::Deferred);
                     continue;
                 }
             };
@@ -567,7 +640,7 @@ impl Checker<'_> {
             else {
                 continue;
             };
-            self.report_relation(
+            let child = self.report_relation(
                 source_property,
                 target_property,
                 property.name_span,
@@ -576,13 +649,14 @@ impl Checker<'_> {
                 mode,
                 RelationDiagnosticStyle::Type,
             );
+            outcome = combine_diagnostic_outcomes(outcome, child);
         }
-        if deferred {
+        if matches!(outcome, RelationDiagnosticOutcome::Deferred) {
             self.semantic_completion = self
                 .semantic_completion
                 .combine(SemanticCompletion::Deferred);
         }
-        deferred || self.diagnostics.len() > reported_before
+        outcome
     }
 
     fn relation_continuations(
@@ -601,10 +675,10 @@ impl Checker<'_> {
                 TypeKind::Array(_)
                     | TypeKind::Tuple(_)
                     | TypeKind::Object(_)
-                    | TypeKind::StringIndex(_)
                     | TypeKind::ClassInstance { .. }
                     | TypeKind::ClassConstructor { .. }
                     | TypeKind::Function(_)
+                    | TypeKind::ShapeFunction(_)
             );
             if target_is_union && !source_is_structured {
                 return Vec::new();

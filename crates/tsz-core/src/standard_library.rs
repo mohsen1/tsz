@@ -58,6 +58,7 @@ pub struct StandardLibraryEnvironment {
     value_names: BTreeMap<String, DeclId>,
     string_record_types: BTreeSet<DeclId>,
     array_type: Option<DeclId>,
+    readonly_array_type: Option<DeclId>,
     undefined_value: Option<DeclId>,
 }
 
@@ -117,6 +118,11 @@ impl StandardLibraryEnvironment {
     }
 
     #[must_use]
+    pub(crate) fn is_rest_array_type(&self, id: DeclId) -> bool {
+        self.array_type == Some(id) || self.readonly_array_type == Some(id)
+    }
+
+    #[must_use]
     pub(crate) fn is_undefined_value(&self, id: DeclId) -> bool {
         self.undefined_value == Some(id)
     }
@@ -164,6 +170,7 @@ impl StandardLibraryEnvironment {
         let mut value_names = BTreeMap::new();
         let mut string_record_types = BTreeSet::new();
         let mut array_type = None;
+        let mut readonly_array_type = None;
         let mut undefined_value = None;
         for (name, meaning) in names {
             let meaning = if meaning == 0 {
@@ -185,6 +192,9 @@ impl StandardLibraryEnvironment {
                 Meaning::Type => {
                     if name == "Array" {
                         array_type = Some(id);
+                    }
+                    if name == "ReadonlyArray" {
+                        readonly_array_type = Some(id);
                     }
                     if string_record_type_names.contains(&name) {
                         string_record_types.insert(id);
@@ -220,6 +230,7 @@ impl StandardLibraryEnvironment {
             value_names,
             string_record_types,
             array_type,
+            readonly_array_type,
             undefined_value,
         }
     }

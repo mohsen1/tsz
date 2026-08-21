@@ -439,7 +439,7 @@ impl Compiler {
         let CheckResult {
             diagnostics: semantic_diagnostics,
             type_count,
-            semantic_completion,
+            mut semantic_completion,
         } = if options.no_check || has_missing_essential_types || has_fatal_option_error {
             CheckResult {
                 diagnostics: Vec::new(),
@@ -472,10 +472,9 @@ impl Compiler {
         let has_errors = diagnostics
             .iter()
             .any(|diagnostic| diagnostic.category == DiagnosticCategory::Error);
-        let mut emitted_files = if options.no_emit
-            || has_fatal_option_error
-            || (has_errors && options.no_emit_on_error)
-        {
+        let emit_suppressed =
+            options.no_emit || has_fatal_option_error || (has_errors && options.no_emit_on_error);
+        let mut emitted_files = if emit_suppressed {
             Vec::new()
         } else {
             program
@@ -487,6 +486,26 @@ impl Compiler {
                 .collect()
         };
         emitted_files.sort_by(|left, right| left.path.cmp(&right.path));
+        let planned_declarations = program
+            .files
+            .iter()
+            .filter(|file| emit_plan.for_file(file.source.id).declaration.is_some())
+            .count();
+        let planned_javascript = program
+            .files
+            .iter()
+            .filter(|file| emit_plan.for_file(file.source.id).javascript.is_some())
+            .count();
+        if !emit_suppressed
+            && (emitted_files.iter().filter(|file| file.declaration).count() < planned_declarations
+                || emitted_files
+                    .iter()
+                    .filter(|file| !file.declaration)
+                    .count()
+                    < planned_javascript)
+        {
+            semantic_completion = semantic_completion.combine(SemanticCompletion::Deferred);
+        }
         let emit_time = emit_start.elapsed();
 
         let lines = program
