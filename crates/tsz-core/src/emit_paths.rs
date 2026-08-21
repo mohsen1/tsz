@@ -65,6 +65,8 @@ impl EmitPlan {
             .filter(|file| {
                 file.syntax.has_unmodeled_function_products()
                     || file.syntax.has_unmodeled_class_products()
+                    || file.syntax.has_unmodeled_declaration_hosts()
+                    || file.has_unmodeled_javascript_module_products()
             })
             .map(|file| file.source.id)
             .collect::<BTreeSet<_>>();
@@ -90,8 +92,12 @@ impl EmitPlan {
                 // and invalid abstract functions must not be reprinted as
                 // ambient declarations. Some class modifiers and recovered
                 // members likewise have no exact runtime/declaration printer
-                // ownership. Block both products, including under `noCheck`,
-                // until those syntax-owned summaries exist.
+                // ownership. Namespace, module, and ambient-global declaration
+                // hosts likewise lack both runtime and declaration lowering.
+                // JavaScript-format module roots need product-specific runtime
+                // markers and declaration elision that are not owned.
+                // Block both products, including under `noCheck`, until those
+                // syntax-owned summaries exist.
                 plan.incomplete_products = true;
                 continue;
             }

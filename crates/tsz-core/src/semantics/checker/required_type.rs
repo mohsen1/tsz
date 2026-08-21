@@ -4,11 +4,12 @@ use crate::bind::{DeclarationKind, Meaning, ScopeId};
 use crate::program::SemanticCompletion;
 use crate::semantics::relation::RelationContext;
 use crate::semantics::types::{Completion, DeferredType, TypeId, TypeKind};
-use crate::source::{DeclId, FileId, NodeId};
+use crate::source::{DeclId, FileId, NodeId, SourceKind};
 use crate::syntax::{
-    ArrowBody, ClassMemberKind, Expression, ExpressionKind, Literal, Parameter, Statement,
-    StatementKind, SwitchClauseKind, TypeMember, TypeMemberKind, TypeMemberName,
-    TypeMemberNameKind, TypeNode, TypeNodeKind, TypeParameterDeclaration, UnaryOperator,
+    AccessorKind, ArrowBody, ClassDeclaration, ClassMemberKind, Expression, ExpressionKind,
+    Literal, Parameter, Statement, StatementKind, SwitchClauseKind, TypeMember, TypeMemberKind,
+    TypeMemberName, TypeMemberNameKind, TypeNode, TypeNodeKind, TypeParameterDeclaration,
+    UnaryOperator,
 };
 
 use super::{
@@ -35,6 +36,12 @@ impl Checker<'_> {
         let empty = HashMap::new();
         for file_id in &self.program.source_order {
             let file_id = *file_id;
+            if self.program.files[file_id.0 as usize]
+                .syntax
+                .has_unmodeled_declaration_hosts()
+            {
+                let _ = self.require_completion(Completion::<()>::Deferred);
+            }
             let statements = &self.program.files[file_id.0 as usize].syntax.statements;
             for (index, statement) in statements.iter().enumerate() {
                 self.visit_required_statement(
@@ -113,7 +120,18 @@ impl Checker<'_> {
                 }
             }
             StatementKind::Function(declaration) => {
+                let source = &self.program.files[file.0 as usize].source;
+                let declaration_source = is_declaration_source(&source.path);
+                let javascript_source = matches!(
+                    source.kind(),
+                    SourceKind::JavaScript | SourceKind::JavaScriptJsx
+                );
                 if !declaration.overload_completion_supported {
+                    let _ = self.require_completion(Completion::<()>::Deferred);
+                }
+                if javascript_source && !declaration.has_body {
+                    // JavaScript overload syntax requires TS8017 rather than
+                    // the TypeScript overload diagnostics modeled below.
                     let _ = self.require_completion(Completion::<()>::Deferred);
                 }
                 if declaration.is_async || declaration.abstract_declaration {
@@ -126,7 +144,7 @@ impl Checker<'_> {
                 if !declaration.has_body
                     && !declaration.declared
                     && !declaration.abstract_declaration
-                    && !is_declaration_source(&self.program.files[file.0 as usize].source.path)
+                    && !declaration_source
                 {
                     match next_statement.map(|next| &next.kind) {
                         Some(StatementKind::Function(next)) if next.name == declaration.name => {}
@@ -163,7 +181,8 @@ impl Checker<'_> {
                 }
                 if !declaration.has_body
                     && !declaration.declared
-                    && is_declaration_source(&self.program.files[file.0 as usize].source.path)
+                    && !declaration.exported
+                    && declaration_source
                 {
                     // TS1046 is not owned yet. A declaration-file function
                     // without `declare` must not become a false Complete.
@@ -178,6 +197,14 @@ impl Checker<'_> {
                         &declaration.name,
                     )
                     .unwrap_or_else(|| synthetic_identity(file, declaration.name_span.start));
+                if !self.declaration_value_host_is_modeled(identity, DeclarationKind::Function) {
+                    let _ = self.require_completion(Completion::<()>::Deferred);
+                }
+                if declaration.has_body && (declaration.declared || declaration_source) {
+                    // TS1183 and the surrounding ambient-host rules are not
+                    // owned by the ordinary overload validator.
+                    let _ = self.require_completion(Completion::<()>::Deferred);
+                }
                 self.validate_function_overload_group(identity);
                 let function_types = self.extend_type_parameters(
                     identity,
@@ -225,13 +252,6 @@ impl Checker<'_> {
                 }
             }
             StatementKind::Class(declaration) => {
-                if !declaration.declared
-                    && !is_declaration_source(&self.program.files[file.0 as usize].source.path)
-                    && !self.class_bodyless_hosts_are_modeled(file, declaration)
-                {
-                    let _ = self.require_completion(Completion::<()>::Deferred);
-                }
-                let class_scope = self.node_scope(file, statement.id, scope);
                 let identity = self
                     .find_declaration(
                         file,
@@ -240,6 +260,30 @@ impl Checker<'_> {
                         &declaration.name,
                     )
                     .unwrap_or_else(|| synthetic_identity(file, declaration.name_span.start));
+                let source = &self.program.files[file.0 as usize].source;
+                let declaration_source = is_declaration_source(&source.path);
+                let javascript_source = matches!(
+                    source.kind(),
+                    SourceKind::JavaScript | SourceKind::JavaScriptJsx
+                );
+                if !self.declaration_value_host_is_modeled(identity, DeclarationKind::Class)
+                    || !self.is_single_type_symbol_declaration(identity)
+                    || class_has_multiple_constructor_implementations(declaration)
+                    || !class_member_declaration_groups_are_modeled(declaration)
+                    || javascript_source && class_has_bodyless_member(declaration)
+                    || (declaration_source && !declaration.declared && !declaration.exported)
+                    || (declaration.declared || declaration_source)
+                        && class_has_ambient_implementation(declaration)
+                {
+                    let _ = self.require_completion(Completion::<()>::Deferred);
+                }
+                if !declaration.declared
+                    && !declaration_source
+                    && !self.class_bodyless_hosts_are_modeled(file, declaration)
+                {
+                    let _ = self.require_completion(Completion::<()>::Deferred);
+                }
+                let class_scope = self.node_scope(file, statement.id, scope);
                 let class_types = self.extend_type_parameters(
                     identity,
                     &declaration.type_parameters,
@@ -1738,6 +1782,103 @@ fn bounded_class_parameters(
             && parameter.modifiers.is_empty()
             && parameter.overload_completion_supported
             && (!options.effective_no_implicit_any() || parameter.annotation.is_some())
+    })
+}
+
+fn class_has_bodyless_member(declaration: &ClassDeclaration) -> bool {
+    declaration.members.iter().any(|member| {
+        matches!(
+            member.kind,
+            ClassMemberKind::Constructor {
+                has_body: false,
+                ..
+            } | ClassMemberKind::Method {
+                has_body: false,
+                ..
+            }
+        )
+    })
+}
+
+fn class_has_multiple_constructor_implementations(declaration: &ClassDeclaration) -> bool {
+    declaration
+        .members
+        .iter()
+        .filter(|member| {
+            matches!(
+                member.kind,
+                ClassMemberKind::Constructor { has_body: true, .. }
+            )
+        })
+        .take(2)
+        .count()
+        > 1
+}
+
+#[derive(Default)]
+struct ClassMemberDeclarationGroup {
+    methods: usize,
+    method_implementations: usize,
+    getters: usize,
+    setters: usize,
+    properties: usize,
+}
+
+fn class_member_declaration_groups_are_modeled(declaration: &ClassDeclaration) -> bool {
+    let mut groups = HashMap::<(bool, &str), ClassMemberDeclarationGroup>::new();
+    let mut uncanonical_members = 0;
+    for member in &declaration.members {
+        if !matches!(member.kind, ClassMemberKind::Constructor { .. })
+            && !member.overload_completion_supported
+        {
+            uncanonical_members += 1;
+            if uncanonical_members >= 2 {
+                return false;
+            }
+        }
+        let group = groups
+            .entry((member.modifiers.static_member, member.name.as_str()))
+            .or_default();
+        match &member.kind {
+            ClassMemberKind::Constructor { .. } => continue,
+            ClassMemberKind::Property { .. } => group.properties += 1,
+            ClassMemberKind::Method {
+                has_body,
+                accessor: None,
+                ..
+            } => {
+                group.methods += 1;
+                group.method_implementations += usize::from(*has_body);
+            }
+            ClassMemberKind::Method {
+                accessor: Some(AccessorKind::Get),
+                ..
+            } => group.getters += 1,
+            ClassMemberKind::Method {
+                accessor: Some(AccessorKind::Set),
+                ..
+            } => group.setters += 1,
+        }
+    }
+    groups.values().all(|group| {
+        if group.methods > 0 {
+            group.method_implementations <= 1
+                && group.getters == 0
+                && group.setters == 0
+                && group.properties == 0
+        } else if group.properties > 0 {
+            group.properties == 1 && group.getters == 0 && group.setters == 0
+        } else {
+            group.getters <= 1 && group.setters <= 1
+        }
+    })
+}
+
+fn class_has_ambient_implementation(declaration: &ClassDeclaration) -> bool {
+    declaration.members.iter().any(|member| match &member.kind {
+        ClassMemberKind::Constructor { has_body, .. }
+        | ClassMemberKind::Method { has_body, .. } => *has_body,
+        ClassMemberKind::Property { initializer, .. } => initializer.is_some(),
     })
 }
 

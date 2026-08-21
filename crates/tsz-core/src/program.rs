@@ -121,15 +121,28 @@ pub struct ProgramFile {
 }
 
 impl ProgramFile {
-    /// Whether this source owns a module-local root scope. `.mts`/`.cts`
-    /// sources are modules by path even without authored import/export syntax.
+    /// Whether this source owns a module-local root scope. Module-format
+    /// extensions are modules by path even without authored import/export syntax.
     #[must_use]
     pub fn is_external_module(&self) -> bool {
-        self.syntax.is_external_module()
-            || self.source.path.extension().is_some_and(|extension| {
-                let extension = extension.to_string_lossy();
-                extension.eq_ignore_ascii_case("mts") || extension.eq_ignore_ascii_case("cts")
-            })
+        self.syntax.is_external_module() || self.has_source_extension(&["mts", "cts", "mjs", "cjs"])
+    }
+
+    /// Whether emit needs module-format lowering that the current printers do
+    /// not own. `.mjs`/`.cjs` runtime markers and declaration elision differ by
+    /// product format, including when imports or exports are authored.
+    #[must_use]
+    pub(crate) fn has_unmodeled_javascript_module_products(&self) -> bool {
+        self.has_source_extension(&["mjs", "cjs"])
+    }
+
+    fn has_source_extension(&self, expected: &[&str]) -> bool {
+        self.source.path.extension().is_some_and(|extension| {
+            let extension = extension.to_string_lossy();
+            expected
+                .iter()
+                .any(|expected| extension.eq_ignore_ascii_case(expected))
+        })
     }
 }
 

@@ -71,6 +71,7 @@ impl<'a> Parser<'a> {
                 function_products_supported: self.product_capabilities.functions_supported,
                 class_products_supported: self.product_capabilities.classes_supported,
                 declaration_products_supported: self.product_capabilities.declarations_supported,
+                declaration_hosts_supported: self.product_capabilities.declaration_hosts_supported,
                 commonjs_class_products_supported: self
                     .product_capabilities
                     .commonjs_classes_supported(),
@@ -82,7 +83,7 @@ impl<'a> Parser<'a> {
     fn parse_statement(&mut self) -> Statement {
         let start = self.current().span.start as usize;
         if self.starts_import_declaration() {
-            let kind = StatementKind::Import(self.parse_import_declaration());
+            let kind = StatementKind::Import(self.parse_product_owned_import_declaration());
             let end = self.previous_end().max(start);
             return Statement {
                 id: self.alloc_node(),
@@ -91,7 +92,7 @@ impl<'a> Parser<'a> {
             };
         }
         if self.starts_export_declaration() {
-            let kind = StatementKind::Export(self.parse_export_declaration());
+            let kind = StatementKind::Export(self.parse_product_owned_export_declaration());
             let end = self.previous_end().max(start);
             return Statement {
                 id: self.alloc_node(),
@@ -107,10 +108,10 @@ impl<'a> Parser<'a> {
             TokenKind::Function => StatementKind::Function(self.parse_function(modifiers)),
             TokenKind::Class => StatementKind::Class(self.parse_class(modifiers)),
             TokenKind::Type if self.starts_type_alias_declaration() => {
-                StatementKind::TypeAlias(self.parse_type_alias(modifiers.exported))
+                StatementKind::TypeAlias(self.parse_product_owned_type_alias(modifiers.exported))
             }
             TokenKind::Interface => {
-                StatementKind::Interface(self.parse_interface(modifiers.exported))
+                StatementKind::Interface(self.parse_product_owned_interface(modifiers.exported))
             }
             TokenKind::If => StatementKind::If(self.parse_if_statement()),
             TokenKind::Switch => StatementKind::Switch(self.parse_switch_statement()),
@@ -720,7 +721,8 @@ impl<'a> Parser<'a> {
             name,
             name_span,
             span: start.merge(self.previous().span),
-            overload_completion_supported: false,
+            overload_completion_supported: identifier_name
+                && self.diagnostics.len() == diagnostic_count,
             emit_products_supported: modifiers.property_products_supported()
                 && self.diagnostics.len() == diagnostic_count,
             modifiers,

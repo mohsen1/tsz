@@ -69,5 +69,9 @@ path = "rewrite-tests/import_aliases.rs"
 name = "rewrite_reference_instantiation"
 path = "rewrite-tests/reference_instantiation.rs"
 
+[[test]]
+name = "rewrite_declaration_host_completion"
+path = "rewrite-tests/declaration_host_completion.rs"
+
 [lints]
 workspace = true

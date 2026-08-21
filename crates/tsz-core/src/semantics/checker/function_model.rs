@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::bind::{DeclarationKind, Meaning, ScopeId};
-use crate::source::{DeclId, FileId, NodeId};
+use crate::source::{DeclId, FileId, NodeId, SourceKind};
 use crate::syntax::{
     ArrowBody, ClassMember, ClassMemberKind, Expression, ExpressionKind, FunctionDeclaration,
     Parameter, Statement, StatementKind, TypeNode,
@@ -37,12 +37,12 @@ impl Checker<'_> {
         self.function_group_ids(id).into_iter().take(2).count() > 1
     }
 
-    fn function_group_ids(&self, id: DeclId) -> Vec<DeclId> {
+    fn value_group_ids(&self, id: DeclId) -> Vec<DeclId> {
         let bindings = &self.program.files[id.file.0 as usize].bindings;
         let Some(declaration) = bindings.declaration(id) else {
             return Vec::new();
         };
-        if declaration.kind != DeclarationKind::Function || declaration.meaning != Meaning::Value {
+        if declaration.meaning != Meaning::Value {
             return Vec::new();
         }
         let global_script_group = declaration.scope == ScopeId(0)
@@ -65,12 +65,124 @@ impl Checker<'_> {
                     && candidate_file
                         .bindings
                         .declaration(*candidate)
-                        .is_some_and(|candidate| {
-                            candidate.kind == DeclarationKind::Function
-                                && candidate.meaning == Meaning::Value
-                        })
+                        .is_some_and(|candidate| candidate.meaning == Meaning::Value)
             })
             .collect()
+    }
+
+    fn function_group_ids(&self, id: DeclId) -> Vec<DeclId> {
+        self.value_group_ids(id)
+            .into_iter()
+            .filter(|candidate| {
+                self.program.files[candidate.file.0 as usize]
+                    .bindings
+                    .declaration(*candidate)
+                    .is_some_and(|candidate| candidate.kind == DeclarationKind::Function)
+            })
+            .collect()
+    }
+
+    fn javascript_function_redeclaration_group_is_modeled(&self, group: &[DeclId]) -> bool {
+        let mut has_function = false;
+        let modeled = group.iter().all(|candidate| {
+            let Some(file) = self.program.files.get(candidate.file.0 as usize) else {
+                return false;
+            };
+            if !matches!(
+                file.source.kind(),
+                SourceKind::JavaScript | SourceKind::JavaScriptJsx
+            ) {
+                return false;
+            }
+            match self.models.get(candidate) {
+                Some(DeclarationModel::Function { declaration, .. }) => {
+                    has_function = true;
+                    declaration.has_body
+                        && !declaration.exported
+                        && !declaration.is_async
+                        && !declaration.default_export
+                        && !declaration.declared
+                        && !declaration.abstract_declaration
+                        && declaration.type_parameters.is_empty()
+                        && declaration.return_type.is_none()
+                        && declaration
+                            .parameters
+                            .iter()
+                            .all(|parameter| parameter.annotation.is_none() && !parameter.optional)
+                        && declaration.overload_completion_supported
+                }
+                _ => false,
+            }
+        });
+        modeled && has_function
+    }
+
+    fn collides_with_global_standard_library_value(&self, id: DeclId) -> bool {
+        let Some(file) = self.program.file(id.file) else {
+            return true;
+        };
+        let Some(declaration) = file.bindings.declaration(id) else {
+            return true;
+        };
+        declaration.scope == ScopeId(0)
+            && !file.is_external_module()
+            && self
+                .program
+                .standard_library
+                .resolve(&declaration.name, Meaning::Value)
+                .is_some()
+    }
+
+    /// Whether the binder-owned value group is inside this checkpoint's
+    /// declaration-host boundary. Cross-kind peers and repeated class value
+    /// hosts require merge diagnostics, while multiple function
+    /// implementations require TS2393; none of those owners is modeled yet.
+    pub(super) fn declaration_value_host_is_modeled(
+        &self,
+        id: DeclId,
+        expected_kind: DeclarationKind,
+    ) -> bool {
+        let group = self.value_group_ids(id);
+        if group.is_empty() {
+            return false;
+        }
+        if expected_kind == DeclarationKind::Function
+            && self.collides_with_global_standard_library_value(id)
+        {
+            return false;
+        }
+        if expected_kind == DeclarationKind::Function
+            && self.javascript_function_redeclaration_group_is_modeled(&group)
+        {
+            return true;
+        }
+        if expected_kind == DeclarationKind::Class && group.len() != 1 {
+            return false;
+        }
+        let mut function_implementations = 0;
+        for candidate in group {
+            let Some(bound) = self.program.files[candidate.file.0 as usize]
+                .bindings
+                .declaration(candidate)
+            else {
+                return false;
+            };
+            if bound.kind != expected_kind {
+                return false;
+            }
+            if expected_kind == DeclarationKind::Function {
+                let Some(DeclarationModel::Function { declaration, .. }) =
+                    self.models.get(&candidate)
+                else {
+                    return false;
+                };
+                function_implementations += usize::from(declaration.has_body);
+                if function_implementations > 1 {
+                    return false;
+                }
+            }
+        }
+        true
     }
 
     /// Validate only the overload owners modeled at this checkpoint. Calls
@@ -79,6 +191,9 @@ impl Checker<'_> {
     pub(super) fn validate_function_overload_group(&mut self, id: DeclId) {
         let group = self.function_group_ids(id);
         if group.len() < 2 || group.first() != Some(&id) {
+            return;
+        }
+        if self.javascript_function_redeclaration_group_is_modeled(&self.value_group_ids(id)) {
             return;
         }
 

@@ -1,5 +1,9 @@
-use super::Parser;
-use crate::syntax::{ClassMember, ClassMemberKind, TokenKind};
+use super::{Parser, token_is_binding_identifier};
+use crate::source::SourceKind;
+use crate::syntax::{
+    ClassMember, ClassMemberKind, ExportDeclaration, ImportDeclaration, InterfaceDeclaration,
+    TokenKind, TypeAliasDeclaration,
+};
 
 #[derive(Debug, Clone, Copy, Default)]
 pub(super) struct Modifiers {
@@ -17,6 +21,7 @@ pub(super) struct ProductCapabilities {
     pub(super) classes_supported: bool,
     pub(super) declarations_supported: bool,
     pub(super) commonjs_classes_supported: bool,
+    pub(super) declaration_hosts_supported: bool,
     has_bodyless_class: bool,
     has_module_export: bool,
 }
@@ -28,6 +33,7 @@ impl ProductCapabilities {
             classes_supported: true,
             declarations_supported: true,
             commonjs_classes_supported: true,
+            declaration_hosts_supported: true,
             has_bodyless_class: false,
             has_module_export: false,
         }
@@ -45,6 +51,10 @@ impl ProductCapabilities {
 
     pub(super) const fn observe_explicit_call_type_arguments(&mut self) {
         self.declarations_supported = false;
+    }
+
+    pub(super) const fn observe_unmodeled_declaration_host(&mut self) {
+        self.declaration_hosts_supported = false;
     }
 
     pub(super) const fn commonjs_classes_supported(&self) -> bool {
@@ -74,6 +84,52 @@ impl ProductCapabilities {
 }
 
 impl Parser<'_> {
+    pub(super) fn parse_product_owned_import_declaration(&mut self) -> ImportDeclaration {
+        let declaration = self.parse_import_declaration();
+        if declaration.type_only || declaration.bindings.iter().any(|binding| binding.type_only) {
+            self.observe_javascript_declaration_host();
+        }
+        declaration
+    }
+
+    pub(super) fn parse_product_owned_export_declaration(&mut self) -> ExportDeclaration {
+        let declaration = self.parse_export_declaration();
+        if declaration.type_only
+            || declaration
+                .specifiers
+                .iter()
+                .any(|specifier| specifier.type_only)
+        {
+            self.observe_javascript_declaration_host();
+        }
+        declaration
+    }
+
+    pub(super) fn parse_product_owned_type_alias(
+        &mut self,
+        exported: bool,
+    ) -> TypeAliasDeclaration {
+        let declaration = self.parse_type_alias(exported);
+        self.observe_javascript_declaration_host();
+        declaration
+    }
+
+    pub(super) fn parse_product_owned_interface(&mut self, exported: bool) -> InterfaceDeclaration {
+        let declaration = self.parse_interface(exported);
+        self.observe_javascript_declaration_host();
+        declaration
+    }
+
+    fn observe_javascript_declaration_host(&mut self) {
+        if matches!(
+            self.source.kind(),
+            SourceKind::JavaScript | SourceKind::JavaScriptJsx
+        ) {
+            self.product_capabilities
+                .observe_unmodeled_declaration_host();
+        }
+    }
+
     pub(super) fn parse_modifiers(&mut self) -> Modifiers {
         let mut modifiers = Modifiers::default();
         loop {
@@ -106,6 +162,29 @@ impl Parser<'_> {
                 _ => break,
             }
         }
+        if self.starts_unmodeled_declaration_host() {
+            self.product_capabilities
+                .observe_unmodeled_declaration_host();
+        }
         modifiers
+    }
+
+    fn starts_unmodeled_declaration_host(&self) -> bool {
+        match self.kind() {
+            TokenKind::Module | TokenKind::Namespace => {
+                self.tokens_are_on_same_line(self.index, self.index + 1)
+                    && (self.peek_kind(1).is_identifier()
+                        || self.peek_kind(1) == TokenKind::StringLiteral)
+            }
+            TokenKind::Global => {
+                let next = self.peek_kind(1);
+                matches!(
+                    next,
+                    TokenKind::LeftBrace | TokenKind::Identifier | TokenKind::Export
+                ) || self.tokens_are_on_same_line(self.index, self.index + 1)
+                    && token_is_binding_identifier(next)
+            }
+            _ => false,
+        }
     }
 }

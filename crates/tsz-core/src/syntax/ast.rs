@@ -8,6 +8,7 @@ pub struct SourceUnit {
     pub(crate) class_products_supported: bool,
     pub(crate) declaration_products_supported: bool,
     pub(crate) commonjs_class_products_supported: bool,
+    pub(crate) declaration_hosts_supported: bool,
 }
 
 impl SourceUnit {
@@ -133,6 +134,14 @@ impl SourceUnit {
     #[must_use]
     pub const fn has_unmodeled_commonjs_class_products(&self) -> bool {
         !self.commonjs_class_products_supported
+    }
+
+    /// Whether every authored declaration host has a semantic owner. Module,
+    /// namespace, and ambient-global bodies remain opaque until their scopes
+    /// and declaration rules are represented in the AST and binder.
+    #[must_use]
+    pub const fn has_unmodeled_declaration_hosts(&self) -> bool {
+        !self.declaration_hosts_supported
     }
 }
 

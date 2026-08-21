@@ -1153,7 +1153,7 @@ fn generic_call_emit_erases_types_without_reclassifying_relational_js() {
     let javascript_source = "const Foo=1;const middle=2;Foo < middle > (1);";
     let javascript_output = Compiler::new().compile(
         vec![SourceInput::new(
-            "case.mjs",
+            "case.jsx",
             Arc::<str>::from(javascript_source),
         )],
         &CompilerOptions {
