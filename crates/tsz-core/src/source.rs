@@ -115,6 +115,23 @@ impl SourceText {
         }
     }
 
+    /// True for ordinary `.ts` inputs, excluding declaration and
+    /// extension-selected module/JSX source families.
+    #[must_use]
+    pub(crate) fn is_regular_typescript_source(&self) -> bool {
+        self.kind() == SourceKind::TypeScript
+            && self
+                .path
+                .extension()
+                .and_then(|extension| extension.to_str())
+                .is_some_and(|extension| extension == "ts")
+            && !self
+                .path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.to_ascii_lowercase().ends_with(".d.ts"))
+    }
+
     #[must_use]
     pub fn new(id: FileId, path: PathBuf, text: Arc<str>) -> Self {
         Self::new_with_host_path(id, path.clone(), path, text)

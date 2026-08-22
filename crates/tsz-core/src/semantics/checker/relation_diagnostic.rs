@@ -573,6 +573,9 @@ impl Checker<'_> {
         let target = self.complete_type(target)?;
         match (literal, self.store.kind(target).clone()) {
             (Literal::String(left), TypeKind::LiteralString(right, _)) => Some(left == &right),
+            (Literal::NoSubstitutionTemplate(left), TypeKind::LiteralString(right, _)) => {
+                Some(left.cooked == right)
+            }
             (Literal::Number(left), TypeKind::LiteralNumber(right, _)) => {
                 let left = self
                     .store
@@ -594,6 +597,7 @@ impl Checker<'_> {
             }
             (
                 Literal::String(_)
+                | Literal::NoSubstitutionTemplate(_)
                 | Literal::Number(_)
                 | Literal::BigInt(_)
                 | Literal::Boolean(_)

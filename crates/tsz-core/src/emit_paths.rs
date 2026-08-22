@@ -11,7 +11,9 @@ use std::path::{Component, Path, PathBuf};
 
 use crate::config::{CompilerOptionKey, ProjectProvenance};
 use crate::diagnostics::{Diagnostic, RelatedInformation};
-use crate::program::{CompilerOptions, ProgramFile};
+use crate::program::{
+    CompilerOptions, ProgramFile, has_unmodeled_no_substitution_template_program_products,
+};
 use crate::source::{FileId, SourceText};
 use crate::syntax::StatementKind;
 
@@ -60,16 +62,21 @@ impl EmitPlan {
                 .filter(|file| file.syntax.has_unmodeled_declaration_products())
                 .map(|file| file.source.id),
         );
-        let incomplete_file_products = files
+        let mut incomplete_file_products = files
             .iter()
             .filter(|file| {
                 file.syntax.has_unmodeled_function_products()
                     || file.syntax.has_unmodeled_class_products()
                     || file.syntax.has_unmodeled_declaration_hosts()
+                    || file.syntax.has_unmodeled_default_export_hosts()
+                    || file.syntax.has_unmodeled_template_products()
                     || file.has_unmodeled_javascript_module_products()
             })
             .map(|file| file.source.id)
             .collect::<BTreeSet<_>>();
+        if has_unmodeled_no_substitution_template_program_products(files, options) {
+            incomplete_file_products.extend(files.iter().map(|file| file.source.id));
+        }
         let file_slots = files
             .iter()
             .map(|file| file.source.id.0 as usize + 1)

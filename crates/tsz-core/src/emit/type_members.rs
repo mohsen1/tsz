@@ -4,6 +4,7 @@ use crate::syntax::{
     TypeMemberNameKind, TypeNode, TypeNodeKind,
 };
 
+use super::literals::function_body_contains_template;
 use super::{PREC_LOWEST, Printer, TYPE_PREC_LOWEST};
 
 impl Printer<'_> {
@@ -11,10 +12,11 @@ impl Printer<'_> {
         if declaration.return_type.is_none()
             && declaration.has_body
             && !declaration.body.is_empty()
-            && declaration
+            && (declaration
                 .parameters
                 .iter()
                 .any(|parameter| parameter.initializer.is_some())
+                || function_body_contains_template(&declaration.body))
         {
             // Return inference for defaulted implementations belongs to the
             // checked declaration summary. Never publish `unknown` as if it

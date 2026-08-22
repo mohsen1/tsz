@@ -41,6 +41,22 @@ impl Parser<'_> {
     /// `>>` token. Every cursor, node, diagnostic, and token mutation is
     /// restored unless the ordinary postfix parser later commits the call.
     pub(super) fn call_type_arguments_are_followed_by_left_paren(&mut self) -> bool {
+        self.type_arguments_are_followed_by(|kind| kind == TokenKind::LeftParen)
+    }
+
+    pub(super) fn tag_type_arguments_are_followed_by_template(&mut self) -> bool {
+        self.type_arguments_are_followed_by(|kind| {
+            matches!(
+                kind,
+                TokenKind::NoSubstitutionTemplateLiteral | TokenKind::TemplateHead
+            )
+        })
+    }
+
+    fn type_arguments_are_followed_by(
+        &mut self,
+        predicate: impl FnOnce(TokenKind) -> bool,
+    ) -> bool {
         if !self.source.kind().supports_expression_type_arguments() || !self.at(TokenKind::LessThan)
         {
             return false;
@@ -52,7 +68,7 @@ impl Parser<'_> {
         let saved_rewrites = self.speculative_token_rewrites.len();
         self.speculating = true;
         let (_, closed) = self.parse_type_arguments_with_status();
-        let is_call = closed && self.at(TokenKind::LeftParen);
+        let matches_following = closed && predicate(self.kind());
         for (index, token) in self
             .speculative_token_rewrites
             .drain(saved_rewrites..)
@@ -64,6 +80,6 @@ impl Parser<'_> {
         self.index = saved_index;
         self.next_node = saved_next_node;
         self.diagnostics.truncate(saved_diagnostics);
-        is_call
+        matches_following
     }
 }

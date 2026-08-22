@@ -1,12 +1,15 @@
 use crate::diagnostics::Diagnostic;
 use crate::source::{SourceText, Span};
 
+use super::template_literal::ScannedTemplateLiteral;
 use super::{Token, TokenKind};
 
 #[derive(Debug)]
 pub struct ScanOutput {
     pub tokens: Vec<Token>,
     pub diagnostics: Vec<Diagnostic>,
+    pub(super) template_literals: Vec<ScannedTemplateLiteral>,
+    pub(super) has_unmodeled_trivia: bool,
 }
 
 pub fn scan_source(source: &SourceText) -> ScanOutput {
@@ -21,6 +24,8 @@ struct Scanner<'a> {
     template_expression_depths: Vec<usize>,
     tokens: Vec<Token>,
     diagnostics: Vec<Diagnostic>,
+    template_literals: Vec<ScannedTemplateLiteral>,
+    has_unmodeled_trivia: bool,
 }
 
 impl<'a> Scanner<'a> {
@@ -33,6 +38,8 @@ impl<'a> Scanner<'a> {
             template_expression_depths: Vec::new(),
             tokens: Vec::new(),
             diagnostics: Vec::new(),
+            template_literals: Vec::new(),
+            has_unmodeled_trivia: false,
         }
     }
 
@@ -79,6 +86,8 @@ impl<'a> Scanner<'a> {
         ScanOutput {
             tokens: self.tokens,
             diagnostics: self.diagnostics,
+            template_literals: self.template_literals,
+            has_unmodeled_trivia: self.has_unmodeled_trivia,
         }
     }
 
@@ -88,6 +97,7 @@ impl<'a> Scanner<'a> {
                 self.offset += 3;
             }
             if self.offset == 0 && self.bytes.get(..2) == Some(b"#!") {
+                self.has_unmodeled_trivia = true;
                 self.offset += 2;
                 while self
                     .bytes
@@ -100,6 +110,7 @@ impl<'a> Scanner<'a> {
             }
             while self.skip_one_whitespace() {}
             if self.bytes.get(self.offset..self.offset + 2) == Some(b"//") {
+                self.has_unmodeled_trivia = true;
                 self.offset += 2;
                 while self
                     .bytes
@@ -111,6 +122,7 @@ impl<'a> Scanner<'a> {
                 continue;
             }
             if self.bytes.get(self.offset..self.offset + 2) == Some(b"/*") {
+                self.has_unmodeled_trivia = true;
                 let start = self.offset;
                 self.offset += 2;
                 while self.offset + 1 < self.bytes.len()
@@ -466,6 +478,12 @@ impl<'a> Scanner<'a> {
                 b'`' => {
                     self.offset += 1;
                     if is_start {
+                        let span = Span::new(self.source.id, start, self.offset);
+                        self.template_literals
+                            .push(ScannedTemplateLiteral::terminated(
+                                span,
+                                &self.source.text[start..self.offset],
+                            ));
                         return TokenKind::NoSubstitutionTemplateLiteral;
                     }
                     self.template_expression_depths.pop();
@@ -490,6 +508,12 @@ impl<'a> Scanner<'a> {
             1160,
         ));
         if is_start {
+            let span = Span::new(self.source.id, start, self.offset);
+            self.template_literals
+                .push(ScannedTemplateLiteral::unterminated(
+                    span,
+                    &self.source.text[start..self.offset],
+                ));
             TokenKind::NoSubstitutionTemplateLiteral
         } else {
             self.template_expression_depths.pop();

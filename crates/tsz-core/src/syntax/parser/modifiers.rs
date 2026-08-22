@@ -13,6 +13,46 @@ pub(super) struct Modifiers {
     pub(super) is_async: bool,
     pub(super) abstract_declaration: bool,
     pub(super) unsupported_for_overload_completion: bool,
+    invalid_sequence: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum StatementHost {
+    Variable,
+    Function,
+    Class,
+    TypeAlias,
+    Interface,
+    Other,
+}
+
+impl Modifiers {
+    const fn products_owned_by(self, host: StatementHost) -> bool {
+        if self.invalid_sequence {
+            return false;
+        }
+        match host {
+            StatementHost::Variable => {
+                !self.default_export
+                    && !self.declared
+                    && !self.is_async
+                    && !self.abstract_declaration
+            }
+            StatementHost::Function
+            | StatementHost::Class
+            | StatementHost::TypeAlias
+            | StatementHost::Interface => {
+                !self.default_export && !self.is_async && !self.abstract_declaration
+            }
+            StatementHost::Other => {
+                !self.exported
+                    && !self.default_export
+                    && !self.declared
+                    && !self.is_async
+                    && !self.abstract_declaration
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -22,6 +62,8 @@ pub(super) struct ProductCapabilities {
     pub(super) declarations_supported: bool,
     pub(super) commonjs_classes_supported: bool,
     pub(super) declaration_hosts_supported: bool,
+    pub(super) default_export_hosts_supported: bool,
+    pub(super) template_products_supported: bool,
     has_bodyless_class: bool,
     has_module_export: bool,
 }
@@ -34,6 +76,8 @@ impl ProductCapabilities {
             declarations_supported: true,
             commonjs_classes_supported: true,
             declaration_hosts_supported: true,
+            default_export_hosts_supported: true,
+            template_products_supported: true,
             has_bodyless_class: false,
             has_module_export: false,
         }
@@ -55,6 +99,14 @@ impl ProductCapabilities {
 
     pub(super) const fn observe_unmodeled_declaration_host(&mut self) {
         self.declaration_hosts_supported = false;
+    }
+
+    pub(super) const fn observe_unmodeled_default_export_host(&mut self) {
+        self.default_export_hosts_supported = false;
+    }
+
+    pub(super) const fn observe_unmodeled_template(&mut self) {
+        self.template_products_supported = false;
     }
 
     pub(super) const fn commonjs_classes_supported(&self) -> bool {
@@ -84,6 +136,99 @@ impl ProductCapabilities {
 }
 
 impl Parser<'_> {
+    pub(super) fn starts_export_declaration(&self) -> bool {
+        if !self.at(TokenKind::Export) {
+            return false;
+        }
+        match self.peek_kind(1) {
+            TokenKind::LeftBrace | TokenKind::Star | TokenKind::Equals | TokenKind::As => true,
+            TokenKind::Type => matches!(self.peek_kind(2), TokenKind::LeftBrace | TokenKind::Star),
+            TokenKind::Default => {
+                let mut offset = 2;
+                while matches!(
+                    self.peek_kind(offset),
+                    TokenKind::Export
+                        | TokenKind::Default
+                        | TokenKind::Declare
+                        | TokenKind::Async
+                        | TokenKind::Abstract
+                ) {
+                    offset += 1;
+                }
+                !self.starts_statement_host_at(offset)
+            }
+            _ => false,
+        }
+    }
+
+    fn starts_statement_host_at(&self, offset: usize) -> bool {
+        let kind = self.peek_kind(offset);
+        let next = self.peek_kind(offset + 1);
+        match kind {
+            TokenKind::Let
+            | TokenKind::Const
+            | TokenKind::Var
+            | TokenKind::Function
+            | TokenKind::Class
+            | TokenKind::Interface
+            | TokenKind::Enum => true,
+            TokenKind::Type => {
+                token_is_binding_identifier(next)
+                    && self.tokens_are_on_same_line(self.index + offset, self.index + offset + 1)
+            }
+            TokenKind::Module | TokenKind::Namespace => {
+                self.tokens_are_on_same_line(self.index + offset, self.index + offset + 1)
+                    && (next.is_identifier() || next == TokenKind::StringLiteral)
+            }
+            TokenKind::Global => {
+                matches!(
+                    next,
+                    TokenKind::LeftBrace | TokenKind::Identifier | TokenKind::Export
+                ) || self.tokens_are_on_same_line(self.index + offset, self.index + offset + 1)
+                    && token_is_binding_identifier(next)
+            }
+            TokenKind::Using => {
+                self.tokens_are_on_same_line(self.index + offset, self.index + offset + 1)
+                    && token_is_binding_identifier(next)
+            }
+            TokenKind::Await => {
+                next == TokenKind::Using
+                    && self.tokens_are_on_same_line(self.index + offset, self.index + offset + 1)
+                    && self
+                        .tokens_are_on_same_line(self.index + offset + 1, self.index + offset + 2)
+                    && token_is_binding_identifier(self.peek_kind(offset + 2))
+            }
+            TokenKind::Import => !matches!(
+                next,
+                TokenKind::LeftParen | TokenKind::LessThan | TokenKind::Dot
+            ),
+            _ => false,
+        }
+    }
+
+    pub(super) fn observe_statement_modifiers(&mut self, modifiers: Modifiers) {
+        let host = match self.kind() {
+            TokenKind::Let | TokenKind::Const | TokenKind::Var => StatementHost::Variable,
+            TokenKind::Function => StatementHost::Function,
+            TokenKind::Class => StatementHost::Class,
+            TokenKind::Type => StatementHost::TypeAlias,
+            TokenKind::Interface => StatementHost::Interface,
+            _ => StatementHost::Other,
+        };
+        if ((modifiers.exported || modifiers.declared) && self.statement_nesting_depth > 0)
+            || !modifiers.products_owned_by(host)
+        {
+            self.has_unmodeled_top_level_syntax = true;
+        }
+        if modifiers.default_export
+            && (modifiers.invalid_sequence
+                || !matches!(host, StatementHost::Function | StatementHost::Class))
+        {
+            self.product_capabilities
+                .observe_unmodeled_default_export_host();
+        }
+    }
+
     pub(super) fn parse_product_owned_import_declaration(&mut self) -> ImportDeclaration {
         let declaration = self.parse_import_declaration();
         if declaration.type_only || declaration.bindings.iter().any(|binding| binding.type_only) {
@@ -132,29 +277,49 @@ impl Parser<'_> {
 
     pub(super) fn parse_modifiers(&mut self) -> Modifiers {
         let mut modifiers = Modifiers::default();
+        let mut modifier_order = 0;
         loop {
+            if matches!(
+                self.kind(),
+                TokenKind::Declare | TokenKind::Async | TokenKind::Abstract
+            ) && matches!(
+                self.peek_kind(1),
+                TokenKind::NoSubstitutionTemplateLiteral | TokenKind::TemplateHead
+            ) {
+                // These contextual keywords remain identifier-like when they
+                // are the tag expression. Do not reinterpret the template as
+                // a recovered declaration tail.
+                break;
+            }
             match self.kind() {
                 TokenKind::Export => {
+                    observe_modifier_order(&mut modifiers, &mut modifier_order, 1);
                     self.product_capabilities.observe_module_export();
                     modifiers.unsupported_for_overload_completion |= modifiers.exported;
                     modifiers.exported = true;
                     self.bump();
                     let default_export = self.eat(TokenKind::Default);
+                    if default_export {
+                        observe_modifier_order(&mut modifiers, &mut modifier_order, 2);
+                    }
                     modifiers.unsupported_for_overload_completion |=
                         default_export && modifiers.default_export;
                     modifiers.default_export |= default_export;
                 }
                 TokenKind::Declare => {
+                    observe_modifier_order(&mut modifiers, &mut modifier_order, 3);
                     modifiers.unsupported_for_overload_completion |= modifiers.declared;
                     modifiers.declared = true;
                     self.bump();
                 }
                 TokenKind::Async => {
+                    observe_modifier_order(&mut modifiers, &mut modifier_order, 4);
                     modifiers.unsupported_for_overload_completion |= modifiers.is_async;
                     modifiers.is_async = true;
                     self.bump();
                 }
                 TokenKind::Abstract => {
+                    observe_modifier_order(&mut modifiers, &mut modifier_order, 4);
                     modifiers.unsupported_for_overload_completion |= modifiers.abstract_declaration;
                     modifiers.abstract_declaration = true;
                     self.bump();
@@ -184,7 +349,22 @@ impl Parser<'_> {
                 ) || self.tokens_are_on_same_line(self.index, self.index + 1)
                     && token_is_binding_identifier(next)
             }
+            TokenKind::Using => {
+                self.tokens_are_on_same_line(self.index, self.index + 1)
+                    && token_is_binding_identifier(self.peek_kind(1))
+            }
+            TokenKind::Await => {
+                self.peek_kind(1) == TokenKind::Using
+                    && self.tokens_are_on_same_line(self.index, self.index + 1)
+                    && self.tokens_are_on_same_line(self.index + 1, self.index + 2)
+                    && token_is_binding_identifier(self.peek_kind(2))
+            }
             _ => false,
         }
     }
+}
+
+const fn observe_modifier_order(modifiers: &mut Modifiers, previous: &mut u8, current: u8) {
+    modifiers.invalid_sequence |= *previous >= current;
+    *previous = current;
 }

@@ -9,6 +9,9 @@ pub struct SourceUnit {
     pub(crate) declaration_products_supported: bool,
     pub(crate) commonjs_class_products_supported: bool,
     pub(crate) declaration_hosts_supported: bool,
+    pub(crate) default_export_hosts_supported: bool,
+    pub(crate) has_authored_no_substitution_template: bool,
+    pub(crate) template_products_supported: bool,
 }
 
 impl SourceUnit {
@@ -142,6 +145,23 @@ impl SourceUnit {
     #[must_use]
     pub const fn has_unmodeled_declaration_hosts(&self) -> bool {
         !self.declaration_hosts_supported
+    }
+
+    #[must_use]
+    pub const fn has_unmodeled_default_export_hosts(&self) -> bool {
+        !self.default_export_hosts_supported
+    }
+
+    #[must_use]
+    pub const fn has_authored_no_substitution_template(&self) -> bool {
+        self.has_authored_no_substitution_template
+    }
+
+    /// Whether template syntax outside the exact no-substitution expression
+    /// slice would require an AST, semantic, or emit product TSZ does not own.
+    #[must_use]
+    pub const fn has_unmodeled_template_products(&self) -> bool {
+        !self.template_products_supported
     }
 }
 
@@ -1300,6 +1320,7 @@ pub struct ObjectProperty {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Literal {
     String(String),
+    NoSubstitutionTemplate(super::NoSubstitutionTemplateLiteral),
     Number(String),
     BigInt(String),
     Boolean(bool),

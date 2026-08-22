@@ -1797,6 +1797,9 @@ impl<'a> Checker<'a> {
             Literal::String(value) => self
                 .store
                 .intern(TypeKind::LiteralString(value.clone(), provenance)),
+            Literal::NoSubstitutionTemplate(literal) => self
+                .store
+                .intern(TypeKind::LiteralString(literal.cooked.clone(), provenance)),
             Literal::Number(value) => self.store.numeric_literal(value, provenance),
             Literal::BigInt(_) => self.store.deferred_bigint_literal(),
             Literal::Boolean(value) => self

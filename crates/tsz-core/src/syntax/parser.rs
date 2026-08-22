@@ -1,20 +1,24 @@
 use crate::diagnostics::Diagnostic;
 use crate::source::{NodeId, SourceText, Span};
 
+mod literals;
 mod modifiers;
 mod parameters;
+mod statements;
 mod type_arguments;
 mod type_members;
 mod type_parameters;
 
+use super::template_literal::ScannedTemplateLiteral;
 use super::{
     AccessorKind, ArrowBody, BinaryOperator, ClassDeclaration, ClassMember, ClassMemberKind,
     ClassMemberModifiers, ExportDeclaration, ExportSpecifier, Expression, ExpressionKind,
     FunctionDeclaration, IfStatement, ImportBinding, ImportDeclaration, InterfaceDeclaration,
-    JumpStatement, Literal, ObjectProperty, Parameter, ParameterModifier, Statement, StatementKind,
-    SwitchClause, SwitchClauseKind, SwitchStatement, Token, TokenKind, TypeAliasDeclaration,
-    TypeNode, TypeNodeKind, UnaryOperator, VariableDeclaration, VariableKind, scan_source,
+    ObjectProperty, Parameter, ParameterModifier, Statement, StatementKind, SwitchClause,
+    SwitchClauseKind, SwitchStatement, Token, TokenKind, TypeAliasDeclaration, TypeNode,
+    TypeNodeKind, UnaryOperator, VariableDeclaration, VariableKind, scan_source,
 };
+use literals::unquote;
 use modifiers::{Modifiers, ProductCapabilities};
 
 #[derive(Debug)]
@@ -25,7 +29,14 @@ pub struct ParseOutput {
 
 pub fn parse_source(source: &SourceText) -> ParseOutput {
     let scanned = scan_source(source);
-    Parser::new(source, scanned.tokens, scanned.diagnostics).parse()
+    Parser::new(
+        source,
+        scanned.tokens,
+        scanned.diagnostics,
+        scanned.template_literals,
+        scanned.has_unmodeled_trivia,
+    )
+    .parse()
 }
 struct Parser<'a> {
     source: &'a SourceText,
@@ -33,23 +44,37 @@ struct Parser<'a> {
     index: usize,
     next_node: u32,
     diagnostics: Vec<Diagnostic>,
+    template_literals: Vec<ScannedTemplateLiteral>,
+    has_unmodeled_trivia: bool,
     speculating: bool,
     speculative_token_rewrites: Vec<(usize, Token)>,
     type_member_recovery_code: u32,
+    statement_nesting_depth: usize,
+    has_unmodeled_top_level_syntax: bool,
     product_capabilities: ProductCapabilities,
 }
 
 impl<'a> Parser<'a> {
-    const fn new(source: &'a SourceText, tokens: Vec<Token>, diagnostics: Vec<Diagnostic>) -> Self {
+    const fn new(
+        source: &'a SourceText,
+        tokens: Vec<Token>,
+        diagnostics: Vec<Diagnostic>,
+        template_literals: Vec<ScannedTemplateLiteral>,
+        has_unmodeled_trivia: bool,
+    ) -> Self {
         Self {
             source,
             tokens,
             index: 0,
             next_node: 0,
             diagnostics,
+            template_literals,
+            has_unmodeled_trivia,
             speculating: false,
             speculative_token_rewrites: Vec::new(),
             type_member_recovery_code: 1128,
+            statement_nesting_depth: 0,
+            has_unmodeled_top_level_syntax: false,
             product_capabilities: ProductCapabilities::all_supported(),
         }
     }
@@ -58,11 +83,13 @@ impl<'a> Parser<'a> {
         let mut statements = Vec::new();
         while !self.at(TokenKind::EndOfFile) {
             let before = self.index;
-            statements.push(self.parse_statement());
+            statements.push(self.parse_statement_at_current_depth());
             if self.index == before {
                 self.bump();
             }
         }
+        let has_authored_no_substitution_template =
+            self.finish_no_substitution_template_source(&statements);
         let end = self.source.text.len();
         ParseOutput {
             unit: super::SourceUnit {
@@ -72,6 +99,11 @@ impl<'a> Parser<'a> {
                 class_products_supported: self.product_capabilities.classes_supported,
                 declaration_products_supported: self.product_capabilities.declarations_supported,
                 declaration_hosts_supported: self.product_capabilities.declaration_hosts_supported,
+                default_export_hosts_supported: self
+                    .product_capabilities
+                    .default_export_hosts_supported,
+                has_authored_no_substitution_template,
+                template_products_supported: self.product_capabilities.template_products_supported,
                 commonjs_class_products_supported: self
                     .product_capabilities
                     .commonjs_classes_supported(),
@@ -81,8 +113,18 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_statement(&mut self) -> Statement {
+        self.statement_nesting_depth += 1;
+        let statement = self.parse_statement_at_current_depth();
+        self.statement_nesting_depth -= 1;
+        statement
+    }
+
+    fn parse_statement_at_current_depth(&mut self) -> Statement {
         let start = self.current().span.start as usize;
         if self.starts_import_declaration() {
+            if self.statement_nesting_depth > 0 {
+                self.has_unmodeled_top_level_syntax = true;
+            }
             let kind = StatementKind::Import(self.parse_product_owned_import_declaration());
             let end = self.previous_end().max(start);
             return Statement {
@@ -92,6 +134,9 @@ impl<'a> Parser<'a> {
             };
         }
         if self.starts_export_declaration() {
+            if self.statement_nesting_depth > 0 {
+                self.has_unmodeled_top_level_syntax = true;
+            }
             let kind = StatementKind::Export(self.parse_product_owned_export_declaration());
             let end = self.previous_end().max(start);
             return Statement {
@@ -101,12 +146,17 @@ impl<'a> Parser<'a> {
             };
         }
         let modifiers = self.parse_modifiers();
+        self.observe_statement_modifiers(modifiers);
         let kind = match self.kind() {
             TokenKind::Let | TokenKind::Const | TokenKind::Var => {
                 StatementKind::Variable(self.parse_variable(modifiers.exported))
             }
             TokenKind::Function => StatementKind::Function(self.parse_function(modifiers)),
-            TokenKind::Class => StatementKind::Class(self.parse_class(modifiers)),
+            TokenKind::Class => {
+                let declaration = self.parse_class(modifiers);
+                self.observe_class_template_semantics(&declaration);
+                StatementKind::Class(declaration)
+            }
             TokenKind::Type if self.starts_type_alias_declaration() => {
                 StatementKind::TypeAlias(self.parse_product_owned_type_alias(modifiers.exported))
             }
@@ -123,7 +173,9 @@ impl<'a> Parser<'a> {
                     TokenKind::Semicolon,
                     TokenKind::RightBrace,
                     TokenKind::EndOfFile,
-                ]) {
+                ]) || !self
+                    .tokens_are_on_same_line(self.index.saturating_sub(1), self.index)
+                {
                     None
                 } else {
                     Some(self.parse_expression())
@@ -143,7 +195,7 @@ impl<'a> Parser<'a> {
             }
             _ => {
                 let expression = self.parse_expression();
-                self.eat(TokenKind::Semicolon);
+                self.finish_expression_statement();
                 StatementKind::Expression(expression)
             }
         };
@@ -159,6 +211,7 @@ impl<'a> Parser<'a> {
         self.bump();
         self.expect(TokenKind::LeftParen, "'(' expected.", 1005);
         let condition = self.parse_expression();
+        self.observe_template_expression_semantics(&condition);
         self.expect(TokenKind::RightParen, "')' expected.", 1005);
         let then_statement = Box::new(self.parse_statement());
         let else_statement = self
@@ -175,6 +228,7 @@ impl<'a> Parser<'a> {
         self.bump();
         self.expect(TokenKind::LeftParen, "'(' expected.", 1005);
         let expression = self.parse_expression();
+        self.observe_template_expression_semantics(&expression);
         self.expect(TokenKind::RightParen, "')' expected.", 1005);
         self.expect(TokenKind::LeftBrace, "'{' expected.", 1005);
 
@@ -183,6 +237,7 @@ impl<'a> Parser<'a> {
             let start = self.current().span;
             let kind = if self.eat(TokenKind::Case) {
                 let expression = self.parse_expression();
+                self.observe_template_expression_semantics(&expression);
                 self.expect(TokenKind::Colon, "':' expected.", 1005);
                 SwitchClauseKind::Case(expression)
             } else if self.eat(TokenKind::Default) {
@@ -220,42 +275,6 @@ impl<'a> Parser<'a> {
         SwitchStatement {
             expression,
             clauses,
-        }
-    }
-
-    fn parse_jump_statement(&mut self) -> JumpStatement {
-        let keyword = self.bump();
-        let has_line_break = self
-            .source
-            .slice(Span::new(
-                self.source.id,
-                keyword.span.end as usize,
-                self.current().span.start as usize,
-            ))
-            .bytes()
-            .any(|byte| matches!(byte, b'\n' | b'\r'));
-        let (label, label_span) = if !has_line_break && token_is_binding_identifier(self.kind()) {
-            let (label, span) = self.parse_name();
-            (Some(label), Some(span))
-        } else {
-            (None, None)
-        };
-        self.eat(TokenKind::Semicolon);
-        JumpStatement { label, label_span }
-    }
-
-    fn starts_export_declaration(&self) -> bool {
-        if !self.at(TokenKind::Export) {
-            return false;
-        }
-        match self.peek_kind(1) {
-            TokenKind::LeftBrace | TokenKind::Star | TokenKind::Equals | TokenKind::As => true,
-            TokenKind::Type => matches!(self.peek_kind(2), TokenKind::LeftBrace | TokenKind::Star),
-            TokenKind::Default => !matches!(
-                self.peek_kind(2),
-                TokenKind::Function | TokenKind::Class | TokenKind::Interface
-            ),
-            _ => false,
         }
     }
 
@@ -384,7 +403,7 @@ impl<'a> Parser<'a> {
         let default_export = self.eat(TokenKind::Default);
         if default_export || self.eat(TokenKind::Equals) {
             let assignment = self.parse_expression();
-            self.eat(TokenKind::Semicolon);
+            self.finish_expression_statement();
             return ExportDeclaration {
                 specifiers: Vec::new(),
                 module_specifier: None,
@@ -489,18 +508,6 @@ impl<'a> Parser<'a> {
                 _ => false,
             },
             _ => true,
-        }
-    }
-
-    fn parse_module_specifier(&mut self) -> (String, Span) {
-        let token = *self.current();
-        if token.kind == TokenKind::StringLiteral {
-            self.bump();
-            (unquote(self.text(token.span)), token.span)
-        } else {
-            self.error_current("String literal expected.", 1141);
-            self.bump();
-            (String::new(), token.span)
         }
     }
 
@@ -1047,6 +1054,7 @@ impl<'a> Parser<'a> {
             TokenKind::LeftParen => self.parse_parenthesized_or_function_type(),
             TokenKind::LessThan => self.parse_generic_function_type(),
             _ => {
+                self.observe_unmodeled_template_if_current();
                 self.error_current("Type expected.", 1110);
                 self.bump();
                 TypeNode {
@@ -1215,12 +1223,15 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_expression(&mut self) -> Expression {
-        self.parse_assignment_expression()
+        let expression = self.parse_assignment_expression();
+        self.observe_unmodeled_template_tail(&expression);
+        expression
     }
 
     fn parse_assignment_expression(&mut self) -> Expression {
         let left = self.parse_binary_expression(0);
         if self.eat(TokenKind::Equals) {
+            self.observe_template_expression_semantics(&left);
             let right = self.parse_assignment_expression();
             let span = left.span.merge(right.span);
             Expression {
@@ -1254,11 +1265,15 @@ impl<'a> Parser<'a> {
                     right: Box::new(right),
                 },
             };
+            self.observe_template_expression_semantics(&expression);
         }
         expression
     }
 
     fn parse_unary_expression(&mut self) -> Expression {
+        if let Some(expression) = self.parse_unsupported_await_template() {
+            return expression;
+        }
         let token = *self.current();
         let operator = match token.kind {
             TokenKind::Plus => Some(UnaryOperator::Plus),
@@ -1276,19 +1291,26 @@ impl<'a> Parser<'a> {
         };
         self.bump();
         let operand = self.parse_unary_expression();
-        Expression {
+        let expression = Expression {
             id: self.alloc_node(),
             span: token.span.merge(operand.span),
             kind: ExpressionKind::Unary {
                 operator,
                 operand: Box::new(operand),
             },
-        }
+        };
+        self.observe_template_expression_semantics(&expression);
+        expression
     }
 
     fn parse_postfix_expression(&mut self) -> Expression {
         let mut expression = self.parse_primary_expression();
         loop {
+            if self.tag_type_arguments_are_followed_by_template() {
+                self.parse_type_arguments();
+                self.reject_tagged_template();
+                break;
+            }
             let has_type_arguments = self.call_type_arguments_are_followed_by_left_paren();
             if has_type_arguments || self.at(TokenKind::LeftParen) {
                 let type_arguments = if has_type_arguments {
@@ -1341,7 +1363,11 @@ impl<'a> Parser<'a> {
                         ty,
                     },
                 };
+                self.observe_template_expression_semantics(&expression);
+            } else if self.consume_non_null_template_host() {
             } else {
+                self.observe_unmodeled_non_null_template_adjacency();
+                self.reject_tagged_template();
                 break;
             }
         }
@@ -1395,36 +1421,7 @@ impl<'a> Parser<'a> {
                     },
                 }
             }
-            TokenKind::New => {
-                let left = self.bump().span;
-                let callee = self.parse_primary_expression();
-                let type_arguments = if self.at(TokenKind::LessThan) {
-                    self.parse_type_arguments()
-                } else {
-                    Vec::new()
-                };
-                let mut arguments = Vec::new();
-                let mut end = callee.span;
-                if self.eat(TokenKind::LeftParen) {
-                    while !self.at_any(&[TokenKind::RightParen, TokenKind::EndOfFile]) {
-                        arguments.push(self.parse_expression());
-                        if !self.eat(TokenKind::Comma) {
-                            break;
-                        }
-                    }
-                    end = self.current().span;
-                    self.expect(TokenKind::RightParen, "')' expected.", 1005);
-                }
-                Expression {
-                    id: self.alloc_node(),
-                    span: left.merge(end),
-                    kind: ExpressionKind::New {
-                        callee: Box::new(callee),
-                        type_arguments,
-                        arguments,
-                    },
-                }
-            }
+            TokenKind::New => self.parse_new_expression(),
             TokenKind::True
             | TokenKind::False
             | TokenKind::Null
@@ -1437,6 +1434,9 @@ impl<'a> Parser<'a> {
                     span: token.span,
                     kind: ExpressionKind::Literal(self.literal_from(token)),
                 }
+            }
+            TokenKind::NoSubstitutionTemplateLiteral => {
+                self.parse_no_substitution_template_literal()
             }
             TokenKind::LeftBrace => self.parse_object_literal(),
             TokenKind::LeftBracket => self.parse_array_literal(),
@@ -1476,6 +1476,7 @@ impl<'a> Parser<'a> {
                 }
             }
             _ => {
+                self.observe_unmodeled_template_if_current();
                 self.error_current("Expression expected.", 1109);
                 self.bump();
                 Expression {
@@ -1659,23 +1660,13 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn literal_from(&self, token: Token) -> Literal {
-        match token.kind {
-            TokenKind::True => Literal::Boolean(true),
-            TokenKind::False => Literal::Boolean(false),
-            TokenKind::Null => Literal::Null,
-            TokenKind::StringLiteral => Literal::String(unquote(self.text(token.span))),
-            TokenKind::BigIntLiteral => Literal::BigInt(self.text(token.span).to_string()),
-            _ => Literal::Number(self.text(token.span).to_string()),
-        }
-    }
-
     fn recover_statement(&mut self) {
         while !self.at_any(&[
             TokenKind::Semicolon,
             TokenKind::RightBrace,
             TokenKind::EndOfFile,
         ]) {
+            self.observe_unmodeled_template_if_current();
             self.bump();
         }
         self.eat(TokenKind::Semicolon);
@@ -1880,17 +1871,6 @@ impl<'a> Parser<'a> {
         self.next_node += 1;
         id
     }
-}
-
-fn unquote(text: &str) -> String {
-    if text.len() >= 2 {
-        let first = text.as_bytes()[0];
-        let last = text.as_bytes()[text.len() - 1];
-        if (first == b'\'' || first == b'"') && first == last {
-            return text[1..text.len() - 1].to_string();
-        }
-    }
-    text.to_string()
 }
 
 const fn binary_operator(kind: TokenKind) -> Option<(BinaryOperator, u8)> {

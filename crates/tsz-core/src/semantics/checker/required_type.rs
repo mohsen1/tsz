@@ -1896,7 +1896,9 @@ fn is_bindable_computed_name(expression: &Expression) -> bool {
     match &expression.kind {
         ExpressionKind::Identifier { entity_name, .. } => *entity_name,
         ExpressionKind::Member { object, .. } => is_entity_name_expression(object),
-        ExpressionKind::Literal(Literal::String(_) | Literal::Number(_)) => true,
+        ExpressionKind::Literal(
+            Literal::String(_) | Literal::NoSubstitutionTemplate(_) | Literal::Number(_),
+        ) => true,
         ExpressionKind::Unary {
             operator: UnaryOperator::Plus | UnaryOperator::Minus,
             operand,

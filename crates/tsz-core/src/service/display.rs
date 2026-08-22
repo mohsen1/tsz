@@ -82,9 +82,10 @@ fn display_expression_type(
 fn display_inferred_literal(literal: &Literal, preserve_literal: bool) -> String {
     match (preserve_literal, literal) {
         (true, Literal::String(value)) => display_string_literal(value),
+        (true, Literal::NoSubstitutionTemplate(literal)) => display_string_literal(&literal.cooked),
         (true, Literal::Number(value) | Literal::BigInt(value)) => value.clone(),
         (true, Literal::Boolean(value)) => value.to_string(),
-        (_, Literal::String(_)) => "string".to_string(),
+        (_, Literal::String(_) | Literal::NoSubstitutionTemplate(_)) => "string".to_string(),
         (_, Literal::Number(_)) => "number".to_string(),
         (_, Literal::BigInt(_)) => "bigint".to_string(),
         (_, Literal::Boolean(_)) => "boolean".to_string(),
@@ -257,7 +258,7 @@ fn display_type_node_at_depth(node: &TypeNode, depth: usize) -> Option<String> {
         TypeNodeKind::Parenthesized(inner) => {
             Some(format!("({})", display_type_node_at_depth(inner, depth)?))
         }
-        TypeNodeKind::Missing => None,
+        TypeNodeKind::Literal(Literal::NoSubstitutionTemplate(_)) | TypeNodeKind::Missing => None,
     }
 }
 

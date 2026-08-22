@@ -146,6 +146,43 @@ impl ProgramFile {
     }
 }
 
+pub(crate) fn has_unmodeled_no_substitution_template_program_products(
+    files: &[ProgramFile],
+    options: &CompilerOptions,
+) -> bool {
+    let has_authored_template = files
+        .iter()
+        .any(|file| file.syntax.has_authored_no_substitution_template());
+    has_authored_template
+        && (!no_substitution_template_program_options_supported(options)
+            || options.source_map
+            || options.inline_source_map
+            || options.declaration_map
+            || options.declaration_dir.is_some()
+            || files.iter().any(|file| {
+                !file.syntax.has_authored_no_substitution_template()
+                    || file.syntax.has_unmodeled_template_products()
+            }))
+}
+
+fn no_substitution_template_program_options_supported(options: &CompilerOptions) -> bool {
+    exact_option_value(
+        &options.target,
+        &[
+            "es6", "es2015", "es2016", "es2017", "es2018", "es2019", "es2020", "es2021", "es2022",
+            "es2023", "es2024", "es2025", "esnext",
+        ],
+    ) && exact_option_value(&options.module, &["commonjs", "esnext", "preserve"])
+        && options.lib.is_none()
+}
+
+fn exact_option_value(value: &str, supported: &[&str]) -> bool {
+    value == value.trim()
+        && supported
+            .iter()
+            .any(|candidate| value.eq_ignore_ascii_case(candidate))
+}
+
 #[derive(Debug)]
 pub struct Program {
     /// Program traversal order, independent from path-sorted `FileId` storage.
@@ -447,7 +484,8 @@ impl Compiler {
             files.push(job.file);
         }
         let option_diagnostics = compiler_option_diagnostics(options, &provenance);
-        let has_fatal_option_error = !option_diagnostics.is_empty()
+        let has_compiler_option_error = !option_diagnostics.is_empty();
+        let has_fatal_option_error = has_compiler_option_error
             && provenance
                 .option_origin(CompilerOptionKey::Target)
                 .is_none();
@@ -485,6 +523,23 @@ impl Compiler {
                 .map(|name| Diagnostic::global(format!("Cannot find global type '{name}'."), 2318)),
         );
         diagnostics.extend(semantic_diagnostics);
+        if program
+            .files
+            .iter()
+            .any(|file| file.syntax.has_unmodeled_template_products())
+            || program
+                .files
+                .iter()
+                .any(|file| file.syntax.has_unmodeled_default_export_hosts())
+            || has_unmodeled_no_substitution_template_program_products(&program.files, options)
+            || (has_compiler_option_error
+                && program
+                    .files
+                    .iter()
+                    .any(|file| file.syntax.has_authored_no_substitution_template()))
+        {
+            semantic_completion = semantic_completion.combine(SemanticCompletion::Deferred);
+        }
         let emit_start = Instant::now();
         let emit_plan = if has_fatal_option_error {
             EmitPlan::empty(program.files.len())
