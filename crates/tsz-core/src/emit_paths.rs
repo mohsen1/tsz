@@ -14,6 +14,7 @@ use crate::diagnostics::{Diagnostic, RelatedInformation};
 use crate::program::{
     CompilerOptions, ProgramFile, has_unmodeled_extended_unicode_string_program_products,
     has_unmodeled_no_substitution_template_program_products,
+    has_unmodeled_numeric_recovery_program_products,
     has_unmodeled_regular_expression_program_products,
 };
 use crate::source::{FileId, SourceText};
@@ -75,6 +76,7 @@ impl EmitPlan {
                     || file.syntax.has_unmodeled_template_products()
                     || file.syntax.has_unmodeled_extended_unicode_string_products()
                     || file.syntax.has_unmodeled_regular_expression_products()
+                    || file.syntax.has_unmodeled_numeric_recovery_products()
                     || file.has_unmodeled_javascript_module_products()
             })
             .map(|file| file.source.id)
@@ -86,6 +88,9 @@ impl EmitPlan {
             incomplete_file_products.extend(files.iter().map(|file| file.source.id));
         }
         if has_unmodeled_extended_unicode_string_program_products(files, options) {
+            incomplete_file_products.extend(files.iter().map(|file| file.source.id));
+        }
+        if has_unmodeled_numeric_recovery_program_products(files, options) {
             incomplete_file_products.extend(files.iter().map(|file| file.source.id));
         }
         let file_slots = files

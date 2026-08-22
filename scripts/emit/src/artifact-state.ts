@@ -10,10 +10,17 @@ export type ArtifactStatus =
   | 'crash'
   | 'incomplete';
 
+const TSZ_SEMANTIC_INCOMPLETE_EXIT_CODE = 3;
+
 function isCrashOutcome(outcome: CompilerOutcome): boolean {
   return outcome.exitCode < 0 ||
     outcome.exitCode > 2 ||
     (outcome.exitCode !== 0 && outcome.diagnosticCodes.length === 0);
+}
+
+function isProductCrashOutcome(outcome: CompilerOutcome): boolean {
+  if (outcome.exitCode === TSZ_SEMANTIC_INCOMPLETE_EXIT_CODE) return false;
+  return isCrashOutcome(outcome);
 }
 
 export function compilerArtifactState(
@@ -21,7 +28,7 @@ export function compilerArtifactState(
   product: CompilerOutcome,
 ): ArtifactState {
   if (oracle.exitCode === 0 && product.exitCode === 0) return 'complete';
-  if (isCrashOutcome(oracle) || isCrashOutcome(product)) return 'crash';
+  if (isCrashOutcome(oracle) || isProductCrashOutcome(product)) return 'crash';
   return 'incomplete';
 }
 

@@ -41,7 +41,8 @@ impl Printer<'_> {
             }
             Literal::String(StringLiteral::Extended(literal)) => literal.raw.clone(),
             Literal::NoSubstitutionTemplate(literal) => literal.raw.clone(),
-            Literal::Number(value) | Literal::BigInt(value) => value.clone(),
+            Literal::Number(value) => value.emit_text().to_string(),
+            Literal::BigInt(value) => value.clone(),
             Literal::Boolean(value) => value.to_string(),
             Literal::Null => "null".to_string(),
         }

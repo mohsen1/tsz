@@ -67,6 +67,12 @@ impl Checker<'_> {
         mode: RelationMode,
         style: RelationDiagnosticStyle,
     ) -> RelationDiagnosticOutcome {
+        if source_expression.is_some_and(expression_is_recovered_number) {
+            self.semantic_completion = self
+                .semantic_completion
+                .combine(SemanticCompletion::Deferred);
+            return RelationDiagnosticOutcome::Deferred;
+        }
         let (property_order, target_origins) = self.relation_origins(target, target_order.as_ref());
         let Err(failure) = relate_with_property_order(self, source, target, mode, property_order)
         else {
@@ -584,9 +590,13 @@ impl Checker<'_> {
                 Some(left.cooked == right)
             }
             (Literal::Number(left), TypeKind::LiteralNumber(right, _)) => {
-                let left = self
-                    .store
-                    .numeric_literal(left, crate::semantics::types::LiteralProvenance::Regular);
+                if matches!(left, crate::syntax::NumberLiteral::Recovery(_)) {
+                    return None;
+                }
+                let left = self.store.numeric_literal(
+                    left.semantic_text(),
+                    crate::semantics::types::LiteralProvenance::Regular,
+                );
                 let TypeKind::LiteralNumber(left, _) = self.store.kind(left) else {
                     return None;
                 };
@@ -911,6 +921,19 @@ impl Checker<'_> {
         let source = &self.program.files[span.file.0 as usize].source;
         self.diagnostics
             .push(Diagnostic::at(source, span, message, code).with_related_information(related));
+    }
+}
+
+fn expression_is_recovered_number(expression: &Expression) -> bool {
+    match &expression.kind {
+        ExpressionKind::Literal(Literal::Number(crate::syntax::NumberLiteral::Recovery(_))) => true,
+        ExpressionKind::Unary { operand, .. }
+        | ExpressionKind::Parenthesized(operand)
+        | ExpressionKind::As {
+            expression: operand,
+            ..
+        } => expression_is_recovered_number(operand),
+        _ => false,
     }
 }
 

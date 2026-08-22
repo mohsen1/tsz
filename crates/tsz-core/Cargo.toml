@@ -93,5 +93,9 @@ path = "rewrite-tests/regular_expression_literals.rs"
 name = "rewrite_extended_unicode_string_literals"
 path = "rewrite-tests/extended_unicode_string_literals.rs"
 
+[[test]]
+name = "rewrite_numeric_literal_recovery"
+path = "rewrite-tests/numeric_literal_recovery.rs"
+
 [lints]
 workspace = true

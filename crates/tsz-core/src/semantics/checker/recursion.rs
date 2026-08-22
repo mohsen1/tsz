@@ -1176,6 +1176,7 @@ fn push_deferred_children(deferred: DeferredType, pending: &mut Vec<TypeId>) {
         DeferredType::Value(_)
         | DeferredType::GenericCall
         | DeferredType::BigIntLiteral
+        | DeferredType::NumericRecovery
         | DeferredType::Utf16StringLiteral
         | DeferredType::UniqueSymbol
         | DeferredType::GenericFunction

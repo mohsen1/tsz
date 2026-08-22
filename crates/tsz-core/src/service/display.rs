@@ -92,11 +92,18 @@ fn display_inferred_literal(literal: &Literal, preserve_literal: bool) -> Option
         (true, Literal::String(crate::syntax::StringLiteral::Plain(value))) => {
             Some(display_string_literal(value))
         }
-        (_, Literal::String(crate::syntax::StringLiteral::Extended(_))) => None,
+        (
+            _,
+            Literal::String(crate::syntax::StringLiteral::Extended(_))
+            | Literal::Number(crate::syntax::NumberLiteral::Recovery(_)),
+        ) => None,
         (true, Literal::NoSubstitutionTemplate(literal)) => {
             Some(display_string_literal(&literal.cooked))
         }
-        (true, Literal::Number(value) | Literal::BigInt(value)) => Some(value.clone()),
+        (
+            true,
+            Literal::Number(crate::syntax::NumberLiteral::Plain(value)) | Literal::BigInt(value),
+        ) => Some(value.clone()),
         (true, Literal::Boolean(value)) => Some(value.to_string()),
         (_, Literal::String(_) | Literal::NoSubstitutionTemplate(_)) => Some("string".to_string()),
         (_, Literal::Number(_)) => Some("number".to_string()),
@@ -113,13 +120,10 @@ fn display_type_node_at_depth(node: &TypeNode, depth: usize) -> Option<String> {
         TypeNodeKind::Literal(Literal::String(crate::syntax::StringLiteral::Plain(value))) => {
             Some(display_string_literal(value))
         }
-        TypeNodeKind::Literal(Literal::String(crate::syntax::StringLiteral::Extended(literal))) => {
-            let _ = literal;
-            None
-        }
-        TypeNodeKind::Literal(Literal::Number(value) | Literal::BigInt(value)) => {
+        TypeNodeKind::Literal(Literal::Number(crate::syntax::NumberLiteral::Plain(value))) => {
             Some(value.clone())
         }
+        TypeNodeKind::Literal(Literal::BigInt(value)) => Some(value.clone()),
         TypeNodeKind::Literal(Literal::Boolean(value)) => Some(value.to_string()),
         TypeNodeKind::Literal(Literal::Null) => Some("null".to_string()),
         TypeNodeKind::Array(element) => {
@@ -277,7 +281,12 @@ fn display_type_node_at_depth(node: &TypeNode, depth: usize) -> Option<String> {
         TypeNodeKind::Parenthesized(inner) => {
             Some(format!("({})", display_type_node_at_depth(inner, depth)?))
         }
-        TypeNodeKind::Literal(Literal::NoSubstitutionTemplate(_)) | TypeNodeKind::Missing => None,
+        TypeNodeKind::Literal(
+            Literal::String(crate::syntax::StringLiteral::Extended(_))
+            | Literal::Number(crate::syntax::NumberLiteral::Recovery(_))
+            | Literal::NoSubstitutionTemplate(_),
+        )
+        | TypeNodeKind::Missing => None,
     }
 }
 

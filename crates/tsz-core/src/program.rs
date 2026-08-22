@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use crate::bind::{BoundFile, DeclarationKind, Meaning, ScopeId, bind_source};
+use crate::bind::{BoundFile, Meaning, bind_source};
 use crate::config::{CompilerOptionKey, ProjectProvenance, ResolvedProject};
 use crate::diagnostics::{Diagnostic, DiagnosticCategory, sort_and_deduplicate};
 use crate::emit::emit_file_with_plan;
@@ -17,15 +17,21 @@ use crate::semantics::{CheckResult, check_program};
 use crate::source::{DeclId, FileId, SourceText};
 use crate::standard_library::{StandardLibraryDeclaration, StandardLibraryEnvironment};
 use crate::syntax::{
-    SourceUnit, StatementKind, parse_source,
-    statements_form_no_substitution_template_expression_file,
+    SourceUnit, parse_source, statements_form_no_substitution_template_expression_file,
     statements_form_no_substitution_template_variable_file,
 };
 
 mod import_aliases;
+mod literal_products;
+mod numeric_literal;
 mod regular_expression;
 mod string_literal;
 
+use literal_products::{
+    LiteralProductFamily, exact_option_value, roots_are_homogeneous_literal_products,
+    unique_top_level_value_bindings_supported,
+};
+pub(crate) use numeric_literal::has_unmodeled_numeric_recovery_program_products;
 pub(crate) use regular_expression::has_unmodeled_regular_expression_program_products;
 pub(crate) use string_literal::has_unmodeled_extended_unicode_string_program_products;
 
@@ -168,10 +174,10 @@ pub(crate) fn has_unmodeled_no_substitution_template_program_products(
             || options.inline_source_map
             || options.declaration_map
             || options.declaration_dir.is_some()
-            || files.iter().any(|file| {
-                !file.syntax.has_authored_no_substitution_template()
-                    || file.syntax.has_unmodeled_template_products()
-            })
+            || !roots_are_homogeneous_literal_products(
+                files,
+                LiteralProductFamily::NoSubstitutionTemplate,
+            )
             || !no_substitution_template_program_sources_supported(files, options))
 }
 
@@ -190,41 +196,7 @@ fn no_substitution_template_program_sources_supported(
             &file.syntax.statements,
         )
     }) && !options.declaration
-        && no_substitution_template_variable_bindings_supported(files, options)
-}
-
-fn no_substitution_template_variable_bindings_supported(
-    files: &[ProgramFile],
-    options: &CompilerOptions,
-) -> bool {
-    let standard_library = StandardLibraryEnvironment::from_options(options);
-    let mut names = BTreeSet::new();
-    for file in files {
-        for statement in &file.syntax.statements {
-            let StatementKind::Variable(declaration) = &statement.kind else {
-                return false;
-            };
-            let mut matches = file.bindings.declarations.iter().filter(|bound| {
-                bound.owner == statement.id
-                    && bound.scope == ScopeId(0)
-                    && bound.kind == DeclarationKind::Variable
-                    && bound.meaning == Meaning::Value
-            });
-            let Some(bound) = matches.next() else {
-                return false;
-            };
-            if matches.next().is_some()
-                || bound.name != declaration.name
-                || !names.insert(bound.name.clone())
-                || standard_library
-                    .resolve(&bound.name, Meaning::Value)
-                    .is_some()
-            {
-                return false;
-            }
-        }
-    }
-    true
+        && unique_top_level_value_bindings_supported(files, options)
 }
 
 fn no_substitution_template_program_options_supported(options: &CompilerOptions) -> bool {
@@ -236,13 +208,6 @@ fn no_substitution_template_program_options_supported(options: &CompilerOptions)
         ],
     ) && exact_option_value(&options.module, &["commonjs", "esnext", "preserve"])
         && options.lib.is_none()
-}
-
-fn exact_option_value(value: &str, supported: &[&str]) -> bool {
-    value == value.trim()
-        && supported
-            .iter()
-            .any(|candidate| value.eq_ignore_ascii_case(candidate))
 }
 
 #[derive(Debug)]
@@ -563,13 +528,21 @@ impl Compiler {
             program.missing_essential_global_types()
         };
         let has_missing_essential_types = !missing_essential_types.is_empty();
+        let has_unmodeled_authored_numeric_recovery = program.files.iter().any(|file| {
+            file.syntax.has_authored_numeric_recovery()
+                && file.syntax.has_unmodeled_numeric_recovery_products()
+        });
 
         let check_start = Instant::now();
         let CheckResult {
             diagnostics: semantic_diagnostics,
             type_count,
             mut semantic_completion,
-        } = if options.no_check || has_missing_essential_types || has_fatal_option_error {
+        } = if options.no_check
+            || has_missing_essential_types
+            || has_fatal_option_error
+            || has_unmodeled_authored_numeric_recovery
+        {
             CheckResult {
                 diagnostics: Vec::new(),
                 type_count: 0,
@@ -596,6 +569,10 @@ impl Compiler {
             || program
                 .files
                 .iter()
+                .any(|file| file.syntax.has_unmodeled_numeric_recovery_products())
+            || program
+                .files
+                .iter()
                 .any(|file| file.syntax.has_unmodeled_expression_products())
             || program
                 .files
@@ -608,11 +585,13 @@ impl Compiler {
             || has_unmodeled_no_substitution_template_program_products(&program.files, options)
             || has_unmodeled_regular_expression_program_products(&program.files, options)
             || has_unmodeled_extended_unicode_string_program_products(&program.files, options)
+            || has_unmodeled_numeric_recovery_program_products(&program.files, options)
             || (has_compiler_option_error
                 && program.files.iter().any(|file| {
                     file.syntax.has_authored_no_substitution_template()
                         || file.syntax.has_authored_extended_unicode_string()
                         || file.syntax.has_authored_regular_expression()
+                        || file.syntax.has_authored_numeric_recovery()
                 }))
         {
             semantic_completion = semantic_completion.combine(SemanticCompletion::Deferred);

@@ -1485,6 +1485,7 @@ impl<'a> Checker<'a> {
             | DeferredType::Mapped { .. }
             | DeferredType::GenericCall
             | DeferredType::BigIntLiteral
+            | DeferredType::NumericRecovery
             | DeferredType::Utf16StringLiteral
             | DeferredType::UniqueSymbol
             | DeferredType::GenericFunction
@@ -1852,6 +1853,7 @@ impl<'a> Checker<'a> {
             | DeferredType::Mapped { .. }
             | DeferredType::IndexedAccess { .. }
             | DeferredType::BigIntLiteral
+            | DeferredType::NumericRecovery
             | DeferredType::Utf16StringLiteral
             | DeferredType::UniqueSymbol
             | DeferredType::GenericFunction

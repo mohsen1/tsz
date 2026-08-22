@@ -1,6 +1,7 @@
 use crate::diagnostics::Diagnostic;
 use crate::source::{SourceText, Span};
 
+use super::numeric_literal::{ScannedNumericLiteral, scan_numeric_literal};
 use super::regular_expression::ScannedRegularExpressionLiteral;
 use super::string_literal::{ScannedStringLiteral, scan_ordinary_string_literal};
 use super::template_literal::ScannedTemplateLiteral;
@@ -14,6 +15,7 @@ pub struct ScanOutput {
     pub diagnostics: Vec<Diagnostic>,
     pub(super) template_literals: Vec<ScannedTemplateLiteral>,
     pub(super) string_literals: Vec<ScannedStringLiteral>,
+    pub(super) numeric_literals: Vec<ScannedNumericLiteral>,
     pub(super) regular_expression_literals: Vec<ScannedRegularExpressionLiteral>,
     pub(super) comments: Vec<CommentTrivia>,
     pub(super) has_unicode_line_comment_terminator: bool,
@@ -34,6 +36,7 @@ struct Scanner<'a> {
     diagnostics: Vec<Diagnostic>,
     template_literals: Vec<ScannedTemplateLiteral>,
     string_literals: Vec<ScannedStringLiteral>,
+    numeric_literals: Vec<ScannedNumericLiteral>,
     regular_expression_literals: Vec<ScannedRegularExpressionLiteral>,
     comments: Vec<CommentTrivia>,
     has_unicode_line_comment_terminator: bool,
@@ -52,6 +55,7 @@ impl<'a> Scanner<'a> {
             diagnostics: Vec::new(),
             template_literals: Vec::new(),
             string_literals: Vec::new(),
+            numeric_literals: Vec::new(),
             regular_expression_literals: Vec::new(),
             comments: Vec::new(),
             has_unicode_line_comment_terminator: false,
@@ -80,7 +84,7 @@ impl<'a> Scanner<'a> {
                         .get(self.offset + 1)
                         .is_some_and(u8::is_ascii_digit))
             {
-                self.scan_number()
+                self.scan_number(start)
             } else {
                 self.scan_punctuation_or_literal(start)
             };
@@ -104,6 +108,7 @@ impl<'a> Scanner<'a> {
             diagnostics: self.diagnostics,
             template_literals: self.template_literals,
             string_literals: self.string_literals,
+            numeric_literals: self.numeric_literals,
             regular_expression_literals: self.regular_expression_literals,
             comments: self.comments,
             has_unicode_line_comment_terminator: self.has_unicode_line_comment_terminator,
@@ -313,76 +318,14 @@ impl<'a> Scanner<'a> {
             .map(|_| 6)
     }
 
-    fn scan_number(&mut self) -> TokenKind {
-        let starts_with_dot = self.bytes.get(self.offset) == Some(&b'.');
-        if starts_with_dot {
-            self.offset += 1;
-            self.consume_digits(10);
-        } else if self.bytes.get(self.offset..self.offset + 2) == Some(b"0x")
-            || self.bytes.get(self.offset..self.offset + 2) == Some(b"0X")
-        {
-            self.offset += 2;
-            self.consume_digits(16);
-            return self.consume_bigint_suffix();
-        } else if self.bytes.get(self.offset..self.offset + 2) == Some(b"0b")
-            || self.bytes.get(self.offset..self.offset + 2) == Some(b"0B")
-        {
-            self.offset += 2;
-            self.consume_digits(2);
-            return self.consume_bigint_suffix();
-        } else if self.bytes.get(self.offset..self.offset + 2) == Some(b"0o")
-            || self.bytes.get(self.offset..self.offset + 2) == Some(b"0O")
-        {
-            self.offset += 2;
-            self.consume_digits(8);
-            return self.consume_bigint_suffix();
-        } else {
-            self.consume_digits(10);
+    fn scan_number(&mut self, start: usize) -> TokenKind {
+        let scanned = scan_numeric_literal(self.source, start, self.tokens.last().copied());
+        self.offset = scanned.end;
+        self.diagnostics.extend(scanned.diagnostics);
+        if let Some(literal) = scanned.recovery_literal {
+            self.numeric_literals.push(literal);
         }
-
-        let mut has_fraction_or_exponent = starts_with_dot;
-        if !starts_with_dot && self.bytes.get(self.offset) == Some(&b'.') {
-            has_fraction_or_exponent = true;
-            self.offset += 1;
-            self.consume_digits(10);
-        }
-        if matches!(self.bytes.get(self.offset), Some(b'e' | b'E')) {
-            has_fraction_or_exponent = true;
-            self.offset += 1;
-            if matches!(self.bytes.get(self.offset), Some(b'+' | b'-')) {
-                self.offset += 1;
-            }
-            self.consume_digits(10);
-        }
-        if !has_fraction_or_exponent {
-            self.consume_bigint_suffix()
-        } else {
-            TokenKind::NumericLiteral
-        }
-    }
-
-    fn consume_digits(&mut self, radix: u32) {
-        while self.bytes.get(self.offset).is_some_and(|byte| {
-            *byte == b'_'
-                || match radix {
-                    2 => matches!(byte, b'0' | b'1'),
-                    8 => matches!(byte, b'0'..=b'7'),
-                    10 => byte.is_ascii_digit(),
-                    16 => byte.is_ascii_hexdigit(),
-                    _ => false,
-                }
-        }) {
-            self.offset += 1;
-        }
-    }
-
-    fn consume_bigint_suffix(&mut self) -> TokenKind {
-        if self.bytes.get(self.offset) == Some(&b'n') {
-            self.offset += 1;
-            TokenKind::BigIntLiteral
-        } else {
-            TokenKind::NumericLiteral
-        }
+        scanned.kind
     }
 
     fn scan_punctuation_or_literal(&mut self, start: usize) -> TokenKind {

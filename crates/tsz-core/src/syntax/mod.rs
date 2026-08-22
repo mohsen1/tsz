@@ -1,6 +1,7 @@
 //! Per-file syntax pipeline. Parsed trees are immutable after construction.
 
 mod ast;
+mod numeric_literal;
 mod parser;
 mod regular_expression;
 mod scanner;
@@ -10,6 +11,10 @@ mod token;
 mod trivia;
 
 pub use ast::*;
+pub use numeric_literal::{NumberLiteral, NumericRecoveryLiteral};
+pub(crate) use numeric_literal::{
+    NumericRecoveryKind, numeric_recovery_family, statements_form_numeric_recovery_safe_file,
+};
 pub use parser::{ParseOutput, parse_source};
 pub use regular_expression::RegularExpressionLiteral;
 pub(crate) use regular_expression::{

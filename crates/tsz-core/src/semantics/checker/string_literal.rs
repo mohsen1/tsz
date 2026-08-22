@@ -1,5 +1,7 @@
 use crate::program::SemanticCompletion;
-use crate::syntax::{ExpressionKind, Literal, StringLiteral, VariableDeclaration, VariableKind};
+use crate::syntax::{
+    ExpressionKind, Literal, NumberLiteral, StringLiteral, VariableDeclaration, VariableKind,
+};
 
 use super::super::relation::RelationContext;
 use super::{Checker, Completion, LiteralProvenance, TypeId, TypeKind};
@@ -23,7 +25,18 @@ impl<'a> Checker<'a> {
             Literal::NoSubstitutionTemplate(literal) => self
                 .store
                 .intern(TypeKind::LiteralString(literal.cooked.clone(), provenance)),
-            Literal::Number(value) => self.store.numeric_literal(value, provenance),
+            Literal::Number(NumberLiteral::Plain(value)) => {
+                self.store.numeric_literal(value, provenance)
+            }
+            Literal::Number(NumberLiteral::Recovery(value)) if value.validation_supported() => self
+                .store
+                .numeric_literal(value.semantic_text(), provenance),
+            Literal::Number(NumberLiteral::Recovery(_)) => {
+                self.semantic_completion = self
+                    .semantic_completion
+                    .combine(SemanticCompletion::Deferred);
+                self.store.deferred_numeric_recovery()
+            }
             Literal::BigInt(_) => self.store.deferred_bigint_literal(),
             Literal::Boolean(value) => self
                 .store

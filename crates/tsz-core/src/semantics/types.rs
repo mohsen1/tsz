@@ -153,6 +153,7 @@ pub enum DeferredType {
         index: TypeId,
     },
     BigIntLiteral,
+    NumericRecovery,
     Utf16StringLiteral,
     UniqueSymbol,
     GenericFunction,
@@ -602,6 +603,7 @@ enum DeferredOrderKey {
     ),
     IndexedAccess(Box<TypeOrderKey>, Box<TypeOrderKey>),
     BigIntLiteral,
+    NumericRecovery,
     Utf16StringLiteral,
     UniqueSymbol,
     GenericFunction,
@@ -763,6 +765,15 @@ impl TypeStore {
         let id = TypeId(self.kinds.len() as u32);
         self.kinds
             .push(TypeKind::Deferred(DeferredType::BigIntLiteral));
+        id
+    }
+
+    /// Allocate a fresh nonclaim for scanner recovery whose numeric value is
+    /// not owned. Authored malformed text never enters literal interning.
+    pub fn deferred_numeric_recovery(&mut self) -> TypeId {
+        let id = TypeId(self.kinds.len() as u32);
+        self.kinds
+            .push(TypeKind::Deferred(DeferredType::NumericRecovery));
         id
     }
 
@@ -1139,6 +1150,7 @@ impl TypeStore {
                 DeferredOrderKey::IndexedAccess(Box::new(nested(*object)), Box::new(nested(*index)))
             }
             DeferredType::BigIntLiteral => DeferredOrderKey::BigIntLiteral,
+            DeferredType::NumericRecovery => DeferredOrderKey::NumericRecovery,
             DeferredType::Utf16StringLiteral => DeferredOrderKey::Utf16StringLiteral,
             DeferredType::UniqueSymbol => DeferredOrderKey::UniqueSymbol,
             DeferredType::GenericFunction => DeferredOrderKey::GenericFunction,
@@ -1427,6 +1439,9 @@ impl TypeStore {
                 self.display_inner(*index, depth + 1)
             ),
             TypeKind::Deferred(DeferredType::BigIntLiteral) => "bigint-literal".to_string(),
+            TypeKind::Deferred(DeferredType::NumericRecovery) => {
+                "deferred-numeric-recovery".to_string()
+            }
             TypeKind::Deferred(DeferredType::Utf16StringLiteral) => {
                 "deferred-utf16-string-literal".to_string()
             }
@@ -1491,6 +1506,24 @@ mod tests {
         assert!(matches!(
             store.kind(second),
             TypeKind::Deferred(DeferredType::Utf16StringLiteral)
+        ));
+    }
+
+    #[test]
+    fn numeric_recovery_nonclaims_are_identity_free_and_not_interned() {
+        let mut store = TypeStore::default();
+        let before = store.len();
+        let first = store.deferred_numeric_recovery();
+        let second = store.deferred_numeric_recovery();
+        assert_ne!(first, second);
+        assert_eq!(store.len(), before + 2);
+        assert!(matches!(
+            store.kind(first),
+            TypeKind::Deferred(DeferredType::NumericRecovery)
+        ));
+        assert!(matches!(
+            store.kind(second),
+            TypeKind::Deferred(DeferredType::NumericRecovery)
         ));
     }
 

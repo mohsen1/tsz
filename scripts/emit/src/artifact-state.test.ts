@@ -8,9 +8,12 @@ import {
 
 const success = { exitCode: 0, diagnosticCodes: [] };
 const diagnostic = { exitCode: 1, diagnosticCodes: ['TS2322'] };
-const crash = { exitCode: 3, diagnosticCodes: [] };
+const semanticIncomplete = { exitCode: 3, diagnosticCodes: [] };
+const crash = { exitCode: 4, diagnosticCodes: [] };
 assert.equal(compilerArtifactState(success, success), 'complete');
 assert.equal(compilerArtifactState(diagnostic, diagnostic), 'incomplete');
+assert.equal(compilerArtifactState(success, semanticIncomplete), 'incomplete');
+assert.equal(compilerArtifactState(semanticIncomplete, success), 'crash');
 assert.equal(compilerArtifactState(success, crash), 'crash');
 assert.equal(artifactStatus('unsupported', false), 'unsupported');
 assert.equal(artifactStatus('timeout', false), 'timeout');

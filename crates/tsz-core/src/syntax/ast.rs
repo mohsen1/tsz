@@ -21,6 +21,8 @@ pub struct SourceUnit {
     pub(crate) extended_unicode_string_products_supported: bool,
     pub(crate) has_authored_regular_expression: bool,
     pub(crate) regular_expression_products_supported: bool,
+    pub(crate) has_authored_numeric_recovery: bool,
+    pub(crate) numeric_recovery_products_supported: bool,
 }
 
 impl SourceUnit {
@@ -211,6 +213,16 @@ impl SourceUnit {
     #[must_use]
     pub(crate) const fn has_unmodeled_regular_expression_products(&self) -> bool {
         !self.regular_expression_products_supported
+    }
+
+    #[must_use]
+    pub(crate) const fn has_authored_numeric_recovery(&self) -> bool {
+        self.has_authored_numeric_recovery
+    }
+
+    #[must_use]
+    pub(crate) const fn has_unmodeled_numeric_recovery_products(&self) -> bool {
+        !self.numeric_recovery_products_supported
     }
 }
 
@@ -1372,7 +1384,7 @@ pub struct ObjectProperty {
 pub enum Literal {
     String(super::StringLiteral),
     NoSubstitutionTemplate(super::NoSubstitutionTemplateLiteral),
-    Number(String),
+    Number(super::NumberLiteral),
     BigInt(String),
     Boolean(bool),
     Null,

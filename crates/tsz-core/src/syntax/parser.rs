@@ -3,6 +3,7 @@ use crate::source::{NodeId, SourceText, Span};
 
 mod literals;
 mod modifiers;
+mod numeric_literal;
 mod operators;
 mod parameters;
 mod regular_expression;
@@ -12,6 +13,7 @@ mod type_arguments;
 mod type_members;
 mod type_parameters;
 
+use super::numeric_literal::ScannedNumericLiteral;
 use super::regular_expression::ScannedRegularExpressionLiteral;
 use super::string_literal::ScannedStringLiteral;
 use super::template_literal::ScannedTemplateLiteral;
@@ -46,6 +48,8 @@ struct Parser<'a> {
     template_literals: Vec<ScannedTemplateLiteral>,
     string_literals: Vec<ScannedStringLiteral>,
     regular_expression_literals: Vec<ScannedRegularExpressionLiteral>,
+    numeric_literals: Vec<ScannedNumericLiteral>,
+    numeric_parser_diagnostics: Vec<Diagnostic>,
     comments: Vec<CommentTrivia>,
     has_unicode_line_comment_terminator: bool,
     has_unmodeled_trivia: bool,
@@ -68,6 +72,8 @@ impl<'a> Parser<'a> {
             template_literals: scanned.template_literals,
             string_literals: scanned.string_literals,
             regular_expression_literals: scanned.regular_expression_literals,
+            numeric_literals: scanned.numeric_literals,
+            numeric_parser_diagnostics: Vec::new(),
             comments: scanned.comments,
             has_unicode_line_comment_terminator: scanned.has_unicode_line_comment_terminator,
             has_unmodeled_trivia: scanned.has_unmodeled_trivia,
@@ -94,6 +100,7 @@ impl<'a> Parser<'a> {
         let has_authored_extended_unicode_string =
             self.finish_extended_unicode_string_source(&statements);
         let has_authored_regular_expression = self.finish_regular_expression_source(&statements);
+        let has_authored_numeric_recovery = self.finish_numeric_recovery_source(&statements);
         let end = self.source.text.len();
         ParseOutput {
             unit: super::SourceUnit {
@@ -121,6 +128,10 @@ impl<'a> Parser<'a> {
                 regular_expression_products_supported: self
                     .product_capabilities
                     .regular_expression_products_supported,
+                has_authored_numeric_recovery,
+                numeric_recovery_products_supported: self
+                    .product_capabilities
+                    .numeric_recovery_products_supported,
                 commonjs_class_products_supported: self
                     .product_capabilities
                     .commonjs_classes_supported(),
@@ -213,7 +224,9 @@ impl<'a> Parser<'a> {
             }
             _ => {
                 let expression = self.parse_expression();
-                self.finish_expression_statement();
+                if !self.finish_numeric_recovery_expression_statement(&expression) {
+                    self.finish_expression_statement();
+                }
                 StatementKind::Expression(expression)
             }
         };

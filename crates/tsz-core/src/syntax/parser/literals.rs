@@ -359,7 +359,7 @@ impl Parser<'_> {
                 ))
             }
             TokenKind::BigIntLiteral => Literal::BigInt(self.text(token.span).to_string()),
-            _ => Literal::Number(self.text(token.span).to_string()),
+            _ => Literal::Number(self.number_literal(token)),
         }
     }
 
