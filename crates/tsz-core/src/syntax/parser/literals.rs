@@ -354,7 +354,7 @@ impl Parser<'_> {
             TokenKind::Null => Literal::Null,
             TokenKind::StringLiteral => {
                 Literal::String(self.extended_unicode_string_literal(token).map_or_else(
-                    || StringLiteral::Plain(unquote(self.text(token.span))),
+                    || StringLiteral::Plain(self.ordinary_string_literal_value(token)),
                     StringLiteral::Extended,
                 ))
             }
@@ -367,7 +367,7 @@ impl Parser<'_> {
         let token = *self.current();
         if token.kind == TokenKind::StringLiteral {
             self.bump();
-            (unquote(self.text(token.span)), token.span)
+            (self.ordinary_string_literal_value(token), token.span)
         } else {
             self.error_current("String literal expected.", 1141);
             self.bump();

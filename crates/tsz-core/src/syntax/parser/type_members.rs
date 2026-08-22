@@ -1,4 +1,4 @@
-use super::{Parser, unquote};
+use super::Parser;
 use crate::source::Span;
 use crate::syntax::{
     AccessorKind, TokenKind, TypeMember, TypeMemberKind, TypeMemberModifier,
@@ -262,7 +262,9 @@ impl Parser<'_> {
                 self.bump();
                 TypeMemberName {
                     span: token.span,
-                    kind: TypeMemberNameKind::StringLiteral(unquote(self.text(token.span))),
+                    kind: TypeMemberNameKind::StringLiteral(
+                        self.ordinary_string_literal_value(token),
+                    ),
                 }
             }
             TokenKind::NumericLiteral => {

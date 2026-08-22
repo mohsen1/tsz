@@ -5,7 +5,9 @@ use super::numeric_literal::{
     ScannedNumericLiteral, ScannedSeparatedNumberLiteral, scan_numeric_literal,
 };
 use super::regular_expression::ScannedRegularExpressionLiteral;
-use super::string_literal::{ScannedStringLiteral, scan_ordinary_string_literal};
+use super::string_literal::{
+    ScannedLineContinuationStringLiteral, ScannedStringLiteral, scan_ordinary_string_literal,
+};
 use super::template_literal::ScannedTemplateLiteral;
 use super::{
     CommentKind, CommentPlacement, CommentTrivia, Token, TokenKind, is_single_line_whitespace,
@@ -17,6 +19,7 @@ pub struct ScanOutput {
     pub diagnostics: Vec<Diagnostic>,
     pub(super) template_literals: Vec<ScannedTemplateLiteral>,
     pub(super) string_literals: Vec<ScannedStringLiteral>,
+    pub(super) line_continuation_string_literals: Vec<ScannedLineContinuationStringLiteral>,
     pub(super) numeric_literals: Vec<ScannedNumericLiteral>,
     pub(super) separated_numeric_literals: Vec<ScannedSeparatedNumberLiteral>,
     pub(super) has_unmodeled_numeric_separator: bool,
@@ -40,6 +43,7 @@ struct Scanner<'a> {
     diagnostics: Vec<Diagnostic>,
     template_literals: Vec<ScannedTemplateLiteral>,
     string_literals: Vec<ScannedStringLiteral>,
+    line_continuation_string_literals: Vec<ScannedLineContinuationStringLiteral>,
     numeric_literals: Vec<ScannedNumericLiteral>,
     separated_numeric_literals: Vec<ScannedSeparatedNumberLiteral>,
     has_unmodeled_numeric_separator: bool,
@@ -61,6 +65,7 @@ impl<'a> Scanner<'a> {
             diagnostics: Vec::new(),
             template_literals: Vec::new(),
             string_literals: Vec::new(),
+            line_continuation_string_literals: Vec::new(),
             numeric_literals: Vec::new(),
             separated_numeric_literals: Vec::new(),
             has_unmodeled_numeric_separator: false,
@@ -116,6 +121,7 @@ impl<'a> Scanner<'a> {
             diagnostics: self.diagnostics,
             template_literals: self.template_literals,
             string_literals: self.string_literals,
+            line_continuation_string_literals: self.line_continuation_string_literals,
             numeric_literals: self.numeric_literals,
             separated_numeric_literals: self.separated_numeric_literals,
             has_unmodeled_numeric_separator: self.has_unmodeled_numeric_separator,
@@ -660,6 +666,9 @@ impl<'a> Scanner<'a> {
         self.diagnostics.extend(scanned.diagnostics);
         if let Some(literal) = scanned.extended_literal {
             self.string_literals.push(literal);
+        }
+        if let Some(literal) = scanned.line_continuation_literal {
+            self.line_continuation_string_literals.push(literal);
         }
         TokenKind::StringLiteral
     }

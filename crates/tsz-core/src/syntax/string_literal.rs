@@ -115,6 +115,16 @@ pub(super) struct ScannedStringToken {
     pub end: usize,
     pub diagnostics: Vec<Diagnostic>,
     pub extended_literal: Option<ScannedStringLiteral>,
+    pub line_continuation_literal: Option<ScannedLineContinuationStringLiteral>,
+}
+
+/// Sparse scanner-owned semantic value for the exact ordinary-string subset
+/// whose only escapes are line continuations. The authored token remains in
+/// source text for emit; parser consumers use this cooked value for identity.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct ScannedLineContinuationStringLiteral {
+    pub span: Span,
+    pub cooked: String,
 }
 
 pub(super) fn scan_ordinary_string_literal(
@@ -125,6 +135,13 @@ pub(super) fn scan_ordinary_string_literal(
     let bytes = source.text.as_bytes();
     let probe = probe_ordinary_string_literal(source, start, quote);
     if !probe.has_extended_escape {
+        let line_continuation_literal = (probe.terminated
+            && probe.has_line_continuation
+            && !probe.has_non_line_continuation_escape)
+            .then(|| ScannedLineContinuationStringLiteral {
+                span: Span::new(source.id, start, probe.end),
+                cooked: cook_line_continuation_string(&source.text[start..probe.end]),
+            });
         return ScannedStringToken {
             end: probe.end,
             diagnostics: (!probe.terminated)
@@ -139,6 +156,7 @@ pub(super) fn scan_ordinary_string_literal(
                 .into_iter()
                 .collect(),
             extended_literal: None,
+            line_continuation_literal,
         };
     }
 
@@ -231,6 +249,7 @@ pub(super) fn scan_ordinary_string_literal(
             },
             diagnostic_events: events,
         }),
+        line_continuation_literal: None,
     }
 }
 
@@ -239,30 +258,41 @@ struct StringProbe {
     end: usize,
     terminated: bool,
     has_extended_escape: bool,
+    has_line_continuation: bool,
+    has_non_line_continuation_escape: bool,
 }
 
 fn probe_ordinary_string_literal(source: &SourceText, start: usize, quote: u8) -> StringProbe {
     let bytes = source.text.as_bytes();
     let mut offset = start + 1;
     let mut has_extended_escape = false;
+    let mut has_line_continuation = false;
+    let mut has_non_line_continuation_escape = false;
     while let Some(byte) = bytes.get(offset).copied() {
         if byte == quote {
             return StringProbe {
                 end: offset + 1,
                 terminated: true,
                 has_extended_escape,
+                has_line_continuation,
+                has_non_line_continuation_escape,
             };
         }
         if matches!(byte, b'\n' | b'\r') {
             break;
         }
         if byte == b'\\' {
-            has_extended_escape |= bytes.get(offset..offset + 3) == Some(b"\\u{");
+            let escape_start = offset;
             offset += 1;
-            if bytes.get(offset..offset + 2) == Some(b"\r\n") {
-                offset += 2;
+            if let Some(length) = line_continuation_len_at(bytes, offset) {
+                has_line_continuation = true;
+                offset += length;
             } else if let Some(character) = source.text[offset..].chars().next() {
+                has_extended_escape |= bytes.get(escape_start..escape_start + 3) == Some(b"\\u{");
+                has_non_line_continuation_escape = true;
                 offset += character.len_utf8();
+            } else {
+                has_non_line_continuation_escape = true;
             }
             continue;
         }
@@ -275,7 +305,52 @@ fn probe_ordinary_string_literal(source: &SourceText, start: usize, quote: u8) -
         end: offset,
         terminated: false,
         has_extended_escape,
+        has_line_continuation,
+        has_non_line_continuation_escape,
     }
+}
+
+fn cook_line_continuation_string(raw: &str) -> String {
+    debug_assert!(raw.len() >= 2);
+    let bytes = raw.as_bytes();
+    let body_end = raw.len() - 1;
+    let mut cooked = String::with_capacity(body_end.saturating_sub(1));
+    let mut offset = 1;
+    let mut segment_start = offset;
+    while offset < body_end {
+        if bytes[offset] == b'\\' {
+            cooked.push_str(&raw[segment_start..offset]);
+            offset += 1;
+            let length = line_continuation_len_at(bytes, offset)
+                .expect("sparse string metadata contains only line-continuation escapes");
+            offset += length;
+            segment_start = offset;
+        } else {
+            let character = raw[offset..]
+                .chars()
+                .next()
+                .expect("offset remains on a character boundary");
+            offset += character.len_utf8();
+        }
+    }
+    cooked.push_str(&raw[segment_start..body_end]);
+    cooked
+}
+
+fn line_continuation_len_at(bytes: &[u8], offset: usize) -> Option<usize> {
+    match bytes.get(offset).copied() {
+        Some(b'\r') if bytes.get(offset + 1) == Some(&b'\n') => Some(2),
+        Some(b'\r' | b'\n') => Some(1),
+        _ if is_unicode_line_separator_at(bytes, offset) => Some(3),
+        _ => None,
+    }
+}
+
+fn is_unicode_line_separator_at(bytes: &[u8], offset: usize) -> bool {
+    matches!(
+        bytes.get(offset..offset + 3),
+        Some([0xe2, 0x80, 0xa8 | 0xa9])
+    )
 }
 
 fn classify_extended_unicode_string(

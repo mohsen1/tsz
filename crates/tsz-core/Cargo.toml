@@ -101,5 +101,9 @@ path = "rewrite-tests/numeric_literal_recovery.rs"
 name = "rewrite_numeric_literal_separators"
 path = "rewrite-tests/numeric_literal_separators.rs"
 
+[[test]]
+name = "rewrite_string_line_continuations"
+path = "rewrite-tests/string_line_continuations.rs"
+
 [lints]
 workspace = true

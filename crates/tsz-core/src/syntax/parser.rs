@@ -15,7 +15,7 @@ mod type_parameters;
 
 use super::numeric_literal::{ScannedNumericLiteral, ScannedSeparatedNumberLiteral};
 use super::regular_expression::ScannedRegularExpressionLiteral;
-use super::string_literal::ScannedStringLiteral;
+use super::string_literal::{ScannedLineContinuationStringLiteral, ScannedStringLiteral};
 use super::template_literal::ScannedTemplateLiteral;
 use super::{
     AccessorKind, ArrowBody, ClassDeclaration, ClassMember, ClassMemberKind, ClassMemberModifiers,
@@ -25,7 +25,6 @@ use super::{
     SwitchStatement, Token, TokenKind, TypeAliasDeclaration, TypeNode, TypeNodeKind, UnaryOperator,
     VariableDeclaration, VariableKind, scan_source,
 };
-use literals::unquote;
 use modifiers::{Modifiers, ProductCapabilities};
 use operators::{binary_operator, expression_has_recovered_left_edge};
 
@@ -47,6 +46,7 @@ struct Parser<'a> {
     diagnostics: Vec<Diagnostic>,
     template_literals: Vec<ScannedTemplateLiteral>,
     string_literals: Vec<ScannedStringLiteral>,
+    line_continuation_string_literals: Vec<ScannedLineContinuationStringLiteral>,
     regular_expression_literals: Vec<ScannedRegularExpressionLiteral>,
     numeric_literals: Vec<ScannedNumericLiteral>,
     separated_numeric_literals: Vec<ScannedSeparatedNumberLiteral>,
@@ -73,6 +73,7 @@ impl<'a> Parser<'a> {
             diagnostics: scanned.diagnostics,
             template_literals: scanned.template_literals,
             string_literals: scanned.string_literals,
+            line_continuation_string_literals: scanned.line_continuation_string_literals,
             regular_expression_literals: scanned.regular_expression_literals,
             numeric_literals: scanned.numeric_literals,
             separated_numeric_literals: scanned.separated_numeric_literals,
@@ -1581,11 +1582,10 @@ impl<'a> Parser<'a> {
         match token.kind {
             TokenKind::StringLiteral | TokenKind::NumericLiteral | TokenKind::PrivateIdentifier => {
                 self.bump();
-                let text = self.text(token.span);
                 let name = if token.kind == TokenKind::StringLiteral {
-                    unquote(text)
+                    self.ordinary_string_literal_value(token)
                 } else {
-                    text.to_string()
+                    self.text(token.span).to_string()
                 };
                 (name, token.span, false)
             }

@@ -2,10 +2,22 @@ use super::super::{
     ExtendedUnicodeStringLiteral, Statement, comments_form_extended_unicode_string_safe_file,
     statements_form_extended_unicode_string_safe_file,
 };
-use super::Parser;
+use super::{Parser, literals::unquote};
 use crate::syntax::Token;
 
 impl Parser<'_> {
+    pub(super) fn ordinary_string_literal_value(&self, token: Token) -> String {
+        let cooked = self
+            .line_continuation_string_literals
+            .binary_search_by_key(&token.span.start, |literal| literal.span.start)
+            .ok()
+            .and_then(|index| {
+                let scanned = &self.line_continuation_string_literals[index];
+                (scanned.span == token.span).then(|| scanned.cooked.clone())
+            });
+        cooked.unwrap_or_else(|| unquote(self.text(token.span)))
+    }
+
     pub(super) fn extended_unicode_string_literal(
         &self,
         token: Token,
