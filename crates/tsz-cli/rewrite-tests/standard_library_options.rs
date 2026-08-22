@@ -151,7 +151,7 @@ fn tsserver_preserves_explicit_no_implicit_any_false_under_strict() {
             "command": "open",
             "arguments": {
                 "file": "opted-out.ts",
-                "fileContent": "function identity(value) { return value; }"
+                "fileContent": "function optedOutIdentity(value) { return value; }"
             }
         }),
         json!({
@@ -172,7 +172,7 @@ fn tsserver_preserves_explicit_no_implicit_any_false_under_strict() {
             "command": "open",
             "arguments": {
                 "file": "strict-default.ts",
-                "fileContent": "function identity(value) { return value; }"
+                "fileContent": "function strictIdentity(value) { return value; }"
             }
         }),
         json!({
