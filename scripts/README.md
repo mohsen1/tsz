@@ -71,7 +71,8 @@ scripts/
 ### Architecture & Linting
 | Script | Purpose |
 |--------|---------|
-| `scripts/arch/arch_guard.py` | Enforce the clean-slate workspace, dependency, size, Sound Mode, and anti-hardcoding boundaries |
+| `scripts/arch/arch_guard.py` | Enforce clean-slate workspace, dependency, size, anti-hardcoding, and rewrite-debt ratchets |
+| `scripts/arch/rewrite_architecture_metrics.py --check` | Report and verify no growth in mirrored capability, suppression, forcing, recursion, collection, and near-cap-module debt |
 | `python3 -m unittest discover -s scripts/arch -p 'test_*.py'` | Exercise the reset architecture guard contract |
 
 ### Setup & Maintenance

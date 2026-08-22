@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 import tempfile
 import textwrap
@@ -67,8 +68,188 @@ class ArchGuardTests(unittest.TestCase):
     def codes(self) -> list[str]:
         return [violation.code for violation in arch_guard.check(self.root)]
 
+    def install_rewrite_metric_sources(self) -> None:
+        self.write("scripts/arch/arch_guard.py", "# architecture guard marker\n")
+        self.write(
+            "crates/tsz-core/src/syntax/ast.rs",
+            "struct SourceUnit { syntax_policy: bool }\n",
+        )
+        self.write(
+            "crates/tsz-core/src/syntax/parser/modifiers.rs",
+            "struct ProductCapabilities { emit_policy: bool }\n",
+        )
+        self.write(
+            "crates/tsz-core/src/semantics/checker.rs",
+            "struct Checker<'a> { queries: Vec<u8>, marker: &'a () }\n",
+        )
+        self.write(
+            "crates/tsz-core/src/program.rs",
+            "let result = if options.no_check || missing { CheckResult { } };\n",
+        )
+
     def test_clean_reset_layout_passes(self) -> None:
         self.assertEqual(arch_guard.check(self.root), [])
+
+    def test_rewrite_architecture_ratchet_is_required_with_the_guard(self) -> None:
+        self.write("scripts/arch/arch_guard.py", "# architecture guard marker\n")
+        self.assertIn("architecture-ratchet", self.codes())
+
+    def test_rewrite_architecture_ratchet_requires_an_object_baseline(self) -> None:
+        self.install_rewrite_metric_sources()
+        for value in ("[]\n", "null\n", "true\n"):
+            with self.subTest(value=value.strip()):
+                self.write(arch_guard.ARCHITECTURE_RATCHET_PATH, value)
+                self.assertIn("architecture-ratchet", self.codes())
+
+    def test_rewrite_architecture_ratchet_blocks_growth(self) -> None:
+        self.install_rewrite_metric_sources()
+        baseline = arch_guard.rewrite_architecture_metrics(self.root)
+        self.write(
+            arch_guard.ARCHITECTURE_RATCHET_PATH,
+            json.dumps(baseline, sort_keys=True),
+        )
+        self.assertNotIn("architecture-ratchet", self.codes())
+        self.write(
+            "crates/tsz-core/src/syntax/ast.rs",
+            "struct SourceUnit { syntax_policy: bool, another_policy: bool }\n",
+        )
+        self.assertIn("architecture-ratchet", self.codes())
+
+    def test_rewrite_architecture_improvement_must_lower_the_baseline(self) -> None:
+        self.install_rewrite_metric_sources()
+        baseline = arch_guard.rewrite_architecture_metrics(self.root)
+        self.write(
+            arch_guard.ARCHITECTURE_RATCHET_PATH,
+            json.dumps(baseline, sort_keys=True),
+        )
+        self.write(
+            "crates/tsz-core/src/syntax/ast.rs",
+            "struct SourceUnit {}\n",
+        )
+        self.assertIn("architecture-ratchet", self.codes())
+
+    def test_rewrite_architecture_metrics_cover_distributed_ownership(self) -> None:
+        self.install_rewrite_metric_sources()
+        baseline = arch_guard.rewrite_architecture_metrics(self.root)
+        self.write(
+            "crates/tsz-core/src/syntax/ast.rs",
+            "struct SourceUnit { syntax_policy: bool, another_policy: bool }\n",
+        )
+        self.write(
+            "crates/tsz-core/src/syntax/parser/modifiers.rs",
+            "struct ProductCapabilities { emit_policy: bool, service_policy: bool }\n",
+        )
+        self.write(
+            "crates/tsz-core/src/semantics/checker.rs",
+            """
+            struct Checker<'a> {
+                queries: Vec<u8>, cache: FxHashMap<u8, u8>, marker: &'a ()
+            }
+            """,
+        )
+        self.write(
+            "crates/tsz-core/src/program.rs",
+            """
+            let result = if options.no_check || missing || local_gap { CheckResult { } };
+            let skipped = CheckResult {
+                diagnostics: Vec::new(),
+                type_count: 0,
+                semantic_completion: SemanticCompletion::Complete,
+            };
+            diagnostics.extend(semantic_diagnostics);
+            if first_gap || second_gap {
+                semantic_completion = semantic_completion.combine(SemanticCompletion::Deferred);
+            }
+            """,
+        )
+        self.write(
+            "crates/tsz-core/src/emit_paths.rs",
+            """
+            struct EmitPlan { incomplete_products: bool, another_policy: bool }
+            incomplete_file_products.extend(files.iter().map(|file| file.source.id));
+            plan.incomplete_products = true;
+            """,
+        )
+        for path in (
+            "crates/tsz-core/src/config.rs",
+            "crates/tsz-core/src/emit.rs",
+            "crates/tsz-core/src/syntax/parser.rs",
+            "crates/tsz-core/src/semantics/checker/required_type.rs",
+            "crates/tsz-core/rewrite-tests/foundation.rs",
+            "crates/tsz-core/rewrite-tests/type_members.rs",
+        ):
+            self.write(path, "// central line ratchet\n")
+        self.write(
+            "crates/tsz-core/src/semantics/query.rs",
+            """
+            fn query(owner: &mut Owner, file: &File) {
+                owner.force_type(
+                    nested(value),
+                    depth,
+                );
+                owner.force_deferred(
+                    value,
+                    deferred,
+                    0,
+                );
+                let _stack = ReferenceExpansionStack::new(Demand::Shape);
+                let _ = file.has_unmodeled_feature();
+                let _ = file.feature_products_supported();
+                owner.require_explicit_type_positions();
+            }
+            """,
+        )
+        measured = arch_guard.rewrite_architecture_metrics(self.root)
+        for metric in (
+            "caller_depth_force_call_sites",
+            "capability_policy_mentions",
+            "checker_collection_fields",
+            "checker_rs_lines",
+            "config_rs_lines",
+            "emit_plan_boolean_fields",
+            "emit_plan_incomplete_assignments",
+            "emit_plan_program_wide_promotions",
+            "emit_rs_lines",
+            "force_deferred_call_sites",
+            "force_type_call_sites",
+            "foundation_rewrite_test_lines",
+            "parser_rs_lines",
+            "parser_product_capability_boolean_fields",
+            "program_completion_deferred_assignments",
+            "program_completion_gate_terms",
+            "program_empty_check_result_sites",
+            "program_whole_check_skip_terms",
+            "reference_stack_constructors",
+            "required_type_rs_lines",
+            "source_unit_boolean_fields",
+            "type_members_rewrite_test_lines",
+            "unmodeled_policy_mentions",
+            "whole_required_type_prepass_call_sites",
+            "zero_depth_force_call_sites",
+        ):
+            self.assertGreater(measured[metric], baseline[metric], metric)
+
+    def test_rewrite_architecture_metrics_ignore_nonproduction_text(self) -> None:
+        self.install_rewrite_metric_sources()
+        baseline = arch_guard.rewrite_architecture_metrics(self.root)
+        self.write(
+            "crates/tsz-core/src/semantics/query.rs",
+            r'''
+            // owner.force_type(value, 0); file.has_unmodeled_comment();
+            const EXAMPLE: &str = "feature_products_supported force_deferred";
+            #[cfg(test)]
+            mod tests {
+                fn fixture(owner: &mut Owner) {
+                    owner.force_type(value, depth);
+                    let _stack = ReferenceExpansionStack::new(Demand::Shape);
+                }
+            }
+            ''',
+        )
+        self.assertEqual(
+            arch_guard.rewrite_architecture_metrics(self.root),
+            baseline,
+        )
 
     def test_workspace_member_is_exact_and_retired_crate_is_rejected(self) -> None:
         self.write(

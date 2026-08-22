@@ -104,19 +104,31 @@ isolation evidence.
    semantic outcome is known.
 8. **Emit consumes syntax and checked summaries.** It does not re-check the
    program or patch already-rendered output.
-9. **Caches prove purity.** A cache key names every input that can change the
+9. **Capabilities have one owner.** Syntax retains authored facts. One immutable,
+   typed analysis per program/options snapshot derives claims keyed by operation
+   or product and program/file/node scope. Checker, public emit/printers, every
+   service, and exit-status selection reuse it; phases do not mirror policy.
+10. **Completion stays local.** An incomplete operation defers its owner while
+    unrelated declarations continue checking. Whole-program suppression is only
+    for uncertainty that is structurally program-global.
+11. **Evaluation has one session identity.** Forcing and recursion use one
+    canonical checker-session key schema. Demand-scoped frames and typed budget
+    axes remain distinct, but required-type and display do not create independent
+    identity universes or eager subtree prewalks. Traversal depth is not reused as
+    evaluator fuel, and incomplete operands stop owner materialization immediately.
+12. **Caches prove purity.** A cache key names every input that can change the
    answer. Incomplete/speculative results do not enter definitive caches.
    Version epochs and whole-cache clears are not substitute inputs.
-10. **Determinism precedes parallelism.** The reference path is single-threaded.
-    A parallel stage graduates only after repeated, file-order, cold/warm, and
-    thread-count diagnostic-set agreement.
-11. **Freshness is typed once.** Literal freshness and regular structural type
-    are distinct semantic facts. Mutable observation points consume the shared
-    widening query; diagnostic display provenance does not decide assignability.
-12. **Validation never repairs the product.** Canonical harnesses consume only
-    TSZ output from the original invocation. Oracle answers, altered retries,
-    output surgery, omitted rows, and fixture stubs cannot count as parity or
-    performance evidence.
+13. **Determinism precedes parallelism.** The reference path is single-threaded.
+   A parallel stage graduates only after repeated, file-order, cold/warm, and
+   thread-count diagnostic-set agreement.
+14. **Freshness is typed once.** Literal freshness and regular structural type
+   are distinct semantic facts. Mutable observation points consume the shared
+   widening query; diagnostic display provenance does not decide assignability.
+15. **Validation never repairs the product.** Canonical harnesses consume only
+   TSZ output from the original invocation. Oracle answers, altered retries,
+   output surgery, omitted rows, and fixture stubs cannot count as parity or
+   performance evidence.
 
 ## Execution Milestones
 
@@ -199,6 +211,11 @@ Open the reset PR only when all of these are true on the exact head:
 5. the retained conformance and emit runners can launch the new binary on narrow filters;
 6. ten repeated runs and both root-file orders produce the same diagnostic fingerprint;
 7. the architecture/context audit passes and hand-written compiler files stay below 2,000 lines;
+   architecture ratchets for capability policy, whole-program suppression,
+   force call sites/depth resets, recursion constructors, required-type prepasses,
+   checker collections, and near-cap central modules do not grow;
+   mirrored `ProductCapabilities`/`SourceUnit` product-policy booleans are removed
+   and all product consumers use one typed capability analysis;
 8. the PR reports the deletion/retention manifest, measured LOC, known unsupported surface,
    and the exact commands used—without implying broad compatibility.
 

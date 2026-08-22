@@ -21,6 +21,17 @@ benchmark regressions, and timing claims.
   cross-session `TypeId` comparisons, or hidden eager materialization.
 - Start semantic operations uncached. A new cache needs a typed key, explicit
   dependencies/lifetime, a residency bound, and uncached agreement tests.
+- One checker session owns recursion identity and budgets. Do not add a local
+  force entry point, recursion stack, or fuel counter for a timeout/overflow;
+  route the demand through the existing evaluation owner and stop on incomplete
+  operands.
+- Relation/projection traversal depth is not evaluator fuel. Keep budget axes
+  typed and session-owned; never seed nested forcing from caller depth or reset
+  it at zero.
+- Inventory direct `.force_type`/`.force_deferred` calls, raw root resets, and
+  required-type whole-tree passes before changing termination behavior.
+- Run `python3 scripts/arch/rewrite_architecture_metrics.py --check`; performance
+  work must not grow the forcing, recursion-owner, or side-table ratchets.
 
 ## Evidence
 

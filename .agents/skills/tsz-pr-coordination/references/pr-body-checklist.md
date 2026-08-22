@@ -30,6 +30,19 @@ Confirm the remote body includes all required sections after GitHub stores it.
 No CI job validates this prose; fix omissions or stale evidence before asking
 for review or queueing the PR.
 
+## Architecture-Affecting PRs
+
+When a PR changes capability/nonclaim ownership, whole-program containment,
+forcing/recursion, caches, or checker side tables, include:
+
+- the single owner before and after, plus mirrors deleted;
+- architecture metric before/after and the ratchet check command;
+- local versus program-global completion behavior;
+- cache/recursion identity and cleanup behavior;
+- for every temporary nonclaim, its typed reason and deletion condition.
+
+Do not raise the architecture ratchet in an ordinary behavior campaign.
+
 ## Good Verification Lines
 
 - `cargo nextest run -p tsz-core -E 'test(<filter>)'`

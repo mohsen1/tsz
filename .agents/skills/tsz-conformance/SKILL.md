@@ -16,6 +16,11 @@ observation. Prefer checked-in artifacts and narrow filters; CI owns broad runs.
 - Treat a failing test as a witness for a structural rule.
 - Do not hide unsupported behavior or capability regressions with
   snapshot/allowlist churn.
+- Syntax campaigns add authored facts, not new product-policy booleans. If a
+  family needs checker/emit/service containment, use `tsz-architecture` and
+  derive one typed nonclaim consumed by every surface.
+- Prefer operation-local Deferred results. A file-local unsupported construct
+  must not suppress unrelated diagnostics through a new whole-program skip.
 
 ## Offline First
 
@@ -86,6 +91,9 @@ display, or emit-only.
 
 Before coding, state the structural rule and adjacent cases. Behavior changes
 need tests at the public service boundary plus focused owner-module tests.
+If the change touches a capability, force path, recursion owner, or cache, also
+record `python3 scripts/arch/rewrite_architecture_metrics.py --check` and the
+temporary nonclaim's deletion condition.
 
 For a full-corpus observation, preserve every unsupported, crash, timeout, and
 mismatch result in the artifact. When a semantic family graduates, add exact

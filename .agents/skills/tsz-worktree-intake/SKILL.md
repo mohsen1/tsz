@@ -22,6 +22,11 @@ gh issue list --state open --limit 100 --json number,title,labels,updatedAt,url
 Pick the roadmap goal the work serves (`green`, `fast`, `grow`, or `hold`);
 `docs/plan/ROADMAP.md` is the only planning doc.
 
+If the task touches `SourceUnit` capability policy, `ProductCapabilities`,
+whole-program checker suppression, EmitPlan/service containment, `force_type`,
+recursion stacks, semantic caches, or checker side tables, use
+`tsz-architecture` before editing and capture the architecture ratchet baseline.
+
 If disk is low or worktree reuse is unclear, use `tsz-disk-cache-hygiene`.
 Read `references/common-failure-modes.md` only for stale merged branches, dirty
 same-path files, low disk, missing TS corpus, or overlapping active PRs.

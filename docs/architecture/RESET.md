@@ -62,6 +62,31 @@ No semantic work starts while declarations are still being mirrored or merged.
 Parallel scanning/parsing/binding is permitted only because each task writes to
 isolated file storage and the program performs a deterministic merge afterward.
 
+## Capability And Nonclaim Ownership
+
+This is the target ownership model. The current mirrored `ProductCapabilities`
+and `SourceUnit` policy booleans are measured rewrite debt, not accepted
+architecture. The no-growth ratchet prevents another campaign from expanding
+them; R0 remains incomplete until the mirrors are removed.
+
+Syntax records authored facts: token kinds, recovery events, source provenance,
+and immutable structure. It does not decide whether checker, JavaScript emit,
+declaration emit, quick info, or the process exit may claim a result.
+
+After program construction, one immutable typed capability analysis is derived
+once per program/options snapshot. Each nonclaim is keyed by operation or
+product and program/file/node scope, and carries a structural reason plus its
+deletion condition. Checker, emit planning, public `emit_file`, printer
+fallbacks, quick info/navigation services, and exit-status selection consume
+this same analysis; they do not maintain parallel `supported` flags, reparse,
+or recompile merely to rediscover the condition.
+
+Semantic incompleteness is local by default. A deferred expression, declaration,
+or query does not erase diagnostics from unrelated siblings. Whole-program
+checker suppression is valid only when the uncertainty is itself program-global,
+such as an unavailable essential library universe. A temporary broader nonclaim
+must name the structural deletion condition in its test and PR evidence.
+
 ## Type Representation
 
 The initial type store contains primitives and ordinary structural types, but
@@ -98,6 +123,16 @@ Complete | Deferred | Cycle | Limit
 propagate or handle them according to the ported TypeScript operation. There is
 one gateway for apparent type, property lookup, symbolic dispatch, and any
 required materialization; callers do not invent local force rules.
+
+One checker-session evaluation owner carries the canonical recursion identity
+and key schema through every demand, including required-type, relation,
+projection, and display work. Demand-scoped source/target frames and typed
+budgets may remain distinct, but a consumer does not create a fresh identity
+universe. Traversal depth and evaluator work are separate typed budget axes
+within that session: callers do not seed a callee's evaluator budget from their
+own depth, and forcing does not restart at depth zero. Required-type is an
+on-demand query, not an eager subtree prewalk. Once a required operand is
+incomplete, its owner returns that completion before expansion or forcing.
 
 ## Inference And Relation
 
@@ -180,6 +215,12 @@ Prefer Rust visibility and types over grep allowlists:
 - compiler files remain below 2,000 physical lines;
 - architecture tests compile invalid examples where practical, then use small
   source scans only for anti-hardcoding and size rules.
+- the rewrite architecture ratchet prevents growth in mirrored capability
+  policy, whole-program semantic/product suppressors, force call sites and raw
+  depth resets, recursion-stack constructors, required-type prepasses, checker
+  collection fields, and the seven production/test shards already above 1,900 lines;
+  improvements lower the ratchet. These lexical counters trigger review; they
+  do not prove semantic ownership.
 
 The architecture is succeeding when adding a TypeScript behavior has one
 obvious module, one oracle-backed algorithm, one identity domain, and no new

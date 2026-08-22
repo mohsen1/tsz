@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass
+import json
 from pathlib import Path
 import os
 import re
@@ -968,6 +969,300 @@ def check_semantic_api_boundary(root: Path) -> list[Violation]:
     return violations
 
 
+ARCHITECTURE_RATCHET_PATH = "scripts/arch/rewrite-architecture-ratchet.json"
+
+
+def _rust_struct_body(text: str, name: str) -> str:
+    code, _ = _rust_code_and_string_literals(_without_cfg_test_modules(text))
+    declaration = re.search(
+        rf"\bstruct\s+{re.escape(name)}(?:\s*<[^{{;]+>)?\s*\{{",
+        code,
+    )
+    if declaration is None:
+        return ""
+    start = declaration.end()
+    depth = 1
+    end = start
+    while end < len(code) and depth:
+        if code[end] == "{":
+            depth += 1
+        elif code[end] == "}":
+            depth -= 1
+        end += 1
+    return code[start : end - 1] if depth == 0 else ""
+
+
+def _field_count(body: str, type_pattern: str) -> int:
+    return len(
+        re.findall(
+            rf"(?m)(?:^|,)\s*(?:pub(?:\([^)]*\))?\s+)?"
+            rf"[A-Za-z_][A-Za-z0-9_]*\s*:\s*(?:{type_pattern})\b",
+            body,
+        )
+    )
+
+
+def _rust_method_call_arguments(text: str, names: tuple[str, ...]) -> list[str]:
+    """Return balanced argument text for selected Rust method calls."""
+
+    calls: list[str] = []
+    pattern = re.compile(rf"\.(?:{'|'.join(map(re.escape, names))})\s*\(")
+    for matched in pattern.finditer(text):
+        start = matched.end()
+        depth = 1
+        end = start
+        while end < len(text) and depth:
+            if text[end] == "(":
+                depth += 1
+            elif text[end] == ")":
+                depth -= 1
+            end += 1
+        if depth == 0:
+            calls.append(text[start : end - 1])
+    return calls
+
+
+def _top_level_boolean_term_count(condition: str) -> int:
+    """Count top-level `||` terms in already string/comment-stripped Rust."""
+
+    depth = 0
+    operators = 0
+    index = 0
+    while index < len(condition):
+        character = condition[index]
+        if character in "([{":
+            depth += 1
+        elif character in ")]}" and depth:
+            depth -= 1
+        elif character == "|" and condition[index : index + 2] == "||" and depth == 0:
+            operators += 1
+            index += 1
+        index += 1
+    return operators + 1 if condition.strip() else 0
+
+
+def rewrite_architecture_metrics(root: Path) -> dict[str, int]:
+    """Measure distributed rewrite ownership that must not grow.
+
+    These are intentionally coarse ratchets, not semantic validators.  Their
+    purpose is to force a review when a feature would add another mirrored
+    capability flag, whole-program suppression term, force call/reset,
+    recursion constructor, required-type prepass, checker collection, or line
+    to an already near-cap central module.
+    """
+
+    source_root = root / "crates/tsz-core/src"
+    production_parts: list[str] = []
+    for path in _walk_files(root, source_root):
+        if path.suffix != ".rs" or _is_test_source(path, source_root):
+            continue
+        text = _without_cfg_test_modules(_read_text(path))
+        production_parts.append(_rust_code_and_string_literals(text)[0])
+    production = "\n".join(production_parts)
+
+    ast_text = _read_text(source_root / "syntax/ast.rs")
+    modifiers_text = _read_text(source_root / "syntax/parser/modifiers.rs")
+    checker_text = _read_text(source_root / "semantics/checker.rs")
+    emit_paths_path = source_root / "emit_paths.rs"
+    emit_paths_text = (
+        _rust_code_and_string_literals(
+            _without_cfg_test_modules(_read_text(emit_paths_path))
+        )[0]
+        if emit_paths_path.is_file()
+        else ""
+    )
+    program_text = _rust_code_and_string_literals(
+        _without_cfg_test_modules(_read_text(source_root / "program.rs"))
+    )[0]
+
+    source_unit = _rust_struct_body(ast_text, "SourceUnit")
+    product_capabilities = _rust_struct_body(modifiers_text, "ProductCapabilities")
+    checker = _rust_struct_body(checker_text, "Checker")
+    emit_plan = _rust_struct_body(emit_paths_text, "EmitPlan")
+    check_branch = re.search(
+        r"=\s*if\s+(?P<condition>options\.no_check.*?)\{\s*CheckResult\s*\{",
+        program_text,
+        re.DOTALL,
+    )
+    check_condition = check_branch.group("condition") if check_branch else ""
+    completion_branch = re.search(
+        r"diagnostics\.extend\(semantic_diagnostics\);\s*if\s+"
+        r"(?P<condition>.*?)\s*\{\s*semantic_completion\s*=",
+        program_text,
+        re.DOTALL,
+    )
+    completion_condition = (
+        completion_branch.group("condition") if completion_branch else ""
+    )
+    force_type_calls = _rust_method_call_arguments(production, ("force_type",))
+    force_deferred_calls = _rust_method_call_arguments(production, ("force_deferred",))
+    force_calls = force_type_calls + force_deferred_calls
+
+    def physical_repo_lines(relative: str) -> int:
+        path = root / relative
+        return len(_read_text(path).splitlines()) if path.is_file() else 0
+
+    def physical_lines(relative: str) -> int:
+        return physical_repo_lines(f"crates/tsz-core/src/{relative}")
+
+    return {
+        "checker_collection_fields": _field_count(
+            checker,
+            r"(?:BTreeMap|BTreeSet|FxHashMap|FxHashSet|HashMap|HashSet|Vec)",
+        ),
+        "caller_depth_force_call_sites": sum(
+            bool(
+                re.search(
+                    r",\s*depth(?:\s*\+\s*1)?\s*,?\s*$",
+                    arguments,
+                    re.DOTALL,
+                )
+            )
+            for arguments in force_calls
+        ),
+        "capability_policy_mentions": len(
+            re.findall(
+                r"\b(?:functions|classes|declarations?|javascript|"
+                r"[A-Za-z_][A-Za-z0-9_]*_(?:products|hosts|classes|declarations?|"
+                r"completion|program_options|program_sources))"
+                r"_supported\b",
+                production,
+            )
+        ),
+        "checker_rs_lines": physical_lines("semantics/checker.rs"),
+        "config_rs_lines": physical_lines("config.rs"),
+        "emit_plan_boolean_fields": _field_count(emit_plan, "bool"),
+        "emit_plan_incomplete_assignments": len(
+            re.findall(r"\bincomplete_products\s*=\s*true\b", emit_paths_text)
+        ),
+        "emit_plan_program_wide_promotions": len(
+            re.findall(
+                r"incomplete_file_products\.extend\s*\(\s*"
+                r"files\.iter\(\)\.map\s*\(",
+                emit_paths_text,
+            )
+        ),
+        "emit_rs_lines": physical_lines("emit.rs"),
+        "force_deferred_call_sites": len(force_deferred_calls),
+        "force_type_call_sites": len(force_type_calls),
+        "foundation_rewrite_test_lines": physical_repo_lines(
+            "crates/tsz-core/rewrite-tests/foundation.rs"
+        ),
+        "parser_rs_lines": physical_lines("syntax/parser.rs"),
+        "parser_product_capability_boolean_fields": _field_count(
+            product_capabilities,
+            "bool",
+        ),
+        "program_empty_check_result_sites": len(
+            re.findall(
+                r"CheckResult\s*\{[^{}]{0,400}?diagnostics:\s*Vec::new\(\)"
+                r"[^{}]{0,400}?type_count:\s*0\b",
+                program_text,
+                re.DOTALL,
+            )
+        ),
+        "program_whole_check_skip_terms": _top_level_boolean_term_count(
+            check_condition
+        ),
+        "program_completion_deferred_assignments": len(
+            re.findall(
+                r"semantic_completion\s*=\s*semantic_completion\.combine\s*\("
+                r"SemanticCompletion::Deferred\s*\)",
+                program_text,
+            )
+        ),
+        "program_completion_gate_terms": _top_level_boolean_term_count(
+            completion_condition
+        ),
+        "reference_stack_constructors": len(
+            re.findall(r"\bReferenceExpansionStack::new\s*\(", production)
+        ),
+        "required_type_rs_lines": physical_lines(
+            "semantics/checker/required_type.rs"
+        ),
+        "source_unit_boolean_fields": _field_count(source_unit, "bool"),
+        "type_members_rewrite_test_lines": physical_repo_lines(
+            "crates/tsz-core/rewrite-tests/type_members.rs"
+        ),
+        "unmodeled_policy_mentions": len(
+            re.findall(r"\bhas_unmodeled_[A-Za-z_][A-Za-z0-9_]*\b", production)
+        ),
+        "whole_required_type_prepass_call_sites": len(
+            re.findall(r"\.require_explicit_type_positions\s*\(", production)
+        ),
+        "zero_depth_force_call_sites": sum(
+            bool(re.search(r",\s*0\s*,?\s*$", arguments, re.DOTALL))
+            for arguments in force_calls
+        ),
+    }
+
+
+def check_rewrite_architecture_ratchet(root: Path) -> list[Violation]:
+    baseline_path = root / ARCHITECTURE_RATCHET_PATH
+    if not baseline_path.is_file():
+        # Small unit-test repositories do not carry the rewrite guard itself.
+        if not (root / "scripts/arch/arch_guard.py").is_file():
+            return []
+        return [
+            Violation(
+                ARCHITECTURE_RATCHET_PATH,
+                1,
+                "architecture-ratchet",
+                "rewrite architecture metric baseline is missing",
+            )
+        ]
+    try:
+        baseline = json.loads(_read_text(baseline_path))
+    except (OSError, json.JSONDecodeError) as error:
+        return [
+            Violation(
+                ARCHITECTURE_RATCHET_PATH,
+                1,
+                "architecture-ratchet",
+                f"cannot read metric baseline: {error}",
+            )
+        ]
+    if not isinstance(baseline, dict):
+        return [
+            Violation(
+                ARCHITECTURE_RATCHET_PATH,
+                1,
+                "architecture-ratchet",
+                "metric baseline must be a JSON object",
+            )
+        ]
+    actual = rewrite_architecture_metrics(root)
+    violations: list[Violation] = []
+    if set(baseline) != set(actual):
+        violations.append(
+            Violation(
+                ARCHITECTURE_RATCHET_PATH,
+                1,
+                "architecture-ratchet",
+                "metric keys differ from the guard; regenerate the exact baseline",
+            )
+        )
+        return violations
+    for name, measured in actual.items():
+        expected = baseline[name]
+        if type(expected) is not int or expected != measured:
+            direction = "grew" if type(expected) is int and measured > expected else "fell"
+            action = (
+                "consolidate an existing owner instead of raising the baseline"
+                if direction == "grew"
+                else "lower the baseline in the same consolidation change"
+            )
+            violations.append(
+                Violation(
+                    ARCHITECTURE_RATCHET_PATH,
+                    1,
+                    "architecture-ratchet",
+                    f"{name} {direction}: baseline={expected!r}, actual={measured}; {action}",
+                )
+            )
+    return violations
+
+
 def check(root: Path) -> list[Violation]:
     checks: Iterable = (
         check_workspace,
@@ -977,6 +1272,7 @@ def check(root: Path) -> list[Violation]:
         check_ambient_behavior_switches,
         check_semantic_hardcoding,
         check_semantic_api_boundary,
+        check_rewrite_architecture_ratchet,
     )
     violations: list[Violation] = []
     for checker in checks:
@@ -1004,7 +1300,7 @@ def main(argv: list[str] | None = None) -> int:
             print(violation.render())
         print(f"architecture guard: {len(violations)} violation(s)")
         return 1
-    print("architecture guard: reset invariants pass")
+    print("architecture guard: enforced checks pass; rewrite debt ratchet unchanged")
     return 0
 
 
