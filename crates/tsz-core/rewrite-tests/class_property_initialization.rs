@@ -6,14 +6,15 @@ use tsz::config::{ProjectRequest, ProjectSelection, resolve_project};
 use tsz::host::SystemHost;
 use tsz::source::{FileId, SourceText};
 use tsz::syntax::{ClassMemberKind, PropertyNameKind, StatementKind, parse_source};
-use tsz::{Compiler, CompilerOptions, SourceInput};
+use tsz::{Compiler, CompilerOptions, SemanticCompletion, SourceInput};
 
 fn compile(source: &str, options: CompilerOptions) -> tsz::CompileOutput {
+    compile_named("property-initialization.ts", source, options)
+}
+
+fn compile_named(path: &str, source: &str, options: CompilerOptions) -> tsz::CompileOutput {
     Compiler::new().compile(
-        vec![SourceInput::new(
-            "property-initialization.ts",
-            Arc::<str>::from(source),
-        )],
+        vec![SourceInput::new(path, Arc::<str>::from(source))],
         &options,
     )
 }
@@ -161,6 +162,37 @@ fn property_name_kinds_are_preserved_and_only_identifiers_are_owned() {
     let output = compile(source, CompilerOptions::default());
     assert_eq!(codes(&output), vec![2564]);
     assert_eq!(ts2564_names(&output), vec!["ordinary"]);
+    assert_eq!(output.semantic_completion, SemanticCompletion::Deferred);
+
+    for source in [
+        "class Quoted { 'value': string; }",
+        "class Numeric { 0: string; }",
+    ] {
+        let output = compile(source, CompilerOptions::default());
+        assert!(output.diagnostics.is_empty(), "{output:?}");
+        assert_eq!(output.semantic_completion, SemanticCompletion::Complete);
+    }
+}
+
+#[test]
+fn unsupported_source_kinds_defer_only_required_property_checks() {
+    for path in ["source.tsx", "source.mts", "source.cts"] {
+        let output = compile_named(
+            path,
+            "class Crate { value: string; }",
+            CompilerOptions::default(),
+        );
+        assert!(!codes(&output).contains(&2564), "{path}: {output:?}");
+        assert_eq!(output.semantic_completion, SemanticCompletion::Deferred);
+    }
+
+    for (path, source) in [
+        ("source.d.ts", "class Declared { value: string; }"),
+        ("source.ts", "declare class Declared { value: string; }"),
+    ] {
+        let output = compile_named(path, source, CompilerOptions::default());
+        assert!(!codes(&output).contains(&2564), "{path}: {output:?}");
+    }
 }
 
 #[test]
@@ -241,9 +273,38 @@ fn any_constructor_member_keeps_assignment_flow_outside_this_atom() {
     for source in [
         "class Crate { value: string; constructor() {} }",
         "class Crate { value: string; constructor(value: string); }",
+        "class Assigned { value: string; constructor() { this.value = ''; } }",
+        concat!(
+            "class Early { value: string; constructor(flag: boolean) { ",
+            "if (flag) return; this.value = ''; } }",
+        ),
+        concat!(
+            "class Branched { value: string; constructor(flag: boolean) { ",
+            "if (flag) { this.value = ''; } else { this.value = 'fallback'; } } }",
+        ),
+        concat!(
+            "class BodyError { value: string; constructor() { ",
+            "const bad: string = 1; this.value = ''; } }",
+        ),
+        "class WrongRhs { value: string; constructor() { this.value = 1; } }",
+        concat!(
+            "class Multiple { value: string; constructor(); ",
+            "constructor() { this.value = ''; } }",
+        ),
     ] {
         let output = compile(source, CompilerOptions::default());
         assert!(!codes(&output).contains(&2564), "{source}: {output:?}");
+        assert_eq!(output.semantic_completion, SemanticCompletion::Deferred);
+    }
+
+    for source in [
+        "class Empty { constructor() {} }",
+        "class Maybe { value: undefined; constructor() {} }",
+        "class Loose { value: any; constructor() {} }",
+    ] {
+        let output = compile(source, CompilerOptions::default());
+        assert!(!codes(&output).contains(&2564), "{source}: {output:?}");
+        assert_eq!(output.semantic_completion, SemanticCompletion::Complete);
     }
 }
 
@@ -257,6 +318,7 @@ fn parser_recovered_class_members_do_not_assert_initialization_facts() {
         CompilerOptions::default(),
     );
     assert_eq!(ts2564_names(&output), vec!["owned"], "{output:?}");
+    assert_eq!(output.semantic_completion, SemanticCompletion::Deferred);
 }
 
 #[test]

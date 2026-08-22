@@ -17,19 +17,25 @@ impl Checker<'_> {
     ) {
         if !self.options.effective_strict_null_checks()
             || !self.options.effective_strict_property_initialization()
-            || !is_plain_typescript_source(&self.program.files[file.0 as usize].source.path)
-            || !declaration.member_syntax_recovery_free
-            || declaration
-                .members
-                .iter()
-                .any(|member| matches!(member.kind, ClassMemberKind::Constructor { .. }))
+            || declaration.declared
         {
             return;
         }
+        let source_path = &self.program.files[file.0 as usize].source.path;
+        if is_declaration_source(source_path) {
+            return;
+        }
+        let source_supported = is_plain_typescript_source(source_path);
+        let has_constructor = declaration
+            .members
+            .iter()
+            .any(|member| matches!(member.kind, ClassMemberKind::Constructor { .. }));
 
         for member in &declaration.members {
-            if member.name_kind != PropertyNameKind::Identifier
-                || member.modifiers.static_member
+            if matches!(
+                member.name_kind,
+                PropertyNameKind::StringLiteral | PropertyNameKind::NumericLiteral
+            ) || member.modifiers.static_member
                 || member.modifiers.abstract_member
                 || member.modifiers.declared
                 || member.modifiers.async_member
@@ -45,10 +51,21 @@ impl Checker<'_> {
             else {
                 continue;
             };
+            if !declaration.member_syntax_recovery_free {
+                let _ = self.require_completion(Completion::<()>::Deferred);
+                continue;
+            }
 
             let ty = self.resolve_type_node(file, class_scope, annotation, &HashMap::new());
             let required = self.property_initialization_requirement(ty);
             match self.require_completion(required) {
+                Completion::Complete(true)
+                    if has_constructor
+                        || !source_supported
+                        || member.name_kind != PropertyNameKind::Identifier =>
+                {
+                    let _ = self.require_completion(Completion::<()>::Deferred);
+                }
                 Completion::Complete(true) => self.push_diagnostic(
                     file,
                     member.name_span,
@@ -143,4 +160,13 @@ impl Checker<'_> {
 fn is_plain_typescript_source(path: &std::path::Path) -> bool {
     path.extension()
         .is_some_and(|extension| extension.eq_ignore_ascii_case("ts"))
+}
+
+fn is_declaration_source(path: &std::path::Path) -> bool {
+    path.file_name()
+        .and_then(std::ffi::OsStr::to_str)
+        .is_some_and(|name| {
+            let name = name.to_ascii_lowercase();
+            name.ends_with(".d.ts") || name.ends_with(".d.mts") || name.ends_with(".d.cts")
+        })
 }
