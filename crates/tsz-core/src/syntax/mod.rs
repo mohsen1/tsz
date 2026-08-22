@@ -11,9 +11,10 @@ mod token;
 mod trivia;
 
 pub use ast::*;
-pub use numeric_literal::{NumberLiteral, NumericRecoveryLiteral};
+pub use numeric_literal::{NumberLiteral, NumericRecoveryLiteral, SeparatedNumberLiteral};
 pub(crate) use numeric_literal::{
-    NumericRecoveryKind, numeric_recovery_family, statements_form_numeric_recovery_safe_file,
+    NumericRecoveryKind, erased_assertion_expression, erased_expression_separated_number,
+    numeric_recovery_family, parse_number_literal, statements_form_numeric_recovery_safe_file,
 };
 pub use parser::{ParseOutput, parse_source};
 pub use regular_expression::RegularExpressionLiteral;

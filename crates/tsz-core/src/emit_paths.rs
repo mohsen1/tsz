@@ -77,6 +77,7 @@ impl EmitPlan {
                     || file.syntax.has_unmodeled_extended_unicode_string_products()
                     || file.syntax.has_unmodeled_regular_expression_products()
                     || file.syntax.has_unmodeled_numeric_recovery_products()
+                    || file.syntax.has_unmodeled_numeric_separator_products()
                     || file.has_unmodeled_javascript_module_products()
             })
             .map(|file| file.source.id)
@@ -91,6 +92,12 @@ impl EmitPlan {
             incomplete_file_products.extend(files.iter().map(|file| file.source.id));
         }
         if has_unmodeled_numeric_recovery_program_products(files, options) {
+            incomplete_file_products.extend(files.iter().map(|file| file.source.id));
+        }
+        if files.iter().any(|file| {
+            file.syntax.has_authored_numeric_separator()
+                && file.syntax.has_unmodeled_numeric_separator_products()
+        }) {
             incomplete_file_products.extend(files.iter().map(|file| file.source.id));
         }
         let file_slots = files

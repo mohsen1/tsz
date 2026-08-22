@@ -7,14 +7,69 @@ use crate::diagnostics::Diagnostic;
 
 impl Parser<'_> {
     pub(super) fn number_literal(&self, token: Token) -> NumberLiteral {
-        self.numeric_literals
+        if let Some(index) = self
+            .numeric_literals
             .binary_search_by_key(&token.span.start, |literal| literal.span.start)
             .ok()
             .filter(|index| self.numeric_literals[*index].span == token.span)
+        {
+            return NumberLiteral::Recovery(self.numeric_literals[index].syntax_literal());
+        }
+        self.separated_numeric_literals
+            .binary_search_by_key(&token.span.start, |literal| literal.span.start)
+            .ok()
+            .filter(|index| self.separated_numeric_literals[*index].span == token.span)
             .map_or_else(
                 || NumberLiteral::Plain(self.text(token.span).to_string()),
-                |index| NumberLiteral::Recovery(self.numeric_literals[index].syntax_literal()),
+                |index| {
+                    NumberLiteral::Separated(
+                        self.separated_numeric_literals[index].syntax_literal(),
+                    )
+                },
             )
+    }
+
+    pub(super) fn observe_unmodeled_numeric_separator_if_current(&mut self) {
+        let span = self.current().span;
+        if self
+            .separated_numeric_literals
+            .binary_search_by_key(&span.start, |literal| literal.span.start)
+            .ok()
+            .is_some_and(|index| self.separated_numeric_literals[index].span == span)
+        {
+            self.product_capabilities
+                .observe_unmodeled_numeric_separator();
+        }
+    }
+
+    pub(super) fn observe_unmodeled_numeric_separator_in_span(
+        &mut self,
+        span: crate::source::Span,
+    ) {
+        if self.separated_numeric_literals.iter().any(|literal| {
+            literal.span.file == span.file
+                && literal.span.start >= span.start
+                && literal.span.end <= span.end
+        }) {
+            self.product_capabilities
+                .observe_unmodeled_numeric_separator();
+        }
+    }
+
+    pub(super) const fn finish_numeric_separator_source(&mut self) -> bool {
+        let has_authored =
+            !self.separated_numeric_literals.is_empty() || self.has_unmodeled_numeric_separator;
+        if has_authored
+            && (self.has_unmodeled_numeric_separator
+                || !self.diagnostics.is_empty()
+                || !self.comments.is_empty()
+                || self.has_unmodeled_trivia
+                || self.has_unmodeled_top_level_syntax)
+        {
+            self.product_capabilities
+                .observe_unmodeled_numeric_separator();
+        }
+        has_authored
     }
 
     /// TypeScript terminates a legacy-octal token before a following decimal

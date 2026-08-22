@@ -435,7 +435,7 @@ fn exact_sixteen_row_scanner_parser_and_ast_manifest() {
                 "{} semantic",
                 case.name
             );
-            assert_eq!(number.emit_text(), expected.emit, "{} emit", case.name);
+            assert_eq!(number.emit_text(false), expected.emit, "{} emit", case.name);
         }
     }
 }
@@ -975,8 +975,8 @@ fn separator_radix_and_fraction_adjacencies_fail_closed() {
         );
     }
 
-    // Valid separators remain ordinary scanner/parser syntax. Their exact
-    // canonical JavaScript emit is a separate adjacent campaign.
+    // Valid separators remain distinct from scanner recovery and are staged
+    // through their own exact raw/canonical syntax representation.
     for source_text in ["1_000", "0xF_F", "0b1_0", "0o7_0"] {
         let source = SourceText::new(
             FileId(14),
@@ -989,9 +989,9 @@ fn separator_radix_and_fraction_adjacencies_fail_closed() {
         assert!(parsed.diagnostics.is_empty(), "{source_text:?}");
         let numbers = collect_numbers(&parsed.unit.statements);
         let [number] = numbers.as_slice() else {
-            panic!("{source_text:?} should remain one plain number");
+            panic!("{source_text:?} should remain one separated number");
         };
-        assert!(matches!(number, NumberLiteral::Plain(_)));
+        assert!(matches!(number, NumberLiteral::Separated(_)));
         assert_eq!(number.raw(), source_text);
     }
 }

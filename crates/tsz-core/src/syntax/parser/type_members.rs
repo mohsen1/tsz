@@ -256,6 +256,7 @@ impl Parser<'_> {
 
     fn parse_type_member_name(&mut self) -> TypeMemberName {
         let token = *self.current();
+        self.observe_unmodeled_numeric_separator_if_current();
         match token.kind {
             TokenKind::StringLiteral => {
                 self.bump();
@@ -282,6 +283,7 @@ impl Parser<'_> {
                 let start = self.bump().span;
                 let expression = self.parse_expression();
                 let end = self.current().span;
+                self.observe_unmodeled_numeric_separator_in_span(start.merge(end));
                 self.expect(TokenKind::RightBracket, "']' expected.", 1005);
                 TypeMemberName {
                     span: start.merge(end),

@@ -68,6 +68,7 @@ pub(super) struct ProductCapabilities {
     pub(super) extended_unicode_string_products_supported: bool,
     pub(super) regular_expression_products_supported: bool,
     pub(super) numeric_recovery_products_supported: bool,
+    pub(super) numeric_separator_products_supported: bool,
     has_bodyless_class: bool,
     has_module_export: bool,
 }
@@ -86,6 +87,7 @@ impl ProductCapabilities {
             extended_unicode_string_products_supported: true,
             regular_expression_products_supported: true,
             numeric_recovery_products_supported: true,
+            numeric_separator_products_supported: true,
             has_bodyless_class: false,
             has_module_export: false,
         }
@@ -131,6 +133,10 @@ impl ProductCapabilities {
 
     pub(super) const fn observe_unmodeled_numeric_recovery(&mut self) {
         self.numeric_recovery_products_supported = false;
+    }
+
+    pub(super) const fn observe_unmodeled_numeric_separator(&mut self) {
+        self.numeric_separator_products_supported = false;
     }
 
     pub(super) const fn commonjs_classes_supported(&self) -> bool {

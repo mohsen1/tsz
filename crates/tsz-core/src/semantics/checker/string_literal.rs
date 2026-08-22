@@ -28,6 +28,9 @@ impl<'a> Checker<'a> {
             Literal::Number(NumberLiteral::Plain(value)) => {
                 self.store.numeric_literal(value, provenance)
             }
+            Literal::Number(NumberLiteral::Separated(value)) => {
+                self.store.numeric_literal(value.raw(), provenance)
+            }
             Literal::Number(NumberLiteral::Recovery(value)) if value.validation_supported() => self
                 .store
                 .numeric_literal(value.semantic_text(), provenance),

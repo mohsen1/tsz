@@ -1,8 +1,8 @@
 use crate::source::Span;
 use crate::syntax::{
     CommentTrivia, Expression, ExpressionKind, Literal, Statement, StringLiteral,
-    VariableDeclaration, VariableKind, expression_contains_no_substitution_template,
-    statements_contain_no_substitution_template,
+    VariableDeclaration, VariableKind, erased_expression_separated_number,
+    expression_contains_no_substitution_template, statements_contain_no_substitution_template,
 };
 
 use super::{Printer, TYPE_PREC_LOWEST, is_quoted, quote_string, variable_kind_text};
@@ -41,10 +41,24 @@ impl Printer<'_> {
             }
             Literal::String(StringLiteral::Extended(literal)) => literal.raw.clone(),
             Literal::NoSubstitutionTemplate(literal) => literal.raw.clone(),
-            Literal::Number(value) => value.emit_text().to_string(),
+            Literal::Number(value) => value
+                .emit_text(self.preserve_numeric_separators && !self.emitting_declaration)
+                .to_string(),
             Literal::BigInt(value) => value.clone(),
             Literal::Boolean(value) => value.to_string(),
             Literal::Null => "null".to_string(),
+        }
+    }
+
+    pub(super) fn write_member_object(&mut self, object: &Expression) {
+        self.write_expression(object, super::PREC_POSTFIX);
+        let Some(number) = erased_expression_separated_number(object) else {
+            return;
+        };
+        if number.needs_property_access_extra_dot(self.preserve_numeric_separators)
+            && self.source.text.as_bytes().get(object.span.end as usize) == Some(&b'.')
+        {
+            self.output.push('.');
         }
     }
 

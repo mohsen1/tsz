@@ -177,6 +177,12 @@ impl LanguageService {
         {
             return None;
         }
+        if parsed.unit.has_authored_numeric_separator()
+            && (parsed.unit.has_unmodeled_numeric_separator_products()
+                || !self.compile().semantic_completion.is_complete())
+        {
+            return None;
+        }
         quick_info_in_statements(&parsed.unit.statements, offset)
     }
 

@@ -1,7 +1,9 @@
 use crate::diagnostics::Diagnostic;
 use crate::source::{SourceText, Span};
 
-use super::numeric_literal::{ScannedNumericLiteral, scan_numeric_literal};
+use super::numeric_literal::{
+    ScannedNumericLiteral, ScannedSeparatedNumberLiteral, scan_numeric_literal,
+};
 use super::regular_expression::ScannedRegularExpressionLiteral;
 use super::string_literal::{ScannedStringLiteral, scan_ordinary_string_literal};
 use super::template_literal::ScannedTemplateLiteral;
@@ -16,6 +18,8 @@ pub struct ScanOutput {
     pub(super) template_literals: Vec<ScannedTemplateLiteral>,
     pub(super) string_literals: Vec<ScannedStringLiteral>,
     pub(super) numeric_literals: Vec<ScannedNumericLiteral>,
+    pub(super) separated_numeric_literals: Vec<ScannedSeparatedNumberLiteral>,
+    pub(super) has_unmodeled_numeric_separator: bool,
     pub(super) regular_expression_literals: Vec<ScannedRegularExpressionLiteral>,
     pub(super) comments: Vec<CommentTrivia>,
     pub(super) has_unicode_line_comment_terminator: bool,
@@ -37,6 +41,8 @@ struct Scanner<'a> {
     template_literals: Vec<ScannedTemplateLiteral>,
     string_literals: Vec<ScannedStringLiteral>,
     numeric_literals: Vec<ScannedNumericLiteral>,
+    separated_numeric_literals: Vec<ScannedSeparatedNumberLiteral>,
+    has_unmodeled_numeric_separator: bool,
     regular_expression_literals: Vec<ScannedRegularExpressionLiteral>,
     comments: Vec<CommentTrivia>,
     has_unicode_line_comment_terminator: bool,
@@ -56,6 +62,8 @@ impl<'a> Scanner<'a> {
             template_literals: Vec::new(),
             string_literals: Vec::new(),
             numeric_literals: Vec::new(),
+            separated_numeric_literals: Vec::new(),
+            has_unmodeled_numeric_separator: false,
             regular_expression_literals: Vec::new(),
             comments: Vec::new(),
             has_unicode_line_comment_terminator: false,
@@ -109,6 +117,8 @@ impl<'a> Scanner<'a> {
             template_literals: self.template_literals,
             string_literals: self.string_literals,
             numeric_literals: self.numeric_literals,
+            separated_numeric_literals: self.separated_numeric_literals,
+            has_unmodeled_numeric_separator: self.has_unmodeled_numeric_separator,
             regular_expression_literals: self.regular_expression_literals,
             comments: self.comments,
             has_unicode_line_comment_terminator: self.has_unicode_line_comment_terminator,
@@ -325,6 +335,10 @@ impl<'a> Scanner<'a> {
         if let Some(literal) = scanned.recovery_literal {
             self.numeric_literals.push(literal);
         }
+        if let Some(literal) = scanned.separated_literal {
+            self.separated_numeric_literals.push(literal);
+        }
+        self.has_unmodeled_numeric_separator |= scanned.has_unmodeled_separator;
         scanned.kind
     }
 

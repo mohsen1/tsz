@@ -16,6 +16,7 @@ use crate::syntax::{
     Expression, ExpressionKind, FunctionDeclaration, ImportDeclaration, InterfaceDeclaration,
     KeywordType, ObjectProperty, Parameter, SourceUnit, Statement, StatementKind, SwitchClauseKind,
     TypeAliasDeclaration, TypeNode, TypeNodeKind, UnaryOperator, VariableDeclaration, VariableKind,
+    erased_assertion_expression,
 };
 
 /// Emit the JavaScript product and, when requested, its declaration product.
@@ -89,7 +90,9 @@ struct Printer<'a> {
     preserve_block_scope: bool,
     preserve_arrows: bool,
     preserve_class_fields: bool,
+    preserve_numeric_separators: bool,
     preserve_comments: bool,
+    emitting_declaration: bool,
     javascript_supported: bool,
     declaration_supported: bool,
     declaration_parameter_property_host: bool,
@@ -121,7 +124,12 @@ impl<'a> Printer<'a> {
                 target.as_str(),
                 "es2022" | "es2023" | "es2024" | "es2025" | "esnext"
             ),
+            preserve_numeric_separators: matches!(
+                target.as_str(),
+                "es2021" | "es2022" | "es2023" | "es2024" | "es2025" | "esnext"
+            ),
             preserve_comments: !options.remove_comments,
+            emitting_declaration: false,
             javascript_supported: true,
             declaration_supported: true,
             declaration_parameter_property_host: false,
@@ -164,6 +172,7 @@ impl<'a> Printer<'a> {
     }
 
     fn emit_declarations(&mut self, unit: &SourceUnit) {
+        self.emitting_declaration = true;
         let has_export = unit.statements.iter().any(statement_is_exported);
         for statement in &unit.statements {
             match &statement.kind {
@@ -750,14 +759,8 @@ impl<'a> Printer<'a> {
         // Parentheses used only to contain a TypeScript assertion disappear
         // with the assertion. The recursive call restores any grouping that
         // the underlying JavaScript expression still requires.
-        if let ExpressionKind::As { expression, .. } = &expression.kind {
+        if let Some(expression) = erased_assertion_expression(expression) {
             self.write_expression(expression, parent_precedence);
-            return;
-        }
-        if let ExpressionKind::Parenthesized(inner) = &expression.kind
-            && matches!(&inner.kind, ExpressionKind::As { .. })
-        {
-            self.write_expression(inner, parent_precedence);
             return;
         }
 
@@ -818,7 +821,7 @@ impl<'a> Printer<'a> {
                 self.output.push(')');
             }
             ExpressionKind::Member { object, name, .. } => {
-                self.write_expression(object, PREC_POSTFIX);
+                self.write_member_object(object);
                 self.output.push('.');
                 self.output.push_str(name);
             }

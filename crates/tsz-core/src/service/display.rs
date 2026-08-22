@@ -104,6 +104,9 @@ fn display_inferred_literal(literal: &Literal, preserve_literal: bool) -> Option
             true,
             Literal::Number(crate::syntax::NumberLiteral::Plain(value)) | Literal::BigInt(value),
         ) => Some(value.clone()),
+        (true, Literal::Number(crate::syntax::NumberLiteral::Separated(value))) => {
+            Some(value.canonical().to_string())
+        }
         (true, Literal::Boolean(value)) => Some(value.to_string()),
         (_, Literal::String(_) | Literal::NoSubstitutionTemplate(_)) => Some("string".to_string()),
         (_, Literal::Number(_)) => Some("number".to_string()),
@@ -283,6 +286,7 @@ fn display_type_node_at_depth(node: &TypeNode, depth: usize) -> Option<String> {
         }
         TypeNodeKind::Literal(
             Literal::String(crate::syntax::StringLiteral::Extended(_))
+            | Literal::Number(crate::syntax::NumberLiteral::Separated(_))
             | Literal::Number(crate::syntax::NumberLiteral::Recovery(_))
             | Literal::NoSubstitutionTemplate(_),
         )

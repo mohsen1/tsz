@@ -13,7 +13,7 @@ mod type_arguments;
 mod type_members;
 mod type_parameters;
 
-use super::numeric_literal::ScannedNumericLiteral;
+use super::numeric_literal::{ScannedNumericLiteral, ScannedSeparatedNumberLiteral};
 use super::regular_expression::ScannedRegularExpressionLiteral;
 use super::string_literal::ScannedStringLiteral;
 use super::template_literal::ScannedTemplateLiteral;
@@ -49,6 +49,8 @@ struct Parser<'a> {
     string_literals: Vec<ScannedStringLiteral>,
     regular_expression_literals: Vec<ScannedRegularExpressionLiteral>,
     numeric_literals: Vec<ScannedNumericLiteral>,
+    separated_numeric_literals: Vec<ScannedSeparatedNumberLiteral>,
+    has_unmodeled_numeric_separator: bool,
     numeric_parser_diagnostics: Vec<Diagnostic>,
     comments: Vec<CommentTrivia>,
     has_unicode_line_comment_terminator: bool,
@@ -73,6 +75,8 @@ impl<'a> Parser<'a> {
             string_literals: scanned.string_literals,
             regular_expression_literals: scanned.regular_expression_literals,
             numeric_literals: scanned.numeric_literals,
+            separated_numeric_literals: scanned.separated_numeric_literals,
+            has_unmodeled_numeric_separator: scanned.has_unmodeled_numeric_separator,
             numeric_parser_diagnostics: Vec::new(),
             comments: scanned.comments,
             has_unicode_line_comment_terminator: scanned.has_unicode_line_comment_terminator,
@@ -101,6 +105,7 @@ impl<'a> Parser<'a> {
             self.finish_extended_unicode_string_source(&statements);
         let has_authored_regular_expression = self.finish_regular_expression_source(&statements);
         let has_authored_numeric_recovery = self.finish_numeric_recovery_source(&statements);
+        let has_authored_numeric_separator = self.finish_numeric_separator_source();
         let end = self.source.text.len();
         ParseOutput {
             unit: super::SourceUnit {
@@ -132,6 +137,10 @@ impl<'a> Parser<'a> {
                 numeric_recovery_products_supported: self
                     .product_capabilities
                     .numeric_recovery_products_supported,
+                has_authored_numeric_separator,
+                numeric_separator_products_supported: self
+                    .product_capabilities
+                    .numeric_separator_products_supported,
                 commonjs_class_products_supported: self
                     .product_capabilities
                     .commonjs_classes_supported(),
@@ -969,6 +978,7 @@ impl<'a> Parser<'a> {
             | TokenKind::NumericLiteral
             | TokenKind::BigIntLiteral
             | TokenKind::StringLiteral => {
+                self.observe_unmodeled_numeric_separator_if_current();
                 self.bump();
                 TypeNode {
                     span: token.span,
@@ -1375,7 +1385,15 @@ impl<'a> Parser<'a> {
                         arguments,
                     },
                 };
-            } else if self.eat(TokenKind::Dot) {
+            } else if self.at(TokenKind::Dot) {
+                let dot = self.current().span;
+                if super::erased_expression_separated_number(&expression).is_some()
+                    && expression.span.end != dot.start
+                {
+                    self.product_capabilities
+                        .observe_unmodeled_numeric_separator();
+                }
+                self.bump();
                 let (name, name_span) = self.parse_identifier_name();
                 let span = expression.span.merge(name_span);
                 expression = Expression {
@@ -1559,6 +1577,7 @@ impl<'a> Parser<'a> {
 
     fn parse_property_name(&mut self) -> (String, Span, bool) {
         let token = *self.current();
+        self.observe_unmodeled_numeric_separator_if_current();
         match token.kind {
             TokenKind::StringLiteral | TokenKind::NumericLiteral | TokenKind::PrivateIdentifier => {
                 self.bump();

@@ -532,6 +532,10 @@ impl Compiler {
             file.syntax.has_authored_numeric_recovery()
                 && file.syntax.has_unmodeled_numeric_recovery_products()
         });
+        let has_unmodeled_authored_numeric_separator = program.files.iter().any(|file| {
+            file.syntax.has_authored_numeric_separator()
+                && file.syntax.has_unmodeled_numeric_separator_products()
+        });
 
         let check_start = Instant::now();
         let CheckResult {
@@ -542,6 +546,7 @@ impl Compiler {
             || has_missing_essential_types
             || has_fatal_option_error
             || has_unmodeled_authored_numeric_recovery
+            || has_unmodeled_authored_numeric_separator
         {
             CheckResult {
                 diagnostics: Vec::new(),
@@ -573,6 +578,10 @@ impl Compiler {
             || program
                 .files
                 .iter()
+                .any(|file| file.syntax.has_unmodeled_numeric_separator_products())
+            || program
+                .files
+                .iter()
                 .any(|file| file.syntax.has_unmodeled_expression_products())
             || program
                 .files
@@ -592,6 +601,7 @@ impl Compiler {
                         || file.syntax.has_authored_extended_unicode_string()
                         || file.syntax.has_authored_regular_expression()
                         || file.syntax.has_authored_numeric_recovery()
+                        || file.syntax.has_authored_numeric_separator()
                 }))
         {
             semantic_completion = semantic_completion.combine(SemanticCompletion::Deferred);

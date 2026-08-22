@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 
 use crate::source::DeclId;
+use crate::syntax::parse_number_literal;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct TypeId(pub u32);
@@ -194,38 +195,11 @@ pub struct NumericLiteralParseError;
 
 impl NumericLiteral {
     fn from_source(source: &str) -> Result<Self, NumericLiteralParseError> {
-        let compact = source.replace('_', "");
-        let value = if let Some(digits) = compact
-            .strip_prefix("0x")
-            .or_else(|| compact.strip_prefix("0X"))
-        {
-            parse_power_of_two_integer(digits, 4)?
-        } else if let Some(digits) = compact
-            .strip_prefix("0b")
-            .or_else(|| compact.strip_prefix("0B"))
-        {
-            parse_power_of_two_integer(digits, 1)?
-        } else if let Some(digits) = compact
-            .strip_prefix("0o")
-            .or_else(|| compact.strip_prefix("0O"))
-        {
-            parse_power_of_two_integer(digits, 3)?
-        } else if compact.len() > 1
-            && compact.starts_with('0')
-            && compact.bytes().all(|byte| matches!(byte, b'0'..=b'7'))
-        {
-            parse_power_of_two_integer(&compact[1..], 3)?
-        } else {
-            if !is_decimal_literal(&compact) {
-                return Err(NumericLiteralParseError);
-            }
-            compact
-                .parse::<f64>()
-                .map_err(|_| NumericLiteralParseError)?
-        };
-        let value = if value == 0.0 { 0.0 } else { value };
-        let display = javascript_number_to_string(value);
-        Ok(Self { value, display })
+        let parsed = parse_number_literal(source).ok_or(NumericLiteralParseError)?;
+        Ok(Self {
+            value: parsed.value,
+            display: parsed.display,
+        })
     }
 
     pub fn display(&self) -> &str {
@@ -234,211 +208,6 @@ impl NumericLiteral {
 
     pub fn is_truthy(&self) -> bool {
         self.value != 0.0
-    }
-}
-
-fn is_decimal_literal(source: &str) -> bool {
-    let bytes = source.as_bytes();
-    let mut position = 0;
-    let mut mantissa_digits = 0;
-
-    while bytes.get(position).is_some_and(u8::is_ascii_digit) {
-        position += 1;
-        mantissa_digits += 1;
-    }
-    if bytes.get(position) == Some(&b'.') {
-        position += 1;
-        while bytes.get(position).is_some_and(u8::is_ascii_digit) {
-            position += 1;
-            mantissa_digits += 1;
-        }
-    }
-    if mantissa_digits == 0 {
-        return false;
-    }
-    if matches!(bytes.get(position), Some(b'e' | b'E')) {
-        position += 1;
-        if matches!(bytes.get(position), Some(b'+' | b'-')) {
-            position += 1;
-        }
-        let exponent_start = position;
-        while bytes.get(position).is_some_and(u8::is_ascii_digit) {
-            position += 1;
-        }
-        if position == exponent_start {
-            return false;
-        }
-    }
-    position == bytes.len()
-}
-
-/// Parse a binary, octal, or hexadecimal integer directly into the correctly
-/// rounded JavaScript Number. These radices are powers of two, so retaining the
-/// leading 53 bits plus guard/sticky bits is exact even when the token is wider
-/// than Rust's integer types.
-fn parse_power_of_two_integer(
-    digits: &str,
-    bits_per_digit: usize,
-) -> Result<f64, NumericLiteralParseError> {
-    if digits.is_empty() {
-        return Err(NumericLiteralParseError);
-    }
-    let radix = 1_u8 << bits_per_digit;
-    let mut first_nonzero = None;
-    for (index, byte) in digits.bytes().enumerate() {
-        let Some(value) = radix_digit(byte) else {
-            return Err(NumericLiteralParseError);
-        };
-        if value >= radix {
-            return Err(NumericLiteralParseError);
-        }
-        if value != 0 && first_nonzero.is_none() {
-            first_nonzero = Some((index, value));
-        }
-    }
-    let Some((first_index, first_value)) = first_nonzero else {
-        return Ok(0.0);
-    };
-
-    let first_width = (u8::BITS - first_value.leading_zeros()) as usize;
-    let trailing_digits = digits.len() - first_index - 1;
-    let Some(bit_length) = trailing_digits
-        .checked_mul(bits_per_digit)
-        .and_then(|width| width.checked_add(first_width))
-    else {
-        return Ok(f64::INFINITY);
-    };
-    if bit_length > 1024 {
-        return Ok(f64::INFINITY);
-    }
-
-    let mut leading = 0_u64;
-    let mut consumed = 0_usize;
-    let mut guard = false;
-    let mut sticky = false;
-    for (relative_index, byte) in digits.as_bytes()[first_index..].iter().enumerate() {
-        let value = radix_digit(*byte).ok_or(NumericLiteralParseError)?;
-        let width = if relative_index == 0 {
-            first_width
-        } else {
-            bits_per_digit
-        };
-        for bit_index in (0..width).rev() {
-            let bit = (value >> bit_index) & 1;
-            if consumed < 53 {
-                leading = (leading << 1) | u64::from(bit);
-            } else if consumed == 53 {
-                guard = bit != 0;
-            } else {
-                sticky |= bit != 0;
-            }
-            consumed += 1;
-        }
-    }
-
-    if bit_length <= 53 {
-        return Ok(leading as f64);
-    }
-    if guard && (sticky || leading & 1 != 0) {
-        leading += 1;
-    }
-
-    let mut exponent = bit_length - 1;
-    if leading == 1_u64 << 53 {
-        leading >>= 1;
-        exponent += 1;
-    }
-    if exponent > 1023 {
-        return Ok(f64::INFINITY);
-    }
-    let fraction = leading & ((1_u64 << 52) - 1);
-    Ok(f64::from_bits(
-        (((exponent + 1023) as u64) << 52) | fraction,
-    ))
-}
-
-const fn radix_digit(byte: u8) -> Option<u8> {
-    match byte {
-        b'0'..=b'9' => Some(byte - b'0'),
-        b'a'..=b'f' => Some(byte - b'a' + 10),
-        b'A'..=b'F' => Some(byte - b'A' + 10),
-        _ => None,
-    }
-}
-
-/// ECMAScript's Number-to-string thresholds differ from Rust's Display
-/// thresholds. Rust's shortest-roundtrip digits are reused, then placed in
-/// fixed or exponential notation at the JavaScript boundaries.
-fn javascript_number_to_string(value: f64) -> String {
-    if value == 0.0 {
-        return "0".to_string();
-    }
-    if value.is_infinite() {
-        return "Infinity".to_string();
-    }
-
-    let shortest = format!("{value:?}");
-    let (mantissa, explicit_exponent) = shortest
-        .split_once(['e', 'E'])
-        .map_or((shortest.as_str(), None), |(mantissa, exponent)| {
-            (mantissa, exponent.parse::<i32>().ok())
-        });
-    let mut digits: String = mantissa
-        .bytes()
-        .filter(|byte| *byte != b'.')
-        .map(char::from)
-        .collect();
-    let significant_start = digits
-        .bytes()
-        .position(|byte| byte != b'0')
-        .expect("a nonzero finite number has a nonzero decimal digit");
-    digits.drain(..significant_start);
-    while digits.len() > 1 && digits.ends_with('0') {
-        digits.pop();
-    }
-
-    let scientific_exponent = explicit_exponent.unwrap_or_else(|| {
-        if let Some(dot) = mantissa.find('.') {
-            if !mantissa.starts_with('0') {
-                dot as i32 - 1
-            } else {
-                let first_nonzero = mantissa
-                    .bytes()
-                    .position(|byte| byte != b'0' && byte != b'.')
-                    .expect("a nonzero finite number has a nonzero decimal digit");
-                -(first_nonzero as i32 - 1)
-            }
-        } else {
-            mantissa.len() as i32 - 1
-        }
-    });
-
-    if (-6..21).contains(&scientific_exponent) {
-        let decimal_position = scientific_exponent + 1;
-        if decimal_position <= 0 {
-            return format!("0.{}{}", "0".repeat((-decimal_position) as usize), digits);
-        }
-        let decimal_position = decimal_position as usize;
-        if decimal_position >= digits.len() {
-            let trailing_zeroes = decimal_position - digits.len();
-            return format!("{}{}", digits, "0".repeat(trailing_zeroes));
-        }
-        return format!(
-            "{}.{}",
-            &digits[..decimal_position],
-            &digits[decimal_position..]
-        );
-    }
-
-    let sign = if scientific_exponent >= 0 { "+" } else { "" };
-    if digits.len() == 1 {
-        format!("{digits}e{sign}{scientific_exponent}")
-    } else {
-        format!(
-            "{}.{}e{sign}{scientific_exponent}",
-            &digits[..1],
-            &digits[1..]
-        )
     }
 }
 
