@@ -702,6 +702,31 @@ impl TypeStore {
         id
     }
 
+    /// Preserve a declaration-owned symbolic identity until the consuming
+    /// checker query genuinely needs to instantiate or inspect its shape.
+    pub(crate) fn symbolic_reference(
+        &mut self,
+        declaration: DeclId,
+        arguments: Vec<TypeId>,
+    ) -> TypeId {
+        self.intern(TypeKind::Deferred(DeferredType::Reference {
+            declaration,
+            arguments,
+        }))
+    }
+
+    /// Query an unapplied symbolic reference without exposing solver storage
+    /// representation to checker feature modules.
+    pub(crate) fn is_unapplied_symbolic_reference(&self, ty: TypeId, declaration: DeclId) -> bool {
+        matches!(
+            self.kind(ty),
+            TypeKind::Deferred(DeferredType::Reference {
+                declaration: candidate,
+                arguments,
+            }) if *candidate == declaration && arguments.is_empty()
+        )
+    }
+
     /// Allocate an incomplete anonymous shape without giving it interned
     /// semantic identity. Required boundaries always force this to
     /// `Completion::Deferred`, and definitive caches reject it.

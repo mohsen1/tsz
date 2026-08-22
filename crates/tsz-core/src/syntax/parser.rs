@@ -3,23 +3,27 @@ use crate::source::{NodeId, SourceText, Span};
 
 mod literals;
 mod modifiers;
+mod operators;
 mod parameters;
+mod regular_expression;
 mod statements;
 mod type_arguments;
 mod type_members;
 mod type_parameters;
 
+use super::regular_expression::ScannedRegularExpressionLiteral;
 use super::template_literal::ScannedTemplateLiteral;
 use super::{
-    AccessorKind, ArrowBody, BinaryOperator, ClassDeclaration, ClassMember, ClassMemberKind,
-    ClassMemberModifiers, CommentTrivia, ExportDeclaration, ExportSpecifier, Expression,
-    ExpressionKind, FunctionDeclaration, IfStatement, ImportBinding, ImportDeclaration,
-    InterfaceDeclaration, ObjectProperty, Parameter, ParameterModifier, Statement, StatementKind,
-    SwitchClause, SwitchClauseKind, SwitchStatement, Token, TokenKind, TypeAliasDeclaration,
-    TypeNode, TypeNodeKind, UnaryOperator, VariableDeclaration, VariableKind, scan_source,
+    AccessorKind, ArrowBody, ClassDeclaration, ClassMember, ClassMemberKind, ClassMemberModifiers,
+    CommentTrivia, ExportDeclaration, ExportSpecifier, Expression, ExpressionKind,
+    FunctionDeclaration, IfStatement, ImportBinding, ImportDeclaration, InterfaceDeclaration,
+    ObjectProperty, Parameter, ParameterModifier, Statement, StatementKind, SwitchClause,
+    SwitchClauseKind, SwitchStatement, Token, TokenKind, TypeAliasDeclaration, TypeNode,
+    TypeNodeKind, UnaryOperator, VariableDeclaration, VariableKind, scan_source,
 };
 use literals::unquote;
 use modifiers::{Modifiers, ProductCapabilities};
+use operators::{binary_operator, expression_has_recovered_left_edge};
 
 #[derive(Debug)]
 pub struct ParseOutput {
@@ -34,6 +38,7 @@ pub fn parse_source(source: &SourceText) -> ParseOutput {
         scanned.tokens,
         scanned.diagnostics,
         scanned.template_literals,
+        scanned.regular_expression_literals,
         scanned.comments,
         scanned.has_unicode_line_comment_terminator,
         scanned.has_unmodeled_trivia,
@@ -47,6 +52,7 @@ struct Parser<'a> {
     next_node: u32,
     diagnostics: Vec<Diagnostic>,
     template_literals: Vec<ScannedTemplateLiteral>,
+    regular_expression_literals: Vec<ScannedRegularExpressionLiteral>,
     comments: Vec<CommentTrivia>,
     has_unicode_line_comment_terminator: bool,
     has_unmodeled_trivia: bool,
@@ -64,6 +70,7 @@ impl<'a> Parser<'a> {
         tokens: Vec<Token>,
         diagnostics: Vec<Diagnostic>,
         template_literals: Vec<ScannedTemplateLiteral>,
+        regular_expression_literals: Vec<ScannedRegularExpressionLiteral>,
         comments: Vec<CommentTrivia>,
         has_unicode_line_comment_terminator: bool,
         has_unmodeled_trivia: bool,
@@ -75,6 +82,7 @@ impl<'a> Parser<'a> {
             next_node: 0,
             diagnostics,
             template_literals,
+            regular_expression_literals,
             comments,
             has_unicode_line_comment_terminator,
             has_unmodeled_trivia,
@@ -98,6 +106,7 @@ impl<'a> Parser<'a> {
         }
         let has_authored_no_substitution_template =
             self.finish_no_substitution_template_source(&statements);
+        let has_authored_regular_expression = self.finish_regular_expression_source(&statements);
         let end = self.source.text.len();
         ParseOutput {
             unit: super::SourceUnit {
@@ -110,10 +119,17 @@ impl<'a> Parser<'a> {
                 default_export_hosts_supported: self
                     .product_capabilities
                     .default_export_hosts_supported,
+                expression_products_supported: self
+                    .product_capabilities
+                    .expression_products_supported,
                 comments: self.comments,
                 has_unicode_line_comment_terminator: self.has_unicode_line_comment_terminator,
                 has_authored_no_substitution_template,
                 template_products_supported: self.product_capabilities.template_products_supported,
+                has_authored_regular_expression,
+                regular_expression_products_supported: self
+                    .product_capabilities
+                    .regular_expression_products_supported,
                 commonjs_class_products_supported: self
                     .product_capabilities
                     .commonjs_classes_supported(),
@@ -131,6 +147,7 @@ impl<'a> Parser<'a> {
 
     fn parse_statement_at_current_depth(&mut self) -> Statement {
         let start = self.current().span.start as usize;
+        self.observe_regular_expression_in_unsupported_statement();
         if self.starts_import_declaration() {
             if self.statement_nesting_depth > 0 {
                 self.has_unmodeled_top_level_syntax = true;
@@ -1064,6 +1081,7 @@ impl<'a> Parser<'a> {
             TokenKind::LeftParen => self.parse_parenthesized_or_function_type(),
             TokenKind::LessThan => self.parse_generic_function_type(),
             _ => {
+                self.observe_unmodeled_regular_expression_if_current();
                 self.observe_unmodeled_template_if_current();
                 self.error_current("Type expected.", 1110);
                 self.bump();
@@ -1259,6 +1277,9 @@ impl<'a> Parser<'a> {
 
     fn parse_binary_expression(&mut self, minimum_precedence: u8) -> Expression {
         let mut expression = self.parse_unary_expression();
+        if expression_has_recovered_left_edge(&expression) {
+            self.observe_unmodeled_regular_expression_if_current();
+        }
         while let Some((operator, precedence)) = binary_operator(self.kind()) {
             if precedence < minimum_precedence {
                 break;
@@ -1448,6 +1469,7 @@ impl<'a> Parser<'a> {
             TokenKind::NoSubstitutionTemplateLiteral => {
                 self.parse_no_substitution_template_literal()
             }
+            TokenKind::RegularExpressionLiteral => self.parse_regular_expression_literal(),
             TokenKind::LeftBrace => self.parse_object_literal(),
             TokenKind::LeftBracket => self.parse_array_literal(),
             TokenKind::LeftParen if self.paren_expression_is_arrow() => {
@@ -1486,6 +1508,7 @@ impl<'a> Parser<'a> {
                 }
             }
             _ => {
+                self.observe_unmodeled_regular_expression_if_current();
                 self.observe_unmodeled_template_if_current();
                 self.error_current("Expression expected.", 1109);
                 self.bump();
@@ -1676,6 +1699,7 @@ impl<'a> Parser<'a> {
             TokenKind::RightBrace,
             TokenKind::EndOfFile,
         ]) {
+            self.observe_unmodeled_regular_expression_if_current();
             self.observe_unmodeled_template_if_current();
             self.bump();
         }
@@ -1881,31 +1905,6 @@ impl<'a> Parser<'a> {
         self.next_node += 1;
         id
     }
-}
-
-const fn binary_operator(kind: TokenKind) -> Option<(BinaryOperator, u8)> {
-    let operator = match kind {
-        TokenKind::BarBar => (BinaryOperator::LogicalOr, 1),
-        TokenKind::QuestionQuestion => (BinaryOperator::NullishCoalesce, 1),
-        TokenKind::AmpersandAmpersand => (BinaryOperator::LogicalAnd, 2),
-        TokenKind::EqualsEquals => (BinaryOperator::Equals, 3),
-        TokenKind::BangEquals => (BinaryOperator::NotEquals, 3),
-        TokenKind::EqualsEqualsEquals => (BinaryOperator::StrictEquals, 3),
-        TokenKind::BangEqualsEquals => (BinaryOperator::StrictNotEquals, 3),
-        TokenKind::LessThan => (BinaryOperator::LessThan, 4),
-        TokenKind::LessThanEquals => (BinaryOperator::LessThanEquals, 4),
-        TokenKind::GreaterThan => (BinaryOperator::GreaterThan, 4),
-        TokenKind::GreaterThanEquals => (BinaryOperator::GreaterThanEquals, 4),
-        TokenKind::In => (BinaryOperator::In, 4),
-        TokenKind::InstanceOf => (BinaryOperator::InstanceOf, 4),
-        TokenKind::Plus => (BinaryOperator::Add, 5),
-        TokenKind::Minus => (BinaryOperator::Subtract, 5),
-        TokenKind::Star => (BinaryOperator::Multiply, 6),
-        TokenKind::Slash => (BinaryOperator::Divide, 6),
-        TokenKind::Percent => (BinaryOperator::Remainder, 6),
-        _ => return None,
-    };
-    Some(operator)
 }
 
 const fn token_is_binding_identifier(kind: TokenKind) -> bool {

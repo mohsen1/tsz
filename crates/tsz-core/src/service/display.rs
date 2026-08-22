@@ -66,6 +66,7 @@ fn display_expression_type(
             display_expression_type(inner, preserve_literal, depth)
         }
         ExpressionKind::Identifier { .. }
+        | ExpressionKind::RegularExpression(_)
         | ExpressionKind::Array(_)
         | ExpressionKind::Call { .. }
         | ExpressionKind::New { .. }

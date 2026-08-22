@@ -10,6 +10,7 @@ mod object_shape;
 mod projection_model;
 pub(super) mod recursion;
 mod reference_instantiation;
+mod regular_expression;
 mod relation_diagnostic;
 mod required_type;
 mod statement_model;
@@ -1007,6 +1008,9 @@ impl<'a> Checker<'a> {
             ExpressionKind::Literal(literal) => {
                 self.literal_type(literal, LiteralProvenance::Fresh)
             }
+            ExpressionKind::RegularExpression(literal) => {
+                self.infer_regular_expression(file, literal)
+            }
             ExpressionKind::Object(properties) => {
                 let properties = properties
                     .iter()
@@ -1810,6 +1814,9 @@ impl<'a> Checker<'a> {
     }
 
     fn widen(&mut self, ty: TypeId) -> TypeId {
+        if self.is_symbolic_regular_expression_type(ty) {
+            return ty;
+        }
         let completion = self.force_type(ty, 0);
         let ty = match self.require_completion(completion) {
             Completion::Complete(ty) => ty,

@@ -23,6 +23,9 @@ use crate::syntax::{
 };
 
 mod import_aliases;
+mod regular_expression;
+
+pub(crate) use regular_expression::has_unmodeled_regular_expression_program_products;
 
 #[derive(Debug, Clone)]
 pub struct SourceInput {
@@ -587,17 +590,22 @@ impl Compiler {
             || program
                 .files
                 .iter()
+                .any(|file| file.syntax.has_unmodeled_expression_products())
+            || program
+                .files
+                .iter()
                 .any(|file| file.syntax.has_unicode_line_comment_terminator())
             || program
                 .files
                 .iter()
                 .any(|file| file.syntax.has_unmodeled_default_export_hosts())
             || has_unmodeled_no_substitution_template_program_products(&program.files, options)
+            || has_unmodeled_regular_expression_program_products(&program.files, options)
             || (has_compiler_option_error
-                && program
-                    .files
-                    .iter()
-                    .any(|file| file.syntax.has_authored_no_substitution_template()))
+                && program.files.iter().any(|file| {
+                    file.syntax.has_authored_no_substitution_template()
+                        || file.syntax.has_authored_regular_expression()
+                }))
         {
             semantic_completion = semantic_completion.combine(SemanticCompletion::Deferred);
         }

@@ -1,6 +1,6 @@
 use crate::source::{NodeId, Span};
 
-use super::CommentTrivia;
+use super::{CommentTrivia, RegularExpressionLiteral};
 
 #[derive(Debug, Clone)]
 pub struct SourceUnit {
@@ -12,10 +12,13 @@ pub struct SourceUnit {
     pub(crate) commonjs_class_products_supported: bool,
     pub(crate) declaration_hosts_supported: bool,
     pub(crate) default_export_hosts_supported: bool,
+    pub(crate) expression_products_supported: bool,
     pub(crate) comments: Vec<CommentTrivia>,
     pub(crate) has_unicode_line_comment_terminator: bool,
     pub(crate) has_authored_no_substitution_template: bool,
     pub(crate) template_products_supported: bool,
+    pub(crate) has_authored_regular_expression: bool,
+    pub(crate) regular_expression_products_supported: bool,
 }
 
 impl SourceUnit {
@@ -157,15 +160,21 @@ impl SourceUnit {
     }
 
     #[must_use]
+    pub const fn has_unmodeled_expression_products(&self) -> bool {
+        !self.expression_products_supported
+    }
+
+    #[must_use]
     pub const fn has_authored_no_substitution_template(&self) -> bool {
         self.has_authored_no_substitution_template
     }
 
-    pub(crate) fn modeled_no_substitution_template_comments(&self) -> Option<&[CommentTrivia]> {
-        (self.has_authored_no_substitution_template
-            && self.template_products_supported
-            && !self.comments.is_empty())
-        .then_some(self.comments.as_slice())
+    pub(crate) fn modeled_comments(&self) -> Option<&[CommentTrivia]> {
+        (!self.comments.is_empty()
+            && (self.has_authored_no_substitution_template && self.template_products_supported
+                || self.has_authored_regular_expression
+                    && self.regular_expression_products_supported))
+            .then_some(self.comments.as_slice())
     }
 
     #[must_use]
@@ -178,6 +187,16 @@ impl SourceUnit {
     #[must_use]
     pub const fn has_unmodeled_template_products(&self) -> bool {
         !self.template_products_supported
+    }
+
+    #[must_use]
+    pub(crate) const fn has_authored_regular_expression(&self) -> bool {
+        self.has_authored_regular_expression
+    }
+
+    #[must_use]
+    pub(crate) const fn has_unmodeled_regular_expression_products(&self) -> bool {
+        !self.regular_expression_products_supported
     }
 }
 
@@ -1202,6 +1221,7 @@ pub enum ExpressionKind {
         entity_name: bool,
     },
     Literal(Literal),
+    RegularExpression(RegularExpressionLiteral),
     Object(Vec<ObjectProperty>),
     Array(Vec<Expression>),
     Call {
@@ -1251,6 +1271,7 @@ impl Expression {
         match &self.kind {
             ExpressionKind::Identifier { .. }
             | ExpressionKind::Literal(_)
+            | ExpressionKind::RegularExpression(_)
             | ExpressionKind::Missing => false,
             ExpressionKind::Object(properties) => properties
                 .iter()

@@ -709,6 +709,7 @@ impl Checker<'_> {
         match &expression.kind {
             ExpressionKind::Identifier { .. }
             | ExpressionKind::Literal(_)
+            | ExpressionKind::RegularExpression(_)
             | ExpressionKind::Missing => {}
             ExpressionKind::Object(properties) => {
                 for property in properties {
@@ -1904,6 +1905,7 @@ fn is_bindable_computed_name(expression: &Expression) -> bool {
             operand,
         } => matches!(operand.kind, ExpressionKind::Literal(Literal::Number(_))),
         ExpressionKind::Literal(Literal::BigInt(_) | Literal::Boolean(_) | Literal::Null)
+        | ExpressionKind::RegularExpression(_)
         | ExpressionKind::Object(_)
         | ExpressionKind::Array(_)
         | ExpressionKind::Call { .. }
@@ -1923,6 +1925,7 @@ fn is_entity_name_expression(expression: &Expression) -> bool {
         ExpressionKind::Identifier { entity_name, .. } => *entity_name,
         ExpressionKind::Member { object, .. } => is_entity_name_expression(object),
         ExpressionKind::Literal(_)
+        | ExpressionKind::RegularExpression(_)
         | ExpressionKind::Object(_)
         | ExpressionKind::Array(_)
         | ExpressionKind::Call { .. }

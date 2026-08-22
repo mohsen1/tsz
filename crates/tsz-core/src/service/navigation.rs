@@ -768,7 +768,9 @@ impl ReferenceVisitor<'_> {
                 }
                 self.record_name(name, *name_span, scope, Meaning::Value, write);
             }
-            ExpressionKind::Literal(_) | ExpressionKind::Missing => {}
+            ExpressionKind::Literal(_)
+            | ExpressionKind::RegularExpression(_)
+            | ExpressionKind::Missing => {}
             ExpressionKind::Object(properties) => {
                 for property in properties {
                     self.visit_expression(&property.value, scope, false);

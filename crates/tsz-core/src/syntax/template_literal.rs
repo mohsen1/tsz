@@ -301,6 +301,7 @@ pub(crate) fn expression_contains_no_substitution_template(expression: &Expressi
         ExpressionKind::Literal(Literal::NoSubstitutionTemplate(_)) => true,
         ExpressionKind::Identifier { .. }
         | ExpressionKind::Literal(_)
+        | ExpressionKind::RegularExpression(_)
         | ExpressionKind::Missing => false,
         ExpressionKind::Object(properties) => properties
             .iter()

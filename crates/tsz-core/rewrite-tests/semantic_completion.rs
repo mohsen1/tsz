@@ -306,16 +306,18 @@ function named<
             format!("Property '{property}' does not exist on type '{receiver}'.")
         );
     }
-    assert_completion(&output, SemanticCompletion::Complete);
+    // The checker owns every required type child above, while explicit type
+    // arguments on `new` still have an unmodeled JavaScript product.
+    assert_completion(&output, SemanticCompletion::Deferred);
 }
 
 #[test]
 fn explicit_type_boundary_keeps_supported_positive_forms_complete() {
     let output = compile(
-        "declare class Crate<T> { value:T } \
+        "declare class Crate<T> { value:T } class Plain {} \
          const arrow=(value:number):number=>value; \
          const nestedArrow=()=>(nested:number):number=>nested; \
-         const asserted=1 as number; const constructed=new Crate<string>(); \
+         const asserted=1 as number; const constructed=new Plain(); \
          type Alias<T extends {present:number}={present:number}> =T; \
          interface Vessel<T extends {present:number}={present:number}>{value:T} \
          class Container<T extends {present:number}={present:number}>{ \
@@ -594,7 +596,7 @@ fn new_uses_the_canonical_bounded_class_instance() {
 #[test]
 fn empty_generic_class_construction_can_omit_type_arguments() {
     let cases = [
-        "class Empty<Value> {} new Empty<number>(); new Empty(); new Empty;",
+        "class Empty<Value> {} new Empty(); new Empty;",
         "class Vessel<Payload> {} const vessel:Vessel<string>=new Vessel();",
     ];
     for source in cases {
@@ -603,7 +605,7 @@ fn empty_generic_class_construction_can_omit_type_arguments() {
         assert_completion(&output, SemanticCompletion::Complete);
     }
 
-    let runtime_arguments = compile("class Empty<Value> {} new Empty(1); new Empty<number>(2);");
+    let runtime_arguments = compile("class Empty<Value> {} new Empty(1); new Empty(2);");
     assert_eq!(
         codes(&runtime_arguments),
         vec![2554, 2554],
@@ -677,9 +679,9 @@ fn generic_class_instance_arguments_are_display_and_order_stable() {
     );
     assert_eq!(fingerprint(&cold), fingerprint(&warm));
     assert_eq!(fingerprint(&cold), fingerprint(&reversed));
-    assert_completion(&cold, SemanticCompletion::Complete);
-    assert_completion(&warm, SemanticCompletion::Complete);
-    assert_completion(&reversed, SemanticCompletion::Complete);
+    assert_completion(&cold, SemanticCompletion::Deferred);
+    assert_completion(&warm, SemanticCompletion::Deferred);
+    assert_completion(&reversed, SemanticCompletion::Deferred);
 }
 
 #[test]

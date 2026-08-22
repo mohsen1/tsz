@@ -54,6 +54,33 @@ pub(crate) fn comments_form_no_substitution_template_expression_file(
         && has_one_line_break(source, comment.span.end, statement.span.start)
 }
 
+pub(crate) fn comments_form_contiguous_plain_leading_run(
+    source: &SourceText,
+    statement: &Statement,
+    comments: &[CommentTrivia],
+) -> bool {
+    if comments.is_empty() {
+        return false;
+    }
+    comments.iter().enumerate().all(|(index, comment)| {
+        let next_start = comments
+            .get(index + 1)
+            .map_or(statement.span.start, |next| next.span.start);
+        comment.plain
+            && comment.kind == CommentKind::Line
+            && comment.placement == CommentPlacement::Leading
+            && comment.has_trailing_line_break
+            && is_column_zero(source, comment.span.start)
+            && !source
+                .slice(comment.span)
+                .chars()
+                .last()
+                .is_some_and(is_single_line_whitespace)
+            && comment.span.end <= next_start
+            && has_one_line_break(source, comment.span.end, next_start)
+    })
+}
+
 fn has_one_line_break(source: &SourceText, start: u32, end: u32) -> bool {
     let bytes = source.text.as_bytes();
     let Some(gap) = bytes.get(start as usize..end as usize) else {

@@ -653,6 +653,7 @@ impl Binder {
         match &expression.kind {
             ExpressionKind::Identifier { .. }
             | ExpressionKind::Literal(_)
+            | ExpressionKind::RegularExpression(_)
             | ExpressionKind::Missing => {}
             ExpressionKind::Object(properties) => {
                 for property in properties {

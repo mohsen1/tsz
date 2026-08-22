@@ -8,7 +8,7 @@ use crate::syntax::{
 use super::{Printer, TYPE_PREC_LOWEST, is_quoted, quote_string, variable_kind_text};
 
 impl Printer<'_> {
-    pub(super) fn write_no_substitution_template_comment_statements(
+    pub(super) fn write_modeled_comment_statements(
         &mut self,
         statements: &[Statement],
         comments: &[CommentTrivia],

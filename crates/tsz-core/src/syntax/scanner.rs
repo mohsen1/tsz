@@ -1,6 +1,7 @@
 use crate::diagnostics::Diagnostic;
 use crate::source::{SourceText, Span};
 
+use super::regular_expression::ScannedRegularExpressionLiteral;
 use super::template_literal::ScannedTemplateLiteral;
 use super::{
     CommentKind, CommentPlacement, CommentTrivia, Token, TokenKind, is_single_line_whitespace,
@@ -11,6 +12,7 @@ pub struct ScanOutput {
     pub tokens: Vec<Token>,
     pub diagnostics: Vec<Diagnostic>,
     pub(super) template_literals: Vec<ScannedTemplateLiteral>,
+    pub(super) regular_expression_literals: Vec<ScannedRegularExpressionLiteral>,
     pub(super) comments: Vec<CommentTrivia>,
     pub(super) has_unicode_line_comment_terminator: bool,
     pub(super) has_unmodeled_trivia: bool,
@@ -29,6 +31,7 @@ struct Scanner<'a> {
     tokens: Vec<Token>,
     diagnostics: Vec<Diagnostic>,
     template_literals: Vec<ScannedTemplateLiteral>,
+    regular_expression_literals: Vec<ScannedRegularExpressionLiteral>,
     comments: Vec<CommentTrivia>,
     has_unicode_line_comment_terminator: bool,
     has_unmodeled_trivia: bool,
@@ -45,6 +48,7 @@ impl<'a> Scanner<'a> {
             tokens: Vec::new(),
             diagnostics: Vec::new(),
             template_literals: Vec::new(),
+            regular_expression_literals: Vec::new(),
             comments: Vec::new(),
             has_unicode_line_comment_terminator: false,
             has_unmodeled_trivia: false,
@@ -95,6 +99,7 @@ impl<'a> Scanner<'a> {
             tokens: self.tokens,
             diagnostics: self.diagnostics,
             template_literals: self.template_literals,
+            regular_expression_literals: self.regular_expression_literals,
             comments: self.comments,
             has_unicode_line_comment_terminator: self.has_unicode_line_comment_terminator,
             has_unmodeled_trivia: self.has_unmodeled_trivia,
@@ -412,11 +417,7 @@ impl<'a> Scanner<'a> {
             b'*' if self.consume_suffix(b"*") => TokenKind::StarStar,
             b'*' if self.consume_suffix(b"=") => TokenKind::StarEquals,
             b'*' => TokenKind::Star,
-            b'/' if self.can_start_regular_expression() && self.scan_regular_expression() => {
-                TokenKind::RegularExpressionLiteral
-            }
-            b'/' if self.consume_suffix(b"=") => TokenKind::SlashEquals,
-            b'/' => TokenKind::Slash,
+            b'/' => self.scan_slash_or_regular_expression(start),
             b'%' if self.consume_suffix(b"=") => TokenKind::PercentEquals,
             b'%' => TokenKind::Percent,
             b'|' if self.consume_suffix(b"|=") => TokenKind::BarBarEquals,
@@ -492,17 +493,46 @@ impl<'a> Scanner<'a> {
             .is_some_and(|token| token_can_end_expression(token.kind))
     }
 
-    fn scan_regular_expression(&mut self) -> bool {
-        let expression_start = self.offset;
+    fn scan_slash_or_regular_expression(&mut self, start: usize) -> TokenKind {
+        if self.can_start_regular_expression()
+            && let Some(literal) = self.scan_regular_expression(start)
+        {
+            self.regular_expression_literals.push(literal);
+            return TokenKind::RegularExpressionLiteral;
+        }
+        if self.consume_suffix(b"=") {
+            TokenKind::SlashEquals
+        } else {
+            TokenKind::Slash
+        }
+    }
+
+    fn scan_regular_expression(&mut self, start: usize) -> Option<ScannedRegularExpressionLiteral> {
         let mut cursor = self.offset;
         let mut in_character_class = false;
         while let Some(byte) = self.bytes.get(cursor).copied() {
+            if self.is_unicode_line_separator_at(cursor) {
+                return self.finish_unterminated_regular_expression(start, cursor, true);
+            }
             match byte {
-                b'\n' | b'\r' => return false,
+                b'\n' | b'\r' => {
+                    return self.finish_unterminated_regular_expression(start, cursor, true);
+                }
                 b'\\' => {
                     cursor += 1;
+                    if self.bytes.get(cursor).is_none() {
+                        return self.finish_unterminated_regular_expression(start, cursor, false);
+                    }
+                    if self
+                        .bytes
+                        .get(cursor)
+                        .is_some_and(|byte| matches!(byte, b'\n' | b'\r'))
+                        || self.is_unicode_line_separator_at(cursor)
+                    {
+                        return self.finish_unterminated_regular_expression(start, cursor, true);
+                    }
                     let Some(character) = self.source.text[cursor..].chars().next() else {
-                        return false;
+                        return self.finish_unterminated_regular_expression(start, cursor, false);
                     };
                     cursor += character.len_utf8();
                 }
@@ -515,7 +545,9 @@ impl<'a> Scanner<'a> {
                     cursor += 1;
                 }
                 b'/' if !in_character_class => {
+                    let pattern_end = cursor;
                     cursor += 1;
+                    let flags_start = cursor;
                     while let Some(character) = self.source.text[cursor..].chars().next() {
                         if character == '$'
                             || character == '_'
@@ -528,18 +560,61 @@ impl<'a> Scanner<'a> {
                         }
                     }
                     self.offset = cursor;
-                    return true;
+                    return Some(ScannedRegularExpressionLiteral::terminated(
+                        self.source,
+                        start,
+                        pattern_end,
+                        flags_start,
+                        cursor,
+                    ));
                 }
                 _ => {
                     let Some(character) = self.source.text[cursor..].chars().next() else {
-                        return false;
+                        return self.finish_unterminated_regular_expression(start, cursor, false);
                     };
                     cursor += character.len_utf8();
                 }
             }
         }
-        self.offset = expression_start;
-        false
+        self.finish_unterminated_regular_expression(start, cursor, false)
+    }
+
+    fn finish_unterminated_regular_expression(
+        &mut self,
+        start: usize,
+        end: usize,
+        at_line_break: bool,
+    ) -> Option<ScannedRegularExpressionLiteral> {
+        if !self.tokens.is_empty()
+            && !self
+                .tokens
+                .last()
+                .is_some_and(|token| token.kind == TokenKind::Equals)
+        {
+            self.offset = start + 1;
+            return None;
+        }
+        self.offset = end;
+        let span = Span::new(self.source.id, start, end);
+        self.diagnostics.push(Diagnostic::at(
+            self.source,
+            span,
+            "Unterminated regular expression literal.".to_string(),
+            1161,
+        ));
+        if at_line_break {
+            Some(ScannedRegularExpressionLiteral::unterminated_at_line_break(
+                self.source,
+                start,
+                end,
+            ))
+        } else {
+            Some(ScannedRegularExpressionLiteral::unterminated(
+                self.source,
+                start,
+                end,
+            ))
+        }
     }
 
     fn scan_template_start(&mut self, start: usize) -> TokenKind {
@@ -981,7 +1056,6 @@ mod tests {
             ("**", TokenKind::StarStar),
             ("*=", TokenKind::StarEquals),
             ("**=", TokenKind::StarStarEquals),
-            ("/=", TokenKind::SlashEquals),
             ("%", TokenKind::Percent),
             ("%=", TokenKind::PercentEquals),
             ("||", TokenKind::BarBar),
@@ -1123,6 +1197,92 @@ mod tests {
         assert!(actual.contains(&(TokenKind::RegularExpressionLiteral, r"/a\/[b-d]+/giu")));
         assert!(actual.contains(&(TokenKind::Slash, "/")));
         assert!(actual.contains(&(TokenKind::RegularExpressionLiteral, r"/x\/y/")));
+    }
+
+    #[test]
+    fn contextual_type_ends_do_not_steal_prefix_or_relational_regex_literals() {
+        let text = concat!(
+            r"async function f() { return await /[a-z\/]+/; }",
+            "\n",
+            r"function* g() { yield /[a-z\/]+/; }",
+            "\n",
+            r"void /[a-z\/]+/;",
+            "\n",
+            r"value > /[a-z\/]+/.source;",
+        );
+        let (source, output) = scan(text);
+        assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+        assert_eq!(output.regular_expression_literals.len(), 4);
+        assert_eq!(
+            output
+                .tokens
+                .iter()
+                .filter(|token| token.kind == TokenKind::RegularExpressionLiteral)
+                .map(|token| source.slice(token.span))
+                .collect::<Vec<_>>(),
+            vec![r"/[a-z\/]+/"; 4],
+        );
+    }
+
+    #[test]
+    fn records_regex_pattern_flag_spans_and_bounded_unterminated_recovery() {
+        let (source, output) = scan("var pattern = /abc/g;");
+        let [scanned] = output.regular_expression_literals.as_slice() else {
+            panic!("expected one scanned regular expression");
+        };
+        let literal = scanned.syntax_literal();
+        assert_eq!(literal.raw, "/abc/g");
+        assert_eq!(literal.pattern, "abc");
+        assert_eq!(literal.flags, "g");
+        assert_eq!(source.slice(literal.pattern_span), "abc");
+        assert_eq!(source.slice(literal.flags_span), "g");
+        assert!(literal.terminated);
+        assert!(literal.validation_supported());
+
+        let (source, output) = scan("var r = /abc");
+        assert_eq!(output.diagnostics.len(), 1);
+        assert_eq!(
+            (
+                output.diagnostics[0].code,
+                output.diagnostics[0].start,
+                output.diagnostics[0].length,
+                output.diagnostics[0].message_text.as_str(),
+            ),
+            (1161, 8, 4, "Unterminated regular expression literal.")
+        );
+        let token = output
+            .tokens
+            .iter()
+            .find(|token| token.kind == TokenKind::RegularExpressionLiteral)
+            .expect("unterminated recovery remains one regex token");
+        assert_eq!(source.slice(token.span), "/abc");
+        let literal = output.regular_expression_literals[0].syntax_literal();
+        assert!(!literal.terminated);
+        assert!(literal.validation_supported());
+
+        let (source, slash_equals_recovery) = scan("/=");
+        assert_eq!(slash_equals_recovery.diagnostics[0].code, 1161);
+        assert_eq!(
+            source.slice(slash_equals_recovery.tokens[0].span),
+            "/=",
+            "a primary-position slash-equals follows TS7 regex recovery"
+        );
+        assert_eq!(
+            slash_equals_recovery.tokens[0].kind,
+            TokenKind::RegularExpressionLiteral
+        );
+
+        for text in ["var r = /abc\n", "var r = /abc\u{2028}"] {
+            let (_, line_break_recovery) = scan(text);
+            let literal = line_break_recovery.regular_expression_literals[0].syntax_literal();
+            assert!(literal.recovery_at_line_break, "{text:?}");
+            assert!(!literal.validation_supported(), "{text:?}");
+        }
+
+        let (_, open_class) = scan("var r = /[/");
+        let literal = open_class.regular_expression_literals[0].syntax_literal();
+        assert!(!literal.terminated);
+        assert!(!literal.validation_supported());
     }
 
     #[test]

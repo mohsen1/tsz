@@ -5,6 +5,7 @@
 
 mod literals;
 mod reachability;
+mod regular_expression;
 mod type_members;
 
 use crate::emit_paths::{EmitFilePlan, EmitPlan, is_declaration_source, is_effective_commonjs};
@@ -148,9 +149,9 @@ impl<'a> Printer<'a> {
         }
 
         if self.preserve_comments
-            && let Some(comments) = unit.modeled_no_substitution_template_comments()
+            && let Some(comments) = unit.modeled_comments()
         {
-            self.write_no_substitution_template_comment_statements(&unit.statements, comments);
+            self.write_modeled_comment_statements(&unit.statements, comments);
         } else {
             for statement in &unit.statements {
                 self.write_javascript_statement(statement, true);
@@ -772,6 +773,9 @@ impl<'a> Printer<'a> {
                 let text = self.literal_text(literal, expression.span);
                 self.output.push_str(&text);
             }
+            ExpressionKind::RegularExpression(literal) => {
+                self.write_regular_expression(literal);
+            }
             ExpressionKind::Object(properties) => self.write_object_literal(properties),
             ExpressionKind::Array(elements) => {
                 self.output.push('[');
@@ -941,6 +945,7 @@ impl<'a> Printer<'a> {
             ExpressionKind::As { expression, .. } => self.expression_precedence(expression),
             ExpressionKind::Identifier { .. }
             | ExpressionKind::Literal(_)
+            | ExpressionKind::RegularExpression(_)
             | ExpressionKind::Object(_)
             | ExpressionKind::Array(_)
             | ExpressionKind::Parenthesized(_)

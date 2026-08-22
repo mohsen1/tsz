@@ -83,7 +83,8 @@ impl Parser<'_> {
     pub(super) fn parse_new_expression(&mut self) -> Expression {
         let left = self.bump().span;
         let callee = self.parse_primary_expression();
-        let type_arguments = if self.at(TokenKind::LessThan) {
+        let has_type_arguments = self.at(TokenKind::LessThan);
+        let type_arguments = if has_type_arguments {
             self.parse_type_arguments()
         } else {
             Vec::new()
@@ -99,6 +100,10 @@ impl Parser<'_> {
             }
             end = self.current().span;
             self.expect(TokenKind::RightParen, "')' expected.", 1005);
+        }
+        if has_type_arguments {
+            self.product_capabilities
+                .observe_unmodeled_expression_products();
         }
         let expression = Expression {
             id: self.alloc_node(),
