@@ -18,6 +18,7 @@ impl Checker<'_> {
         if !self.options.effective_strict_null_checks()
             || !self.options.effective_strict_property_initialization()
             || !is_plain_typescript_source(&self.program.files[file.0 as usize].source.path)
+            || !declaration.member_syntax_recovery_free
             || declaration
                 .members
                 .iter()

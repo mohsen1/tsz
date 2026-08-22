@@ -248,6 +248,18 @@ fn any_constructor_member_keeps_assignment_flow_outside_this_atom() {
 }
 
 #[test]
+fn parser_recovered_class_members_do_not_assert_initialization_facts() {
+    let output = compile(
+        concat!(
+            "class Stable { owned: string; }\n",
+            "class Recovered { speculative: string; class Nested {} }\n",
+        ),
+        CompilerOptions::default(),
+    );
+    assert_eq!(ts2564_names(&output), vec!["owned"], "{output:?}");
+}
+
+#[test]
 fn strict_property_option_error_uses_config_key_coordinates() {
     let fixture = TempDir::new().expect("tempdir");
     let config = concat!(

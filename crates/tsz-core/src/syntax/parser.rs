@@ -616,6 +616,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_class(&mut self, modifiers: Modifiers) -> ClassDeclaration {
+        let diagnostic_count = self.diagnostics.len();
         self.expect(TokenKind::Class, "'class' expected.", 1005);
         let (name, name_span) = self.parse_name();
         let type_parameters = self.parse_type_parameters();
@@ -648,6 +649,7 @@ impl<'a> Parser<'a> {
             }
         }
         self.expect(TokenKind::RightBrace, "'}' expected.", 1005);
+        let member_syntax_recovery_free = self.diagnostics.len() == diagnostic_count;
         self.product_capabilities.observe_class(modifiers, &members);
         ClassDeclaration {
             name,
@@ -660,6 +662,7 @@ impl<'a> Parser<'a> {
             default_export: modifiers.default_export,
             declared: modifiers.declared,
             abstract_class: modifiers.abstract_declaration,
+            member_syntax_recovery_free,
         }
     }
 

@@ -514,6 +514,7 @@ pub struct ClassDeclaration {
     pub default_export: bool,
     pub declared: bool,
     pub abstract_class: bool,
+    pub member_syntax_recovery_free: bool,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
