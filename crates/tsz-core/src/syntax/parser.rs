@@ -12,11 +12,11 @@ mod type_parameters;
 use super::template_literal::ScannedTemplateLiteral;
 use super::{
     AccessorKind, ArrowBody, BinaryOperator, ClassDeclaration, ClassMember, ClassMemberKind,
-    ClassMemberModifiers, ExportDeclaration, ExportSpecifier, Expression, ExpressionKind,
-    FunctionDeclaration, IfStatement, ImportBinding, ImportDeclaration, InterfaceDeclaration,
-    ObjectProperty, Parameter, ParameterModifier, Statement, StatementKind, SwitchClause,
-    SwitchClauseKind, SwitchStatement, Token, TokenKind, TypeAliasDeclaration, TypeNode,
-    TypeNodeKind, UnaryOperator, VariableDeclaration, VariableKind, scan_source,
+    ClassMemberModifiers, CommentTrivia, ExportDeclaration, ExportSpecifier, Expression,
+    ExpressionKind, FunctionDeclaration, IfStatement, ImportBinding, ImportDeclaration,
+    InterfaceDeclaration, ObjectProperty, Parameter, ParameterModifier, Statement, StatementKind,
+    SwitchClause, SwitchClauseKind, SwitchStatement, Token, TokenKind, TypeAliasDeclaration,
+    TypeNode, TypeNodeKind, UnaryOperator, VariableDeclaration, VariableKind, scan_source,
 };
 use literals::unquote;
 use modifiers::{Modifiers, ProductCapabilities};
@@ -34,6 +34,8 @@ pub fn parse_source(source: &SourceText) -> ParseOutput {
         scanned.tokens,
         scanned.diagnostics,
         scanned.template_literals,
+        scanned.comments,
+        scanned.has_unicode_line_comment_terminator,
         scanned.has_unmodeled_trivia,
     )
     .parse()
@@ -45,6 +47,8 @@ struct Parser<'a> {
     next_node: u32,
     diagnostics: Vec<Diagnostic>,
     template_literals: Vec<ScannedTemplateLiteral>,
+    comments: Vec<CommentTrivia>,
+    has_unicode_line_comment_terminator: bool,
     has_unmodeled_trivia: bool,
     speculating: bool,
     speculative_token_rewrites: Vec<(usize, Token)>,
@@ -60,6 +64,8 @@ impl<'a> Parser<'a> {
         tokens: Vec<Token>,
         diagnostics: Vec<Diagnostic>,
         template_literals: Vec<ScannedTemplateLiteral>,
+        comments: Vec<CommentTrivia>,
+        has_unicode_line_comment_terminator: bool,
         has_unmodeled_trivia: bool,
     ) -> Self {
         Self {
@@ -69,6 +75,8 @@ impl<'a> Parser<'a> {
             next_node: 0,
             diagnostics,
             template_literals,
+            comments,
+            has_unicode_line_comment_terminator,
             has_unmodeled_trivia,
             speculating: false,
             speculative_token_rewrites: Vec::new(),
@@ -102,6 +110,8 @@ impl<'a> Parser<'a> {
                 default_export_hosts_supported: self
                     .product_capabilities
                     .default_export_hosts_supported,
+                comments: self.comments,
+                has_unicode_line_comment_terminator: self.has_unicode_line_comment_terminator,
                 has_authored_no_substitution_template,
                 template_products_supported: self.product_capabilities.template_products_supported,
                 commonjs_class_products_supported: self

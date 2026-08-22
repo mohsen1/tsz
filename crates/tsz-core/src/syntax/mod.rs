@@ -5,6 +5,7 @@ mod parser;
 mod scanner;
 mod template_literal;
 mod token;
+mod trivia;
 
 pub use ast::*;
 pub use parser::{ParseOutput, parse_source};
@@ -18,3 +19,7 @@ pub(crate) use template_literal::{
     statements_form_no_substitution_template_variable_file,
 };
 pub use token::{Token, TokenKind};
+pub(crate) use trivia::{
+    CommentKind, CommentPlacement, CommentTrivia,
+    comments_form_no_substitution_template_expression_file, is_single_line_whitespace,
+};

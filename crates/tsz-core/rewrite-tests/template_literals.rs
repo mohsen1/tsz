@@ -152,7 +152,6 @@ fn safe_file_boundary_allows_only_direct_expression_statements() {
         "var value: string = `plain`;",
         "export var value = `plain`;",
         "\"use strict\"; `plain`;",
-        "// leading comment\n`plain`;",
         "/* leading comment */ var value = `plain`;",
         "#!/usr/bin/env node\n`plain`;",
     ] {

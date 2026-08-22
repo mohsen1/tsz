@@ -1,5 +1,7 @@
 use crate::source::{NodeId, Span};
 
+use super::CommentTrivia;
+
 #[derive(Debug, Clone)]
 pub struct SourceUnit {
     pub statements: Vec<Statement>,
@@ -10,6 +12,8 @@ pub struct SourceUnit {
     pub(crate) commonjs_class_products_supported: bool,
     pub(crate) declaration_hosts_supported: bool,
     pub(crate) default_export_hosts_supported: bool,
+    pub(crate) comments: Vec<CommentTrivia>,
+    pub(crate) has_unicode_line_comment_terminator: bool,
     pub(crate) has_authored_no_substitution_template: bool,
     pub(crate) template_products_supported: bool,
 }
@@ -155,6 +159,18 @@ impl SourceUnit {
     #[must_use]
     pub const fn has_authored_no_substitution_template(&self) -> bool {
         self.has_authored_no_substitution_template
+    }
+
+    pub(crate) fn modeled_no_substitution_template_comments(&self) -> Option<&[CommentTrivia]> {
+        (self.has_authored_no_substitution_template
+            && self.template_products_supported
+            && !self.comments.is_empty())
+        .then_some(self.comments.as_slice())
+    }
+
+    #[must_use]
+    pub(crate) const fn has_unicode_line_comment_terminator(&self) -> bool {
+        self.has_unicode_line_comment_terminator
     }
 
     /// Whether template syntax outside the exact no-substitution expression

@@ -88,6 +88,7 @@ struct Printer<'a> {
     preserve_block_scope: bool,
     preserve_arrows: bool,
     preserve_class_fields: bool,
+    preserve_comments: bool,
     javascript_supported: bool,
     declaration_supported: bool,
     declaration_parameter_property_host: bool,
@@ -119,6 +120,7 @@ impl<'a> Printer<'a> {
                 target.as_str(),
                 "es2022" | "es2023" | "es2024" | "es2025" | "esnext"
             ),
+            preserve_comments: !options.remove_comments,
             javascript_supported: true,
             declaration_supported: true,
             declaration_parameter_property_host: false,
@@ -145,8 +147,14 @@ impl<'a> Printer<'a> {
                 .push_str("Object.defineProperty(exports, \"__esModule\", { value: true });\n");
         }
 
-        for statement in &unit.statements {
-            self.write_javascript_statement(statement, true);
+        if self.preserve_comments
+            && let Some(comments) = unit.modeled_no_substitution_template_comments()
+        {
+            self.write_no_substitution_template_comment_statements(&unit.statements, comments);
+        } else {
+            for statement in &unit.statements {
+                self.write_javascript_statement(statement, true);
+            }
         }
 
         if external_module && !has_runtime_export && self.module_format == ModuleFormat::EsModule {

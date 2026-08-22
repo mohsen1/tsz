@@ -81,5 +81,9 @@ path = "rewrite-tests/template_literals.rs"
 name = "rewrite_template_literal_variables"
 path = "rewrite-tests/template_literal_variables.rs"
 
+[[test]]
+name = "rewrite_template_literal_comments"
+path = "rewrite-tests/template_literal_comments.rs"
+
 [lints]
 workspace = true

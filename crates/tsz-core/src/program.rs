@@ -587,6 +587,10 @@ impl Compiler {
             || program
                 .files
                 .iter()
+                .any(|file| file.syntax.has_unicode_line_comment_terminator())
+            || program
+                .files
+                .iter()
                 .any(|file| file.syntax.has_unmodeled_default_export_hosts())
             || has_unmodeled_no_substitution_template_program_products(&program.files, options)
             || (has_compiler_option_error

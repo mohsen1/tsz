@@ -2,13 +2,17 @@ use crate::diagnostics::Diagnostic;
 use crate::source::{SourceText, Span};
 
 use super::template_literal::ScannedTemplateLiteral;
-use super::{Token, TokenKind};
+use super::{
+    CommentKind, CommentPlacement, CommentTrivia, Token, TokenKind, is_single_line_whitespace,
+};
 
 #[derive(Debug)]
 pub struct ScanOutput {
     pub tokens: Vec<Token>,
     pub diagnostics: Vec<Diagnostic>,
     pub(super) template_literals: Vec<ScannedTemplateLiteral>,
+    pub(super) comments: Vec<CommentTrivia>,
+    pub(super) has_unicode_line_comment_terminator: bool,
     pub(super) has_unmodeled_trivia: bool,
 }
 
@@ -25,6 +29,8 @@ struct Scanner<'a> {
     tokens: Vec<Token>,
     diagnostics: Vec<Diagnostic>,
     template_literals: Vec<ScannedTemplateLiteral>,
+    comments: Vec<CommentTrivia>,
+    has_unicode_line_comment_terminator: bool,
     has_unmodeled_trivia: bool,
 }
 
@@ -39,6 +45,8 @@ impl<'a> Scanner<'a> {
             tokens: Vec::new(),
             diagnostics: Vec::new(),
             template_literals: Vec::new(),
+            comments: Vec::new(),
+            has_unicode_line_comment_terminator: false,
             has_unmodeled_trivia: false,
         }
     }
@@ -87,6 +95,8 @@ impl<'a> Scanner<'a> {
             tokens: self.tokens,
             diagnostics: self.diagnostics,
             template_literals: self.template_literals,
+            comments: self.comments,
+            has_unicode_line_comment_terminator: self.has_unicode_line_comment_terminator,
             has_unmodeled_trivia: self.has_unmodeled_trivia,
         }
     }
@@ -103,27 +113,44 @@ impl<'a> Scanner<'a> {
                     .bytes
                     .get(self.offset)
                     .is_some_and(|byte| *byte != b'\n' && *byte != b'\r')
+                    && !self.is_unicode_line_separator_at(self.offset)
                 {
                     self.offset += 1;
                 }
+                self.has_unicode_line_comment_terminator |=
+                    self.is_unicode_line_separator_at(self.offset);
                 continue;
             }
             while self.skip_one_whitespace() {}
             if self.bytes.get(self.offset..self.offset + 2) == Some(b"//") {
-                self.has_unmodeled_trivia = true;
+                let start = self.offset;
+                let placement = self.comment_placement(start);
                 self.offset += 2;
                 while self
                     .bytes
                     .get(self.offset)
                     .is_some_and(|byte| *byte != b'\n' && *byte != b'\r')
+                    && !self.is_unicode_line_separator_at(self.offset)
                 {
                     self.offset += 1;
                 }
+                self.has_unicode_line_comment_terminator |=
+                    self.is_unicode_line_separator_at(self.offset);
+                let plain = self.is_plain_line_comment(start, self.offset);
+                self.comments.push(CommentTrivia {
+                    span: Span::new(self.source.id, start, self.offset),
+                    kind: CommentKind::Line,
+                    placement,
+                    has_trailing_line_break: self.has_line_break_at_offset(),
+                    plain,
+                });
+                self.has_unmodeled_trivia |= !plain;
                 continue;
             }
             if self.bytes.get(self.offset..self.offset + 2) == Some(b"/*") {
                 self.has_unmodeled_trivia = true;
                 let start = self.offset;
+                let placement = self.comment_placement(start);
                 self.offset += 2;
                 while self.offset + 1 < self.bytes.len()
                     && self.bytes.get(self.offset..self.offset + 2) != Some(b"*/")
@@ -141,10 +168,63 @@ impl<'a> Scanner<'a> {
                     ));
                     self.offset = self.bytes.len();
                 }
+                self.comments.push(CommentTrivia {
+                    span: Span::new(self.source.id, start, self.offset),
+                    kind: CommentKind::Block,
+                    placement,
+                    has_trailing_line_break: self.has_line_break_at_offset(),
+                    plain: false,
+                });
                 continue;
             }
             break;
         }
+    }
+
+    fn comment_placement(&self, comment_start: usize) -> CommentPlacement {
+        let Some(previous) = self.tokens.last() else {
+            return CommentPlacement::Leading;
+        };
+        if self.contains_line_break(previous.span.end as usize, comment_start) {
+            CommentPlacement::Leading
+        } else {
+            CommentPlacement::Trailing
+        }
+    }
+
+    fn is_plain_line_comment(&self, start: usize, end: usize) -> bool {
+        let body = &self.source.text[start + 2..end];
+        let first = body
+            .chars()
+            .find(|character| !is_single_line_whitespace(*character));
+        body.starts_with(' ') && !matches!(first, Some('/' | '@' | '!' | '#'))
+    }
+
+    fn has_line_break_at_offset(&self) -> bool {
+        self.bytes
+            .get(self.offset)
+            .is_some_and(|byte| matches!(byte, b'\r' | b'\n'))
+            || self.is_unicode_line_separator_at(self.offset)
+    }
+
+    fn contains_line_break(&self, start: usize, end: usize) -> bool {
+        let mut offset = start;
+        while offset < end {
+            if matches!(self.bytes[offset], b'\r' | b'\n')
+                || self.is_unicode_line_separator_at(offset)
+            {
+                return true;
+            }
+            offset += 1;
+        }
+        false
+    }
+
+    fn is_unicode_line_separator_at(&self, offset: usize) -> bool {
+        matches!(
+            self.bytes.get(offset..offset + 3),
+            Some([0xe2, 0x80, 0xa8 | 0xa9])
+        )
     }
 
     fn skip_one_whitespace(&mut self) -> bool {

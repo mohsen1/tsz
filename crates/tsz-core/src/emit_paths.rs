@@ -85,6 +85,13 @@ impl EmitPlan {
         let mut plan = Self::empty(file_slots);
         plan.diagnostics
             .extend(paths.explicit_root_diagnostics(files, options, provenance));
+        if files
+            .iter()
+            .any(|file| file.syntax.has_unicode_line_comment_terminator())
+        {
+            plan.incomplete_products = true;
+            return plan;
+        }
         if options.no_emit {
             return plan;
         }

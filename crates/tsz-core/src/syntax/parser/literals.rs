@@ -1,6 +1,8 @@
 use super::super::{
     ClassDeclaration, Expression, ExpressionKind, Literal, Statement, Token, TokenKind,
-    class_contains_no_substitution_template, expression_contains_no_substitution_template,
+    class_contains_no_substitution_template,
+    comments_form_no_substitution_template_expression_file,
+    expression_contains_no_substitution_template,
     statements_form_no_substitution_template_safe_file,
 };
 use super::Parser;
@@ -22,6 +24,11 @@ impl Parser<'_> {
             && (!self.diagnostics.is_empty()
                 || self.has_unmodeled_trivia
                 || self.has_unmodeled_top_level_syntax
+                || !comments_form_no_substitution_template_expression_file(
+                    self.source,
+                    statements,
+                    &self.comments,
+                )
                 || !statements_form_no_substitution_template_safe_file(
                     self.source,
                     statements,

@@ -1,12 +1,34 @@
 use crate::source::Span;
 use crate::syntax::{
-    Expression, ExpressionKind, Literal, Statement, VariableDeclaration, VariableKind,
-    expression_contains_no_substitution_template, statements_contain_no_substitution_template,
+    CommentTrivia, Expression, ExpressionKind, Literal, Statement, VariableDeclaration,
+    VariableKind, expression_contains_no_substitution_template,
+    statements_contain_no_substitution_template,
 };
 
 use super::{Printer, TYPE_PREC_LOWEST, is_quoted, quote_string, variable_kind_text};
 
 impl Printer<'_> {
+    pub(super) fn write_no_substitution_template_comment_statements(
+        &mut self,
+        statements: &[Statement],
+        comments: &[CommentTrivia],
+    ) {
+        let mut comment_index = 0;
+        for statement in statements {
+            while comments
+                .get(comment_index)
+                .is_some_and(|comment| comment.span.start < statement.span.start)
+            {
+                self.output
+                    .push_str(self.source.slice(comments[comment_index].span));
+                self.output.push('\n');
+                comment_index += 1;
+            }
+            self.write_javascript_statement(statement, true);
+        }
+        debug_assert_eq!(comment_index, comments.len());
+    }
+
     pub(super) fn literal_text(&self, literal: &Literal, span: Span) -> String {
         match literal {
             Literal::String(value) => {
