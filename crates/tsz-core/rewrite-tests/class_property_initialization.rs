@@ -6,7 +6,7 @@ use tsz::config::{ProjectRequest, ProjectSelection, resolve_project};
 use tsz::host::SystemHost;
 use tsz::source::{FileId, SourceText};
 use tsz::syntax::{ClassMemberKind, PropertyNameKind, StatementKind, parse_source};
-use tsz::{Compiler, CompilerOptions, SemanticCompletion, SourceInput};
+use tsz::{CompileExitStatus, Compiler, CompilerOptions, SemanticCompletion, SourceInput};
 
 fn compile(source: &str, options: CompilerOptions) -> tsz::CompileOutput {
     compile_named("property-initialization.ts", source, options)
@@ -257,6 +257,45 @@ fn recursive_class_reference_unions_do_not_force_object_interiors() {
         ts2564_names(&output),
         vec!["members", "members", "parent", "parent"]
     );
+}
+
+#[test]
+fn incomplete_reference_arguments_propagate_without_recursive_forcing() {
+    for (source, property) in [
+        (
+            "class Vessel<Payload> { item: Vessel< <Element>() => Element >; }",
+            "item",
+        ),
+        (
+            "class Envelope<Value> { nested: Envelope< (<Item>() => Item) >; }",
+            "nested",
+        ),
+    ] {
+        let output = compile(source, CompilerOptions::default());
+        assert_eq!(codes(&output), vec![2564], "{source}: {output:?}");
+        assert_eq!(ts2564_names(&output), vec![property]);
+        assert_eq!(output.semantic_completion, SemanticCompletion::Deferred);
+        assert_eq!(output.exit_status, CompileExitStatus::SemanticIncomplete);
+        assert!(output.stats.types < 128, "{source}: {:?}", output.stats);
+    }
+
+    let sibling = compile(
+        "class Pair<Left, Right> { field: Pair<Missing, <Item>() => Item >; }",
+        CompilerOptions::default(),
+    );
+    assert_eq!(codes(&sibling), vec![2564, 2304], "{sibling:?}");
+    assert_eq!(ts2564_names(&sibling), vec!["field"]);
+    assert_eq!(sibling.semantic_completion, SemanticCompletion::Deferred);
+    assert!(sibling.stats.types < 128, "{:?}", sibling.stats);
+
+    let complete = compile(
+        "class Plain<Value> { prop: Plain<() => string>; }",
+        CompilerOptions::default(),
+    );
+    assert_eq!(codes(&complete), vec![2564], "{complete:?}");
+    assert_eq!(ts2564_names(&complete), vec!["prop"]);
+    assert_eq!(complete.semantic_completion, SemanticCompletion::Complete);
+    assert!(complete.stats.types < 128, "{:?}", complete.stats);
 }
 
 #[test]

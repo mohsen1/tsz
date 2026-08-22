@@ -1618,6 +1618,14 @@ impl Checker<'_> {
             } => Some((*declaration, arguments.as_slice())),
             _ => None,
         };
+        // A reference cannot be instantiated definitively while one of its
+        // authored arguments is incomplete. Propagate that operand state
+        // before expansion so fresh opaque arguments cannot evade recursion
+        // identity and restart forcing indefinitely.
+        if reference.is_some() && !state.is_complete() {
+            self.force_queries.remove(&ty);
+            return completion_from_state(state, ty);
+        }
         if let Some((declaration, arguments)) = reference
             && let Some(expansion) =
                 references.generative_expansion(ty, declaration, arguments, &|ty| {
