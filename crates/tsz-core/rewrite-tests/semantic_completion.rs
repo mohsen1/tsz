@@ -621,7 +621,7 @@ fn empty_generic_class_construction_can_omit_type_arguments() {
     assert_completion(&runtime_arguments, SemanticCompletion::Complete);
 
     let unsupported = [
-        "class Box<Value> { value:Value; } new Box();",
+        "class Box<Value> { value!:Value; } new Box();",
         "class Base {} class Derived<Value> extends Base {} new Derived();",
         "interface Contract {} class Implementing<Value> implements Contract {} new Implementing();",
         "class Constrained<Value extends string> {} new Constrained();",

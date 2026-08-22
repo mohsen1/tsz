@@ -630,6 +630,10 @@ fn compiler_options(value: &Value) -> CompilerOptions {
             .get("strict")
             .and_then(Value::as_bool)
             .unwrap_or(false),
+        strict_null_checks: value.get("strictNullChecks").and_then(Value::as_bool),
+        strict_property_initialization: value
+            .get("strictPropertyInitialization")
+            .and_then(Value::as_bool),
         no_implicit_any: value.get("noImplicitAny").and_then(Value::as_bool),
         no_lib: value.get("noLib").and_then(Value::as_bool).unwrap_or(false),
         lib,

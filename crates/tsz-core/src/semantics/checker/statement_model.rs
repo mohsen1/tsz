@@ -23,7 +23,10 @@ impl Checker<'_> {
                     self.infer_expression(file, scope, expression, None);
                 }
             }
-            StatementKind::Class(declaration) => self.check_class(file, declaration),
+            StatementKind::Class(declaration) => {
+                let class_scope = self.node_scope(file, statement.id, scope);
+                self.check_class(file, class_scope, declaration);
+            }
             StatementKind::Variable(declaration) => {
                 self.check_variable(file, scope, statement.id, declaration);
             }

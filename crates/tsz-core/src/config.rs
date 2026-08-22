@@ -85,6 +85,8 @@ pub struct ResolvedProject {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum CompilerOptionKey {
     Strict,
+    StrictNullChecks,
+    StrictPropertyInitialization,
     NoImplicitAny,
     NoLib,
     Lib,
@@ -105,8 +107,10 @@ pub enum CompilerOptionKey {
 }
 
 impl CompilerOptionKey {
-    const ALL: [Self; 18] = [
+    const ALL: [Self; 20] = [
         Self::Strict,
+        Self::StrictNullChecks,
+        Self::StrictPropertyInitialization,
         Self::NoImplicitAny,
         Self::NoLib,
         Self::Lib,
@@ -129,6 +133,8 @@ impl CompilerOptionKey {
     const fn json_name(self) -> &'static str {
         match self {
             Self::Strict => "strict",
+            Self::StrictNullChecks => "strictNullChecks",
+            Self::StrictPropertyInitialization => "strictPropertyInitialization",
             Self::NoImplicitAny => "noImplicitAny",
             Self::NoLib => "noLib",
             Self::Lib => "lib",
@@ -877,6 +883,8 @@ impl Selector {
 #[derive(Debug, Clone, Default)]
 struct PartialCompilerOptions {
     strict: Option<bool>,
+    strict_null_checks: Option<bool>,
+    strict_property_initialization: Option<bool>,
     no_implicit_any: Option<bool>,
     no_lib: Option<bool>,
     lib: Option<Vec<String>>,
@@ -900,6 +908,10 @@ impl PartialCompilerOptions {
     const fn contains(&self, key: CompilerOptionKey) -> bool {
         match key {
             CompilerOptionKey::Strict => self.strict.is_some(),
+            CompilerOptionKey::StrictNullChecks => self.strict_null_checks.is_some(),
+            CompilerOptionKey::StrictPropertyInitialization => {
+                self.strict_property_initialization.is_some()
+            }
             CompilerOptionKey::NoImplicitAny => self.no_implicit_any.is_some(),
             CompilerOptionKey::NoLib => self.no_lib.is_some(),
             CompilerOptionKey::Lib => self.lib.is_some(),
@@ -928,6 +940,8 @@ impl PartialCompilerOptions {
         }
         replace_present!(
             strict,
+            strict_null_checks,
+            strict_property_initialization,
             no_implicit_any,
             no_lib,
             lib,
@@ -967,6 +981,12 @@ impl PartialCompilerOptions {
             inline_source_map,
             remove_comments,
         );
+        if let Some(value) = self.strict_null_checks {
+            options.strict_null_checks = Some(value);
+        }
+        if let Some(value) = self.strict_property_initialization {
+            options.strict_property_initialization = Some(value);
+        }
         if let Some(value) = self.no_implicit_any {
             options.no_implicit_any = Some(value);
         }
@@ -997,6 +1017,8 @@ fn partial_options(object: &Map<String, Value>, origin: &Path) -> PartialCompile
     };
     PartialCompilerOptions {
         strict: bool_property(options, "strict"),
+        strict_null_checks: bool_property(options, "strictNullChecks"),
+        strict_property_initialization: bool_property(options, "strictPropertyInitialization"),
         no_implicit_any: bool_property(options, "noImplicitAny"),
         no_lib: bool_property(options, "noLib"),
         lib: string_array_property(options, "lib"),

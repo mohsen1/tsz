@@ -588,11 +588,21 @@ pub struct ClassMember {
     pub id: NodeId,
     pub name: String,
     pub name_span: Span,
+    pub name_kind: PropertyNameKind,
     pub span: Span,
     pub modifiers: ClassMemberModifiers,
     pub overload_completion_supported: bool,
     pub emit_products_supported: bool,
     pub kind: ClassMemberKind,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PropertyNameKind {
+    Identifier,
+    PrivateIdentifier,
+    StringLiteral,
+    NumericLiteral,
+    Unsupported,
 }
 
 #[derive(Debug, Clone)]

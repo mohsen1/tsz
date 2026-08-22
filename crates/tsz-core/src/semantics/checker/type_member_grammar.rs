@@ -337,7 +337,7 @@ impl Checker<'_> {
             )
         });
         let optional_breaks_array = parameter.optional
-            && self.options.strict
+            && self.options.effective_strict_null_checks()
             && !matches!(
                 declared_array_like,
                 Some(RestTypeSyntax::Any | RestTypeSyntax::ErrorCascade)

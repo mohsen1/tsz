@@ -74,6 +74,10 @@ impl SourceInput {
 pub struct CompilerOptions {
     pub strict: bool,
     /// `None` inherits `strict`; `Some(false)` explicitly opts out.
+    pub strict_null_checks: Option<bool>,
+    /// `None` inherits `strict`; `Some(false)` explicitly opts out.
+    pub strict_property_initialization: Option<bool>,
+    /// `None` inherits `strict`; `Some(false)` explicitly opts out.
     pub no_implicit_any: Option<bool>,
     pub no_lib: bool,
     pub lib: Option<Vec<String>>,
@@ -97,6 +101,8 @@ impl Default for CompilerOptions {
     fn default() -> Self {
         Self {
             strict: true,
+            strict_null_checks: None,
+            strict_property_initialization: None,
             no_implicit_any: None,
             no_lib: false,
             lib: None,
@@ -119,6 +125,22 @@ impl Default for CompilerOptions {
 }
 
 impl CompilerOptions {
+    #[must_use]
+    pub const fn effective_strict_null_checks(&self) -> bool {
+        match self.strict_null_checks {
+            Some(value) => value,
+            None => self.strict,
+        }
+    }
+
+    #[must_use]
+    pub const fn effective_strict_property_initialization(&self) -> bool {
+        match self.strict_property_initialization {
+            Some(value) => value,
+            None => self.strict,
+        }
+    }
+
     #[must_use]
     pub const fn effective_no_implicit_any(&self) -> bool {
         match self.no_implicit_any {
@@ -512,7 +534,9 @@ impl Compiler {
         }
         let option_diagnostics = compiler_option_diagnostics(options, &provenance);
         let has_compiler_option_error = !option_diagnostics.is_empty();
-        let has_fatal_option_error = has_compiler_option_error
+        let has_fatal_option_error = option_diagnostics
+            .iter()
+            .any(|diagnostic| matches!(diagnostic.code, 5108 | 6046))
             && provenance
                 .option_origin(CompilerOptionKey::Target)
                 .is_none();
@@ -766,7 +790,7 @@ fn compiler_option_diagnostics(
             6046,
         )),
     };
-    diagnostic
+    let mut diagnostics = diagnostic
         .map(|(message, code)| {
             if let Some(origin) = provenance.option_origin(CompilerOptionKey::Target) {
                 origin.diagnostic_at_value(message, code)
@@ -775,7 +799,26 @@ fn compiler_option_diagnostics(
             }
         })
         .into_iter()
-        .collect()
+        .collect::<Vec<_>>();
+    if options.strict_property_initialization == Some(true)
+        && !options.effective_strict_null_checks()
+    {
+        let message = concat!(
+            "Option 'strictPropertyInitialization' cannot be specified without specifying ",
+            "option 'strictNullChecks'."
+        )
+        .to_string();
+        diagnostics.push(
+            if let Some(origin) =
+                provenance.option_origin(CompilerOptionKey::StrictPropertyInitialization)
+            {
+                origin.diagnostic_at_key(message, 5052)
+            } else {
+                Diagnostic::global(message, 5052)
+            },
+        );
+    }
+    diagnostics
 }
 
 struct ParseBindJob {

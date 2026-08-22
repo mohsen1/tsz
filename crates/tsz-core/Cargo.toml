@@ -105,5 +105,9 @@ path = "rewrite-tests/numeric_literal_separators.rs"
 name = "rewrite_string_line_continuations"
 path = "rewrite-tests/string_line_continuations.rs"
 
+[[test]]
+name = "rewrite_class_property_initialization"
+path = "rewrite-tests/class_property_initialization.rs"
+
 [lints]
 workspace = true

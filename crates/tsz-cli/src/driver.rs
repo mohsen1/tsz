@@ -36,6 +36,8 @@ pub struct Invocation {
 #[derive(Debug, Default, Clone)]
 pub struct CompilerOptionPatch {
     pub strict: Option<bool>,
+    pub strict_null_checks: Option<bool>,
+    pub strict_property_initialization: Option<bool>,
     pub no_implicit_any: Option<bool>,
     pub no_lib: Option<bool>,
     pub lib: Option<Vec<String>>,
@@ -77,6 +79,12 @@ impl CompilerOptionPatch {
             remove_comments,
             allow_js,
         );
+        if let Some(value) = self.strict_null_checks {
+            options.strict_null_checks = Some(value);
+        }
+        if let Some(value) = self.strict_property_initialization {
+            options.strict_property_initialization = Some(value);
+        }
         if let Some(value) = self.no_implicit_any {
             options.no_implicit_any = Some(value);
         }
@@ -110,6 +118,8 @@ impl CompilerOptionPatch {
         }
         clear_present!(
             (strict, Strict),
+            (strict_null_checks, StrictNullChecks),
+            (strict_property_initialization, StrictPropertyInitialization),
             (no_implicit_any, NoImplicitAny),
             (no_lib, NoLib),
             (lib, Lib),
@@ -206,6 +216,14 @@ pub fn parse_arguments(arguments: &[OsString]) -> Result<Invocation> {
                 invocation.options.strict =
                     Some(optional_bool(arguments, &mut index, inline_value, true));
             }
+            "strictnullchecks" => {
+                invocation.options.strict_null_checks =
+                    Some(optional_bool(arguments, &mut index, inline_value, true));
+            }
+            "strictpropertyinitialization" => {
+                invocation.options.strict_property_initialization =
+                    Some(optional_bool(arguments, &mut index, inline_value, true));
+            }
             "noimplicitany" => {
                 invocation.options.no_implicit_any =
                     Some(optional_bool(arguments, &mut index, inline_value, true));
@@ -291,8 +309,7 @@ pub fn parse_arguments(arguments: &[OsString]) -> Result<Invocation> {
             | "importsnotusedasvalues"
             | "baseurl"
             | "outfile"
-            | "usedefineforclassfields"
-            | "strictnullchecks" => {
+            | "usedefineforclassfields" => {
                 let _ = take_value()?;
             }
             _ => invocation.unknown_options.push(raw_name.to_string()),

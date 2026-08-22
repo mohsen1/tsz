@@ -21,9 +21,9 @@ use super::{
     AccessorKind, ArrowBody, ClassDeclaration, ClassMember, ClassMemberKind, ClassMemberModifiers,
     CommentTrivia, ExportDeclaration, ExportSpecifier, Expression, ExpressionKind,
     FunctionDeclaration, IfStatement, ImportBinding, ImportDeclaration, InterfaceDeclaration,
-    ObjectProperty, ParameterModifier, Statement, StatementKind, SwitchClause, SwitchClauseKind,
-    SwitchStatement, Token, TokenKind, TypeAliasDeclaration, TypeNode, TypeNodeKind, UnaryOperator,
-    VariableDeclaration, VariableKind, scan_source,
+    ObjectProperty, ParameterModifier, PropertyNameKind, Statement, StatementKind, SwitchClause,
+    SwitchClauseKind, SwitchStatement, Token, TokenKind, TypeAliasDeclaration, TypeNode,
+    TypeNodeKind, UnaryOperator, VariableDeclaration, VariableKind, scan_source,
 };
 use modifiers::{Modifiers, ProductCapabilities};
 use operators::{binary_operator, expression_has_recovered_left_edge};
@@ -698,6 +698,7 @@ impl<'a> Parser<'a> {
                 id: self.alloc_node(),
                 name: "constructor".to_string(),
                 name_span,
+                name_kind: PropertyNameKind::Identifier,
                 span: start.merge(self.previous().span),
                 overload_completion_supported: !modifiers.unsupported_for_overload_completion
                     && self.diagnostics.len() == diagnostic_count,
@@ -723,7 +724,7 @@ impl<'a> Parser<'a> {
             }
             _ => None,
         };
-        let (name, name_span, identifier_name) = self.parse_property_name();
+        let (name, name_span, name_kind) = self.parse_property_name();
         let optional = self.eat(TokenKind::Question);
         let definite = self.eat(TokenKind::Bang);
         let type_parameters = self.parse_type_parameters();
@@ -741,8 +742,9 @@ impl<'a> Parser<'a> {
                 id: self.alloc_node(),
                 name,
                 name_span,
+                name_kind,
                 span: start.merge(self.previous().span),
-                overload_completion_supported: identifier_name
+                overload_completion_supported: matches!(name_kind, PropertyNameKind::Identifier)
                     && !optional
                     && !definite
                     && self.diagnostics.len() == diagnostic_count,
@@ -768,8 +770,9 @@ impl<'a> Parser<'a> {
             id: self.alloc_node(),
             name,
             name_span,
+            name_kind,
             span: start.merge(self.previous().span),
-            overload_completion_supported: identifier_name
+            overload_completion_supported: matches!(name_kind, PropertyNameKind::Identifier)
                 && self.diagnostics.len() == diagnostic_count,
             emit_products_supported: modifiers.property_products_supported()
                 && self.diagnostics.len() == diagnostic_count,
@@ -1576,7 +1579,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_property_name(&mut self) -> (String, Span, bool) {
+    fn parse_property_name(&mut self) -> (String, Span, PropertyNameKind) {
         let token = *self.current();
         self.observe_unmodeled_numeric_separator_if_current();
         match token.kind {
@@ -1587,15 +1590,25 @@ impl<'a> Parser<'a> {
                 } else {
                     self.text(token.span).to_string()
                 };
-                (name, token.span, false)
+                let kind = match token.kind {
+                    TokenKind::StringLiteral => PropertyNameKind::StringLiteral,
+                    TokenKind::NumericLiteral => PropertyNameKind::NumericLiteral,
+                    TokenKind::PrivateIdentifier => PropertyNameKind::PrivateIdentifier,
+                    _ => unreachable!(),
+                };
+                (name, token.span, kind)
             }
             _ if token_is_identifier_name(token.kind) => {
                 self.bump();
-                (self.text(token.span).to_string(), token.span, true)
+                (
+                    self.text(token.span).to_string(),
+                    token.span,
+                    PropertyNameKind::Identifier,
+                )
             }
             _ => {
                 let (name, span) = self.parse_name();
-                (name, span, false)
+                (name, span, PropertyNameKind::Unsupported)
             }
         }
     }

@@ -4,6 +4,7 @@ use rustc_hash::FxHashMap;
 
 mod cache_model;
 mod class_model;
+mod class_property_initialization;
 mod function_model;
 mod import_alias;
 mod object_shape;
@@ -382,12 +383,14 @@ impl<'a> Checker<'a> {
             .map(|declaration| declaration.id)
     }
 
-    fn check_class(&mut self, file: FileId, declaration: &ClassDeclaration) {
+    fn check_class(&mut self, file: FileId, class_scope: ScopeId, declaration: &ClassDeclaration) {
         if declaration.declared
             || is_declaration_source(&self.program.files[file.0 as usize].source.path)
         {
             return;
         }
+
+        self.check_unconstructed_class_properties(file, class_scope, declaration);
 
         for (index, member) in declaration.members.iter().enumerate() {
             match &member.kind {
@@ -1956,7 +1959,7 @@ impl RelationContext for Checker<'_> {
     }
 
     fn strict_null_checks(&self) -> bool {
-        self.options.strict
+        self.options.effective_strict_null_checks()
     }
 
     fn canonical_union(&mut self, members: &[TypeId]) -> TypeId {
