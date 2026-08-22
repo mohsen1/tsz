@@ -147,8 +147,6 @@ fn safe_file_boundary_allows_only_direct_expression_statements() {
     for source in [
         "; `plain`;",
         "`expression`; var value = `variable`;",
-        "var value = `plain`;",
-        "var first = `one`; var second = `two`;",
         "const value = `plain`;",
         "let value = `plain`;",
         "var value: string = `plain`;",
@@ -243,7 +241,6 @@ fn variable_declarations_other_source_kinds_and_broader_hosts_defer() {
 
     for no_check in [false, true] {
         for source in [
-            "var renamed = `plain`;",
             "var duplicate = `one`; var duplicate = `two`;",
             "var await = `keyword`;",
             "var Array = `library collision`;",

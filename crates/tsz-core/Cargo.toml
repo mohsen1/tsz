@@ -77,5 +77,9 @@ path = "rewrite-tests/declaration_host_completion.rs"
 name = "rewrite_template_literals"
 path = "rewrite-tests/template_literals.rs"
 
+[[test]]
+name = "rewrite_template_literal_variables"
+path = "rewrite-tests/template_literal_variables.rs"
+
 [lints]
 workspace = true

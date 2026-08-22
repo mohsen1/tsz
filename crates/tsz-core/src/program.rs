@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use crate::bind::{BoundFile, Meaning, bind_source};
+use crate::bind::{BoundFile, DeclarationKind, Meaning, ScopeId, bind_source};
 use crate::config::{CompilerOptionKey, ProjectProvenance, ResolvedProject};
 use crate::diagnostics::{Diagnostic, DiagnosticCategory, sort_and_deduplicate};
 use crate::emit::emit_file_with_plan;
@@ -16,7 +16,11 @@ use crate::emit_paths::EmitPlan;
 use crate::semantics::{CheckResult, check_program};
 use crate::source::{DeclId, FileId, SourceText};
 use crate::standard_library::{StandardLibraryDeclaration, StandardLibraryEnvironment};
-use crate::syntax::{SourceUnit, parse_source};
+use crate::syntax::{
+    SourceUnit, StatementKind, parse_source,
+    statements_form_no_substitution_template_expression_file,
+    statements_form_no_substitution_template_variable_file,
+};
 
 mod import_aliases;
 
@@ -162,7 +166,60 @@ pub(crate) fn has_unmodeled_no_substitution_template_program_products(
             || files.iter().any(|file| {
                 !file.syntax.has_authored_no_substitution_template()
                     || file.syntax.has_unmodeled_template_products()
-            }))
+            })
+            || !no_substitution_template_program_sources_supported(files, options))
+}
+
+fn no_substitution_template_program_sources_supported(
+    files: &[ProgramFile],
+    options: &CompilerOptions,
+) -> bool {
+    if files.iter().all(|file| {
+        statements_form_no_substitution_template_expression_file(&file.syntax.statements)
+    }) {
+        return true;
+    }
+    files.iter().all(|file| {
+        statements_form_no_substitution_template_variable_file(
+            &file.source,
+            &file.syntax.statements,
+        )
+    }) && !options.declaration
+        && no_substitution_template_variable_bindings_supported(files, options)
+}
+
+fn no_substitution_template_variable_bindings_supported(
+    files: &[ProgramFile],
+    options: &CompilerOptions,
+) -> bool {
+    let standard_library = StandardLibraryEnvironment::from_options(options);
+    let mut names = BTreeSet::new();
+    for file in files {
+        for statement in &file.syntax.statements {
+            let StatementKind::Variable(declaration) = &statement.kind else {
+                return false;
+            };
+            let mut matches = file.bindings.declarations.iter().filter(|bound| {
+                bound.owner == statement.id
+                    && bound.scope == ScopeId(0)
+                    && bound.kind == DeclarationKind::Variable
+                    && bound.meaning == Meaning::Value
+            });
+            let Some(bound) = matches.next() else {
+                return false;
+            };
+            if matches.next().is_some()
+                || bound.name != declaration.name
+                || !names.insert(bound.name.clone())
+                || standard_library
+                    .resolve(&bound.name, Meaning::Value)
+                    .is_some()
+            {
+                return false;
+            }
+        }
+    }
+    true
 }
 
 fn no_substitution_template_program_options_supported(options: &CompilerOptions) -> bool {

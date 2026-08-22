@@ -734,6 +734,18 @@ fn keyword_kind(text: &str) -> TokenKind {
     }
 }
 
+pub(super) fn is_plain_strict_binding_identifier(text: &str) -> bool {
+    let bytes = text.as_bytes();
+    let Some((&first, rest)) = bytes.split_first() else {
+        return false;
+    };
+    text.is_ascii()
+        && is_identifier_start(first)
+        && rest.iter().copied().all(is_identifier_continue)
+        && keyword_kind(text) == TokenKind::Identifier
+        && !matches!(text, "eval" | "arguments")
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;

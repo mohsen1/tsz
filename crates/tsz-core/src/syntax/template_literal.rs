@@ -1,8 +1,9 @@
 use crate::source::{SourceText, Span};
 
+use super::scanner::is_plain_strict_binding_identifier;
 use super::{
     ArrowBody, ClassDeclaration, ClassMemberKind, Expression, ExpressionKind, FunctionDeclaration,
-    Literal, Parameter, Statement, StatementKind, SwitchClauseKind,
+    Literal, Parameter, Statement, StatementKind, SwitchClauseKind, VariableKind,
 };
 
 /// Syntax-owned spelling and template value for a complete, valid,
@@ -360,8 +361,15 @@ pub(crate) fn statements_form_no_substitution_template_safe_file(
     valid_template_literal_count: usize,
 ) -> bool {
     source.is_regular_typescript_source()
-        && !statements.is_empty()
         && statements.len() == valid_template_literal_count
+        && (statements_form_no_substitution_template_expression_file(statements)
+            || statements_form_no_substitution_template_variable_file(source, statements))
+}
+
+pub(crate) fn statements_form_no_substitution_template_expression_file(
+    statements: &[Statement],
+) -> bool {
+    !statements.is_empty()
         && statements.iter().all(|statement| {
             matches!(
                 &statement.kind,
@@ -370,6 +378,29 @@ pub(crate) fn statements_form_no_substitution_template_safe_file(
                     ..
                 })
             )
+        })
+}
+
+pub(crate) fn statements_form_no_substitution_template_variable_file(
+    source: &SourceText,
+    statements: &[Statement],
+) -> bool {
+    !statements.is_empty()
+        && statements.iter().all(|statement| {
+            let StatementKind::Variable(declaration) = &statement.kind else {
+                return false;
+            };
+            declaration.declaration_kind == VariableKind::Var
+                && !declaration.exported
+                && declaration.annotation.is_none()
+                && is_plain_strict_binding_identifier(source.slice(declaration.name_span))
+                && matches!(
+                    declaration.initializer.as_ref(),
+                    Some(Expression {
+                        kind: ExpressionKind::Literal(Literal::NoSubstitutionTemplate(_)),
+                        ..
+                    })
+                )
         })
 }
 
