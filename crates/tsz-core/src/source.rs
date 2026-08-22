@@ -77,7 +77,23 @@ pub struct SourceText {
     /// Host path retained for module and filesystem resolution.
     pub host_path: PathBuf,
     pub text: Arc<str>,
-    line_starts: Vec<u32>,
+    coordinates: SourceCoordinateIndex,
+}
+
+/// Translation index between scanner-owned UTF-8 byte offsets and
+/// TypeScript's public absolute UTF-16 coordinates.
+///
+/// Syntax spans stay byte-based so slicing is exact. Located diagnostics cross
+/// into UTF-16 only once, when they become a public product.
+#[derive(Debug, Clone)]
+pub(crate) struct SourceCoordinateIndex {
+    line_starts: Vec<LineStart>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct LineStart {
+    byte: u32,
+    utf16: u32,
 }
 
 /// Syntax family selected from the logical source extension.
@@ -144,18 +160,13 @@ impl SourceText {
         host_path: PathBuf,
         text: Arc<str>,
     ) -> Self {
-        let mut line_starts = vec![0];
-        for (offset, byte) in text.bytes().enumerate() {
-            if byte == b'\n' {
-                line_starts.push((offset + 1) as u32);
-            }
-        }
+        let coordinates = SourceCoordinateIndex::new(&text);
         Self {
             id,
             path,
             host_path,
             text,
-            line_starts,
+            coordinates,
         }
     }
 
@@ -167,13 +178,18 @@ impl SourceText {
         self.text.get(start..end).unwrap_or("")
     }
 
-    /// Return one-based line and column, matching `tsc` diagnostic rendering.
+    /// Return one-based line and column for an absolute UTF-16 offset,
+    /// matching `tsc` diagnostic rendering.
     #[must_use]
     pub fn line_and_column(&self, offset: u32) -> (u32, u32) {
-        let line = self.line_starts.partition_point(|start| *start <= offset);
-        let index = line.saturating_sub(1);
-        let column = offset.saturating_sub(self.line_starts[index]);
-        ((index + 1) as u32, column + 1)
+        self.coordinates.line_and_column(offset)
+    }
+
+    /// Convert one byte-based syntax span into public absolute UTF-16 units.
+    #[must_use]
+    pub(crate) fn utf16_span(&self, span: Span) -> (u32, u32) {
+        debug_assert_eq!(self.id, span.file);
+        self.coordinates.byte_span(&self.text, span.start, span.end)
     }
 
     #[must_use]
@@ -182,5 +198,120 @@ impl SourceText {
             .and_then(|base| self.path.strip_prefix(base).ok())
             .unwrap_or(&self.path);
         path.to_string_lossy().replace('\\', "/")
+    }
+}
+
+impl SourceCoordinateIndex {
+    #[must_use]
+    pub(crate) fn new(text: &str) -> Self {
+        let mut line_starts = vec![LineStart { byte: 0, utf16: 0 }];
+        let mut utf16 = 0_u32;
+        let mut characters = text.char_indices().peekable();
+        while let Some((byte, character)) = characters.next() {
+            utf16 = utf16.saturating_add(character.len_utf16() as u32);
+            let is_line_end = match character {
+                '\r' => !characters.peek().is_some_and(|(_, next)| *next == '\n'),
+                '\n' | '\u{2028}' | '\u{2029}' => true,
+                _ => false,
+            };
+            if is_line_end {
+                line_starts.push(LineStart {
+                    byte: (byte + character.len_utf8()) as u32,
+                    utf16,
+                });
+            }
+        }
+        Self { line_starts }
+    }
+
+    #[must_use]
+    pub(crate) fn byte_span(&self, text: &str, start: u32, end: u32) -> (u32, u32) {
+        let start = self.byte_offset(text, start);
+        let end = self.byte_offset(text, end);
+        (start, end.saturating_sub(start))
+    }
+
+    #[must_use]
+    pub(crate) fn line_and_column(&self, offset: u32) -> (u32, u32) {
+        let line = self
+            .line_starts
+            .partition_point(|line_start| line_start.utf16 <= offset);
+        let index = line.saturating_sub(1);
+        let column = offset.saturating_sub(self.line_starts[index].utf16);
+        ((index + 1) as u32, column + 1)
+    }
+
+    fn byte_offset(&self, text: &str, offset: u32) -> u32 {
+        let offset = usize::try_from(offset)
+            .unwrap_or(usize::MAX)
+            .min(text.len());
+        assert!(
+            text.is_char_boundary(offset),
+            "source span must end at a UTF-8 character boundary"
+        );
+        let line = self
+            .line_starts
+            .partition_point(|line_start| line_start.byte as usize <= offset);
+        let line_start = self.line_starts[line.saturating_sub(1)];
+        let prefix = &text[line_start.byte as usize..offset];
+        line_start
+            .utf16
+            .saturating_add(prefix.encode_utf16().count() as u32)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{FileId, SourceText, Span};
+    use std::path::PathBuf;
+    use std::sync::Arc;
+
+    #[test]
+    fn source_coordinates_translate_bytes_to_absolute_utf16() {
+        let text = Arc::<str>::from("// café 😀\r\nvar value = /x/z;");
+        let source = SourceText::new(FileId(1), PathBuf::from("case.ts"), Arc::clone(&text));
+        let start = text.find("z;").expect("flag") as u32;
+        assert_eq!(
+            source.utf16_span(Span::new(FileId(1), start as usize, start as usize + 1)),
+            (27, 1)
+        );
+        assert_eq!(source.line_and_column(27), (2, 16));
+    }
+
+    #[test]
+    fn decoded_bom_is_an_ordinary_utf16_source_unit() {
+        let text = Arc::<str>::from("\u{feff}var value = /x/z;");
+        let source = SourceText::new(FileId(2), PathBuf::from("bom.ts"), Arc::clone(&text));
+        let start = text.find("z;").expect("flag") as u32;
+        assert_eq!(
+            source.utf16_span(Span::new(FileId(2), start as usize, start as usize + 1)),
+            (16, 1)
+        );
+        assert_eq!(source.line_and_column(16), (1, 17));
+    }
+
+    #[test]
+    fn every_typescript_line_terminator_starts_a_new_utf16_line() {
+        for (separator, expected_start) in [
+            ("\n", 17),
+            ("\r\n", 18),
+            ("\r", 17),
+            ("\u{2028}", 17),
+            ("\u{2029}", 17),
+        ] {
+            let text = Arc::<str>::from(format!("// ≤{separator}var x = /\\u{{110000}}/gu;"));
+            let source = SourceText::new(FileId(3), PathBuf::from("lines.ts"), Arc::clone(&text));
+            let start = text.find("110000").expect("digits");
+            assert_eq!(
+                source.utf16_span(Span::new(FileId(3), start, start + 6)),
+                (expected_start, 6),
+                "{separator:?}",
+            );
+            assert_eq!(
+                source.line_and_column(expected_start),
+                (2, 13),
+                "{separator:?}",
+            );
+        }
     }
 }

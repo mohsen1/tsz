@@ -81,6 +81,93 @@ const CLEAN_JS_MANIFEST: &[(&str, &str, &str)] = &[
         ),
     ),
     (
+        "unicodeExtendedEscapesInRegularExpressions06",
+        concat!(
+            "// ES6 Spec - 10.1.1 Static Semantics: UTF16Encoding (cp)\n",
+            "//  1. Assert: 0 ≤ cp ≤ 0x10FFFF.\n",
+            r"var x = /\u{10FFFF}/gu;",
+        ),
+        concat!(
+            "\"use strict\";\n",
+            "// ES6 Spec - 10.1.1 Static Semantics: UTF16Encoding (cp)\n",
+            "//  1. Assert: 0 ≤ cp ≤ 0x10FFFF.\n",
+            r"var x = /\u{10FFFF}/gu;",
+            "\n",
+        ),
+    ),
+    (
+        "unicodeExtendedEscapesInRegularExpressions08",
+        concat!(
+            "// ES6 Spec - 10.1.1 Static Semantics: UTF16Encoding (cp)\n",
+            "//  2. If cp ≤ 65535, return cp.\n",
+            "// (FFFF == 65535)\n",
+            r"var x = /\u{FFFF}/gu;",
+        ),
+        concat!(
+            "\"use strict\";\n",
+            "// ES6 Spec - 10.1.1 Static Semantics: UTF16Encoding (cp)\n",
+            "//  2. If cp ≤ 65535, return cp.\n",
+            "// (FFFF == 65535)\n",
+            r"var x = /\u{FFFF}/gu;",
+            "\n",
+        ),
+    ),
+    (
+        "unicodeExtendedEscapesInRegularExpressions09",
+        concat!(
+            "// ES6 Spec - 10.1.1 Static Semantics: UTF16Encoding (cp)\n",
+            "//  2. If cp ≤ 65535, return cp.\n",
+            "// (10000 == 65536)\n",
+            r"var x = /\u{10000}/gu;",
+        ),
+        concat!(
+            "\"use strict\";\n",
+            "// ES6 Spec - 10.1.1 Static Semantics: UTF16Encoding (cp)\n",
+            "//  2. If cp ≤ 65535, return cp.\n",
+            "// (10000 == 65536)\n",
+            r"var x = /\u{10000}/gu;",
+            "\n",
+        ),
+    ),
+    (
+        "unicodeExtendedEscapesInRegularExpressions10",
+        concat!(
+            "// ES6 Spec - 10.1.1 Static Semantics: UTF16Encoding (cp)\n",
+            "//  2. Let cu1 be floor((cp – 65536) / 1024) + 0xD800.\n",
+            "// Although we should just get back a single code point value of 0xD800,\n",
+            "// this is a useful edge-case test.\n",
+            r"var x = /\u{D800}/gu;",
+        ),
+        concat!(
+            "\"use strict\";\n",
+            "// ES6 Spec - 10.1.1 Static Semantics: UTF16Encoding (cp)\n",
+            "//  2. Let cu1 be floor((cp – 65536) / 1024) + 0xD800.\n",
+            "// Although we should just get back a single code point value of 0xD800,\n",
+            "// this is a useful edge-case test.\n",
+            r"var x = /\u{D800}/gu;",
+            "\n",
+        ),
+    ),
+    (
+        "unicodeExtendedEscapesInRegularExpressions11",
+        concat!(
+            "// ES6 Spec - 10.1.1 Static Semantics: UTF16Encoding (cp)\n",
+            "//  2. Let cu2 be ((cp – 65536) modulo 1024) + 0xDC00.\n",
+            "// Although we should just get back a single code point value of 0xDC00,\n",
+            "// this is a useful edge-case test.\n",
+            r"var x = /\u{DC00}/gu;",
+        ),
+        concat!(
+            "\"use strict\";\n",
+            "// ES6 Spec - 10.1.1 Static Semantics: UTF16Encoding (cp)\n",
+            "//  2. Let cu2 be ((cp – 65536) modulo 1024) + 0xDC00.\n",
+            "// Although we should just get back a single code point value of 0xDC00,\n",
+            "// this is a useful edge-case test.\n",
+            r"var x = /\u{DC00}/gu;",
+            "\n",
+        ),
+    ),
+    (
         "unicodeExtendedEscapesInRegularExpressions13",
         r"var x = /\u{DDDDD}/gu;",
         concat!("\"use strict\";\n", r"var x = /\u{DDDDD}/gu;", "\n"),
@@ -162,14 +249,14 @@ fn regex_has_a_dedicated_expression_node_and_preserves_scanner_metadata() {
 }
 
 #[test]
-fn exact_thirteen_row_javascript_manifest_is_frozen_in_both_check_modes() {
-    assert_eq!(CLEAN_JS_MANIFEST.len(), 13);
+fn exact_eighteen_row_javascript_manifest_is_frozen_in_both_check_modes() {
+    assert_eq!(CLEAN_JS_MANIFEST.len(), 18);
     assert_eq!(
         CLEAN_JS_MANIFEST
             .iter()
             .map(|(_, _, expected_javascript)| expected_javascript.len())
             .sum::<usize>(),
-        589,
+        1_541,
         "aggregate UTF-8 bytes in the exact expected JavaScript outputs",
     );
     for no_check in [false, true] {
@@ -193,8 +280,17 @@ fn exact_thirteen_row_javascript_manifest_is_frozen_in_both_check_modes() {
 }
 
 #[test]
-fn ascii_unicode_escape_invalid_siblings_match_checked_diagnostics_and_no_check_emit() {
+fn unicode_escape_invalid_siblings_match_checked_diagnostics_and_no_check_emit() {
     let cases: &[(&str, &str, &[u32])] = &[
+        (
+            "07",
+            concat!(
+                "// ES6 Spec - 10.1.1 Static Semantics: UTF16Encoding (cp)\n",
+                "//  1. Assert: 0 ≤ cp ≤ 0x10FFFF.\n",
+                r"var x = /\u{110000}/gu;",
+            ),
+            &[1198],
+        ),
         ("12", r"var x = /\u{FFFFFFFF}/gu;", &[1198]),
         (
             "14",
@@ -226,6 +322,12 @@ fn ascii_unicode_escape_invalid_siblings_match_checked_diagnostics_and_no_check_
         );
         assert_eq!(codes(&checked), *expected_codes, "{name}");
         let expected_facts = match *name {
+            "07" => vec![(
+                1198,
+                104,
+                6,
+                "An extended Unicode escape value must be between 0x0 and 0x10FFFF inclusive.",
+            )],
             "12" => vec![(
                 1198,
                 source.find("FFFFFFFF").unwrap() as u32,
@@ -348,6 +450,49 @@ fn checked_flag_validation_is_suppressed_by_no_check() {
 }
 
 #[test]
+fn positioned_unicode_comments_publish_utf16_diagnostic_coordinates() {
+    let cases = [
+        ("// café\nvar value = /x/z;", 23, 2),
+        ("// 😀\nvar value = /x/z;", 21, 2),
+        ("// café 😀\r\nvar value = /x/z;", 27, 2),
+        ("// café\n// 😀\nvar value = /x/z;", 29, 3),
+    ];
+    for (source, expected_start, expected_line) in cases {
+        let checked = compile("utf16-comments.ts", source, options(false));
+        let [diagnostic] = checked.diagnostics.as_slice() else {
+            panic!("expected one diagnostic for {source:?}");
+        };
+        assert_eq!(checked.semantic_completion, SemanticCompletion::Complete);
+        assert_eq!(
+            (
+                diagnostic.code,
+                diagnostic.start,
+                diagnostic.length,
+                diagnostic.message_text.as_str(),
+            ),
+            (1499, expected_start, 1, "Unknown regular expression flag.",),
+            "{source:?}",
+        );
+        assert!(
+            diagnostic
+                .render(checked.program.source(FileId(0)))
+                .starts_with(&format!(
+                    "utf16-comments.ts({expected_line},16): error TS1499:"
+                )),
+            "{}",
+            diagnostic.render(checked.program.source(FileId(0))),
+        );
+        let expected_javascript = format!("\"use strict\";\n{}\n", source.replace("\r\n", "\n"));
+        assert_eq!(javascript(&checked), expected_javascript);
+
+        let unchecked = compile("utf16-comments.ts", source, options(true));
+        assert_eq!(unchecked.semantic_completion, SemanticCompletion::Complete);
+        assert!(unchecked.diagnostics.is_empty());
+        assert_eq!(javascript(&unchecked), javascript(&checked));
+    }
+}
+
+#[test]
 fn unterminated_direct_atom_has_syntax_diagnostic_in_both_modes_and_raw_emit() {
     for no_check in [false, true] {
         let output = compile("unterminated.ts", "/abc", options(no_check));
@@ -388,12 +533,12 @@ fn renamed_vars_bare_atoms_and_comment_removal_are_exact() {
         }
 
         let source = concat!(
-            "// first\n",
-            "// second\n",
+            "// first café\n",
+            "// second 😀\n",
             "// third\n",
-            "// fourth\n",
+            "// fourth ≤\n",
             "// fifth\n",
-            "// sixth\n",
+            "// sixth –\n",
             "var renamed = /x/g;",
         );
         let preserved = compile("comments.ts", source, options(no_check));
@@ -448,44 +593,16 @@ fn division_is_unchanged_and_broader_regex_hosts_fail_closed() {
             "var first = /x/; var second = /y/;",
             "var first = /x/, second = /y/;",
             "// comment before bare\n/x/;",
-            concat!(
-                "// ES6 Spec - 10.1.1 Static Semantics: UTF16Encoding (cp)\n",
-                "//  1. Assert: 0 ≤ cp ≤ 0x10FFFF.\n",
-                r"var x = /\u{10FFFF}/gu;",
-            ),
-            concat!(
-                "// ES6 Spec - 10.1.1 Static Semantics: UTF16Encoding (cp)\n",
-                "//  1. Assert: 0 ≤ cp ≤ 0x10FFFF.\n",
-                r"var x = /\u{110000}/gu;",
-            ),
-            concat!(
-                "// ES6 Spec - 10.1.1 Static Semantics: UTF16Encoding (cp)\n",
-                "//  2. If cp ≤ 65535, return cp.\n",
-                "// (FFFF == 65535)\n",
-                r"var x = /\u{FFFF}/gu;",
-            ),
-            concat!(
-                "// ES6 Spec - 10.1.1 Static Semantics: UTF16Encoding (cp)\n",
-                "//  2. If cp ≤ 65535, return cp.\n",
-                "// (10000 == 65536)\n",
-                r"var x = /\u{10000}/gu;",
-            ),
-            concat!(
-                "// ES6 Spec - 10.1.1 Static Semantics: UTF16Encoding (cp)\n",
-                "//  2. Let cu1 be floor((cp – 65536) / 1024) + 0xD800.\n",
-                "// Although we should just get back a single code point value of 0xD800,\n",
-                "// this is a useful edge-case test.\n",
-                r"var x = /\u{D800}/gu;",
-            ),
-            concat!(
-                "// ES6 Spec - 10.1.1 Static Semantics: UTF16Encoding (cp)\n",
-                "//  2. Let cu2 be ((cp – 65536) modulo 1024) + 0xDC00.\n",
-                "// Although we should just get back a single code point value of 0xDC00,\n",
-                "// this is a useful edge-case test.\n",
-                r"var x = /\u{DC00}/gu;",
-            ),
-            "// café\nvar value = /x/z;",
-            "// 😀\nvar value = /x/z;",
+            "// café\n/x/z;",
+            "// café\n\nvar value = /x/z;",
+            "/* café */\nvar value = /x/z;",
+            "// café\nvar valué = /x/z;",
+            "// café\nvar value = /é/z;",
+            "// café\nvar value = /x/é;",
+            "// café\nvar value = \u{00a0}/x/z;",
+            "// café\nvar value = /x/z; // 😀",
+            "// café\u{00a0}\nvar value = /x/z;",
+            "\u{feff}// café\nvar value = /x/z;",
             "var first = /x/; // trailing",
             "// trailing whitespace \nvar first = /x/;",
             "/// triple slash\nvar first = /x/;",
@@ -1053,6 +1170,16 @@ fn regex_program_results_are_cold_warm_and_root_order_stable() {
             SourceInput::new("a.ts", Arc::<str>::from(r"/\u{41}/gu;")),
             SourceInput::new("b.ts", Arc::<str>::from(r"/(#?\d+)|[a-z]/gi;")),
         ],
+        vec![
+            SourceInput::new(
+                "a.ts",
+                Arc::<str>::from("// café\nvar alphaPattern = /\\u{41}/gu;"),
+            ),
+            SourceInput::new(
+                "b.ts",
+                Arc::<str>::from("// 😀\n// ≤\nvar betaPattern = /[a-z]+/gi;"),
+            ),
+        ],
     ];
 
     for (family, roots) in families.into_iter().enumerate() {
@@ -1084,6 +1211,83 @@ fn regex_program_results_are_cold_warm_and_root_order_stable() {
             );
             assert_eq!(mixed.semantic_completion, SemanticCompletion::Deferred);
             assert!(mixed.emitted_files.is_empty());
+        }
+    }
+}
+
+#[test]
+fn unicode_comment_diagnostics_are_cold_warm_and_root_order_stable() {
+    let roots = vec![
+        SourceInput::new(
+            "a.ts",
+            Arc::<str>::from("// ≤\nvar alphaPattern = /\\u{110000}/gu;"),
+        ),
+        SourceInput::new(
+            "b.ts",
+            Arc::<str>::from("// 😀\nvar betaPattern = /[a-z]+/gi;"),
+        ),
+    ];
+    let fingerprint = |output: &CompileOutput| {
+        (
+            output.semantic_completion,
+            output.exit_status,
+            output
+                .diagnostics
+                .iter()
+                .map(|diagnostic| {
+                    (
+                        diagnostic.file.clone(),
+                        diagnostic.code,
+                        diagnostic.start,
+                        diagnostic.length,
+                        diagnostic.message_text.clone(),
+                    )
+                })
+                .collect::<Vec<_>>(),
+            output
+                .emitted_files
+                .iter()
+                .map(|file| (file.path.to_string_lossy().into_owned(), file.text.clone()))
+                .collect::<Vec<_>>(),
+        )
+    };
+
+    for no_check in [false, true] {
+        let compiler = Compiler::new();
+        let compiler_options = options(no_check);
+        let expected = fingerprint(&compiler.compile(roots.clone(), &compiler_options));
+        assert_eq!(expected.0, SemanticCompletion::Complete);
+        if no_check {
+            assert_eq!(expected.1, CompileExitStatus::Success);
+            assert!(expected.2.is_empty());
+        } else {
+            assert_eq!(
+                expected.1,
+                CompileExitStatus::DiagnosticsPresentOutputsGenerated,
+            );
+            assert_eq!(
+                expected.2,
+                vec![(
+                    "a.ts".to_string(),
+                    1198,
+                    28,
+                    6,
+                    "An extended Unicode escape value must be between 0x0 and 0x10FFFF inclusive."
+                        .to_string(),
+                )],
+            );
+        }
+        for iteration in 0..10 {
+            let ordered = if iteration % 2 == 0 {
+                roots.clone()
+            } else {
+                roots.iter().rev().cloned().collect()
+            };
+            assert_eq!(
+                fingerprint(&compiler.compile(ordered, &compiler_options)),
+                expected,
+                "noCheck={no_check} iteration={iteration}",
+            );
         }
     }
 }

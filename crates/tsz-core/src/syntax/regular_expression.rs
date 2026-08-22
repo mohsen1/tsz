@@ -134,7 +134,6 @@ pub(crate) fn statements_form_regular_expression_safe_file(
     supported_literal_count: usize,
 ) -> bool {
     source.is_regular_typescript_source()
-        && source.text.is_ascii()
         && source_uses_supported_line_breaks(source)
         && statement_starts_at_supported_column(source, statements)
         && supported_literal_count == 1
@@ -187,13 +186,33 @@ pub(crate) fn comments_form_regular_expression_safe_file(
     comments: &[CommentTrivia],
 ) -> bool {
     if comments.is_empty() {
-        return true;
+        return source.text.is_ascii();
     }
     let [statement] = statements else {
         return false;
     };
     statements_form_regular_expression_variable_file(source, statements)
         && comments_form_contiguous_plain_leading_run(source, statement, comments)
+        && source_is_ascii_outside_comments(source, comments)
+}
+
+fn source_is_ascii_outside_comments(source: &SourceText, comments: &[CommentTrivia]) -> bool {
+    let mut cursor = 0_usize;
+    for comment in comments {
+        let start = comment.span.start as usize;
+        let end = comment.span.end as usize;
+        if start < cursor
+            || end < start
+            || end > source.text.len()
+            || !source.text.is_char_boundary(start)
+            || !source.text.is_char_boundary(end)
+            || !source.text[cursor..start].is_ascii()
+        {
+            return false;
+        }
+        cursor = end;
+    }
+    source.text[cursor..].is_ascii()
 }
 
 fn basic_ascii_pattern_supported(pattern: &str) -> bool {

@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
-use crate::source::{FileId, SourceText, Span};
+use crate::source::{FileId, SourceCoordinateIndex, SourceText, Span};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -57,7 +57,9 @@ impl RelatedInformation {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Diagnostic {
     pub file: String,
+    /// Absolute TypeScript source position in UTF-16 code units.
     pub start: u32,
+    /// Diagnostic extent in UTF-16 code units.
     pub length: u32,
     pub message_text: String,
     pub category: DiagnosticCategory,
@@ -79,6 +81,8 @@ impl Diagnostic {
         self.file_id
     }
 
+    /// Construct a diagnostic whose coordinates are already public UTF-16
+    /// units, or whose location is global when `file` is empty.
     #[must_use]
     pub const fn error(
         file: String,
@@ -100,8 +104,10 @@ impl Diagnostic {
         }
     }
 
+    /// Construct a diagnostic from byte offsets in retained external source
+    /// text, such as `tsconfig.json`.
     #[must_use]
-    pub const fn error_at_text(
+    pub fn error_at_text(
         file: String,
         start: u32,
         length: u32,
@@ -109,6 +115,9 @@ impl Diagnostic {
         message_text: String,
         code: u32,
     ) -> Self {
+        let coordinates = SourceCoordinateIndex::new(&source_text);
+        let (start, length) =
+            coordinates.byte_span(&source_text, start, start.saturating_add(length));
         Self {
             file,
             start,
@@ -124,10 +133,11 @@ impl Diagnostic {
 
     #[must_use]
     pub fn at(source: &SourceText, span: Span, message_text: String, code: u32) -> Self {
+        let (start, length) = source.utf16_span(span);
         Self {
             file: source.path.to_string_lossy().replace('\\', "/"),
-            start: span.start,
-            length: span.len(),
+            start,
+            length,
             message_text,
             category: DiagnosticCategory::Error,
             code,
@@ -163,7 +173,8 @@ impl Diagnostic {
                 self.message_text
             )
         } else if let Some(source_text) = &self.external_source {
-            let (line, column) = line_and_column(source_text, self.start);
+            let (line, column) =
+                SourceCoordinateIndex::new(source_text).line_and_column(self.start);
             format!(
                 "{}({line},{column}): {} TS{}: {}",
                 self.file,
@@ -241,11 +252,60 @@ fn sort_and_deduplicate_by<K: Ord>(
     });
 }
 
-fn line_and_column(text: &str, offset: u32) -> (u32, u32) {
-    let offset = (offset as usize).min(text.len());
-    let prefix = &text[..offset];
-    let line_start = prefix.rfind('\n').map_or(0, |index| index + 1);
-    let line = prefix.bytes().filter(|byte| *byte == b'\n').count() as u32 + 1;
-    let column = text[line_start..offset].encode_utf16().count() as u32 + 1;
-    (line, column)
+#[cfg(test)]
+mod tests {
+    use super::Diagnostic;
+    use crate::source::{FileId, SourceText, Span};
+    use std::path::PathBuf;
+    use std::sync::Arc;
+
+    #[test]
+    fn external_config_diagnostics_publish_utf16_coordinates() {
+        let source = Arc::<str>::from("\u{feff}// café 😀\n{\"target\":\"oops\"}");
+        let byte_start = source.find("oops").expect("value") as u32;
+        let diagnostic = Diagnostic::error_at_text(
+            "tsconfig.json".to_string(),
+            byte_start,
+            4,
+            source,
+            "Invalid value.".to_string(),
+            6046,
+        );
+        assert_eq!((diagnostic.start, diagnostic.length), (23, 4));
+        assert_eq!(
+            diagnostic.render(None),
+            "tsconfig.json(2,12): error TS6046: Invalid value."
+        );
+    }
+
+    #[test]
+    fn source_diagnostic_rendering_uses_typescript_line_terminators() {
+        for (separator, expected_start) in [
+            ("\n", 17),
+            ("\r\n", 18),
+            ("\r", 17),
+            ("\u{2028}", 17),
+            ("\u{2029}", 17),
+        ] {
+            let text = Arc::<str>::from(format!("// ≤{separator}var x = /\\u{{110000}}/gu;"));
+            let source = SourceText::new(FileId(4), PathBuf::from("lines.ts"), Arc::clone(&text));
+            let start = text.find("110000").expect("digits");
+            let diagnostic = Diagnostic::at(
+                &source,
+                Span::new(FileId(4), start, start + 6),
+                "Out of range.".to_string(),
+                1198,
+            );
+            assert_eq!(
+                (diagnostic.start, diagnostic.length),
+                (expected_start, 6),
+                "{separator:?}",
+            );
+            assert_eq!(
+                diagnostic.render(Some(&source)),
+                "lines.ts(2,13): error TS1198: Out of range.",
+                "{separator:?}",
+            );
+        }
+    }
 }
