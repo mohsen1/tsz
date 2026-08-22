@@ -87,6 +87,16 @@ checker suppression is valid only when the uncertainty is itself program-global,
 such as an unavailable essential library universe. A temporary broader nonclaim
 must name the structural deletion condition in its test and PR evidence.
 
+Locality is a semantic dependency property, not a lexical-span property. A
+claimed consumer may not interpret declarations, models, flow facts, merged
+groups, or query results omitted by a nonclaimed producer as genuinely absent.
+Capability filtering never erases identities or facts the parser and binder
+actually constructed. If construction itself is incomplete, that producer is
+nonclaimed rather than replaced with a fabricated model. The typed demand
+gateway propagates its completion across every dependency edge before
+missing-name, missing-property, call, or relation diagnostics can become
+definitive. The closure must still leave independent demands checkable.
+
 ## Type Representation
 
 The initial type store contains primitives and ordinary structural types, but
@@ -127,12 +137,15 @@ required materialization; callers do not invent local force rules.
 One checker-session evaluation owner carries the canonical recursion identity
 and key schema through every demand, including required-type, relation,
 projection, and display work. Demand-scoped source/target frames and typed
-budgets may remain distinct, but a consumer does not create a fresh identity
-universe. Traversal depth and evaluator work are separate typed budget axes
-within that session: callers do not seed a callee's evaluator budget from their
-own depth, and forcing does not restart at depth zero. Required-type is an
-on-demand query, not an eager subtree prewalk. Once a required operand is
-incomplete, its owner returns that completion before expansion or forcing.
+budgets may remain distinct, but they carry query context and provenance rather
+than termination authority. Only the session owner decides active recursion
+membership, Cycle, Limit, and budget consumption; a consumer does not create a
+fresh identity universe or reset those decisions. Traversal depth and evaluator
+work are separate typed budget axes within that session: callers do not seed a
+callee's evaluator budget from their own depth, and forcing does not restart at
+depth zero. Required-type is an on-demand query, not an eager subtree prewalk.
+Once a required operand is incomplete, its owner returns that completion before
+expansion or forcing.
 
 ## Inference And Relation
 
@@ -166,6 +179,11 @@ Every cache declares:
 - request/session lifetime and residency bound;
 - cold/warm, enabled/disabled, file-order, and repeated-run agreement tests.
 
+Negative answers are cached semantic results, not harmless absence. `NotFound`,
+empty member/signature sets, and relation failure are definitive only when all
+dependencies consumed by the answer are Complete. A nonclaimed or incomplete
+producer propagates Deferred before a negative cache entry or diagnostic exists.
+
 Pure type interning is not a semantic-result cache. It still remains local to a
 checker session and cannot perform hidden reduction.
 
@@ -186,6 +204,12 @@ independent checker universes, following TypeScript 7, only if:
 Diagnostics are sorted and deduplicated once at the program boundary. Their
 identity includes code, normalized path, span, message chain, and related info.
 Pretty/non-pretty formatting is a terminal presentation step.
+
+Validation compares that full identity per stable corpus row. Pass totals and
+diagonal status matrices are insufficient: a still-incomplete row can regress
+by gaining fabricated diagnostics. Every added diagnostic must be present in
+the pinned oracle for the exact authored options; oracle-clean emit rows may not
+gain TSZ diagnostics.
 
 JavaScript emit operates on syntax. Declaration emit consumes explicit checked
 summaries and source provenance. Neither output path performs general semantic

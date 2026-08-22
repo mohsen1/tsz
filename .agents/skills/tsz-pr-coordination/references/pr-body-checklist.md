@@ -38,6 +38,9 @@ forcing/recursion, caches, or checker side tables, include:
 - the single owner before and after, plus mirrors deleted;
 - architecture metric before/after and the ratchet check command;
 - local versus program-global completion behavior;
+- the dependent/independent producer-consumer matrix for capability changes;
+- stable-key status matrices plus exact added/removed diagnostics, with every
+  addition reconciled against the pinned oracle;
 - cache/recursion identity and cleanup behavior;
 - for every temporary nonclaim, its typed reason and deletion condition.
 

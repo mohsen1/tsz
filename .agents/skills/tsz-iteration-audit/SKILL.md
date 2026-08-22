@@ -37,7 +37,10 @@ rg -n "WIP|stale|drift|queue|worktree|disk|allowlist|fingerprint|context" docs s
 - `behavior debt`: compiler bug; route to owner skill/issue.
 - `context debt`: startup hooks/settings/prompts waste tokens.
 - `architecture debt`: one fact is mirrored across phases, a local gap suppresses
-  unrelated work, or a consumer creates a new forcing/cache identity owner.
+  unrelated work, a lexical nonclaim fabricates absence in a dependent consumer,
+  or a consumer creates a new forcing/cache identity owner.
+- `artifact debt`: a status/count-only gate ignores diagnostic or product
+  payload churn; add a stable-key content comparison instead of prose review.
 
 ## Choose Smallest Fix
 

@@ -37,8 +37,10 @@ Ownership and termination direction:
 - derive capability and nonclaim decisions once per program/options snapshot as
   immutable typed analysis keyed by operation/product and program/file/node scope;
   checker, public emit, printers, all services, and exit status reuse that result;
-- defer at the smallest semantic operation that is incomplete; whole-program checker
-  suppression is reserved for genuinely program-global uncertainty;
+- defer at the smallest dependency-closed semantic operation that is incomplete;
+  a claimed consumer must not treat declaration, model, flow, or query state omitted
+  by a nonclaimed producer as absent; whole-program checker suppression is reserved
+  for genuinely program-global uncertainty;
 - one checker session owns the canonical recursion identity/key schema; demand-scoped
   frames and typed budgets are allowed, but do not create a fresh identity universe;
 - traversal depth and evaluator budget are distinct typed counters within that session;
@@ -64,7 +66,9 @@ the current mirrors and forcing surface satisfy this direction.
   whole-program skip predicates, force call sites, recursion-stack constructors, or
   checker collection fields above the architecture ratchet. Use structured syntax
   facts and reduce or consolidate an existing owner instead; run
-  `python3 scripts/arch/rewrite_architecture_metrics.py --check`.
+  `python3 scripts/arch/rewrite_architecture_metrics.py --check`. The required
+  CI also compares against the strictest reachable committed floor; later
+  same-branch raises and delete/recreate resets fail.
 - The seven production/test shards already above 1,900 lines have no-growth line
   ratchets; split by concern before adding behavior instead of spending the cap.
 
@@ -78,6 +82,11 @@ the current mirrors and forcing surface satisfy this direction.
 - Wrap long or memory-heavy commands with `scripts/safe-run.sh`.
 - Never run two conformance invocations concurrently.
 - Run focused local filters; CI owns broad suites.
+- Compare broad artifacts by stable row identity and exact diagnostic/product
+  payload, not only pass counts or status matrices. Any newly added oracle-absent
+  diagnostic is a regression even when the row remains incomplete or failing.
+- Before readying a behavior PR, record the relevant local or manually dispatched
+  broad-artifact delta; a later scheduled failure is not pre-merge proof.
 - No `dbg!`, `println!`, `print!`, or `eprintln!` in compiler internals; use tracing.
 
 Every behavior change states:

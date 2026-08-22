@@ -24,6 +24,9 @@ Name one owner for every decision.
 
 ## Capability And Completion
 
+For capability or nonclaim work, also read
+[references/capability-completion.md](references/capability-completion.md).
+
 - AST and scanner data record authored facts and recovery, not product policy.
 - Prefer typed event/feature records to adding another top-level `SourceUnit`
   boolean, even for an authored fact.
@@ -36,8 +39,14 @@ Name one owner for every decision.
   does not reparse or recompile merely to rediscover capability policy.
 - Do not add paired `has_authored_*`/`*_supported` booleans or a one-off service
   guard. Consolidate an existing decision instead.
-- Defer the smallest incomplete query or owner. Do not skip the whole checker
-  for a file-local gap.
+- Defer the smallest dependency-closed incomplete query or owner. A claimed
+  consumer must not turn state omitted by a nonclaimed producer into a
+  definitive missing-name, missing-property, call, or relation diagnostic.
+- Capability filtering must not erase declaration, binding, or syntax-model
+  identity that the parser/binder constructed. If construction itself is
+  incomplete, propagate that producer completion through the typed demand.
+- Prove both directions: dependent consumers defer, while independent same-file
+  and cross-file demands still check.
 - A program-wide skip requires evidence that unrelated files cannot be checked
   definitively.
 - Every temporary nonclaim has a typed reason, a public fallback test, and a
@@ -48,6 +57,10 @@ Name one owner for every decision.
 - One checker session owns the canonical forcing and recursion identity/key schema.
 - Demand-scoped relation source/target frames and typed budget axes are valid;
   they must not mint a fresh identity universe or reset shared semantic work.
+- Only the session evaluation owner decides active recursion membership,
+  counters, Cycle, and Limit. Demand frames carry typed query context and
+  provenance; wrappers do not create/reset termination state or choose a
+  semantic fallback.
 - Required-type, relation, projection, and display are demands on that session,
   not independent recursion universes or eager subtree prewalks.
 - Keep traversal depth, expansion depth, and evaluator work as typed budget axes
@@ -77,7 +90,8 @@ claiming cache agreement.
 
 The architecture metric baseline is a no-growth ratchet, not a quota. Do not
 raise it in a feature/campaign change. When consolidation lowers a metric,
-lower the baseline in the same change.
+lower the baseline in the same change. Required CI compares against the
+strictest reachable committed floor, so later raises and resets still fail.
 Passing the ratchet only proves that measured debt did not grow; it does not
 prove that the current mirrored capability or forcing architecture is complete.
 The counters are lexical review indicators, not semantic proof; inspect the

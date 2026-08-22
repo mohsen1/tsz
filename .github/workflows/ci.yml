@@ -230,6 +230,27 @@ jobs:
         id: observe
         continue-on-error: true
         run: scripts/ci/github-suite.sh emit-aggregate
+      - name: Enforce rewrite emit direction
+        if: always()
+        run: |
+          set -Eeuo pipefail
+          details=()
+          for index in 0 1 2 3; do
+            mapfile -t matches < <(
+              find .emit-shards -type f -name "emit-detail-${index}.json" -print
+            )
+            if [[ "${#matches[@]}" -ne 1 ]]; then
+              echo "error: expected exactly one emit detail shard ${index}/4; found ${#matches[@]}" >&2
+              exit 1
+            fi
+            details+=("${matches[0]}")
+          done
+          python3 scripts/ci/check-emit-regression-set.py \
+            --baseline scripts/emit/rewrite-regression-baseline.json \
+            --require-oracle-provenance \
+            --reject-absent-baseline-rows \
+            --oracle-manifest scripts/emit/oracle-manifest.json \
+            "${details[@]}"
       - name: Upload emit observation aggregate
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -328,12 +349,23 @@ jobs:
     if: ${{ github.event_name != 'workflow_dispatch' || inputs.refresh_tsc_cache != true }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    env:
+      TSZ_ARCH_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before || 'HEAD^' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 1
+          fetch-depth: 0
       - name: Run rewrite architecture guard
-        run: python3 scripts/arch/arch_guard.py
+        run: |
+          python3 scripts/arch/arch_guard.py
+          python3 scripts/arch/rewrite_architecture_metrics.py \
+            --check --base-ref "$TSZ_ARCH_BASE_SHA"
+      - name: Prevent rewrite emit baseline ratchet-down
+        run: |
+          python3 scripts/ci/check-emit-regression-set.py \
+            --check-baseline-history \
+            --baseline scripts/emit/rewrite-regression-baseline.json \
+            --oracle-manifest scripts/emit/oracle-manifest.json
       - name: Verify disabled inline-test archive
         run: python3 scripts/reset/verify-legacy-inline.py
       - name: Run architecture guard self-tests
@@ -531,11 +563,9 @@ jobs:
           }
 
           # The active rewrite gate is strict: formatting, cargo check, Clippy,
-          # nextest, and the architecture guard must pass. The retained broad
-          # runners are observations until their semantic families graduate in
-          # the roadmap; their runner steps use continue-on-error so artifacts
-          # preserve the real unsupported/failure surface without reviving the
-          # retired implementation's aggregate floor as an R0 merge gate.
+          # nextest, and the architecture guard must pass. Nightly/manual emit
+          # additionally enforces the rewrite-era stable-key direction floor;
+          # conformance and fourslash remain broad observations.
           fast = {"clippy", "arch-size"}
           heavy_lane_event = os.environ.get("EVENT_NAME") in {"schedule", "workflow_dispatch"}
 
@@ -563,8 +593,8 @@ jobs:
           if heavy_lane_event:
               print(
                   "Rewrite foundation checks and rewrite unit tests passed. "
-                  "Conformance, emit, and fourslash observations completed; "
-                  "their artifacts, including unsupported cases, are informational."
+                  "The rewrite emit direction floor passed. Conformance and "
+                  "fourslash artifacts, including unsupported cases, remain informational."
               )
           else:
               print(

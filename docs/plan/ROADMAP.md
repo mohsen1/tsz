@@ -108,9 +108,10 @@ isolation evidence.
    typed analysis per program/options snapshot derives claims keyed by operation
    or product and program/file/node scope. Checker, public emit/printers, every
    service, and exit-status selection reuse it; phases do not mirror policy.
-10. **Completion stays local.** An incomplete operation defers its owner while
-    unrelated declarations continue checking. Whole-program suppression is only
-    for uncertainty that is structurally program-global.
+10. **Completion is dependency-closed and stays local.** An incomplete producer
+    defers every dependent demand before definitive absence/relation diagnostics,
+    while independent declarations continue checking. Whole-program suppression
+    is only for uncertainty that is structurally program-global.
 11. **Evaluation has one session identity.** Forcing and recursion use one
     canonical checker-session key schema. Demand-scoped frames and typed budget
     axes remain distinct, but required-type and display do not create independent
@@ -251,6 +252,8 @@ are `hold`. Speed claims on red, yellow, gray, or stubbed rows do not count.
 - Preserve unsupported outcomes honestly; do not manufacture success with `any`.
 - Use the pinned TypeScript 7.0.2 oracle, including its declared threading mode.
 - Run focused local suites; CI owns full conformance, emit, fourslash, and project matrices.
+- Compare artifacts by stable row identity and exact diagnostic/product payload;
+  unchanged totals or status matrices do not establish parity.
 - Record provenance and exact commands in every PR.
 - Git history is the archive. Do not keep the deleted implementation in a new source directory.
 

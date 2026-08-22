@@ -21,6 +21,9 @@ observation. Prefer checked-in artifacts and narrow filters; CI owns broad runs.
   derive one typed nonclaim consumed by every surface.
 - Prefer operation-local Deferred results. A file-local unsupported construct
   must not suppress unrelated diagnostics through a new whole-program skip.
+- A scoped nonclaim is sound only when semantic dependencies are closed: a
+  consumer of a nonclaimed producer defers before publishing a definitive
+  missing-name, missing-property, call, or relation diagnostic.
 
 ## Offline First
 
@@ -99,3 +102,7 @@ For a full-corpus observation, preserve every unsupported, crash, timeout, and
 mismatch result in the artifact. When a semantic family graduates, add exact
 public-boundary tests and establish its new monotonic floor; do not inherit or
 edit the retired implementation's accepted-failure policy.
+
+When comparing broad artifacts, read
+[references/artifact-diff.md](references/artifact-diff.md). Status totals alone
+never establish diagnostic or product parity.

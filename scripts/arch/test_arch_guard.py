@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import subprocess
 import tempfile
 import textwrap
 import unittest
@@ -10,6 +11,7 @@ import sys
 sys.dont_write_bytecode = True
 
 import arch_guard
+import rewrite_architecture_metrics
 
 
 ROOT_MANIFEST = """
@@ -64,6 +66,32 @@ class ArchGuardTests(unittest.TestCase):
         path = self.root / relative
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(textwrap.dedent(content).lstrip(), encoding="utf-8")
+
+    def git(self, *arguments: str) -> str:
+        result = subprocess.run(
+            ["git", "-C", str(self.root), *arguments],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        return result.stdout.strip()
+
+    def initialize_direction_repository(self, include_guard: bool = True) -> str:
+        self.git("init", "--quiet")
+        self.git("config", "user.email", "architecture@example.invalid")
+        self.git("config", "user.name", "Architecture Guard")
+        if include_guard:
+            self.write(
+                "scripts/arch/rewrite_architecture_metrics.py",
+                "# direction checker\n",
+            )
+            self.write(
+                arch_guard.ARCHITECTURE_RATCHET_PATH,
+                json.dumps({"capability_owners": 4}),
+            )
+        self.git("add", ".")
+        self.git("commit", "--quiet", "-m", "base")
+        return self.git("rev-parse", "HEAD")
 
     def codes(self) -> list[str]:
         return [violation.code for violation in arch_guard.check(self.root)]
@@ -127,6 +155,230 @@ class ArchGuardTests(unittest.TestCase):
             "struct SourceUnit {}\n",
         )
         self.assertIn("architecture-ratchet", self.codes())
+
+    def test_merge_base_ratchet_rejects_same_change_baseline_growth(self) -> None:
+        base = {"capability_owners": 4, "forcing_entry_points": 3}
+        current = {"capability_owners": 5, "forcing_entry_points": 3}
+        self.assertEqual(
+            rewrite_architecture_metrics.direction_violations(base, current),
+            [
+                "architecture metric 'capability_owners' grew across the "
+                "merge base: base=4, current=5"
+            ],
+        )
+
+    def test_merge_base_ratchet_allows_consolidation_and_new_metrics(self) -> None:
+        base = {"capability_owners": 4, "forcing_entry_points": 3}
+        current = {
+            "capability_owners": 2,
+            "forcing_entry_points": 3,
+            "new_review_indicator": 7,
+        }
+        self.assertEqual(
+            rewrite_architecture_metrics.direction_violations(base, current), []
+        )
+
+    def test_merge_base_ratchet_rejects_removing_an_existing_metric(self) -> None:
+        self.assertEqual(
+            rewrite_architecture_metrics.direction_violations(
+                {"capability_owners": 4}, {}
+            ),
+            ["architecture metric 'capability_owners' was removed"],
+        )
+
+    def test_merge_base_ratchet_requires_nonnegative_integer_values(self) -> None:
+        for value in ({"metric": -1}, {"metric": True}, {"metric": "1"}, None):
+            with self.subTest(value=value):
+                with self.assertRaises(ValueError):
+                    rewrite_architecture_metrics.validate_baseline(value, "test")
+
+    def test_merge_base_loader_accepts_only_a_real_ancestor(self) -> None:
+        base = self.initialize_direction_repository()
+        self.write("after.txt", "after\n")
+        self.git("add", "after.txt")
+        self.git("commit", "--quiet", "-m", "after")
+        self.assertEqual(
+            rewrite_architecture_metrics.load_baseline_at_ref(self.root, base),
+            {"capability_owners": 4},
+        )
+        with self.assertRaisesRegex(ValueError, "must precede HEAD"):
+            rewrite_architecture_metrics.load_baseline_at_ref(self.root, "HEAD")
+
+    def test_merge_base_loader_allows_only_genuine_first_introduction(self) -> None:
+        base = self.initialize_direction_repository(include_guard=False)
+        self.write(
+            "scripts/arch/rewrite_architecture_metrics.py",
+            "# direction checker\n",
+        )
+        self.write(
+            arch_guard.ARCHITECTURE_RATCHET_PATH,
+            json.dumps({"capability_owners": 4}),
+        )
+        self.git("add", ".")
+        self.git("commit", "--quiet", "-m", "introduce guard")
+        self.assertEqual(
+            rewrite_architecture_metrics.load_baseline_at_ref(self.root, base),
+            {"capability_owners": 4},
+        )
+
+    def test_merge_base_loader_allows_uncommitted_first_introduction(self) -> None:
+        base = self.initialize_direction_repository(include_guard=False)
+        self.write("after.txt", "after\n")
+        self.git("add", "after.txt")
+        self.git("commit", "--quiet", "-m", "after base")
+        self.write(
+            "scripts/arch/rewrite_architecture_metrics.py",
+            "# direction checker\n",
+        )
+        self.write(
+            arch_guard.ARCHITECTURE_RATCHET_PATH,
+            json.dumps({"capability_owners": 4}),
+        )
+        self.assertIsNone(
+            rewrite_architecture_metrics.load_baseline_at_ref(self.root, base)
+        )
+
+    def test_merge_base_loader_pins_later_pr_commits_to_first_introduction(self) -> None:
+        base = self.initialize_direction_repository(include_guard=False)
+        self.write(
+            "scripts/arch/rewrite_architecture_metrics.py",
+            "# direction checker\n",
+        )
+        self.write(
+            arch_guard.ARCHITECTURE_RATCHET_PATH,
+            json.dumps({"capability_owners": 4}),
+        )
+        self.git("add", ".")
+        self.git("commit", "--quiet", "-m", "introduce guard")
+        self.write(
+            arch_guard.ARCHITECTURE_RATCHET_PATH,
+            json.dumps({"capability_owners": 5}),
+        )
+        self.git("add", ".")
+        self.git("commit", "--quiet", "-m", "try to raise guard")
+        introduced = rewrite_architecture_metrics.load_baseline_at_ref(
+            self.root, base
+        )
+        current = rewrite_architecture_metrics.load_current_baseline(self.root)
+        self.assertEqual(introduced, {"capability_owners": 4})
+        self.assertEqual(
+            rewrite_architecture_metrics.direction_violations(introduced, current),
+            [
+                "architecture metric 'capability_owners' grew across the "
+                "merge base: base=4, current=5"
+            ],
+        )
+
+    def test_merge_base_loader_survives_delete_and_recreate_reset(self) -> None:
+        self.initialize_direction_repository()
+        (self.root / arch_guard.ARCHITECTURE_RATCHET_PATH).unlink()
+        (self.root / "scripts/arch/rewrite_architecture_metrics.py").unlink()
+        self.git("add", "-u")
+        self.git("commit", "--quiet", "-m", "remove guard")
+        base = self.git("rev-parse", "HEAD")
+        self.write(
+            "scripts/arch/rewrite_architecture_metrics.py",
+            "# direction checker\n",
+        )
+        self.write(
+            arch_guard.ARCHITECTURE_RATCHET_PATH,
+            json.dumps({"capability_owners": 99}),
+        )
+        self.git("add", ".")
+        self.git("commit", "--quiet", "-m", "restore guard too high")
+        self.assertEqual(
+            rewrite_architecture_metrics.load_baseline_at_ref(self.root, base),
+            {"capability_owners": 4},
+        )
+
+    def test_merge_base_loader_uses_strictest_parallel_introduction(self) -> None:
+        base = self.initialize_direction_repository(include_guard=False)
+        self.git("checkout", "--quiet", "-b", "low", base)
+        self.write("scripts/arch/rewrite_architecture_metrics.py", "# checker\n")
+        self.write(
+            arch_guard.ARCHITECTURE_RATCHET_PATH,
+            json.dumps({"capability_owners": 4}),
+        )
+        self.git("add", ".")
+        self.git("commit", "--quiet", "-m", "low introduction")
+        self.git("checkout", "--quiet", "-b", "high", base)
+        self.write("scripts/arch/rewrite_architecture_metrics.py", "# checker\n")
+        self.write(
+            arch_guard.ARCHITECTURE_RATCHET_PATH,
+            json.dumps({"capability_owners": 9}),
+        )
+        self.git("add", ".")
+        self.git("commit", "--quiet", "-m", "high introduction")
+        self.git("merge", "--quiet", "--no-ff", "-X", "ours", "low", "-m", "merge")
+        self.assertEqual(
+            rewrite_architecture_metrics.load_baseline_at_ref(self.root, base),
+            {"capability_owners": 4},
+        )
+
+    def test_merge_base_loader_keeps_feature_history_after_base_advances(self) -> None:
+        base = self.initialize_direction_repository(include_guard=False)
+        self.git("checkout", "--quiet", "-b", "feature", base)
+        self.write("scripts/arch/rewrite_architecture_metrics.py", "# checker\n")
+        self.write(
+            arch_guard.ARCHITECTURE_RATCHET_PATH,
+            json.dumps({"capability_owners": 4}),
+        )
+        self.git("add", ".")
+        self.git("commit", "--quiet", "-m", "introduce")
+        self.write(
+            arch_guard.ARCHITECTURE_RATCHET_PATH,
+            json.dumps({"capability_owners": 5}),
+        )
+        self.git("add", ".")
+        self.git("commit", "--quiet", "-m", "raise")
+        self.git("checkout", "--quiet", "-b", "mainline", base)
+        self.write("main.txt", "advance\n")
+        self.git("add", "main.txt")
+        self.git("commit", "--quiet", "-m", "advance base")
+        advanced_base = self.git("rev-parse", "HEAD")
+        self.git("merge", "--quiet", "--no-ff", "feature", "-m", "merge feature")
+        self.assertEqual(
+            rewrite_architecture_metrics.load_baseline_at_ref(
+                self.root, advanced_base
+            ),
+            {"capability_owners": 4},
+        )
+
+    def test_merge_base_loader_rejects_relevant_shallow_history(self) -> None:
+        self.initialize_direction_repository()
+        self.write("after.txt", "after\n")
+        self.git("add", "after.txt")
+        self.git("commit", "--quiet", "-m", "after")
+        with tempfile.TemporaryDirectory() as clone_dir:
+            clone = Path(clone_dir) / "shallow"
+            subprocess.run(
+                [
+                    "git",
+                    "clone",
+                    "--quiet",
+                    "--depth",
+                    "1",
+                    self.root.as_uri(),
+                    str(clone),
+                ],
+                check=True,
+            )
+            with self.assertRaisesRegex(ValueError, "complete HEAD/base history"):
+                rewrite_architecture_metrics.resolve_base_commit(clone, "HEAD")
+
+    def test_arch_size_workflow_supplies_full_history_and_every_event_base(self) -> None:
+        workflow = (
+            Path(__file__).resolve().parents[2] / ".github/workflows/ci.yml"
+        ).read_text(encoding="utf-8")
+        arch_size = workflow.split("\n  arch-size:\n", 1)[1].split(
+            "\n  refresh-tsc-cache:\n", 1
+        )[0]
+        self.assertIn("fetch-depth: 0", arch_size)
+        self.assertIn("github.event.pull_request.base.sha", arch_size)
+        self.assertIn("github.event.merge_group.base_sha", arch_size)
+        self.assertIn("github.event.before", arch_size)
+        self.assertIn("'HEAD^'", arch_size)
+        self.assertIn('--check --base-ref "$TSZ_ARCH_BASE_SHA"', arch_size)
 
     def test_rewrite_architecture_metrics_cover_distributed_ownership(self) -> None:
         self.install_rewrite_metric_sources()

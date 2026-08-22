@@ -510,18 +510,16 @@ validate_emit_aggregate_counts() {
   base_js="$(cap_positive_baseline "$base_js" "$TSZ_CI_JS_ACCEPTED_FLOOR")"
   base_dts="$(cap_positive_baseline "$base_dts" "$TSZ_CI_DTS_ACCEPTED_FLOOR")"
   if [[ "$base_js" -gt 0 && "$js_passed" -lt "$base_js" ]]; then
-    echo "error: emit JS regression: ${js_passed} < ${base_js}" >&2
-    return 1
+    echo "notice: rewrite emit JS ${js_passed} remains below retired checkpoint ${base_js}" >&2
   fi
   if [[ "$base_dts" -gt 0 && "$dts_passed" -lt "$base_dts" ]]; then
-    echo "error: emit DTS regression: ${dts_passed} < ${base_dts}" >&2
-    return 1
+    echo "notice: rewrite emit DTS ${dts_passed} remains below retired checkpoint ${base_dts}" >&2
   fi
-  echo "Emit OK: JS ${js_passed}/${js_total}, DTS ${dts_passed}/${dts_total}"
+  echo "Emit observation complete: JS ${js_passed}/${js_total}, DTS ${dts_passed}/${dts_total}"
 }
 
-# Direction check for emit (#16171). The count comparison above is the whole
-# emit gate today, and it cannot see two things:
+# Direction check for emit (#16171). The historical count comparison above is
+# informational during R0 and cannot see two things:
 #
 #   * a swap — one row fixed and another broken leaves jsPass unchanged;
 #   * a ratchet-down — cap_positive_baseline is min(baseline, floor), so
@@ -529,12 +527,13 @@ validate_emit_aggregate_counts() {
 #     not a floor. A hand-refreshed emit-snapshot.json that lands while emit is
 #     regressed takes the count bar down with it.
 #
-# emit-snapshot.json's detailFingerprint only proves emit-detail.json matches
-# its own summary: internal consistency, not direction. So diff the named
-# failing-row set out of the committed emit-detail.json, the way conformance
-# diffs its failure set. Fails closed — if the per-shard detail JSON is missing
-# there is no direction evidence, and a gate that silently skips when its data
-# is absent is the same bug class this closes.
+# emit-snapshot.json's detailFingerprint only proves the retired emit detail
+# matches its own summary: internal consistency, not rewrite direction. Diff
+# named pass/terminal transitions and oracle-clean TSZ diagnostic sequences
+# against the last clean rewrite-era artifact. A diagonal status matrix can
+# still hide false diagnostics on an incomplete row. This runs before the
+# historical count observation so that a known-retired floor cannot mask the
+# actionable rewrite delta. Missing shard detail fails closed.
 validate_emit_regression_set() {
   if [[ "$#" -eq 0 ]]; then
     echo "error: emit regression set check received no per-test detail JSON" >&2
@@ -542,7 +541,27 @@ validate_emit_regression_set() {
     return 1
   fi
   python3 scripts/ci/check-emit-regression-set.py \
-    --baseline scripts/emit/emit-detail.json "$@" || return 1
+    --baseline scripts/emit/rewrite-regression-baseline.json \
+    --require-oracle-provenance \
+    --reject-absent-baseline-rows \
+    --oracle-manifest scripts/emit/oracle-manifest.json \
+    "$@" || return 1
+}
+
+require_emit_detail_shards() {
+  local details_dir="$1" expected_shards="$2" shard_index
+  for (( shard_index=0; shard_index<expected_shards; shard_index++ )); do
+    if [[ ! -s "$details_dir/detail-${shard_index}.json" ]]; then
+      echo "error: emit detail shard ${shard_index}/${expected_shards} is missing or empty" >&2
+      return 1
+    fi
+  done
+  local actual_details
+  actual_details="$(find "$details_dir" -maxdepth 1 -type f -name 'detail-*.json' | wc -l | tr -d ' ')"
+  if [[ "$actual_details" -ne "$expected_shards" ]]; then
+    echo "error: emit detail shard count ${actual_details}/${expected_shards} is not exact" >&2
+    return 1
+  fi
 }
 
 run_emit_shard() {
@@ -599,8 +618,8 @@ run_emit_shard() {
 
   if [[ "$shard_count" -eq 1 ]]; then
     ci_section "Emit aggregate"
-    validate_emit_aggregate_counts "$js_p" "$js_t" "$js_s" "$js_to" "$dts_p" "$dts_t" "$dts_s" 1 1 || return 1
     validate_emit_regression_set "$detail_json" || return 1
+    validate_emit_aggregate_counts "$js_p" "$js_t" "$js_s" "$js_to" "$dts_p" "$dts_t" "$dts_s" 1 1 || return 1
     write_emit_metric "$METRICS_DIR/emit.json" \
       "$js_p" "$js_t" "$js_s" "$js_to" \
       "$dts_p" "$dts_t" "$dts_s"
@@ -679,13 +698,9 @@ run_emit_aggregate() {
     echo "warning: ${failed_shards} emit shard(s) returned non-zero rc; aggregate still applies the full-corpus floor" >&2
   fi
 
+  require_emit_detail_shards "$tmp_dir" "$expected_shards" || return 1
+  validate_emit_regression_set "$tmp_dir"/detail-*.json || return 1
   validate_emit_aggregate_counts "$js_p" "$js_t" "$js_s" "$js_to" "$dts_p" "$dts_t" "$dts_s" "$shard_count" "$expected_shards" || return 1
-  if compgen -G "$tmp_dir/detail-*.json" >/dev/null; then
-    validate_emit_regression_set "$tmp_dir"/detail-*.json || return 1
-  else
-    # No detail in the artifacts: fail closed rather than pass on counts alone.
-    validate_emit_regression_set || return 1
-  fi
   write_emit_metric "$METRICS_DIR/emit.json" \
     "$js_p" "$js_t" "$js_s" "$js_to" \
     "$dts_p" "$dts_t" "$dts_s"

@@ -69,7 +69,7 @@ write_emit_metric "{out}" 13401 13530 1 0 1619 1669 11862
         self.assertLess(validate_idx, write_idx)
         self.assertLess(write_idx, publish_idx)
 
-    def test_emit_js_and_dts_accepted_floors_cap_snapshot_baselines(self):
+    def test_retired_emit_floors_are_informational_for_the_rewrite(self):
         helper = self.function_body("cap_positive_baseline", "\nHOST_CPUS=")
         validate = self.function_body("validate_emit_aggregate_counts", "\nrun_emit_shard() {")
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -93,7 +93,7 @@ num_or_zero() {{
 }}
 {helper}
 {validate}
-validate_emit_aggregate_counts 9 10 0 0 7 8 0 1 1
+validate_emit_aggregate_counts 4 10 0 0 2 8 0 1 1
 """,
                 encoding="utf-8",
             )
@@ -106,7 +106,9 @@ validate_emit_aggregate_counts 9 10 0 0 7 8 0 1 1
             )
 
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("Emit OK: JS 9/10, DTS 7/8", result.stdout)
+        self.assertIn("Emit observation complete: JS 4/10, DTS 2/8", result.stdout)
+        self.assertIn("rewrite emit JS 4 remains below retired checkpoint 9", result.stderr)
+        self.assertIn("rewrite emit DTS 2 remains below retired checkpoint 7", result.stderr)
 
 
 if __name__ == "__main__":
