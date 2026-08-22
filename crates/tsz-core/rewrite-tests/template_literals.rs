@@ -816,6 +816,81 @@ fn return_hosts_stay_outside_the_safe_file_boundary_even_across_asi() {
 }
 
 #[test]
+fn unmodeled_template_programs_skip_speculative_semantic_diagnostics() {
+    let cases: [(&str, &str, &[u32]); 2] = [
+        (
+            "stringLiteralTypesWithTemplateStrings01.ts",
+            concat!(
+                "let ABC: \"ABC\" = `ABC`;\n",
+                "let DE_NEWLINE_F: \"DE\\nF\" = `DE\nF`;\n",
+                "let G_QUOTE_HI: 'G\"HI';\n",
+                "let JK_BACKTICK_L: \"JK`L\" = `JK\\`L`;",
+            ),
+            &[],
+        ),
+        (
+            "stringLiteralTypesWithTemplateStrings02.ts",
+            concat!(
+                "let abc: \"AB\\r\\nC\" = `AB\nC`;\n",
+                "let de_NEWLINE_f: \"DE\\nF\" = `DE${\"\\n\"}F`;",
+            ),
+            &[1109, 1109],
+        ),
+    ];
+
+    for no_check in [false, true] {
+        for (path, source, expected_codes) in cases {
+            let output = compile(
+                path,
+                source,
+                CompilerOptions {
+                    declaration: true,
+                    no_check,
+                    ..options("es2015")
+                },
+            );
+            assert_eq!(
+                output.semantic_completion,
+                SemanticCompletion::Deferred,
+                "noCheck={no_check} {path}: {:?}",
+                output.diagnostics
+            );
+            assert_eq!(output.exit_status, CompileExitStatus::SemanticIncomplete);
+            assert_eq!(output.stats.types, 0, "noCheck={no_check} {path}");
+            assert_eq!(codes(&output), expected_codes, "noCheck={no_check} {path}");
+            assert!(output.emitted_files.is_empty(), "noCheck={no_check} {path}");
+        }
+    }
+
+    let interpolated_only = compile(
+        "interpolated-only.ts",
+        "let value: string = `head${missing}tail`;",
+        CompilerOptions {
+            declaration: true,
+            ..options("es2015")
+        },
+    );
+    assert_eq!(
+        interpolated_only.semantic_completion,
+        SemanticCompletion::Deferred
+    );
+    assert_eq!(
+        interpolated_only.exit_status,
+        CompileExitStatus::SemanticIncomplete
+    );
+    assert_eq!(interpolated_only.stats.types, 0);
+    assert!(
+        interpolated_only
+            .diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != 2304),
+        "{:?}",
+        interpolated_only.diagnostics
+    );
+    assert!(interpolated_only.emitted_files.is_empty());
+}
+
+#[test]
 fn es5_is_rejected_and_unmodeled_declaration_literal_emit_is_deferred() {
     for (target, code) in [("es5", 5108), ("unsupported", 6046)] {
         let removed_target = compile(
@@ -1405,7 +1480,7 @@ fn repeated_compiles_and_both_root_orders_have_one_product_fingerprint() {
 #[test]
 fn template_safe_file_boundary_is_program_wide_and_map_modes_defer() {
     let template = SourceInput::new("template.ts", Arc::<str>::from("`plain`;"));
-    let sibling = SourceInput::new("sibling.ts", Arc::<str>::from("const sibling = 1;"));
+    let sibling = SourceInput::new("sibling.ts", Arc::<str>::from("missing;"));
     for no_check in [false, true] {
         for roots in [
             vec![template.clone(), sibling.clone()],
@@ -1424,6 +1499,8 @@ fn template_safe_file_boundary_is_program_wide_and_map_modes_defer() {
                 "noCheck={no_check}: {:?}",
                 output.diagnostics
             );
+            let expected_codes: &[u32] = if no_check { &[] } else { &[2304] };
+            assert_eq!(codes(&output), expected_codes, "noCheck={no_check}");
             assert!(output.emitted_files.is_empty());
         }
 

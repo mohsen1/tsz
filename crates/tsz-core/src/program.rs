@@ -536,6 +536,10 @@ impl Compiler {
             file.syntax.has_authored_numeric_separator()
                 && file.syntax.has_unmodeled_numeric_separator_products()
         });
+        let has_unmodeled_authored_template = program
+            .files
+            .iter()
+            .any(|file| file.syntax.has_unmodeled_template_products());
 
         let check_start = Instant::now();
         let CheckResult {
@@ -545,6 +549,7 @@ impl Compiler {
         } = if options.no_check
             || has_missing_essential_types
             || has_fatal_option_error
+            || has_unmodeled_authored_template
             || has_unmodeled_authored_numeric_recovery
             || has_unmodeled_authored_numeric_separator
         {
