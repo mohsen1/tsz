@@ -153,6 +153,7 @@ pub enum DeferredType {
         index: TypeId,
     },
     BigIntLiteral,
+    Utf16StringLiteral,
     UniqueSymbol,
     GenericFunction,
     ObjectShape,
@@ -601,6 +602,7 @@ enum DeferredOrderKey {
     ),
     IndexedAccess(Box<TypeOrderKey>, Box<TypeOrderKey>),
     BigIntLiteral,
+    Utf16StringLiteral,
     UniqueSymbol,
     GenericFunction,
     ObjectShape,
@@ -761,6 +763,16 @@ impl TypeStore {
         let id = TypeId(self.kinds.len() as u32);
         self.kinds
             .push(TypeKind::Deferred(DeferredType::BigIntLiteral));
+        id
+    }
+
+    /// Allocate an identity-free typed nonclaim for an ordinary string value
+    /// that cannot be represented by Rust `String` without losing UTF-16
+    /// code units. The authored units never enter the type interner.
+    pub fn deferred_utf16_string_literal(&mut self) -> TypeId {
+        let id = TypeId(self.kinds.len() as u32);
+        self.kinds
+            .push(TypeKind::Deferred(DeferredType::Utf16StringLiteral));
         id
     }
 
@@ -1127,6 +1139,7 @@ impl TypeStore {
                 DeferredOrderKey::IndexedAccess(Box::new(nested(*object)), Box::new(nested(*index)))
             }
             DeferredType::BigIntLiteral => DeferredOrderKey::BigIntLiteral,
+            DeferredType::Utf16StringLiteral => DeferredOrderKey::Utf16StringLiteral,
             DeferredType::UniqueSymbol => DeferredOrderKey::UniqueSymbol,
             DeferredType::GenericFunction => DeferredOrderKey::GenericFunction,
             DeferredType::ObjectShape => DeferredOrderKey::ObjectShape,
@@ -1414,6 +1427,9 @@ impl TypeStore {
                 self.display_inner(*index, depth + 1)
             ),
             TypeKind::Deferred(DeferredType::BigIntLiteral) => "bigint-literal".to_string(),
+            TypeKind::Deferred(DeferredType::Utf16StringLiteral) => {
+                "deferred-utf16-string-literal".to_string()
+            }
             TypeKind::Deferred(DeferredType::UniqueSymbol) => "unique symbol".to_string(),
             TypeKind::Deferred(DeferredType::GenericFunction) => {
                 "deferred-generic-function".to_string()
@@ -1459,6 +1475,24 @@ pub enum Completion<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn utf16_string_nonclaims_are_identity_free_and_not_interned() {
+        let mut store = TypeStore::default();
+        let before = store.len();
+        let first = store.deferred_utf16_string_literal();
+        let second = store.deferred_utf16_string_literal();
+        assert_ne!(first, second);
+        assert_eq!(store.len(), before + 2);
+        assert!(matches!(
+            store.kind(first),
+            TypeKind::Deferred(DeferredType::Utf16StringLiteral)
+        ));
+        assert!(matches!(
+            store.kind(second),
+            TypeKind::Deferred(DeferredType::Utf16StringLiteral)
+        ));
+    }
 
     fn literal_array(store: &mut TypeStore, value: &str) -> TypeId {
         let literal = store.intern(TypeKind::LiteralString(

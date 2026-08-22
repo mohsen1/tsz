@@ -572,7 +572,14 @@ impl Checker<'_> {
     fn literal_matches_type(&mut self, literal: &Literal, target: TypeId) -> Option<bool> {
         let target = self.complete_type(target)?;
         match (literal, self.store.kind(target).clone()) {
-            (Literal::String(left), TypeKind::LiteralString(right, _)) => Some(left == &right),
+            (
+                Literal::String(crate::syntax::StringLiteral::Plain(left)),
+                TypeKind::LiteralString(right, _),
+            ) => Some(left == &right),
+            (
+                Literal::String(crate::syntax::StringLiteral::Extended(_)),
+                TypeKind::LiteralString(_, _),
+            ) => None,
             (Literal::NoSubstitutionTemplate(left), TypeKind::LiteralString(right, _)) => {
                 Some(left.cooked == right)
             }

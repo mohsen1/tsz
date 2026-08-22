@@ -1,7 +1,7 @@
 use crate::source::Span;
 use crate::syntax::{
-    CommentTrivia, Expression, ExpressionKind, Literal, Statement, VariableDeclaration,
-    VariableKind, expression_contains_no_substitution_template,
+    CommentTrivia, Expression, ExpressionKind, Literal, Statement, StringLiteral,
+    VariableDeclaration, VariableKind, expression_contains_no_substitution_template,
     statements_contain_no_substitution_template,
 };
 
@@ -31,7 +31,7 @@ impl Printer<'_> {
 
     pub(super) fn literal_text(&self, literal: &Literal, span: Span) -> String {
         match literal {
-            Literal::String(value) => {
+            Literal::String(StringLiteral::Plain(value)) => {
                 let raw = self.source.slice(span).trim();
                 if is_quoted(raw) {
                     raw.to_string()
@@ -39,6 +39,7 @@ impl Printer<'_> {
                     quote_string(value)
                 }
             }
+            Literal::String(StringLiteral::Extended(literal)) => literal.raw.clone(),
             Literal::NoSubstitutionTemplate(literal) => literal.raw.clone(),
             Literal::Number(value) | Literal::BigInt(value) => value.clone(),
             Literal::Boolean(value) => value.to_string(),

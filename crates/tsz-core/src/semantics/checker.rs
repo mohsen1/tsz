@@ -14,6 +14,7 @@ mod regular_expression;
 mod relation_diagnostic;
 mod required_type;
 mod statement_model;
+mod string_literal;
 mod type_member_grammar;
 
 use relation_diagnostic::{
@@ -26,9 +27,8 @@ use crate::program::{CompilerOptions, Program, SemanticCompletion};
 use crate::source::{DeclId, FileId, NodeId, Span};
 use crate::syntax::{
     BinaryOperator, ClassDeclaration, ClassMemberKind, Expression, ExpressionKind,
-    FunctionDeclaration, InterfaceDeclaration, KeywordType, Literal, Parameter, Statement,
-    StatementKind, TypeAliasDeclaration, TypeNode, TypeNodeKind, UnaryOperator,
-    VariableDeclaration, VariableKind,
+    FunctionDeclaration, InterfaceDeclaration, KeywordType, Parameter, Statement, StatementKind,
+    TypeAliasDeclaration, TypeNode, TypeNodeKind, UnaryOperator, VariableDeclaration, VariableKind,
 };
 
 use super::relation::{RelationContext, RelationMode};
@@ -485,10 +485,19 @@ impl<'a> Checker<'a> {
                     let is_complete = self.complete_required_type_nodes.contains(&annotation.span);
                     (Some(ty), is_complete)
                 });
-        let initializer = declaration
-            .initializer
-            .as_ref()
-            .map(|initializer| self.infer_expression(file, scope, initializer, annotation));
+        let extended_unicode_string = self.extended_unicode_variable_type(declaration);
+        let initializer = declaration.initializer.as_ref().map(|initializer| {
+            if let Some(completion) = extended_unicode_string.clone() {
+                match self.require_completion(completion) {
+                    Completion::Complete(ty) => ty,
+                    Completion::Deferred | Completion::Cycle | Completion::Limit => {
+                        self.store.deferred_utf16_string_literal()
+                    }
+                }
+            } else {
+                self.infer_expression(file, scope, initializer, annotation)
+            }
+        });
         if let (Some(source), Some(target), Some(initializer)) =
             (initializer, annotation, declaration.initializer.as_ref())
         {
@@ -610,6 +619,8 @@ impl<'a> Checker<'a> {
                         annotation,
                         &HashMap::new(),
                     ))
+                } else if let Some(completion) = self.extended_unicode_variable_type(declaration) {
+                    completion
                 } else if let Some(initializer) = &declaration.initializer {
                     let inferred = self.infer_expression(id.file, scope, initializer, None);
                     let inferred = if declaration.declaration_kind == VariableKind::Const {
@@ -1474,6 +1485,7 @@ impl<'a> Checker<'a> {
             | DeferredType::Mapped { .. }
             | DeferredType::GenericCall
             | DeferredType::BigIntLiteral
+            | DeferredType::Utf16StringLiteral
             | DeferredType::UniqueSymbol
             | DeferredType::GenericFunction
             | DeferredType::ObjectShape => Completion::Deferred,
@@ -1796,44 +1808,6 @@ impl<'a> Checker<'a> {
         }
     }
 
-    fn literal_type(&mut self, literal: &Literal, provenance: LiteralProvenance) -> TypeId {
-        match literal {
-            Literal::String(value) => self
-                .store
-                .intern(TypeKind::LiteralString(value.clone(), provenance)),
-            Literal::NoSubstitutionTemplate(literal) => self
-                .store
-                .intern(TypeKind::LiteralString(literal.cooked.clone(), provenance)),
-            Literal::Number(value) => self.store.numeric_literal(value, provenance),
-            Literal::BigInt(_) => self.store.deferred_bigint_literal(),
-            Literal::Boolean(value) => self
-                .store
-                .intern(TypeKind::LiteralBoolean(*value, provenance)),
-            Literal::Null => self.store.builtins.null,
-        }
-    }
-
-    fn widen(&mut self, ty: TypeId) -> TypeId {
-        if self.is_symbolic_regular_expression_type(ty) {
-            return ty;
-        }
-        let completion = self.force_type(ty, 0);
-        let ty = match self.require_completion(completion) {
-            Completion::Complete(ty) => ty,
-            Completion::Deferred | Completion::Cycle | Completion::Limit => return ty,
-        };
-        self.store.widened_literal_type(ty)
-    }
-
-    fn is_string_like(&mut self, ty: TypeId) -> bool {
-        self.complete_type(ty).is_some_and(|ty| {
-            matches!(
-                self.store.kind(ty),
-                TypeKind::String | TypeKind::LiteralString(_, _)
-            )
-        })
-    }
-
     fn report_deferred_cycle(&mut self, deferred: &DeferredType) {
         let DeferredType::Reference { declaration, .. } = deferred else {
             return;
@@ -1878,6 +1852,7 @@ impl<'a> Checker<'a> {
             | DeferredType::Mapped { .. }
             | DeferredType::IndexedAccess { .. }
             | DeferredType::BigIntLiteral
+            | DeferredType::Utf16StringLiteral
             | DeferredType::UniqueSymbol
             | DeferredType::GenericFunction
             | DeferredType::ObjectShape => None,

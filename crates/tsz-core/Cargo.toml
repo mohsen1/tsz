@@ -89,5 +89,9 @@ path = "rewrite-tests/template_literal_comments.rs"
 name = "rewrite_regular_expression_literals"
 path = "rewrite-tests/regular_expression_literals.rs"
 
+[[test]]
+name = "rewrite_extended_unicode_string_literals"
+path = "rewrite-tests/extended_unicode_string_literals.rs"
+
 [lints]
 workspace = true

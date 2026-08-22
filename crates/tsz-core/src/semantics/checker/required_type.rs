@@ -1683,6 +1683,7 @@ impl Checker<'_> {
             }
             DeferredType::Value(_)
             | DeferredType::BigIntLiteral
+            | DeferredType::Utf16StringLiteral
             | DeferredType::UniqueSymbol
             | DeferredType::GenericCall
             | DeferredType::GenericFunction

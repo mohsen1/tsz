@@ -4,6 +4,7 @@ mod ast;
 mod parser;
 mod regular_expression;
 mod scanner;
+mod string_literal;
 mod template_literal;
 mod token;
 mod trivia;
@@ -16,6 +17,12 @@ pub(crate) use regular_expression::{
     statements_form_regular_expression_safe_file, statements_form_regular_expression_variable_file,
 };
 pub use scanner::{ScanOutput, scan_source};
+pub use string_literal::{ExtendedUnicodeStringLiteral, StringLiteral, Utf16String};
+pub(crate) use string_literal::{
+    comments_form_extended_unicode_string_safe_file,
+    statements_form_extended_unicode_string_safe_file,
+    statements_form_extended_unicode_string_variable_file,
+};
 pub use template_literal::NoSubstitutionTemplateLiteral;
 pub(crate) use template_literal::{
     class_contains_no_substitution_template, expression_contains_no_substitution_template,
@@ -28,4 +35,6 @@ pub use token::{Token, TokenKind};
 pub(crate) use trivia::{
     CommentKind, CommentPlacement, CommentTrivia, comments_form_contiguous_plain_leading_run,
     comments_form_no_substitution_template_expression_file, is_single_line_whitespace,
+    source_is_ascii_outside_comments, source_uses_supported_line_breaks,
+    statement_starts_at_supported_column,
 };

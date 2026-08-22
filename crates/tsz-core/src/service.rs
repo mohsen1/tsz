@@ -165,6 +165,12 @@ impl LanguageService {
             Arc::clone(&file.text),
         );
         let parsed = parse_source(&source);
+        if parsed.unit.has_authored_extended_unicode_string()
+            && (parsed.unit.has_unmodeled_extended_unicode_string_products()
+                || !self.compile().semantic_completion.is_complete())
+        {
+            return None;
+        }
         quick_info_in_statements(&parsed.unit.statements, offset)
     }
 

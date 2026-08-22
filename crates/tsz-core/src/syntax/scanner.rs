@@ -2,6 +2,7 @@ use crate::diagnostics::Diagnostic;
 use crate::source::{SourceText, Span};
 
 use super::regular_expression::ScannedRegularExpressionLiteral;
+use super::string_literal::{ScannedStringLiteral, scan_ordinary_string_literal};
 use super::template_literal::ScannedTemplateLiteral;
 use super::{
     CommentKind, CommentPlacement, CommentTrivia, Token, TokenKind, is_single_line_whitespace,
@@ -12,6 +13,7 @@ pub struct ScanOutput {
     pub tokens: Vec<Token>,
     pub diagnostics: Vec<Diagnostic>,
     pub(super) template_literals: Vec<ScannedTemplateLiteral>,
+    pub(super) string_literals: Vec<ScannedStringLiteral>,
     pub(super) regular_expression_literals: Vec<ScannedRegularExpressionLiteral>,
     pub(super) comments: Vec<CommentTrivia>,
     pub(super) has_unicode_line_comment_terminator: bool,
@@ -31,6 +33,7 @@ struct Scanner<'a> {
     tokens: Vec<Token>,
     diagnostics: Vec<Diagnostic>,
     template_literals: Vec<ScannedTemplateLiteral>,
+    string_literals: Vec<ScannedStringLiteral>,
     regular_expression_literals: Vec<ScannedRegularExpressionLiteral>,
     comments: Vec<CommentTrivia>,
     has_unicode_line_comment_terminator: bool,
@@ -48,6 +51,7 @@ impl<'a> Scanner<'a> {
             tokens: Vec::new(),
             diagnostics: Vec::new(),
             template_literals: Vec::new(),
+            string_literals: Vec::new(),
             regular_expression_literals: Vec::new(),
             comments: Vec::new(),
             has_unicode_line_comment_terminator: false,
@@ -99,6 +103,7 @@ impl<'a> Scanner<'a> {
             tokens: self.tokens,
             diagnostics: self.diagnostics,
             template_literals: self.template_literals,
+            string_literals: self.string_literals,
             regular_expression_literals: self.regular_expression_literals,
             comments: self.comments,
             has_unicode_line_comment_terminator: self.has_unicode_line_comment_terminator,
@@ -693,29 +698,11 @@ impl<'a> Scanner<'a> {
     }
 
     fn scan_string(&mut self, start: usize, quote: u8) -> TokenKind {
-        let mut terminated = false;
-        while let Some(byte) = self.bytes.get(self.offset).copied() {
-            if byte == quote {
-                self.offset += 1;
-                terminated = true;
-                break;
-            }
-            if byte == b'\\' {
-                self.skip_escape_sequence();
-                continue;
-            }
-            if byte == b'\n' || byte == b'\r' {
-                break;
-            }
-            self.advance_character();
-        }
-        if !terminated {
-            self.diagnostics.push(Diagnostic::at(
-                self.source,
-                Span::new(self.source.id, start, self.offset),
-                "Unterminated string literal.".to_string(),
-                1002,
-            ));
+        let scanned = scan_ordinary_string_literal(self.source, start, quote);
+        self.offset = scanned.end;
+        self.diagnostics.extend(scanned.diagnostics);
+        if let Some(literal) = scanned.extended_literal {
+            self.string_literals.push(literal);
         }
         TokenKind::StringLiteral
     }

@@ -17,6 +17,8 @@ pub struct SourceUnit {
     pub(crate) has_unicode_line_comment_terminator: bool,
     pub(crate) has_authored_no_substitution_template: bool,
     pub(crate) template_products_supported: bool,
+    pub(crate) has_authored_extended_unicode_string: bool,
+    pub(crate) extended_unicode_string_products_supported: bool,
     pub(crate) has_authored_regular_expression: bool,
     pub(crate) regular_expression_products_supported: bool,
 }
@@ -169,9 +171,16 @@ impl SourceUnit {
         self.has_authored_no_substitution_template
     }
 
+    #[must_use]
+    pub const fn has_authored_extended_unicode_string(&self) -> bool {
+        self.has_authored_extended_unicode_string
+    }
+
     pub(crate) fn modeled_comments(&self) -> Option<&[CommentTrivia]> {
         (!self.comments.is_empty()
             && (self.has_authored_no_substitution_template && self.template_products_supported
+                || self.has_authored_extended_unicode_string
+                    && self.extended_unicode_string_products_supported
                 || self.has_authored_regular_expression
                     && self.regular_expression_products_supported))
             .then_some(self.comments.as_slice())
@@ -187,6 +196,11 @@ impl SourceUnit {
     #[must_use]
     pub const fn has_unmodeled_template_products(&self) -> bool {
         !self.template_products_supported
+    }
+
+    #[must_use]
+    pub const fn has_unmodeled_extended_unicode_string_products(&self) -> bool {
+        !self.extended_unicode_string_products_supported
     }
 
     #[must_use]
@@ -1356,7 +1370,7 @@ pub struct ObjectProperty {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Literal {
-    String(String),
+    String(super::StringLiteral),
     NoSubstitutionTemplate(super::NoSubstitutionTemplateLiteral),
     Number(String),
     BigInt(String),

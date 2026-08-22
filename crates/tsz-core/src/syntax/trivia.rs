@@ -81,6 +81,55 @@ pub(crate) fn comments_form_contiguous_plain_leading_run(
     })
 }
 
+pub(crate) fn source_is_ascii_outside_comments(
+    source: &SourceText,
+    comments: &[CommentTrivia],
+) -> bool {
+    let mut cursor = 0_usize;
+    for comment in comments {
+        let start = comment.span.start as usize;
+        let end = comment.span.end as usize;
+        if start < cursor
+            || end < start
+            || end > source.text.len()
+            || !source.text.is_char_boundary(start)
+            || !source.text.is_char_boundary(end)
+            || !source.text[cursor..start].is_ascii()
+        {
+            return false;
+        }
+        cursor = end;
+    }
+    source.text[cursor..].is_ascii()
+}
+
+pub(crate) fn source_uses_supported_line_breaks(source: &SourceText) -> bool {
+    let bytes = source.text.as_bytes();
+    !source
+        .text
+        .chars()
+        .any(|character| matches!(character, '\u{2028}' | '\u{2029}'))
+        && bytes
+            .iter()
+            .enumerate()
+            .all(|(index, byte)| *byte != b'\r' || bytes.get(index + 1) == Some(&b'\n'))
+}
+
+pub(crate) fn statement_starts_at_supported_column(
+    source: &SourceText,
+    statements: &[Statement],
+) -> bool {
+    let [statement] = statements else {
+        return false;
+    };
+    statement.span.start == 0
+        || source
+            .text
+            .as_bytes()
+            .get(statement.span.start as usize - 1)
+            == Some(&b'\n')
+}
+
 fn has_one_line_break(source: &SourceText, start: u32, end: u32) -> bool {
     let bytes = source.text.as_bytes();
     let Some(gap) = bytes.get(start as usize..end as usize) else {

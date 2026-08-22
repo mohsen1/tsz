@@ -65,6 +65,7 @@ pub(super) struct ProductCapabilities {
     pub(super) default_export_hosts_supported: bool,
     pub(super) expression_products_supported: bool,
     pub(super) template_products_supported: bool,
+    pub(super) extended_unicode_string_products_supported: bool,
     pub(super) regular_expression_products_supported: bool,
     has_bodyless_class: bool,
     has_module_export: bool,
@@ -81,6 +82,7 @@ impl ProductCapabilities {
             default_export_hosts_supported: true,
             expression_products_supported: true,
             template_products_supported: true,
+            extended_unicode_string_products_supported: true,
             regular_expression_products_supported: true,
             has_bodyless_class: false,
             has_module_export: false,
@@ -115,6 +117,10 @@ impl ProductCapabilities {
 
     pub(super) const fn observe_unmodeled_template(&mut self) {
         self.template_products_supported = false;
+    }
+
+    pub(super) const fn observe_unmodeled_extended_unicode_string(&mut self) {
+        self.extended_unicode_string_products_supported = false;
     }
 
     pub(super) const fn observe_unmodeled_regular_expression(&mut self) {

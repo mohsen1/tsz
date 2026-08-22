@@ -20,6 +20,15 @@ pub(super) fn display_variable_type(declaration: &VariableDeclaration) -> Option
     let Some(initializer) = &declaration.initializer else {
         return Some("any".to_string());
     };
+    if let ExpressionKind::Literal(Literal::String(crate::syntax::StringLiteral::Extended(
+        literal,
+    ))) = &initializer.kind
+    {
+        return (declaration.declaration_kind == VariableKind::Var
+            && !declaration.exported
+            && literal.validation_supported())
+        .then(|| "string".to_string());
+    }
     display_expression_type(
         initializer,
         declaration.declaration_kind == VariableKind::Const,
@@ -46,9 +55,7 @@ fn display_expression_type(
 ) -> Option<String> {
     let depth = descend(depth)?;
     match &expression.kind {
-        ExpressionKind::Literal(literal) => {
-            Some(display_inferred_literal(literal, preserve_literal))
-        }
+        ExpressionKind::Literal(literal) => display_inferred_literal(literal, preserve_literal),
         ExpressionKind::Object(properties) => {
             if properties.is_empty() {
                 return Some("{}".to_string());
@@ -80,17 +87,22 @@ fn display_expression_type(
     }
 }
 
-fn display_inferred_literal(literal: &Literal, preserve_literal: bool) -> String {
+fn display_inferred_literal(literal: &Literal, preserve_literal: bool) -> Option<String> {
     match (preserve_literal, literal) {
-        (true, Literal::String(value)) => display_string_literal(value),
-        (true, Literal::NoSubstitutionTemplate(literal)) => display_string_literal(&literal.cooked),
-        (true, Literal::Number(value) | Literal::BigInt(value)) => value.clone(),
-        (true, Literal::Boolean(value)) => value.to_string(),
-        (_, Literal::String(_) | Literal::NoSubstitutionTemplate(_)) => "string".to_string(),
-        (_, Literal::Number(_)) => "number".to_string(),
-        (_, Literal::BigInt(_)) => "bigint".to_string(),
-        (_, Literal::Boolean(_)) => "boolean".to_string(),
-        (_, Literal::Null) => "null".to_string(),
+        (true, Literal::String(crate::syntax::StringLiteral::Plain(value))) => {
+            Some(display_string_literal(value))
+        }
+        (_, Literal::String(crate::syntax::StringLiteral::Extended(_))) => None,
+        (true, Literal::NoSubstitutionTemplate(literal)) => {
+            Some(display_string_literal(&literal.cooked))
+        }
+        (true, Literal::Number(value) | Literal::BigInt(value)) => Some(value.clone()),
+        (true, Literal::Boolean(value)) => Some(value.to_string()),
+        (_, Literal::String(_) | Literal::NoSubstitutionTemplate(_)) => Some("string".to_string()),
+        (_, Literal::Number(_)) => Some("number".to_string()),
+        (_, Literal::BigInt(_)) => Some("bigint".to_string()),
+        (_, Literal::Boolean(_)) => Some("boolean".to_string()),
+        (_, Literal::Null) => Some("null".to_string()),
     }
 }
 
@@ -98,7 +110,13 @@ fn display_type_node_at_depth(node: &TypeNode, depth: usize) -> Option<String> {
     let depth = descend(depth)?;
     match &node.kind {
         TypeNodeKind::Keyword(keyword) => Some(display_keyword(*keyword).to_string()),
-        TypeNodeKind::Literal(Literal::String(value)) => Some(display_string_literal(value)),
+        TypeNodeKind::Literal(Literal::String(crate::syntax::StringLiteral::Plain(value))) => {
+            Some(display_string_literal(value))
+        }
+        TypeNodeKind::Literal(Literal::String(crate::syntax::StringLiteral::Extended(literal))) => {
+            let _ = literal;
+            None
+        }
         TypeNodeKind::Literal(Literal::Number(value) | Literal::BigInt(value)) => {
             Some(value.clone())
         }

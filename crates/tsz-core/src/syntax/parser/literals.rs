@@ -1,6 +1,6 @@
 use super::super::{
-    ClassDeclaration, Expression, ExpressionKind, Literal, Statement, Token, TokenKind,
-    class_contains_no_substitution_template,
+    ClassDeclaration, Expression, ExpressionKind, Literal, Parameter, Statement, StringLiteral,
+    Token, TokenKind, class_contains_no_substitution_template,
     comments_form_no_substitution_template_expression_file,
     expression_contains_no_substitution_template,
     statements_form_no_substitution_template_safe_file,
@@ -10,6 +10,122 @@ use crate::diagnostics::Diagnostic;
 use crate::source::Span;
 
 impl Parser<'_> {
+    pub(super) fn parse_primary_expression(&mut self) -> Expression {
+        let token = *self.current();
+        match token.kind {
+            _ if matches!(
+                token.kind,
+                TokenKind::Import | TokenKind::This | TokenKind::Super
+            ) || token.kind.is_identifier() =>
+            {
+                self.bump();
+                let name = self.text(token.span).to_string();
+                if self.eat(TokenKind::FatArrow) {
+                    let parameter = Parameter {
+                        name,
+                        name_span: token.span,
+                        annotation: None,
+                        initializer: None,
+                        optional: false,
+                        optional_span: None,
+                        rest: false,
+                        rest_span: None,
+                        modifiers: Vec::new(),
+                        overload_completion_supported: token.kind == TokenKind::Identifier,
+                        function_implementation_completion_supported: token.kind.is_identifier(),
+                        span: token.span,
+                    };
+                    let body = self.parse_arrow_body();
+                    let end = self.previous().span;
+                    return Expression {
+                        id: self.alloc_node(),
+                        span: token.span.merge(end),
+                        kind: ExpressionKind::Arrow {
+                            parameters: vec![parameter],
+                            return_type: None,
+                            body,
+                        },
+                    };
+                }
+                Expression {
+                    id: self.alloc_node(),
+                    span: token.span,
+                    kind: ExpressionKind::Identifier {
+                        name,
+                        name_span: token.span,
+                        entity_name: token.kind.is_identifier(),
+                    },
+                }
+            }
+            TokenKind::New => self.parse_new_expression(),
+            TokenKind::True
+            | TokenKind::False
+            | TokenKind::Null
+            | TokenKind::NumericLiteral
+            | TokenKind::BigIntLiteral
+            | TokenKind::StringLiteral => {
+                self.bump();
+                Expression {
+                    id: self.alloc_node(),
+                    span: token.span,
+                    kind: ExpressionKind::Literal(self.literal_from(token)),
+                }
+            }
+            TokenKind::NoSubstitutionTemplateLiteral => {
+                self.parse_no_substitution_template_literal()
+            }
+            TokenKind::RegularExpressionLiteral => self.parse_regular_expression_literal(),
+            TokenKind::LeftBrace => self.parse_object_literal(),
+            TokenKind::LeftBracket => self.parse_array_literal(),
+            TokenKind::LeftParen if self.paren_expression_is_arrow() => {
+                let left = self.bump().span;
+                let mut parameters = Vec::new();
+                while !self.at_any(&[TokenKind::RightParen, TokenKind::EndOfFile]) {
+                    parameters.push(self.parse_parameter());
+                    if !self.eat(TokenKind::Comma) {
+                        break;
+                    }
+                }
+                self.expect(TokenKind::RightParen, "')' expected.", 1005);
+                let return_type = self.eat(TokenKind::Colon).then(|| self.parse_type());
+                self.expect(TokenKind::FatArrow, "'=>' expected.", 1005);
+                let body = self.parse_arrow_body();
+                let end = self.previous().span;
+                Expression {
+                    id: self.alloc_node(),
+                    span: left.merge(end),
+                    kind: ExpressionKind::Arrow {
+                        parameters,
+                        return_type,
+                        body,
+                    },
+                }
+            }
+            TokenKind::LeftParen => {
+                let left = self.bump().span;
+                let inner = self.parse_expression();
+                let right = self.current().span;
+                self.expect(TokenKind::RightParen, "')' expected.", 1005);
+                Expression {
+                    id: self.alloc_node(),
+                    span: left.merge(right),
+                    kind: ExpressionKind::Parenthesized(Box::new(inner)),
+                }
+            }
+            _ => {
+                self.observe_unmodeled_regular_expression_if_current();
+                self.observe_unmodeled_template_if_current();
+                self.error_current("Expression expected.", 1109);
+                self.bump();
+                Expression {
+                    id: self.alloc_node(),
+                    span: token.span,
+                    kind: ExpressionKind::Missing,
+                }
+            }
+        }
+    }
+
     pub(super) fn finish_no_substitution_template_source(
         &mut self,
         statements: &[Statement],
@@ -236,7 +352,12 @@ impl Parser<'_> {
             TokenKind::True => Literal::Boolean(true),
             TokenKind::False => Literal::Boolean(false),
             TokenKind::Null => Literal::Null,
-            TokenKind::StringLiteral => Literal::String(unquote(self.text(token.span))),
+            TokenKind::StringLiteral => {
+                Literal::String(self.extended_unicode_string_literal(token).map_or_else(
+                    || StringLiteral::Plain(unquote(self.text(token.span))),
+                    StringLiteral::Extended,
+                ))
+            }
             TokenKind::BigIntLiteral => Literal::BigInt(self.text(token.span).to_string()),
             _ => Literal::Number(self.text(token.span).to_string()),
         }

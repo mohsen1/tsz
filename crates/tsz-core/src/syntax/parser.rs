@@ -7,19 +7,21 @@ mod operators;
 mod parameters;
 mod regular_expression;
 mod statements;
+mod string_literal;
 mod type_arguments;
 mod type_members;
 mod type_parameters;
 
 use super::regular_expression::ScannedRegularExpressionLiteral;
+use super::string_literal::ScannedStringLiteral;
 use super::template_literal::ScannedTemplateLiteral;
 use super::{
     AccessorKind, ArrowBody, ClassDeclaration, ClassMember, ClassMemberKind, ClassMemberModifiers,
     CommentTrivia, ExportDeclaration, ExportSpecifier, Expression, ExpressionKind,
     FunctionDeclaration, IfStatement, ImportBinding, ImportDeclaration, InterfaceDeclaration,
-    ObjectProperty, Parameter, ParameterModifier, Statement, StatementKind, SwitchClause,
-    SwitchClauseKind, SwitchStatement, Token, TokenKind, TypeAliasDeclaration, TypeNode,
-    TypeNodeKind, UnaryOperator, VariableDeclaration, VariableKind, scan_source,
+    ObjectProperty, ParameterModifier, Statement, StatementKind, SwitchClause, SwitchClauseKind,
+    SwitchStatement, Token, TokenKind, TypeAliasDeclaration, TypeNode, TypeNodeKind, UnaryOperator,
+    VariableDeclaration, VariableKind, scan_source,
 };
 use literals::unquote;
 use modifiers::{Modifiers, ProductCapabilities};
@@ -33,17 +35,7 @@ pub struct ParseOutput {
 
 pub fn parse_source(source: &SourceText) -> ParseOutput {
     let scanned = scan_source(source);
-    Parser::new(
-        source,
-        scanned.tokens,
-        scanned.diagnostics,
-        scanned.template_literals,
-        scanned.regular_expression_literals,
-        scanned.comments,
-        scanned.has_unicode_line_comment_terminator,
-        scanned.has_unmodeled_trivia,
-    )
-    .parse()
+    Parser::new(source, scanned).parse()
 }
 struct Parser<'a> {
     source: &'a SourceText,
@@ -52,6 +44,7 @@ struct Parser<'a> {
     next_node: u32,
     diagnostics: Vec<Diagnostic>,
     template_literals: Vec<ScannedTemplateLiteral>,
+    string_literals: Vec<ScannedStringLiteral>,
     regular_expression_literals: Vec<ScannedRegularExpressionLiteral>,
     comments: Vec<CommentTrivia>,
     has_unicode_line_comment_terminator: bool,
@@ -65,27 +58,19 @@ struct Parser<'a> {
 }
 
 impl<'a> Parser<'a> {
-    const fn new(
-        source: &'a SourceText,
-        tokens: Vec<Token>,
-        diagnostics: Vec<Diagnostic>,
-        template_literals: Vec<ScannedTemplateLiteral>,
-        regular_expression_literals: Vec<ScannedRegularExpressionLiteral>,
-        comments: Vec<CommentTrivia>,
-        has_unicode_line_comment_terminator: bool,
-        has_unmodeled_trivia: bool,
-    ) -> Self {
+    fn new(source: &'a SourceText, scanned: super::ScanOutput) -> Self {
         Self {
             source,
-            tokens,
+            tokens: scanned.tokens,
             index: 0,
             next_node: 0,
-            diagnostics,
-            template_literals,
-            regular_expression_literals,
-            comments,
-            has_unicode_line_comment_terminator,
-            has_unmodeled_trivia,
+            diagnostics: scanned.diagnostics,
+            template_literals: scanned.template_literals,
+            string_literals: scanned.string_literals,
+            regular_expression_literals: scanned.regular_expression_literals,
+            comments: scanned.comments,
+            has_unicode_line_comment_terminator: scanned.has_unicode_line_comment_terminator,
+            has_unmodeled_trivia: scanned.has_unmodeled_trivia,
             speculating: false,
             speculative_token_rewrites: Vec::new(),
             type_member_recovery_code: 1128,
@@ -106,6 +91,8 @@ impl<'a> Parser<'a> {
         }
         let has_authored_no_substitution_template =
             self.finish_no_substitution_template_source(&statements);
+        let has_authored_extended_unicode_string =
+            self.finish_extended_unicode_string_source(&statements);
         let has_authored_regular_expression = self.finish_regular_expression_source(&statements);
         let end = self.source.text.len();
         ParseOutput {
@@ -126,6 +113,10 @@ impl<'a> Parser<'a> {
                 has_unicode_line_comment_terminator: self.has_unicode_line_comment_terminator,
                 has_authored_no_substitution_template,
                 template_products_supported: self.product_capabilities.template_products_supported,
+                has_authored_extended_unicode_string,
+                extended_unicode_string_products_supported: self
+                    .product_capabilities
+                    .extended_unicode_string_products_supported,
                 has_authored_regular_expression,
                 regular_expression_products_supported: self
                     .product_capabilities
@@ -1403,122 +1394,6 @@ impl<'a> Parser<'a> {
             }
         }
         expression
-    }
-
-    fn parse_primary_expression(&mut self) -> Expression {
-        let token = *self.current();
-        match token.kind {
-            _ if matches!(
-                token.kind,
-                TokenKind::Import | TokenKind::This | TokenKind::Super
-            ) || token.kind.is_identifier() =>
-            {
-                self.bump();
-                let name = self.text(token.span).to_string();
-                if self.eat(TokenKind::FatArrow) {
-                    let parameter = Parameter {
-                        name,
-                        name_span: token.span,
-                        annotation: None,
-                        initializer: None,
-                        optional: false,
-                        optional_span: None,
-                        rest: false,
-                        rest_span: None,
-                        modifiers: Vec::new(),
-                        overload_completion_supported: token.kind == TokenKind::Identifier,
-                        function_implementation_completion_supported: token.kind.is_identifier(),
-                        span: token.span,
-                    };
-                    let body = self.parse_arrow_body();
-                    let end = self.previous().span;
-                    return Expression {
-                        id: self.alloc_node(),
-                        span: token.span.merge(end),
-                        kind: ExpressionKind::Arrow {
-                            parameters: vec![parameter],
-                            return_type: None,
-                            body,
-                        },
-                    };
-                }
-                Expression {
-                    id: self.alloc_node(),
-                    span: token.span,
-                    kind: ExpressionKind::Identifier {
-                        name,
-                        name_span: token.span,
-                        entity_name: token.kind.is_identifier(),
-                    },
-                }
-            }
-            TokenKind::New => self.parse_new_expression(),
-            TokenKind::True
-            | TokenKind::False
-            | TokenKind::Null
-            | TokenKind::NumericLiteral
-            | TokenKind::BigIntLiteral
-            | TokenKind::StringLiteral => {
-                self.bump();
-                Expression {
-                    id: self.alloc_node(),
-                    span: token.span,
-                    kind: ExpressionKind::Literal(self.literal_from(token)),
-                }
-            }
-            TokenKind::NoSubstitutionTemplateLiteral => {
-                self.parse_no_substitution_template_literal()
-            }
-            TokenKind::RegularExpressionLiteral => self.parse_regular_expression_literal(),
-            TokenKind::LeftBrace => self.parse_object_literal(),
-            TokenKind::LeftBracket => self.parse_array_literal(),
-            TokenKind::LeftParen if self.paren_expression_is_arrow() => {
-                let left = self.bump().span;
-                let mut parameters = Vec::new();
-                while !self.at_any(&[TokenKind::RightParen, TokenKind::EndOfFile]) {
-                    parameters.push(self.parse_parameter());
-                    if !self.eat(TokenKind::Comma) {
-                        break;
-                    }
-                }
-                self.expect(TokenKind::RightParen, "')' expected.", 1005);
-                let return_type = self.eat(TokenKind::Colon).then(|| self.parse_type());
-                self.expect(TokenKind::FatArrow, "'=>' expected.", 1005);
-                let body = self.parse_arrow_body();
-                let end = self.previous().span;
-                Expression {
-                    id: self.alloc_node(),
-                    span: left.merge(end),
-                    kind: ExpressionKind::Arrow {
-                        parameters,
-                        return_type,
-                        body,
-                    },
-                }
-            }
-            TokenKind::LeftParen => {
-                let left = self.bump().span;
-                let inner = self.parse_expression();
-                let right = self.current().span;
-                self.expect(TokenKind::RightParen, "')' expected.", 1005);
-                Expression {
-                    id: self.alloc_node(),
-                    span: left.merge(right),
-                    kind: ExpressionKind::Parenthesized(Box::new(inner)),
-                }
-            }
-            _ => {
-                self.observe_unmodeled_regular_expression_if_current();
-                self.observe_unmodeled_template_if_current();
-                self.error_current("Expression expected.", 1109);
-                self.bump();
-                Expression {
-                    id: self.alloc_node(),
-                    span: token.span,
-                    kind: ExpressionKind::Missing,
-                }
-            }
-        }
     }
 
     fn parse_arrow_body(&mut self) -> ArrowBody {
