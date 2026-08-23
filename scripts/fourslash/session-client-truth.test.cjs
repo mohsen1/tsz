@@ -242,6 +242,41 @@ test("canonical sources contain no native-service or fixture arbitration route",
     assert.equal(fs.existsSync(path.join(root, "import-fix-parity-overrides.cjs")), false);
 });
 
+test("sequential fixtures reset their server session and recover before continuing", () => {
+    let resets = 0;
+    let restarts = 0;
+    const resetResult = runner.resetBridgeForNextTest({
+        resetSession() {
+            resets++;
+        },
+    }, () => {
+        restarts++;
+    });
+    assert.equal(resetResult, undefined);
+    assert.equal(resets, 1);
+    assert.equal(restarts, 0);
+
+    const resetError = new Error("reset failed");
+    const recovered = Symbol("recovered");
+    const recoveryResult = runner.resetBridgeForNextTest({
+        resetSession() {
+            throw resetError;
+        },
+    }, error => {
+        assert.strictEqual(error, resetError);
+        restarts++;
+        return recovered;
+    });
+    assert.strictEqual(recoveryResult, recovered);
+    assert.equal(restarts, 1);
+
+    const sequentialSource = fs.readFileSync(path.join(__dirname, "runner.cjs"), "utf8");
+    assert.match(
+        sequentialSource,
+        /finally\s*\{\s*await resetBridgeForNextTest\(bridge,[\s\S]*?restartBridge\(/,
+    );
+});
+
 test("CI aggregation never turns failed shards or a tolerant count floor into success", () => {
     const fullCi = fs.readFileSync(path.join(__dirname, "..", "ci", "full-ci.sh"), "utf8");
     const start = fullCi.indexOf("run_fourslash_aggregate() {");

@@ -502,6 +502,14 @@ function slowestResults(testResults, limit = 10) {
 // Sequential runner (fallback)
 // =============================================================================
 
+function resetBridgeForNextTest(bridge, restartBridge) {
+    try {
+        bridge.resetSession();
+    } catch (error) {
+        return restartBridge(error);
+    }
+}
+
 async function runSequential(opts, testsToRun) {
     const tsDir = process.cwd();
     const { TszServerBridge, createTszAdapterFactory } = require("./tsz-adapter.cjs");
@@ -509,12 +517,29 @@ async function runSequential(opts, testsToRun) {
     setupGlobals(tsDir);
     const { ts, Harness, FourSlash, HarnessLS, SessionClient } = loadHarnessModules(tsDir);
 
-    const bridge = new TszServerBridge(opts.tszServerBinary);
+    let bridge = new TszServerBridge(opts.tszServerBinary);
     await bridge.start();
 
-    const TszAdapter = createTszAdapterFactory(ts, Harness, SessionClient, bridge);
+    let TszAdapter = createTszAdapterFactory(ts, Harness, SessionClient, bridge);
     patchTestState(FourSlash, TszAdapter);
     patchSessionClient(SessionClient, ts);
+
+    const restartBridge = async (reason) => {
+        const previousBridge = bridge;
+        const nextBridge = new TszServerBridge(opts.tszServerBinary);
+        try {
+            await nextBridge.start();
+        } catch (error) {
+            nextBridge.shutdown();
+            previousBridge.shutdown();
+            throw error;
+        }
+        bridge = nextBridge;
+        TszAdapter = createTszAdapterFactory(ts, Harness, SessionClient, bridge);
+        patchTestState(FourSlash, TszAdapter);
+        previousBridge.shutdown();
+        if (opts.verbose) console.log(`    restarted bridge after ${reason}`);
+    };
 
     const testType = 1; // FourSlashTestType.Server — tsz-server talks over stdio
     let passed = 0;
@@ -575,6 +600,10 @@ async function runSequential(opts, testsToRun) {
                 console.log(`${tag} (${elapsed}ms)`);
                 console.log(`    ${errMsg.split("\n")[0]}`);
             }
+        } finally {
+            await resetBridgeForNextTest(bridge, resetError =>
+                restartBridge(`${testName} reset failed: ${resetError.message}`)
+            );
         }
     }
 
@@ -1135,6 +1164,7 @@ module.exports = {
     executedCount,
     runFailedCount,
     validateResultCoverage,
+    resetBridgeForNextTest,
     TIMEOUT_WEIGHT_BIAS_MS,
 };
 
