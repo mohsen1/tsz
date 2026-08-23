@@ -5,8 +5,6 @@ from __future__ import annotations
 
 from pathlib import Path
 import re
-import subprocess
-import tempfile
 import unittest
 
 
@@ -38,12 +36,15 @@ UNIT_LANE_EVENT = (
     "UNIT_LANE_EVENT: ${{ github.event_name == 'schedule' || "
     "github.event_name == 'workflow_dispatch' }}"
 )
-IGNORE_ATTRIBUTE_PATTERN = r"^\s*#\s*\[[^]]*\bignore\b[^]]*\]"
-IGNORE_SCAN = (
-    "rg --pcre2 -U -n '^\\s*#\\s*\\[[^]]*\\bignore\\b[^]]*\\]' "
-    "\\\n  crates/tsz-core/rewrite-tests "
-    "\\\n  crates/tsz-cli/rewrite-tests"
+ACTIVE_REWRITE_TEST_ROOTS = (
+    ROOT / "crates" / "tsz-core" / "rewrite-tests",
+    ROOT / "crates" / "tsz-cli" / "rewrite-tests",
 )
+ATTRIBUTE_PATTERN = re.compile(
+    r"^[^\S\r\n]*#\s*\[(?P<body>[^]]*)\]",
+    flags=re.MULTILINE,
+)
+IGNORE_TOKEN_PATTERN = re.compile(r"\bignore\b")
 
 
 def function_body(source: str, name: str) -> str:
@@ -80,17 +81,117 @@ def workflow_named_step(source: str, job: str, step: str) -> str:
     return match.group("body")
 
 
-def ignore_scan_matches(source: str) -> bool:
-    with tempfile.TemporaryDirectory() as directory:
-        path = Path(directory) / "case.rs"
-        path.write_text(source, encoding="utf-8")
-        result = subprocess.run(
-            ["rg", "--pcre2", "-U", "--quiet", IGNORE_ATTRIBUTE_PATTERN, str(path)],
-            check=False,
-        )
-    if result.returncode not in (0, 1):
-        raise AssertionError(f"rewrite ignore scan failed with status {result.returncode}")
-    return result.returncode == 0
+def blank_non_newlines(chars: list[str], start: int, end: int) -> None:
+    for index in range(start, end):
+        if chars[index] not in "\r\n":
+            chars[index] = " "
+
+
+def char_literal_end(source: str, start: int) -> int | None:
+    index = start + 1
+    if index >= len(source) or source[index] in "\r\n":
+        return None
+    if source[index] == "\\":
+        index += 1
+        if index >= len(source):
+            return None
+        if source[index] == "u" and source[index + 1 : index + 2] == "{":
+            closing_brace = source.find("}", index + 2)
+            if closing_brace == -1:
+                return None
+            index = closing_brace + 1
+        elif source[index] == "x":
+            index += 3
+        else:
+            index += 1
+    else:
+        index += 1
+    if index < len(source) and source[index] == "'":
+        return index + 1
+    return None
+
+
+def mask_rust_comments_and_literals(source: str) -> str:
+    chars = list(source)
+    index = 0
+    while index < len(source):
+        if source.startswith("//", index):
+            end = source.find("\n", index + 2)
+            end = len(source) if end == -1 else end
+            blank_non_newlines(chars, index, end)
+            index = end
+            continue
+        if source.startswith("/*", index):
+            start = index
+            depth = 1
+            index += 2
+            while index < len(source) and depth:
+                if source.startswith("/*", index):
+                    depth += 1
+                    index += 2
+                elif source.startswith("*/", index):
+                    depth -= 1
+                    index += 2
+                else:
+                    index += 1
+            blank_non_newlines(chars, start, index)
+            continue
+        if source[index] == "r":
+            opening_quote = index + 1
+            while opening_quote < len(source) and source[opening_quote] == "#":
+                opening_quote += 1
+            if opening_quote < len(source) and source[opening_quote] == '"':
+                terminator = '"' + "#" * (opening_quote - index - 1)
+                end = source.find(terminator, opening_quote + 1)
+                end = len(source) if end == -1 else end + len(terminator)
+                blank_non_newlines(chars, index, end)
+                index = end
+                continue
+        if source[index] == '"':
+            start = index
+            index += 1
+            while index < len(source):
+                if source[index] == "\\":
+                    index = min(index + 2, len(source))
+                elif source[index] == '"':
+                    index += 1
+                    break
+                else:
+                    index += 1
+            blank_non_newlines(chars, start, index)
+            continue
+        if source[index] == "'":
+            end = char_literal_end(source, index)
+            if end is not None:
+                blank_non_newlines(chars, index, end)
+                index = end
+                continue
+        index += 1
+    return "".join(chars)
+
+
+def active_ignore_attribute_lines(source: str) -> list[int]:
+    masked = mask_rust_comments_and_literals(source)
+    return [
+        masked.count("\n", 0, match.start()) + 1
+        for match in ATTRIBUTE_PATTERN.finditer(masked)
+        if IGNORE_TOKEN_PATTERN.search(match.group("body"))
+    ]
+
+
+def active_rewrite_ignores() -> list[str]:
+    offenders = []
+    for root in ACTIVE_REWRITE_TEST_ROOTS:
+        if not root.is_dir():
+            raise AssertionError(f"missing active rewrite-test root: {root}")
+        paths = sorted(root.rglob("*.rs"))
+        if not paths:
+            raise AssertionError(f"active rewrite-test root has no Rust tests: {root}")
+        for path in paths:
+            source = path.read_text(encoding="utf-8")
+            for line in active_ignore_attribute_lines(source):
+                offenders.append(f"{path.relative_to(ROOT)}:{line}")
+    return offenders
 
 
 class FullCiRewriteGateTests(unittest.TestCase):
@@ -176,10 +277,13 @@ class FullCiRewriteGateTests(unittest.TestCase):
         )
 
     def test_active_rewrite_ignores_are_rejected_by_anchored_attribute(self) -> None:
-        self.assertIn(IGNORE_SCAN, self.unit_contract)
-        self.assertIn(
-            "active #[ignore] attributes are forbidden in rewrite tests",
-            self.unit_contract,
+        self.assertNotIn("rg ", self.unit_contract)
+        self.assertEqual(
+            tuple(path.relative_to(ROOT).as_posix() for path in ACTIVE_REWRITE_TEST_ROOTS),
+            (
+                "crates/tsz-core/rewrite-tests",
+                "crates/tsz-cli/rewrite-tests",
+            ),
         )
 
         matches = {
@@ -195,20 +299,41 @@ class FullCiRewriteGateTests(unittest.TestCase):
                 "]\n"
                 "fn skipped() {}\n"
             ),
+            "commented_cfg_attr": (
+                '#[cfg_attr(feature = "slow", /* retained debt */ ignore)]\n'
+                "fn skipped() {}\n"
+            ),
         }
         for name, source in matches.items():
             with self.subTest(name=name):
-                self.assertTrue(ignore_scan_matches(source))
+                self.assertTrue(active_ignore_attribute_lines(source))
 
         misses = {
             "line_comment": "  // #[ignore]\nfn active() {}\n",
             "commented_whitespace": "// # [ ignore ]\nfn active() {}\n",
+            "block_comment": "/*\n#[ignore]\n*/\nfn active() {}\n",
             "fixture_string": 'const ATTR: &str = "#[ignore]";\n',
+            "multiline_raw_string": (
+                'const ATTR: &str = r#"\n'
+                "#[ignore]\n"
+                '"#;\n'
+            ),
+            "ignore_in_cfg_string": (
+                '#[cfg_attr(feature = "ignore", allow(dead_code))]\n'
+                "fn active() {}\n"
+            ),
             "other_attribute": "#[allow(dead_code)]\nfn active() {}\n",
         }
         for name, source in misses.items():
             with self.subTest(name=name):
-                self.assertFalse(ignore_scan_matches(source))
+                self.assertFalse(active_ignore_attribute_lines(source))
+
+        offenders = active_rewrite_ignores()
+        self.assertFalse(
+            offenders,
+            "active #[ignore] attributes are forbidden in rewrite tests:\n"
+            + "\n".join(offenders),
+        )
 
     def test_pull_request_transitions_trigger_a_fresh_workflow(self) -> None:
         preamble = self.workflow.partition("\njobs:\n")[0]
