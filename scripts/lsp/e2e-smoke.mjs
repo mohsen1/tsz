@@ -1,10 +1,9 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync } from "node:fs";
 import path from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 
 const ROOT = path.resolve(fileURLToPath(new URL(".", import.meta.url)), "..", "..");
 
@@ -109,7 +108,7 @@ class LspClient {
     );
   }
 
-  request(method, params) {
+  requestMessage(method, params) {
     const id = this.nextId++;
     this.send({ jsonrpc: "2.0", id, method, params });
     return new Promise((resolve, reject) => {
@@ -118,7 +117,11 @@ class LspClient {
         reject(new Error(`timed out waiting for ${method}; stderr:\n${this.stderr}`));
       }, 15_000);
       this.pending.set(JSON.stringify(id), { resolve, reject, timer });
-    }).then((message) => {
+    });
+  }
+
+  request(method, params) {
+    return this.requestMessage(method, params).then((message) => {
       if (message.error) {
         throw new Error(`${method} failed: ${JSON.stringify(message.error)}`);
       }
@@ -137,113 +140,59 @@ class LspClient {
     }
   }
 
-  waitForExit() {
-    return Promise.race([
-      this.exit,
-      new Promise((_, reject) => {
-        setTimeout(() => {
-          reject(new Error(`timed out waiting for tsz-lsp exit; stderr:\n${this.stderr}`));
-        }, 5_000);
-      }),
-    ]);
+  async waitForExit() {
+    let timer;
+    try {
+      return await Promise.race([
+        this.exit,
+        new Promise((_, reject) => {
+          timer = setTimeout(() => {
+            reject(new Error(`timed out waiting for tsz-lsp exit; stderr:\n${this.stderr}`));
+          }, 5_000);
+        }),
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
   }
-}
-
-function textDocument(uri, text) {
-  return {
-    uri,
-    languageId: "typescript",
-    version: 1,
-    text,
-  };
-}
-
-function labels(completionResult) {
-  return (completionResult?.items ?? []).map((item) => item.label);
 }
 
 const binary = resolveBinary();
 assert(binary, "could not find tsz-lsp; pass a binary path or set TSZ_LSP_BIN");
 assert(existsSync(binary), `tsz-lsp binary does not exist: ${binary}`);
 
-const workspace = mkdtempSync(path.join(tmpdir(), "tsz-lsp-e2e-"));
 const client = new LspClient(binary);
 
 try {
-  const filePath = path.join(workspace, "main.ts");
-  const source = [
-    "function add(left: number, right: number): number { return left + right; }",
-    "const wrong: string = add(1, 2);",
-    "add(3, 4);",
-    "const alphaValue = 1;",
-    "al",
-    "",
-  ].join("\n");
-  writeFileSync(filePath, source);
-
-  const workspaceUri = pathToFileURL(workspace).href;
-  const uri = pathToFileURL(filePath).href;
-
   const initialize = await client.request("initialize", {
     processId: process.pid,
-    rootUri: workspaceUri,
-    capabilities: {
-      textDocument: {
-        completion: { completionItem: { snippetSupport: true } },
-        hover: { contentFormat: ["markdown", "plaintext"] },
-      },
-      workspace: { workspaceFolders: true },
-    },
-    workspaceFolders: [{ uri: workspaceUri, name: "tsz-lsp-e2e" }],
+    rootUri: null,
+    capabilities: {},
   });
   assert.equal(initialize.serverInfo.name, "tsz-lsp");
-  assert.equal(initialize.capabilities.hoverProvider, true);
-  assert.equal(initialize.capabilities.definitionProvider, true);
-  assert.equal(initialize.capabilities.renameProvider.prepareProvider, true);
+  assert.equal(initialize.capabilities.textDocumentSync, 1);
+  for (const provider of [
+    "hoverProvider",
+    "definitionProvider",
+    "renameProvider",
+    "completionProvider",
+    "diagnosticProvider",
+  ]) {
+    assert.equal(
+      Object.hasOwn(initialize.capabilities, provider),
+      false,
+      `rewrite foundation must not advertise unsupported ${provider}`,
+    );
+  }
 
   client.notify("initialized", {});
-  client.notify("textDocument/didOpen", {
-    textDocument: textDocument(uri, source),
+  const unsupported = await client.requestMessage("textDocument/hover", {
+    textDocument: { uri: "file:///unsupported.ts" },
+    position: { line: 0, character: 0 },
   });
-
-  const diagnostic = await client.request("textDocument/diagnostic", {
-    textDocument: { uri },
-  });
-  assert.equal(diagnostic.kind, "full");
-  assert(
-    diagnostic.items.some((item) => item.code === 2322),
-    `expected TS2322 diagnostic, got ${JSON.stringify(diagnostic.items)}`,
-  );
-
-  const completion = await client.request("textDocument/completion", {
-    textDocument: { uri },
-    position: { line: 4, character: 2 },
-  });
-  assert(
-    labels(completion).includes("alphaValue"),
-    `expected completion for alphaValue, got ${labels(completion).join(", ")}`,
-  );
-
-  const hover = await client.request("textDocument/hover", {
-    textDocument: { uri },
-    position: { line: 2, character: 1 },
-  });
-  assert.match(hover.contents.value, /add/);
-
-  const definition = await client.request("textDocument/definition", {
-    textDocument: { uri },
-    position: { line: 2, character: 1 },
-  });
-  assert.equal(definition[0].uri, uri);
-  assert.equal(definition[0].range.start.line, 0);
-
-  const rename = await client.request("textDocument/rename", {
-    textDocument: { uri },
-    position: { line: 2, character: 1 },
-    newName: "sum",
-  });
-  assert(rename.changes[uri].length >= 2, JSON.stringify(rename));
-  assert(rename.changes[uri].every((edit) => edit.newText === "sum"));
+  assert.equal(unsupported.jsonrpc, "2.0");
+  assert.equal(unsupported.error?.code, -32601);
+  assert.equal(Object.hasOwn(unsupported, "result"), false);
 
   await client.request("shutdown", null);
   client.notify("exit", null);
@@ -251,5 +200,4 @@ try {
   assert.equal(exit.code, 0, `expected clean exit, got ${JSON.stringify(exit)}`);
 } finally {
   await client.close();
-  rmSync(workspace, { recursive: true, force: true });
 }
