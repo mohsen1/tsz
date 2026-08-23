@@ -2,7 +2,7 @@ name: CI
 
 on:
   pull_request:
-    types: [opened, reopened, synchronize, ready_for_review]
+    types: [opened, reopened, synchronize, ready_for_review, converted_to_draft]
   merge_group:
   push:
     branches:
@@ -89,7 +89,7 @@ jobs:
 
   conformance:
     name: conformance-observation-${{ matrix.shard }}
-    if: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && inputs.refresh_tsc_cache != true }}
+    if: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.event.pull_request.draft == false)) && inputs.refresh_tsc_cache != true }}
     runs-on: ubuntu-latest
     timeout-minutes: 90
     strategy:
@@ -106,6 +106,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 1
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
       - name: Observe conformance shard
         id: observe
         continue-on-error: true
@@ -126,7 +127,7 @@ jobs:
             .ci-logs/full-ci.log
             .ci-status/check-summary.md
             .ci-status/full-ci.exit
-          if-no-files-found: warn
+          if-no-files-found: error
           retention-days: 14
 
   conformance-aggregate:
@@ -143,6 +144,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 1
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
       - name: Download conformance shard results
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -151,7 +153,6 @@ jobs:
           merge-multiple: false
       - name: Aggregate conformance observation
         id: observe
-        continue-on-error: true
         run: scripts/ci/github-suite.sh conformance-aggregate
       - name: Upload conformance observation aggregate
         if: always()
@@ -163,12 +164,12 @@ jobs:
             .ci-logs/full-ci.log
             .ci-status/check-summary.md
             .ci-status/full-ci.exit
-          if-no-files-found: warn
+          if-no-files-found: error
           retention-days: 14
 
   emit:
     name: emit-observation-${{ matrix.shard }}
-    if: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && inputs.refresh_tsc_cache != true }}
+    if: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.event.pull_request.draft == false)) && inputs.refresh_tsc_cache != true }}
     runs-on: ubuntu-latest
     timeout-minutes: 35
     strategy:
@@ -184,6 +185,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 1
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
       - name: Observe emit shard
         id: observe
         continue-on-error: true
@@ -220,6 +222,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 1
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
       - name: Download emit shard results
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -266,7 +269,7 @@ jobs:
 
   fourslash:
     name: fourslash-observation-${{ matrix.shard }}
-    if: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && inputs.refresh_tsc_cache != true }}
+    if: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.event.pull_request.draft == false)) && inputs.refresh_tsc_cache != true }}
     runs-on: ubuntu-latest
     timeout-minutes: 35
     strategy:
@@ -286,6 +289,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 1
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
       - name: Observe fourslash shard
         id: observe
         continue-on-error: true
@@ -305,7 +309,7 @@ jobs:
             .ci-logs/full-ci.log
             .ci-status/check-summary.md
             .ci-status/full-ci.exit
-          if-no-files-found: warn
+          if-no-files-found: error
           retention-days: 14
 
   fourslash-aggregate:
@@ -321,6 +325,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 1
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
       - name: Download fourslash shard results
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -329,7 +334,6 @@ jobs:
           merge-multiple: false
       - name: Aggregate fourslash observation
         id: observe
-        continue-on-error: true
         run: scripts/ci/github-suite.sh fourslash-aggregate
       - name: Upload fourslash observation aggregate
         if: always()
@@ -341,7 +345,7 @@ jobs:
             .ci-logs/full-ci.log
             .ci-status/check-summary.md
             .ci-status/full-ci.exit
-          if-no-files-found: warn
+          if-no-files-found: error
           retention-days: 14
 
   arch-size:
@@ -351,13 +355,18 @@ jobs:
     timeout-minutes: 10
     env:
       TSZ_ARCH_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before || 'HEAD^' }}
+      TSZ_REQUIRE_R0_READY: ${{ github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.event.pull_request.draft == false) }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
       - name: Run rewrite architecture guard
         run: |
-          python3 scripts/arch/arch_guard.py
+          if [[ "$TSZ_REQUIRE_R0_READY" == "true" ]]; then
+            python3 scripts/arch/arch_guard.py --require-r0-ready
+          else
+            python3 scripts/arch/arch_guard.py
+          fi
           python3 scripts/arch/rewrite_architecture_metrics.py \
             --check --base-ref "$TSZ_ARCH_BASE_SHA"
       - name: Prevent rewrite emit baseline ratchet-down
@@ -542,7 +551,8 @@ jobs:
       - name: Verify core CI jobs
         env:
           NEEDS_JSON: ${{ toJSON(needs) }}
-          EVENT_NAME: ${{ github.event_name }}
+          HEAVY_READY_EVENT: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.event.pull_request.draft == false) }}
+          UNIT_LANE_EVENT: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
         run: |
           python3 - <<'PY'
           import json
@@ -563,21 +573,33 @@ jobs:
           }
 
           # The active rewrite gate is strict: formatting, cargo check, Clippy,
-          # nextest, and the architecture guard must pass. Nightly/manual emit
+          # nextest, and the architecture guard must pass. Heavy-ready emit
           # additionally enforces the rewrite-era stable-key direction floor;
           # conformance and fourslash remain broad observations.
           fast = {"clippy", "arch-size"}
-          heavy_lane_event = os.environ.get("EVENT_NAME") in {"schedule", "workflow_dispatch"}
+          heavy = {
+              "conformance",
+              "conformance-aggregate",
+              "emit",
+              "emit-aggregate",
+              "fourslash",
+              "fourslash-aggregate",
+          }
+          heavy_ready_event = os.environ.get("HEAVY_READY_EVENT") == "true"
+          unit_lane_event = os.environ.get("UNIT_LANE_EVENT") == "true"
+          required = set(fast)
+          if heavy_ready_event:
+              required.update(heavy)
+          if unit_lane_event:
+              required.add("unit")
 
           failures = []
           for name in sorted(jobs):
               result = needs.get(name, {}).get("result")
-              if name in fast or (heavy_lane_event and name == "unit"):
-                  passing = {"success"}
-              elif heavy_lane_event:
-                  # A behavior failure is continued inside the observation
-                  # step. A failed job here therefore means the observation
-                  # infrastructure itself did not complete.
+              if name in required:
+                  # Behavior mismatches are continued inside observation
+                  # steps. Success here means the exact-head observation and
+                  # its infrastructure completed.
                   passing = {"success"}
               else:
                   passing = {"success", "skipped"}
@@ -590,16 +612,24 @@ jobs:
                   print(f"  - {failure}")
               sys.exit(1)
 
-          if heavy_lane_event:
+          if heavy_ready_event and not unit_lane_event:
+              print(
+                  "Rewrite foundation checks and exact-head full-corpus observations "
+                  "completed. The rewrite emit direction floor passed. Conformance "
+                  "and fourslash artifacts, including unsupported cases, remain "
+                  "informational."
+              )
+          elif unit_lane_event:
               print(
                   "Rewrite foundation checks and rewrite unit tests passed. "
-                  "The rewrite emit direction floor passed. Conformance and "
-                  "fourslash artifacts, including unsupported cases, remain informational."
+                  "Full-corpus observations completed and the rewrite emit direction "
+                  "floor passed. Conformance and fourslash artifacts, including "
+                  "unsupported cases, remain informational."
               )
           else:
               print(
                   "Rewrite foundation gate passed: fmt, check, Clippy, nextest, "
-                  "and the architecture guard are green. Full-corpus conformance, "
-                  "emit, and fourslash observations run nightly and manually."
+                  "and the architecture guard are green. Draft PR and push-to-main "
+                  "events keep full-corpus observations skipped."
               )
           PY

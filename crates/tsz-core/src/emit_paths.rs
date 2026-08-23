@@ -12,13 +12,10 @@ use std::path::{Component, Path, PathBuf};
 use crate::config::{CompilerOptionKey, ProjectProvenance};
 use crate::diagnostics::{Diagnostic, RelatedInformation};
 use crate::program::{
-    CompilerOptions, ProgramFile, has_unmodeled_extended_unicode_string_program_products,
-    has_unmodeled_no_substitution_template_program_products,
-    has_unmodeled_numeric_recovery_program_products,
-    has_unmodeled_regular_expression_program_products,
+    CapabilityAnalysis, CapabilityScope, CapabilityTarget, CompilerOptions, ProgramFile,
+    is_declaration_source,
 };
 use crate::source::{FileId, SourceText};
-use crate::syntax::StatementKind;
 
 #[derive(Debug, Clone, Default)]
 pub(crate) struct EmitFilePlan {
@@ -36,7 +33,6 @@ pub(crate) struct EmitPlan {
     files: Vec<EmitFilePlan>,
     diagnostics: Vec<Diagnostic>,
     blocked_products: bool,
-    incomplete_products: bool,
 }
 
 impl EmitPlan {
@@ -45,7 +41,6 @@ impl EmitPlan {
             files: vec![EmitFilePlan::default(); file_count],
             diagnostics: Vec::new(),
             blocked_products: false,
-            incomplete_products: false,
         }
     }
 
@@ -53,53 +48,11 @@ impl EmitPlan {
         files: &[ProgramFile],
         options: &CompilerOptions,
         provenance: &ProjectProvenance,
+        capabilities: &CapabilityAnalysis,
     ) -> Self {
         let config_path = provenance.entry_config_path();
         let configured_root = config_path.and_then(Path::parent);
         let paths = EmitPaths::for_program(files, configured_root, options.root_dir.as_deref());
-        let incomplete_commonjs_declarations = unmodeled_declaration_overload_files(files);
-        let mut incomplete_declarations = incomplete_commonjs_declarations.clone();
-        incomplete_declarations.extend(
-            files
-                .iter()
-                .filter(|file| file.syntax.has_unmodeled_declaration_products())
-                .map(|file| file.source.id),
-        );
-        let mut incomplete_file_products = files
-            .iter()
-            .filter(|file| {
-                file.syntax.has_unmodeled_function_products()
-                    || file.syntax.has_unmodeled_class_products()
-                    || file.syntax.has_unmodeled_declaration_hosts()
-                    || file.syntax.has_unmodeled_default_export_hosts()
-                    || file.syntax.has_unmodeled_expression_products()
-                    || file.syntax.has_unmodeled_template_products()
-                    || file.syntax.has_unmodeled_extended_unicode_string_products()
-                    || file.syntax.has_unmodeled_regular_expression_products()
-                    || file.syntax.has_unmodeled_numeric_recovery_products()
-                    || file.syntax.has_unmodeled_numeric_separator_products()
-                    || file.has_unmodeled_javascript_module_products()
-            })
-            .map(|file| file.source.id)
-            .collect::<BTreeSet<_>>();
-        if has_unmodeled_no_substitution_template_program_products(files, options) {
-            incomplete_file_products.extend(files.iter().map(|file| file.source.id));
-        }
-        if has_unmodeled_regular_expression_program_products(files, options) {
-            incomplete_file_products.extend(files.iter().map(|file| file.source.id));
-        }
-        if has_unmodeled_extended_unicode_string_program_products(files, options) {
-            incomplete_file_products.extend(files.iter().map(|file| file.source.id));
-        }
-        if has_unmodeled_numeric_recovery_program_products(files, options) {
-            incomplete_file_products.extend(files.iter().map(|file| file.source.id));
-        }
-        if files.iter().any(|file| {
-            file.syntax.has_authored_numeric_separator()
-                && file.syntax.has_unmodeled_numeric_separator_products()
-        }) {
-            incomplete_file_products.extend(files.iter().map(|file| file.source.id));
-        }
         let file_slots = files
             .iter()
             .map(|file| file.source.id.0 as usize + 1)
@@ -108,13 +61,6 @@ impl EmitPlan {
         let mut plan = Self::empty(file_slots);
         plan.diagnostics
             .extend(paths.explicit_root_diagnostics(files, options, provenance));
-        if files
-            .iter()
-            .any(|file| file.syntax.has_unicode_line_comment_terminator())
-        {
-            plan.incomplete_products = true;
-            return plan;
-        }
         if options.no_emit {
             return plan;
         }
@@ -124,53 +70,39 @@ impl EmitPlan {
             if is_declaration_source(&file.source.path) {
                 continue;
             }
-            if incomplete_file_products.contains(&file.source.id) {
-                // Default-export function lowering differs by module target,
-                // and invalid abstract functions must not be reprinted as
-                // ambient declarations. Some class modifiers and recovered
-                // members likewise have no exact runtime/declaration printer
-                // ownership. Namespace, module, and ambient-global declaration
-                // hosts likewise lack both runtime and declaration lowering.
-                // JavaScript-format module roots need product-specific runtime
-                // markers and declaration elision that are not owned.
-                // Block both products, including under `noCheck`, until those
-                // syntax-owned summaries exist.
-                plan.incomplete_products = true;
-                continue;
-            }
-            if is_effective_commonjs(&file.source.path, &options.module)
-                && (incomplete_commonjs_declarations.contains(&file.source.id)
-                    || file.syntax.has_unmodeled_commonjs_class_products())
-            {
-                // CommonJS needs hoisted export predeclarations for promoted
-                // function and class overload implementations. Until emit
-                // owns that summary, neither product is publishable.
-                plan.incomplete_products = true;
-                continue;
-            }
-            let javascript = paths.output_target(&file.source, options.out_dir.as_deref(), false);
-            let javascript_map = javascript.map();
-            plan.files[file.source.id.0 as usize].javascript = Some(javascript.path.clone());
-            products.push(PlannedProduct::new(
-                file.source.id,
-                ProductKind::Javascript,
-                javascript,
-            ));
-            if options.source_map && !options.inline_source_map {
+            let javascript_claimed = capabilities
+                .claim(
+                    CapabilityTarget::JavaScript,
+                    CapabilityScope::File(file.source.id),
+                )
+                .is_claimed();
+            if javascript_claimed {
+                let javascript =
+                    paths.output_target(&file.source, options.out_dir.as_deref(), false);
+                let javascript_map = javascript.map();
+                plan.files[file.source.id.0 as usize].javascript = Some(javascript.path.clone());
                 products.push(PlannedProduct::new(
                     file.source.id,
-                    ProductKind::JavascriptMap,
-                    javascript_map,
+                    ProductKind::Javascript,
+                    javascript,
                 ));
+                if options.source_map && !options.inline_source_map {
+                    products.push(PlannedProduct::new(
+                        file.source.id,
+                        ProductKind::JavascriptMap,
+                        javascript_map,
+                    ));
+                }
             }
 
             if options.declaration {
-                if incomplete_declarations.contains(&file.source.id) {
-                    // The syntax printer has no checked overload summary yet,
-                    // so it cannot know which body signature TS omits. Keep
-                    // JavaScript eligible, but never publish a false `.d.ts`.
-                    plan.incomplete_products = true;
-                } else {
+                let declaration_claimed = capabilities
+                    .claim(
+                        CapabilityTarget::Declaration,
+                        CapabilityScope::File(file.source.id),
+                    )
+                    .is_claimed();
+                if declaration_claimed {
                     let directory = options
                         .declaration_dir
                         .as_deref()
@@ -208,10 +140,6 @@ impl EmitPlan {
 
     pub(crate) const fn has_blocked_products(&self) -> bool {
         self.blocked_products
-    }
-
-    pub(crate) const fn has_incomplete_products(&self) -> bool {
-        self.incomplete_products
     }
 
     pub(crate) fn for_file(&self, id: FileId) -> &EmitFilePlan {
@@ -271,47 +199,6 @@ impl EmitPlan {
             ProductKind::JavascriptMap | ProductKind::DeclarationMap => {}
         }
     }
-}
-
-pub(crate) fn is_effective_commonjs(path: &Path, module: &str) -> bool {
-    let module = module.trim();
-    module.eq_ignore_ascii_case("commonjs")
-        || module.eq_ignore_ascii_case("cjs")
-        || ((module.eq_ignore_ascii_case("node16") || module.eq_ignore_ascii_case("nodenext"))
-            && path
-                .extension()
-                .is_some_and(|extension| extension.eq_ignore_ascii_case("cts")))
-}
-
-fn unmodeled_declaration_overload_files(files: &[ProgramFile]) -> BTreeSet<FileId> {
-    let mut incomplete = files
-        .iter()
-        .filter(|file| file.syntax.has_local_unmodeled_declaration_overloads())
-        .map(|file| file.source.id)
-        .collect::<BTreeSet<_>>();
-    let mut global_functions: BTreeMap<String, (bool, bool, BTreeSet<FileId>)> = BTreeMap::new();
-    for file in files {
-        if file.is_external_module() {
-            continue;
-        }
-        for statement in &file.syntax.statements {
-            let StatementKind::Function(declaration) = &statement.kind else {
-                continue;
-            };
-            let group = global_functions
-                .entry(declaration.name.clone())
-                .or_default();
-            group.0 |= !declaration.has_body;
-            group.1 |= declaration.has_body;
-            group.2.insert(file.source.id);
-        }
-    }
-    for (_, (has_signature, has_body, sources)) in global_functions {
-        if has_signature && has_body {
-            incomplete.extend(sources);
-        }
-    }
-    incomplete
 }
 
 #[derive(Debug, Clone)]
@@ -502,15 +389,6 @@ impl EmitPaths {
             })
             .collect()
     }
-}
-
-pub(crate) fn is_declaration_source(path: &Path) -> bool {
-    let name = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or_default()
-        .to_ascii_lowercase();
-    name.ends_with(".d.ts") || name.ends_with(".d.mts") || name.ends_with(".d.cts")
 }
 
 fn common_source_directory(files: &[ProgramFile]) -> Option<PathBuf> {

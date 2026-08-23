@@ -816,8 +816,8 @@ fn return_hosts_stay_outside_the_safe_file_boundary_even_across_asi() {
 }
 
 #[test]
-fn unmodeled_template_programs_skip_speculative_semantic_diagnostics() {
-    let cases: [(&str, &str, &[u32]); 2] = [
+fn unmodeled_template_regions_skip_only_their_own_semantic_diagnostics() {
+    let cases: [(&str, &str, &[u32], bool); 2] = [
         (
             "stringLiteralTypesWithTemplateStrings01.ts",
             concat!(
@@ -827,6 +827,7 @@ fn unmodeled_template_programs_skip_speculative_semantic_diagnostics() {
                 "let JK_BACKTICK_L: \"JK`L\" = `JK\\`L`;",
             ),
             &[],
+            true,
         ),
         (
             "stringLiteralTypesWithTemplateStrings02.ts",
@@ -835,11 +836,12 @@ fn unmodeled_template_programs_skip_speculative_semantic_diagnostics() {
                 "let de_NEWLINE_f: \"DE\\nF\" = `DE${\"\\n\"}F`;",
             ),
             &[1109, 1109],
+            false,
         ),
     ];
 
     for no_check in [false, true] {
-        for (path, source, expected_codes) in cases {
+        for (path, source, expected_codes, has_owned_sibling) in cases {
             let output = compile(
                 path,
                 source,
@@ -856,7 +858,14 @@ fn unmodeled_template_programs_skip_speculative_semantic_diagnostics() {
                 output.diagnostics
             );
             assert_eq!(output.exit_status, CompileExitStatus::SemanticIncomplete);
-            assert_eq!(output.stats.types, 0, "noCheck={no_check} {path}");
+            if no_check || !has_owned_sibling {
+                assert_eq!(output.stats.types, 0, "noCheck={no_check} {path}");
+            } else {
+                assert!(
+                    output.stats.types > 0,
+                    "the owned sibling must remain checked: {path}"
+                );
+            }
             assert_eq!(codes(&output), expected_codes, "noCheck={no_check} {path}");
             assert!(output.emitted_files.is_empty(), "noCheck={no_check} {path}");
         }
@@ -904,7 +913,12 @@ fn es5_is_rejected_and_unmodeled_declaration_literal_emit_is_deferred() {
         assert_eq!(codes(&removed_target), vec![code], "{target}");
         assert_eq!(
             removed_target.semantic_completion,
-            SemanticCompletion::Deferred,
+            SemanticCompletion::Complete,
+            "{target}"
+        );
+        assert_eq!(
+            removed_target.exit_status,
+            CompileExitStatus::DiagnosticsPresentOutputsSkipped,
             "{target}"
         );
         assert!(removed_target.emitted_files.is_empty(), "{target}");
@@ -1594,12 +1608,23 @@ fn template_program_requires_exact_context_free_compiler_options() {
                     ..options(target)
                 },
             );
+            let expected = if matches!(target, "es7" | "latest") {
+                SemanticCompletion::Complete
+            } else {
+                SemanticCompletion::Deferred
+            };
             assert_eq!(
-                output.semantic_completion,
-                SemanticCompletion::Deferred,
+                output.semantic_completion, expected,
                 "noCheck={no_check} target={target:?}: {:?}",
                 output.diagnostics
             );
+            if matches!(target, "es7" | "latest") {
+                assert_eq!(codes(&output), vec![6046]);
+                assert_eq!(
+                    output.exit_status,
+                    CompileExitStatus::DiagnosticsPresentOutputsSkipped
+                );
+            }
             assert!(output.emitted_files.is_empty(), "target={target:?}");
         }
 
@@ -1635,7 +1660,8 @@ fn template_program_requires_exact_context_free_compiler_options() {
                 ..options("es2015")
             },
         );
-        assert_eq!(no_emit.semantic_completion, SemanticCompletion::Deferred);
+        assert_eq!(no_emit.semantic_completion, SemanticCompletion::Complete);
+        assert_eq!(no_emit.exit_status, CompileExitStatus::Success);
         assert!(no_emit.emitted_files.is_empty());
     }
 }

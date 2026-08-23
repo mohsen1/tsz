@@ -35,6 +35,9 @@ impl Checker<'_> {
         declaration: DeclId,
         supplied: &[TypeId],
     ) -> Completion<ReferenceInstantiation> {
+        if !self.semantic_declaration_is_claimed(declaration) {
+            return Completion::Deferred;
+        }
         let Some(model) = self.models.get(&declaration).copied() else {
             return Completion::Complete(ReferenceInstantiation::Exact);
         };
@@ -145,6 +148,9 @@ impl Checker<'_> {
         declaration: DeclId,
         arguments: &[TypeId],
     ) -> Completion<TypeId> {
+        if !self.semantic_declaration_is_claimed(declaration) {
+            return Completion::Deferred;
+        }
         let Some(model) = self.models.get(&declaration).copied() else {
             return Completion::Deferred;
         };

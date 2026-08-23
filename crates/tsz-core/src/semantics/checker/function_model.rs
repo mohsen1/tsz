@@ -7,7 +7,7 @@ use crate::syntax::{
     Parameter, Statement, StatementKind, TypeNode,
 };
 
-use super::{Checker, DeclarationModel};
+use super::{Checker, DeclarationModel, relation_diagnostic::ContextualType};
 use crate::semantics::relation::{RelationMode, RelationPropertyOrder, relate_with_property_order};
 use crate::semantics::types::{
     Completion, ParameterType, Signature, TypeId, TypeKind, UnionPolicy,
@@ -109,7 +109,7 @@ impl Checker<'_> {
                             .parameters
                             .iter()
                             .all(|parameter| parameter.annotation.is_none() && !parameter.optional)
-                        && declaration.overload_completion_supported
+                        && declaration.overload_context_is_recovery_free()
                 }
                 _ => false,
             }
@@ -190,7 +190,17 @@ impl Checker<'_> {
     /// compatibility owner makes the whole check an honest nonclaim.
     pub(super) fn validate_function_overload_group(&mut self, id: DeclId) {
         let group = self.function_group_ids(id);
-        if group.len() < 2 || group.first() != Some(&id) {
+        if group.len() < 2 {
+            return;
+        }
+        if group
+            .iter()
+            .any(|candidate| !self.semantic_declaration_is_claimed(*candidate))
+        {
+            let _ = self.require_completion(Completion::<()>::Deferred);
+            return;
+        }
+        if group.first() != Some(&id) {
             return;
         }
         if self.javascript_function_redeclaration_group_is_modeled(&self.value_group_ids(id)) {
@@ -204,7 +214,7 @@ impl Checker<'_> {
                     if declaration.is_async
                         || declaration.default_export
                         || declaration.abstract_declaration
-                        || !declaration.overload_completion_supported
+                        || !declaration.overload_context_is_recovery_free()
             )
         }) {
             // TS1064, default-export overload ownership, and the invalid
@@ -439,10 +449,12 @@ impl Checker<'_> {
         };
         self.signatures_are_compatibly_modeled(
             &Signature {
+                generic_declaration: None,
                 parameters: implementation_parameters,
                 return_type: implementation_return,
             },
             &Signature {
+                generic_declaration: None,
                 parameters: overload_parameters,
                 return_type: overload_return,
             },
@@ -507,7 +519,7 @@ impl Checker<'_> {
         parameters: &[Parameter],
         annotation: Option<&TypeNode>,
         body: &ArrowBody,
-        expected: Option<TypeId>,
+        expected: ContextualType,
     ) -> TypeId {
         let arrow_scope = self.program.files[file.0 as usize]
             .bindings
@@ -515,9 +527,22 @@ impl Checker<'_> {
             .get(&owner)
             .copied()
             .unwrap_or(scope);
-        let expected_signature = expected
-            .and_then(|expected| self.complete_type(expected))
-            .and_then(|expected| self.callable_signature(expected));
+        self.check_parameter_initializer_statement_descendants(file, arrow_scope, parameters);
+        let (expected_signature, signature_context) = match expected {
+            ContextualType::Known(expected) => {
+                if let Some(expected) = self.complete_type(expected) {
+                    if let Some(signature) = self.callable_signature(expected) {
+                        (Some(signature), ContextualType::Known(expected))
+                    } else {
+                        (None, ContextualType::Absent)
+                    }
+                } else {
+                    (None, ContextualType::Deferred)
+                }
+            }
+            ContextualType::Absent => (None, ContextualType::Absent),
+            ContextualType::Deferred => (None, ContextualType::Deferred),
+        };
         let mut resolved = Vec::with_capacity(parameters.len());
         for (index, parameter) in parameters.iter().enumerate() {
             if parameter.initializer.is_some()
@@ -550,6 +575,7 @@ impl Checker<'_> {
             if parameter.annotation.is_none()
                 && parameter.initializer.is_none()
                 && expected_signature.is_none()
+                && matches!(signature_context, ContextualType::Absent)
                 && self.options.effective_no_implicit_any()
             {
                 self.push_diagnostic(
@@ -569,45 +595,62 @@ impl Checker<'_> {
                 rest: parameter.rest,
             });
         }
-        let expected_return = annotation
-            .map(|annotation| {
-                if annotation.contains_type_query() {
-                    let _ = self.require_completion(Completion::<()>::Deferred);
-                }
-                self.resolve_type_node(file, arrow_scope, annotation, &HashMap::new())
-            })
-            .or_else(|| {
-                expected_signature
-                    .as_ref()
-                    .map(|signature| signature.return_type)
-            });
+        let expected_return = if let Some(annotation) = annotation {
+            if annotation.contains_type_query() {
+                let _ = self.require_completion(Completion::<()>::Deferred);
+            }
+            ContextualType::Known(self.resolve_type_node(
+                file,
+                arrow_scope,
+                annotation,
+                &HashMap::new(),
+            ))
+        } else if let Some(signature) = &expected_signature {
+            ContextualType::Known(signature.return_type)
+        } else {
+            signature_context
+        };
+        let expected_return_type = match expected_return {
+            ContextualType::Known(expected_return) => Some(expected_return),
+            ContextualType::Absent | ContextualType::Deferred => None,
+        };
         let expected_return_order = annotation.and_then(|annotation| {
             self.property_order_for_type_node_root(file, arrow_scope, annotation)
         });
+        for (parameter, resolved) in parameters.iter().zip(&resolved) {
+            if parameter.initializer.is_some()
+                || parameter.optional && self.options.effective_strict_null_checks()
+                || parameter.annotation.is_none()
+                    && expected_signature.is_none()
+                    && (!matches!(signature_context, ContextualType::Absent)
+                        || self.options.effective_no_implicit_any())
+            {
+                continue;
+            }
+            if let Some(declaration) =
+                self.find_declaration(file, owner, DeclarationKind::Parameter, &parameter.name)
+            {
+                self.parameter_type_overrides
+                    .insert(declaration, resolved.ty);
+            }
+        }
         let return_type = match body {
             ArrowBody::Expression(body) => {
-                self.infer_expression(file, arrow_scope, body, expected_return)
+                self.infer_expression_contextual(file, arrow_scope, body, expected_return)
             }
             ArrowBody::Block(statements) => {
-                for statement in statements {
-                    let statement_scope = self.program.files[file.0 as usize]
-                        .bindings
-                        .scope_for_node
-                        .get(&statement.id)
-                        .copied()
-                        .unwrap_or(arrow_scope);
-                    self.check_statement(
-                        file,
-                        statement_scope,
-                        statement,
-                        expected_return,
-                        expected_return_order.as_ref(),
-                    );
-                }
-                expected_return.unwrap_or(self.store.builtins.void)
+                self.check_statement_list(
+                    file,
+                    arrow_scope,
+                    statements,
+                    expected_return,
+                    expected_return_order.as_ref(),
+                );
+                expected_return_type.unwrap_or(self.store.builtins.void)
             }
         };
         self.store.intern(TypeKind::Function(Signature {
+            generic_declaration: None,
             parameters: resolved,
             return_type,
         }))
@@ -623,11 +666,12 @@ impl Checker<'_> {
             return Completion::Deferred;
         }
         if let Some(annotation) = &parameter.annotation {
+            let type_parameters = self.enclosing_function_type_parameters(file, scope);
             return Completion::Complete(self.resolve_type_node(
                 file,
                 scope,
                 annotation,
-                &HashMap::new(),
+                &type_parameters,
             ));
         }
         parameter.initializer.as_ref().map_or(
@@ -699,18 +743,7 @@ impl Checker<'_> {
         declaration: &FunctionDeclaration,
         scope: ScopeId,
     ) -> Completion<TypeId> {
-        let mut type_parameters = HashMap::new();
-        let mut seen = HashSet::new();
-        for (index, parameter) in declaration.type_parameters.iter().enumerate() {
-            let ty = self.store.intern(TypeKind::TypeParameter {
-                declaration: id,
-                index: index as u32,
-                name: parameter.name.clone(),
-            });
-            if seen.insert(parameter.name.as_str()) {
-                type_parameters.insert(parameter.name.clone(), ty);
-            }
-        }
+        let type_parameters = self.function_type_parameters(id, declaration);
         let mut parameters = Vec::with_capacity(declaration.parameters.len());
         for parameter in &declaration.parameters {
             if parameter.annotation.is_some() && parameter.initializer.is_some() {
@@ -757,9 +790,60 @@ impl Checker<'_> {
             }
         };
         Completion::Complete(self.store.intern(TypeKind::Function(Signature {
+            generic_declaration: (!declaration.type_parameters.is_empty()).then_some(id),
             parameters,
             return_type,
         })))
+    }
+
+    fn enclosing_function_type_parameters(
+        &mut self,
+        file: FileId,
+        scope: ScopeId,
+    ) -> HashMap<String, TypeId> {
+        let bindings = &self.program.files[file.0 as usize].bindings;
+        let Some(owner) = bindings
+            .scopes
+            .get(scope.0 as usize)
+            .and_then(|scope| scope.owner)
+        else {
+            return HashMap::new();
+        };
+        let Some(id) = bindings
+            .declarations
+            .iter()
+            .find(|declaration| {
+                declaration.owner == owner && declaration.kind == DeclarationKind::Function
+            })
+            .map(|declaration| declaration.id)
+        else {
+            return HashMap::new();
+        };
+        let Some(DeclarationModel::Function { declaration, .. }) = self.models.get(&id).copied()
+        else {
+            return HashMap::new();
+        };
+        self.function_type_parameters(id, declaration)
+    }
+
+    fn function_type_parameters(
+        &mut self,
+        id: DeclId,
+        declaration: &FunctionDeclaration,
+    ) -> HashMap<String, TypeId> {
+        let mut type_parameters = HashMap::new();
+        let mut seen = HashSet::new();
+        for (index, parameter) in declaration.type_parameters.iter().enumerate() {
+            let ty = self.store.intern(TypeKind::TypeParameter {
+                declaration: id,
+                index: index as u32,
+                name: parameter.name.clone(),
+            });
+            if seen.insert(parameter.name.as_str()) {
+                type_parameters.insert(parameter.name.clone(), ty);
+            }
+        }
+        type_parameters
     }
 
     fn infer_function_return(
@@ -777,6 +861,13 @@ impl Checker<'_> {
         };
         collect_return_sites(&declaration.body, &mut analysis);
         if !analysis.supported {
+            return Completion::Deferred;
+        }
+        if analysis.sites.iter().any(|site| {
+            !self
+                .capabilities
+                .semantic_check_node_is_claimed(id.file, site.statement.id)
+        }) {
             return Completion::Deferred;
         }
         if analysis.sites.is_empty() || analysis.sites.iter().all(|site| site.expression.is_none())

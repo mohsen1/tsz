@@ -1,15 +1,20 @@
 //! Incremental service boundary. The service owns source revisions and asks the
 //! compiler for semantic values; it does not own type algorithms.
 
+use std::cell::RefCell;
+use std::cmp::Reverse;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
 use crate::diagnostics::Diagnostic;
-use crate::program::{CompileOutput, Compiler, CompilerOptions, SemanticCompletion, SourceInput};
+use crate::program::{
+    CapabilityScope, CapabilityTarget, CompileOutput, Compiler, CompilerOptions, ProgramFile,
+    SemanticCompletion, SourceInput,
+};
 use crate::source::Span;
-use crate::syntax::{ClassMemberKind, Statement, StatementKind, VariableKind, parse_source};
+use crate::syntax::{ClassMemberKind, Statement, StatementKind, VariableKind};
 
 mod display;
 mod navigation;
@@ -59,6 +64,10 @@ pub struct LanguageService {
     compiler: Compiler,
     options: CompilerOptions,
     files: BTreeMap<String, OpenFile>,
+    /// One compiled snapshot for the current options plus exact open-file
+    /// revisions. Every mutation owner invalidates it; incomplete snapshots
+    /// remain reusable because capability verdicts are part of the value.
+    compiled_snapshot: RefCell<Option<CompileOutput>>,
 }
 
 impl LanguageService {
@@ -68,11 +77,13 @@ impl LanguageService {
             compiler: Compiler::new(),
             options,
             files: BTreeMap::new(),
+            compiled_snapshot: RefCell::new(None),
         }
     }
 
     pub fn configure(&mut self, options: CompilerOptions) {
         self.options = options;
+        self.compiled_snapshot.get_mut().take();
     }
 
     pub fn open(&mut self, path: impl Into<String>, text: impl Into<Arc<str>>) {
@@ -83,6 +94,7 @@ impl LanguageService {
                 version: 1,
             },
         );
+        self.compiled_snapshot.get_mut().take();
     }
 
     pub fn change(&mut self, path: &str, text: impl Into<Arc<str>>) -> bool {
@@ -91,15 +103,21 @@ impl LanguageService {
         };
         file.text = text.into();
         file.version += 1;
+        self.compiled_snapshot.get_mut().take();
         true
     }
 
     pub fn close(&mut self, path: &str) -> bool {
-        self.files.remove(&normalize_path(path)).is_some()
+        let removed = self.files.remove(&normalize_path(path)).is_some();
+        if removed {
+            self.compiled_snapshot.get_mut().take();
+        }
+        removed
     }
 
     pub fn reset(&mut self) {
         self.files.clear();
+        self.compiled_snapshot.get_mut().take();
     }
 
     #[must_use]
@@ -117,6 +135,10 @@ impl LanguageService {
     }
 
     pub fn compile(&self) -> CompileOutput {
+        self.compile_uncached()
+    }
+
+    fn compile_uncached(&self) -> CompileOutput {
         let inputs = self
             .files
             .iter()
@@ -125,32 +147,64 @@ impl LanguageService {
         self.compiler.compile(inputs, &self.options)
     }
 
+    fn with_compiled_snapshot<R>(&self, query: impl FnOnce(&CompileOutput) -> R) -> R {
+        if self.compiled_snapshot.borrow().is_none() {
+            let output = self.compile_uncached();
+            self.compiled_snapshot.borrow_mut().replace(output);
+        }
+        let snapshot = self.compiled_snapshot.borrow();
+        query(snapshot.as_ref().expect("compiled snapshot"))
+    }
+
     pub fn syntactic_diagnostics(&self, path: &str) -> Vec<Diagnostic> {
         self.diagnostics(path, |code| code < 2000)
     }
 
     pub fn semantic_diagnostics(&self, path: &str) -> SemanticDiagnosticResult {
         let normalized = normalize_path(path);
-        let output = self.compile();
-        SemanticDiagnosticResult {
-            diagnostics: output
-                .diagnostics
-                .into_iter()
-                .filter(|diagnostic| normalize_path(&diagnostic.file) == normalized)
-                .filter(|diagnostic| diagnostic.code >= 2000)
-                .collect(),
-            semantic_completion: output.semantic_completion,
-        }
+        self.with_compiled_snapshot(|output| {
+            let file = output.program.files.iter().find(|file| {
+                normalize_path(&file.source.path.to_string_lossy()) == normalized
+                    || normalize_path(&file.source.host_path.to_string_lossy()) == normalized
+            });
+            let semantic_completion = file.map_or(SemanticCompletion::Deferred, |file| {
+                if output
+                    .capabilities
+                    .semantic_diagnostics_file_is_claimed(file.source.id)
+                {
+                    output
+                        .check_file_completions
+                        .get(file.source.id.0 as usize)
+                        .copied()
+                        .unwrap_or(SemanticCompletion::Deferred)
+                } else {
+                    SemanticCompletion::Deferred
+                }
+            });
+            SemanticDiagnosticResult {
+                diagnostics: output
+                    .diagnostics
+                    .iter()
+                    .filter(|diagnostic| normalize_path(&diagnostic.file) == normalized)
+                    .filter(|diagnostic| diagnostic.code >= 2000)
+                    .cloned()
+                    .collect(),
+                semantic_completion,
+            }
+        })
     }
 
     fn diagnostics(&self, path: &str, include: impl Fn(u32) -> bool) -> Vec<Diagnostic> {
         let normalized = normalize_path(path);
-        self.compile()
-            .diagnostics
-            .into_iter()
-            .filter(|diagnostic| normalize_path(&diagnostic.file) == normalized)
-            .filter(|diagnostic| include(diagnostic.code))
-            .collect()
+        self.with_compiled_snapshot(|output| {
+            output
+                .diagnostics
+                .iter()
+                .filter(|diagnostic| normalize_path(&diagnostic.file) == normalized)
+                .filter(|diagnostic| include(diagnostic.code))
+                .cloned()
+                .collect()
+        })
     }
 
     /// A small R0 quick-info surface for declarations represented by the new
@@ -158,32 +212,24 @@ impl LanguageService {
     /// semantic result.
     pub fn quick_info(&self, path: &str, offset: u32) -> Option<QuickInfo> {
         let normalized = normalize_path(path);
-        let file = self.files.get(&normalized)?;
-        let source = crate::source::SourceText::new(
-            crate::source::FileId(0),
-            normalized.into(),
-            Arc::clone(&file.text),
-        );
-        let parsed = parse_source(&source);
-        if parsed.unit.has_authored_extended_unicode_string()
-            && (parsed.unit.has_unmodeled_extended_unicode_string_products()
-                || !self.compile().semantic_completion.is_complete())
-        {
-            return None;
-        }
-        if parsed.unit.has_authored_numeric_recovery()
-            && (parsed.unit.has_unmodeled_numeric_recovery_products()
-                || !self.compile().semantic_completion.is_complete())
-        {
-            return None;
-        }
-        if parsed.unit.has_authored_numeric_separator()
-            && (parsed.unit.has_unmodeled_numeric_separator_products()
-                || !self.compile().semantic_completion.is_complete())
-        {
-            return None;
-        }
-        quick_info_in_statements(&parsed.unit.statements, offset)
+        self.files.get(&normalized)?;
+        self.with_compiled_snapshot(|output| {
+            let file = output.program.files.iter().find(|file| {
+                normalize_path(&file.source.path.to_string_lossy()) == normalized
+                    || normalize_path(&file.source.host_path.to_string_lossy()) == normalized
+            })?;
+            if !output
+                .capabilities
+                .claim(
+                    CapabilityTarget::QuickInfo,
+                    capability_scope_at(file, offset)?,
+                )
+                .is_claimed()
+            {
+                return None;
+            }
+            quick_info_in_statements(&file.syntax.statements, offset)
+        })
     }
 
     /// Resolve the declaration at `offset` together with the token span that
@@ -194,13 +240,31 @@ impl LanguageService {
         path: &str,
         offset: u32,
     ) -> Option<DefinitionAndBoundSpan> {
-        navigation::NavigationIndex::build(self.compile().program).definition(path, offset)
+        self.with_compiled_snapshot(|output| {
+            if !service_operation_claimed(output, path, offset, CapabilityTarget::Definition) {
+                return None;
+            }
+            let result =
+                navigation::NavigationIndex::build(&output.program).definition(path, offset)?;
+            definition_result_is_claimed(output, &result).then_some(result)
+        })
     }
 
     /// Find references through the same declaration identity used by
     /// definition lookup.
     pub fn references(&self, path: &str, offset: u32) -> Vec<ReferencedSymbol> {
-        navigation::NavigationIndex::build(self.compile().program).references(path, offset)
+        self.with_compiled_snapshot(|output| {
+            if !service_operation_claimed(output, path, offset, CapabilityTarget::References) {
+                return Vec::new();
+            }
+            let result =
+                navigation::NavigationIndex::build(&output.program).references(path, offset);
+            if references_result_is_claimed(output, &result) {
+                result
+            } else {
+                Vec::new()
+            }
+        })
     }
 
     /// Return identity-based highlights, restricted to the requested files.
@@ -210,17 +274,155 @@ impl LanguageService {
         offset: u32,
         files_to_search: &[String],
     ) -> Vec<DocumentHighlights> {
-        navigation::NavigationIndex::build(self.compile().program).document_highlights(
-            path,
-            offset,
-            files_to_search,
-        )
+        self.with_compiled_snapshot(|output| {
+            if !service_operation_claimed(output, path, offset, CapabilityTarget::Highlights) {
+                return Vec::new();
+            }
+            let result = navigation::NavigationIndex::build(&output.program).document_highlights(
+                path,
+                offset,
+                files_to_search,
+            );
+            if highlights_result_is_claimed(output, &result) {
+                result
+            } else {
+                Vec::new()
+            }
+        })
     }
 
     /// Return the rename trigger and all locations for the resolved symbol.
     pub fn rename(&self, path: &str, offset: u32) -> RenameResult {
-        navigation::NavigationIndex::build(self.compile().program).rename(path, offset)
+        self.with_compiled_snapshot(|output| {
+            if !service_operation_claimed(output, path, offset, CapabilityTarget::Rename) {
+                return RenameResult::failure();
+            }
+            let result = navigation::NavigationIndex::build(&output.program).rename(path, offset);
+            if rename_result_is_claimed(output, &result) {
+                result
+            } else {
+                RenameResult::failure()
+            }
+        })
     }
+}
+
+fn definition_result_is_claimed(output: &CompileOutput, result: &DefinitionAndBoundSpan) -> bool {
+    result.definitions.iter().all(|definition| {
+        service_location_claimed(
+            output,
+            &definition.file_name,
+            definition.text_span,
+            CapabilityTarget::Definition,
+        )
+    })
+}
+
+fn references_result_is_claimed(output: &CompileOutput, result: &[ReferencedSymbol]) -> bool {
+    result.iter().all(|symbol| {
+        service_location_claimed(
+            output,
+            &symbol.definition.file_name,
+            symbol.definition.text_span,
+            CapabilityTarget::References,
+        ) && symbol.references.iter().all(|reference| {
+            service_location_claimed(
+                output,
+                &reference.file_name,
+                reference.text_span,
+                CapabilityTarget::References,
+            )
+        })
+    })
+}
+
+fn highlights_result_is_claimed(output: &CompileOutput, result: &[DocumentHighlights]) -> bool {
+    result.iter().all(|document| {
+        document.highlight_spans.iter().all(|highlight| {
+            service_location_claimed(
+                output,
+                &document.file_name,
+                highlight.text_span,
+                CapabilityTarget::Highlights,
+            )
+        })
+    })
+}
+
+fn rename_result_is_claimed(output: &CompileOutput, result: &RenameResult) -> bool {
+    result.locations.iter().all(|location| {
+        service_location_claimed(
+            output,
+            &location.file_name,
+            location.text_span,
+            CapabilityTarget::Rename,
+        )
+    })
+}
+
+fn service_location_claimed(
+    output: &CompileOutput,
+    path: &str,
+    span: TextSpan,
+    target: CapabilityTarget,
+) -> bool {
+    let normalized = normalize_path(path);
+    let Some(file) = output.program.files.iter().find(|file| {
+        normalize_path(&file.source.path.to_string_lossy()) == normalized
+            || normalize_path(&file.source.host_path.to_string_lossy()) == normalized
+    }) else {
+        return false;
+    };
+    output
+        .capabilities
+        .claim(
+            target,
+            capability_scope_at(file, span.start).unwrap_or(CapabilityScope::File(file.source.id)),
+        )
+        .is_claimed()
+}
+
+fn service_operation_claimed(
+    output: &CompileOutput,
+    path: &str,
+    offset: u32,
+    target: CapabilityTarget,
+) -> bool {
+    let normalized = normalize_path(path);
+    let Some(file) = output.program.files.iter().find(|file| {
+        normalize_path(&file.source.path.to_string_lossy()) == normalized
+            || normalize_path(&file.source.host_path.to_string_lossy()) == normalized
+    }) else {
+        return false;
+    };
+    output
+        .capabilities
+        .claim(
+            target,
+            capability_scope_at(file, offset).unwrap_or(CapabilityScope::File(file.source.id)),
+        )
+        .is_claimed()
+}
+
+fn capability_scope_at(file: &ProgramFile, offset: u32) -> Option<CapabilityScope> {
+    let mut owner = None;
+    let mut best = None;
+    for statement in &file.syntax.statements {
+        statement.for_each_statement(&mut |statement| {
+            if contains(statement.span, offset) {
+                let candidate = (
+                    statement.span.start != offset,
+                    statement.span.len(),
+                    Reverse(statement.span.start),
+                );
+                if best.is_none_or(|current| candidate < current) {
+                    owner = Some(statement.id);
+                    best = Some(candidate);
+                }
+            }
+        });
+    }
+    owner.map(|owner| CapabilityScope::node(file.source.id, owner))
 }
 
 fn quick_info_in_statements(statements: &[Statement], offset: u32) -> Option<QuickInfo> {
@@ -354,5 +556,81 @@ const fn text_span(span: Span) -> TextSpan {
     TextSpan {
         start: span.start,
         length: span.len(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn compiled_snapshot_is_reused_and_invalidated_by_every_revision_owner() {
+        let mut service = LanguageService::new(CompilerOptions::default());
+        service.open(
+            "case.ts",
+            Arc::<str>::from("const gap = `plain`; const value: string = missing;"),
+        );
+        assert!(service.compiled_snapshot.get_mut().is_none());
+
+        let first = service.semantic_diagnostics("case.ts");
+        assert_eq!(first.diagnostics.len(), 1);
+        assert_eq!(first.semantic_completion, SemanticCompletion::Deferred);
+        assert!(service.compiled_snapshot.get_mut().is_some());
+        let uncached = service.compile();
+        let cached = service.compiled_snapshot.get_mut().as_ref().unwrap();
+        assert_eq!(cached.semantic_completion, uncached.semantic_completion);
+        assert_eq!(cached.diagnostics, uncached.diagnostics);
+
+        service.configure(CompilerOptions {
+            no_check: true,
+            ..CompilerOptions::default()
+        });
+        assert!(service.compiled_snapshot.get_mut().is_none());
+        let _ = service.semantic_diagnostics("case.ts");
+        assert!(service.compiled_snapshot.get_mut().is_some());
+
+        service.open("other.ts", Arc::<str>::from("const other = 1;"));
+        assert!(service.compiled_snapshot.get_mut().is_none());
+        service.quick_info("other.ts", 7);
+        assert!(service.compiled_snapshot.get_mut().is_some());
+
+        assert!(service.change("other.ts", Arc::<str>::from("const renamed = 1;")));
+        assert!(service.compiled_snapshot.get_mut().is_none());
+        service.quick_info("other.ts", 7);
+        assert!(service.compiled_snapshot.get_mut().is_some());
+
+        assert!(service.close("other.ts"));
+        assert!(service.compiled_snapshot.get_mut().is_none());
+        let _ = service.semantic_diagnostics("case.ts");
+        assert!(service.compiled_snapshot.get_mut().is_some());
+
+        service.reset();
+        assert!(service.compiled_snapshot.get_mut().is_none());
+    }
+
+    #[test]
+    fn capability_scope_prefers_adjacent_starts_and_nested_right_edges() {
+        let adjacent = "const g = `plain`;veryLongSiblingName;const veryLongSiblingName = 1;";
+        let adjacent_reference = adjacent.find("veryLongSiblingName").unwrap() as u32;
+        let mut service = LanguageService::new(CompilerOptions::default());
+        service.open("adjacent.ts", Arc::<str>::from(adjacent));
+
+        let definition = service
+            .definition_and_bound_span("adjacent.ts", adjacent_reference)
+            .expect("the adjacent statement start must not inherit the prior nonclaim");
+        assert_eq!(definition.definitions.len(), 1);
+        assert_eq!(definition.definitions[0].name, "veryLongSiblingName");
+
+        let nested = "function shell(bad: ){const sibling:string='x';sibling}";
+        let nested_reference = nested.rfind("sibling").unwrap() as u32;
+        let mut service = LanguageService::new(CompilerOptions::default());
+        service.open("nested.ts", Arc::<str>::from(nested));
+        for offset in [nested_reference, nested_reference + "sibling".len() as u32] {
+            let definition = service
+                .definition_and_bound_span("nested.ts", offset)
+                .expect("a nested statement owns both its token and right-edge query");
+            assert_eq!(definition.definitions.len(), 1);
+            assert_eq!(definition.definitions[0].name, "sibling");
+        }
     }
 }

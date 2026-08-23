@@ -28,6 +28,7 @@ impl Checker<'_> {
             return self.store.builtins.error;
         };
         let declaration = root.semantic_declaration();
+        self.observe_semantic_declaration(file, declaration);
         let root = self
             .store
             .intern(TypeKind::Deferred(DeferredType::Value(declaration)));

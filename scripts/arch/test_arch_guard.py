@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from contextlib import redirect_stdout
+import io
 import json
 from pathlib import Path
 import subprocess
@@ -98,6 +100,7 @@ class ArchGuardTests(unittest.TestCase):
 
     def install_rewrite_metric_sources(self) -> None:
         self.write("scripts/arch/arch_guard.py", "# architecture guard marker\n")
+        self.install_rewrite_compiler_size_manifest()
         self.write(
             "crates/tsz-core/src/syntax/ast.rs",
             "struct SourceUnit { syntax_policy: bool }\n",
@@ -115,8 +118,105 @@ class ArchGuardTests(unittest.TestCase):
             "let result = if options.no_check || missing { CheckResult { } };\n",
         )
 
+    def install_rewrite_compiler_size_manifest(self) -> None:
+        self.write(
+            arch_guard.REWRITE_COMPILER_SIZE_MANIFEST_PATH,
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "r0_physical_line_limit": 15_000,
+                    "include": list(arch_guard.REWRITE_COMPILER_INCLUDE_PATTERNS),
+                    "exclude": list(arch_guard.REWRITE_COMPILER_EXCLUDE_PATHS),
+                },
+                sort_keys=True,
+            ),
+        )
+        for relative in arch_guard.REWRITE_COMPILER_EXCLUDE_PATHS:
+            self.write(relative, "// test-only source\n")
+
     def test_clean_reset_layout_passes(self) -> None:
         self.assertEqual(arch_guard.check(self.root), [])
+
+    def test_rewrite_compiler_size_manifest_is_required_with_the_guard(self) -> None:
+        self.write("scripts/arch/arch_guard.py", "# architecture guard marker\n")
+        self.assertIn("rewrite-compiler-size-manifest", self.codes())
+
+    def test_rewrite_compiler_size_manifest_keeps_the_r0_limit_exact(self) -> None:
+        self.install_rewrite_compiler_size_manifest()
+        path = self.root / arch_guard.REWRITE_COMPILER_SIZE_MANIFEST_PATH
+        value = json.loads(path.read_text(encoding="utf-8"))
+        value["r0_physical_line_limit"] = 46_019
+        path.write_text(json.dumps(value, sort_keys=True), encoding="utf-8")
+        self.assertIn("rewrite-compiler-size-manifest", self.codes())
+
+    def test_rewrite_compiler_size_manifest_cannot_hide_a_source_root(self) -> None:
+        self.install_rewrite_compiler_size_manifest()
+        path = self.root / arch_guard.REWRITE_COMPILER_SIZE_MANIFEST_PATH
+        value = json.loads(path.read_text(encoding="utf-8"))
+        value["include"] = value["include"][:1]
+        path.write_text(json.dumps(value, sort_keys=True), encoding="utf-8")
+        self.assertIn("rewrite-compiler-size-manifest", self.codes())
+
+    def test_rewrite_compiler_size_uses_explicit_roots_and_exclusions(self) -> None:
+        self.install_rewrite_compiler_size_manifest()
+        size = arch_guard.rewrite_compiler_size(self.root)
+        self.assertEqual(size.physical_lines, 2)
+        self.assertEqual(
+            size.included_paths,
+            (
+                "crates/tsz-cli/src/lib.rs",
+                "crates/tsz-core/src/lib.rs",
+            ),
+        )
+        self.assertEqual(
+            size.excluded_paths,
+            arch_guard.REWRITE_COMPILER_EXCLUDE_PATHS,
+        )
+
+    def test_r0_size_readiness_strict_mode_fails_without_a_manifest(self) -> None:
+        output = io.StringIO()
+        with redirect_stdout(output):
+            status = arch_guard.main(
+                ["--root", str(self.root), "--require-r0-ready"]
+            )
+        self.assertEqual(status, 1)
+        self.assertIn("R0 size readiness: UNAVAILABLE", output.getvalue())
+        self.assertIn("r0-compiler-size", output.getvalue())
+
+    def test_r0_size_readiness_reports_debt_and_strict_mode_enforces_it(self) -> None:
+        self.install_rewrite_compiler_size_manifest()
+        for index in range(8):
+            self.write(f"crates/tsz-core/src/shard_{index}.rs", "line\n" * 1_900)
+
+        output = io.StringIO()
+        with redirect_stdout(output):
+            default_status = arch_guard.main(["--root", str(self.root)])
+        self.assertEqual(default_status, 0)
+        self.assertIn("R0 size readiness: NOT READY", output.getvalue())
+
+        output = io.StringIO()
+        with redirect_stdout(output):
+            strict_status = arch_guard.main(
+                ["--root", str(self.root), "--require-r0-ready"]
+            )
+        self.assertEqual(strict_status, 1)
+        self.assertIn("r0-compiler-size", output.getvalue())
+
+    def test_r0_size_readiness_strict_mode_accepts_a_small_rewrite(self) -> None:
+        self.install_rewrite_compiler_size_manifest()
+        output = io.StringIO()
+        with redirect_stdout(output):
+            status = arch_guard.main(
+                ["--root", str(self.root), "--require-r0-ready"]
+            )
+        self.assertEqual(status, 0)
+        self.assertIn("R0 size readiness: READY", output.getvalue())
+
+    def test_r0_size_readiness_requires_strictly_fewer_than_fifteen_thousand(self) -> None:
+        at_limit = arch_guard.RewriteCompilerSize(15_000, 15_000, (), ())
+        below_limit = arch_guard.RewriteCompilerSize(14_999, 15_000, (), ())
+        self.assertFalse(at_limit.r0_ready)
+        self.assertTrue(below_limit.r0_ready)
 
     def test_rewrite_architecture_ratchet_is_required_with_the_guard(self) -> None:
         self.write("scripts/arch/arch_guard.py", "# architecture guard marker\n")
@@ -379,6 +479,17 @@ class ArchGuardTests(unittest.TestCase):
         self.assertIn("github.event.before", arch_size)
         self.assertIn("'HEAD^'", arch_size)
         self.assertIn('--check --base-ref "$TSZ_ARCH_BASE_SHA"', arch_size)
+        self.assertIn("github.event_name == 'merge_group'", arch_size)
+        self.assertIn("github.event_name == 'pull_request'", arch_size)
+        self.assertIn("github.event.pull_request.draft == false", arch_size)
+        self.assertIn(
+            'if [[ "$TSZ_REQUIRE_R0_READY" == "true" ]]; then',
+            arch_size,
+        )
+        self.assertIn(
+            "python3 scripts/arch/arch_guard.py --require-r0-ready",
+            arch_size,
+        )
 
     def test_rewrite_architecture_metrics_cover_distributed_ownership(self) -> None:
         self.install_rewrite_metric_sources()
@@ -471,6 +582,7 @@ class ArchGuardTests(unittest.TestCase):
             "program_completion_gate_terms",
             "program_empty_check_result_sites",
             "program_whole_check_skip_terms",
+            "r0_handwritten_compiler_rust_lines",
             "reference_stack_constructors",
             "required_type_rs_lines",
             "source_unit_boolean_fields",
@@ -481,7 +593,7 @@ class ArchGuardTests(unittest.TestCase):
         ):
             self.assertGreater(measured[metric], baseline[metric], metric)
 
-    def test_rewrite_architecture_metrics_ignore_nonproduction_text(self) -> None:
+    def test_semantic_metrics_ignore_nonproduction_text_but_total_size_counts_it(self) -> None:
         self.install_rewrite_metric_sources()
         baseline = arch_guard.rewrite_architecture_metrics(self.root)
         self.write(
@@ -498,10 +610,10 @@ class ArchGuardTests(unittest.TestCase):
             }
             ''',
         )
-        self.assertEqual(
-            arch_guard.rewrite_architecture_metrics(self.root),
-            baseline,
-        )
+        measured = arch_guard.rewrite_architecture_metrics(self.root)
+        size_metric = "r0_handwritten_compiler_rust_lines"
+        self.assertGreater(measured.pop(size_metric), baseline.pop(size_metric))
+        self.assertEqual(measured, baseline)
 
     def test_workspace_member_is_exact_and_retired_crate_is_rejected(self) -> None:
         self.write(

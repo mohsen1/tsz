@@ -1,11 +1,15 @@
 use crate::source::{NodeId, Span};
 
-use super::{CommentTrivia, RegularExpressionLiteral};
+use super::{CommentTrivia, RegularExpressionLiteral, SourceCheckDirective};
 
 #[derive(Debug, Clone)]
 pub struct SourceUnit {
     pub statements: Vec<Statement>,
     pub span: Span,
+    pub(crate) authored_literal_facts: Vec<AuthoredLiteralFact>,
+    pub(crate) parser_recovery_facts: Vec<ParserRecoveryFact>,
+    pub(crate) unmodeled_declaration_hosts: Vec<UnmodeledDeclarationHostFact>,
+    pub(crate) source_check_directive: Option<SourceCheckDirective>,
     pub(crate) function_products_supported: bool,
     pub(crate) class_products_supported: bool,
     pub(crate) declaration_products_supported: bool,
@@ -27,34 +31,130 @@ pub struct SourceUnit {
     pub(crate) numeric_separator_products_supported: bool,
 }
 
+/// Scanner-authored literal occurrence retained for downstream ownership
+/// analysis. This is syntax provenance, not a product-support decision.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct AuthoredLiteralFact {
+    pub(crate) span: Span,
+    /// Parser-owned syntax extent whose statements may belong to the same
+    /// recovered literal. This stays separate from the authored token span so
+    /// capability analysis never has to infer recovery boundaries from text.
+    pub(crate) recovery_extent: Span,
+    pub(crate) kind: AuthoredLiteralKind,
+    /// Stable syntax identity for the smallest represented statement that
+    /// owns this scanner-authored literal and its SourceUnit-root wrapper.
+    pub(crate) owner: ParserRecoveryOwner,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum AuthoredLiteralKind {
+    Template,
+    NumericRecovery,
+    NumericSeparator,
+}
+
+/// Parser-owned extent for syntax whose recovered AST is not a complete
+/// semantic producer. The authored token remains separate from the dependent
+/// recovery extent so capability analysis does not infer parser boundaries.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ParserRecoveryFact {
+    pub(crate) authored_span: Span,
+    pub(crate) recovery_extent: Span,
+    pub(crate) kind: ParserRecoveryKind,
+    pub(crate) owner: ParserRecoveryOwner,
+}
+
+/// Stable syntax owners attached after the parser has built the recovered AST.
+/// `statement` is the smallest represented statement containing the authored
+/// recovery token; `root_statement` retains its SourceUnit-root attribution.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ParserRecoveryOwner {
+    pub(crate) root_statement: NodeId,
+    pub(crate) statement: NodeId,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum ParserRecoveryKind {
+    Declaration,
+    Expression,
+    Type,
+    Template,
+}
+
+/// Parser-retained identity for a declaration whose body is not represented
+/// yet. The binder publishes only this authored name; every semantic demand
+/// on the declaration remains nonclaiming until the host grammar is owned.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct UnmodeledDeclarationHostFact {
+    pub(crate) owner_start: u32,
+    pub(crate) recovery_extent: Span,
+    pub(crate) name: Option<String>,
+    pub(crate) name_span: Option<Span>,
+    pub(crate) kind: UnmodeledDeclarationHostKind,
+    pub(crate) exported: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum UnmodeledDeclarationHostKind {
+    Namespace,
+    Module,
+    ExternalModule,
+    Global,
+    Using,
+}
+
 impl SourceUnit {
+    #[must_use]
+    pub(crate) fn authored_literal_facts(&self) -> &[AuthoredLiteralFact] {
+        &self.authored_literal_facts
+    }
+
+    #[must_use]
+    pub(crate) fn parser_recovery_facts(&self) -> &[ParserRecoveryFact] {
+        &self.parser_recovery_facts
+    }
+
+    #[must_use]
+    pub(crate) fn unmodeled_declaration_hosts(&self) -> &[UnmodeledDeclarationHostFact] {
+        &self.unmodeled_declaration_hosts
+    }
+
+    #[must_use]
+    pub(crate) const fn source_check_directive(&self) -> Option<SourceCheckDirective> {
+        self.source_check_directive
+    }
+
     /// Whether this file owns a module-local root scope rather than
     /// contributing declarations to the program's global script scope.
     #[must_use]
     pub fn is_external_module(&self) -> bool {
-        self.statements
+        self.unmodeled_declaration_hosts
             .iter()
-            .any(|statement| match &statement.kind {
-                StatementKind::Import(_) | StatementKind::Export(_) => true,
-                StatementKind::Variable(declaration) => declaration.exported,
-                StatementKind::Function(declaration) => {
-                    declaration.exported || declaration.default_export
-                }
-                StatementKind::Class(declaration) => {
-                    declaration.exported || declaration.default_export
-                }
-                StatementKind::TypeAlias(declaration) => declaration.exported,
-                StatementKind::Interface(declaration) => declaration.exported,
-                StatementKind::If(_)
-                | StatementKind::Switch(_)
-                | StatementKind::Break(_)
-                | StatementKind::Continue(_)
-                | StatementKind::Return(_)
-                | StatementKind::Block(_)
-                | StatementKind::Expression(_)
-                | StatementKind::Empty
-                | StatementKind::Unknown => false,
-            })
+            .any(|host| host.exported)
+            || self
+                .statements
+                .iter()
+                .any(|statement| match &statement.kind {
+                    StatementKind::Import(_) | StatementKind::Export(_) => true,
+                    StatementKind::Variable(declaration) => declaration.exported,
+                    StatementKind::Function(declaration) => {
+                        declaration.exported || declaration.default_export
+                    }
+                    StatementKind::Class(declaration) => {
+                        declaration.exported || declaration.default_export
+                    }
+                    StatementKind::TypeAlias(declaration) => declaration.exported,
+                    StatementKind::Interface(declaration) => declaration.exported,
+                    StatementKind::If(_)
+                    | StatementKind::Switch(_)
+                    | StatementKind::Break(_)
+                    | StatementKind::Continue(_)
+                    | StatementKind::Return(_)
+                    | StatementKind::Block(_)
+                    | StatementKind::Expression(_)
+                    | StatementKind::Empty
+                    | StatementKind::Unknown => false,
+                })
     }
 
     /// Whether parser recovery escaped an authored type-member list anywhere
@@ -180,14 +280,8 @@ impl SourceUnit {
         self.has_authored_extended_unicode_string
     }
 
-    pub(crate) fn modeled_comments(&self) -> Option<&[CommentTrivia]> {
-        (!self.comments.is_empty()
-            && (self.has_authored_no_substitution_template && self.template_products_supported
-                || self.has_authored_extended_unicode_string
-                    && self.extended_unicode_string_products_supported
-                || self.has_authored_regular_expression
-                    && self.regular_expression_products_supported))
-            .then_some(self.comments.as_slice())
+    pub(crate) fn comments(&self) -> &[CommentTrivia] {
+        &self.comments
     }
 
     #[must_use]
@@ -266,6 +360,94 @@ pub enum StatementKind {
 }
 
 impl Statement {
+    pub(crate) fn for_each_statement(&self, visit: &mut impl FnMut(&Statement)) {
+        visit(self);
+        match &self.kind {
+            StatementKind::Import(_)
+            | StatementKind::TypeAlias(_)
+            | StatementKind::Interface(_)
+            | StatementKind::Break(_)
+            | StatementKind::Continue(_)
+            | StatementKind::Empty
+            | StatementKind::Unknown => {}
+            StatementKind::Export(declaration) => {
+                if let Some(expression) = &declaration.assignment {
+                    expression.for_each_statement(visit);
+                }
+            }
+            StatementKind::Variable(declaration) => {
+                if let Some(initializer) = &declaration.initializer {
+                    initializer.for_each_statement(visit);
+                }
+            }
+            StatementKind::Function(declaration) => {
+                for parameter in &declaration.parameters {
+                    if let Some(initializer) = &parameter.initializer {
+                        initializer.for_each_statement(visit);
+                    }
+                }
+                for statement in &declaration.body {
+                    statement.for_each_statement(visit);
+                }
+            }
+            StatementKind::Class(declaration) => {
+                for member in &declaration.members {
+                    match &member.kind {
+                        ClassMemberKind::Constructor {
+                            parameters, body, ..
+                        }
+                        | ClassMemberKind::Method {
+                            parameters, body, ..
+                        } => {
+                            for parameter in parameters {
+                                if let Some(initializer) = &parameter.initializer {
+                                    initializer.for_each_statement(visit);
+                                }
+                            }
+                            for statement in body {
+                                statement.for_each_statement(visit);
+                            }
+                        }
+                        ClassMemberKind::Property { initializer, .. } => {
+                            if let Some(initializer) = initializer {
+                                initializer.for_each_statement(visit);
+                            }
+                        }
+                    }
+                }
+            }
+            StatementKind::If(statement) => {
+                statement.condition.for_each_statement(visit);
+                statement.then_statement.for_each_statement(visit);
+                if let Some(statement) = &statement.else_statement {
+                    statement.for_each_statement(visit);
+                }
+            }
+            StatementKind::Switch(statement) => {
+                statement.expression.for_each_statement(visit);
+                for clause in &statement.clauses {
+                    if let SwitchClauseKind::Case(expression) = &clause.kind {
+                        expression.for_each_statement(visit);
+                    }
+                    for statement in &clause.statements {
+                        statement.for_each_statement(visit);
+                    }
+                }
+            }
+            StatementKind::Return(expression) => {
+                if let Some(expression) = expression {
+                    expression.for_each_statement(visit);
+                }
+            }
+            StatementKind::Block(statements) => {
+                for statement in statements {
+                    statement.for_each_statement(visit);
+                }
+            }
+            StatementKind::Expression(expression) => expression.for_each_statement(visit),
+        }
+    }
+
     fn contains_recovered_type_members(&self) -> bool {
         match &self.kind {
             StatementKind::Import(_)
@@ -409,6 +591,7 @@ pub struct IfStatement {
 pub struct SwitchStatement {
     pub expression: Expression,
     pub clauses: Vec<SwitchClause>,
+    pub recovered_discriminant: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -480,9 +663,18 @@ pub struct VariableDeclaration {
     pub declaration_kind: VariableKind,
     pub name: String,
     pub name_span: Span,
+    pub(crate) recovered_binding_names: Vec<AuthoredBindingName>,
     pub annotation: Option<TypeNode>,
     pub initializer: Option<Expression>,
     pub exported: bool,
+}
+
+/// Authored binding identity retained from a destructuring pattern whose full
+/// declaration AST is not represented yet.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct AuthoredBindingName {
+    pub(crate) name: String,
+    pub(crate) span: Span,
 }
 
 #[derive(Debug, Clone)]
@@ -500,6 +692,16 @@ pub struct FunctionDeclaration {
     pub declared: bool,
     pub abstract_declaration: bool,
     pub overload_completion_supported: bool,
+}
+
+impl FunctionDeclaration {
+    pub(crate) const fn overload_context_is_recovery_free(&self) -> bool {
+        self.overload_completion_supported
+    }
+
+    pub(crate) const fn bodyless_overload_is_recovery_free(&self) -> bool {
+        !self.has_body && self.overload_context_is_recovery_free()
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -597,6 +799,12 @@ pub struct ClassMember {
     pub kind: ClassMemberKind,
 }
 
+impl ClassMember {
+    pub(crate) const fn overload_context_is_recovery_free(&self) -> bool {
+        self.overload_completion_supported
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PropertyNameKind {
     Identifier,
@@ -668,6 +876,16 @@ pub struct Parameter {
     pub overload_completion_supported: bool,
     pub function_implementation_completion_supported: bool,
     pub span: Span,
+}
+
+impl Parameter {
+    pub(crate) const fn overload_context_is_recovery_free(&self) -> bool {
+        self.overload_completion_supported
+    }
+
+    pub(crate) const fn implementation_name_is_recovery_free(&self) -> bool {
+        self.function_implementation_completion_supported
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1269,6 +1487,7 @@ pub enum ExpressionKind {
         name_span: Span,
         entity_name: bool,
     },
+    This,
     Literal(Literal),
     RegularExpression(RegularExpressionLiteral),
     Object(Vec<ObjectProperty>),
@@ -1288,6 +1507,10 @@ pub enum ExpressionKind {
         name: String,
         name_span: Span,
     },
+    ElementAccess {
+        object: Box<Expression>,
+        index: Box<Expression>,
+    },
     Arrow {
         parameters: Vec<Parameter>,
         return_type: Option<TypeNode>,
@@ -1296,6 +1519,7 @@ pub enum ExpressionKind {
     Binary {
         left: Box<Expression>,
         operator: BinaryOperator,
+        operator_span: Span,
         right: Box<Expression>,
     },
     Unary {
@@ -1315,10 +1539,74 @@ pub enum ExpressionKind {
 }
 
 impl Expression {
+    fn for_each_statement(&self, visit: &mut impl FnMut(&Statement)) {
+        match &self.kind {
+            ExpressionKind::Identifier { .. }
+            | ExpressionKind::This
+            | ExpressionKind::Literal(_)
+            | ExpressionKind::RegularExpression(_)
+            | ExpressionKind::Missing => {}
+            ExpressionKind::Object(properties) => {
+                for property in properties {
+                    property.value.for_each_statement(visit);
+                }
+            }
+            ExpressionKind::Array(elements) => {
+                for element in elements {
+                    element.for_each_statement(visit);
+                }
+            }
+            ExpressionKind::Call {
+                callee, arguments, ..
+            }
+            | ExpressionKind::New {
+                callee, arguments, ..
+            } => {
+                callee.for_each_statement(visit);
+                for argument in arguments {
+                    argument.for_each_statement(visit);
+                }
+            }
+            ExpressionKind::Member { object, .. }
+            | ExpressionKind::Unary {
+                operand: object, ..
+            }
+            | ExpressionKind::Parenthesized(object) => object.for_each_statement(visit),
+            ExpressionKind::ElementAccess { object, index } => {
+                object.for_each_statement(visit);
+                index.for_each_statement(visit);
+            }
+            ExpressionKind::Arrow {
+                parameters, body, ..
+            } => {
+                for parameter in parameters {
+                    if let Some(initializer) = &parameter.initializer {
+                        initializer.for_each_statement(visit);
+                    }
+                }
+                match body {
+                    ArrowBody::Expression(expression) => expression.for_each_statement(visit),
+                    ArrowBody::Block(statements) => {
+                        for statement in statements {
+                            statement.for_each_statement(visit);
+                        }
+                    }
+                }
+            }
+            ExpressionKind::Binary { left, right, .. }
+            | ExpressionKind::Assignment { left, right } => {
+                left.for_each_statement(visit);
+                right.for_each_statement(visit);
+            }
+            ExpressionKind::As { expression, .. } => expression.for_each_statement(visit),
+        }
+    }
+
     #[must_use]
     pub fn contains_recovered_type_members(&self) -> bool {
         match &self.kind {
             ExpressionKind::Identifier { .. }
+            | ExpressionKind::This
             | ExpressionKind::Literal(_)
             | ExpressionKind::RegularExpression(_)
             | ExpressionKind::Missing => false,
@@ -1360,6 +1648,9 @@ impl Expression {
                 operand: object, ..
             }
             | ExpressionKind::Parenthesized(object) => object.contains_recovered_type_members(),
+            ExpressionKind::ElementAccess { object, index } => {
+                object.contains_recovered_type_members() || index.contains_recovered_type_members()
+            }
             ExpressionKind::Arrow {
                 parameters,
                 return_type,
@@ -1399,6 +1690,8 @@ pub enum ArrowBody {
 pub struct ObjectProperty {
     pub name: String,
     pub name_span: Span,
+    pub shorthand: bool,
+    pub shorthand_equals_span: Option<Span>,
     pub value: Expression,
     pub span: Span,
 }
@@ -1430,6 +1723,8 @@ pub enum BinaryOperator {
     StrictNotEquals,
     LogicalAnd,
     LogicalOr,
+    BitwiseAnd,
+    BitwiseOr,
     NullishCoalesce,
     In,
     InstanceOf,

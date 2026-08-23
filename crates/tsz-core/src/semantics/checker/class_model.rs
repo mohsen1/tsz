@@ -1,9 +1,11 @@
-use crate::bind::ScopeId;
+use crate::bind::{LexicalThisOwner, ScopeId};
 use crate::source::{DeclId, Span};
-use crate::syntax::{ClassDeclaration, ClassMemberKind, TypeNode};
+use crate::syntax::{
+    ClassDeclaration, ClassMemberKind, Expression, ExpressionKind, PropertyNameKind, TypeNode,
+};
 
 use super::object_shape::plain_type_parameters;
-use super::{Checker, ConstructOrigin, DeclarationModel};
+use super::{Checker, ConstructOrigin, DeclarationModel, is_declaration_source};
 use crate::semantics::relation::RelationContext;
 use crate::semantics::types::{Completion, DeferredType, Property, TypeId, TypeKind};
 
@@ -51,6 +53,187 @@ pub(super) fn class_instance_properties(
 }
 
 impl Checker<'_> {
+    /// Project one exact lexical-this method without claiming the full class shape.
+    pub(super) fn lexical_this_method_type(
+        &mut self,
+        file: crate::source::FileId,
+        scope: ScopeId,
+        object: &Expression,
+        name: &str,
+    ) -> Option<TypeId> {
+        if !matches!(object.kind, ExpressionKind::This) {
+            return None;
+        }
+        let LexicalThisOwner::ClassInstance(owner) = self.program.files[file.0 as usize]
+            .bindings
+            .lexical_this_owner(scope)?
+        else {
+            return None;
+        };
+        let DeclarationModel::Class {
+            declaration: class,
+            scope: class_scope,
+            ..
+        } = self.models.get(&owner).copied()?
+        else {
+            return None;
+        };
+        if !class.type_parameters.is_empty()
+            || class.extends.is_some()
+            || !class.implements.is_empty()
+            || !class.member_syntax_recovery_free
+        {
+            return None;
+        }
+        let mut candidates = class
+            .members
+            .iter()
+            .filter(|member| !member.modifiers.static_member && member.name == name);
+        let member = candidates.next()?;
+        if candidates.next().is_some()
+            || member.name_kind != PropertyNameKind::Identifier
+            || member.modifiers.static_member
+            || member.modifiers.readonly
+            || member.modifiers.abstract_member
+            || member.modifiers.declared
+            || member.modifiers.async_member
+            || member.modifiers.unsupported_for_overload_completion
+            || !member.overload_context_is_recovery_free()
+        {
+            return None;
+        }
+        let ClassMemberKind::Method {
+            type_parameters,
+            parameters,
+            return_type,
+            body,
+            has_body,
+            accessor: None,
+        } = &member.kind
+        else {
+            return None;
+        };
+        if !*has_body || !type_parameters.is_empty() {
+            return None;
+        }
+        let member_scope = self.node_scope(owner.file, member.id, class_scope);
+        self.contextual_function_projection(
+            owner.file,
+            member_scope,
+            parameters,
+            return_type.as_ref(),
+            body.is_empty(),
+        )
+    }
+
+    pub(super) fn check_class(
+        &mut self,
+        file: crate::source::FileId,
+        class_scope: ScopeId,
+        declaration: &ClassDeclaration,
+    ) {
+        if declaration.declared
+            || is_declaration_source(&self.program.files[file.0 as usize].source.path)
+        {
+            return;
+        }
+
+        self.check_unconstructed_class_properties(file, class_scope, declaration);
+
+        for (index, member) in declaration.members.iter().enumerate() {
+            match &member.kind {
+                ClassMemberKind::Constructor {
+                    has_body: false, ..
+                } if !member.modifiers.abstract_member && !member.modifiers.declared => {
+                    if !member.overload_context_is_recovery_free() {
+                        continue;
+                    }
+                    let next_is_constructor =
+                        declaration.members.get(index + 1).is_some_and(|next| {
+                            next.overload_context_is_recovery_free()
+                                && matches!(next.kind, ClassMemberKind::Constructor { .. })
+                        });
+                    if !next_is_constructor {
+                        self.push_diagnostic(
+                            file,
+                            member.name_span,
+                            "Constructor implementation is missing.".to_string(),
+                            2390,
+                        );
+                    }
+                }
+                ClassMemberKind::Method {
+                    has_body: false,
+                    accessor: None,
+                    ..
+                } if !member.modifiers.abstract_member && !member.modifiers.declared => {
+                    if !member.overload_context_is_recovery_free() {
+                        continue;
+                    }
+                    let Some(next) = declaration.members.get(index + 1) else {
+                        self.report_missing_function_implementation(file, member.name_span);
+                        continue;
+                    };
+                    if !next.overload_context_is_recovery_free() {
+                        continue;
+                    }
+                    let ClassMemberKind::Method {
+                        has_body: next_has_body,
+                        accessor: None,
+                        ..
+                    } = &next.kind
+                    else {
+                        self.report_missing_function_implementation(file, member.name_span);
+                        continue;
+                    };
+
+                    if next.name == member.name {
+                        if *next_has_body
+                            && next.modifiers.static_member != member.modifiers.static_member
+                        {
+                            let (code, message) = if member.modifiers.static_member {
+                                (2387, "Function overload must be static.")
+                            } else {
+                                (2388, "Function overload must not be static.")
+                            };
+                            self.push_diagnostic(file, next.name_span, message.to_string(), code);
+                        }
+                    } else if *next_has_body {
+                        let expected_name = self.program.files[file.0 as usize]
+                            .source
+                            .slice(member.name_span)
+                            .to_string();
+                        self.push_diagnostic(
+                            file,
+                            next.name_span,
+                            format!("Function implementation name must be '{expected_name}'."),
+                            2389,
+                        );
+                    } else {
+                        self.report_missing_function_implementation(file, member.name_span);
+                    }
+                }
+                ClassMemberKind::Constructor { .. }
+                | ClassMemberKind::Property { .. }
+                | ClassMemberKind::Method { .. } => {}
+            }
+        }
+    }
+
+    pub(super) fn report_missing_function_implementation(
+        &mut self,
+        file: crate::source::FileId,
+        span: Span,
+    ) {
+        self.push_diagnostic(
+            file,
+            span,
+            "Function implementation is missing or not immediately following the declaration."
+                .to_string(),
+            2391,
+        );
+    }
+
     pub(super) fn deferred_construct_type(
         &mut self,
         callee: TypeId,
@@ -152,7 +335,10 @@ impl Checker<'_> {
             if argument_count == 0 {
                 continue;
             }
-            let Completion::Complete(callee) = self.force_type(callee, 0) else {
+            let completion = self.force_type(callee, 0);
+            let Completion::Complete(callee) =
+                self.require_file_completion(origin.argument_span.file, completion)
+            else {
                 continue;
             };
             let TypeKind::ClassConstructor { declaration, .. } = self.store.kind(callee) else {

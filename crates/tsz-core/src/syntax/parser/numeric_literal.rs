@@ -57,8 +57,7 @@ impl Parser<'_> {
     }
 
     pub(super) const fn finish_numeric_separator_source(&mut self) -> bool {
-        let has_authored =
-            !self.separated_numeric_literals.is_empty() || self.has_unmodeled_numeric_separator;
+        let has_authored = !self.numeric_separator_spans.is_empty();
         if has_authored
             && (self.has_unmodeled_numeric_separator
                 || !self.diagnostics.is_empty()

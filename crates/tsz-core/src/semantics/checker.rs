@@ -2,12 +2,21 @@ use std::collections::{HashMap, HashSet};
 
 use rustc_hash::FxHashMap;
 
+mod binary_expression;
 mod cache_model;
+mod call_model;
+mod capabilities;
 mod class_model;
 mod class_property_initialization;
+mod declaration_value;
+mod element_access;
+mod entry;
+mod flow_reference;
 mod function_model;
+mod generic_call_instantiation;
 mod import_alias;
 mod object_shape;
+mod primary_reference;
 mod projection_model;
 pub(super) mod recursion;
 mod reference_instantiation;
@@ -17,38 +26,27 @@ mod required_type;
 mod statement_model;
 mod string_literal;
 mod type_member_grammar;
+mod unary_expression;
 
-use relation_diagnostic::{
-    ContextualPropertyType, RelationDiagnosticOutcome, RelationDiagnosticStyle,
-};
+pub use entry::{CheckResult, check_program};
+use relation_diagnostic::{ContextualType, RelationDiagnosticStyle};
 
 use crate::bind::{DeclarationKind, Meaning, ScopeId};
 use crate::diagnostics::Diagnostic;
-use crate::program::{CompilerOptions, Program, SemanticCompletion};
+use crate::program::{CapabilityAnalysis, CompilerOptions, Program, SemanticCompletion};
 use crate::source::{DeclId, FileId, NodeId, Span};
 use crate::syntax::{
-    BinaryOperator, ClassDeclaration, ClassMemberKind, Expression, ExpressionKind,
-    FunctionDeclaration, InterfaceDeclaration, KeywordType, Parameter, Statement, StatementKind,
-    TypeAliasDeclaration, TypeNode, TypeNodeKind, UnaryOperator, VariableDeclaration, VariableKind,
+    ClassDeclaration, Expression, ExpressionKind, FunctionDeclaration, InterfaceDeclaration,
+    KeywordType, Parameter, Statement, StatementKind, TypeAliasDeclaration, TypeNode, TypeNodeKind,
+    UnaryOperator, VariableDeclaration, VariableKind,
 };
 
 use super::relation::{RelationContext, RelationMode};
 use super::types::{
-    Completion, DeferredLogicalOperator, DeferredType, DeferredUnaryOperator, IndexKeyKind,
-    IndexSignature, LiteralProvenance, ObjectShape, Property, ShapeParameter, ShapeSignature,
-    Signature, TypeId, TypeKind, TypeStore, UnionPolicy,
+    Completion, DeferredType, DeferredUnaryOperator, ElementAccessMode, IndexKeyKind,
+    IndexSignature, LiteralProvenance, ObjectShape, Property, Signature, TypeId, TypeKind,
+    TypeStore, UnionPolicy,
 };
-
-#[derive(Debug)]
-pub struct CheckResult {
-    pub diagnostics: Vec<Diagnostic>,
-    pub type_count: usize,
-    pub semantic_completion: SemanticCompletion,
-}
-
-pub fn check_program(program: &Program, options: &CompilerOptions) -> CheckResult {
-    Checker::new(program, options).check()
-}
 
 #[derive(Clone, Copy)]
 enum DeclarationModel<'a> {
@@ -119,12 +117,13 @@ struct ConstructOrigin {
 struct Checker<'a> {
     program: &'a Program,
     options: &'a CompilerOptions,
+    capabilities: &'a CapabilityAnalysis,
     store: TypeStore,
     models: FxHashMap<DeclId, DeclarationModel<'a>>,
     parameter_type_overrides: FxHashMap<DeclId, TypeId>,
     deferred_anonymous_parameters: HashSet<DeclId>,
     forbidden_default_type_parameters: Vec<HashSet<TypeId>>,
-    value_queries: FxHashMap<DeclId, QueryState>,
+    value_queries: FxHashMap<DeclId, declaration_value::ValueQueryState>,
     force_queries: FxHashMap<TypeId, QueryState>,
     force_reference_stack: recursion::ReferenceExpansionStack,
     // Syntax contexts and diagnostic origins are session data. Neither is
@@ -141,14 +140,19 @@ struct Checker<'a> {
     expression_order_origins: FxHashMap<(FileId, NodeId), projection_model::PropertyOrderTree>,
     diagnostics: Vec<Diagnostic>,
     reported: HashSet<(FileId, u32, u32, DiagnosticIdentity)>,
-    semantic_completion: SemanticCompletion,
+    completion: capabilities::CompletionTracker,
 }
 
 impl<'a> Checker<'a> {
-    fn new(program: &'a Program, options: &'a CompilerOptions) -> Self {
+    fn new(
+        program: &'a Program,
+        options: &'a CompilerOptions,
+        capabilities: &'a CapabilityAnalysis,
+    ) -> Self {
         let mut checker = Self {
             program,
             options,
+            capabilities,
             store: TypeStore::new(),
             models: FxHashMap::default(),
             parameter_type_overrides: FxHashMap::default(),
@@ -168,37 +172,10 @@ impl<'a> Checker<'a> {
             expression_order_origins: FxHashMap::default(),
             diagnostics: Vec::new(),
             reported: HashSet::new(),
-            semantic_completion: SemanticCompletion::Complete,
+            completion: capabilities::CompletionTracker::new(program.files.len()),
         };
         checker.collect_models();
         checker
-    }
-
-    fn check(mut self) -> CheckResult {
-        self.require_explicit_type_positions();
-        for file_id in &self.program.source_order {
-            let file = &self.program.files[file_id.0 as usize];
-            for statement in &file.syntax.statements {
-                self.check_statement(file.source.id, ScopeId(0), statement, None, None);
-            }
-        }
-        self.flush_property_diagnostics();
-        self.flush_indexed_access_diagnostics();
-        self.flush_construct_diagnostics();
-        CheckResult {
-            diagnostics: self.diagnostics,
-            type_count: self.store.len(),
-            semantic_completion: self.semantic_completion,
-        }
-    }
-
-    fn collect_models(&mut self) {
-        for file_id in &self.program.source_order {
-            let file = &self.program.files[file_id.0 as usize];
-            for statement in &file.syntax.statements {
-                self.collect_statement_model(file.source.id, statement, ScopeId(0));
-            }
-        }
     }
 
     fn collect_statement_model(&mut self, file: FileId, statement: &'a Statement, scope: ScopeId) {
@@ -383,95 +360,6 @@ impl<'a> Checker<'a> {
             .map(|declaration| declaration.id)
     }
 
-    fn check_class(&mut self, file: FileId, class_scope: ScopeId, declaration: &ClassDeclaration) {
-        if declaration.declared
-            || is_declaration_source(&self.program.files[file.0 as usize].source.path)
-        {
-            return;
-        }
-
-        self.check_unconstructed_class_properties(file, class_scope, declaration);
-
-        for (index, member) in declaration.members.iter().enumerate() {
-            match &member.kind {
-                ClassMemberKind::Constructor {
-                    has_body: false, ..
-                } if !member.modifiers.abstract_member && !member.modifiers.declared => {
-                    let next_is_constructor =
-                        declaration.members.get(index + 1).is_some_and(|next| {
-                            matches!(next.kind, ClassMemberKind::Constructor { .. })
-                        });
-                    if !next_is_constructor {
-                        self.push_diagnostic(
-                            file,
-                            member.name_span,
-                            "Constructor implementation is missing.".to_string(),
-                            2390,
-                        );
-                    }
-                }
-                ClassMemberKind::Method {
-                    has_body: false,
-                    accessor: None,
-                    ..
-                } if !member.modifiers.abstract_member && !member.modifiers.declared => {
-                    let Some(next) = declaration.members.get(index + 1) else {
-                        self.report_missing_function_implementation(file, member.name_span);
-                        continue;
-                    };
-                    let ClassMemberKind::Method {
-                        has_body: next_has_body,
-                        accessor: None,
-                        ..
-                    } = &next.kind
-                    else {
-                        self.report_missing_function_implementation(file, member.name_span);
-                        continue;
-                    };
-
-                    if next.name == member.name {
-                        if *next_has_body
-                            && next.modifiers.static_member != member.modifiers.static_member
-                        {
-                            let (code, message) = if member.modifiers.static_member {
-                                (2387, "Function overload must be static.")
-                            } else {
-                                (2388, "Function overload must not be static.")
-                            };
-                            self.push_diagnostic(file, next.name_span, message.to_string(), code);
-                        }
-                    } else if *next_has_body {
-                        let expected_name = self.program.files[file.0 as usize]
-                            .source
-                            .slice(member.name_span)
-                            .to_string();
-                        self.push_diagnostic(
-                            file,
-                            next.name_span,
-                            format!("Function implementation name must be '{expected_name}'."),
-                            2389,
-                        );
-                    } else {
-                        self.report_missing_function_implementation(file, member.name_span);
-                    }
-                }
-                ClassMemberKind::Constructor { .. }
-                | ClassMemberKind::Property { .. }
-                | ClassMemberKind::Method { .. } => {}
-            }
-        }
-    }
-
-    fn report_missing_function_implementation(&mut self, file: FileId, span: Span) {
-        self.push_diagnostic(
-            file,
-            span,
-            "Function implementation is missing or not immediately following the declaration."
-                .to_string(),
-            2391,
-        );
-    }
-
     fn check_variable(
         &mut self,
         file: FileId,
@@ -489,6 +377,7 @@ impl<'a> Checker<'a> {
                     (Some(ty), is_complete)
                 });
         let extended_unicode_string = self.extended_unicode_variable_type(declaration);
+        self.completion.begin_capture();
         let initializer = declaration.initializer.as_ref().map(|initializer| {
             if let Some(completion) = extended_unicode_string.clone() {
                 match self.require_completion(completion) {
@@ -501,6 +390,7 @@ impl<'a> Checker<'a> {
                 self.infer_expression(file, scope, initializer, annotation)
             }
         });
+        let initializer_completion = self.completion.finish_capture();
         if let (Some(source), Some(target), Some(initializer)) =
             (initializer, annotation, declaration.initializer.as_ref())
         {
@@ -531,7 +421,17 @@ impl<'a> Checker<'a> {
                 .or(initializer)
                 .unwrap_or(self.store.builtins.any);
             if annotation_is_complete && self.is_cacheable_type(value) {
-                self.value_queries.insert(id, QueryState::Ready(value));
+                self.value_queries.insert(
+                    id,
+                    declaration_value::ValueQueryState::Ready {
+                        value,
+                        completion: if annotation.is_some() {
+                            SemanticCompletion::Complete
+                        } else {
+                            initializer_completion
+                        },
+                    },
+                );
             } else {
                 self.value_queries.remove(&id);
             }
@@ -555,7 +455,9 @@ impl<'a> Checker<'a> {
             self.property_order_for_type_node_root(file, scope, return_type)
         });
         for parameter in &declaration.parameters {
-            if parameter.annotation.is_none()
+            if declaration.overload_context_is_recovery_free()
+                && parameter.implementation_name_is_recovery_free()
+                && parameter.annotation.is_none()
                 && parameter.initializer.is_none()
                 && self.options.effective_no_implicit_any()
             {
@@ -570,102 +472,13 @@ impl<'a> Checker<'a> {
                 );
             }
         }
-        for statement in &declaration.body {
-            let statement_scope = self.program.files[file.0 as usize]
-                .bindings
-                .scope_for_node
-                .get(&statement.id)
-                .copied()
-                .unwrap_or(scope);
-            self.check_statement(
-                file,
-                statement_scope,
-                statement,
-                expected_return,
-                expected_return_order.as_ref(),
-            );
-        }
-    }
-
-    fn declaration_value_type(&mut self, id: DeclId) -> Completion<TypeId> {
-        if self.program.standard_library_declaration(id).is_some() {
-            return Completion::Deferred;
-        }
-        // A reference to an overload group is a semantic demand: selecting a
-        // signature is not modeled yet. Declaration self-checking bypasses
-        // this gateway through `declared_function_type`.
-        if self.function_value_requires_overload_resolution(id) {
-            return Completion::Deferred;
-        }
-        if self.deferred_anonymous_parameters.contains(&id) {
-            return Completion::Deferred;
-        }
-        if let Some(ty) = self.parameter_type_overrides.get(&id) {
-            return Completion::Complete(*ty);
-        }
-        match self.value_queries.get(&id).copied() {
-            Some(QueryState::Ready(ty)) => return Completion::Complete(ty),
-            Some(QueryState::Computing) => return Completion::Cycle,
-            None => {}
-        }
-        self.value_queries.insert(id, QueryState::Computing);
-        let Some(model) = self.models.get(&id).copied() else {
-            self.value_queries.remove(&id);
-            return Completion::Deferred;
-        };
-        let result = match model {
-            DeclarationModel::Variable { declaration, scope } => {
-                if let Some(annotation) = &declaration.annotation {
-                    Completion::Complete(self.resolve_type_node(
-                        id.file,
-                        scope,
-                        annotation,
-                        &HashMap::new(),
-                    ))
-                } else if let Some(completion) = self.extended_unicode_variable_type(declaration) {
-                    completion
-                } else if let Some(initializer) = &declaration.initializer {
-                    let inferred = self.infer_expression(id.file, scope, initializer, None);
-                    let inferred = if declaration.declaration_kind == VariableKind::Const {
-                        inferred
-                    } else {
-                        self.widen(inferred)
-                    };
-                    Completion::Complete(inferred)
-                } else {
-                    Completion::Complete(self.store.builtins.any)
-                }
-            }
-            DeclarationModel::Parameter { parameter, scope } => {
-                self.parameter_value_type(id.file, scope, parameter)
-            }
-            DeclarationModel::Function { declaration, scope } => {
-                self.function_type(id, declaration, scope)
-            }
-            DeclarationModel::Class {
-                identity,
-                declaration,
-                ..
-            } => Completion::Complete(self.store.intern(TypeKind::ClassConstructor {
-                declaration: identity,
-                name: declaration.name.clone(),
-            })),
-            DeclarationModel::TypeAlias { .. } | DeclarationModel::Interface { .. } => {
-                Completion::Deferred
-            }
-        };
-        match result {
-            Completion::Complete(ty) if self.is_cacheable_type(ty) => {
-                self.value_queries.insert(id, QueryState::Ready(ty));
-            }
-            Completion::Complete(_)
-            | Completion::Deferred
-            | Completion::Cycle
-            | Completion::Limit => {
-                self.value_queries.remove(&id);
-            }
-        }
-        result
+        self.check_statement_list(
+            file,
+            scope,
+            &declaration.body,
+            expected_return,
+            expected_return_order.as_ref(),
+        );
     }
 
     fn resolve_type_node(
@@ -765,6 +578,7 @@ impl<'a> Checker<'a> {
                 };
                 let return_type = self.resolve_type_node(file, scope, return_type, type_parameters);
                 self.store.intern(TypeKind::Function(Signature {
+                    generic_declaration: None,
                     parameters,
                     return_type,
                 }))
@@ -794,6 +608,7 @@ impl<'a> Checker<'a> {
                 };
                 let return_type = self.resolve_type_node(file, scope, return_type, type_parameters);
                 self.store.intern(TypeKind::Function(Signature {
+                    generic_declaration: None,
                     parameters,
                     return_type,
                 }))
@@ -819,7 +634,9 @@ impl<'a> Checker<'a> {
                     .iter()
                     .map(|argument| self.resolve_type_node(file, scope, argument, type_parameters))
                     .collect::<Vec<_>>();
-                let Some(declaration) = self.resolve_name(file, scope, name, Meaning::Type) else {
+                let Some(declaration) =
+                    self.resolve_semantic_name(file, scope, name, Meaning::Type)
+                else {
                     self.push_diagnostic(
                         file,
                         *name_span,
@@ -970,6 +787,21 @@ impl<'a> Checker<'a> {
         expression: &Expression,
         expected: Option<TypeId>,
     ) -> TypeId {
+        self.infer_expression_contextual(
+            file,
+            scope,
+            expression,
+            ContextualType::from_option(expected),
+        )
+    }
+
+    fn infer_expression_contextual(
+        &mut self,
+        file: FileId,
+        scope: ScopeId,
+        expression: &Expression,
+        expected: ContextualType,
+    ) -> TypeId {
         let order = self.property_order_for_expression(file, scope, expression);
         let inferred = self.infer_expression_inner(file, scope, expression, expected);
         self.expression_type_origins
@@ -986,39 +818,11 @@ impl<'a> Checker<'a> {
         file: FileId,
         scope: ScopeId,
         expression: &Expression,
-        expected: Option<TypeId>,
+        expected: ContextualType,
     ) -> TypeId {
         match &expression.kind {
-            ExpressionKind::Identifier {
-                name,
-                name_span,
-                entity_name,
-            } => {
-                if !entity_name {
-                    self.semantic_completion = self
-                        .semantic_completion
-                        .combine(SemanticCompletion::Deferred);
-                    return self.store.builtins.error;
-                }
-                let Some(declaration) = self.resolve_name(file, scope, name, Meaning::Value) else {
-                    self.push_diagnostic(
-                        file,
-                        *name_span,
-                        format!("Cannot find name '{name}'."),
-                        2304,
-                    );
-                    return self.store.builtins.error;
-                };
-                if self
-                    .program
-                    .standard_library
-                    .is_undefined_value(declaration)
-                {
-                    return self.store.builtins.undefined;
-                }
-                self.store
-                    .intern(TypeKind::Deferred(DeferredType::Value(declaration)))
-            }
+            ExpressionKind::Identifier { .. } => self.infer_identifier(file, scope, expression),
+            ExpressionKind::This => self.infer_this_expression(file, scope, expression.id),
             ExpressionKind::Literal(literal) => {
                 self.literal_type(literal, LiteralProvenance::Fresh)
             }
@@ -1029,25 +833,24 @@ impl<'a> Checker<'a> {
                 let properties = properties
                     .iter()
                     .map(|property| {
-                        let expected = expected.and_then(|expected| {
-                            match self.contextual_object_property_type(
-                                expected,
-                                &property.name,
-                                Some(expression),
-                            ) {
-                                ContextualPropertyType::Known(expected) => Some(expected),
-                                ContextualPropertyType::Absent => None,
-                                ContextualPropertyType::Deferred => {
-                                    self.semantic_completion = self
-                                        .semantic_completion
-                                        .combine(SemanticCompletion::Deferred);
-                                    None
-                                }
-                            }
-                        });
-                        let inferred =
-                            self.infer_expression(file, scope, &property.value, expected);
-                        let inferred = if expected.is_some() {
+                        self.report_object_literal_shorthand_default(file, property);
+                        let expected = match expected {
+                            ContextualType::Known(expected) => self
+                                .contextual_object_property_type(
+                                    expected,
+                                    &property.name,
+                                    Some(expression),
+                                ),
+                            ContextualType::Absent => ContextualType::Absent,
+                            ContextualType::Deferred => ContextualType::Deferred,
+                        };
+                        let inferred = self.infer_expression_contextual(
+                            file,
+                            scope,
+                            &property.value,
+                            expected,
+                        );
+                        let inferred = if expected.is_known() {
                             inferred
                         } else {
                             self.widen(inferred)
@@ -1063,14 +866,21 @@ impl<'a> Checker<'a> {
                 self.store.object(properties)
             }
             ExpressionKind::Array(elements) => {
-                let expected_element =
-                    expected.and_then(|expected| self.contextual_array_element_type(expected));
+                let expected_element = match expected {
+                    ContextualType::Known(expected) => self.contextual_array_element_type(expected),
+                    ContextualType::Absent => ContextualType::Absent,
+                    ContextualType::Deferred => ContextualType::Deferred,
+                };
                 let elements = elements
                     .iter()
                     .map(|element| {
-                        let inferred =
-                            self.infer_expression(file, scope, element, expected_element);
-                        if expected_element.is_some() {
+                        let inferred = self.infer_expression_contextual(
+                            file,
+                            scope,
+                            element,
+                            expected_element,
+                        );
+                        if expected_element.is_known() {
                             inferred
                         } else {
                             self.widen(inferred)
@@ -1085,154 +895,7 @@ impl<'a> Checker<'a> {
                 type_arguments,
                 arguments,
             } => {
-                let callee_type = if let ExpressionKind::Member {
-                    object,
-                    name,
-                    name_span,
-                } = &callee.kind
-                {
-                    let ty =
-                        self.infer_member_expression(file, scope, object, name, *name_span, true);
-                    self.expression_type_origins.insert((file, callee.id), ty);
-                    ty
-                } else {
-                    self.infer_expression(file, scope, callee, None)
-                };
-                if type_arguments.is_some() {
-                    // Binding/navigation retain the authored type syntax, but
-                    // signature instantiation and its TS2345/TS2347/TS2558/
-                    // TS2749 diagnostics are not modeled yet. The operand-free
-                    // marker cannot later force or cache an ordinary call.
-                    self.semantic_completion = self
-                        .semantic_completion
-                        .combine(SemanticCompletion::Deferred);
-                    return self
-                        .store
-                        .intern(TypeKind::Deferred(DeferredType::GenericCall));
-                }
-                let completion = self.force_type(callee_type, 0);
-                let callee_type = match self.require_completion(completion) {
-                    Completion::Complete(callee_type) => callee_type,
-                    Completion::Deferred | Completion::Cycle | Completion::Limit => {
-                        for argument in arguments {
-                            let _ = self.infer_expression(file, scope, argument, None);
-                        }
-                        return self.store.intern(TypeKind::Deferred(DeferredType::Call {
-                            callee: callee_type,
-                            argument_count: arguments.len(),
-                        }));
-                    }
-                };
-                let Some(signature) = self.callable_signature(callee_type) else {
-                    if self.authored_shape_display_is_unavailable(callee_type) {
-                        for argument in arguments {
-                            let _ = self.infer_expression(file, scope, argument, None);
-                        }
-                        return self.store.intern(TypeKind::Deferred(DeferredType::Call {
-                            callee: callee_type,
-                            argument_count: arguments.len(),
-                        }));
-                    }
-                    if !matches!(
-                        self.store.kind(callee_type),
-                        TypeKind::Any | TypeKind::Error
-                    ) {
-                        let name = self.store.display(callee_type);
-                        self.push_diagnostic(
-                            file,
-                            callee.span,
-                            format!("This expression is not callable. Type '{name}' has no call signatures."),
-                            2349,
-                        );
-                    }
-                    return self.store.builtins.any;
-                };
-                let rest_index = signature
-                    .parameters
-                    .iter()
-                    .position(|parameter| parameter.rest);
-                let required = signature
-                    .parameters
-                    .iter()
-                    .take(rest_index.unwrap_or(signature.parameters.len()))
-                    .filter(|parameter| !parameter.optional)
-                    .count();
-                let maximum =
-                    rest_index.map_or(Some(signature.parameters.len()), |index| {
-                        match self.store.kind(signature.parameters[index].ty) {
-                            TypeKind::Tuple(elements) => Some(index + elements.len()),
-                            _ => None,
-                        }
-                    });
-                let too_few = arguments.len() < required;
-                let too_many = maximum.is_some_and(|maximum| arguments.len() > maximum);
-                if too_few || too_many {
-                    let expected_count = if maximum.is_none() {
-                        format!("at least {required}")
-                    } else if maximum == Some(required) {
-                        required.to_string()
-                    } else {
-                        format!("{}-{}", required, maximum.unwrap_or(required))
-                    };
-                    self.push_diagnostic(
-                        file,
-                        if too_many {
-                            arguments[maximum.unwrap_or(arguments.len())].span
-                        } else {
-                            callee.span
-                        },
-                        format!(
-                            "Expected {expected_count} arguments, but got {}.",
-                            arguments.len()
-                        ),
-                        2554,
-                    );
-                }
-                let mut stopped_argument_relations = too_few || too_many;
-                for (index, argument) in arguments.iter().enumerate() {
-                    let Some(parameter) = signature.parameters.get(index).or_else(|| {
-                        rest_index.and_then(|rest_index| signature.parameters.get(rest_index))
-                    }) else {
-                        let _ = self.infer_expression(file, scope, argument, None);
-                        continue;
-                    };
-                    let expected = if parameter.rest {
-                        match self.store.kind(parameter.ty) {
-                            TypeKind::Array(element) => *element,
-                            TypeKind::Tuple(elements) => rest_index
-                                .and_then(|rest_index| index.checked_sub(rest_index))
-                                .and_then(|index| elements.get(index))
-                                .copied()
-                                .unwrap_or(parameter.ty),
-                            _ => parameter.ty,
-                        }
-                    } else {
-                        parameter.ty
-                    };
-                    let actual = self.infer_expression(file, scope, argument, Some(expected));
-                    let target_order = self.relation_order_for_call_argument(
-                        file,
-                        scope,
-                        callee,
-                        index,
-                        parameter.rest,
-                    );
-                    if !stopped_argument_relations {
-                        stopped_argument_relations = !matches!(
-                            self.report_relation(
-                                actual,
-                                expected,
-                                argument.span,
-                                Some(argument),
-                                target_order,
-                                RelationMode::Assignment,
-                                RelationDiagnosticStyle::Argument,
-                            ),
-                            RelationDiagnosticOutcome::Compatible
-                        );
-                    }
-                }
-                signature.return_type
+                self.infer_call_expression(file, scope, callee, type_arguments.is_some(), arguments)
             }
             ExpressionKind::New {
                 callee,
@@ -1249,7 +912,12 @@ impl<'a> Checker<'a> {
                     .zip(arguments.last())
                     .map_or(callee.span, |(first, last)| first.span.merge(last.span));
                 for argument in arguments {
-                    let _ = self.infer_expression(file, scope, argument, None);
+                    let _ = self.infer_expression_contextual(
+                        file,
+                        scope,
+                        argument,
+                        ContextualType::Deferred,
+                    );
                 }
                 let query = self.deferred_construct_type(
                     callee_type,
@@ -1268,6 +936,14 @@ impl<'a> Checker<'a> {
                 name,
                 name_span,
             } => self.infer_member_expression(file, scope, object, name, *name_span, false),
+            ExpressionKind::ElementAccess { object, index } => self
+                .infer_element_access_expression(
+                    file,
+                    scope,
+                    object,
+                    index,
+                    ElementAccessMode::Read,
+                ),
             ExpressionKind::Arrow {
                 parameters,
                 return_type: annotation,
@@ -1281,56 +957,18 @@ impl<'a> Checker<'a> {
                 body,
                 expected,
             ),
-            ExpressionKind::Binary {
-                left,
-                operator,
-                right,
-            } => {
-                let left = self.infer_expression(file, scope, left, None);
-                let right = self.infer_expression(file, scope, right, None);
-                if *operator == BinaryOperator::Add
-                    && (self.is_string_like(left) || self.is_string_like(right))
-                {
-                    self.store.builtins.string
-                } else if matches!(
-                    operator,
-                    BinaryOperator::LessThan
-                        | BinaryOperator::LessThanEquals
-                        | BinaryOperator::GreaterThan
-                        | BinaryOperator::GreaterThanEquals
-                        | BinaryOperator::Equals
-                        | BinaryOperator::NotEquals
-                        | BinaryOperator::StrictEquals
-                        | BinaryOperator::StrictNotEquals
-                        | BinaryOperator::In
-                        | BinaryOperator::InstanceOf
-                ) {
-                    self.store.builtins.boolean
-                } else if matches!(
-                    operator,
-                    BinaryOperator::LogicalAnd
-                        | BinaryOperator::LogicalOr
-                        | BinaryOperator::NullishCoalesce
-                ) {
-                    let operator = match operator {
-                        BinaryOperator::LogicalAnd => DeferredLogicalOperator::And,
-                        BinaryOperator::LogicalOr => DeferredLogicalOperator::Or,
-                        BinaryOperator::NullishCoalesce => DeferredLogicalOperator::Nullish,
-                        _ => unreachable!(),
-                    };
-                    self.store.intern(TypeKind::Deferred(DeferredType::Logical {
-                        operator,
-                        left,
-                        right,
-                    }))
-                } else {
-                    self.store.builtins.number
-                }
+            ExpressionKind::Binary { .. } => {
+                self.infer_authored_binary_expression(file, scope, expression)
             }
             ExpressionKind::Unary { operator, operand } => {
-                let operand = self.infer_expression(file, scope, operand, None);
+                let operand_expression = operand;
+                let operand = self.infer_expression(file, scope, operand_expression, None);
                 match operator {
-                    UnaryOperator::Not | UnaryOperator::Delete => self.store.builtins.boolean,
+                    UnaryOperator::Not => self.store.builtins.boolean,
+                    UnaryOperator::Delete => {
+                        self.observe_delete_operand(operand);
+                        self.store.builtins.boolean
+                    }
                     UnaryOperator::TypeOf => self.store.builtins.string,
                     UnaryOperator::Void => self.store.builtins.undefined,
                     UnaryOperator::Await => {
@@ -1353,41 +991,17 @@ impl<'a> Checker<'a> {
                 }
             }
             ExpressionKind::Assignment { left, right } => {
-                let target = self.infer_expression(file, scope, left, None);
-                let source = self.infer_expression(file, scope, right, Some(target));
-                self.report_relation(
-                    source,
-                    target,
-                    right.span,
-                    Some(right),
-                    self.expression_order_origins.get(&(file, left.id)).cloned(),
-                    RelationMode::Assignment,
-                    RelationDiagnosticStyle::Type,
-                );
-                target
+                self.infer_assignment_expression(file, scope, left, right)
             }
             ExpressionKind::As { expression, ty } => {
                 self.infer_expression(file, scope, expression, None);
                 self.resolve_type_node(file, scope, ty, &HashMap::new())
             }
             ExpressionKind::Parenthesized(inner) => {
-                self.infer_expression(file, scope, inner, expected)
+                self.infer_expression_contextual(file, scope, inner, expected)
             }
             ExpressionKind::Missing => self.store.builtins.error,
         }
-    }
-
-    fn resolve_name(
-        &self,
-        file: FileId,
-        scope: ScopeId,
-        name: &str,
-        meaning: Meaning,
-    ) -> Option<DeclId> {
-        self.program.files[file.0 as usize]
-            .bindings
-            .resolve(scope, name, meaning)
-            .or_else(|| self.program.resolve_global(name, meaning))
     }
 
     fn force_deferred(
@@ -1408,6 +1022,7 @@ impl<'a> Checker<'a> {
             self.report_complexity(&deferred);
             return Completion::Limit;
         }
+        self.completion.begin_capture();
         let reference_instantiation = match &deferred {
             DeferredType::Reference {
                 declaration,
@@ -1415,10 +1030,10 @@ impl<'a> Checker<'a> {
             } => Some(self.reference_instantiation(*declaration, arguments)),
             _ => None,
         };
-        let reference_is_query_local = matches!(
+        let result_is_query_local = matches!(
             &reference_instantiation,
             Some(Completion::Complete(instantiation)) if instantiation.is_query_local()
-        );
+        ) || deferred.is_query_local();
         let reference_checkpoint = self.force_reference_stack.checkpoint();
         if let DeferredType::Reference {
             declaration,
@@ -1444,6 +1059,7 @@ impl<'a> Checker<'a> {
                 Some(Completion::Limit) => Completion::Limit,
             },
             DeferredType::Value(declaration) => self.declaration_value_type(declaration),
+            query @ DeferredType::FlowReference { .. } => self.force_flow(query, depth + 1),
             DeferredType::Call {
                 callee,
                 argument_count,
@@ -1456,6 +1072,16 @@ impl<'a> Checker<'a> {
             DeferredType::Property { object, name } => {
                 self.evaluate_property(ty, object, &name, depth + 1)
             }
+            DeferredType::ElementAccess {
+                object,
+                index,
+                mode,
+            } => self.evaluate_element_access(object, index, mode, depth + 1),
+            DeferredType::Binary {
+                operator,
+                left,
+                right,
+            } => self.force_binary(operator, left, right, depth + 1),
             DeferredType::Logical {
                 operator,
                 left,
@@ -1486,6 +1112,7 @@ impl<'a> Checker<'a> {
             DeferredType::Predicate { .. }
             | DeferredType::Conditional { .. }
             | DeferredType::Mapped { .. }
+            | DeferredType::LexicalThis { .. }
             | DeferredType::GenericCall
             | DeferredType::BigIntLiteral
             | DeferredType::NumericRecovery
@@ -1511,10 +1138,13 @@ impl<'a> Checker<'a> {
             }
             other => other,
         };
+        let captured = self.completion.finish_capture();
         self.force_reference_stack.restore(reference_checkpoint);
         match result {
             Completion::Complete(result)
-                if !reference_is_query_local && self.is_cacheable_type(result) =>
+                if captured.is_complete()
+                    && !result_is_query_local
+                    && self.is_cacheable_type(result) =>
             {
                 self.force_queries.insert(ty, QueryState::Ready(result));
             }
@@ -1534,6 +1164,9 @@ impl<'a> Checker<'a> {
         declaration: DeclId,
         arguments: &[TypeId],
     ) -> Completion<TypeId> {
+        if !self.semantic_declaration_is_claimed(declaration) {
+            return Completion::Deferred;
+        }
         if self
             .program
             .standard_library_declaration(declaration)
@@ -1649,169 +1282,6 @@ impl<'a> Checker<'a> {
             .collect()
     }
 
-    fn evaluate_call(
-        &mut self,
-        callee: TypeId,
-        argument_count: usize,
-        depth: usize,
-    ) -> Completion<TypeId> {
-        let callee = match self.force_type(callee, depth) {
-            Completion::Complete(callee) => callee,
-            Completion::Deferred => return Completion::Deferred,
-            Completion::Cycle => return Completion::Cycle,
-            Completion::Limit => return Completion::Limit,
-        };
-        match self.store.kind(callee) {
-            TypeKind::Function(signature)
-                if argument_count == 0 && signature.parameters.is_empty() =>
-            {
-                Completion::Complete(signature.return_type)
-            }
-            TypeKind::ShapeFunction(signature)
-                if argument_count == 0 && signature.parameters.is_empty() =>
-            {
-                Completion::Complete(signature.return_type)
-            }
-            TypeKind::Object(shape)
-                if argument_count == 0
-                    && shape.call_signatures.len() == 1
-                    && shape.call_signatures[0].parameters.is_empty() =>
-            {
-                Completion::Complete(shape.call_signatures[0].return_type)
-            }
-            TypeKind::Any => Completion::Complete(self.store.builtins.any),
-            TypeKind::Error | TypeKind::Invalid(_) => Completion::Complete(callee),
-            _ => Completion::Deferred,
-        }
-    }
-
-    fn evaluate_logical(
-        &mut self,
-        operator: DeferredLogicalOperator,
-        left: TypeId,
-        right: TypeId,
-        depth: usize,
-    ) -> Completion<TypeId> {
-        let left = match self.force_type(left, depth) {
-            Completion::Complete(left) => left,
-            Completion::Deferred => return Completion::Deferred,
-            Completion::Cycle => return Completion::Cycle,
-            Completion::Limit => return Completion::Limit,
-        };
-        let left_kind = self.store.kind(left);
-        if matches!(left_kind, TypeKind::Error | TypeKind::Invalid(_)) {
-            return Completion::Complete(left);
-        }
-        match operator {
-            DeferredLogicalOperator::And => match known_truthiness(left_kind) {
-                Some(true) => Completion::Complete(right),
-                Some(false) => Completion::Complete(left),
-                None => Completion::Deferred,
-            },
-            DeferredLogicalOperator::Or => match known_truthiness(left_kind) {
-                Some(true) => Completion::Complete(left),
-                Some(false) => Completion::Complete(right),
-                None => Completion::Deferred,
-            },
-            DeferredLogicalOperator::Nullish => {
-                if matches!(left_kind, TypeKind::Null | TypeKind::Undefined) {
-                    Completion::Complete(right)
-                } else if matches!(
-                    left_kind,
-                    TypeKind::Boolean
-                        | TypeKind::Number
-                        | TypeKind::String
-                        | TypeKind::BigInt
-                        | TypeKind::ObjectKeyword
-                        | TypeKind::Symbol
-                        | TypeKind::LiteralBoolean(_, _)
-                        | TypeKind::LiteralNumber(_, _)
-                        | TypeKind::LiteralString(_, _)
-                        | TypeKind::Array(_)
-                        | TypeKind::Tuple(_)
-                        | TypeKind::Object(_)
-                        | TypeKind::Function(_)
-                ) {
-                    Completion::Complete(left)
-                } else {
-                    Completion::Deferred
-                }
-            }
-        }
-    }
-
-    fn evaluate_unary(
-        &mut self,
-        operator: DeferredUnaryOperator,
-        operand: TypeId,
-        depth: usize,
-    ) -> Completion<TypeId> {
-        let operand = match self.force_type(operand, depth) {
-            Completion::Complete(operand) => operand,
-            Completion::Deferred => return Completion::Deferred,
-            Completion::Cycle => return Completion::Cycle,
-            Completion::Limit => return Completion::Limit,
-        };
-        if operator == DeferredUnaryOperator::Await {
-            return Completion::Complete(operand);
-        }
-        match self.store.kind(operand) {
-            TypeKind::Number | TypeKind::LiteralNumber(_, _) | TypeKind::Any => {
-                Completion::Complete(self.store.builtins.number)
-            }
-            TypeKind::BigInt if operator != DeferredUnaryOperator::Plus => {
-                Completion::Complete(self.store.builtins.bigint)
-            }
-            TypeKind::Error | TypeKind::Invalid(_) => Completion::Complete(operand),
-            _ => Completion::Deferred,
-        }
-    }
-
-    fn complete_type(&mut self, ty: TypeId) -> Option<TypeId> {
-        let completion = self.force_type(ty, 0);
-        match self.require_completion(completion) {
-            Completion::Complete(ty) => Some(ty),
-            Completion::Deferred | Completion::Cycle | Completion::Limit => None,
-        }
-    }
-
-    /// Aggregate only results that escape at a required checking boundary.
-    /// Creating or recursively carrying a symbolic deferred type is not itself
-    /// incomplete; callers invoke this after forcing is necessary to decide a
-    /// diagnostic, contextual type, or other user-visible checked result.
-    const fn require_completion<T>(&mut self, completion: Completion<T>) -> Completion<T> {
-        let observed = match &completion {
-            Completion::Complete(_) => SemanticCompletion::Complete,
-            Completion::Deferred => SemanticCompletion::Deferred,
-            Completion::Cycle => SemanticCompletion::Cycle,
-            Completion::Limit => SemanticCompletion::Limit,
-        };
-        self.semantic_completion = self.semantic_completion.combine(observed);
-        completion
-    }
-
-    fn callable_signature(&self, ty: TypeId) -> Option<ShapeSignature> {
-        match self.store.kind(ty) {
-            TypeKind::Function(signature) => Some(ShapeSignature {
-                parameters: signature
-                    .parameters
-                    .iter()
-                    .map(|parameter| ShapeParameter {
-                        ty: parameter.ty,
-                        optional: parameter.optional,
-                        rest: parameter.rest,
-                    })
-                    .collect(),
-                return_type: signature.return_type,
-            }),
-            TypeKind::ShapeFunction(signature) => Some(signature.clone()),
-            TypeKind::Object(shape) if shape.call_signatures.len() == 1 => {
-                shape.call_signatures.first().cloned()
-            }
-            _ => None,
-        }
-    }
-
     fn report_deferred_cycle(&mut self, deferred: &DeferredType) {
         let DeferredType::Reference { declaration, .. } = deferred else {
             return;
@@ -1846,9 +1316,13 @@ impl<'a> Checker<'a> {
             }
             DeferredType::Call { .. }
             | DeferredType::GenericCall
+            | DeferredType::FlowReference { .. }
+            | DeferredType::LexicalThis { .. }
             | DeferredType::Construct { .. }
             | DeferredType::Property { .. }
+            | DeferredType::ElementAccess { .. }
             | DeferredType::Predicate { .. }
+            | DeferredType::Binary { .. }
             | DeferredType::Logical { .. }
             | DeferredType::Unary { .. }
             | DeferredType::KeyOf(_)
@@ -1890,27 +1364,12 @@ impl<'a> Checker<'a> {
         code: u32,
         identity: DiagnosticIdentity,
     ) {
-        if !self.reported.insert((file, span.start, code, identity)) {
+        if !self.record_semantic_diagnostic(file, span.start, code, identity) {
             return;
         }
         let source = &self.program.files[file.0 as usize].source;
         self.diagnostics
             .push(Diagnostic::at(source, span, message, code));
-    }
-}
-
-fn known_truthiness(kind: &TypeKind) -> Option<bool> {
-    match kind {
-        TypeKind::Null | TypeKind::Undefined | TypeKind::LiteralBoolean(false, _) => Some(false),
-        TypeKind::LiteralBoolean(true, _)
-        | TypeKind::Array(_)
-        | TypeKind::Tuple(_)
-        | TypeKind::Object(_)
-        | TypeKind::Function(_)
-        | TypeKind::ShapeFunction(_) => Some(true),
-        TypeKind::LiteralString(value, _) => Some(!value.is_empty()),
-        TypeKind::LiteralNumber(value, _) => Some(value.is_truthy()),
-        _ => None,
     }
 }
 

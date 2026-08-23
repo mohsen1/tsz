@@ -2,7 +2,7 @@ use super::{Parser, token_is_binding_identifier};
 use crate::source::SourceKind;
 use crate::syntax::{
     ClassMember, ClassMemberKind, ExportDeclaration, ImportDeclaration, InterfaceDeclaration,
-    TokenKind, TypeAliasDeclaration,
+    TokenKind, TypeAliasDeclaration, UnmodeledDeclarationHostFact, UnmodeledDeclarationHostKind,
 };
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -305,7 +305,7 @@ impl Parser<'_> {
         }
     }
 
-    pub(super) fn parse_modifiers(&mut self) -> Modifiers {
+    pub(super) fn parse_modifiers(&mut self, statement_start: usize) -> Modifiers {
         let mut modifiers = Modifiers::default();
         let mut modifier_order = 0;
         loop {
@@ -360,8 +360,103 @@ impl Parser<'_> {
         if self.starts_unmodeled_declaration_host() {
             self.product_capabilities
                 .observe_unmodeled_declaration_host();
+            self.retain_unmodeled_declaration_host(statement_start, modifiers.exported);
         }
         modifiers
+    }
+
+    fn retain_unmodeled_declaration_host(&mut self, owner_start: usize, exported: bool) {
+        let (name_index, kind) = match self.kind() {
+            TokenKind::Module | TokenKind::Namespace if self.peek_kind(1).is_identifier() => (
+                Some(self.index + 1),
+                if self.kind() == TokenKind::Module {
+                    UnmodeledDeclarationHostKind::Module
+                } else {
+                    UnmodeledDeclarationHostKind::Namespace
+                },
+            ),
+            TokenKind::Module if self.peek_kind(1) == TokenKind::StringLiteral => (
+                Some(self.index + 1),
+                UnmodeledDeclarationHostKind::ExternalModule,
+            ),
+            TokenKind::Using if token_is_binding_identifier(self.peek_kind(1)) => {
+                (Some(self.index + 1), UnmodeledDeclarationHostKind::Using)
+            }
+            TokenKind::Await
+                if self.peek_kind(1) == TokenKind::Using
+                    && token_is_binding_identifier(self.peek_kind(2)) =>
+            {
+                (Some(self.index + 2), UnmodeledDeclarationHostKind::Using)
+            }
+            TokenKind::Global => (None, UnmodeledDeclarationHostKind::Global),
+            _ => return,
+        };
+        let name_token = name_index.and_then(|index| self.tokens.get(index).copied());
+        let recovery_extent = self.unmodeled_declaration_recovery_extent(kind);
+        self.unmodeled_declaration_hosts
+            .push(UnmodeledDeclarationHostFact {
+                owner_start: owner_start as u32,
+                recovery_extent,
+                name: name_token.map(|token| self.text(token.span).to_string()),
+                name_span: name_token.map(|token| token.span),
+                kind,
+                exported,
+            });
+    }
+
+    fn unmodeled_declaration_recovery_extent(
+        &self,
+        kind: UnmodeledDeclarationHostKind,
+    ) -> crate::source::Span {
+        let start = self.current().span;
+        let mut braces = 0usize;
+        let mut saw_body = false;
+        let mut using_depth = 0_u32;
+        let mut previous = self.index;
+        for (index, token) in self.tokens.iter().enumerate().skip(self.index) {
+            if kind == UnmodeledDeclarationHostKind::Using
+                && using_depth == 0
+                && index > self.index
+                && self.later_line_starts_declaration(previous, index)
+            {
+                return start.merge(self.tokens[previous].span);
+            }
+            match token.kind {
+                TokenKind::LeftBrace if kind != UnmodeledDeclarationHostKind::Using => {
+                    saw_body = true;
+                    braces += 1;
+                }
+                TokenKind::RightBrace if saw_body => {
+                    braces = braces.saturating_sub(1);
+                    if braces == 0 {
+                        return start.merge(token.span);
+                    }
+                }
+                TokenKind::LeftParen | TokenKind::LeftBracket | TokenKind::LeftBrace
+                    if kind == UnmodeledDeclarationHostKind::Using =>
+                {
+                    using_depth += 1;
+                }
+                TokenKind::RightParen | TokenKind::RightBracket | TokenKind::RightBrace
+                    if kind == UnmodeledDeclarationHostKind::Using && using_depth > 0 =>
+                {
+                    using_depth -= 1;
+                }
+                TokenKind::RightBrace if kind == UnmodeledDeclarationHostKind::Using => {
+                    return start.merge(self.tokens[previous].span);
+                }
+                TokenKind::Semicolon
+                    if !saw_body
+                        && (kind != UnmodeledDeclarationHostKind::Using || using_depth == 0) =>
+                {
+                    return start.merge(token.span);
+                }
+                TokenKind::EndOfFile => return start.merge(token.span),
+                _ => {}
+            }
+            previous = index;
+        }
+        start
     }
 
     fn starts_unmodeled_declaration_host(&self) -> bool {

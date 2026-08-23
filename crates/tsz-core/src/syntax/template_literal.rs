@@ -300,6 +300,7 @@ pub(crate) fn expression_contains_no_substitution_template(expression: &Expressi
     match &expression.kind {
         ExpressionKind::Literal(Literal::NoSubstitutionTemplate(_)) => true,
         ExpressionKind::Identifier { .. }
+        | ExpressionKind::This
         | ExpressionKind::Literal(_)
         | ExpressionKind::RegularExpression(_)
         | ExpressionKind::Missing => false,
@@ -329,6 +330,10 @@ pub(crate) fn expression_contains_no_substitution_template(expression: &Expressi
         }
         | ExpressionKind::Parenthesized(object) => {
             expression_contains_no_substitution_template(object)
+        }
+        ExpressionKind::ElementAccess { object, index } => {
+            expression_contains_no_substitution_template(object)
+                || expression_contains_no_substitution_template(index)
         }
         ExpressionKind::Arrow {
             parameters, body, ..

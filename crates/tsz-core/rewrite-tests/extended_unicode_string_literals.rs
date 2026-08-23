@@ -457,16 +457,18 @@ fn row25_single_valid_escape_missing_quote_is_owned_at_eof_and_line_break() {
 }
 
 fn assert_incomplete(path: &str, source: &str, options: CompilerOptions) {
+    let no_check = options.no_check;
+    let no_emit = options.no_emit;
     let output = compile(path, source, options);
     assert_eq!(
         output.semantic_completion,
         SemanticCompletion::Deferred,
-        "{path}: {source:?}"
+        "{path}: noCheck={no_check} noEmit={no_emit} {source:?}"
     );
     assert_eq!(
         output.stats.semantic_completion,
         SemanticCompletion::Deferred,
-        "{path}: {source:?}"
+        "{path}: noCheck={no_check} noEmit={no_emit} {source:?}"
     );
     assert_eq!(output.exit_status, CompileExitStatus::SemanticIncomplete);
     assert!(output.emitted_files.is_empty());
@@ -528,7 +530,19 @@ fn exact_option_gate_accepts_only_the_owned_product_matrix() {
         rejected.push(candidate);
     }
     for candidate in rejected {
-        assert_incomplete("owned.ts", source, candidate);
+        if candidate.target.trim().eq_ignore_ascii_case("es5") {
+            let output = compile("owned.ts", source, candidate);
+            assert_eq!(output.semantic_completion, SemanticCompletion::Complete);
+            assert_eq!(
+                output.exit_status,
+                CompileExitStatus::DiagnosticsPresentOutputsSkipped
+            );
+            assert_eq!(output.diagnostics.len(), 1);
+            assert_eq!(output.diagnostics[0].code, 5108);
+            assert!(output.emitted_files.is_empty());
+        } else {
+            assert_incomplete("owned.ts", source, candidate);
+        }
     }
 }
 
@@ -744,6 +758,14 @@ fn attribution_bindings_and_line_geometry_fail_closed() {
     ] {
         for no_check in [false, true] {
             for no_emit in [false, true] {
+                if no_emit && source == r#"var Symbol = "\u{67}";"# {
+                    let output = compile("attribution.ts", source, options(no_check, true));
+                    assert_eq!(output.semantic_completion, SemanticCompletion::Complete);
+                    assert_eq!(output.exit_status, CompileExitStatus::Success);
+                    assert!(output.diagnostics.is_empty());
+                    assert!(output.emitted_files.is_empty());
+                    continue;
+                }
                 assert_incomplete("attribution.ts", source, options(no_check, no_emit));
             }
         }
@@ -798,5 +820,8 @@ fn service_publishes_only_the_program_owned_direct_var_widening() {
 
     assert!(service.change("service.ts", r#"var value = "\u{D800}";"#));
     service.open("mixed.ts", "var other = \"plain\";");
-    assert!(service.quick_info("service.ts", 6).is_none());
+    let info = service
+        .quick_info("service.ts", 6)
+        .expect("an unrelated root does not invalidate this file's query");
+    assert_eq!(info.display, "var value: string");
 }

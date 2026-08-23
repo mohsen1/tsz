@@ -21,9 +21,7 @@ impl Checker<'_> {
                 self.validate_regular_expression(file, literal);
             }
         } else {
-            self.semantic_completion = self
-                .semantic_completion
-                .combine(SemanticCompletion::Deferred);
+            self.observe_file_completion(file, SemanticCompletion::Deferred);
         }
 
         let Some(declaration) = self
@@ -31,9 +29,7 @@ impl Checker<'_> {
             .standard_library
             .resolve("RegExp", Meaning::Type)
         else {
-            self.semantic_completion = self
-                .semantic_completion
-                .combine(SemanticCompletion::Deferred);
+            self.observe_file_completion(file, SemanticCompletion::Deferred);
             return self.store.builtins.error;
         };
 
@@ -41,9 +37,7 @@ impl Checker<'_> {
         // declaration merging is represented, retain the ambient identity but
         // never claim the merged semantic result as complete.
         if self.program.global_types.contains_key("RegExp") {
-            self.semantic_completion = self
-                .semantic_completion
-                .combine(SemanticCompletion::Deferred);
+            self.observe_file_completion(file, SemanticCompletion::Deferred);
         }
         self.store.symbolic_reference(declaration, Vec::new())
     }
@@ -65,9 +59,7 @@ impl Checker<'_> {
     fn validate_regular_expression(&mut self, file: FileId, literal: &RegularExpressionLiteral) {
         self.validate_regular_expression_flags(file, literal);
         if literal.flags.contains('u') && !self.validate_extended_unicode_escapes(file, literal) {
-            self.semantic_completion = self
-                .semantic_completion
-                .combine(SemanticCompletion::Deferred);
+            self.observe_file_completion(file, SemanticCompletion::Deferred);
         }
     }
 

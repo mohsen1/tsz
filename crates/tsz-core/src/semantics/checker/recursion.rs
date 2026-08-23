@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 
 use crate::bind::Meaning;
+use crate::semantics::relation::RelationContext;
 use crate::semantics::types::{Completion, DeferredType, ObjectShape, TypeId, TypeKind};
 use crate::source::DeclId;
 use crate::syntax::{
@@ -246,6 +247,26 @@ impl ReferenceExpansionStack {
 }
 
 impl Checker<'_> {
+    pub(super) fn complete_type(&mut self, ty: TypeId) -> Option<TypeId> {
+        let completion = self.force_type(ty, 0);
+        match self.require_completion(completion) {
+            Completion::Complete(ty) => Some(ty),
+            Completion::Deferred | Completion::Cycle | Completion::Limit => None,
+        }
+    }
+
+    pub(super) fn force_operand(&mut self, operand: TypeId, depth: usize) -> Completion<TypeId> {
+        self.force_type(operand, depth)
+    }
+
+    pub(super) fn force_operands<const N: usize>(
+        &mut self,
+        operands: [TypeId; N],
+        depth: usize,
+    ) -> [Completion<TypeId>; N] {
+        operands.map(|operand| self.force_operand(operand, depth))
+    }
+
     pub(super) fn evaluate_type_alias_reference(
         &mut self,
         declaration: DeclId,
@@ -1141,6 +1162,7 @@ fn push_object_shape_children(shape: ObjectShape, pending: &mut Vec<TypeId>) {
 fn push_deferred_children(deferred: DeferredType, pending: &mut Vec<TypeId>) {
     match deferred {
         DeferredType::Reference { arguments, .. } => pending.extend(arguments),
+        DeferredType::FlowReference { declared, .. } => pending.push(declared),
         DeferredType::Call { callee, .. }
         | DeferredType::Property { object: callee, .. }
         | DeferredType::Unary {
@@ -1156,7 +1178,11 @@ fn push_deferred_children(deferred: DeferredType, pending: &mut Vec<TypeId>) {
             pending.extend(type_arguments);
         }
         DeferredType::Predicate { asserted, .. } => pending.extend(asserted),
-        DeferredType::Logical { left, right, .. } => pending.extend([left, right]),
+        DeferredType::Binary { left, right, .. } | DeferredType::Logical { left, right, .. } => {
+            pending.extend([left, right]);
+        }
+        DeferredType::ElementAccess { object, index, .. }
+        | DeferredType::IndexedAccess { object, index } => pending.extend([object, index]),
         DeferredType::Conditional {
             check,
             extends,
@@ -1172,8 +1198,8 @@ fn push_deferred_children(deferred: DeferredType, pending: &mut Vec<TypeId>) {
             pending.extend([constraint, value]);
             pending.extend(name_type);
         }
-        DeferredType::IndexedAccess { object, index } => pending.extend([object, index]),
         DeferredType::Value(_)
+        | DeferredType::LexicalThis { .. }
         | DeferredType::GenericCall
         | DeferredType::BigIntLiteral
         | DeferredType::NumericRecovery

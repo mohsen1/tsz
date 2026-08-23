@@ -16,9 +16,7 @@ impl<'a> Checker<'a> {
             Literal::String(value) => match self.string_literal_type(value, provenance) {
                 Completion::Complete(ty) => ty,
                 Completion::Deferred | Completion::Cycle | Completion::Limit => {
-                    self.semantic_completion = self
-                        .semantic_completion
-                        .combine(SemanticCompletion::Deferred);
+                    self.observe_completion(SemanticCompletion::Deferred);
                     self.store.deferred_utf16_string_literal()
                 }
             },
@@ -35,9 +33,7 @@ impl<'a> Checker<'a> {
                 .store
                 .numeric_literal(value.semantic_text(), provenance),
             Literal::Number(NumberLiteral::Recovery(_)) => {
-                self.semantic_completion = self
-                    .semantic_completion
-                    .combine(SemanticCompletion::Deferred);
+                self.observe_completion(SemanticCompletion::Deferred);
                 self.store.deferred_numeric_recovery()
             }
             Literal::BigInt(_) => self.store.deferred_bigint_literal(),
@@ -96,20 +92,17 @@ impl<'a> Checker<'a> {
         if self.is_symbolic_regular_expression_type(ty) {
             return ty;
         }
+        if matches!(
+            self.store.kind(ty),
+            TypeKind::Deferred(crate::semantics::types::DeferredType::BigIntLiteral)
+        ) {
+            return self.store.builtins.bigint;
+        }
         let completion = self.force_type(ty, 0);
         let ty = match self.require_completion(completion) {
             Completion::Complete(ty) => ty,
             Completion::Deferred | Completion::Cycle | Completion::Limit => return ty,
         };
         self.store.widened_literal_type(ty)
-    }
-
-    pub(super) fn is_string_like(&mut self, ty: TypeId) -> bool {
-        self.complete_type(ty).is_some_and(|ty| {
-            matches!(
-                self.store.kind(ty),
-                TypeKind::String | TypeKind::LiteralString(_, _)
-            )
-        })
     }
 }

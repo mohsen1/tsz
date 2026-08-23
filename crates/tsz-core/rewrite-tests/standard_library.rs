@@ -1,11 +1,18 @@
 use std::sync::Arc;
 
 use tsz::bind::Meaning;
-use tsz::{Compiler, CompilerOptions, SourceInput};
+use tsz::{Compiler, CompilerOptions, SemanticCompletion, SourceInput};
 
 fn compile(source: &str, options: CompilerOptions) -> tsz::CompileOutput {
+    compile_files(&[("case.ts", source)], options)
+}
+
+fn compile_files(sources: &[(&str, &str)], options: CompilerOptions) -> tsz::CompileOutput {
     Compiler::new().compile(
-        vec![SourceInput::new("case.ts", Arc::<str>::from(source))],
+        sources
+            .iter()
+            .map(|(path, source)| SourceInput::new(*path, Arc::<str>::from(*source)))
+            .collect(),
         &CompilerOptions {
             no_emit: true,
             ..options
@@ -69,6 +76,8 @@ fn default_library_contributes_generated_type_and_value_symbols() {
     assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
 
     for (name, meaning) in [
+        ("Array", Meaning::Type),
+        ("Array", Meaning::Value),
         ("Record", Meaning::Type),
         ("parseInt", Meaning::Value),
         ("console", Meaning::Value),
@@ -80,6 +89,180 @@ fn default_library_contributes_generated_type_and_value_symbols() {
             .unwrap();
         assert_eq!(declaration.name, name);
         assert_eq!(declaration.meaning, meaning);
+    }
+}
+
+#[test]
+fn array_value_identity_projects_generated_function_method_in_strict_mode() {
+    for source in [
+        "Array['toString'];",
+        "(Array)['toString'];",
+        "const renamed=Array;renamed['toString'];",
+        "const method:()=>string=Array['toString'];",
+        "const rendered:string=Array['toString']();",
+        "Array['toString']=()=>'';",
+        "const renamed=Array;(renamed)['toString']=()=>'';",
+    ] {
+        let output = compile(source, CompilerOptions::default());
+        assert_eq!(output.diagnostics, [], "{source}: {:?}", output.diagnostics);
+        assert_eq!(
+            output.semantic_completion,
+            SemanticCompletion::Complete,
+            "{source}"
+        );
+    }
+
+    for source in [
+        "Array['renamedMissing'];",
+        "declare const key:string;Array[key];",
+        "Array['toLocaleString'];",
+        "const Array={};Array['toString'];",
+    ] {
+        let output = compile(source, CompilerOptions::default());
+        assert_eq!(output.diagnostics, [], "{source}: {:?}", output.diagnostics);
+        assert_eq!(
+            output.semantic_completion,
+            SemanticCompletion::Deferred,
+            "{source}"
+        );
+    }
+}
+
+#[test]
+fn array_function_member_defers_only_matching_global_augmentations() {
+    for strict in [true, false] {
+        for source in [
+            concat!(
+                "interface ArrayConstructor{toString():number}",
+                "const expected:()=>number=Array['toString'];",
+            ),
+            concat!(
+                "interface CallableFunction{toString():number}",
+                "const renamed=Array;const expected:()=>number=renamed['toString'];",
+            ),
+            concat!(
+                "interface Function{toString():number}",
+                "const expected:()=>number=(Array)['toString'];",
+            ),
+            concat!(
+                "interface Function{toString:()=>number}",
+                "const expected:()=>number=Array['toString'];",
+            ),
+            concat!(
+                "interface Function{'toString'():number}",
+                "const expected:()=>number=Array['toString'];",
+            ),
+        ] {
+            let output = compile(
+                source,
+                CompilerOptions {
+                    strict,
+                    ..CompilerOptions::default()
+                },
+            );
+            assert_eq!(output.diagnostics, [], "{source}: {:?}", output.diagnostics);
+            assert_eq!(
+                output.semantic_completion,
+                SemanticCompletion::Deferred,
+                "strict={strict}: {source}"
+            );
+        }
+
+        for source in [
+            "interface ArrayConstructor{renamed():void}Array['toString'];",
+            "interface CallableFunction{renamed():void}(Array)['toString'];",
+            "interface Function{renamed():void}const alias=Array;alias['toString'];",
+            "interface Object{toString():number}Array['toString'];",
+            "interface RenamedFunction{toString():number}Array['toString'];",
+        ] {
+            let output = compile(
+                source,
+                CompilerOptions {
+                    strict,
+                    ..CompilerOptions::default()
+                },
+            );
+            assert_eq!(output.diagnostics, [], "{source}: {:?}", output.diagnostics);
+            assert_eq!(
+                output.semantic_completion,
+                SemanticCompletion::Complete,
+                "strict={strict}: {source}"
+            );
+        }
+    }
+}
+
+#[test]
+fn array_function_augmentation_is_global_group_and_root_order_structural() {
+    let augmentation = ("augmentation.ts", "interface Function{toString():number}");
+    let consumer = (
+        "consumer.ts",
+        "const renamed=Array;const expected:()=>number=renamed['toString'];",
+    );
+    for sources in [vec![augmentation, consumer], vec![consumer, augmentation]] {
+        let output = compile_files(&sources, CompilerOptions::default());
+        assert_eq!(output.diagnostics, [], "{:?}", output.diagnostics);
+        assert_eq!(output.semantic_completion, SemanticCompletion::Deferred);
+    }
+
+    for augmentation in [
+        "interface Function{renamed():void}",
+        "interface Object{toString():number}",
+        "interface RenamedFunction{toString():number}",
+        "export const marker=1;interface Function{toString():number}",
+    ] {
+        let sources = [
+            ("augmentation.ts", augmentation),
+            (
+                "consumer.ts",
+                "const renamed=Array;const expected:()=>string=renamed['toString'];",
+            ),
+        ];
+        let output = compile_files(&sources, CompilerOptions::default());
+        assert_eq!(
+            output.diagnostics,
+            [],
+            "{augmentation}: {:?}",
+            output.diagnostics
+        );
+        assert_eq!(
+            output.semantic_completion,
+            SemanticCompletion::Complete,
+            "{augmentation}"
+        );
+    }
+}
+
+#[test]
+fn loose_array_value_lookup_and_unmodeled_constructor_calls_stay_bounded() {
+    for source in [
+        "Array['toString'];",
+        "(Array)['renamedMissing'];",
+        "const renamed=Array;renamed['toString'];",
+    ] {
+        let output = compile(
+            source,
+            CompilerOptions {
+                strict: false,
+                ..CompilerOptions::default()
+            },
+        );
+        assert_eq!(output.diagnostics, [], "{source}: {:?}", output.diagnostics);
+        assert_eq!(
+            output.semantic_completion,
+            SemanticCompletion::Complete,
+            "{source}"
+        );
+    }
+
+    for source in ["Array();", "new Array();"] {
+        let output = compile(source, CompilerOptions::default());
+        assert_eq!(output.diagnostics, [], "{source}: {:?}", output.diagnostics);
+        assert_eq!(
+            output.semantic_completion,
+            SemanticCompletion::Deferred,
+            "{source}"
+        );
     }
 }
 

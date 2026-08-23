@@ -9,6 +9,24 @@ set -Eeuo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
 
+# Active rewrite tests are promises, not a known-failure inventory. Scan both
+# active roots with multiline PCRE so whitespace and `cfg_attr(..., ignore)`
+# forms cannot bypass the gate. The line anchor keeps comments and fixture
+# strings from manufacturing matches.
+if active_ignores="$(rg --pcre2 -U -n '^\s*#\s*\[[^]]*\bignore\b[^]]*\]' \
+  crates/tsz-core/rewrite-tests \
+  crates/tsz-cli/rewrite-tests)"; then
+  printf '%s\n' "$active_ignores" >&2
+  echo "active #[ignore] attributes are forbidden in rewrite tests" >&2
+  exit 1
+else
+  ignore_scan_status=$?
+  if [[ "$ignore_scan_status" -ne 1 ]]; then
+    echo "failed to scan rewrite tests for active #[ignore] attributes" >&2
+    exit "$ignore_scan_status"
+  fi
+fi
+
 python3 scripts/ci/test_unit_nextest.py
 python3 scripts/ci/test_full_ci_unit_gate.py
 python3 scripts/ci/test_suite_metadata.py
@@ -51,4 +69,5 @@ python3 scripts/conformance/test_oracle_stream_contract.py
 python3 scripts/reset/test_seed_oracle_stream_contract.py
 # Keep the retained emit comparison machinery executable even though broad
 # emit scores are observational during R0.
+python3 scripts/emit/test_run_binary_resolution.py
 python3 scripts/ci/test_check_emit_regression_set.py

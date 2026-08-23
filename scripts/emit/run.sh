@@ -14,7 +14,7 @@
 #   --concurrency=N, -jN  Parallel workers (default: CPU count)
 #   --timeout=MS          Per-test timeout in ms (default: 5000)
 #   --skip-build, --no-build
-#                         Skip tsz/baseline rebuild checks (requires prebuilt artifacts)
+#                         Skip rebuild checks (set TSZ_BIN if multiple builds exist)
 #   --verbose             Detailed output
 #   --js-only             Test JavaScript emit only
 #   --dts-only            Test declaration emit only
@@ -88,7 +88,7 @@ Options:
   --concurrency=N, -jN  Parallel workers (default: CPU count)
   --timeout=MS          Per-test timeout in ms (default: 5000)
   --skip-build, --no-build
-                        Skip rebuild checks for tsz and runner (requires prebuilt artifacts)
+                        Skip rebuild checks for tsz and runner (set TSZ_BIN if multiple builds exist)
   --verbose, -v         Detailed output with diffs
   --js-only             Test JavaScript emit only
   --dts-only            Test declaration emit only
@@ -192,10 +192,18 @@ state_head_matches() {
 
 # Resolve tsz binary path for the Node runner
 resolve_tsz_binary() {
+    local reject_ambiguous="${1:-0}"
     local candidates=()
 
     if [[ -n "${TSZ_BIN:-}" ]]; then
-        candidates+=("$TSZ_BIN")
+        if [[ ! -x "$TSZ_BIN" ]]; then
+            log_error "explicit TSZ_BIN is not executable: $TSZ_BIN"
+            return 1
+        fi
+        TSZ_BIN="$(cd "$(dirname "$TSZ_BIN")" && pwd)/$(basename "$TSZ_BIN")"
+        export TSZ_BIN
+        log_info "Using explicit tsz binary: $TSZ_BIN"
+        return 0
     fi
 
     if [[ -n "${CARGO_TARGET_DIR:-}" ]]; then
@@ -208,17 +216,49 @@ resolve_tsz_binary() {
         "$ROOT_DIR/target/release/tsz"
     )
 
+    local executable_candidates=()
+    local tsz_bin resolved existing duplicate
     for tsz_bin in "${candidates[@]}"; do
         if [[ -x "$tsz_bin" ]]; then
-            # Resolve to absolute path so it works after cd
-            TSZ_BIN="$(cd "$(dirname "$tsz_bin")" && pwd)/$(basename "$tsz_bin")"
-            export TSZ_BIN
-            return 0
+            resolved="$(cd "$(dirname "$tsz_bin")" && pwd)/$(basename "$tsz_bin")"
+            duplicate=0
+            if [[ "${#executable_candidates[@]}" -gt 0 ]]; then
+                for existing in "${executable_candidates[@]}"; do
+                    if [[ "$existing" == "$resolved" ]]; then
+                        duplicate=1
+                        break
+                    fi
+                done
+            fi
+            if [[ "$duplicate" -eq 0 ]]; then
+                executable_candidates+=("$resolved")
+            fi
         fi
     done
 
-    log_error "tsz binary not found in known target directories"
-    return 1
+    if [[ "${#executable_candidates[@]}" -eq 0 ]]; then
+        log_error "tsz binary not found in known target directories"
+        return 1
+    fi
+
+    if [[ "$reject_ambiguous" -eq 1 && "${#executable_candidates[@]}" -gt 1 ]]; then
+        local first="${executable_candidates[0]}"
+        for existing in "${executable_candidates[@]:1}"; do
+            if ! cmp -s "$first" "$existing"; then
+                log_error "--skip-build found multiple different tsz binaries:"
+                for tsz_bin in "${executable_candidates[@]}"; do
+                    log_error "  $tsz_bin"
+                done
+                log_error "Set TSZ_BIN to the exact binary intended for this measurement."
+                return 1
+            fi
+        done
+    fi
+
+    TSZ_BIN="${executable_candidates[0]}"
+    export TSZ_BIN
+    log_info "Using tsz binary: $TSZ_BIN"
+    return 0
 }
 
 rebuild_tsz_binary() {
@@ -413,8 +453,8 @@ main() {
         ensure_tsz_binary
         build_runner
     else
-        if ! resolve_tsz_binary; then
-            die "tsz binary not found. Run once without --skip-build/--no-build."
+        if ! resolve_tsz_binary 1; then
+            die "tsz binary is missing or ambiguous. Set TSZ_BIN or rerun without --skip-build/--no-build."
         fi
         if [[ ! -f "$SCRIPT_DIR/dist/runner.js" ]]; then
             die "Runner JS not built. Run once without --skip-build/--no-build."
@@ -433,4 +473,6 @@ main() {
     fi
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    main "$@"
+fi

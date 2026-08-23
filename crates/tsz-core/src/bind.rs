@@ -9,7 +9,19 @@ use crate::source::{DeclId, FileId, NodeId, Span};
 use crate::syntax::{
     ArrowBody, ClassDeclaration, ClassMemberKind, Expression, ExpressionKind, FunctionDeclaration,
     SourceUnit, Statement, StatementKind, SwitchClauseKind, TypeMember, TypeMemberKind,
-    TypeMemberNameKind, TypeNode, TypeNodeKind,
+    TypeMemberNameKind, TypeNode, TypeNodeKind, UnmodeledDeclarationHostFact,
+    UnmodeledDeclarationHostKind,
+};
+
+mod flow;
+
+pub(crate) use flow::{
+    BoundFlowGraph, BoundFlowNode, FlowAssignmentSource, FlowNarrowing, FlowPathSegment,
+    TypeofWitness, TypeofWitnessSet,
+};
+use flow::{
+    FlowContainer, FlowContainerKind, FlowDemandPath, PendingFlowAssignmentSource,
+    PendingFlowFacts, PendingFlowMutation, PendingFlowReference,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -26,6 +38,7 @@ pub enum DeclarationKind {
     Interface,
     TypeMember,
     AnonymousSignature,
+    UnmodeledHost,
 }
 
 /// Binder-owned symbol category for a type element. Internal signature
@@ -52,6 +65,14 @@ pub enum Meaning {
     Type,
 }
 
+/// Binder-owned lexical `this` identity. Arrow and block scopes inherit this
+/// value; non-arrow function and class container scopes reset it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LexicalThisOwner {
+    ClassInstance(DeclId),
+    ClassConstructor(DeclId),
+}
+
 #[derive(Debug, Clone)]
 pub struct BoundDeclaration {
     pub id: DeclId,
@@ -69,6 +90,8 @@ pub struct Scope {
     pub parent: Option<ScopeId>,
     pub owner: Option<NodeId>,
     pub names: BTreeMap<String, Vec<DeclId>>,
+    lexical_this: Option<LexicalThisOwner>,
+    flow_container: Option<FlowContainer>,
 }
 
 #[derive(Debug, Clone)]
@@ -80,6 +103,8 @@ pub struct BoundFile {
     pub type_members: FxHashMap<NodeId, BoundTypeMember>,
     pub anonymous_signatures: FxHashMap<NodeId, DeclId>,
     pub type_member_groups: BTreeMap<(ScopeId, TypeMemberSymbol), Vec<DeclId>>,
+    pub(crate) flow: BoundFlowGraph,
+    flow_facts: PendingFlowFacts,
 }
 
 impl BoundFile {
@@ -119,6 +144,21 @@ impl BoundFile {
     pub fn canonical_type_member_declaration(&self, node: NodeId) -> Option<DeclId> {
         self.type_member_group(node)?.first().copied()
     }
+
+    #[must_use]
+    pub fn lexical_this_owner(&self, scope: ScopeId) -> Option<LexicalThisOwner> {
+        self.scopes
+            .get(scope.0 as usize)
+            .and_then(|scope| scope.lexical_this)
+    }
+
+    pub(crate) fn finalize_flow(
+        &mut self,
+        unit: &SourceUnit,
+        resolve_global: impl Fn(&str) -> Option<DeclId>,
+    ) {
+        self.flow = BoundFlowGraph::build(unit, self, &self.flow_facts, resolve_global);
+    }
 }
 
 pub fn bind_source(file: FileId, unit: &SourceUnit) -> BoundFile {
@@ -130,14 +170,18 @@ pub fn bind_source(file: FileId, unit: &SourceUnit) -> BoundFile {
             parent: None,
             owner: None,
             names: BTreeMap::new(),
+            lexical_this: None,
+            flow_container: None,
         }],
         scope_for_node: FxHashMap::default(),
         type_members: FxHashMap::default(),
         anonymous_signatures: FxHashMap::default(),
         type_member_groups: BTreeMap::new(),
+        flow_facts: PendingFlowFacts::default(),
+        unmodeled_declaration_hosts: unit.unmodeled_declaration_hosts().to_vec(),
     };
     for statement in &unit.statements {
-        binder.bind_statement(statement, ScopeId(0));
+        binder.bind_statement(statement, ScopeId(0), None);
     }
     BoundFile {
         file,
@@ -147,6 +191,8 @@ pub fn bind_source(file: FileId, unit: &SourceUnit) -> BoundFile {
         type_members: binder.type_members,
         anonymous_signatures: binder.anonymous_signatures,
         type_member_groups: binder.type_member_groups,
+        flow: BoundFlowGraph::default(),
+        flow_facts: binder.flow_facts,
     }
 }
 
@@ -158,11 +204,62 @@ struct Binder {
     type_members: FxHashMap<NodeId, BoundTypeMember>,
     anonymous_signatures: FxHashMap<NodeId, DeclId>,
     type_member_groups: BTreeMap<(ScopeId, TypeMemberSymbol), Vec<DeclId>>,
+    flow_facts: PendingFlowFacts,
+    unmodeled_declaration_hosts: Vec<UnmodeledDeclarationHostFact>,
 }
 
 impl Binder {
-    fn bind_statement(&mut self, statement: &Statement, scope: ScopeId) {
+    fn bind_statement(&mut self, statement: &Statement, scope: ScopeId, control: Option<NodeId>) {
         self.scope_for_node.insert(statement.id, scope);
+        let unmodeled_hosts = self
+            .unmodeled_declaration_hosts
+            .iter()
+            .filter(|host| host.owner_start == statement.span.start)
+            .cloned()
+            .collect::<Vec<_>>();
+        for host in unmodeled_hosts {
+            let Some(name) = host.name.as_deref() else {
+                continue;
+            };
+            let Some(name_span) = host.name_span else {
+                continue;
+            };
+            if matches!(
+                host.kind,
+                UnmodeledDeclarationHostKind::Namespace
+                    | UnmodeledDeclarationHostKind::Module
+                    | UnmodeledDeclarationHostKind::Using
+            ) {
+                self.declare(
+                    scope,
+                    statement.id,
+                    name,
+                    name_span,
+                    DeclarationKind::UnmodeledHost,
+                    Meaning::Value,
+                );
+            }
+            if matches!(
+                host.kind,
+                UnmodeledDeclarationHostKind::Namespace | UnmodeledDeclarationHostKind::Module
+            ) {
+                self.declare(
+                    scope,
+                    statement.id,
+                    name,
+                    name_span,
+                    DeclarationKind::UnmodeledHost,
+                    Meaning::Type,
+                );
+            }
+        }
+        if self.unmodeled_declaration_hosts.iter().any(|host| {
+            host.owner_start != statement.span.start
+                && host.recovery_extent.start <= statement.span.start
+                && statement.span.start < host.recovery_extent.end
+        }) {
+            return;
+        }
         match &statement.kind {
             StatementKind::Import(declaration) => {
                 for binding in &declaration.bindings {
@@ -187,16 +284,47 @@ impl Binder {
                 }
             }
             StatementKind::Variable(declaration) => {
-                self.declare(
-                    scope,
-                    statement.id,
-                    &declaration.name,
-                    declaration.name_span,
-                    DeclarationKind::Variable,
-                    Meaning::Value,
-                );
+                let declared = if declaration.recovered_binding_names.is_empty() {
+                    Some(self.declare(
+                        scope,
+                        statement.id,
+                        &declaration.name,
+                        declaration.name_span,
+                        DeclarationKind::Variable,
+                        Meaning::Value,
+                    ))
+                } else {
+                    for binding in &declaration.recovered_binding_names {
+                        self.declare(
+                            scope,
+                            statement.id,
+                            &binding.name,
+                            binding.span,
+                            DeclarationKind::Variable,
+                            Meaning::Value,
+                        );
+                    }
+                    None
+                };
+                if let Some(declared) = declared
+                    && declaration.annotation.is_none()
+                    && declaration
+                        .initializer
+                        .as_ref()
+                        .is_some_and(is_empty_array_expression)
+                {
+                    self.flow_facts.evolving_array_declarations.push(declared);
+                }
                 if let Some(initializer) = &declaration.initializer {
-                    self.bind_expression(initializer, scope);
+                    self.bind_expression(initializer, scope, control);
+                }
+                if let (Some(declaration), Some(initializer)) = (declared, &declaration.initializer)
+                    && let Some(PendingFlowAssignmentSource::Literal(source)) =
+                        PendingFlowAssignmentSource::from_expression(initializer)
+                {
+                    self.flow_facts
+                        .initializers
+                        .push((declaration, source, statement.span));
                 }
                 if let Some(annotation) = &declaration.annotation {
                     self.bind_type_node(annotation, scope);
@@ -214,7 +342,7 @@ impl Binder {
                 self.bind_function(statement.id, declaration, scope);
             }
             StatementKind::Class(declaration) => {
-                self.declare(
+                let constructor = self.declare(
                     scope,
                     statement.id,
                     &declaration.name,
@@ -222,7 +350,7 @@ impl Binder {
                     DeclarationKind::Class,
                     Meaning::Value,
                 );
-                self.declare(
+                let instance = self.declare(
                     scope,
                     statement.id,
                     &declaration.name,
@@ -230,7 +358,7 @@ impl Binder {
                     DeclarationKind::Class,
                     Meaning::Type,
                 );
-                self.bind_class(statement.id, declaration, scope);
+                self.bind_class(statement.id, declaration, scope, instance, constructor);
             }
             StatementKind::TypeAlias(declaration) => {
                 self.declare(
@@ -258,41 +386,44 @@ impl Binder {
             }
             StatementKind::Block(statements) => {
                 let child = self.new_scope(scope, statement.id);
+                self.scope_for_node.insert(statement.id, child);
                 for nested in statements {
-                    self.bind_statement(nested, child);
+                    self.bind_statement(nested, child, control);
                 }
             }
             StatementKind::If(control_flow) => {
-                self.bind_expression(&control_flow.condition, scope);
-                self.bind_statement(&control_flow.then_statement, scope);
+                self.bind_expression(&control_flow.condition, scope, control);
+                self.bind_statement(&control_flow.then_statement, scope, Some(statement.id));
                 if let Some(else_statement) = &control_flow.else_statement {
-                    self.bind_statement(else_statement, scope);
+                    self.bind_statement(else_statement, scope, Some(statement.id));
                 }
             }
             StatementKind::Switch(control_flow) => {
                 let child = self.new_scope(scope, statement.id);
                 self.scope_for_node.insert(statement.id, child);
-                self.bind_expression(&control_flow.expression, child);
+                self.bind_expression(&control_flow.expression, scope, control);
                 for clause in &control_flow.clauses {
                     if let SwitchClauseKind::Case(expression) = &clause.kind {
-                        self.bind_expression(expression, child);
+                        self.bind_expression(expression, child, Some(expression.id));
                     }
                     for nested in &clause.statements {
-                        self.bind_statement(nested, child);
+                        self.bind_statement(nested, child, Some(statement.id));
                     }
                 }
             }
             StatementKind::Export(declaration) => {
                 if let Some(assignment) = &declaration.assignment {
-                    self.bind_expression(assignment, scope);
+                    self.bind_expression(assignment, scope, control);
                 }
             }
             StatementKind::Return(expression) => {
                 if let Some(expression) = expression {
-                    self.bind_expression(expression, scope);
+                    self.bind_expression(expression, scope, control);
                 }
             }
-            StatementKind::Expression(expression) => self.bind_expression(expression, scope),
+            StatementKind::Expression(expression) => {
+                self.bind_expression(expression, scope, control);
+            }
             StatementKind::Break(_)
             | StatementKind::Continue(_)
             | StatementKind::Empty
@@ -378,7 +509,7 @@ impl Binder {
                     self.bind_type_node(ty, member_scope);
                 }
                 if let Some(initializer) = initializer {
-                    self.bind_expression(initializer, member_scope);
+                    self.bind_expression(initializer, member_scope, None);
                 }
             }
             TypeMemberKind::Method {
@@ -443,7 +574,7 @@ impl Binder {
 
     fn bind_type_member_name(&mut self, name: &crate::syntax::TypeMemberName, scope: ScopeId) {
         if let TypeMemberNameKind::Computed(expression) = &name.kind {
-            self.bind_expression(expression, scope);
+            self.bind_expression(expression, scope, None);
         }
     }
 
@@ -486,7 +617,7 @@ impl Binder {
                 self.bind_type_node(annotation, parameter_scope);
             }
             if let Some(initializer) = &parameter.initializer {
-                self.bind_expression(initializer, parameter_scope);
+                self.bind_expression(initializer, parameter_scope, None);
             }
         }
         if let Some(return_type) = return_type {
@@ -595,32 +726,56 @@ impl Binder {
         }
     }
 
-    fn bind_class(&mut self, owner: NodeId, declaration: &ClassDeclaration, parent: ScopeId) {
-        let class_scope = self.new_scope(parent, owner);
+    fn bind_class(
+        &mut self,
+        owner: NodeId,
+        declaration: &ClassDeclaration,
+        parent: ScopeId,
+        instance: DeclId,
+        constructor: DeclId,
+    ) {
+        let class_scope = self.new_scope_with_lexical_this(parent, owner, None);
         self.scope_for_node.insert(owner, class_scope);
         for member in &declaration.members {
+            let lexical_this = if member.modifiers.static_member {
+                LexicalThisOwner::ClassConstructor(constructor)
+            } else {
+                LexicalThisOwner::ClassInstance(instance)
+            };
             match &member.kind {
                 ClassMemberKind::Property {
                     annotation,
                     initializer,
                     ..
                 } => {
+                    let member_scope = self.new_flow_scope(
+                        class_scope,
+                        member.id,
+                        Some(lexical_this),
+                        FlowContainerKind::Creation,
+                    );
+                    self.scope_for_node.insert(member.id, member_scope);
                     if let Some(annotation) = annotation {
-                        self.bind_type_node(annotation, class_scope);
+                        self.bind_type_node(annotation, member_scope);
                     }
                     if let Some(initializer) = initializer {
-                        self.bind_expression(initializer, class_scope);
+                        self.bind_expression(initializer, member_scope, None);
                     }
                 }
                 ClassMemberKind::Constructor {
                     parameters, body, ..
                 } => {
-                    let member_scope = self.new_scope(class_scope, member.id);
+                    let member_scope = self.new_flow_scope(
+                        class_scope,
+                        member.id,
+                        Some(LexicalThisOwner::ClassInstance(instance)),
+                        FlowContainerKind::Ordinary,
+                    );
                     self.scope_for_node.insert(member.id, member_scope);
                     let body_scope = self.new_anonymous_scope(member_scope);
                     self.bind_signature_types(parameters, None, member_scope, member_scope);
                     for statement in body {
-                        self.bind_statement(statement, body_scope);
+                        self.bind_statement(statement, body_scope, None);
                     }
                 }
                 ClassMemberKind::Method {
@@ -630,7 +785,12 @@ impl Binder {
                     body,
                     ..
                 } => {
-                    let member_scope = self.new_scope(class_scope, member.id);
+                    let member_scope = self.new_flow_scope(
+                        class_scope,
+                        member.id,
+                        Some(lexical_this),
+                        FlowContainerKind::Ordinary,
+                    );
                     self.scope_for_node.insert(member.id, member_scope);
                     self.bind_type_parameters(type_parameters, member_scope);
                     let body_scope = self.new_anonymous_scope(member_scope);
@@ -641,28 +801,56 @@ impl Binder {
                         member_scope,
                     );
                     for statement in body {
-                        self.bind_statement(statement, body_scope);
+                        self.bind_statement(statement, body_scope, None);
                     }
                 }
             }
         }
     }
 
-    fn bind_expression(&mut self, expression: &Expression, scope: ScopeId) {
+    fn bind_expression(
+        &mut self,
+        expression: &Expression,
+        scope: ScopeId,
+        control: Option<NodeId>,
+    ) {
+        self.bind_expression_with_demand(expression, scope, control, FlowDemandPath::root());
+    }
+
+    fn bind_expression_with_demand(
+        &mut self,
+        expression: &Expression,
+        scope: ScopeId,
+        control: Option<NodeId>,
+        demand: FlowDemandPath,
+    ) {
         self.scope_for_node.insert(expression.id, scope);
         match &expression.kind {
-            ExpressionKind::Identifier { .. }
+            ExpressionKind::Identifier {
+                name, entity_name, ..
+            } => {
+                if *entity_name {
+                    self.flow_facts.references.push(PendingFlowReference {
+                        expression: expression.id,
+                        span: expression.span,
+                        scope,
+                        name: name.clone(),
+                        demand,
+                    });
+                }
+            }
+            ExpressionKind::This
             | ExpressionKind::Literal(_)
             | ExpressionKind::RegularExpression(_)
             | ExpressionKind::Missing => {}
             ExpressionKind::Object(properties) => {
                 for property in properties {
-                    self.bind_expression(&property.value, scope);
+                    self.bind_expression(&property.value, scope, control);
                 }
             }
             ExpressionKind::Array(elements) => {
                 for element in elements {
-                    self.bind_expression(element, scope);
+                    self.bind_expression(element, scope, control);
                 }
             }
             ExpressionKind::Call {
@@ -670,12 +858,12 @@ impl Binder {
                 type_arguments,
                 arguments,
             } => {
-                self.bind_expression(callee, scope);
+                self.bind_expression(callee, scope, control);
                 for type_argument in type_arguments.iter().flatten() {
                     self.bind_type_node(type_argument, scope);
                 }
                 for argument in arguments {
-                    self.bind_expression(argument, scope);
+                    self.bind_expression(argument, scope, control);
                 }
             }
             ExpressionKind::New {
@@ -683,28 +871,44 @@ impl Binder {
                 type_arguments,
                 arguments,
             } => {
-                self.bind_expression(callee, scope);
+                self.bind_expression(callee, scope, control);
                 for type_argument in type_arguments {
                     self.bind_type_node(type_argument, scope);
                 }
                 for argument in arguments {
-                    self.bind_expression(argument, scope);
+                    self.bind_expression(argument, scope, control);
                 }
             }
-            ExpressionKind::Member { object, .. }
-            | ExpressionKind::Unary {
+            ExpressionKind::Member { object, name, .. } => {
+                self.bind_expression_with_demand(object, scope, control, demand.member(name));
+            }
+            ExpressionKind::Parenthesized(object) => {
+                self.bind_expression_with_demand(object, scope, control, demand);
+            }
+            ExpressionKind::Unary {
                 operand: object, ..
             }
             | ExpressionKind::As {
                 expression: object, ..
+            } => {
+                self.bind_expression(object, scope, control);
             }
-            | ExpressionKind::Parenthesized(object) => self.bind_expression(object, scope),
+            ExpressionKind::ElementAccess { object, index } => {
+                self.bind_expression_with_demand(object, scope, control, demand.element(index));
+                self.bind_expression(index, scope, control);
+            }
             ExpressionKind::Arrow {
                 parameters,
                 return_type,
                 body,
             } => {
-                let arrow_scope = self.new_scope(scope, expression.id);
+                let lexical_this = self.scopes[scope.0 as usize].lexical_this;
+                let arrow_scope = self.new_flow_scope(
+                    scope,
+                    expression.id,
+                    lexical_this,
+                    FlowContainerKind::Creation,
+                );
                 self.scope_for_node.insert(expression.id, arrow_scope);
                 let body_scope = match body {
                     ArrowBody::Expression(_) => arrow_scope,
@@ -717,24 +921,39 @@ impl Binder {
                     arrow_scope,
                 );
                 match body {
-                    ArrowBody::Expression(body) => self.bind_expression(body, body_scope),
+                    ArrowBody::Expression(body) => self.bind_expression(body, body_scope, None),
                     ArrowBody::Block(statements) => {
                         for statement in statements {
-                            self.bind_statement(statement, body_scope);
+                            self.bind_statement(statement, body_scope, None);
                         }
                     }
                 }
             }
-            ExpressionKind::Binary { left, right, .. }
-            | ExpressionKind::Assignment { left, right } => {
-                self.bind_expression(left, scope);
-                self.bind_expression(right, scope);
+            ExpressionKind::Binary { left, right, .. } => {
+                self.bind_expression(left, scope, control);
+                self.bind_expression(right, scope, control);
+            }
+            ExpressionKind::Assignment { left, right } => {
+                self.bind_expression(left, scope, control);
+                self.bind_expression(right, scope, control);
+                if let Some(target) = flow_assignment_root(left) {
+                    self.flow_facts.mutations.push(PendingFlowMutation {
+                        target: target.id,
+                        source: simple_assignment_target(left)
+                            .and_then(|_| PendingFlowAssignmentSource::from_expression(right)),
+                        control,
+                        effect_span: expression.span,
+                    });
+                }
+                if let Some(target) = element_assignment_receiver(left) {
+                    self.flow_facts.evolving_array_writes.push(target.id);
+                }
             }
         }
     }
 
     fn bind_function(&mut self, owner: NodeId, declaration: &FunctionDeclaration, parent: ScopeId) {
-        let scope = self.new_scope(parent, owner);
+        let scope = self.new_flow_scope(parent, owner, None, FlowContainerKind::Ordinary);
         self.scope_for_node.insert(owner, scope);
         self.bind_type_parameters(&declaration.type_parameters, scope);
         let body_scope = if declaration.has_body {
@@ -749,28 +968,57 @@ impl Binder {
             scope,
         );
         for statement in &declaration.body {
-            self.bind_statement(statement, body_scope);
+            self.bind_statement(statement, body_scope, None);
         }
     }
 
     fn new_scope(&mut self, parent: ScopeId, owner: NodeId) -> ScopeId {
+        let lexical_this = self.scopes[parent.0 as usize].lexical_this;
+        self.new_scope_with_lexical_this(parent, owner, lexical_this)
+    }
+
+    fn new_scope_with_lexical_this(
+        &mut self,
+        parent: ScopeId,
+        owner: NodeId,
+        lexical_this: Option<LexicalThisOwner>,
+    ) -> ScopeId {
         let id = ScopeId(self.scopes.len() as u32);
+        let flow_container = self.scopes[parent.0 as usize].flow_container;
         self.scopes.push(Scope {
             id,
             parent: Some(parent),
             owner: Some(owner),
             names: BTreeMap::new(),
+            lexical_this,
+            flow_container,
         });
         id
     }
 
+    fn new_flow_scope(
+        &mut self,
+        parent: ScopeId,
+        owner: NodeId,
+        lexical_this: Option<LexicalThisOwner>,
+        kind: FlowContainerKind,
+    ) -> ScopeId {
+        let scope = self.new_scope_with_lexical_this(parent, owner, lexical_this);
+        self.scopes[scope.0 as usize].flow_container = Some(FlowContainer { owner, kind });
+        scope
+    }
+
     fn new_anonymous_scope(&mut self, parent: ScopeId) -> ScopeId {
         let id = ScopeId(self.scopes.len() as u32);
+        let lexical_this = self.scopes[parent.0 as usize].lexical_this;
+        let flow_container = self.scopes[parent.0 as usize].flow_container;
         self.scopes.push(Scope {
             id,
             parent: Some(parent),
             owner: None,
             names: BTreeMap::new(),
+            lexical_this,
+            flow_container,
         });
         id
     }
@@ -853,4 +1101,41 @@ impl Binder {
             self.declare(scope, owner, name, name_span, kind, meaning)
         }
     }
+}
+
+fn simple_assignment_target(mut expression: &Expression) -> Option<&Expression> {
+    while let ExpressionKind::Parenthesized(inner) = &expression.kind {
+        expression = inner;
+    }
+    matches!(expression.kind, ExpressionKind::Identifier { .. }).then_some(expression)
+}
+
+fn flow_assignment_root(mut expression: &Expression) -> Option<&Expression> {
+    while let ExpressionKind::Parenthesized(inner) = &expression.kind {
+        expression = inner;
+    }
+    match &expression.kind {
+        ExpressionKind::Identifier { .. } => Some(expression),
+        ExpressionKind::Member { object, .. } | ExpressionKind::ElementAccess { object, .. } => {
+            flow_assignment_root(object)
+        }
+        _ => None,
+    }
+}
+
+fn element_assignment_receiver(mut expression: &Expression) -> Option<&Expression> {
+    while let ExpressionKind::Parenthesized(inner) = &expression.kind {
+        expression = inner;
+    }
+    let ExpressionKind::ElementAccess { object, .. } = &expression.kind else {
+        return None;
+    };
+    simple_assignment_target(object)
+}
+
+fn is_empty_array_expression(mut expression: &Expression) -> bool {
+    while let ExpressionKind::Parenthesized(inner) = &expression.kind {
+        expression = inner;
+    }
+    matches!(&expression.kind, ExpressionKind::Array(elements) if elements.is_empty())
 }

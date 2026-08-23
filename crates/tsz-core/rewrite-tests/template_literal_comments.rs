@@ -253,7 +253,7 @@ fn unicode_line_comment_terminators_fail_closed_for_every_program_product() {
         "unsafe.ts",
         Arc::<str>::from("// ordinary\u{2028}declare const hidden: number;"),
     );
-    let safe_root = SourceInput::new("safe.ts", Arc::<str>::from("// safe\n`plain`;"));
+    let safe_root = SourceInput::new("safe.ts", Arc::<str>::from("// safe\nconst visible = 1;"));
     for roots in [
         vec![unsafe_root.clone(), safe_root.clone()],
         vec![safe_root, unsafe_root],

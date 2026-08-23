@@ -9,6 +9,7 @@ struct LibraryIndex {
     type_names: BTreeSet<String>,
     value_names: BTreeSet<String>,
     string_record_type_names: BTreeSet<String>,
+    function_zero_argument_string_method_names: BTreeSet<String>,
 }
 
 fn main() {
@@ -32,7 +33,12 @@ fn main() {
         let name = library_name(&path);
         let source = fs::read_to_string(&path).unwrap();
         let references = reference_libraries(&source);
-        let (type_names, value_names, string_record_type_names) = declaration_names(&source);
+        let (
+            type_names,
+            value_names,
+            string_record_type_names,
+            function_zero_argument_string_method_names,
+        ) = declaration_names(&source);
         libraries.insert(
             name,
             LibraryIndex {
@@ -40,6 +46,7 @@ fn main() {
                 type_names,
                 value_names,
                 string_record_type_names,
+                function_zero_argument_string_method_names,
             },
         );
     }
@@ -80,12 +87,20 @@ fn reference_libraries(source: &str) -> Vec<String> {
     references
 }
 
-fn declaration_names(source: &str) -> (BTreeSet<String>, BTreeSet<String>, BTreeSet<String>) {
+fn declaration_names(
+    source: &str,
+) -> (
+    BTreeSet<String>,
+    BTreeSet<String>,
+    BTreeSet<String>,
+    BTreeSet<String>,
+) {
     let tokens = tokens(source);
     let mut scopes = Vec::new();
     let mut type_names = BTreeSet::new();
     let mut value_names = BTreeSet::new();
     let mut string_record_type_names = BTreeSet::new();
+    let mut function_zero_argument_string_method_names = BTreeSet::new();
 
     for (index, token) in tokens.iter().enumerate() {
         match token.as_str() {
@@ -112,6 +127,10 @@ fn declaration_names(source: &str) -> (BTreeSet<String>, BTreeSet<String>, BTree
                         if token == "type" && is_homogeneous_string_record_alias(&tokens, index) {
                             string_record_type_names.insert(name.clone());
                         }
+                        if token == "interface" && name == "Function" {
+                            function_zero_argument_string_method_names
+                                .extend(zero_argument_string_methods(&tokens, index));
+                        }
                     }
                     "class" | "enum" | "namespace" | "module" => {
                         type_names.insert(name.clone());
@@ -130,7 +149,55 @@ fn declaration_names(source: &str) -> (BTreeSet<String>, BTreeSet<String>, BTree
         }
     }
 
-    (type_names, value_names, string_record_type_names)
+    (
+        type_names,
+        value_names,
+        string_record_type_names,
+        function_zero_argument_string_method_names,
+    )
+}
+
+/// Extract the pinned intrinsic interface member shape `name(): string`.
+///
+/// The interface name is selected by the caller while declaration tokens are
+/// still known to come from the pinned library corpus. Member spellings are
+/// data: no checker path elects a property by a source or fixture string.
+fn zero_argument_string_methods(tokens: &[String], interface_start: usize) -> BTreeSet<String> {
+    let Some(open) = tokens
+        .iter()
+        .enumerate()
+        .skip(interface_start + 2)
+        .find_map(|(index, token)| (token == "{").then_some(index))
+    else {
+        return BTreeSet::new();
+    };
+
+    let mut methods = BTreeSet::new();
+    let mut depth = 1_u32;
+    let mut index = open + 1;
+    while index < tokens.len() && depth > 0 {
+        match tokens[index].as_str() {
+            "{" => depth += 1,
+            "}" => depth -= 1,
+            _ if depth == 1 => {
+                if let Some(shape) = tokens.get(index..index + 6)
+                    && is_identifier(&shape[0])
+                    && shape[1] == "("
+                    && shape[2] == ")"
+                    && shape[3] == ":"
+                    && shape[4] == "string"
+                    && shape[5] == ";"
+                {
+                    methods.insert(shape[0].clone());
+                    index += shape.len();
+                    continue;
+                }
+            }
+            _ => {}
+        }
+        index += 1;
+    }
+    methods
 }
 
 /// Recognize the pinned-library declaration shape
@@ -203,7 +270,7 @@ fn tokens(source: &str) -> Vec<String> {
                     }
                 }
             }
-            b'{' | b'}' | b'[' | b']' | b'<' | b'>' | b',' | b':' | b';' | b'=' => {
+            b'{' | b'}' | b'[' | b']' | b'(' | b')' | b'<' | b'>' | b',' | b':' | b';' | b'=' => {
                 tokens.push(char::from(bytes[index]).to_string());
                 index += 1;
             }
@@ -255,6 +322,10 @@ fn generated_source(libraries: &BTreeMap<String, LibraryIndex>) -> String {
         output.push_str(&render_strings(&library.value_names));
         output.push_str(", string_record_type_names: &");
         output.push_str(&render_strings(&library.string_record_type_names));
+        output.push_str(", function_zero_argument_string_method_names: &");
+        output.push_str(&render_strings(
+            &library.function_zero_argument_string_method_names,
+        ));
         output.push_str(" },\n");
     }
     output.push_str("];\n");

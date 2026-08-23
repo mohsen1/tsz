@@ -1,38 +1,27 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use tsz::CompilerOptions;
-use tsz::bind::bind_source;
-use tsz::emit::emit_file;
-use tsz::program::ProgramFile;
 use tsz::source::{FileId, SourceText};
 use tsz::syntax::{StatementKind, parse_source};
+use tsz::{Compiler, CompilerOptions, SourceInput};
 
 fn emit(source: &str) -> String {
-    let source = SourceText::new(FileId(0), "case.ts".into(), Arc::<str>::from(source));
-    let parsed = parse_source(&source);
-    assert!(
-        parsed.diagnostics.is_empty(),
-        "identifier-shaped keywords should remain syntax nodes: {:?}",
-        parsed.diagnostics
-    );
-    let bindings = bind_source(source.id, &parsed.unit);
-    let file = ProgramFile {
-        source,
-        syntax: parsed.unit,
-        bindings,
-    };
-    let output = emit_file(
-        &file,
+    let output = Compiler::new().compile(
+        vec![SourceInput::new("case.ts", Arc::<str>::from(source))],
         &CompilerOptions {
             no_check: true,
-            no_lib: true,
             target: "es2025".to_string(),
             module: "preserve".to_string(),
             ..CompilerOptions::default()
         },
     );
+    assert!(
+        output.diagnostics.is_empty(),
+        "identifier-shaped keywords should remain syntax nodes: {:?}",
+        output.diagnostics
+    );
     let javascript = output
+        .emitted_files
         .iter()
         .find(|file| !file.declaration)
         .expect("JavaScript output");

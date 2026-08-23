@@ -76,6 +76,17 @@ ACTIVE_COMPILER_RUST_ROOTS = (
     "crates/tsz-cli/src",
 )
 
+REWRITE_COMPILER_SIZE_MANIFEST_PATH = "scripts/arch/rewrite-compiler-size.json"
+R0_COMPILER_PHYSICAL_LINE_LIMIT = 15_000
+REWRITE_COMPILER_INCLUDE_PATTERNS = (
+    "crates/tsz-cli/src/**/*.rs",
+    "crates/tsz-core/src/**/*.rs",
+)
+REWRITE_COMPILER_EXCLUDE_PATHS = (
+    "crates/tsz-core/src/emit/test_support.rs",
+    "crates/tsz-core/src/program/capabilities/tests.rs",
+)
+
 CLI_OBSERVABILITY_ENV_NAMES = frozenset(
     {
         "TSZ_LOG",
@@ -214,6 +225,25 @@ class Manifest:
     dependencies: tuple[Dependency, ...]
 
 
+@dataclass(frozen=True)
+class RewriteCompilerSizeManifest:
+    r0_physical_line_limit: int
+    include: tuple[str, ...]
+    exclude: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class RewriteCompilerSize:
+    physical_lines: int
+    r0_physical_line_limit: int
+    included_paths: tuple[str, ...]
+    excluded_paths: tuple[str, ...]
+
+    @property
+    def r0_ready(self) -> bool:
+        return self.physical_lines < self.r0_physical_line_limit
+
+
 def _relative(root: Path, path: Path) -> str:
     return path.resolve().relative_to(root.resolve()).as_posix()
 
@@ -237,6 +267,99 @@ def _physical_lines(text: str) -> int:
     if not text:
         return 0
     return text.count("\n") + (not text.endswith("\n"))
+
+
+def _rewrite_compiler_size_manifest(root: Path) -> RewriteCompilerSizeManifest:
+    path = root / REWRITE_COMPILER_SIZE_MANIFEST_PATH
+    try:
+        value = json.loads(_read_text(path))
+    except (OSError, json.JSONDecodeError) as error:
+        raise ValueError(f"cannot read size manifest: {error}") from error
+    expected_keys = {
+        "schema_version",
+        "r0_physical_line_limit",
+        "include",
+        "exclude",
+    }
+    if not isinstance(value, dict) or set(value) != expected_keys:
+        raise ValueError(
+            "size manifest must be an object with exactly schema_version, "
+            "r0_physical_line_limit, include, and exclude"
+        )
+    if type(value["schema_version"]) is not int or value["schema_version"] != 1:
+        raise ValueError("size manifest schema_version must be 1")
+    if (
+        type(value["r0_physical_line_limit"]) is not int
+        or value["r0_physical_line_limit"] != R0_COMPILER_PHYSICAL_LINE_LIMIT
+    ):
+        raise ValueError(
+            "R0 compiler size limit must remain 15000 physical lines"
+        )
+
+    def string_tuple(field: str) -> tuple[str, ...]:
+        entries = value[field]
+        if (
+            not isinstance(entries, list)
+            or any(not isinstance(entry, str) or not entry for entry in entries)
+            or entries != sorted(set(entries))
+        ):
+            raise ValueError(
+                f"size manifest {field} must be a sorted list of unique paths"
+            )
+        return tuple(entries)
+
+    include = string_tuple("include")
+    exclude = string_tuple("exclude")
+    if include != REWRITE_COMPILER_INCLUDE_PATTERNS:
+        raise ValueError(
+            "size manifest include list must cover exactly tsz-core/src and "
+            "tsz-cli/src Rust sources"
+        )
+    if exclude != REWRITE_COMPILER_EXCLUDE_PATHS:
+        raise ValueError(
+            "size manifest exclude list must contain exactly the two test-only "
+            "Rust sources under the compiler src roots"
+        )
+    return RewriteCompilerSizeManifest(
+        r0_physical_line_limit=value["r0_physical_line_limit"],
+        include=include,
+        exclude=exclude,
+    )
+
+
+def rewrite_compiler_size(root: Path) -> RewriteCompilerSize:
+    manifest = _rewrite_compiler_size_manifest(root)
+    included: set[Path] = set()
+    for pattern in manifest.include:
+        matches = {
+            path.resolve()
+            for path in root.glob(pattern)
+            if path.is_file() and not path.is_symlink()
+        }
+        if not matches:
+            raise ValueError(
+                f"size manifest include pattern matched no files: {pattern}"
+            )
+        included.update(matches)
+
+    excluded: set[Path] = set()
+    for relative in manifest.exclude:
+        path = (root / relative).resolve()
+        if not path.is_file() or path.is_symlink():
+            raise ValueError(f"size manifest excluded source is missing: {relative}")
+        if path not in included:
+            raise ValueError(
+                f"size manifest exclusion is outside include roots: {relative}"
+            )
+        excluded.add(path)
+
+    selected = sorted(included - excluded)
+    return RewriteCompilerSize(
+        physical_lines=sum(_physical_lines(_read_text(path)) for path in selected),
+        r0_physical_line_limit=manifest.r0_physical_line_limit,
+        included_paths=tuple(_relative(root, path) for path in selected),
+        excluded_paths=tuple(_relative(root, path) for path in sorted(excluded)),
+    )
 
 
 def _line_of(text: str, pattern: re.Pattern[str]) -> int:
@@ -561,6 +684,26 @@ def check_rust_line_limits(root: Path) -> list[Violation]:
                     )
                 )
     return violations
+
+
+def check_rewrite_compiler_size_manifest(root: Path) -> list[Violation]:
+    manifest_path = root / REWRITE_COMPILER_SIZE_MANIFEST_PATH
+    guard_is_installed = (root / "scripts/arch/arch_guard.py").is_file()
+    if not manifest_path.is_file() and not guard_is_installed:
+        # Small unit-test repositories need not install the rewrite guard.
+        return []
+    try:
+        rewrite_compiler_size(root)
+    except (OSError, UnicodeDecodeError, ValueError) as error:
+        return [
+            Violation(
+                REWRITE_COMPILER_SIZE_MANIFEST_PATH,
+                1,
+                "rewrite-compiler-size-manifest",
+                str(error),
+            )
+        ]
+    return []
 
 
 def check_sound_mode(root: Path) -> list[Violation]:
@@ -1105,6 +1248,13 @@ def rewrite_architecture_metrics(root: Path) -> dict[str, int]:
     def physical_lines(relative: str) -> int:
         return physical_repo_lines(f"crates/tsz-core/src/{relative}")
 
+    try:
+        compiler_rust_lines = rewrite_compiler_size(root).physical_lines
+    except (OSError, UnicodeDecodeError, ValueError):
+        # The manifest check reports the actionable error. Keeping a numeric
+        # value here makes the ratchet fail closed without aborting the guard.
+        compiler_rust_lines = 0
+
     return {
         "checker_collection_fields": _field_count(
             checker,
@@ -1174,6 +1324,7 @@ def rewrite_architecture_metrics(root: Path) -> dict[str, int]:
         "program_completion_gate_terms": _top_level_boolean_term_count(
             completion_condition
         ),
+        "r0_handwritten_compiler_rust_lines": compiler_rust_lines,
         "reference_stack_constructors": len(
             re.findall(r"\bReferenceExpansionStack::new\s*\(", production)
         ),
@@ -1268,6 +1419,7 @@ def check(root: Path) -> list[Violation]:
         check_workspace,
         check_manifests,
         check_rust_line_limits,
+        check_rewrite_compiler_size_manifest,
         check_sound_mode,
         check_ambient_behavior_switches,
         check_semantic_hardcoding,
@@ -1288,6 +1440,11 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         default=Path(__file__).resolve().parents[2],
         help="repository root (defaults to the root containing this script)",
     )
+    parser.add_argument(
+        "--require-r0-ready",
+        action="store_true",
+        help="fail unless hand-written compiler Rust is below the R0 15000-line limit",
+    )
     return parser.parse_args(argv)
 
 
@@ -1295,6 +1452,43 @@ def main(argv: list[str] | None = None) -> int:
     args = _parse_args(sys.argv[1:] if argv is None else argv)
     root = args.root.resolve()
     violations = check(root)
+    size: RewriteCompilerSize | None = None
+    try:
+        size = rewrite_compiler_size(root)
+    except (OSError, UnicodeDecodeError, ValueError):
+        # The regular manifest check already owns the actionable diagnostic.
+        pass
+    if size is not None:
+        readiness = "READY" if size.r0_ready else "NOT READY"
+        comparison = "<" if size.r0_ready else ">="
+        print(
+            f"R0 size readiness: {readiness} "
+            f"({size.physical_lines} {comparison} {size.r0_physical_line_limit} "
+            "hand-written compiler Rust physical lines)"
+        )
+        if args.require_r0_ready and not size.r0_ready:
+            violations.append(
+                Violation(
+                    REWRITE_COMPILER_SIZE_MANIFEST_PATH,
+                    1,
+                    "r0-compiler-size",
+                    f"R0 requires fewer than {size.r0_physical_line_limit} physical "
+                    f"lines; measured {size.physical_lines}",
+                )
+            )
+            violations = sorted(set(violations))
+    else:
+        print("R0 size readiness: UNAVAILABLE (size manifest is missing or invalid)")
+        if args.require_r0_ready:
+            violations.append(
+                Violation(
+                    REWRITE_COMPILER_SIZE_MANIFEST_PATH,
+                    1,
+                    "r0-compiler-size",
+                    "strict R0 readiness requires a valid compiler size manifest",
+                )
+            )
+            violations = sorted(set(violations))
     if violations:
         for violation in violations:
             print(violation.render())

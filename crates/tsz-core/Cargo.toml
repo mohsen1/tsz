@@ -106,8 +106,52 @@ name = "rewrite_string_line_continuations"
 path = "rewrite-tests/string_line_continuations.rs"
 
 [[test]]
+name = "rewrite_capability_analysis"
+path = "rewrite-tests/capability_analysis.rs"
+
+[[test]]
+name = "rewrite_parser_recovery_completion"
+path = "rewrite-tests/parser_recovery_completion.rs"
+
+[[test]]
 name = "rewrite_class_property_initialization"
 path = "rewrite-tests/class_property_initialization.rs"
+
+[[test]]
+name = "rewrite_checker_dependency_completion"
+path = "rewrite-tests/checker_dependency_completion.rs"
+
+[[test]]
+name = "rewrite_generic_call_completion"
+path = "rewrite-tests/generic_call_completion.rs"
+
+[[test]]
+name = "rewrite_generic_call_identity"
+path = "rewrite-tests/generic_call_identity.rs"
+
+[[test]]
+name = "rewrite_flow_dependency_completion"
+path = "rewrite-tests/flow_dependency_completion.rs"
+
+[[test]]
+name = "rewrite_this_expression"
+path = "rewrite-tests/this_expression.rs"
+
+[[test]]
+name = "rewrite_element_access"
+path = "rewrite-tests/element_access.rs"
+
+[[test]]
+name = "rewrite_element_access_containment"
+path = "rewrite-tests/element_access_containment.rs"
+
+[[test]]
+name = "rewrite_flow_reference"
+path = "rewrite-tests/flow_reference.rs"
+
+[[test]]
+name = "rewrite_file_nocheck_pragma"
+path = "rewrite-tests/file_nocheck_pragma.rs"
 
 [lints]
 workspace = true

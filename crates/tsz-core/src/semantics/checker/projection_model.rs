@@ -3,7 +3,8 @@ use std::collections::HashSet;
 use crate::bind::{Meaning, ScopeId};
 use crate::source::{DeclId, FileId, Span};
 use crate::syntax::{
-    ClassMemberKind, Expression, ExpressionKind, TypeMemberKind, TypeNode, TypeNodeKind,
+    ClassMemberKind, Expression, ExpressionKind, Parameter, TypeMember, TypeMemberKind, TypeNode,
+    TypeNodeKind,
 };
 
 use super::{
@@ -12,8 +13,8 @@ use super::{
 };
 use crate::semantics::relation::RelationContext;
 use crate::semantics::types::{
-    Completion, DeferredType, IndexKeyKind, InvalidType, LiteralProvenance, TypeId, TypeKind,
-    UnionPolicy,
+    Completion, DeferredType, IndexKeyKind, InvalidType, LiteralProvenance, ParameterType,
+    Property, Signature, TypeId, TypeKind, UnionPolicy,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -134,6 +135,108 @@ impl PropertyOrderTree {
 }
 
 impl Checker<'_> {
+    /// Operation-local, name-bearing callback projection for an exact class method.
+    pub(super) fn contextual_projection_type(
+        &mut self,
+        file: FileId,
+        scope: ScopeId,
+        node: &TypeNode,
+    ) -> Option<TypeId> {
+        match &node.kind {
+            TypeNodeKind::Keyword(_)
+            | TypeNodeKind::Literal(_)
+            | TypeNodeKind::Reference { .. }
+                if !matches!(&node.kind, TypeNodeKind::Reference { arguments, .. } if !arguments.is_empty()) =>
+            {
+                let ty =
+                    self.resolve_type_node(file, scope, node, &std::collections::HashMap::new());
+                (!matches!(self.store.kind(ty), TypeKind::Error | TypeKind::Invalid(_)))
+                    .then_some(ty)
+            }
+            TypeNodeKind::Object(members) => {
+                self.contextual_object_projection(file, scope, members)
+            }
+            _ => None,
+        }
+    }
+
+    fn contextual_object_projection(
+        &mut self,
+        file: FileId,
+        scope: ScopeId,
+        members: &[TypeMember],
+    ) -> Option<TypeId> {
+        if members.is_empty() {
+            return Some(self.store.object(Vec::new()));
+        }
+        let [member] = members else { return None };
+        if member.recovered || !member.modifiers.nodes.is_empty() {
+            return None;
+        }
+        let TypeMemberKind::Method {
+            name,
+            optional: false,
+            type_parameters,
+            parameters,
+            return_type: Some(return_type),
+        } = &member.kind
+        else {
+            return None;
+        };
+        if !type_parameters.is_empty() {
+            return None;
+        }
+        let member_scope = self.node_scope(file, member.id, scope);
+        let ty = self.contextual_function_projection(
+            file,
+            member_scope,
+            parameters,
+            Some(return_type),
+            false,
+        )?;
+        Some(self.store.object(vec![Property {
+            name: name.semantic_name()?.to_string(),
+            ty,
+            optional: false,
+            readonly: false,
+        }]))
+    }
+
+    pub(super) fn contextual_function_projection(
+        &mut self,
+        file: FileId,
+        scope: ScopeId,
+        parameters: &[Parameter],
+        return_type: Option<&TypeNode>,
+        empty_body: bool,
+    ) -> Option<TypeId> {
+        let mut resolved = Vec::with_capacity(parameters.len());
+        for parameter in parameters {
+            if parameter.initializer.is_some()
+                || !parameter.modifiers.is_empty()
+                || !parameter.overload_context_is_recovery_free()
+            {
+                return None;
+            }
+            resolved.push(ParameterType {
+                name: parameter.name.clone(),
+                ty: self.contextual_projection_type(file, scope, parameter.annotation.as_ref()?)?,
+                optional: parameter.optional,
+                rest: parameter.rest,
+            });
+        }
+        let return_type = match return_type {
+            Some(return_type) => self.contextual_projection_type(file, scope, return_type)?,
+            None if empty_body => self.store.builtins.void,
+            None => return None,
+        };
+        Some(self.store.intern(TypeKind::Function(Signature {
+            generic_declaration: None,
+            parameters: resolved,
+            return_type,
+        })))
+    }
+
     /// Whether rendering this semantic type would require authored object-
     /// signature provenance that is intentionally absent from `TypeKind`.
     /// Incomplete wrappers stay typed nonclaims instead of being printed with
@@ -588,6 +691,7 @@ impl Checker<'_> {
     pub(super) fn flush_property_diagnostics(&mut self) {
         for origin in self.property_query_origins.clone() {
             let completion = self.force_type(origin.query, 0);
+            let completion = self.require_file_completion(origin.span.file, completion);
             let Completion::Complete(result) = completion else {
                 continue;
             };
@@ -1113,6 +1217,9 @@ impl Checker<'_> {
                 .property_order_for_expression_inner(file, scope, object, active)?
                 .property(name)
                 .cloned(),
+            ExpressionKind::ElementAccess { object, .. } => self
+                .property_order_for_expression_inner(file, scope, object, active)?
+                .element_owned(),
             ExpressionKind::As { ty, .. } => {
                 self.property_order_for_type_node(file, scope, ty, active)
             }
@@ -1281,7 +1388,10 @@ impl Checker<'_> {
 
     pub(super) fn flush_indexed_access_diagnostics(&mut self) {
         for origin in self.indexed_access_origins.clone() {
-            let Completion::Complete(result) = self.force_type(origin.query, 0) else {
+            let completion = self.force_type(origin.query, 0);
+            let Completion::Complete(result) =
+                self.require_file_completion(origin.span.file, completion)
+            else {
                 continue;
             };
             let (object, names) = match self.store.kind(result).clone() {
@@ -1354,7 +1464,7 @@ fn diagnostic_alias_shape(node: &TypeNode) -> bool {
     }
 }
 
-fn peel_expression_parentheses(mut expression: &Expression) -> &Expression {
+pub(super) fn peel_expression_parentheses(mut expression: &Expression) -> &Expression {
     while let ExpressionKind::Parenthesized(inner) = &expression.kind {
         expression = inner;
     }

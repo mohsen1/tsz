@@ -3,36 +3,29 @@
 //! Emit is deliberately a syntax transform. It erases type-only syntax and
 //! prints runtime nodes; it does not validate types or recover semantic facts.
 
+mod comments;
+mod element_access;
 mod literals;
+mod operators;
 mod reachability;
 mod regular_expression;
+#[cfg(test)]
+mod test_support;
 mod type_members;
-
-use crate::emit_paths::{EmitFilePlan, EmitPlan, is_declaration_source, is_effective_commonjs};
-use crate::program::{CompilerOptions, EmittedFile, ProgramFile};
+use self::comments::CommentCursor;
+use crate::emit_paths::EmitFilePlan;
+use crate::program::{
+    CompilerOptions, EmittedFile, ProgramFile, is_declaration_source, is_effective_commonjs,
+};
 use crate::source::{SourceText, Span};
 use crate::syntax::{
     AccessorKind, ArrowBody, BinaryOperator, ClassDeclaration, ClassMemberKind, ExportDeclaration,
     Expression, ExpressionKind, FunctionDeclaration, ImportDeclaration, InterfaceDeclaration,
     KeywordType, ObjectProperty, Parameter, SourceUnit, Statement, StatementKind, SwitchClauseKind,
-    TypeAliasDeclaration, TypeNode, TypeNodeKind, UnaryOperator, VariableDeclaration, VariableKind,
+    TypeAliasDeclaration, TypeNode, TypeNodeKind, VariableDeclaration, VariableKind,
     erased_assertion_expression,
 };
-
-/// Emit the JavaScript product and, when requested, its declaration product.
-///
-/// Output ordering is stable: JavaScript precedes declarations for a source
-/// file, and the program layer performs the final path sort across files.
-#[must_use]
-pub fn emit_file(file: &ProgramFile, options: &CompilerOptions) -> Vec<EmittedFile> {
-    let plan = EmitPlan::for_program(
-        std::slice::from_ref(file),
-        options,
-        &crate::config::ProjectProvenance::default(),
-    );
-    emit_file_with_plan(file, options, plan.for_file(file.source.id))
-}
-
+use operators::*;
 pub(crate) fn emit_file_with_plan(
     file: &ProgramFile,
     options: &CompilerOptions,
@@ -92,6 +85,7 @@ struct Printer<'a> {
     preserve_class_fields: bool,
     preserve_numeric_separators: bool,
     preserve_comments: bool,
+    comment_cursor: CommentCursor,
     emitting_declaration: bool,
     javascript_supported: bool,
     declaration_supported: bool,
@@ -107,7 +101,6 @@ impl<'a> Printer<'a> {
             .and_then(|extension| extension.to_str())
             .unwrap_or_default()
             .to_ascii_lowercase();
-        let implicit_external_module = matches!(extension.as_str(), "mts" | "cts");
         Self {
             source,
             output: String::new(),
@@ -117,7 +110,7 @@ impl<'a> Printer<'a> {
             } else {
                 ModuleFormat::EsModule
             },
-            implicit_external_module,
+            implicit_external_module: matches!(extension.as_str(), "mts" | "cts"),
             preserve_block_scope: !matches!(target.as_str(), "es3" | "es5"),
             preserve_arrows: !matches!(target.as_str(), "es3" | "es5"),
             preserve_class_fields: matches!(
@@ -129,6 +122,7 @@ impl<'a> Printer<'a> {
                 "es2021" | "es2022" | "es2023" | "es2024" | "es2025" | "esnext"
             ),
             preserve_comments: !options.remove_comments,
+            comment_cursor: CommentCursor::default(),
             emitting_declaration: false,
             javascript_supported: true,
             declaration_supported: true,
@@ -156,15 +150,7 @@ impl<'a> Printer<'a> {
                 .push_str("Object.defineProperty(exports, \"__esModule\", { value: true });\n");
         }
 
-        if self.preserve_comments
-            && let Some(comments) = unit.modeled_comments()
-        {
-            self.write_modeled_comment_statements(&unit.statements, comments);
-        } else {
-            for statement in &unit.statements {
-                self.write_javascript_statement(statement, true);
-            }
-        }
+        self.write_javascript_statements(unit);
 
         if external_module && !has_runtime_export && self.module_format == ModuleFormat::EsModule {
             self.output.push_str("export {};\n");
@@ -214,6 +200,10 @@ impl<'a> Printer<'a> {
     }
 
     fn write_javascript_statement(&mut self, statement: &Statement, top_level: bool) {
+        if self.discard_erased_statement_comments(statement) {
+            return;
+        }
+        self.write_comments_before(statement.span.start);
         match &statement.kind {
             StatementKind::Import(declaration) => {
                 self.write_javascript_import(statement, declaration);
@@ -282,9 +272,7 @@ impl<'a> Printer<'a> {
                 self.output.push('\n');
             }
             StatementKind::Expression(expression) => {
-                self.write_indent();
-                self.write_expression(expression, PREC_LOWEST);
-                self.output.push_str(";\n");
+                self.write_commented_expression_statement(statement, expression);
             }
             StatementKind::Empty => {
                 self.write_indent();
@@ -756,6 +744,7 @@ impl<'a> Printer<'a> {
     }
 
     fn write_expression(&mut self, expression: &Expression, parent_precedence: u8) {
+        self.write_comments_before(expression.span.start);
         // Parentheses used only to contain a TypeScript assertion disappear
         // with the assertion. The recursive call restores any grouping that
         // the underlying JavaScript expression still requires.
@@ -772,13 +761,12 @@ impl<'a> Printer<'a> {
 
         match &expression.kind {
             ExpressionKind::Identifier { name, .. } => self.output.push_str(name),
+            ExpressionKind::This => self.output.push_str("this"),
             ExpressionKind::Literal(literal) => {
                 let text = self.literal_text(literal, expression.span);
                 self.output.push_str(&text);
             }
-            ExpressionKind::RegularExpression(literal) => {
-                self.write_regular_expression(literal);
-            }
+            ExpressionKind::RegularExpression(literal) => self.write_regular_expression(literal),
             ExpressionKind::Object(properties) => self.write_object_literal(properties),
             ExpressionKind::Array(elements) => {
                 self.output.push('[');
@@ -825,6 +813,9 @@ impl<'a> Printer<'a> {
                 self.output.push('.');
                 self.output.push_str(name);
             }
+            ExpressionKind::ElementAccess { object, index } => {
+                self.write_element_access(object, index);
+            }
             ExpressionKind::Arrow {
                 parameters, body, ..
             } => {
@@ -834,6 +825,7 @@ impl<'a> Printer<'a> {
                 left,
                 operator,
                 right,
+                ..
             } => {
                 self.write_expression(left, precedence);
                 self.output.push(' ');
@@ -877,7 +869,14 @@ impl<'a> Printer<'a> {
                 self.output.push_str(", ");
             }
             self.write_property_name(&property.name, property.name_span);
-            if !object_property_is_shorthand(property) {
+            if property.shorthand {
+                if let (Some(_), ExpressionKind::Assignment { right, .. }) =
+                    (property.shorthand_equals_span, &property.value.kind)
+                {
+                    self.output.push_str(" = ");
+                    self.write_expression(right, PREC_ASSIGNMENT);
+                }
+            } else {
                 self.output.push_str(": ");
                 self.write_expression(&property.value, PREC_LOWEST);
             }
@@ -926,6 +925,8 @@ impl<'a> Printer<'a> {
             ExpressionKind::Binary { operator, .. } => match operator {
                 BinaryOperator::LogicalOr | BinaryOperator::NullishCoalesce => PREC_LOGICAL_OR,
                 BinaryOperator::LogicalAnd => PREC_LOGICAL_AND,
+                BinaryOperator::BitwiseOr => PREC_BITWISE_OR,
+                BinaryOperator::BitwiseAnd => PREC_BITWISE_AND,
                 BinaryOperator::Equals
                 | BinaryOperator::NotEquals
                 | BinaryOperator::StrictEquals
@@ -944,9 +945,11 @@ impl<'a> Printer<'a> {
             ExpressionKind::Unary { .. } => PREC_UNARY,
             ExpressionKind::Call { .. }
             | ExpressionKind::New { .. }
-            | ExpressionKind::Member { .. } => PREC_POSTFIX,
+            | ExpressionKind::Member { .. }
+            | ExpressionKind::ElementAccess { .. } => PREC_POSTFIX,
             ExpressionKind::As { expression, .. } => self.expression_precedence(expression),
             ExpressionKind::Identifier { .. }
+            | ExpressionKind::This
             | ExpressionKind::Literal(_)
             | ExpressionKind::RegularExpression(_)
             | ExpressionKind::Object(_)
@@ -1490,18 +1493,6 @@ impl<'a> Printer<'a> {
     }
 }
 
-const PREC_LOWEST: u8 = 0;
-const PREC_ASSIGNMENT: u8 = 1;
-const PREC_LOGICAL_OR: u8 = 2;
-const PREC_LOGICAL_AND: u8 = 3;
-const PREC_EQUALITY: u8 = 4;
-const PREC_RELATIONAL: u8 = 5;
-const PREC_ADDITIVE: u8 = 6;
-const PREC_MULTIPLICATIVE: u8 = 7;
-const PREC_UNARY: u8 = 8;
-const PREC_POSTFIX: u8 = 9;
-const PREC_PRIMARY: u8 = 10;
-
 const TYPE_PREC_LOWEST: u8 = 0;
 const TYPE_PREC_FUNCTION: u8 = 1;
 const TYPE_PREC_UNION: u8 = 2;
@@ -1551,57 +1542,6 @@ const fn statement_is_exported(statement: &Statement) -> bool {
         | StatementKind::Empty
         | StatementKind::Unknown => false,
     }
-}
-
-fn object_property_is_shorthand(property: &ObjectProperty) -> bool {
-    matches!(
-        &property.value.kind,
-        ExpressionKind::Identifier { name, .. }
-            if name == &property.name && property.value.span == property.name_span
-    )
-}
-
-const fn binary_operator_text(operator: BinaryOperator) -> &'static str {
-    match operator {
-        BinaryOperator::Add => "+",
-        BinaryOperator::Subtract => "-",
-        BinaryOperator::Multiply => "*",
-        BinaryOperator::Divide => "/",
-        BinaryOperator::Remainder => "%",
-        BinaryOperator::LessThan => "<",
-        BinaryOperator::LessThanEquals => "<=",
-        BinaryOperator::GreaterThan => ">",
-        BinaryOperator::GreaterThanEquals => ">=",
-        BinaryOperator::Equals => "==",
-        BinaryOperator::NotEquals => "!=",
-        BinaryOperator::StrictEquals => "===",
-        BinaryOperator::StrictNotEquals => "!==",
-        BinaryOperator::LogicalAnd => "&&",
-        BinaryOperator::LogicalOr => "||",
-        BinaryOperator::NullishCoalesce => "??",
-        BinaryOperator::In => "in",
-        BinaryOperator::InstanceOf => "instanceof",
-    }
-}
-
-const fn unary_operator_text(operator: UnaryOperator) -> &'static str {
-    match operator {
-        UnaryOperator::Plus => "+",
-        UnaryOperator::Minus => "-",
-        UnaryOperator::Not => "!",
-        UnaryOperator::BitwiseNot => "~",
-        UnaryOperator::TypeOf => "typeof",
-        UnaryOperator::Void => "void",
-        UnaryOperator::Delete => "delete",
-        UnaryOperator::Await => "await",
-    }
-}
-
-const fn unary_operator_is_keyword(operator: UnaryOperator) -> bool {
-    matches!(
-        operator,
-        UnaryOperator::TypeOf | UnaryOperator::Void | UnaryOperator::Delete | UnaryOperator::Await
-    )
 }
 
 const fn variable_kind_text(kind: VariableKind) -> &'static str {
@@ -1703,7 +1643,7 @@ mod tests {
     use crate::source::{FileId, SourceText};
     use crate::syntax::parse_source;
 
-    use super::emit_file;
+    use super::test_support::emit_file;
 
     fn program_file(path: &str, text: &str) -> ProgramFile {
         let source = SourceText::new(FileId(0), PathBuf::from(path), Arc::<str>::from(text));

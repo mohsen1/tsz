@@ -191,15 +191,15 @@ pub(super) struct NavigationIndex {
 }
 
 impl NavigationIndex {
-    pub(super) fn build(program: Program) -> Self {
+    pub(super) fn build(program: &Program) -> Self {
         let mut index = Self::default();
-        let dual_globals = dual_global_names(&program);
+        let dual_globals = dual_global_names(program);
 
         for file in &program.files {
             index.collect_bound_declarations(file, &dual_globals);
         }
         for file in &program.files {
-            index.collect_references(&program, file);
+            index.collect_references(program, file);
         }
         index.occurrences.sort_by(|left, right| {
             (&left.file_name, left.span.start, left.span.length).cmp(&(
@@ -473,7 +473,7 @@ impl NavigationIndex {
 }
 
 impl RenameResult {
-    fn failure() -> Self {
+    pub(super) fn failure() -> Self {
         Self {
             info: RenameInfo {
                 can_rename: false,
@@ -768,12 +768,13 @@ impl ReferenceVisitor<'_> {
                 }
                 self.record_name(name, *name_span, scope, Meaning::Value, write);
             }
-            ExpressionKind::Literal(_)
+            ExpressionKind::This
+            | ExpressionKind::Literal(_)
             | ExpressionKind::RegularExpression(_)
             | ExpressionKind::Missing => {}
             ExpressionKind::Object(properties) => {
                 for property in properties {
-                    self.visit_expression(&property.value, scope, false);
+                    self.visit_expression(&property.value, scope, write);
                 }
             }
             ExpressionKind::Array(elements) => {
@@ -809,6 +810,10 @@ impl ReferenceVisitor<'_> {
             }
             ExpressionKind::Member { object, .. } => {
                 self.visit_expression(object, scope, false);
+            }
+            ExpressionKind::ElementAccess { object, index } => {
+                self.visit_expression(object, scope, false);
+                self.visit_expression(index, scope, false);
             }
             ExpressionKind::Arrow {
                 parameters,
@@ -1493,6 +1498,7 @@ fn fallback_metadata(kind: DeclarationKind, name: &str) -> SyntaxMetadata {
         DeclarationKind::Interface => ("interface", format!("interface {name}")),
         DeclarationKind::TypeMember => ("property", format!("(property) {name}")),
         DeclarationKind::AnonymousSignature => ("type", "(anonymous signature)".to_string()),
+        DeclarationKind::UnmodeledHost => ("module", format!("module {name}")),
     };
     SyntaxMetadata {
         kind: kind.to_string(),

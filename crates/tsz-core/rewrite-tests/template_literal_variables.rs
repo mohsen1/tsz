@@ -169,12 +169,24 @@ fn template_var_declaration_and_map_products_remain_deferred() {
                     "var payload = `plain`;",
                     compiler_options,
                 );
+                let expected_completion = if no_emit {
+                    SemanticCompletion::Complete
+                } else {
+                    SemanticCompletion::Deferred
+                };
                 assert_eq!(
-                    output.semantic_completion,
-                    SemanticCompletion::Deferred,
+                    output.semantic_completion, expected_completion,
                     "mode={mode} noCheck={no_check} noEmit={no_emit}: {:?}",
                     output.diagnostics
                 );
+                if no_emit {
+                    assert_eq!(
+                        output.exit_status,
+                        CompileExitStatus::Success,
+                        "mode={mode}"
+                    );
+                    assert!(output.diagnostics.is_empty(), "mode={mode}");
+                }
                 assert!(output.emitted_files.is_empty(), "mode={mode}");
             }
         }

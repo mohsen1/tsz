@@ -39,8 +39,10 @@ pub(crate) use template_literal::{
 };
 pub use token::{Token, TokenKind};
 pub(crate) use trivia::{
-    CommentKind, CommentPlacement, CommentTrivia, comments_form_contiguous_plain_leading_run,
+    CommentKind, CommentPlacement, CommentSourcePosition, CommentTrivia,
+    comments_form_contiguous_plain_leading_run,
     comments_form_no_substitution_template_expression_file, is_single_line_whitespace,
-    source_is_ascii_outside_comments, source_uses_supported_line_breaks,
-    statement_starts_at_supported_column,
+    parse_source_check_directive, source_is_ascii_outside_comments,
+    source_uses_supported_line_breaks, statement_starts_at_supported_column,
 };
+pub(crate) use trivia::{SourceCheckDirective, SourceCheckDirectiveKind};

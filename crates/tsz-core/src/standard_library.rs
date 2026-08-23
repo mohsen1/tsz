@@ -1,9 +1,9 @@
 //! Pinned TypeScript 7 standard-library selection and global symbol ownership.
 //!
 //! The user grammar is not asked to parse the multi-megabyte declaration
-//! corpus before it supports that grammar. A build-time index contributes only
-//! declaration identity and meaning; declaration shapes remain an explicit
-//! checker-owned porting surface.
+//! corpus before it supports that grammar. A build-time index contributes
+//! declaration identity and narrow, structurally recognized member identities;
+//! broader declaration shapes remain an explicit checker-owned porting surface.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -30,6 +30,11 @@ const ESSENTIAL_GLOBAL_TYPES: &[&str] = &[
     "String",
 ];
 
+// Pinned TS7 apparent owners for `Array` function members. `Function.toString`
+// shadows `Object.toString`, so `Object` is not a dependency for this member.
+const ARRAY_FUNCTION_MEMBER_OWNER_TYPES: &[&str] =
+    &["ArrayConstructor", "CallableFunction", "Function"];
+
 #[derive(Debug)]
 struct GeneratedLibrary {
     name: &'static str,
@@ -37,6 +42,7 @@ struct GeneratedLibrary {
     type_names: &'static [&'static str],
     value_names: &'static [&'static str],
     string_record_type_names: &'static [&'static str],
+    function_zero_argument_string_method_names: &'static [&'static str],
 }
 
 include!(concat!(env!("OUT_DIR"), "/standard_library_data.rs"));
@@ -49,6 +55,37 @@ pub struct StandardLibraryDeclaration {
     pub meaning: Meaning,
 }
 
+/// Program-owned identity for a member projected from the pinned libraries.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub(crate) struct StandardLibraryMemberId {
+    owner: DeclId,
+    local: u32,
+}
+
+/// Narrow semantic shapes structurally recognized by the pinned-library index.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum StandardLibraryMemberKind {
+    ZeroArgumentStringMethod,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum StandardLibraryValueMemberLookup {
+    Missing,
+    DeferredUntilMemberMerging,
+    Found {
+        id: StandardLibraryMemberId,
+        kind: StandardLibraryMemberKind,
+    },
+}
+
+/// A deterministic ambient value member owned by one library declaration.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct StandardLibraryValueMember {
+    id: StandardLibraryMemberId,
+    kind: StandardLibraryMemberKind,
+    dependency_type_owners: Option<Vec<DeclId>>,
+}
+
 /// The deterministic, program-owned ambient declaration environment.
 #[derive(Debug, Default)]
 pub struct StandardLibraryEnvironment {
@@ -56,6 +93,7 @@ pub struct StandardLibraryEnvironment {
     declarations: Vec<StandardLibraryDeclaration>,
     type_names: BTreeMap<String, DeclId>,
     value_names: BTreeMap<String, DeclId>,
+    value_members: BTreeMap<DeclId, BTreeMap<String, StandardLibraryValueMember>>,
     string_record_types: BTreeSet<DeclId>,
     array_type: Option<DeclId>,
     readonly_array_type: Option<DeclId>,
@@ -118,6 +156,42 @@ impl StandardLibraryEnvironment {
     }
 
     #[must_use]
+    pub(crate) fn is_array_value(&self, id: DeclId) -> bool {
+        self.resolve("Array", Meaning::Value) == Some(id)
+    }
+
+    #[must_use]
+    pub(crate) fn value_member(
+        &self,
+        owner: DeclId,
+        name: &str,
+        mut has_authored_member: impl FnMut(DeclId, &str) -> bool,
+    ) -> StandardLibraryValueMemberLookup {
+        let Some(member) = self
+            .value_members
+            .get(&owner)
+            .and_then(|members| members.get(name))
+        else {
+            return StandardLibraryValueMemberLookup::Missing;
+        };
+        let Some(dependency_type_owners) = &member.dependency_type_owners else {
+            return StandardLibraryValueMemberLookup::DeferredUntilMemberMerging;
+        };
+        if dependency_type_owners
+            .iter()
+            .copied()
+            .any(|dependency| has_authored_member(dependency, name))
+        {
+            StandardLibraryValueMemberLookup::DeferredUntilMemberMerging
+        } else {
+            StandardLibraryValueMemberLookup::Found {
+                id: member.id,
+                kind: member.kind,
+            }
+        }
+    }
+
+    #[must_use]
     pub(crate) fn is_rest_array_type(&self, id: DeclId) -> bool {
         self.array_type == Some(id) || self.readonly_array_type == Some(id)
     }
@@ -141,6 +215,7 @@ impl StandardLibraryEnvironment {
 
         let mut names = BTreeSet::new();
         let mut string_record_type_names = BTreeSet::new();
+        let mut function_zero_argument_string_method_names = BTreeSet::new();
         for name in &selected_libraries {
             let Some(library) = library(name) else {
                 continue;
@@ -160,6 +235,12 @@ impl StandardLibraryEnvironment {
             string_record_type_names.extend(
                 library
                     .string_record_type_names
+                    .iter()
+                    .map(|name| (*name).to_string()),
+            );
+            function_zero_argument_string_method_names.extend(
+                library
+                    .function_zero_argument_string_method_names
                     .iter()
                     .map(|name| (*name).to_string()),
             );
@@ -223,11 +304,36 @@ impl StandardLibraryEnvironment {
             undefined_value = Some(id);
         }
 
+        let mut value_members = BTreeMap::new();
+        if let Some(owner) = value_names.get("Array").copied() {
+            let dependency_type_owners = ARRAY_FUNCTION_MEMBER_OWNER_TYPES
+                .iter()
+                .map(|name| type_names.get(*name).copied())
+                .collect::<Option<Vec<_>>>();
+            let members = function_zero_argument_string_method_names
+                .into_iter()
+                .enumerate()
+                .map(|(local, name)| {
+                    let member = StandardLibraryValueMember {
+                        id: StandardLibraryMemberId {
+                            owner,
+                            local: local as u32,
+                        },
+                        kind: StandardLibraryMemberKind::ZeroArgumentStringMethod,
+                        dependency_type_owners: dependency_type_owners.clone(),
+                    };
+                    (name, member)
+                })
+                .collect();
+            value_members.insert(owner, members);
+        }
+
         Self {
             selected_libraries,
             declarations,
             type_names,
             value_names,
+            value_members,
             string_record_types,
             array_type,
             readonly_array_type,
@@ -304,4 +410,62 @@ fn explicit_library_name(name: &str) -> Option<&'static str> {
         _ => name.as_str(),
     };
     library(alias).map(|library| library.name)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn generated_function_string_methods_and_member_ids_are_stable() {
+        let es5 = library("es5").expect("pinned ES5 library");
+        assert_eq!(
+            es5.function_zero_argument_string_method_names,
+            &["toString"]
+        );
+
+        let environment = StandardLibraryEnvironment::from_roots(&["es5"]);
+        let owner = environment
+            .resolve("Array", Meaning::Value)
+            .expect("ambient Array value");
+        let to_string = environment.value_member(owner, "toString", |_, _| false);
+        let StandardLibraryValueMemberLookup::Found { id, kind } = to_string else {
+            panic!("generated Function method: {to_string:?}");
+        };
+        assert_eq!(id.owner, owner);
+        assert_eq!(id.local, 0);
+        assert_eq!(kind, StandardLibraryMemberKind::ZeroArgumentStringMethod);
+        assert_eq!(
+            environment.value_member(owner, "toLocaleString", |_, _| false),
+            StandardLibraryValueMemberLookup::Missing
+        );
+        assert_eq!(
+            environment.value_member(owner, "renamedMissing", |_, _| false),
+            StandardLibraryValueMemberLookup::Missing
+        );
+
+        let mut dependencies = Vec::new();
+        assert_eq!(
+            environment.value_member(owner, "toString", |dependency, name| {
+                dependencies.push((dependency, name.to_string()));
+                false
+            }),
+            StandardLibraryValueMemberLookup::Found { id, kind }
+        );
+        assert_eq!(dependencies.len(), 3);
+        assert!(dependencies.iter().all(|(_, name)| name == "toString"));
+        assert_eq!(
+            dependencies
+                .iter()
+                .map(|(dependency, _)| {
+                    environment
+                        .declaration(*dependency)
+                        .expect("dependency declaration")
+                        .name
+                        .as_str()
+                })
+                .collect::<Vec<_>>(),
+            ARRAY_FUNCTION_MEMBER_OWNER_TYPES
+        );
+    }
 }

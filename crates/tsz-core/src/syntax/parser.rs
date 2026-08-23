@@ -1,12 +1,16 @@
 use crate::diagnostics::Diagnostic;
 use crate::source::{NodeId, SourceText, Span};
 
+mod declarations;
+mod element_access;
 mod literals;
 mod modifiers;
 mod numeric_literal;
 mod operators;
 mod parameters;
+mod recovery;
 mod regular_expression;
+mod source_unit;
 mod statements;
 mod string_literal;
 mod type_arguments;
@@ -20,10 +24,9 @@ use super::template_literal::ScannedTemplateLiteral;
 use super::{
     AccessorKind, ArrowBody, ClassDeclaration, ClassMember, ClassMemberKind, ClassMemberModifiers,
     CommentTrivia, ExportDeclaration, ExportSpecifier, Expression, ExpressionKind,
-    FunctionDeclaration, IfStatement, ImportBinding, ImportDeclaration, InterfaceDeclaration,
-    ObjectProperty, ParameterModifier, PropertyNameKind, Statement, StatementKind, SwitchClause,
-    SwitchClauseKind, SwitchStatement, Token, TokenKind, TypeAliasDeclaration, TypeNode,
-    TypeNodeKind, UnaryOperator, VariableDeclaration, VariableKind, scan_source,
+    FunctionDeclaration, ImportBinding, ImportDeclaration, InterfaceDeclaration, ParameterModifier,
+    PropertyNameKind, Statement, StatementKind, Token, TokenKind, TypeAliasDeclaration, TypeNode,
+    TypeNodeKind, UnaryOperator, UnmodeledDeclarationHostFact, scan_source,
 };
 use modifiers::{Modifiers, ProductCapabilities};
 use operators::{binary_operator, expression_has_recovered_left_edge};
@@ -50,6 +53,7 @@ struct Parser<'a> {
     regular_expression_literals: Vec<ScannedRegularExpressionLiteral>,
     numeric_literals: Vec<ScannedNumericLiteral>,
     separated_numeric_literals: Vec<ScannedSeparatedNumberLiteral>,
+    numeric_separator_spans: Vec<Span>,
     has_unmodeled_numeric_separator: bool,
     numeric_parser_diagnostics: Vec<Diagnostic>,
     comments: Vec<CommentTrivia>,
@@ -60,6 +64,8 @@ struct Parser<'a> {
     type_member_recovery_code: u32,
     statement_nesting_depth: usize,
     has_unmodeled_top_level_syntax: bool,
+    parser_recovery_facts: Vec<recovery::PendingParserRecoveryFact>,
+    unmodeled_declaration_hosts: Vec<UnmodeledDeclarationHostFact>,
     product_capabilities: ProductCapabilities,
 }
 
@@ -77,6 +83,7 @@ impl<'a> Parser<'a> {
             regular_expression_literals: scanned.regular_expression_literals,
             numeric_literals: scanned.numeric_literals,
             separated_numeric_literals: scanned.separated_numeric_literals,
+            numeric_separator_spans: scanned.numeric_separator_spans,
             has_unmodeled_numeric_separator: scanned.has_unmodeled_numeric_separator,
             numeric_parser_diagnostics: Vec::new(),
             comments: scanned.comments,
@@ -87,66 +94,9 @@ impl<'a> Parser<'a> {
             type_member_recovery_code: 1128,
             statement_nesting_depth: 0,
             has_unmodeled_top_level_syntax: false,
+            parser_recovery_facts: Vec::new(),
+            unmodeled_declaration_hosts: Vec::new(),
             product_capabilities: ProductCapabilities::all_supported(),
-        }
-    }
-
-    fn parse(mut self) -> ParseOutput {
-        let mut statements = Vec::new();
-        while !self.at(TokenKind::EndOfFile) {
-            let before = self.index;
-            statements.push(self.parse_statement_at_current_depth());
-            if self.index == before {
-                self.bump();
-            }
-        }
-        let has_authored_no_substitution_template =
-            self.finish_no_substitution_template_source(&statements);
-        let has_authored_extended_unicode_string =
-            self.finish_extended_unicode_string_source(&statements);
-        let has_authored_regular_expression = self.finish_regular_expression_source(&statements);
-        let has_authored_numeric_recovery = self.finish_numeric_recovery_source(&statements);
-        let has_authored_numeric_separator = self.finish_numeric_separator_source();
-        let end = self.source.text.len();
-        ParseOutput {
-            unit: super::SourceUnit {
-                statements,
-                span: Span::new(self.source.id, 0, end),
-                function_products_supported: self.product_capabilities.functions_supported,
-                class_products_supported: self.product_capabilities.classes_supported,
-                declaration_products_supported: self.product_capabilities.declarations_supported,
-                declaration_hosts_supported: self.product_capabilities.declaration_hosts_supported,
-                default_export_hosts_supported: self
-                    .product_capabilities
-                    .default_export_hosts_supported,
-                expression_products_supported: self
-                    .product_capabilities
-                    .expression_products_supported,
-                comments: self.comments,
-                has_unicode_line_comment_terminator: self.has_unicode_line_comment_terminator,
-                has_authored_no_substitution_template,
-                template_products_supported: self.product_capabilities.template_products_supported,
-                has_authored_extended_unicode_string,
-                extended_unicode_string_products_supported: self
-                    .product_capabilities
-                    .extended_unicode_string_products_supported,
-                has_authored_regular_expression,
-                regular_expression_products_supported: self
-                    .product_capabilities
-                    .regular_expression_products_supported,
-                has_authored_numeric_recovery,
-                numeric_recovery_products_supported: self
-                    .product_capabilities
-                    .numeric_recovery_products_supported,
-                has_authored_numeric_separator,
-                numeric_separator_products_supported: self
-                    .product_capabilities
-                    .numeric_separator_products_supported,
-                commonjs_class_products_supported: self
-                    .product_capabilities
-                    .commonjs_classes_supported(),
-            },
-            diagnostics: self.diagnostics,
         }
     }
 
@@ -184,7 +134,7 @@ impl<'a> Parser<'a> {
                 kind,
             };
         }
-        let modifiers = self.parse_modifiers();
+        let modifiers = self.parse_modifiers(start);
         self.observe_statement_modifiers(modifiers);
         let kind = match self.kind() {
             TokenKind::Let | TokenKind::Const | TokenKind::Var => {
@@ -246,91 +196,6 @@ impl<'a> Parser<'a> {
             span: Span::new(self.source.id, start, end),
             kind,
         }
-    }
-
-    fn parse_if_statement(&mut self) -> IfStatement {
-        self.bump();
-        self.expect(TokenKind::LeftParen, "'(' expected.", 1005);
-        let condition = self.parse_expression();
-        self.observe_template_expression_semantics(&condition);
-        self.expect(TokenKind::RightParen, "')' expected.", 1005);
-        let then_statement = Box::new(self.parse_statement());
-        let else_statement = self
-            .eat(TokenKind::Else)
-            .then(|| Box::new(self.parse_statement()));
-        IfStatement {
-            condition,
-            then_statement,
-            else_statement,
-        }
-    }
-
-    fn parse_switch_statement(&mut self) -> SwitchStatement {
-        self.bump();
-        self.expect(TokenKind::LeftParen, "'(' expected.", 1005);
-        let expression = self.parse_expression();
-        self.observe_template_expression_semantics(&expression);
-        self.expect(TokenKind::RightParen, "')' expected.", 1005);
-        self.expect(TokenKind::LeftBrace, "'{' expected.", 1005);
-
-        let mut clauses = Vec::new();
-        while !self.at_any(&[TokenKind::RightBrace, TokenKind::EndOfFile]) {
-            let start = self.current().span;
-            let kind = if self.eat(TokenKind::Case) {
-                let expression = self.parse_expression();
-                self.observe_template_expression_semantics(&expression);
-                self.expect(TokenKind::Colon, "':' expected.", 1005);
-                SwitchClauseKind::Case(expression)
-            } else if self.eat(TokenKind::Default) {
-                self.expect(TokenKind::Colon, "':' expected.", 1005);
-                SwitchClauseKind::Default
-            } else {
-                self.error_current("'case' or 'default' expected.", 1130);
-                self.bump();
-                continue;
-            };
-
-            let mut statements = Vec::new();
-            while !self.at_any(&[
-                TokenKind::Case,
-                TokenKind::Default,
-                TokenKind::RightBrace,
-                TokenKind::EndOfFile,
-            ]) {
-                let before = self.index;
-                statements.push(self.parse_statement());
-                if self.index == before {
-                    self.bump();
-                }
-            }
-            let end = statements
-                .last()
-                .map_or_else(|| self.previous().span, |statement| statement.span);
-            clauses.push(SwitchClause {
-                span: start.merge(end),
-                kind,
-                statements,
-            });
-        }
-        self.expect(TokenKind::RightBrace, "'}' expected.", 1005);
-        SwitchStatement {
-            expression,
-            clauses,
-        }
-    }
-
-    fn starts_import_declaration(&self) -> bool {
-        self.at(TokenKind::Import)
-            && !matches!(
-                self.peek_kind(1),
-                TokenKind::LeftParen | TokenKind::LessThan | TokenKind::Dot
-            )
-    }
-
-    fn starts_type_alias_declaration(&self) -> bool {
-        self.at(TokenKind::Type)
-            && token_is_binding_identifier(self.peek_kind(1))
-            && self.tokens_are_on_same_line(self.index, self.index + 1)
     }
 
     fn parse_import_declaration(&mut self) -> ImportDeclaration {
@@ -552,27 +417,6 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_variable(&mut self, exported: bool) -> VariableDeclaration {
-        let declaration_kind = match self.kind() {
-            TokenKind::Const => VariableKind::Const,
-            TokenKind::Var => VariableKind::Var,
-            _ => VariableKind::Let,
-        };
-        self.bump();
-        let (name, name_span) = self.parse_name();
-        let annotation = self.eat(TokenKind::Colon).then(|| self.parse_type());
-        let initializer = self.eat(TokenKind::Equals).then(|| self.parse_expression());
-        self.eat(TokenKind::Semicolon);
-        VariableDeclaration {
-            declaration_kind,
-            name,
-            name_span,
-            annotation,
-            initializer,
-            exported,
-        }
-    }
-
     fn parse_function(&mut self, modifiers: Modifiers) -> FunctionDeclaration {
         let diagnostic_count = self.diagnostics.len();
         self.expect(TokenKind::Function, "'function' expected.", 1005);
@@ -617,6 +461,7 @@ impl<'a> Parser<'a> {
 
     fn parse_class(&mut self, modifiers: Modifiers) -> ClassDeclaration {
         let diagnostic_count = self.diagnostics.len();
+        let recovery_fact_start = self.parser_recovery_facts.len();
         self.expect(TokenKind::Class, "'class' expected.", 1005);
         let (name, name_span) = self.parse_name();
         let type_parameters = self.parse_type_parameters();
@@ -634,6 +479,10 @@ impl<'a> Parser<'a> {
                 }
             }
         }
+        let authored_body_extent = self
+            .at(TokenKind::LeftBrace)
+            .then(|| self.balanced_recovery_brace_extent(self.index))
+            .flatten();
         self.expect(TokenKind::LeftBrace, "'{' expected.", 1005);
         let mut members = Vec::new();
         while !self.at_any(&[TokenKind::RightBrace, TokenKind::EndOfFile]) {
@@ -649,6 +498,11 @@ impl<'a> Parser<'a> {
             }
         }
         self.expect(TokenKind::RightBrace, "'}' expected.", 1005);
+        if let Some(extent) = authored_body_extent
+            && self.previous().span.end < extent.end
+        {
+            self.promote_parser_recovery_extent(recovery_fact_start, extent);
+        }
         let member_syntax_recovery_free = self.diagnostics.len() == diagnostic_count;
         self.product_capabilities.observe_class(modifiers, &members);
         ClassDeclaration {
@@ -994,7 +848,7 @@ impl<'a> Parser<'a> {
             }
             TokenKind::KeyOf => {
                 self.bump();
-                let operand = self.parse_primary_type();
+                let operand = self.parse_postfix_type();
                 TypeNode {
                     span: token.span.merge(operand.span),
                     kind: TypeNodeKind::KeyOf(Box::new(operand)),
@@ -1101,16 +955,7 @@ impl<'a> Parser<'a> {
             }
             TokenKind::LeftParen => self.parse_parenthesized_or_function_type(),
             TokenKind::LessThan => self.parse_generic_function_type(),
-            _ => {
-                self.observe_unmodeled_regular_expression_if_current();
-                self.observe_unmodeled_template_if_current();
-                self.error_current("Type expected.", 1110);
-                self.bump();
-                TypeNode {
-                    span: token.span,
-                    kind: TypeNodeKind::Missing,
-                }
-            }
+            _ => self.recover_missing_type(token),
         }
     }
 
@@ -1271,12 +1116,6 @@ impl<'a> Parser<'a> {
         false
     }
 
-    fn parse_expression(&mut self) -> Expression {
-        let expression = self.parse_assignment_expression();
-        self.observe_unmodeled_template_tail(&expression);
-        expression
-    }
-
     fn parse_assignment_expression(&mut self) -> Expression {
         let left = self.parse_binary_expression(0);
         if self.eat(TokenKind::Equals) {
@@ -1305,15 +1144,15 @@ impl<'a> Parser<'a> {
             if precedence < minimum_precedence {
                 break;
             }
-            self.bump();
+            let operator_span = self.bump().span;
             let right = self.parse_binary_expression(precedence + 1);
-            let span = expression.span.merge(right.span);
             expression = Expression {
                 id: self.alloc_node(),
-                span,
+                span: expression.span.merge(right.span),
                 kind: ExpressionKind::Binary {
                     left: Box::new(expression),
                     operator,
+                    operator_span,
                     right: Box::new(right),
                 },
             };
@@ -1360,7 +1199,7 @@ impl<'a> Parser<'a> {
         loop {
             if self.tag_type_arguments_are_followed_by_template() {
                 self.parse_type_arguments();
-                self.reject_tagged_template();
+                self.reject_tagged_template(expression.span);
                 break;
             }
             let has_type_arguments = self.call_type_arguments_are_followed_by_left_paren();
@@ -1392,26 +1231,10 @@ impl<'a> Parser<'a> {
                         arguments,
                     },
                 };
-            } else if self.at(TokenKind::Dot) {
-                let dot = self.current().span;
-                if super::erased_expression_separated_number(&expression).is_some()
-                    && expression.span.end != dot.start
-                {
-                    self.product_capabilities
-                        .observe_unmodeled_numeric_separator();
-                }
-                self.bump();
-                let (name, name_span) = self.parse_identifier_name();
-                let span = expression.span.merge(name_span);
-                expression = Expression {
-                    id: self.alloc_node(),
-                    span,
-                    kind: ExpressionKind::Member {
-                        object: Box::new(expression),
-                        name,
-                        name_span,
-                    },
-                };
+            } else if self.at_recovered_element_access(&expression) {
+                break;
+            } else if self.at_any(&[TokenKind::Dot, TokenKind::LeftBracket]) {
+                expression = self.parse_member_access(expression);
             } else if self.eat(TokenKind::As) {
                 let ty = self.parse_type();
                 let span = expression.span.merge(ty.span);
@@ -1424,10 +1247,9 @@ impl<'a> Parser<'a> {
                     },
                 };
                 self.observe_template_expression_semantics(&expression);
-            } else if self.consume_non_null_template_host() {
+            } else if self.consume_non_null_postfix() {
             } else {
-                self.observe_unmodeled_non_null_template_adjacency();
-                self.reject_tagged_template();
+                self.observe_unmodeled_postfix_expression(expression.span);
                 break;
             }
         }
@@ -1486,63 +1308,6 @@ impl<'a> Parser<'a> {
         self.next_node = saved_next_node;
         self.diagnostics.truncate(saved_diagnostics);
         followed_by_arrow
-    }
-
-    fn parse_object_literal(&mut self) -> Expression {
-        let left = self.bump().span;
-        let mut properties = Vec::new();
-        while !self.at_any(&[TokenKind::RightBrace, TokenKind::EndOfFile]) {
-            let start = self.current().span;
-            let (name, name_span, _) = self.parse_property_name();
-            let value = if self.eat(TokenKind::Colon) {
-                self.parse_expression()
-            } else {
-                Expression {
-                    id: self.alloc_node(),
-                    span: name_span,
-                    kind: ExpressionKind::Identifier {
-                        name: name.clone(),
-                        name_span,
-                        entity_name: true,
-                    },
-                }
-            };
-            let span = start.merge(value.span);
-            properties.push(ObjectProperty {
-                name,
-                name_span,
-                value,
-                span,
-            });
-            if !self.eat(TokenKind::Comma) {
-                break;
-            }
-        }
-        let right = self.current().span;
-        self.expect(TokenKind::RightBrace, "'}' expected.", 1005);
-        Expression {
-            id: self.alloc_node(),
-            span: left.merge(right),
-            kind: ExpressionKind::Object(properties),
-        }
-    }
-
-    fn parse_array_literal(&mut self) -> Expression {
-        let left = self.bump().span;
-        let mut elements = Vec::new();
-        while !self.at_any(&[TokenKind::RightBracket, TokenKind::EndOfFile]) {
-            elements.push(self.parse_expression());
-            if !self.eat(TokenKind::Comma) {
-                break;
-            }
-        }
-        let right = self.current().span;
-        self.expect(TokenKind::RightBracket, "']' expected.", 1005);
-        Expression {
-            id: self.alloc_node(),
-            span: left.merge(right),
-            kind: ExpressionKind::Array(elements),
-        }
     }
 
     fn parse_name(&mut self) -> (String, Span) {

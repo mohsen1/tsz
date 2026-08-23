@@ -787,12 +787,16 @@ fn named_function_returns_are_inferred_without_any_fallback() {
 fn multiple_function_returns_form_a_bounded_union() {
     let output = compile(
         "function choose(flag:boolean) { \
-           if (flag) { return \"yes\"; } else { return 1; } \
+           if (1 + 1) { return \"yes\"; } else { return 1; } \
          } \
          const value:string|number=choose(true); \
          const wrong:boolean=choose(false);",
     );
     assert_eq!(codes(&output), vec![2322], "{:?}", output.diagnostics);
+    assert_eq!(
+        output.diagnostics[0].message_text,
+        "Type 'string | number' is not assignable to type 'boolean'."
+    );
 }
 
 #[test]

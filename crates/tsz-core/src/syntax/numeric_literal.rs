@@ -557,6 +557,11 @@ fn recovered_numeric_token_with_kind(
     token_kind: TokenKind,
 ) -> ScannedNumericToken {
     let raw = source.text[start..end].to_string();
+    let has_unmodeled_separator = raw.contains('_')
+        && matches!(
+            kind,
+            NumericRecoveryKind::InvalidSeparator | NumericRecoveryKind::IncompleteRadix
+        );
     let diagnostic_events = diagnostics
         .iter()
         .cloned()
@@ -578,7 +583,7 @@ fn recovered_numeric_token_with_kind(
             diagnostic_events,
         }),
         separated_literal: None,
-        has_unmodeled_separator: false,
+        has_unmodeled_separator,
     }
 }
 

@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use crate::bind::{BoundFile, Meaning, bind_source};
+use crate::bind::{BoundFile, DeclarationKind, Meaning, bind_source};
 use crate::config::{CompilerOptionKey, ProjectProvenance, ResolvedProject};
 use crate::diagnostics::{Diagnostic, DiagnosticCategory, sort_and_deduplicate};
 use crate::emit::emit_file_with_plan;
@@ -17,23 +17,26 @@ use crate::semantics::{CheckResult, check_program};
 use crate::source::{DeclId, FileId, SourceText};
 use crate::standard_library::{StandardLibraryDeclaration, StandardLibraryEnvironment};
 use crate::syntax::{
-    SourceUnit, parse_source, statements_form_no_substitution_template_expression_file,
+    SourceUnit, StatementKind, TypeMemberKind, TypeMemberNameKind, parse_source,
+    statements_form_no_substitution_template_expression_file,
     statements_form_no_substitution_template_variable_file,
 };
 
+mod capabilities;
 mod import_aliases;
 mod literal_products;
 mod numeric_literal;
 mod regular_expression;
 mod string_literal;
 
+pub(crate) use capabilities::{
+    CapabilityAnalysis, CapabilityContext, CapabilityScope, CapabilityTarget,
+    is_declaration_source, is_effective_commonjs,
+};
 use literal_products::{
     LiteralProductFamily, exact_option_value, roots_are_homogeneous_literal_products,
     unique_top_level_value_bindings_supported,
 };
-pub(crate) use numeric_literal::has_unmodeled_numeric_recovery_program_products;
-pub(crate) use regular_expression::has_unmodeled_regular_expression_program_products;
-pub(crate) use string_literal::has_unmodeled_extended_unicode_string_program_products;
 
 #[derive(Debug, Clone)]
 pub struct SourceInput {
@@ -275,6 +278,66 @@ impl Program {
         self.standard_library.declaration(id)
     }
 
+    /// Query one canonical library owner's authored global group for a member.
+    pub(crate) fn standard_library_type_has_authored_member(
+        &self,
+        owner: DeclId,
+        member_name: &str,
+    ) -> bool {
+        let Some(owner_name) = self
+            .standard_library
+            .declaration(owner)
+            .filter(|declaration| declaration.meaning == Meaning::Type)
+            .map(|declaration| declaration.name.as_str())
+        else {
+            return true;
+        };
+        self.global_types
+            .get(owner_name)
+            .is_some_and(|declarations| {
+                declarations.iter().copied().any(|declaration| {
+                    let Some(file) = self.file(declaration.file) else {
+                        return true;
+                    };
+                    let Some(bound) = file.bindings.declaration(declaration) else {
+                        return true;
+                    };
+                    let Some(interface) = file.syntax.statements.iter().find_map(|statement| {
+                        (bound.kind == DeclarationKind::Interface
+                            && bound.meaning == Meaning::Type
+                            && statement.id == bound.owner)
+                            .then_some(&statement.kind)
+                            .and_then(|statement| match statement {
+                                StatementKind::Interface(interface) => Some(interface),
+                                _ => None,
+                            })
+                    }) else {
+                        return true;
+                    };
+                    if !interface.type_parameters.is_empty() || !interface.extends.is_empty() {
+                        return true;
+                    }
+                    interface.members.iter().any(|member| {
+                        if member.recovered || member.recovery_incomplete {
+                            return true;
+                        }
+                        let name = match &member.kind {
+                            TypeMemberKind::Property { name, .. }
+                            | TypeMemberKind::Method { name, .. }
+                            | TypeMemberKind::Accessor { name, .. } => name,
+                            TypeMemberKind::Call { .. }
+                            | TypeMemberKind::Construct { .. }
+                            | TypeMemberKind::Index { .. } => return false,
+                        };
+                        match &name.kind {
+                            TypeMemberNameKind::Identifier(name) => name == member_name,
+                            _ => true,
+                        }
+                    })
+                })
+            })
+    }
+
     fn missing_essential_global_types(&self) -> Vec<&'static str> {
         StandardLibraryEnvironment::essential_type_names()
             .iter()
@@ -326,6 +389,8 @@ pub struct CompileOutput {
     pub stats: CompileStats,
     pub semantic_completion: SemanticCompletion,
     pub exit_status: CompileExitStatus,
+    pub(crate) capabilities: CapabilityAnalysis,
+    pub(crate) check_file_completions: Vec<SemanticCompletion>,
 }
 
 /// Whether every required semantic operation reached a definitive result.
@@ -523,15 +588,6 @@ impl Compiler {
             })
             .collect();
 
-        let mut files = Vec::with_capacity(jobs.len());
-        let mut parse_time = Duration::ZERO;
-        let mut bind_time = Duration::ZERO;
-        for job in jobs {
-            diagnostics.extend(job.diagnostics);
-            parse_time += job.parse_time;
-            bind_time += job.bind_time;
-            files.push(job.file);
-        }
         let option_diagnostics = compiler_option_diagnostics(options, &provenance);
         let has_compiler_option_error = !option_diagnostics.is_empty();
         let has_fatal_option_error = option_diagnostics
@@ -540,6 +596,19 @@ impl Compiler {
             && provenance
                 .option_origin(CompilerOptionKey::Target)
                 .is_none();
+        let mut files = Vec::with_capacity(jobs.len());
+        let mut syntax_diagnostics = Vec::new();
+        let mut parse_time = Duration::ZERO;
+        let mut bind_time = Duration::ZERO;
+        for job in jobs {
+            syntax_diagnostics.extend(job.diagnostics);
+            parse_time += job.parse_time;
+            bind_time += job.bind_time;
+            files.push(job.file);
+        }
+        if !has_fatal_option_error {
+            diagnostics.extend(syntax_diagnostics);
+        }
         diagnostics.extend(option_diagnostics);
         files.sort_by_key(|file| file.source.id);
         let program = build_program(files, source_order, options);
@@ -552,38 +621,42 @@ impl Compiler {
             program.missing_essential_global_types()
         };
         let has_missing_essential_types = !missing_essential_types.is_empty();
-        let has_unmodeled_authored_numeric_recovery = program.files.iter().any(|file| {
-            file.syntax.has_authored_numeric_recovery()
-                && file.syntax.has_unmodeled_numeric_recovery_products()
+        let capabilities = CapabilityAnalysis::derive(
+            &program.files,
+            options,
+            CapabilityContext {
+                has_compiler_option_error,
+                has_fatal_option_error,
+                has_missing_essential_types,
+            },
+        );
+        let has_checkable_file = program.files.iter().any(|file| {
+            capabilities.semantic_check_file_is_enabled(file.source.id)
+                && file.syntax.statements.iter().any(|statement| {
+                    let mut has_checkable_statement = false;
+                    statement.for_each_statement(&mut |statement| {
+                        has_checkable_statement |= capabilities
+                            .semantic_check_node_is_claimed(file.source.id, statement.id);
+                    });
+                    has_checkable_statement
+                })
         });
-        let has_unmodeled_authored_numeric_separator = program.files.iter().any(|file| {
-            file.syntax.has_authored_numeric_separator()
-                && file.syntax.has_unmodeled_numeric_separator_products()
-        });
-        let has_unmodeled_authored_template = program
-            .files
-            .iter()
-            .any(|file| file.syntax.has_unmodeled_template_products());
 
         let check_start = Instant::now();
         let CheckResult {
             diagnostics: semantic_diagnostics,
             type_count,
             mut semantic_completion,
-        } = if options.no_check
-            || has_missing_essential_types
-            || has_fatal_option_error
-            || has_unmodeled_authored_template
-            || has_unmodeled_authored_numeric_recovery
-            || has_unmodeled_authored_numeric_separator
-        {
+            file_semantic_completions,
+        } = if options.no_check || !has_checkable_file {
             CheckResult {
                 diagnostics: Vec::new(),
                 type_count: 0,
                 semantic_completion: SemanticCompletion::Complete,
+                file_semantic_completions: vec![SemanticCompletion::Complete; program.files.len()],
             }
         } else {
-            check_program(&program, options)
+            check_program(&program, options, &capabilities)
         };
         let check_time = check_start.elapsed();
         diagnostics.extend(
@@ -592,56 +665,18 @@ impl Compiler {
                 .map(|name| Diagnostic::global(format!("Cannot find global type '{name}'."), 2318)),
         );
         diagnostics.extend(semantic_diagnostics);
-        if program
-            .files
-            .iter()
-            .any(|file| file.syntax.has_unmodeled_template_products())
-            || program
-                .files
-                .iter()
-                .any(|file| file.syntax.has_unmodeled_extended_unicode_string_products())
-            || program
-                .files
-                .iter()
-                .any(|file| file.syntax.has_unmodeled_numeric_recovery_products())
-            || program
-                .files
-                .iter()
-                .any(|file| file.syntax.has_unmodeled_numeric_separator_products())
-            || program
-                .files
-                .iter()
-                .any(|file| file.syntax.has_unmodeled_expression_products())
-            || program
-                .files
-                .iter()
-                .any(|file| file.syntax.has_unicode_line_comment_terminator())
-            || program
-                .files
-                .iter()
-                .any(|file| file.syntax.has_unmodeled_default_export_hosts())
-            || has_unmodeled_no_substitution_template_program_products(&program.files, options)
-            || has_unmodeled_regular_expression_program_products(&program.files, options)
-            || has_unmodeled_extended_unicode_string_program_products(&program.files, options)
-            || has_unmodeled_numeric_recovery_program_products(&program.files, options)
-            || (has_compiler_option_error
-                && program.files.iter().any(|file| {
-                    file.syntax.has_authored_no_substitution_template()
-                        || file.syntax.has_authored_extended_unicode_string()
-                        || file.syntax.has_authored_regular_expression()
-                        || file.syntax.has_authored_numeric_recovery()
-                        || file.syntax.has_authored_numeric_separator()
-                }))
-        {
+        if !has_fatal_option_error && !capabilities.semantic_diagnostics_are_claimed() {
             semantic_completion = semantic_completion.combine(SemanticCompletion::Deferred);
         }
         let emit_start = Instant::now();
         let emit_plan = if has_fatal_option_error {
             EmitPlan::empty(program.files.len())
         } else {
-            EmitPlan::for_program(&program.files, options, &provenance)
+            EmitPlan::for_program(&program.files, options, &provenance, &capabilities)
         };
-        if emit_plan.has_incomplete_products() {
+        if !has_fatal_option_error
+            && !capabilities.requested_emit_is_claimed(&program.files, options)
+        {
             semantic_completion = semantic_completion.combine(SemanticCompletion::Deferred);
         }
         diagnostics.extend(emit_plan.diagnostics().iter().cloned());
@@ -750,6 +785,8 @@ impl Compiler {
             stats,
             semantic_completion,
             exit_status,
+            capabilities,
+            check_file_completions: file_semantic_completions,
         }
     }
 }
@@ -829,7 +866,7 @@ struct ParseBindJob {
 }
 
 fn build_program(
-    files: Vec<ProgramFile>,
+    mut files: Vec<ProgramFile>,
     source_order: Vec<FileId>,
     options: &CompilerOptions,
 ) -> Program {
@@ -857,6 +894,13 @@ fn build_program(
                 table.entry(declaration.name.clone()).or_default().push(*id);
             }
         }
+    }
+    for file in &mut files {
+        file.bindings.finalize_flow(&file.syntax, |name| {
+            global_values
+                .get(name)
+                .and_then(|declarations| declarations.first().copied())
+        });
     }
     Program {
         source_order,

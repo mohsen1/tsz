@@ -15,8 +15,12 @@ use crate::syntax::{
 use super::{
     Checker, is_declaration_source,
     recursion::{ReferenceDemand, ReferenceExpansionStack},
+    relation_diagnostic::ContextualType,
     type_member_grammar::ParameterGrammarHost,
 };
+
+mod operands;
+mod program;
 
 #[derive(Debug, Clone, Copy)]
 enum TypeMemberContainerKind {
@@ -25,41 +29,10 @@ enum TypeMemberContainerKind {
 }
 
 impl Checker<'_> {
-    /// Walk every parsed explicit type position before ordinary checking.
-    ///
-    /// This is intentionally a syntax boundary, not an inference or relation
-    /// side effect. It preserves the lexical value scope and the declaration-
-    /// owned type-parameter identities for annotations that otherwise might
-    /// never be observed (ambient declarations, class bodies, assertions, and
-    /// nested arrows included).
-    pub(super) fn require_explicit_type_positions(&mut self) {
-        let empty = HashMap::new();
-        for file_id in &self.program.source_order {
-            let file_id = *file_id;
-            if self.program.files[file_id.0 as usize]
-                .syntax
-                .has_unmodeled_declaration_hosts()
-            {
-                let _ = self.require_completion(Completion::<()>::Deferred);
-            }
-            let statements = &self.program.files[file_id.0 as usize].syntax.statements;
-            for (index, statement) in statements.iter().enumerate() {
-                self.visit_required_statement(
-                    file_id,
-                    ScopeId(0),
-                    statement,
-                    statements.get(index + 1),
-                    &empty,
-                );
-            }
-        }
-    }
-
     /// Require a type at a declaration boundary.
     ///
     /// Forcing a deferred outer type is not enough: a concrete object,
-    /// signature, tuple, or union can still contain deferred required
-    /// components. This visitor is the single boundary that walks those
+    /// signature, tuple, or union can contain deferred components. This visitor walks those
     /// components. Its active set is keyed by program-local `TypeId`, so
     /// productive recursive structural types close coinductively without a
     /// second depth or fuel policy. Deferred evaluation keeps its own budget.
@@ -69,30 +42,27 @@ impl Checker<'_> {
         let completion = self.visit_required_type(ty, &mut active, &mut references);
         self.require_completion(completion)
     }
-
-    pub(super) fn require_function_signature(&mut self, id: DeclId) -> Option<TypeId> {
-        // Checking an authored declaration validates that declaration's own
-        // signature. It is not a value-use query and therefore must not ask
-        // the overload gateway to select a callable signature.
+    pub(super) fn require_function_signature(&mut self, id: DeclId) -> ContextualType {
         let declaration_completion = self.declared_function_type(id);
         let signature_type = match self.require_completion(declaration_completion) {
             Completion::Complete(signature_type) => signature_type,
-            Completion::Deferred | Completion::Cycle | Completion::Limit => return None,
+            Completion::Deferred | Completion::Cycle | Completion::Limit => {
+                return ContextualType::Deferred;
+            }
         };
         let signature_type = match self.require_type_completion(signature_type) {
             Completion::Complete(signature_type) => signature_type,
             Completion::Deferred | Completion::Cycle | Completion::Limit => {
                 self.value_queries.remove(&id);
-                return None;
+                return ContextualType::Deferred;
             }
         };
         let TypeKind::Function(signature) = self.store.kind(signature_type) else {
-            return None;
+            return ContextualType::Absent;
         };
-        Some(signature.return_type)
+        ContextualType::Known(signature.return_type)
     }
-
-    fn visit_required_statement(
+    fn visit_required_statement_claimed(
         &mut self,
         file: FileId,
         scope: ScopeId,
@@ -126,7 +96,15 @@ impl Checker<'_> {
                     source.kind(),
                     SourceKind::JavaScript | SourceKind::JavaScriptJsx
                 );
-                if !declaration.overload_completion_supported {
+                let identity = self
+                    .find_declaration(
+                        file,
+                        statement.id,
+                        DeclarationKind::Function,
+                        &declaration.name,
+                    )
+                    .unwrap_or_else(|| synthetic_identity(file, declaration.name_span.start));
+                if !declaration.overload_context_is_recovery_free() {
                     let _ = self.require_completion(Completion::<()>::Deferred);
                 }
                 if javascript_source && !declaration.has_body {
@@ -137,14 +115,14 @@ impl Checker<'_> {
                 if declaration.is_async || declaration.abstract_declaration {
                     // Async return validation (TS1064) and the invalid
                     // abstract-function modifier (TS1242) are not owned yet.
-                    // Preserve the parsed modifier and fail closed rather
-                    // than treating either host as an ordinary overload.
+                    // Preserve both and fail closed until their hosts are owned.
                     let _ = self.require_completion(Completion::<()>::Deferred);
                 }
-                if !declaration.has_body
+                if declaration.bodyless_overload_is_recovery_free()
                     && !declaration.declared
                     && !declaration.abstract_declaration
                     && !declaration_source
+                    && self.required_declaration_model_is_claimed(identity)
                 {
                     match next_statement.map(|next| &next.kind) {
                         Some(StatementKind::Function(next)) if next.name == declaration.name => {}
@@ -164,7 +142,7 @@ impl Checker<'_> {
                         }
                     }
                 }
-                if !declaration.has_body
+                if declaration.bodyless_overload_is_recovery_free()
                     && declaration.return_type.is_none()
                     && !declaration.abstract_declaration
                     && self.options.effective_no_implicit_any()
@@ -189,14 +167,6 @@ impl Checker<'_> {
                     let _ = self.require_completion(Completion::<()>::Deferred);
                 }
                 let function_scope = self.node_scope(file, statement.id, scope);
-                let identity = self
-                    .find_declaration(
-                        file,
-                        statement.id,
-                        DeclarationKind::Function,
-                        &declaration.name,
-                    )
-                    .unwrap_or_else(|| synthetic_identity(file, declaration.name_span.start));
                 if !self.declaration_value_host_is_modeled(identity, DeclarationKind::Function) {
                     let _ = self.require_completion(Completion::<()>::Deferred);
                 }
@@ -240,16 +210,7 @@ impl Checker<'_> {
                         );
                     }
                 }
-                for (index, nested) in declaration.body.iter().enumerate() {
-                    let nested_scope = self.node_scope(file, nested.id, function_scope);
-                    self.visit_required_statement(
-                        file,
-                        nested_scope,
-                        nested,
-                        declaration.body.get(index + 1),
-                        &function_types,
-                    );
-                }
+                self.visit_required_body(file, function_scope, &declaration.body, &function_types);
             }
             StatementKind::Class(declaration) => {
                 let identity = self
@@ -570,7 +531,7 @@ impl Checker<'_> {
                     has_body,
                 } => {
                     if !supported_modifiers
-                        || !member.overload_completion_supported
+                        || !member.overload_context_is_recovery_free()
                         || member.modifiers.static_member
                         || (*has_body && !body.is_empty())
                         || !bounded_class_parameters(parameters, self.options)
@@ -587,7 +548,7 @@ impl Checker<'_> {
                     accessor,
                 } => {
                     if !supported_modifiers
-                        || !member.overload_completion_supported
+                        || !member.overload_context_is_recovery_free()
                         || accessor.is_some()
                         || !type_parameters.is_empty()
                         || (*has_body && !body.is_empty())
@@ -708,6 +669,7 @@ impl Checker<'_> {
     ) {
         match &expression.kind {
             ExpressionKind::Identifier { .. }
+            | ExpressionKind::This
             | ExpressionKind::Literal(_)
             | ExpressionKind::RegularExpression(_)
             | ExpressionKind::Missing => {}
@@ -751,6 +713,10 @@ impl Checker<'_> {
             }
             ExpressionKind::Member { object, .. } => {
                 self.visit_required_expression(file, scope, object, type_parameters);
+            }
+            ExpressionKind::ElementAccess { object, index } => {
+                self.visit_required_expression(file, scope, object, type_parameters);
+                self.visit_required_expression(file, scope, index, type_parameters);
             }
             ExpressionKind::Arrow {
                 parameters,
@@ -850,6 +816,13 @@ impl Checker<'_> {
             type_parameters,
             implementation,
         );
+        for parameter in parameters {
+            if let Some(initializer) = &parameter.initializer
+                && !matches!(initializer.kind, ExpressionKind::Literal(_))
+            {
+                self.visit_required_expression(file, scope, initializer, type_parameters);
+            }
+        }
         if implementation {
             for parameter in parameters {
                 if let Some(initializer) = &parameter.initializer
@@ -1673,90 +1646,6 @@ impl Checker<'_> {
         completion
     }
 
-    fn visit_deferred_operands(
-        &mut self,
-        deferred: &DeferredType,
-        active: &mut HashSet<TypeId>,
-        references: &mut ReferenceExpansionStack,
-        state: &mut SemanticCompletion,
-    ) {
-        match deferred {
-            DeferredType::Reference { arguments, .. } => {
-                self.combine_required_children(
-                    arguments.iter().copied(),
-                    active,
-                    references,
-                    state,
-                );
-            }
-            DeferredType::Value(_)
-            | DeferredType::BigIntLiteral
-            | DeferredType::NumericRecovery
-            | DeferredType::Utf16StringLiteral
-            | DeferredType::UniqueSymbol
-            | DeferredType::GenericCall
-            | DeferredType::GenericFunction
-            | DeferredType::ObjectShape => {}
-            DeferredType::Call { callee, .. }
-            | DeferredType::Unary {
-                operand: callee, ..
-            }
-            | DeferredType::KeyOf(callee)
-            | DeferredType::Property { object: callee, .. } => {
-                self.combine_required_children([*callee], active, references, state);
-            }
-            DeferredType::Construct {
-                callee,
-                type_arguments,
-                ..
-            } => {
-                self.combine_required_children([*callee], active, references, state);
-                self.combine_required_children(
-                    type_arguments.iter().copied(),
-                    active,
-                    references,
-                    state,
-                );
-            }
-            DeferredType::Predicate { asserted, .. } => {
-                self.combine_required_children(asserted.iter().copied(), active, references, state);
-            }
-            DeferredType::Logical { left, right, .. } => {
-                self.combine_required_children([*left, *right], active, references, state);
-            }
-            DeferredType::Conditional {
-                check,
-                extends,
-                when_true,
-                when_false,
-            } => {
-                self.combine_required_children(
-                    [*check, *extends, *when_true, *when_false],
-                    active,
-                    references,
-                    state,
-                );
-            }
-            DeferredType::Mapped {
-                constraint,
-                name_type,
-                value,
-                ..
-            } => {
-                self.combine_required_children([*constraint, *value], active, references, state);
-                self.combine_required_children(
-                    name_type.iter().copied(),
-                    active,
-                    references,
-                    state,
-                );
-            }
-            DeferredType::IndexedAccess { object, index, .. } => {
-                self.combine_required_children([*object, *index], active, references, state);
-            }
-        }
-    }
-
     fn visit_required_children(
         &mut self,
         owner: TypeId,
@@ -1791,7 +1680,7 @@ fn bounded_class_parameters(
         !parameter.rest
             && parameter.initializer.is_none()
             && parameter.modifiers.is_empty()
-            && parameter.overload_completion_supported
+            && parameter.overload_context_is_recovery_free()
             && (!options.effective_no_implicit_any() || parameter.annotation.is_some())
     })
 }
@@ -1840,7 +1729,7 @@ fn class_member_declaration_groups_are_modeled(declaration: &ClassDeclaration) -
     let mut uncanonical_members = 0;
     for member in &declaration.members {
         if !matches!(member.kind, ClassMemberKind::Constructor { .. })
-            && !member.overload_completion_supported
+            && !member.overload_context_is_recovery_free()
         {
             uncanonical_members += 1;
             if uncanonical_members >= 2 {
@@ -1894,12 +1783,10 @@ fn class_has_ambient_implementation(declaration: &ClassDeclaration) -> bool {
 }
 
 const fn class_member_access(modifiers: &crate::syntax::ClassMemberModifiers) -> u8 {
-    if modifiers.private {
-        1
-    } else if modifiers.protected {
-        2
-    } else {
-        0
+    match (modifiers.private, modifiers.protected) {
+        (true, _) => 1,
+        (false, true) => 2,
+        (false, false) => 0,
     }
 }
 
@@ -1914,10 +1801,12 @@ fn is_bindable_computed_name(expression: &Expression) -> bool {
             operator: UnaryOperator::Plus | UnaryOperator::Minus,
             operand,
         } => matches!(operand.kind, ExpressionKind::Literal(Literal::Number(_))),
-        ExpressionKind::Literal(Literal::BigInt(_) | Literal::Boolean(_) | Literal::Null)
+        ExpressionKind::This
+        | ExpressionKind::Literal(Literal::BigInt(_) | Literal::Boolean(_) | Literal::Null)
         | ExpressionKind::RegularExpression(_)
         | ExpressionKind::Object(_)
         | ExpressionKind::Array(_)
+        | ExpressionKind::ElementAccess { .. }
         | ExpressionKind::Call { .. }
         | ExpressionKind::New { .. }
         | ExpressionKind::Arrow { .. }
@@ -1934,10 +1823,12 @@ fn is_entity_name_expression(expression: &Expression) -> bool {
     match &expression.kind {
         ExpressionKind::Identifier { entity_name, .. } => *entity_name,
         ExpressionKind::Member { object, .. } => is_entity_name_expression(object),
-        ExpressionKind::Literal(_)
+        ExpressionKind::This
+        | ExpressionKind::Literal(_)
         | ExpressionKind::RegularExpression(_)
         | ExpressionKind::Object(_)
         | ExpressionKind::Array(_)
+        | ExpressionKind::ElementAccess { .. }
         | ExpressionKind::Call { .. }
         | ExpressionKind::New { .. }
         | ExpressionKind::Arrow { .. }
@@ -1958,14 +1849,12 @@ const fn completion_state<T>(completion: &Completion<T>) -> SemanticCompletion {
         Completion::Limit => SemanticCompletion::Limit,
     }
 }
-
 const fn synthetic_identity(file: FileId, start: u32) -> DeclId {
     DeclId {
         file,
         local: start | (1 << 31),
     }
 }
-
 const fn completion_from_state(state: SemanticCompletion, ty: TypeId) -> Completion<TypeId> {
     match state {
         SemanticCompletion::Complete => Completion::Complete(ty),

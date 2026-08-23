@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "r0_physical_line_limit": 15000,
+  "include": [
+    "crates/tsz-cli/src/**/*.rs",
+    "crates/tsz-core/src/**/*.rs"
+  ],
+  "exclude": [
+    "crates/tsz-core/src/emit/test_support.rs",
+    "crates/tsz-core/src/program/capabilities/tests.rs"
+  ]
+}

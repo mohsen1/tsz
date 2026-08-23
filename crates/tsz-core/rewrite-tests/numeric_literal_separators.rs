@@ -65,7 +65,11 @@ fn assert_incomplete(source: &str, no_check: bool, no_emit: bool) {
         SemanticCompletion::Deferred
     );
     assert_eq!(output.exit_status, CompileExitStatus::SemanticIncomplete);
-    assert_eq!(output.stats.types, 0, "{source:?}");
+    assert_eq!(
+        output.stats.types, 0,
+        "{source:?}: {:?}",
+        output.diagnostics
+    );
     assert!(output.emitted_files.is_empty(), "{source:?}");
 }
 
@@ -292,7 +296,10 @@ fn property_type_and_trivia_member_hosts_fail_closed_before_semantics_or_emit() 
     ] {
         let output = Compiler::new().compile(roots, &options("es2020", false, false));
         assert_eq!(output.semantic_completion, SemanticCompletion::Deferred);
-        assert_eq!(output.stats.types, 0);
+        assert!(
+            output.stats.types > 0,
+            "the safe sibling remains independently checkable"
+        );
         assert!(output.emitted_files.is_empty());
     }
 }

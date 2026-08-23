@@ -879,7 +879,11 @@ fn separator_radix_and_fraction_adjacencies_fail_closed() {
                 options(no_check, false),
             );
             assert_eq!(output.semantic_completion, SemanticCompletion::Deferred);
-            assert_eq!(output.stats.types, 0);
+            assert_eq!(
+                output.stats.types, 0,
+                "{source_text:?}: {:?}",
+                output.diagnostics
+            );
             assert!(
                 output
                     .diagnostics
@@ -1168,7 +1172,18 @@ fn exact_option_root_order_repeat_and_existing_literal_gates_are_stable() {
         rejected.push(candidate);
     }
     for candidate in rejected {
-        assert_incomplete("owned.ts", "01;", candidate);
+        if candidate.target.trim().eq_ignore_ascii_case("es5") {
+            let output = compile("owned.ts", "01;", candidate);
+            assert_eq!(output.semantic_completion, SemanticCompletion::Complete);
+            assert_eq!(
+                output.exit_status,
+                CompileExitStatus::DiagnosticsPresentOutputsSkipped
+            );
+            assert_eq!(diagnostic_facts(&output.diagnostics)[0].0, 5108);
+            assert!(output.emitted_files.is_empty());
+        } else {
+            assert_incomplete("owned.ts", "01;", candidate);
+        }
     }
 
     let roots = || {

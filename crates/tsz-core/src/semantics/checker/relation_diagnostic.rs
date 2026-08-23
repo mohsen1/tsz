@@ -9,7 +9,9 @@ use crate::semantics::relation::{
     RelationFailure, RelationFailureKind, RelationMode, RelationPropertyOrder,
     relate_with_property_order,
 };
-use crate::semantics::types::{Completion, IndexKeyKind, TypeId, TypeKind, UnionPolicy};
+use crate::semantics::types::{
+    Completion, DeferredType, IndexKeyKind, TypeId, TypeKind, UnionPolicy,
+};
 
 #[derive(Clone, Copy)]
 pub(super) enum RelationDiagnosticStyle {
@@ -41,10 +43,24 @@ const fn combine_diagnostic_outcomes(
     }
 }
 
-pub(super) enum ContextualPropertyType {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum ContextualType {
     Known(TypeId),
     Absent,
     Deferred,
+}
+
+impl ContextualType {
+    pub(super) const fn from_option(expected: Option<TypeId>) -> Self {
+        match expected {
+            Some(expected) => Self::Known(expected),
+            None => Self::Absent,
+        }
+    }
+
+    pub(super) const fn is_known(self) -> bool {
+        matches!(self, Self::Known(_))
+    }
 }
 
 impl RelationDiagnosticStyle {
@@ -68,9 +84,7 @@ impl Checker<'_> {
         style: RelationDiagnosticStyle,
     ) -> RelationDiagnosticOutcome {
         if source_expression.is_some_and(expression_is_recovered_number) {
-            self.semantic_completion = self
-                .semantic_completion
-                .combine(SemanticCompletion::Deferred);
+            self.observe_file_completion(span.file, SemanticCompletion::Deferred);
             return RelationDiagnosticOutcome::Deferred;
         }
         let (property_order, target_origins) = self.relation_origins(target, target_order.as_ref());
@@ -100,22 +114,18 @@ impl Checker<'_> {
         }
         match failure.kind {
             RelationFailureKind::Deferred => {
-                self.semantic_completion = self
-                    .semantic_completion
-                    .combine(SemanticCompletion::Deferred);
+                self.observe_file_completion(span.file, SemanticCompletion::Deferred);
                 return RelationDiagnosticOutcome::Deferred;
             }
             RelationFailureKind::Cycle => {
-                self.semantic_completion =
-                    self.semantic_completion.combine(SemanticCompletion::Cycle);
+                self.observe_file_completion(span.file, SemanticCompletion::Cycle);
                 return RelationDiagnosticOutcome::Deferred;
             }
             RelationFailureKind::InvalidProjection => {
                 return RelationDiagnosticOutcome::Deferred;
             }
             RelationFailureKind::ComplexityLimit => {
-                self.semantic_completion =
-                    self.semantic_completion.combine(SemanticCompletion::Limit);
+                self.observe_file_completion(span.file, SemanticCompletion::Limit);
                 self.push_diagnostic(
                     span.file,
                     span,
@@ -137,29 +147,23 @@ impl Checker<'_> {
             | RelationFailureKind::Parameter(_)
             | RelationFailureKind::Return => {}
         }
-
         for ty in [source, target] {
             match self.requires_authored_shape_display(ty) {
                 Completion::Complete(false) => {}
                 Completion::Complete(true) | Completion::Deferred => {
-                    self.semantic_completion = self
-                        .semantic_completion
-                        .combine(SemanticCompletion::Deferred);
+                    self.observe_file_completion(span.file, SemanticCompletion::Deferred);
                     return RelationDiagnosticOutcome::Deferred;
                 }
                 Completion::Cycle => {
-                    self.semantic_completion =
-                        self.semantic_completion.combine(SemanticCompletion::Cycle);
+                    self.observe_file_completion(span.file, SemanticCompletion::Cycle);
                     return RelationDiagnosticOutcome::Deferred;
                 }
                 Completion::Limit => {
-                    self.semantic_completion =
-                        self.semantic_completion.combine(SemanticCompletion::Limit);
+                    self.observe_file_completion(span.file, SemanticCompletion::Limit);
                     return RelationDiagnosticOutcome::Deferred;
                 }
             }
         }
-
         let diagnostic_span = source_expression
             .and_then(|expression| {
                 relation_property_name(&failure)
@@ -174,8 +178,13 @@ impl Checker<'_> {
                 .cloned()
         });
         let (_, source_origins) = self.relation_origins(source, source_order.as_ref());
-        let source_name =
-            self.relation_source_name(primary.source, primary.target, source_order.as_ref());
+        let source_name = match self.store.kind(source) {
+            TypeKind::Deferred(DeferredType::FlowReference { .. }) if primary.source != source => {
+                self.flow_alias(primary.source, &source_origins)
+                    .unwrap_or_else(|| self.source_name(primary.source, primary.target, None))
+            }
+            _ => self.source_name(primary.source, primary.target, source_order.as_ref()),
+        };
         let target_name = self.type_name_with_order(primary.target, target_order.as_ref());
         let message = match style {
             RelationDiagnosticStyle::Argument => format!(
@@ -221,11 +230,25 @@ impl Checker<'_> {
         if depth > 24 {
             return;
         }
+        let declared = match self.store.kind(ty) {
+            TypeKind::Deferred(DeferredType::FlowReference { declared, .. }) => Some(*declared),
+            _ => None,
+        };
         origins.insert(ty, origin.clone());
         let Some(ty) = self.complete_type(ty) else {
             return;
         };
         origins.insert(ty, origin.clone());
+        if let (Some(declared), PropertyOrderTree::Union(authored)) = (declared, origin) {
+            self.collect_relation_property_order(declared, origin, order, origins, depth + 1);
+            let live = origins.get(&ty);
+            let mut aliases = authored.iter().filter(|origin| {
+                matches!(origin, PropertyOrderTree::Alias { preserve_name: true, target, .. } if Some(target.as_ref()) == live)
+            });
+            if let (Some(alias), None) = (aliases.next(), aliases.next()) {
+                origins.insert(ty, alias.clone());
+            }
+        }
         match origin {
             PropertyOrderTree::Alias { target, .. } => {
                 self.collect_relation_property_order(ty, target, order, origins, depth + 1);
@@ -357,8 +380,10 @@ impl Checker<'_> {
         let ExpressionKind::Array(elements) = &expression.kind else {
             return RelationDiagnosticOutcome::Compatible;
         };
-        let Some(target_element) = self.contextual_array_element_type(target) else {
-            return RelationDiagnosticOutcome::Compatible;
+        let target_element = match self.contextual_array_element_type(target) {
+            ContextualType::Known(target_element) => target_element,
+            ContextualType::Absent => return RelationDiagnosticOutcome::Compatible,
+            ContextualType::Deferred => return RelationDiagnosticOutcome::Deferred,
         };
         let Some(element_types) = elements
             .iter()
@@ -371,7 +396,6 @@ impl Checker<'_> {
         else {
             return RelationDiagnosticOutcome::Compatible;
         };
-
         let mut outcome = RelationDiagnosticOutcome::Compatible;
         for (element, source_element) in elements.iter().zip(element_types) {
             let diagnostic_expression = peel_parentheses(element);
@@ -392,12 +416,14 @@ impl Checker<'_> {
     /// An array target supplies its element type as context. A union made
     /// entirely of array types supplies the union of their element types, as
     /// in TypeScript 7's contextual typing of `A[] | B[]`.
-    pub(super) fn contextual_array_element_type(&mut self, target: TypeId) -> Option<TypeId> {
-        let target = self.complete_type(target)?;
+    pub(super) fn contextual_array_element_type(&mut self, target: TypeId) -> ContextualType {
+        let Some(target) = self.complete_type(target) else {
+            return ContextualType::Deferred;
+        };
         match self.store.kind(target).clone() {
-            TypeKind::Array(element) => Some(element),
+            TypeKind::Array(element) => ContextualType::Known(element),
             TypeKind::Union(members) => {
-                let elements = members
+                let Some(elements) = members
                     .into_iter()
                     .map(|member| {
                         let member = self.complete_type(member)?;
@@ -406,10 +432,13 @@ impl Checker<'_> {
                             _ => None,
                         }
                     })
-                    .collect::<Option<Vec<_>>>()?;
-                Some(self.store.union(elements, UnionPolicy::Canonical))
+                    .collect::<Option<Vec<_>>>()
+                else {
+                    return ContextualType::Deferred;
+                };
+                ContextualType::Known(self.store.union(elements, UnionPolicy::Canonical))
             }
-            _ => None,
+            _ => ContextualType::Absent,
         }
     }
 
@@ -424,9 +453,9 @@ impl Checker<'_> {
         target: TypeId,
         name: &str,
         source: Option<&Expression>,
-    ) -> ContextualPropertyType {
+    ) -> ContextualType {
         let Some(target) = self.complete_type(target) else {
-            return ContextualPropertyType::Deferred;
+            return ContextualType::Deferred;
         };
         match self.store.kind(target).clone() {
             TypeKind::Object(shape)
@@ -436,13 +465,13 @@ impl Checker<'_> {
                 .properties
                 .iter()
                 .find(|property| property.name == name)
-                .map(|property| ContextualPropertyType::Known(property.ty))
+                .map(|property| ContextualType::Known(property.ty))
                 .or_else(|| {
                     shape
                         .index(IndexKeyKind::String)
-                        .map(|index| ContextualPropertyType::Known(index.value))
+                        .map(|index| ContextualType::Known(index.value))
                 })
-                .unwrap_or(ContextualPropertyType::Absent),
+                .unwrap_or(ContextualType::Absent),
             TypeKind::Union(members) => {
                 let Some(member_properties) = members
                     .into_iter()
@@ -460,7 +489,7 @@ impl Checker<'_> {
                     })
                     .collect::<Option<Vec<_>>>()
                 else {
-                    return ContextualPropertyType::Deferred;
+                    return ContextualType::Deferred;
                 };
                 let property_is_shared = member_properties
                     .iter()
@@ -469,12 +498,12 @@ impl Checker<'_> {
                     (0..member_properties.len()).collect::<Vec<_>>()
                 } else {
                     let Some(source) = source else {
-                        return ContextualPropertyType::Deferred;
+                        return ContextualType::Deferred;
                     };
                     let Some(applicable) =
                         self.contextually_applicable_members(&member_properties, source)
                     else {
-                        return ContextualPropertyType::Deferred;
+                        return ContextualType::Deferred;
                     };
                     applicable
                 };
@@ -488,14 +517,12 @@ impl Checker<'_> {
                     })
                     .collect::<Vec<_>>();
                 if property_types.is_empty() {
-                    return ContextualPropertyType::Deferred;
+                    return ContextualType::Deferred;
                 }
-                ContextualPropertyType::Known(
-                    self.store.union(property_types, UnionPolicy::Canonical),
-                )
+                ContextualType::Known(self.store.union(property_types, UnionPolicy::Canonical))
             }
-            TypeKind::Any => ContextualPropertyType::Known(self.store.builtins.any),
-            _ => ContextualPropertyType::Absent,
+            TypeKind::Any => ContextualType::Known(self.store.builtins.any),
+            _ => ContextualType::Absent,
         }
     }
 
@@ -509,10 +536,8 @@ impl Checker<'_> {
         };
         let mut applicable = (0..members.len()).collect::<Vec<_>>();
         let mut found_applicability_evidence = false;
-
-        // An authored property that only some union members declare excludes
-        // the members that cannot accept it. This is enough to contextually
-        // type `{ right: value }` against `{ left: L } | { right: R }`
+        // A property declared by only some union members excludes the others.
+        // This contextually types `{ right: value }` against `{ left: L } | { right: R }`
         // without requiring a separate literal tag.
         for source_property in source_properties {
             let declared = members
@@ -534,7 +559,6 @@ impl Checker<'_> {
                 return None;
             }
         }
-
         for source_property in source_properties {
             let ExpressionKind::Literal(literal) = &peel_parentheses(&source_property.value).kind
             else {
@@ -646,9 +670,9 @@ impl Checker<'_> {
                 &property.name,
                 Some(expression),
             ) {
-                ContextualPropertyType::Known(target_property) => target_property,
-                ContextualPropertyType::Absent => continue,
-                ContextualPropertyType::Deferred => {
+                ContextualType::Known(target_property) => target_property,
+                ContextualType::Absent => continue,
+                ContextualType::Deferred => {
                     outcome =
                         combine_diagnostic_outcomes(outcome, RelationDiagnosticOutcome::Deferred);
                     continue;
@@ -673,9 +697,7 @@ impl Checker<'_> {
             outcome = combine_diagnostic_outcomes(outcome, child);
         }
         if matches!(outcome, RelationDiagnosticOutcome::Deferred) {
-            self.semantic_completion = self
-                .semantic_completion
-                .combine(SemanticCompletion::Deferred);
+            self.observe_completion(SemanticCompletion::Deferred);
         }
         outcome
     }
@@ -720,11 +742,10 @@ impl Checker<'_> {
             if reason.kind == RelationFailureKind::AliasExpansion {
                 let source_origin = self.origin_for(reason.source, source_origins).cloned();
                 let target_origin = self.origin_for(reason.target, target_origins).cloned();
-                let source_name =
-                    self.relation_source_name(reason.source, reason.target, source_origin.as_ref());
+                let src = self.source_name(reason.source, reason.target, source_origin.as_ref());
                 let target_name = self.type_name_with_order(reason.target, target_origin.as_ref());
                 related.push(RelatedInformation::unlocated(
-                    format!("Type '{source_name}' is not assignable to type '{target_name}'."),
+                    format!("Type '{src}' is not assignable to type '{target_name}'."),
                     code,
                     depth,
                 ));
@@ -776,11 +797,8 @@ impl Checker<'_> {
                 RelationFailureKind::MissingProperty(name) => {
                     let source_origin = self.origin_for(reason.source, source_origins).cloned();
                     let target_origin = self.origin_for(reason.target, target_origins).cloned();
-                    let source_name = self.relation_source_name(
-                        reason.source,
-                        reason.target,
-                        source_origin.as_ref(),
-                    );
+                    let source_name =
+                        self.source_name(reason.source, reason.target, source_origin.as_ref());
                     let target_name =
                         self.type_name_with_order(reason.target, target_origin.as_ref());
                     format!(
@@ -790,11 +808,8 @@ impl Checker<'_> {
                 RelationFailureKind::MissingProperties(names) => {
                     let source_origin = self.origin_for(reason.source, source_origins).cloned();
                     let target_origin = self.origin_for(reason.target, target_origins).cloned();
-                    let source_name = self.relation_source_name(
-                        reason.source,
-                        reason.target,
-                        source_origin.as_ref(),
-                    );
+                    let source_name =
+                        self.source_name(reason.source, reason.target, source_origin.as_ref());
                     let target_name =
                         self.type_name_with_order(reason.target, target_origin.as_ref());
                     format!(
@@ -808,11 +823,8 @@ impl Checker<'_> {
                 _ => {
                     let source_origin = self.origin_for(reason.source, source_origins).cloned();
                     let target_origin = self.origin_for(reason.target, target_origins).cloned();
-                    let source_name = self.relation_source_name(
-                        reason.source,
-                        reason.target,
-                        source_origin.as_ref(),
-                    );
+                    let source_name =
+                        self.source_name(reason.source, reason.target, source_origin.as_ref());
                     let target_name =
                         self.type_name_with_order(reason.target, target_origin.as_ref());
                     format!("Type '{source_name}' is not assignable to type '{target_name}'.")
@@ -836,7 +848,7 @@ impl Checker<'_> {
         })
     }
 
-    fn relation_source_name(
+    fn source_name(
         &mut self,
         source: TypeId,
         target: TypeId,
@@ -851,6 +863,38 @@ impl Checker<'_> {
             self.widen(source)
         };
         self.display_type_with_property_order(display, source_order, 0)
+    }
+
+    fn flow_alias(&self, ty: TypeId, map: &HashMap<TypeId, PropertyOrderTree>) -> Option<String> {
+        use PropertyOrderTree::Alias;
+        if let Some(Alias {
+            name,
+            preserve_name,
+            ..
+        }) = map.get(&ty)
+            && *preserve_name
+        {
+            return Some(name.clone());
+        }
+        let (TypeKind::Union(members), Some(PropertyOrderTree::Union(authored))) =
+            (self.store.kind(ty), map.get(&ty))
+        else {
+            return None;
+        };
+        let live: Vec<_> = members.iter().filter_map(|ty| map.get(ty)).collect();
+        let names = authored
+            .iter()
+            .filter(|origin| live.contains(origin))
+            .map(|origin| match origin {
+                Alias {
+                    name,
+                    preserve_name,
+                    ..
+                } => (*preserve_name).then_some(name.as_str()),
+                _ => None,
+            })
+            .collect::<Option<Vec<_>>>()?;
+        (names.len() == members.len()).then(|| names.join(" | "))
     }
 
     fn target_preserves_literal_family(&mut self, source: TypeId, target: TypeId) -> bool {

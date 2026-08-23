@@ -210,13 +210,16 @@ impl Checker<'_> {
         type_parameters: &HashMap<String, TypeId>,
     ) {
         let mut occurrences = HashMap::<&str, usize>::new();
-        for parameter in parameters {
-            *occurrences.entry(parameter.name.as_str()).or_default() += 1;
-        }
         for parameter in parameters
             .iter()
-            .filter(|parameter| occurrences[parameter.name.as_str()] > 1)
+            .filter(|parameter| parameter.implementation_name_is_recovery_free())
         {
+            *occurrences.entry(parameter.name.as_str()).or_default() += 1;
+        }
+        for parameter in parameters.iter().filter(|parameter| {
+            parameter.implementation_name_is_recovery_free()
+                && occurrences[parameter.name.as_str()] > 1
+        }) {
             self.push_diagnostic(
                 file,
                 parameter.name_span,
@@ -415,6 +418,10 @@ impl Checker<'_> {
                 declaration,
                 arguments,
             }) => {
+                if !self.semantic_declaration_is_claimed(declaration) {
+                    let _ = self.require_completion(Completion::<()>::Deferred);
+                    return RestTypeSyntax::Unknown;
+                }
                 if self
                     .program
                     .standard_library
@@ -676,7 +683,7 @@ impl Checker<'_> {
     }
 
     fn index_key_syntax(
-        &self,
+        &mut self,
         file: FileId,
         scope: ScopeId,
         node: &TypeNode,
@@ -706,6 +713,10 @@ impl Checker<'_> {
                 else {
                     return IndexKeySyntax::Unknown;
                 };
+                if !self.semantic_declaration_is_claimed(declaration_id) {
+                    let _ = self.require_completion(Completion::<()>::Deferred);
+                    return IndexKeySyntax::Unknown;
+                }
                 match self.models.get(&declaration_id) {
                     Some(DeclarationModel::TypeAlias {
                         declaration: alias,

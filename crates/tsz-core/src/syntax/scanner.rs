@@ -10,7 +10,8 @@ use super::string_literal::{
 };
 use super::template_literal::ScannedTemplateLiteral;
 use super::{
-    CommentKind, CommentPlacement, CommentTrivia, Token, TokenKind, is_single_line_whitespace,
+    CommentKind, CommentPlacement, CommentSourcePosition, CommentTrivia, Token, TokenKind,
+    is_single_line_whitespace,
 };
 
 #[derive(Debug)]
@@ -22,6 +23,7 @@ pub struct ScanOutput {
     pub(super) line_continuation_string_literals: Vec<ScannedLineContinuationStringLiteral>,
     pub(super) numeric_literals: Vec<ScannedNumericLiteral>,
     pub(super) separated_numeric_literals: Vec<ScannedSeparatedNumberLiteral>,
+    pub(super) numeric_separator_spans: Vec<Span>,
     pub(super) has_unmodeled_numeric_separator: bool,
     pub(super) regular_expression_literals: Vec<ScannedRegularExpressionLiteral>,
     pub(super) comments: Vec<CommentTrivia>,
@@ -46,6 +48,7 @@ struct Scanner<'a> {
     line_continuation_string_literals: Vec<ScannedLineContinuationStringLiteral>,
     numeric_literals: Vec<ScannedNumericLiteral>,
     separated_numeric_literals: Vec<ScannedSeparatedNumberLiteral>,
+    numeric_separator_spans: Vec<Span>,
     has_unmodeled_numeric_separator: bool,
     regular_expression_literals: Vec<ScannedRegularExpressionLiteral>,
     comments: Vec<CommentTrivia>,
@@ -68,6 +71,7 @@ impl<'a> Scanner<'a> {
             line_continuation_string_literals: Vec::new(),
             numeric_literals: Vec::new(),
             separated_numeric_literals: Vec::new(),
+            numeric_separator_spans: Vec::new(),
             has_unmodeled_numeric_separator: false,
             regular_expression_literals: Vec::new(),
             comments: Vec::new(),
@@ -106,10 +110,13 @@ impl<'a> Scanner<'a> {
                 TokenKind::RightBrace => self.brace_depth = self.brace_depth.saturating_sub(1),
                 _ => {}
             }
-            self.tokens.push(Token {
-                kind,
-                span: Span::new(self.source.id, start, self.offset),
-            });
+            let span = Span::new(self.source.id, start, self.offset);
+            if matches!(kind, TokenKind::NumericLiteral | TokenKind::BigIntLiteral)
+                && self.bytes[start..self.offset].contains(&b'_')
+            {
+                self.numeric_separator_spans.push(span);
+            }
+            self.tokens.push(Token { kind, span });
         }
         let end = self.bytes.len();
         self.tokens.push(Token {
@@ -124,6 +131,7 @@ impl<'a> Scanner<'a> {
             line_continuation_string_literals: self.line_continuation_string_literals,
             numeric_literals: self.numeric_literals,
             separated_numeric_literals: self.separated_numeric_literals,
+            numeric_separator_spans: self.numeric_separator_spans,
             has_unmodeled_numeric_separator: self.has_unmodeled_numeric_separator,
             regular_expression_literals: self.regular_expression_literals,
             comments: self.comments,
@@ -156,6 +164,7 @@ impl<'a> Scanner<'a> {
             if self.bytes.get(self.offset..self.offset + 2) == Some(b"//") {
                 let start = self.offset;
                 let placement = self.comment_placement(start);
+                let source_position = self.comment_source_position();
                 self.offset += 2;
                 while self
                     .bytes
@@ -170,8 +179,10 @@ impl<'a> Scanner<'a> {
                 let plain = self.is_plain_line_comment(start, self.offset);
                 self.comments.push(CommentTrivia {
                     span: Span::new(self.source.id, start, self.offset),
+                    preceding_token_end: self.tokens.last().map(|token| token.span.end),
                     kind: CommentKind::Line,
                     placement,
+                    source_position,
                     has_trailing_line_break: self.has_line_break_at_offset(),
                     plain,
                 });
@@ -182,6 +193,7 @@ impl<'a> Scanner<'a> {
                 self.has_unmodeled_trivia = true;
                 let start = self.offset;
                 let placement = self.comment_placement(start);
+                let source_position = self.comment_source_position();
                 self.offset += 2;
                 while self.offset + 1 < self.bytes.len()
                     && self.bytes.get(self.offset..self.offset + 2) != Some(b"*/")
@@ -201,8 +213,10 @@ impl<'a> Scanner<'a> {
                 }
                 self.comments.push(CommentTrivia {
                     span: Span::new(self.source.id, start, self.offset),
+                    preceding_token_end: self.tokens.last().map(|token| token.span.end),
                     kind: CommentKind::Block,
                     placement,
+                    source_position,
                     has_trailing_line_break: self.has_line_break_at_offset(),
                     plain: false,
                 });
@@ -220,6 +234,14 @@ impl<'a> Scanner<'a> {
             CommentPlacement::Leading
         } else {
             CommentPlacement::Trailing
+        }
+    }
+
+    const fn comment_source_position(&self) -> CommentSourcePosition {
+        if self.tokens.is_empty() {
+            CommentSourcePosition::SourceLeading
+        } else {
+            CommentSourcePosition::AfterToken
         }
     }
 

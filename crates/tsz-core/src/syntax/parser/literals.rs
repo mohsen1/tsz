@@ -1,6 +1,7 @@
 use super::super::{
-    ClassDeclaration, Expression, ExpressionKind, Literal, Parameter, Statement, StringLiteral,
-    Token, TokenKind, class_contains_no_substitution_template,
+    AuthoredLiteralFact, AuthoredLiteralKind, ClassDeclaration, Expression, ExpressionKind,
+    Literal, ObjectProperty, Parameter, ParserRecoveryFact, ParserRecoveryKind, PropertyNameKind,
+    Statement, StringLiteral, Token, TokenKind, class_contains_no_substitution_template,
     comments_form_no_substitution_template_expression_file,
     expression_contains_no_substitution_template,
     statements_form_no_substitution_template_safe_file,
@@ -10,6 +11,147 @@ use crate::diagnostics::Diagnostic;
 use crate::source::Span;
 
 impl Parser<'_> {
+    pub(super) fn authored_literal_facts(
+        &self,
+        statements: &[Statement],
+        parser_recovery_facts: &[ParserRecoveryFact],
+    ) -> Vec<AuthoredLiteralFact> {
+        let recovery_spans = self
+            .numeric_literals
+            .iter()
+            .map(|literal| (literal.span.start, literal.span.end))
+            .collect::<std::collections::BTreeSet<_>>();
+        let separator_spans = self
+            .numeric_separator_spans
+            .iter()
+            .map(|span| (span.start, span.end))
+            .collect::<std::collections::BTreeSet<_>>();
+        let mut facts = Vec::new();
+        let mut template_starts = Vec::new();
+        for (token_index, token) in self.tokens.iter().enumerate() {
+            match token.kind {
+                TokenKind::NoSubstitutionTemplateLiteral => facts.push(AuthoredLiteralFact {
+                    span: token.span,
+                    recovery_extent: token.span,
+                    kind: AuthoredLiteralKind::Template,
+                    owner: self.authored_literal_owner(
+                        statements,
+                        parser_recovery_facts,
+                        token.span,
+                    ),
+                }),
+                TokenKind::TemplateHead => template_starts.push(token.span),
+                TokenKind::TemplateTail => {
+                    if let Some(start) = template_starts.pop() {
+                        facts.push(AuthoredLiteralFact {
+                            span: start.merge(token.span),
+                            recovery_extent: start.merge(token.span),
+                            kind: AuthoredLiteralKind::Template,
+                            owner: self.authored_literal_owner(
+                                statements,
+                                parser_recovery_facts,
+                                start,
+                            ),
+                        });
+                    }
+                }
+                _ => {}
+            }
+            if recovery_spans.contains(&(token.span.start, token.span.end)) {
+                facts.push(AuthoredLiteralFact {
+                    span: token.span,
+                    recovery_extent: self.attached_numeric_recovery_extent(token_index),
+                    kind: AuthoredLiteralKind::NumericRecovery,
+                    owner: self.authored_literal_owner(
+                        statements,
+                        parser_recovery_facts,
+                        token.span,
+                    ),
+                });
+            }
+            if separator_spans.contains(&(token.span.start, token.span.end)) {
+                facts.push(AuthoredLiteralFact {
+                    span: token.span,
+                    recovery_extent: self.attached_numeric_recovery_extent(token_index),
+                    kind: AuthoredLiteralKind::NumericSeparator,
+                    owner: self.authored_literal_owner(
+                        statements,
+                        parser_recovery_facts,
+                        token.span,
+                    ),
+                });
+            }
+        }
+        let end = self.source.text.len();
+        facts.extend(
+            template_starts
+                .into_iter()
+                .map(|start| AuthoredLiteralFact {
+                    span: start.merge(Span::new(self.source.id, end, end)),
+                    recovery_extent: start.merge(Span::new(self.source.id, end, end)),
+                    kind: AuthoredLiteralKind::Template,
+                    owner: self.authored_literal_owner(statements, parser_recovery_facts, start),
+                }),
+        );
+        facts.sort_unstable_by_key(|fact| {
+            (
+                fact.kind,
+                fact.span.start,
+                fact.span.end,
+                fact.recovery_extent.start,
+                fact.recovery_extent.end,
+            )
+        });
+        facts.dedup_by_key(|fact| {
+            (
+                fact.kind,
+                fact.span.start,
+                fact.span.end,
+                fact.recovery_extent.start,
+                fact.recovery_extent.end,
+            )
+        });
+        facts
+    }
+
+    fn authored_literal_owner(
+        &self,
+        statements: &[Statement],
+        parser_recovery_facts: &[ParserRecoveryFact],
+        span: Span,
+    ) -> super::super::ParserRecoveryOwner {
+        parser_recovery_facts
+            .iter()
+            .find(|fact| fact.authored_span.start == span.start)
+            .map(|fact| fact.owner)
+            .or_else(|| super::recovery::recovery_owner(statements, span))
+            .expect("a scanner-authored literal token must have a represented statement owner")
+    }
+
+    /// Extend a recovered numeric token through the parser's same-line
+    /// recovery segment. Explicit statement terminators, a closed block, and
+    /// line boundaries end the syntax-owned extent.
+    fn attached_numeric_recovery_extent(&self, token_index: usize) -> Span {
+        let span = self.tokens[token_index].span;
+        let mut end = span.end;
+        for (index, token) in self.tokens.iter().enumerate().skip(token_index + 1) {
+            if matches!(token.kind, TokenKind::Semicolon | TokenKind::EndOfFile)
+                || !self.tokens_are_on_same_line(index - 1, index)
+            {
+                break;
+            }
+            end = token.span.end;
+            if token.kind == TokenKind::RightBrace {
+                break;
+            }
+        }
+        Span {
+            file: span.file,
+            start: span.start,
+            end,
+        }
+    }
+
     pub(super) fn parse_primary_expression(&mut self) -> Expression {
         let token = *self.current();
         match token.kind {
@@ -50,10 +192,14 @@ impl Parser<'_> {
                 Expression {
                     id: self.alloc_node(),
                     span: token.span,
-                    kind: ExpressionKind::Identifier {
-                        name,
-                        name_span: token.span,
-                        entity_name: token.kind.is_identifier(),
+                    kind: if token.kind == TokenKind::This {
+                        ExpressionKind::This
+                    } else {
+                        ExpressionKind::Identifier {
+                            name,
+                            name_span: token.span,
+                            entity_name: token.kind.is_identifier(),
+                        }
                     },
                 }
             }
@@ -115,6 +261,12 @@ impl Parser<'_> {
             _ => {
                 self.observe_unmodeled_regular_expression_if_current();
                 self.observe_unmodeled_template_if_current();
+                let recovery_extent = self.recovery_extent_from_current(token.span);
+                self.retain_parser_recovery(
+                    ParserRecoveryKind::Expression,
+                    token.span,
+                    recovery_extent,
+                );
                 self.error_current("Expression expected.", 1109);
                 self.bump();
                 Expression {
@@ -123,6 +275,66 @@ impl Parser<'_> {
                     kind: ExpressionKind::Missing,
                 }
             }
+        }
+    }
+
+    fn parse_object_literal(&mut self) -> Expression {
+        let left = self.bump().span;
+        let mut properties = Vec::new();
+        while !self.at_any(&[TokenKind::RightBrace, TokenKind::EndOfFile]) {
+            let start = self.current().span;
+            let (name, name_span, name_kind) = self.parse_property_name();
+            let has_colon = self.eat(TokenKind::Colon);
+            let shorthand = !has_colon && name_kind == PropertyNameKind::Identifier;
+            let value = if has_colon {
+                self.parse_expression()
+            } else {
+                Expression {
+                    id: self.alloc_node(),
+                    span: name_span,
+                    kind: ExpressionKind::Identifier {
+                        name: name.clone(),
+                        name_span,
+                        entity_name: true,
+                    },
+                }
+            };
+            let (value, shorthand_equals_span) = if shorthand && self.at(TokenKind::Equals) {
+                let equals_span = self.bump().span;
+                let right = self.parse_assignment_expression();
+                (
+                    Expression {
+                        id: self.alloc_node(),
+                        span: value.span.merge(right.span),
+                        kind: ExpressionKind::Assignment {
+                            left: Box::new(value),
+                            right: Box::new(right),
+                        },
+                    },
+                    Some(equals_span),
+                )
+            } else {
+                (value, None)
+            };
+            let span = start.merge(value.span);
+            properties.push(ObjectProperty {
+                name,
+                name_span,
+                shorthand,
+                shorthand_equals_span,
+                value,
+                span,
+            });
+            if !self.eat(TokenKind::Comma) {
+                break;
+            }
+        }
+        let right = self.current().span;
+        self.expect(TokenKind::RightBrace, "'}' expected.", 1005);
+        Expression {
+            id: self.alloc_node(),
+            span: left.merge(right),
+            kind: ExpressionKind::Object(properties),
         }
     }
 
@@ -194,11 +406,20 @@ impl Parser<'_> {
             return;
         }
         self.product_capabilities.observe_unmodeled_template();
+        let recovery_extent = self.recovery_extent_from_current(expression.span);
+        self.retain_parser_recovery(
+            ParserRecoveryKind::Template,
+            expression.span,
+            recovery_extent,
+        );
     }
 
     pub(super) fn parse_new_expression(&mut self) -> Expression {
         let left = self.bump().span;
-        let callee = self.parse_primary_expression();
+        let mut callee = self.parse_primary_expression();
+        while self.at_any(&[TokenKind::Dot, TokenKind::LeftBracket]) {
+            callee = self.parse_member_access(callee);
+        }
         let has_type_arguments = self.at(TokenKind::LessThan);
         let type_arguments = if has_type_arguments {
             self.parse_type_arguments()
@@ -245,7 +466,11 @@ impl Parser<'_> {
         }
         let await_token = self.bump();
         self.product_capabilities.observe_unmodeled_template();
-        let template = self.bump();
+        let template = *self.current();
+        let authored_span = await_token.span.merge(template.span);
+        let recovery_extent = self.recovery_extent_from_current(authored_span);
+        self.retain_parser_recovery(ParserRecoveryKind::Template, authored_span, recovery_extent);
+        self.bump();
         Some(Expression {
             id: self.alloc_node(),
             span: await_token.span.merge(template.span),
@@ -253,21 +478,21 @@ impl Parser<'_> {
         })
     }
 
-    pub(super) fn consume_non_null_template_host(&mut self) -> bool {
+    pub(super) fn consume_non_null_postfix(&mut self) -> bool {
         if !self.source.kind().supports_expression_type_arguments()
             || !self.at(TokenKind::Bang)
             || !self.tokens_are_on_same_line(self.index.saturating_sub(1), self.index)
-            || !matches!(
-                self.peek_kind(1),
-                TokenKind::NoSubstitutionTemplateLiteral | TokenKind::TemplateHead
-            )
         {
             return false;
         }
-        // A TypeScript non-null assertion remains a valid tag host. It is
-        // syntax-erased, while the following template is still consumed as
-        // parser-proven tagged rather than revisited as an ordinary literal.
-        self.bump();
+        let tagged = matches!(
+            self.peek_kind(1),
+            TokenKind::NoSubstitutionTemplateLiteral | TokenKind::TemplateHead
+        );
+        let bang = self.bump().span;
+        if !tagged {
+            self.retain_parser_recovery(ParserRecoveryKind::Expression, bang, bang);
+        }
         true
     }
 
@@ -295,6 +520,8 @@ impl Parser<'_> {
         let escape_diagnostic = metadata.and_then(|metadata| metadata.escape_diagnostic());
         let Some(literal) = literal else {
             self.product_capabilities.observe_unmodeled_template();
+            let recovery_extent = self.recovery_extent_from_current(token.span);
+            self.retain_parser_recovery(ParserRecoveryKind::Template, token.span, recovery_extent);
             if let Some(diagnostic) = escape_diagnostic {
                 let start = token.span.start + diagnostic.relative_start;
                 self.diagnostics.push(Diagnostic::at(
@@ -323,7 +550,7 @@ impl Parser<'_> {
         }
     }
 
-    pub(super) fn reject_tagged_template(&mut self) -> bool {
+    pub(super) fn reject_tagged_template(&mut self, tag_span: Span) -> bool {
         if !matches!(
             self.kind(),
             TokenKind::NoSubstitutionTemplateLiteral | TokenKind::TemplateHead
@@ -331,6 +558,8 @@ impl Parser<'_> {
             return false;
         }
         self.product_capabilities.observe_unmodeled_template();
+        let recovery_extent = self.recovery_extent_from_current(tag_span);
+        self.retain_parser_recovery(ParserRecoveryKind::Template, tag_span, recovery_extent);
         self.bump();
         true
     }
@@ -344,6 +573,13 @@ impl Parser<'_> {
                 | TokenKind::TemplateTail
         ) {
             self.product_capabilities.observe_unmodeled_template();
+            let authored_span = self.current().span;
+            let recovery_extent = self.recovery_extent_from_current(authored_span);
+            self.retain_parser_recovery(
+                ParserRecoveryKind::Template,
+                authored_span,
+                recovery_extent,
+            );
         }
     }
 
