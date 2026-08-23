@@ -18,8 +18,8 @@ compiler only. Git history is the archive for the retired implementation.
 
 ## Compatibility Specifications
 
-[`specs/`](specs/) contains behavior-facing notes for diagnostics, TypeScript
-directives, library loading, root-file order, and `try-tsz`. The pinned
+[`specs/`](specs/) contains behavior-facing notes for TypeScript directives,
+library loading, root-file order, and `try-tsz`. The pinned
 TypeScript 7.0.2 checkout and oracle output remain authoritative when a note and
 the oracle disagree.
 

@@ -146,7 +146,6 @@ impl Runner {
         for variant in option_variants {
             let content = content.to_string();
             let filenames = directives.filenames.clone();
-            let key_order = directives.option_order.clone();
             let original_ext = original_ext.map(str::to_string);
             let ts_tests_lib_dir = ts_tests_lib_dir.to_path_buf();
             let prepared = tokio::task::spawn_blocking(move || {
@@ -155,7 +154,6 @@ impl Runner {
                     &filenames,
                     &variant,
                     original_ext.as_deref(),
-                    &key_order,
                     Some(&ts_tests_lib_dir),
                 )
                 .map(|prepared| (prepared, variant))

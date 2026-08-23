@@ -95,7 +95,7 @@ fn compile_test(
         serde_json::json!(["*.ts", "*.tsx", "**/*.ts", "**/*.tsx"])
     };
     if !has_tsconfig_file {
-        let mut compiler_options = convert_options_to_tsconfig(options, &[]);
+        let mut compiler_options = directives_to_tsconfig(options);
         if allow_js {
             if let serde_json::Value::Object(ref mut map) = compiler_options {
                 map.entry("allowJs")
@@ -255,7 +255,7 @@ fn test_prepare_test_dir_copies_root_tsconfig_to_root() {
     ];
     let options: HashMap<String, String> = HashMap::new();
 
-    let prepared = prepare_test_dir(content, &filenames, &options, None, &[]).unwrap();
+    let prepared = prepare_test_dir(content, &filenames, &options, None).unwrap();
     let root_tsconfig = prepared.temp_dir.path().join("tsconfig.json");
     assert!(
         root_tsconfig.is_file(),
@@ -275,7 +275,7 @@ fn test_prepare_test_dir_does_not_copy_non_root_tsconfig_to_root() {
     ];
     let options: HashMap<String, String> = HashMap::new();
 
-    let prepared = prepare_test_dir(content, &filenames, &options, None, &[]).unwrap();
+    let prepared = prepare_test_dir(content, &filenames, &options, None).unwrap();
     let root_tsconfig = prepared.temp_dir.path().join("tsconfig.json");
     assert!(
         !root_tsconfig.exists(),
@@ -303,7 +303,7 @@ fn test_prepare_test_dir_preserves_explicit_allow_js_false_with_check_js() {
         ("allowJs".to_string(), "false".to_string()),
     ]);
 
-    let prepared = prepare_test_dir(content, &filenames, &options, None, &[]).unwrap();
+    let prepared = prepare_test_dir(content, &filenames, &options, None).unwrap();
     let tsconfig_path = prepared.temp_dir.path().join("tsconfig.json");
     let tsconfig_raw = std::fs::read_to_string(tsconfig_path).unwrap();
     let tsconfig_json: serde_json::Value = serde_json::from_str(&tsconfig_raw).unwrap();
@@ -342,7 +342,7 @@ fn test_prepare_test_dir_no_implicit_references_uses_last_unit_as_root_file() {
     let options: HashMap<String, String> =
         HashMap::from([("noImplicitReferences".to_string(), "true".to_string())]);
 
-    let prepared = prepare_test_dir(content, &filenames, &options, None, &[]).unwrap();
+    let prepared = prepare_test_dir(content, &filenames, &options, None).unwrap();
     let tsconfig_path = prepared.temp_dir.path().join("tsconfig.json");
     let tsconfig_raw = std::fs::read_to_string(tsconfig_path).unwrap();
     let tsconfig_json: serde_json::Value = serde_json::from_str(&tsconfig_raw).unwrap();
@@ -378,7 +378,7 @@ fn test_prepare_test_dir_merges_directives_into_current_directory_tsconfig() {
         ("types".to_string(), "*".to_string()),
     ]);
 
-    let prepared = prepare_test_dir(content, &filenames, &options, None, &[]).unwrap();
+    let prepared = prepare_test_dir(content, &filenames, &options, None).unwrap();
     let tsconfig_path = prepared.project_dir.join("tsconfig.json");
     let tsconfig_raw = std::fs::read_to_string(tsconfig_path).unwrap();
     let tsconfig_json: serde_json::Value = serde_json::from_str(&tsconfig_raw).unwrap();
@@ -409,7 +409,7 @@ fn test_prepare_test_dir_merges_directives_into_jsonc_without_erasing_authored_o
     ];
     let options = HashMap::from([("strict".to_string(), "true".to_string())]);
 
-    let prepared = prepare_test_dir("", &filenames, &options, None, &[]).unwrap();
+    let prepared = prepare_test_dir("", &filenames, &options, None).unwrap();
     let tsconfig_raw = std::fs::read_to_string(prepared.project_dir.join("tsconfig.json")).unwrap();
     let tsconfig: serde_json::Value = serde_json::from_str(&tsconfig_raw).unwrap();
 
@@ -429,7 +429,7 @@ fn test_prepare_test_dir_rejects_malformed_authored_config_instead_of_replacing_
     ];
     let options = HashMap::from([("strict".to_string(), "true".to_string())]);
 
-    let error = match prepare_test_dir("", &filenames, &options, None, &[]) {
+    let error = match prepare_test_dir("", &filenames, &options, None) {
         Ok(_) => panic!("malformed authored JSONC must not become an empty config"),
         Err(error) => error,
     };
@@ -454,7 +454,7 @@ fn test_prepare_test_dir_no_implicit_references_keeps_authored_declaration_roots
     let options: HashMap<String, String> =
         HashMap::from([("noImplicitReferences".to_string(), "true".to_string())]);
 
-    let prepared = prepare_test_dir(content, &filenames, &options, None, &[]).unwrap();
+    let prepared = prepare_test_dir(content, &filenames, &options, None).unwrap();
     let tsconfig_path = prepared.temp_dir.path().join("tsconfig.json");
     let tsconfig_raw = std::fs::read_to_string(tsconfig_path).unwrap();
     let tsconfig_json: serde_json::Value = serde_json::from_str(&tsconfig_raw).unwrap();
@@ -494,7 +494,7 @@ fn test_prepare_test_dir_no_implicit_references_keeps_type_roots_declarations() 
         ("typeRoots".to_string(), "/a/types".to_string()),
     ]);
 
-    let prepared = prepare_test_dir(content, &filenames, &options, None, &[]).unwrap();
+    let prepared = prepare_test_dir(content, &filenames, &options, None).unwrap();
     let tsconfig_path = prepared.temp_dir.path().join("tsconfig.json");
     let tsconfig_raw = std::fs::read_to_string(tsconfig_path).unwrap();
     let tsconfig_json: serde_json::Value = serde_json::from_str(&tsconfig_raw).unwrap();
@@ -539,7 +539,7 @@ import { styles } from "package-a";
     let options: HashMap<String, String> =
         HashMap::from([("noImplicitReferences".to_string(), "true".to_string())]);
 
-    let prepared = prepare_test_dir(content, &filenames, &options, None, &[]).unwrap();
+    let prepared = prepare_test_dir(content, &filenames, &options, None).unwrap();
     let tsconfig_path = prepared.temp_dir.path().join("tsconfig.json");
     let tsconfig_raw = std::fs::read_to_string(tsconfig_path).unwrap();
     let tsconfig_json: serde_json::Value = serde_json::from_str(&tsconfig_raw).unwrap();
@@ -576,7 +576,7 @@ fn test_prepare_test_dir_excludes_no_types_and_symbols_from_generated_tsconfig()
     let options: HashMap<String, String> =
         HashMap::from([("noTypesAndSymbols".to_string(), "true".to_string())]);
 
-    let prepared = prepare_test_dir(content, &filenames, &options, None, &[]).unwrap();
+    let prepared = prepare_test_dir(content, &filenames, &options, None).unwrap();
     let tsconfig_path = prepared.temp_dir.path().join("tsconfig.json");
     let tsconfig_raw = std::fs::read_to_string(tsconfig_path).unwrap();
     let tsconfig_json: serde_json::Value = serde_json::from_str(&tsconfig_raw).unwrap();
@@ -609,7 +609,7 @@ fn test_prepare_test_dir_excludes_no_types_and_symbols_from_root_tsconfig_merge(
     let options: HashMap<String, String> =
         HashMap::from([("noTypesAndSymbols".to_string(), "true".to_string())]);
 
-    let prepared = prepare_test_dir(content, &filenames, &options, None, &[]).unwrap();
+    let prepared = prepare_test_dir(content, &filenames, &options, None).unwrap();
     let tsconfig_path = prepared.temp_dir.path().join("tsconfig.json");
     let tsconfig_raw = std::fs::read_to_string(tsconfig_path).unwrap();
     let tsconfig_json: serde_json::Value = serde_json::from_str(&tsconfig_raw).unwrap();
@@ -645,7 +645,7 @@ fn test_prepare_test_dir_no_types_and_symbols_excludes_at_types_from_root_files(
     let options: HashMap<String, String> =
         HashMap::from([("noTypesAndSymbols".to_string(), "true".to_string())]);
 
-    let prepared = prepare_test_dir(content, &filenames, &options, None, &[]).unwrap();
+    let prepared = prepare_test_dir(content, &filenames, &options, None).unwrap();
     let tsconfig_path = prepared.temp_dir.path().join("tsconfig.json");
     let tsconfig_raw = std::fs::read_to_string(&tsconfig_path).unwrap();
     let tsconfig_json: serde_json::Value = serde_json::from_str(&tsconfig_raw).unwrap();
@@ -735,7 +735,7 @@ const x: number = 42;
 
 #[test]
 fn test_convert_options_leaves_strict_absent_when_not_explicit() {
-    let opts = convert_options_to_tsconfig(&HashMap::new(), &[]);
+    let opts = directives_to_tsconfig(&HashMap::new());
     let compiler_options = opts
         .as_object()
         .expect("compilerOptions should be an object");
@@ -748,7 +748,7 @@ fn test_convert_options_leaves_strict_absent_when_not_explicit() {
 #[test]
 fn test_convert_options_expands_explicit_strict_false() {
     let options = HashMap::from([("strict".to_string(), "false".to_string())]);
-    let opts = convert_options_to_tsconfig(&options, &[]);
+    let opts = directives_to_tsconfig(&options);
     let compiler_options = opts
         .as_object()
         .expect("compilerOptions should be an object");
@@ -775,7 +775,7 @@ class C<T> {
 }
 "#;
 
-    let prepared = prepare_test_dir(content, &[], &HashMap::new(), None, &[]).unwrap();
+    let prepared = prepare_test_dir(content, &[], &HashMap::new(), None).unwrap();
     let tsconfig = std::fs::read_to_string(prepared.temp_dir.path().join("tsconfig.json"))
         .expect("tsconfig should be written");
     let parsed: serde_json::Value =
@@ -811,7 +811,7 @@ class C {
 }
 "#;
 
-    let prepared = prepare_test_dir(content, &[], &HashMap::new(), None, &[]).unwrap();
+    let prepared = prepare_test_dir(content, &[], &HashMap::new(), None).unwrap();
     let tsconfig = std::fs::read_to_string(prepared.temp_dir.path().join("tsconfig.json"))
         .expect("tsconfig should be written");
     let parsed: serde_json::Value =
@@ -839,7 +839,7 @@ class C {
 #[test]
 fn test_prepare_test_dir_preserves_target_default_lib_resolution() {
     let options = HashMap::from([("target".to_string(), "esnext".to_string())]);
-    let prepared = prepare_test_dir("", &[], &options, Some("ts"), &[]).unwrap();
+    let prepared = prepare_test_dir("", &[], &options, Some("ts")).unwrap();
     let tsconfig = std::fs::read_to_string(prepared.temp_dir.path().join("tsconfig.json"))
         .expect("tsconfig should be written");
     let parsed: serde_json::Value =
@@ -1010,7 +1010,7 @@ fn test_prepare_test_dir_preserves_tsconfig() {
         ),
     ];
 
-    let prepared = prepare_test_dir("", &filenames, &HashMap::new(), None, &[]).unwrap();
+    let prepared = prepare_test_dir("", &filenames, &HashMap::new(), None).unwrap();
     let tsconfig_path = prepared.temp_dir.path().join("tsconfig.json");
     let tsconfig_contents = std::fs::read_to_string(tsconfig_path).unwrap();
     let parsed: serde_json::Value = serde_json::from_str(&tsconfig_contents).unwrap();
@@ -1039,7 +1039,7 @@ fn test_prepare_test_dir_implicit_include_matches_tsc_harness() {
         ("checkjs".to_string(), "true".to_string()),
     ]);
 
-    let prepared = prepare_test_dir("", &filenames, &options, None, &[]).unwrap();
+    let prepared = prepare_test_dir("", &filenames, &options, None).unwrap();
     let tsconfig_path = prepared.temp_dir.path().join("tsconfig.json");
     let tsconfig_contents = std::fs::read_to_string(tsconfig_path).unwrap();
     let parsed: serde_json::Value = serde_json::from_str(&tsconfig_contents).unwrap();
@@ -1109,7 +1109,7 @@ fn test_prepare_test_dir_root_files_are_derived_from_corpus_inputs() {
         ),
     ];
 
-    let prepared = prepare_test_dir("", &filenames, &HashMap::new(), None, &[]).unwrap();
+    let prepared = prepare_test_dir("", &filenames, &HashMap::new(), None).unwrap();
     let tsconfig_path = prepared.temp_dir.path().join("tsconfig.json");
     let tsconfig_contents = std::fs::read_to_string(tsconfig_path).unwrap();
     let parsed: serde_json::Value = serde_json::from_str(&tsconfig_contents).unwrap();
@@ -1232,7 +1232,7 @@ fn test_prepare_test_dir_skips_windows_absolute_path_files() {
     let options: HashMap<String, String> =
         HashMap::from([("target".to_string(), "es2015".to_string())]);
 
-    let prepared = prepare_test_dir("", &filenames, &options, None, &[]).unwrap();
+    let prepared = prepare_test_dir("", &filenames, &options, None).unwrap();
     let dir = prepared.temp_dir.path();
 
     // Only tsconfig.json should exist, no source files
@@ -1260,7 +1260,7 @@ fn test_prepare_test_dir_keeps_mixed_path_files() {
     ];
     let options: HashMap<String, String> = HashMap::new();
 
-    let prepared = prepare_test_dir("", &filenames, &options, None, &[]).unwrap();
+    let prepared = prepare_test_dir("", &filenames, &options, None).unwrap();
     let dir = prepared.temp_dir.path();
 
     // test.ts should be written
@@ -1278,7 +1278,7 @@ fn test_prepare_test_dir_applies_link_directives_as_symlinks() {
     )];
     let options: HashMap<String, String> = HashMap::new();
 
-    let prepared = prepare_test_dir(content, &filenames, &options, None, &[]).unwrap();
+    let prepared = prepare_test_dir(content, &filenames, &options, None).unwrap();
     let link_path = prepared.temp_dir.path().join("node_modules/search");
     let target_path = prepared.temp_dir.path().join("packages/search");
 
@@ -1305,7 +1305,7 @@ fn test_prepare_test_dir_remaps_virtual_absolute_path_options() {
         ),
     ]);
 
-    let prepared = prepare_test_dir(content, &filenames, &options, None, &[]).unwrap();
+    let prepared = prepare_test_dir(content, &filenames, &options, None).unwrap();
     let tsconfig_raw = std::fs::read_to_string(prepared.project_dir.join("tsconfig.json"))
         .expect("tsconfig should exist");
     let tsconfig_json: serde_json::Value = serde_json::from_str(&tsconfig_raw).unwrap();
@@ -1389,7 +1389,7 @@ export function thing(): void {}"#
         ("rootDir".to_string(), "/pkg/src".to_string()),
     ]);
 
-    let prepared = prepare_test_dir(content, &filenames, &options, None, &[]).unwrap();
+    let prepared = prepare_test_dir(content, &filenames, &options, None).unwrap();
     assert_eq!(prepared.project_dir, prepared.temp_dir.path().join("pkg"));
     assert!(prepared.project_dir.join("tsconfig.json").is_file());
 }

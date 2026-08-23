@@ -1,7 +1,7 @@
 //! TSC Cache Generator using tsc directly
 //!
 //! Generates the conformance cache by running tsc on each test file.
-//! Uses the same `prepare_test_dir` and output parsing as the conformance runner
+//! Uses the same test-directory preparation and output parsing as the conformance runner
 //! to ensure cache-vs-runner consistency.
 //!
 //! Architecture: rayon threads handle Rust-side work (file I/O, parsing, setup)
@@ -460,7 +460,7 @@ fn process_test_file(
         })?
         .replace('\\', "/");
 
-    let (content, filenames, option_variants, option_order, binary_bytes) = match decoded {
+    let (content, filenames, option_variants, binary_bytes) = match decoded {
         DecodedSourceText::Text(content) => {
             let parsed = tsz_conformance::test_parser::parse_test_file(&content)?;
             match tsz_conformance::test_parser::test_disposition_at_path(path, &parsed.directives) {
@@ -479,7 +479,6 @@ fn process_test_file(
                 Some(content),
                 parsed.directives.filenames,
                 option_variants,
-                parsed.directives.option_order,
                 None,
             )
         }
@@ -501,17 +500,10 @@ fn process_test_file(
                 Some(content),
                 parsed.directives.filenames,
                 option_variants,
-                parsed.directives.option_order,
                 Some(original),
             )
         }
-        DecodedSourceText::Binary(bytes) => (
-            None,
-            Vec::new(),
-            vec![HashMap::new()],
-            Vec::new(),
-            Some(bytes),
-        ),
+        DecodedSourceText::Binary(bytes) => (None, Vec::new(), vec![HashMap::new()], Some(bytes)),
     };
 
     let metadata = fs::metadata(path)?;
@@ -535,7 +527,6 @@ fn process_test_file(
                 &filenames,
                 options,
                 original_extension,
-                &option_order,
                 Some(&ts_tests_lib_dir),
             )?
         } else if let Some(bytes) = &binary_bytes {

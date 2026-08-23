@@ -71,24 +71,14 @@ pub struct PreparedTest {
 ///
 /// `original_extension` is the file extension of the original test file (e.g. "tsx"),
 /// used when there are no `@Filename` directives so the single-file test preserves its extension.
-// Dead in the lib/bin build; the thin wrapper over `prepare_test_dir_with_lib_dir`
-// is exercised only by `tests/tsz_wrapper.rs`, so `allow` (not `expect`) is correct.
-#[allow(dead_code)]
+#[cfg(test)]
 pub fn prepare_test_dir(
     content: &str,
     filenames: &[(String, String)],
     options: &HashMap<String, String>,
     original_extension: Option<&str>,
-    key_order: &[String],
 ) -> anyhow::Result<PreparedTest> {
-    prepare_test_dir_with_lib_dir(
-        content,
-        filenames,
-        options,
-        original_extension,
-        key_order,
-        None,
-    )
+    prepare_test_dir_with_lib_dir(content, filenames, options, original_extension, None)
 }
 
 /// Derive the TypeScript harness `tests/lib` directory from a conformance
@@ -112,7 +102,6 @@ pub fn prepare_test_dir_with_lib_dir(
     filenames: &[(String, String)],
     options: &HashMap<String, String>,
     original_extension: Option<&str>,
-    key_order: &[String],
     ts_tests_lib_dir: Option<&Path>,
 ) -> anyhow::Result<PreparedTest> {
     use tempfile::TempDir;
@@ -419,7 +408,7 @@ pub fn prepare_test_dir_with_lib_dir(
         None
     };
     if !has_tsconfig_file {
-        let mut compiler_options = convert_options_to_tsconfig(options, key_order);
+        let mut compiler_options = directives_to_tsconfig(options);
         if let serde_json::Value::Object(ref mut map) = compiler_options {
             // TypeScript 6.0+ defaults all strict-family flags to true.
             // No synthetic non-strict baseline is needed; the compiler
@@ -581,7 +570,7 @@ pub fn prepare_binary_test_dir(
             "*.ts", "*.tsx", "*.js", "*.jsx", "**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx"
         ]);
 
-        let compiler_options = convert_options_to_tsconfig(options, &[]);
+        let compiler_options = directives_to_tsconfig(options);
 
         let tsconfig_content = serde_json::json!({
             "compilerOptions": compiler_options,
@@ -1021,18 +1010,6 @@ fn declaration_file_linked_into_node_modules(
     })
 }
 
-/// Convert test directive options to tsconfig compiler options.
-///
-/// `key_order` is kept for compatibility with call sites. The actual conversion
-/// is shared with the cache generators so runner/cache option shapes cannot
-/// drift.
-fn convert_options_to_tsconfig(
-    options: &HashMap<String, String>,
-    _key_order: &[String],
-) -> serde_json::Value {
-    directives_to_tsconfig(options)
-}
-
 fn copy_tsconfig_to_project_if_needed(
     dir_path: &Path,
     project_dir: &Path,
@@ -1060,7 +1037,7 @@ fn copy_tsconfig_to_project_if_needed(
         .replace('\\', "/");
     let is_project_tsconfig =
         sanitized_source == "tsconfig.json" || sanitized_source == project_tsconfig;
-    let directive_opts = convert_options_to_tsconfig(options, &[]);
+    let directive_opts = directives_to_tsconfig(options);
     let no_types_and_symbols = no_types_and_symbols_enabled(options);
     let has_directive_opts = if let serde_json::Value::Object(ref opts) = directive_opts {
         !opts.is_empty() || no_types_and_symbols
