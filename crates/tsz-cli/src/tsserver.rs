@@ -635,6 +635,14 @@ fn compiler_options(value: &Value) -> CompilerOptions {
             .get("strictPropertyInitialization")
             .and_then(Value::as_bool),
         no_implicit_any: value.get("noImplicitAny").and_then(Value::as_bool),
+        no_unused_locals: value
+            .get("noUnusedLocals")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        no_unused_parameters: value
+            .get("noUnusedParameters")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
         no_lib: value.get("noLib").and_then(Value::as_bool).unwrap_or(false),
         lib,
         target,

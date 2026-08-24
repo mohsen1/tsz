@@ -162,6 +162,69 @@ fn config_preserves_explicit_strict_suboption_false() {
 }
 
 #[test]
+fn unmodeled_unused_diagnostic_options_are_typed_nonclaims() {
+    let fixture = TempDir::new().expect("tempdir");
+    let root = fixture.path();
+    write(
+        root,
+        "tsconfig.json",
+        r#"{
+          "compilerOptions": { "noUnusedLocals": true, "noUnusedParameters": true, "noEmit": true },
+          "files": ["unused.ts"]
+        }"#,
+    );
+    write(
+        root,
+        "unused.ts",
+        "const holder = function renamed(parameter: number) {\n\
+         \tconst nested = function changed(inner: number) { return 1; };\n\
+         \treturn nested;\n\
+         };\n\
+         const independent: MissingIndependent = 1;\n",
+    );
+    let host = SystemHost::new(root);
+    let resolved = resolve_project(
+        &host,
+        &ProjectRequest::new(ProjectSelection::Project(root.to_path_buf())),
+    );
+    assert!(resolved.options.no_unused_locals);
+    assert!(resolved.options.no_unused_parameters);
+    let options = resolved.options.clone();
+    let output = Compiler::new().compile_resolved(resolved, &options);
+    assert_eq!(
+        output
+            .diagnostics
+            .iter()
+            .map(|diagnostic| diagnostic.code)
+            .collect::<Vec<_>>(),
+        [2304]
+    );
+    assert_eq!(output.semantic_completion, SemanticCompletion::Deferred);
+    assert_eq!(output.exit_status, CompileExitStatus::SemanticIncomplete);
+
+    let control = Compiler::new().compile(
+        vec![SourceInput::new(
+            "unused.ts",
+            "const holder = function renamed(parameter: number) { return 1; };\n\
+             const independent: MissingIndependent = 1;\n",
+        )],
+        &CompilerOptions {
+            no_emit: true,
+            ..CompilerOptions::default()
+        },
+    );
+    assert_eq!(
+        control
+            .diagnostics
+            .iter()
+            .map(|diagnostic| diagnostic.code)
+            .collect::<Vec<_>>(),
+        [2304]
+    );
+    assert_eq!(control.semantic_completion, SemanticCompletion::Complete);
+}
+
+#[test]
 fn jsonc_default_discovery_is_deterministic_and_skips_package_directories() {
     let fixture = TempDir::new().expect("tempdir");
     let root = fixture.path();

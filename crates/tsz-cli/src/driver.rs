@@ -39,6 +39,8 @@ pub struct CompilerOptionPatch {
     pub strict_null_checks: Option<bool>,
     pub strict_property_initialization: Option<bool>,
     pub no_implicit_any: Option<bool>,
+    pub no_unused_locals: Option<bool>,
+    pub no_unused_parameters: Option<bool>,
     pub no_lib: Option<bool>,
     pub lib: Option<Vec<String>>,
     pub no_check: Option<bool>,
@@ -72,6 +74,8 @@ impl CompilerOptionPatch {
             no_check,
             no_emit,
             no_emit_on_error,
+            no_unused_locals,
+            no_unused_parameters,
             declaration,
             declaration_map,
             source_map,
@@ -121,6 +125,8 @@ impl CompilerOptionPatch {
             (strict_null_checks, StrictNullChecks),
             (strict_property_initialization, StrictPropertyInitialization),
             (no_implicit_any, NoImplicitAny),
+            (no_unused_locals, NoUnusedLocals),
+            (no_unused_parameters, NoUnusedParameters),
             (no_lib, NoLib),
             (lib, Lib),
             (no_check, NoCheck),
@@ -230,6 +236,14 @@ pub fn parse_arguments(arguments: &[OsString]) -> Result<Invocation> {
             }
             "nolib" => {
                 invocation.options.no_lib =
+                    Some(optional_bool(arguments, &mut index, inline_value, true));
+            }
+            "nounusedlocals" => {
+                invocation.options.no_unused_locals =
+                    Some(optional_bool(arguments, &mut index, inline_value, true));
+            }
+            "nounusedparameters" => {
+                invocation.options.no_unused_parameters =
                     Some(optional_bool(arguments, &mut index, inline_value, true));
             }
             "declaration" => {

@@ -105,6 +105,7 @@ pub(crate) enum SyntaxGap {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum SemanticGap {
     FlowTypeOfReference,
+    UnusedFunctionExpressionBindings,
     FunctionLikeTypeParameters,
     FunctionExpressionBindingName,
     FunctionExpressionDeclaration,
@@ -233,7 +234,6 @@ impl CapabilityAnalysis {
                 function_like_owners: Box::default(),
             };
         }
-
         for file in files {
             for owner in derive_file_nonclaims(&mut nonclaims, file, options) {
                 function_like_owners.push((file.source.id, owner));
@@ -835,6 +835,18 @@ fn derive_file_nonclaims(
         &nodes.function_like_signatures,
     );
     let has_function_expression = !nodes.function_expressions.is_empty();
+    if options.no_unused_locals || options.no_unused_parameters {
+        for products in &nodes.function_expressions {
+            let gap = SemanticGap::UnusedFunctionExpressionBindings;
+            add_nonclaims(
+                nonclaims,
+                &[CapabilityTarget::SemanticDiagnostics],
+                CapabilityScope::node(id, products.owner),
+                NonclaimReason::Semantic(gap),
+                DeletionCondition::SemanticOwner(gap),
+            );
+        }
+    }
     if has_function_expression
         && target_requires_class_property_transform(&options.target)
         && nodes.boundaries.contains(&FileBoundary::ClassProperty)

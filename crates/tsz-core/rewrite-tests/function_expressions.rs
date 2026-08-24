@@ -1892,3 +1892,28 @@ fn javascript_emit_waits_for_function_product_interaction_owners() {
         assert_eq!(output.semantic_completion, SemanticCompletion::Complete);
     }
 }
+
+#[test]
+fn negative_parenthesized_arrow_lookahead_is_memoized_without_hiding_nested_arrows() {
+    let mut nested = "0".to_string();
+    for _ in 0..72 {
+        nested = format!("renamed = ({nested})");
+    }
+    let source = format!(
+        "let renamed = 0; renamed = ({nested}); \
+         const arrow = (outer = (inner = 1) => inner) => outer;"
+    );
+    let output = compile(&source, true, true);
+    assert!(output.diagnostics.is_empty(), "{:#?}", output.diagnostics);
+    let parsed = parse(&source);
+    assert!(parsed.diagnostics.is_empty(), "{:#?}", parsed.diagnostics);
+    assert!(parsed.unit.statements.iter().any(|statement| {
+        matches!(
+            &statement.kind,
+            StatementKind::Variable(declaration)
+                if declaration.initializer.as_ref().is_some_and(|expression| {
+                    matches!(expression.kind, ExpressionKind::FunctionLike(_))
+                })
+        )
+    }));
+}

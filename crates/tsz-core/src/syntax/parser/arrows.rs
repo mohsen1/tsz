@@ -75,6 +75,9 @@ impl Parser<'_> {
     }
 
     fn speculative_parenthesized_arrow_token(&mut self) -> Option<ParenthesizedArrowToken> {
+        if self.not_parenthesized_arrows.contains(&self.index) {
+            return None;
+        }
         let saved_index = self.index;
         let saved_next_node = self.next_node;
         let saved_diagnostics = self.diagnostics.len();
@@ -127,6 +130,9 @@ impl Parser<'_> {
         self.index = saved_index;
         self.next_node = saved_next_node;
         self.diagnostics.truncate(saved_diagnostics);
+        if arrow.is_none() {
+            self.not_parenthesized_arrows.insert(saved_index);
+        }
         arrow
     }
 

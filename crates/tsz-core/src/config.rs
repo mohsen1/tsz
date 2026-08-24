@@ -165,6 +165,8 @@ compiler_option_schema! {
     StrictNullChecks => strict_null_checks, "strictNullChecks", optional_bool;
     StrictPropertyInitialization => strict_property_initialization, "strictPropertyInitialization", optional_bool;
     NoImplicitAny => no_implicit_any, "noImplicitAny", optional_bool;
+    NoUnusedLocals => no_unused_locals, "noUnusedLocals", bool;
+    NoUnusedParameters => no_unused_parameters, "noUnusedParameters", bool;
     NoLib => no_lib, "noLib", bool;
     Lib => lib, "lib", string_array;
     AllowJs => allow_js, "allowJs", bool;
@@ -304,12 +306,8 @@ impl ResolvedProject {
     }
 }
 
-/// Resolve configuration inheritance, selectors, references, and source text.
-///
-/// Literal `files` roots are never filtered by `exclude`; wildcard roots are
-/// grouped by include order and filesystem entries are compared
-/// deterministically within each directory, matching TypeScript's ownership
-/// and ordering rules.
+/// Resolve inherited options, project references, and deterministic root-file
+/// selection. Literal `files` roots are never filtered by `exclude`.
 #[must_use]
 pub fn resolve_project(host: &dyn ProgramHost, request: &ProjectRequest) -> ResolvedProject {
     let mut resolver = Resolver::new(

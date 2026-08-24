@@ -63,6 +63,7 @@ struct Parser<'a> {
     has_unicode_line_comment_terminator: bool,
     has_unmodeled_trivia: bool,
     speculating: bool,
+    not_parenthesized_arrows: std::collections::BTreeSet<usize>,
     speculative_token_rewrites: Vec<(usize, Token)>,
     type_member_recovery_code: u32,
     statement_nesting_depth: usize,
@@ -93,6 +94,7 @@ impl<'a> Parser<'a> {
             has_unicode_line_comment_terminator: scanned.has_unicode_line_comment_terminator,
             has_unmodeled_trivia: scanned.has_unmodeled_trivia,
             speculating: false,
+            not_parenthesized_arrows: std::collections::BTreeSet::new(),
             speculative_token_rewrites: Vec::new(),
             type_member_recovery_code: 1128,
             statement_nesting_depth: 0,
@@ -1382,24 +1384,6 @@ impl<'a> Parser<'a> {
         self.tokens
             .get(self.index + distance)
             .map_or(TokenKind::EndOfFile, |token| token.kind)
-    }
-
-    fn tokens_are_on_same_line(&self, left: usize, right: usize) -> bool {
-        let Some(left) = self.tokens.get(left) else {
-            return false;
-        };
-        let Some(right) = self.tokens.get(right) else {
-            return false;
-        };
-        !self
-            .source
-            .slice(Span::new(
-                self.source.id,
-                left.span.end as usize,
-                right.span.start as usize,
-            ))
-            .chars()
-            .any(|character| matches!(character, '\n' | '\r' | '\u{2028}' | '\u{2029}'))
     }
 
     fn current(&self) -> &Token {

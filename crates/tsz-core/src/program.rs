@@ -82,6 +82,8 @@ pub struct CompilerOptions {
     pub strict_property_initialization: Option<bool>,
     /// `None` inherits `strict`; `Some(false)` explicitly opts out.
     pub no_implicit_any: Option<bool>,
+    pub no_unused_locals: bool,
+    pub no_unused_parameters: bool,
     pub no_lib: bool,
     pub lib: Option<Vec<String>>,
     pub allow_js: bool,
@@ -107,6 +109,8 @@ impl Default for CompilerOptions {
             strict_null_checks: None,
             strict_property_initialization: None,
             no_implicit_any: None,
+            no_unused_locals: false,
+            no_unused_parameters: false,
             no_lib: false,
             lib: None,
             allow_js: false,

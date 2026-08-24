@@ -6,6 +6,24 @@ use crate::syntax::{
 };
 
 impl Parser<'_> {
+    pub(super) fn tokens_are_on_same_line(&self, left: usize, right: usize) -> bool {
+        let Some(left) = self.tokens.get(left) else {
+            return false;
+        };
+        let Some(right) = self.tokens.get(right) else {
+            return false;
+        };
+        !self
+            .source
+            .slice(Span::new(
+                self.source.id,
+                left.span.end as usize,
+                right.span.start as usize,
+            ))
+            .chars()
+            .any(|character| matches!(character, '\n' | '\r' | '\u{2028}' | '\u{2029}'))
+    }
+
     pub(super) fn parse(mut self) -> ParseOutput {
         let mut statements = Vec::new();
         while !self.at(TokenKind::EndOfFile) {
