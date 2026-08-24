@@ -12,9 +12,11 @@ use crate::bind::{DeclarationKind, Meaning, ScopeId};
 use crate::program::{Program, ProgramFile};
 use crate::source::{DeclId, FileId, NodeId, Span};
 use crate::syntax::{
-    ArrowBody, ClassMemberKind, Expression, ExpressionKind, Parameter, Statement, StatementKind,
-    SwitchClauseKind, TypeMember, TypeMemberKind, TypeMemberNameKind, TypeNode, TypeNodeKind,
-    TypeParameterDeclaration, VariableKind,
+    ArrowBody, ClassMemberKind, DescendantAdapter, DescendantContainer, Expression, ExpressionKind,
+    FunctionLikeExpression, FunctionLikeSyntax, NestedStatement, Parameter, Statement,
+    StatementKind, SwitchClauseKind, TypeMember, TypeMemberKind, TypeMemberNameKind, TypeNode,
+    TypeNodeKind, TypeParameterDeclaration, VariableKind, walk_function_like_descendants,
+    walk_statement_descendants,
 };
 
 use super::{
@@ -383,7 +385,9 @@ impl NavigationIndex {
             if matches!(
                 declaration.kind,
                 DeclarationKind::TypeMember | DeclarationKind::AnonymousSignature
-            ) {
+            ) || declaration.kind == DeclarationKind::FunctionExpression
+                && declaration.name.is_empty()
+            {
                 continue;
             }
             let span_key = (declaration.name_span.start, declaration.name_span.end);
@@ -815,40 +819,38 @@ impl ReferenceVisitor<'_> {
                 self.visit_expression(object, scope, false);
                 self.visit_expression(index, scope, false);
             }
-            ExpressionKind::Arrow {
-                parameters,
-                return_type,
-                body,
-            } => {
-                let arrow_scope = self
+            ExpressionKind::FunctionLike(function) => {
+                let function_scope = self
                     .file
                     .bindings
                     .scope_for_node
                     .get(&expression.id)
                     .copied()
                     .unwrap_or(scope);
-                for parameter in parameters {
-                    if let Some(annotation) = &parameter.annotation
-                        && !annotation.contains_type_query()
-                    {
-                        self.visit_type(annotation, arrow_scope);
-                    }
+                let retained_type_locals = self.visit_signature_types_with_host(
+                    expression.id,
+                    function_scope,
+                    &function.type_parameters,
+                    &function.parameters,
+                    function.return_type.as_ref(),
+                    true,
+                );
+                for parameter in &function.parameters {
                     if let Some(initializer) = &parameter.initializer {
-                        self.visit_expression(initializer, arrow_scope, false);
+                        self.visit_expression(initializer, function_scope, false);
                     }
                 }
-                if let Some(return_type) = return_type
-                    && !return_type.contains_type_query()
-                {
-                    self.visit_type(return_type, arrow_scope);
+                match &function.syntax {
+                    FunctionLikeSyntax::Arrow(ArrowBody::Expression(expression)) => {
+                        self.visit_expression(expression, function_scope, false);
+                    }
+                    FunctionLikeSyntax::Arrow(ArrowBody::Block(statements))
+                    | FunctionLikeSyntax::Function {
+                        body: statements, ..
+                    } => self.visit_bound_statements(statements, function_scope),
                 }
-                match body {
-                    ArrowBody::Expression(expression) => {
-                        self.visit_expression(expression, arrow_scope, false);
-                    }
-                    ArrowBody::Block(statements) => {
-                        self.visit_bound_statements(statements, arrow_scope)
-                    }
+                if retained_type_locals {
+                    self.type_locals.pop();
                 }
             }
             ExpressionKind::Binary { left, right, .. } => {
@@ -896,6 +898,7 @@ impl ReferenceVisitor<'_> {
                 type_parameters,
                 parameters,
                 return_type,
+                ..
             }
             | TypeNodeKind::Constructor {
                 id,
@@ -1094,18 +1097,14 @@ impl ReferenceVisitor<'_> {
         self.push_type_parameter_locals(type_parameters);
         self.visit_type_parameter_bounds(type_parameters, enclosing_scope);
         for parameter in parameters {
-            if let Some(annotation) = &parameter.annotation
-                && (!implementation || !annotation.contains_type_query())
-            {
+            if let Some(annotation) = &parameter.annotation {
                 self.visit_type(annotation, signature_scope);
             }
             if !implementation && let Some(initializer) = &parameter.initializer {
                 self.visit_expression(initializer, signature_scope, false);
             }
         }
-        if let Some(return_type) = return_type
-            && (!implementation || !return_type.contains_type_query())
-        {
+        if let Some(return_type) = return_type {
             self.visit_type(return_type, signature_scope);
         }
         if !implementation {
@@ -1263,34 +1262,33 @@ struct SyntaxMetadata {
 
 fn syntax_declaration_metadata(file: &ProgramFile) -> BTreeMap<(u32, u32), SyntaxMetadata> {
     let mut metadata = BTreeMap::new();
-    collect_statement_metadata(
-        &file.syntax.statements,
-        is_declaration_file(file),
-        &mut metadata,
-    );
+    let ambient_context = is_declaration_file(file);
+    {
+        let mut collector = SyntaxMetadataCollector {
+            metadata: &mut metadata,
+        };
+        for statement in &file.syntax.statements {
+            collector.statement(ambient_context, statement);
+        }
+    }
     metadata
 }
 
-fn collect_statement_metadata(
-    statements: &[Statement],
-    ambient_context: bool,
-    metadata: &mut BTreeMap<(u32, u32), SyntaxMetadata>,
-) {
-    for statement in statements {
+struct SyntaxMetadataCollector<'metadata> {
+    metadata: &'metadata mut BTreeMap<(u32, u32), SyntaxMetadata>,
+}
+
+impl SyntaxMetadataCollector<'_> {
+    fn statement(&mut self, ambient_context: bool, statement: &Statement) {
         match &statement.kind {
             StatementKind::Import(declaration) => {
                 for binding in &declaration.bindings {
                     let display = format!("(alias) {}", binding.local);
-                    metadata.insert(
-                        (binding.local_span.start, binding.local_span.end),
-                        SyntaxMetadata {
-                            kind: "alias".to_string(),
-                            context_span: Some(text_span(statement.span)),
-                            exported: false,
-                            ambient: ambient_context,
-                            display: display.clone(),
-                            display_parts: vec![display_part(&display, "text")],
-                        },
+                    self.insert(
+                        (binding.local_span, statement.span),
+                        "alias",
+                        (false, ambient_context),
+                        (display.clone(), vec![display_part(&display, "text")]),
                     );
                 }
             }
@@ -1305,20 +1303,14 @@ fn collect_statement_metadata(
                     || format!("{kind} {}", declaration.name),
                     |ty| format!("{kind} {}: {ty}", declaration.name),
                 );
-                metadata.insert(
-                    (declaration.name_span.start, declaration.name_span.end),
-                    SyntaxMetadata {
-                        kind: kind.to_string(),
-                        context_span: Some(text_span(statement.span)),
-                        exported: declaration.exported,
-                        ambient: ambient_context,
-                        display: display.clone(),
-                        display_parts: variable_display_parts(
-                            kind,
-                            &declaration.name,
-                            ty.as_deref(),
-                        ),
-                    },
+                self.insert(
+                    (declaration.name_span, statement.span),
+                    kind,
+                    (declaration.exported, ambient_context),
+                    (
+                        display,
+                        variable_display_parts(kind, &declaration.name, ty.as_deref()),
+                    ),
                 );
             }
             StatementKind::Function(declaration) => {
@@ -1335,133 +1327,143 @@ fn collect_statement_metadata(
                     }
                     _ => format!("function {}", declaration.name),
                 };
-                metadata.insert(
-                    (declaration.name_span.start, declaration.name_span.end),
-                    SyntaxMetadata {
-                        kind: "function".to_string(),
-                        context_span: Some(text_span(statement.span)),
-                        exported: declaration.exported,
-                        ambient: ambient_context || declaration.declared,
-                        display,
-                        display_parts: function_display_parts(declaration),
-                    },
-                );
-                for parameter in &declaration.parameters {
-                    insert_parameter_metadata(
-                        parameter,
+                self.insert(
+                    (declaration.name_span, statement.span),
+                    "function",
+                    (
+                        declaration.exported,
                         ambient_context || declaration.declared,
-                        metadata,
-                    );
-                }
-                collect_statement_metadata(
-                    &declaration.body,
-                    ambient_context || declaration.declared,
-                    metadata,
+                    ),
+                    (display, function_display_parts(declaration)),
                 );
             }
             StatementKind::Class(declaration) => {
                 let display = format!("class {}", declaration.name);
-                metadata.insert(
-                    (declaration.name_span.start, declaration.name_span.end),
-                    SyntaxMetadata {
-                        kind: "class".to_string(),
-                        context_span: Some(text_span(statement.span)),
-                        exported: declaration.exported || declaration.default_export,
-                        ambient: ambient_context || declaration.declared,
-                        display: display.clone(),
-                        display_parts: vec![
+                self.insert(
+                    (declaration.name_span, statement.span),
+                    "class",
+                    (
+                        declaration.exported || declaration.default_export,
+                        ambient_context || declaration.declared,
+                    ),
+                    (
+                        display,
+                        vec![
                             display_part("class", "keyword"),
                             display_part(" ", "space"),
                             display_part(&declaration.name, "className"),
                         ],
-                    },
+                    ),
                 );
-                for member in &declaration.members {
-                    match &member.kind {
-                        ClassMemberKind::Constructor {
-                            parameters, body, ..
-                        }
-                        | ClassMemberKind::Method {
-                            parameters, body, ..
-                        } => {
-                            for parameter in parameters {
-                                insert_parameter_metadata(
-                                    parameter,
-                                    ambient_context || declaration.declared,
-                                    metadata,
-                                );
-                            }
-                            collect_statement_metadata(
-                                body,
-                                ambient_context || declaration.declared,
-                                metadata,
-                            );
-                        }
-                        ClassMemberKind::Property { .. } => {}
-                    }
-                }
             }
             StatementKind::TypeAlias(declaration) => {
                 let display = display_type_node(&declaration.ty).map_or_else(
                     || format!("type {}", declaration.name),
                     |ty| format!("type {} = {ty}", declaration.name),
                 );
-                metadata.insert(
-                    (declaration.name_span.start, declaration.name_span.end),
-                    SyntaxMetadata {
-                        kind: "type".to_string(),
-                        context_span: Some(text_span(statement.span)),
-                        exported: declaration.exported,
-                        ambient: ambient_context,
-                        display: display.clone(),
-                        display_parts: vec![display_part(&display, "text")],
-                    },
+                self.insert(
+                    (declaration.name_span, statement.span),
+                    "type",
+                    (declaration.exported, ambient_context),
+                    (display.clone(), vec![display_part(&display, "text")]),
                 );
             }
             StatementKind::Interface(declaration) => {
                 let display = format!("interface {}", declaration.name);
-                metadata.insert(
-                    (declaration.name_span.start, declaration.name_span.end),
-                    SyntaxMetadata {
-                        kind: "interface".to_string(),
-                        context_span: Some(text_span(statement.span)),
-                        exported: declaration.exported,
-                        ambient: ambient_context,
-                        display: display.clone(),
-                        display_parts: vec![display_part(&display, "text")],
-                    },
+                self.insert(
+                    (declaration.name_span, statement.span),
+                    "interface",
+                    (declaration.exported, ambient_context),
+                    (display.clone(), vec![display_part(&display, "text")]),
                 );
-            }
-            StatementKind::Block(statements) => {
-                collect_statement_metadata(statements, ambient_context, metadata);
-            }
-            StatementKind::If(control_flow) => {
-                collect_statement_metadata(
-                    std::slice::from_ref(control_flow.then_statement.as_ref()),
-                    ambient_context,
-                    metadata,
-                );
-                if let Some(else_statement) = &control_flow.else_statement {
-                    collect_statement_metadata(
-                        std::slice::from_ref(else_statement.as_ref()),
-                        ambient_context,
-                        metadata,
-                    );
-                }
-            }
-            StatementKind::Switch(control_flow) => {
-                for clause in &control_flow.clauses {
-                    collect_statement_metadata(&clause.statements, ambient_context, metadata);
-                }
             }
             StatementKind::Export(_)
             | StatementKind::Break(_)
             | StatementKind::Continue(_)
             | StatementKind::Return(_)
+            | StatementKind::Block(_)
+            | StatementKind::If(_)
+            | StatementKind::Switch(_)
             | StatementKind::Expression(_)
             | StatementKind::Empty
             | StatementKind::Unknown => {}
         }
+        walk_statement_descendants(self, &ambient_context, statement);
+    }
+
+    fn insert(
+        &mut self,
+        (name_span, context_span): (Span, Span),
+        kind: &str,
+        (exported, ambient): (bool, bool),
+        (display, display_parts): (String, Vec<SymbolDisplayPart>),
+    ) {
+        self.metadata.insert(
+            (name_span.start, name_span.end),
+            SyntaxMetadata {
+                kind: kind.to_string(),
+                context_span: Some(text_span(context_span)),
+                exported,
+                ambient,
+                display,
+                display_parts,
+            },
+        );
+    }
+
+    fn parameters(&mut self, parameters: &[Parameter], ambient_context: bool) -> bool {
+        for parameter in parameters {
+            insert_parameter_metadata(parameter, ambient_context, self.metadata);
+        }
+        ambient_context
+    }
+}
+
+impl<'ast> DescendantAdapter<'ast> for SyntaxMetadataCollector<'_> {
+    type Context = bool;
+
+    fn context(
+        &mut self,
+        ambient_context: &Self::Context,
+        container: DescendantContainer<'ast>,
+    ) -> Self::Context {
+        match container {
+            DescendantContainer::Function(_, declaration) => self.parameters(
+                &declaration.parameters,
+                *ambient_context || declaration.declared,
+            ),
+            DescendantContainer::Class(_, declaration) => *ambient_context || declaration.declared,
+            DescendantContainer::ClassMember(member) => match &member.kind {
+                ClassMemberKind::Constructor { parameters, .. }
+                | ClassMemberKind::Method { parameters, .. } => {
+                    self.parameters(parameters, *ambient_context)
+                }
+                ClassMemberKind::Property { .. } => *ambient_context,
+            },
+            DescendantContainer::Statement(_) | DescendantContainer::FunctionLike(_, _) => {
+                *ambient_context
+            }
+        }
+    }
+
+    fn nested_statement(
+        &mut self,
+        ambient_context: &Self::Context,
+        statement: &'ast Statement,
+        _next_statement: Option<&'ast Statement>,
+    ) -> NestedStatement {
+        self.statement(*ambient_context, statement);
+        NestedStatement::Handled
+    }
+
+    fn function_like(
+        &mut self,
+        ambient_context: &Self::Context,
+        expression: &'ast Expression,
+        function: &'ast FunctionLikeExpression,
+    ) {
+        self.parameters(&function.parameters, *ambient_context);
+        walk_function_like_descendants(self, ambient_context, expression, function);
     }
 }
 
@@ -1492,7 +1494,9 @@ fn fallback_metadata(kind: DeclarationKind, name: &str) -> SyntaxMetadata {
         DeclarationKind::Variable => ("var", format!("var {name}")),
         DeclarationKind::Parameter => ("parameter", format!("(parameter) {name}")),
         DeclarationKind::Import => ("alias", format!("(alias) {name}")),
-        DeclarationKind::Function => ("function", format!("function {name}")),
+        DeclarationKind::Function | DeclarationKind::FunctionExpression => {
+            ("function", format!("function {name}"))
+        }
         DeclarationKind::Class => ("class", format!("class {name}")),
         DeclarationKind::TypeAlias => ("type", format!("type {name}")),
         DeclarationKind::Interface => ("interface", format!("interface {name}")),

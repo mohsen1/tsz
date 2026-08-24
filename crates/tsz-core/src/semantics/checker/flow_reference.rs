@@ -11,17 +11,6 @@ use crate::syntax::TypeNodeKind;
 
 use super::{Checker, DeclarationModel};
 
-macro_rules! completed {
-    ($value:expr) => {
-        match $value {
-            Completion::Complete(value) => value,
-            Completion::Deferred => return Completion::Deferred,
-            Completion::Cycle => return Completion::Cycle,
-            Completion::Limit => return Completion::Limit,
-        }
-    };
-}
-
 impl Checker<'_> {
     pub(super) fn force_flow(&mut self, query: DeferredType, depth: usize) -> Completion<TypeId> {
         let DeferredType::FlowReference {

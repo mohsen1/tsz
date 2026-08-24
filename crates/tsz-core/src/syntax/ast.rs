@@ -1,6 +1,11 @@
 use crate::source::{NodeId, Span};
 
-use super::{CommentTrivia, RegularExpressionLiteral, SourceCheckDirective};
+use super::{
+    CommentTrivia, RegularExpressionLiteral, SourceCheckDirective, TokenKind,
+    descendant_walk::{
+        ExpressionRoot, ExpressionTraversal, contains_matching_expression, for_each_statement_in,
+    },
+};
 
 #[derive(Debug, Clone)]
 pub struct SourceUnit {
@@ -10,25 +15,33 @@ pub struct SourceUnit {
     pub(crate) parser_recovery_facts: Vec<ParserRecoveryFact>,
     pub(crate) unmodeled_declaration_hosts: Vec<UnmodeledDeclarationHostFact>,
     pub(crate) source_check_directive: Option<SourceCheckDirective>,
-    pub(crate) function_products_supported: bool,
-    pub(crate) class_products_supported: bool,
-    pub(crate) declaration_products_supported: bool,
-    pub(crate) commonjs_class_products_supported: bool,
-    pub(crate) declaration_hosts_supported: bool,
-    pub(crate) default_export_hosts_supported: bool,
-    pub(crate) expression_products_supported: bool,
+    pub(crate) source_syntax_facts: Vec<SourceSyntaxFact>,
     pub(crate) comments: Vec<CommentTrivia>,
     pub(crate) has_unicode_line_comment_terminator: bool,
-    pub(crate) has_authored_no_substitution_template: bool,
-    pub(crate) template_products_supported: bool,
-    pub(crate) has_authored_extended_unicode_string: bool,
-    pub(crate) extended_unicode_string_products_supported: bool,
-    pub(crate) has_authored_regular_expression: bool,
-    pub(crate) regular_expression_products_supported: bool,
-    pub(crate) has_authored_numeric_recovery: bool,
-    pub(crate) numeric_recovery_products_supported: bool,
-    pub(crate) has_authored_numeric_separator: bool,
-    pub(crate) numeric_separator_products_supported: bool,
+}
+
+/// Positive parser observations that cannot be reconstructed from the current
+/// AST. Product capability analysis maps these authored facts to consumers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum SourceSyntaxFact {
+    AsyncClassModifier,
+    AuthoredExtendedUnicodeString,
+    AuthoredFunctionExpressionModifier,
+    AuthoredRegularExpression,
+    DefaultExportOnUnsupportedHost,
+    ExplicitCallTypeArguments,
+    ExplicitNewTypeArguments,
+    InvalidClassModifierOrder,
+    LiteralBoundary(AuthoredLiteralKind, LiteralSyntaxBoundary),
+    ModuleExport,
+    TemplateExpressionIdentifier,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum LiteralSyntaxBoundary {
+    LexicalRecovery,
+    SourceContext,
+    UnsupportedHost,
 }
 
 /// Scanner-authored literal occurrence retained for downstream ownership
@@ -49,6 +62,8 @@ pub(crate) struct AuthoredLiteralFact {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum AuthoredLiteralKind {
     Template,
+    ExtendedUnicodeString,
+    RegularExpression,
     NumericRecovery,
     NumericSeparator,
 }
@@ -76,7 +91,15 @@ pub(crate) struct ParserRecoveryOwner {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum ParserRecoveryKind {
     Declaration,
+    GeneratorFunctionLike,
+    VariableDeclaratorTail,
     Expression,
+    ObjectMember,
+    ForStatement,
+    ComputedPropertyName,
+    ClassExpression,
+    AngleAssertion,
+    RejectedGenericArrowPrefix,
     Type,
     Template,
 }
@@ -124,6 +147,18 @@ impl SourceUnit {
         self.source_check_directive
     }
 
+    #[must_use]
+    pub(crate) fn has_source_syntax_fact(&self, fact: SourceSyntaxFact) -> bool {
+        self.source_syntax_facts.binary_search(&fact).is_ok()
+    }
+
+    #[must_use]
+    pub(crate) fn has_authored_literal(&self, kind: AuthoredLiteralKind) -> bool {
+        self.authored_literal_facts
+            .iter()
+            .any(|fact| fact.kind == kind)
+    }
+
     /// Whether this file owns a module-local root scope rather than
     /// contributing declarations to the program's global script scope.
     #[must_use]
@@ -162,9 +197,16 @@ impl SourceUnit {
     /// syntax is represented explicitly.
     #[must_use]
     pub fn contains_recovered_type_members(&self) -> bool {
-        self.statements
-            .iter()
-            .any(Statement::contains_recovered_type_members)
+        let mut written_type_contains_recovery = false;
+        for_each_statement_in(&self.statements, &mut |statement| {
+            written_type_contains_recovery |= statement_owns_recovered_type_members(statement);
+        });
+        written_type_contains_recovery
+            || contains_matching_expression(
+                ExpressionRoot::Statements(&self.statements),
+                ExpressionTraversal::All,
+                expression_owns_recovered_type_members,
+            )
     }
 
     /// Whether declaration emit needs an overload summary that the syntax
@@ -231,53 +273,19 @@ impl SourceUnit {
     /// Whether emit would need function-modifier product ownership that the
     /// syntax printer does not yet provide for every module target.
     #[must_use]
-    pub const fn has_unmodeled_function_products(&self) -> bool {
-        !self.function_products_supported
-    }
-
-    /// Whether class emit needs syntax ownership that the printers do not
-    /// currently have in every checked and `noCheck` product mode.
-    #[must_use]
-    pub const fn has_unmodeled_class_products(&self) -> bool {
-        !self.class_products_supported
-    }
-
-    #[must_use]
-    pub const fn has_unmodeled_declaration_products(&self) -> bool {
-        !self.declaration_products_supported
+    pub fn has_unmodeled_function_products(&self) -> bool {
+        let mut unmodeled = false;
+        for_each_statement_in(&self.statements, &mut |statement| {
+            unmodeled |= matches!(&statement.kind, StatementKind::Function(function)
+                if function.default_export || function.abstract_declaration
+                    || !function.overload_completion_supported);
+        });
+        unmodeled
     }
 
     #[must_use]
-    pub const fn has_unmodeled_commonjs_class_products(&self) -> bool {
-        !self.commonjs_class_products_supported
-    }
-
-    /// Whether every authored declaration host has a semantic owner. Module,
-    /// namespace, and ambient-global bodies remain opaque until their scopes
-    /// and declaration rules are represented in the AST and binder.
-    #[must_use]
-    pub const fn has_unmodeled_declaration_hosts(&self) -> bool {
-        !self.declaration_hosts_supported
-    }
-
-    #[must_use]
-    pub const fn has_unmodeled_default_export_hosts(&self) -> bool {
-        !self.default_export_hosts_supported
-    }
-
-    #[must_use]
-    pub const fn has_unmodeled_expression_products(&self) -> bool {
-        !self.expression_products_supported
-    }
-
-    #[must_use]
-    pub const fn has_authored_no_substitution_template(&self) -> bool {
-        self.has_authored_no_substitution_template
-    }
-
-    #[must_use]
-    pub const fn has_authored_extended_unicode_string(&self) -> bool {
-        self.has_authored_extended_unicode_string
+    pub fn has_authored_extended_unicode_string(&self) -> bool {
+        self.has_source_syntax_fact(SourceSyntaxFact::AuthoredExtendedUnicodeString)
     }
 
     pub(crate) fn comments(&self) -> &[CommentTrivia] {
@@ -292,43 +300,39 @@ impl SourceUnit {
     /// Whether template syntax outside the exact no-substitution expression
     /// slice would require an AST, semantic, or emit product TSZ does not own.
     #[must_use]
-    pub const fn has_unmodeled_template_products(&self) -> bool {
-        !self.template_products_supported
+    pub fn has_unmodeled_template_products(&self) -> bool {
+        self.has_literal_syntax_boundary(AuthoredLiteralKind::Template)
     }
 
     #[must_use]
-    pub const fn has_unmodeled_extended_unicode_string_products(&self) -> bool {
-        !self.extended_unicode_string_products_supported
+    pub fn has_unmodeled_extended_unicode_string_products(&self) -> bool {
+        self.has_literal_syntax_boundary(AuthoredLiteralKind::ExtendedUnicodeString)
     }
 
     #[must_use]
-    pub(crate) const fn has_authored_regular_expression(&self) -> bool {
-        self.has_authored_regular_expression
+    pub(crate) fn has_authored_regular_expression(&self) -> bool {
+        self.has_source_syntax_fact(SourceSyntaxFact::AuthoredRegularExpression)
     }
 
     #[must_use]
-    pub(crate) const fn has_unmodeled_regular_expression_products(&self) -> bool {
-        !self.regular_expression_products_supported
+    pub(crate) fn has_unmodeled_regular_expression_products(&self) -> bool {
+        self.has_literal_syntax_boundary(AuthoredLiteralKind::RegularExpression)
     }
 
     #[must_use]
-    pub(crate) const fn has_authored_numeric_recovery(&self) -> bool {
-        self.has_authored_numeric_recovery
+    pub(crate) fn has_unmodeled_numeric_recovery_products(&self) -> bool {
+        self.has_literal_syntax_boundary(AuthoredLiteralKind::NumericRecovery)
     }
 
     #[must_use]
-    pub(crate) const fn has_unmodeled_numeric_recovery_products(&self) -> bool {
-        !self.numeric_recovery_products_supported
+    pub(crate) fn has_unmodeled_numeric_separator_products(&self) -> bool {
+        self.has_literal_syntax_boundary(AuthoredLiteralKind::NumericSeparator)
     }
 
-    #[must_use]
-    pub(crate) const fn has_authored_numeric_separator(&self) -> bool {
-        self.has_authored_numeric_separator
-    }
-
-    #[must_use]
-    pub(crate) const fn has_unmodeled_numeric_separator_products(&self) -> bool {
-        !self.numeric_separator_products_supported
+    fn has_literal_syntax_boundary(&self, family: AuthoredLiteralKind) -> bool {
+        self.source_syntax_facts.iter().any(|fact| {
+            matches!(fact, SourceSyntaxFact::LiteralBoundary(candidate, _) if *candidate == family)
+        })
     }
 }
 
@@ -359,225 +363,88 @@ pub enum StatementKind {
     Unknown,
 }
 
-impl Statement {
-    pub(crate) fn for_each_statement(&self, visit: &mut impl FnMut(&Statement)) {
-        visit(self);
-        match &self.kind {
-            StatementKind::Import(_)
-            | StatementKind::TypeAlias(_)
-            | StatementKind::Interface(_)
-            | StatementKind::Break(_)
-            | StatementKind::Continue(_)
-            | StatementKind::Empty
-            | StatementKind::Unknown => {}
-            StatementKind::Export(declaration) => {
-                if let Some(expression) = &declaration.assignment {
-                    expression.for_each_statement(visit);
-                }
-            }
-            StatementKind::Variable(declaration) => {
-                if let Some(initializer) = &declaration.initializer {
-                    initializer.for_each_statement(visit);
-                }
-            }
-            StatementKind::Function(declaration) => {
-                for parameter in &declaration.parameters {
-                    if let Some(initializer) = &parameter.initializer {
-                        initializer.for_each_statement(visit);
-                    }
-                }
-                for statement in &declaration.body {
-                    statement.for_each_statement(visit);
-                }
-            }
-            StatementKind::Class(declaration) => {
-                for member in &declaration.members {
-                    match &member.kind {
-                        ClassMemberKind::Constructor {
-                            parameters, body, ..
-                        }
-                        | ClassMemberKind::Method {
-                            parameters, body, ..
-                        } => {
-                            for parameter in parameters {
-                                if let Some(initializer) = &parameter.initializer {
-                                    initializer.for_each_statement(visit);
-                                }
-                            }
-                            for statement in body {
-                                statement.for_each_statement(visit);
-                            }
-                        }
-                        ClassMemberKind::Property { initializer, .. } => {
-                            if let Some(initializer) = initializer {
-                                initializer.for_each_statement(visit);
-                            }
-                        }
-                    }
-                }
-            }
-            StatementKind::If(statement) => {
-                statement.condition.for_each_statement(visit);
-                statement.then_statement.for_each_statement(visit);
-                if let Some(statement) = &statement.else_statement {
-                    statement.for_each_statement(visit);
-                }
-            }
-            StatementKind::Switch(statement) => {
-                statement.expression.for_each_statement(visit);
-                for clause in &statement.clauses {
-                    if let SwitchClauseKind::Case(expression) = &clause.kind {
-                        expression.for_each_statement(visit);
-                    }
-                    for statement in &clause.statements {
-                        statement.for_each_statement(visit);
-                    }
-                }
-            }
-            StatementKind::Return(expression) => {
-                if let Some(expression) = expression {
-                    expression.for_each_statement(visit);
-                }
-            }
-            StatementKind::Block(statements) => {
-                for statement in statements {
-                    statement.for_each_statement(visit);
-                }
-            }
-            StatementKind::Expression(expression) => expression.for_each_statement(visit),
-        }
-    }
-
-    fn contains_recovered_type_members(&self) -> bool {
-        match &self.kind {
-            StatementKind::Import(_)
-            | StatementKind::Break(_)
-            | StatementKind::Continue(_)
-            | StatementKind::Empty
-            | StatementKind::Unknown => false,
-            StatementKind::Export(declaration) => declaration
-                .assignment
-                .as_ref()
-                .is_some_and(Expression::contains_recovered_type_members),
-            StatementKind::Variable(declaration) => {
-                declaration
-                    .annotation
+fn statement_owns_recovered_type_members(statement: &Statement) -> bool {
+    match &statement.kind {
+        StatementKind::Variable(declaration) => declaration
+            .annotation
+            .as_ref()
+            .is_some_and(TypeNode::contains_recovered_type_members),
+        StatementKind::Function(declaration) => signature_contains_recovered_type_members(
+            &declaration.type_parameters,
+            &declaration.parameters,
+            declaration.return_type.as_ref(),
+        ),
+        StatementKind::Class(declaration) => {
+            type_parameters_contain_recovery(&declaration.type_parameters)
+                || declaration
+                    .extends
                     .as_ref()
                     .is_some_and(TypeNode::contains_recovered_type_members)
-                    || declaration
-                        .initializer
-                        .as_ref()
-                        .is_some_and(Expression::contains_recovered_type_members)
-            }
-            StatementKind::Function(declaration) => {
-                type_parameters_contain_recovery(&declaration.type_parameters)
-                    || parameters_contain_recovery(&declaration.parameters)
-                    || declaration
-                        .return_type
-                        .as_ref()
-                        .is_some_and(TypeNode::contains_recovered_type_members)
-                    || declaration
-                        .body
-                        .iter()
-                        .any(Statement::contains_recovered_type_members)
-            }
-            StatementKind::Class(declaration) => {
-                type_parameters_contain_recovery(&declaration.type_parameters)
-                    || declaration
-                        .extends
-                        .as_ref()
-                        .is_some_and(TypeNode::contains_recovered_type_members)
-                    || declaration
-                        .implements
-                        .iter()
-                        .any(TypeNode::contains_recovered_type_members)
-                    || declaration
-                        .members
-                        .iter()
-                        .any(class_member_contains_recovery)
-            }
-            StatementKind::TypeAlias(declaration) => {
-                type_parameters_contain_recovery(&declaration.type_parameters)
-                    || declaration.ty.contains_recovered_type_members()
-            }
-            StatementKind::Interface(declaration) => {
-                type_parameters_contain_recovery(&declaration.type_parameters)
-                    || declaration
-                        .extends
-                        .iter()
-                        .any(TypeNode::contains_recovered_type_members)
-                    || declaration
-                        .members
-                        .iter()
-                        .any(|member| member.recovered || member.contains_recovered_type_members())
-            }
-            StatementKind::If(statement) => {
-                statement.condition.contains_recovered_type_members()
-                    || statement.then_statement.contains_recovered_type_members()
-                    || statement
-                        .else_statement
-                        .as_deref()
-                        .is_some_and(Statement::contains_recovered_type_members)
-            }
-            StatementKind::Switch(statement) => {
-                statement.expression.contains_recovered_type_members()
-                    || statement.clauses.iter().any(|clause| {
-                        matches!(
-                            &clause.kind,
-                            SwitchClauseKind::Case(expression)
-                                if expression.contains_recovered_type_members()
-                        ) || clause
-                            .statements
-                            .iter()
-                            .any(Statement::contains_recovered_type_members)
-                    })
-            }
-            StatementKind::Return(expression) => expression
-                .as_ref()
-                .is_some_and(Expression::contains_recovered_type_members),
-            StatementKind::Block(statements) => statements
-                .iter()
-                .any(Statement::contains_recovered_type_members),
-            StatementKind::Expression(expression) => expression.contains_recovered_type_members(),
+                || declaration
+                    .implements
+                    .iter()
+                    .any(TypeNode::contains_recovered_type_members)
+                || declaration
+                    .members
+                    .iter()
+                    .any(class_member_owns_recovered_type_members)
         }
+        StatementKind::TypeAlias(declaration) => {
+            type_parameters_contain_recovery(&declaration.type_parameters)
+                || declaration.ty.contains_recovered_type_members()
+        }
+        StatementKind::Interface(declaration) => {
+            type_parameters_contain_recovery(&declaration.type_parameters)
+                || declaration
+                    .extends
+                    .iter()
+                    .any(TypeNode::contains_recovered_type_members)
+                || declaration
+                    .members
+                    .iter()
+                    .any(|member| member.contains(TypeContainment::RecoveredTypeMembers))
+        }
+        StatementKind::Import(_)
+        | StatementKind::Export(_)
+        | StatementKind::If(_)
+        | StatementKind::Switch(_)
+        | StatementKind::Break(_)
+        | StatementKind::Continue(_)
+        | StatementKind::Return(_)
+        | StatementKind::Block(_)
+        | StatementKind::Expression(_)
+        | StatementKind::Empty
+        | StatementKind::Unknown => false,
     }
 }
 
-fn class_member_contains_recovery(member: &ClassMember) -> bool {
+fn class_member_owns_recovered_type_members(member: &ClassMember) -> bool {
     match &member.kind {
-        ClassMemberKind::Constructor {
-            parameters, body, ..
-        } => {
-            parameters_contain_recovery(parameters)
-                || body.iter().any(Statement::contains_recovered_type_members)
-        }
-        ClassMemberKind::Property {
-            annotation,
-            initializer,
-            ..
-        } => {
-            annotation
-                .as_ref()
-                .is_some_and(TypeNode::contains_recovered_type_members)
-                || initializer
-                    .as_ref()
-                    .is_some_and(Expression::contains_recovered_type_members)
-        }
+        ClassMemberKind::Constructor { parameters, .. } => parameters_contain_recovery(parameters),
+        ClassMemberKind::Property { annotation, .. } => annotation
+            .as_ref()
+            .is_some_and(TypeNode::contains_recovered_type_members),
         ClassMemberKind::Method {
             type_parameters,
             parameters,
             return_type,
-            body,
             ..
-        } => {
-            type_parameters_contain_recovery(type_parameters)
-                || parameters_contain_recovery(parameters)
-                || return_type
-                    .as_ref()
-                    .is_some_and(TypeNode::contains_recovered_type_members)
-                || body.iter().any(Statement::contains_recovered_type_members)
-        }
+        } => signature_contains_recovered_type_members(
+            type_parameters,
+            parameters,
+            return_type.as_ref(),
+        ),
     }
+}
+
+fn signature_contains_recovered_type_members(
+    type_parameters: &[TypeParameterDeclaration],
+    parameters: &[Parameter],
+    return_type: Option<&TypeNode>,
+) -> bool {
+    type_parameters_contain_recovery(type_parameters)
+        || parameters_contain_recovery(parameters)
+        || return_type.is_some_and(TypeNode::contains_recovered_type_members)
 }
 
 #[derive(Debug, Clone)]
@@ -669,12 +536,12 @@ pub struct VariableDeclaration {
     pub exported: bool,
 }
 
-/// Authored binding identity retained from a destructuring pattern whose full
-/// declaration AST is not represented yet.
+/// An authored binding identity retained independently from its declaration.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct AuthoredBindingName {
-    pub(crate) name: String,
-    pub(crate) span: Span,
+pub struct AuthoredBindingName {
+    pub name: String,
+    pub span: Span,
+    pub token_kind: TokenKind,
 }
 
 #[derive(Debug, Clone)]
@@ -811,6 +678,7 @@ pub enum PropertyNameKind {
     PrivateIdentifier,
     StringLiteral,
     NumericLiteral,
+    Computed,
     Unsupported,
 }
 
@@ -866,6 +734,8 @@ pub struct InterfaceDeclaration {
 pub struct Parameter {
     pub name: String,
     pub name_span: Span,
+    pub(crate) recovered_binding_names: Vec<AuthoredBindingName>,
+    pub name_kind: ParameterNameKind,
     pub annotation: Option<TypeNode>,
     pub initializer: Option<Expression>,
     pub optional: bool,
@@ -876,6 +746,13 @@ pub struct Parameter {
     pub overload_completion_supported: bool,
     pub function_implementation_completion_supported: bool,
     pub span: Span,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ParameterNameKind {
+    Binding,
+    BindingPattern,
+    This,
 }
 
 impl Parameter {
@@ -1088,12 +965,14 @@ pub enum TypeNodeKind {
         id: NodeId,
         type_parameters: Vec<TypeParameterDeclaration>,
         parameters: Vec<Parameter>,
+        parameter_list_recovered: bool,
         return_type: Box<TypeNode>,
     },
     Constructor {
         id: NodeId,
         type_parameters: Vec<TypeParameterDeclaration>,
         parameters: Vec<Parameter>,
+        parameter_list_recovered: bool,
         return_type: Box<TypeNode>,
         abstract_constructor: bool,
     },
@@ -1145,76 +1024,30 @@ pub enum TypeNodeKind {
 }
 
 impl TypeNode {
+    pub(super) fn blocks_arrow_parse(&self) -> bool {
+        match &self.kind {
+            TypeNodeKind::Missing => true,
+            TypeNodeKind::Function {
+                parameter_list_recovered,
+                return_type,
+                ..
+            }
+            | TypeNodeKind::Constructor {
+                parameter_list_recovered,
+                return_type,
+                ..
+            } => *parameter_list_recovered || return_type.blocks_arrow_parse(),
+            TypeNodeKind::Parenthesized(return_type) => return_type.blocks_arrow_parse(),
+            _ => false,
+        }
+    }
+
     /// Whether this written type contains a value-space `typeof` query.
     /// Function implementations need a symbol-kind-aware lookup filter for
     /// these positions; callers that do not own that filter fail closed.
     #[must_use]
     pub fn contains_type_query(&self) -> bool {
-        match &self.kind {
-            TypeNodeKind::TypeQuery { .. } => true,
-            TypeNodeKind::Array(inner)
-            | TypeNodeKind::KeyOf(inner)
-            | TypeNodeKind::Readonly(inner)
-            | TypeNodeKind::Parenthesized(inner) => inner.contains_type_query(),
-            TypeNodeKind::Tuple(types)
-            | TypeNodeKind::Union(types)
-            | TypeNodeKind::Intersection(types) => types.iter().any(TypeNode::contains_type_query),
-            TypeNodeKind::Object(members) => members.iter().any(TypeMember::contains_type_query),
-            TypeNodeKind::Function {
-                type_parameters,
-                parameters,
-                return_type,
-                ..
-            }
-            | TypeNodeKind::Constructor {
-                type_parameters,
-                parameters,
-                return_type,
-                ..
-            } => {
-                type_parameters.iter().any(type_parameter_contains_query)
-                    || parameters.iter().any(parameter_contains_query)
-                    || return_type.contains_type_query()
-            }
-            TypeNodeKind::Reference { arguments, .. } => {
-                arguments.iter().any(TypeNode::contains_type_query)
-            }
-            TypeNodeKind::Infer { constraint, .. } => constraint
-                .as_deref()
-                .is_some_and(TypeNode::contains_type_query),
-            TypeNodeKind::Predicate { ty, .. } => {
-                ty.as_deref().is_some_and(TypeNode::contains_type_query)
-            }
-            TypeNodeKind::Conditional {
-                check_type,
-                extends_type,
-                true_type,
-                false_type,
-            } => {
-                check_type.contains_type_query()
-                    || extends_type.contains_type_query()
-                    || true_type.contains_type_query()
-                    || false_type.contains_type_query()
-            }
-            TypeNodeKind::Mapped {
-                constraint,
-                name_type,
-                value_type,
-                members,
-                ..
-            } => {
-                constraint.contains_type_query()
-                    || name_type
-                        .as_deref()
-                        .is_some_and(TypeNode::contains_type_query)
-                    || value_type.contains_type_query()
-                    || members.iter().any(TypeMember::contains_type_query)
-            }
-            TypeNodeKind::IndexedAccess { object, index } => {
-                object.contains_type_query() || index.contains_type_query()
-            }
-            TypeNodeKind::Keyword(_) | TypeNodeKind::Literal(_) | TypeNodeKind::Missing => false,
-        }
+        self.contains(TypeContainment::TypeQuery)
     }
 
     /// Whether declaration/runtime recovery for this type escaped an authored
@@ -1222,19 +1055,24 @@ impl TypeNode {
     /// enclosing declarator/parameter recovery is represented structurally.
     #[must_use]
     pub fn contains_recovered_type_members(&self) -> bool {
+        self.contains(TypeContainment::RecoveredTypeMembers)
+    }
+
+    fn contains(&self, containment: TypeContainment) -> bool {
         match &self.kind {
+            TypeNodeKind::TypeQuery { .. } => containment == TypeContainment::TypeQuery,
             TypeNodeKind::Array(inner)
             | TypeNodeKind::KeyOf(inner)
             | TypeNodeKind::Readonly(inner)
-            | TypeNodeKind::Parenthesized(inner) => inner.contains_recovered_type_members(),
+            | TypeNodeKind::Parenthesized(inner) => inner.contains(containment),
             TypeNodeKind::Tuple(types)
             | TypeNodeKind::Union(types)
             | TypeNodeKind::Intersection(types) => {
-                types.iter().any(TypeNode::contains_recovered_type_members)
+                types.iter().any(|node| node.contains(containment))
             }
-            TypeNodeKind::Object(members) => members
-                .iter()
-                .any(|member| member.recovered || member.contains_recovered_type_members()),
+            TypeNodeKind::Object(members) => {
+                members.iter().any(|member| member.contains(containment))
+            }
             TypeNodeKind::Function {
                 type_parameters,
                 parameters,
@@ -1247,29 +1085,33 @@ impl TypeNode {
                 return_type,
                 ..
             } => {
-                type_parameters_contain_recovery(type_parameters)
-                    || parameters.iter().any(parameter_contains_recovery)
-                    || return_type.contains_recovered_type_members()
+                type_parameters
+                    .iter()
+                    .any(|parameter| containment.contains_type_parameter(parameter))
+                    || parameters
+                        .iter()
+                        .any(|parameter| containment.contains_parameter(parameter))
+                    || return_type.contains(containment)
             }
-            TypeNodeKind::Reference { arguments, .. } => arguments
-                .iter()
-                .any(TypeNode::contains_recovered_type_members),
+            TypeNodeKind::Reference { arguments, .. } => {
+                arguments.iter().any(|node| node.contains(containment))
+            }
             TypeNodeKind::Infer { constraint, .. } => constraint
                 .as_deref()
-                .is_some_and(TypeNode::contains_recovered_type_members),
-            TypeNodeKind::Predicate { ty, .. } => ty
-                .as_deref()
-                .is_some_and(TypeNode::contains_recovered_type_members),
+                .is_some_and(|node| node.contains(containment)),
+            TypeNodeKind::Predicate { ty, .. } => {
+                ty.as_deref().is_some_and(|node| node.contains(containment))
+            }
             TypeNodeKind::Conditional {
                 check_type,
                 extends_type,
                 true_type,
                 false_type,
             } => {
-                check_type.contains_recovered_type_members()
-                    || extends_type.contains_recovered_type_members()
-                    || true_type.contains_recovered_type_members()
-                    || false_type.contains_recovered_type_members()
+                check_type.contains(containment)
+                    || extends_type.contains(containment)
+                    || true_type.contains(containment)
+                    || false_type.contains(containment)
             }
             TypeNodeKind::Mapped {
                 constraint,
@@ -1278,107 +1120,81 @@ impl TypeNode {
                 members,
                 ..
             } => {
-                constraint.contains_recovered_type_members()
+                constraint.contains(containment)
                     || name_type
                         .as_deref()
-                        .is_some_and(TypeNode::contains_recovered_type_members)
-                    || value_type.contains_recovered_type_members()
-                    || members
-                        .iter()
-                        .any(|member| member.recovered || member.contains_recovered_type_members())
+                        .is_some_and(|node| node.contains(containment))
+                    || value_type.contains(containment)
+                    || members.iter().any(|member| member.contains(containment))
             }
             TypeNodeKind::IndexedAccess { object, index } => {
-                object.contains_recovered_type_members() || index.contains_recovered_type_members()
+                object.contains(containment) || index.contains(containment)
             }
-            TypeNodeKind::Keyword(_)
-            | TypeNodeKind::Literal(_)
-            | TypeNodeKind::TypeQuery { .. }
-            | TypeNodeKind::Missing => false,
+            TypeNodeKind::Keyword(_) | TypeNodeKind::Literal(_) | TypeNodeKind::Missing => false,
         }
     }
 }
 
-impl TypeMember {
-    fn contains_type_query(&self) -> bool {
-        if self.recovered {
-            return false;
-        }
-        match &self.kind {
-            TypeMemberKind::Property { ty, .. } => {
-                ty.as_ref().is_some_and(TypeNode::contains_type_query)
-            }
-            TypeMemberKind::Method {
-                type_parameters,
-                parameters,
-                return_type,
-                ..
-            }
-            | TypeMemberKind::Call {
-                type_parameters,
-                parameters,
-                return_type,
-            }
-            | TypeMemberKind::Construct {
-                type_parameters,
-                parameters,
-                return_type,
-            } => {
-                type_parameters.iter().any(type_parameter_contains_query)
-                    || parameters.iter().any(parameter_contains_query)
-                    || return_type
-                        .as_ref()
-                        .is_some_and(TypeNode::contains_type_query)
-            }
-            TypeMemberKind::Accessor {
-                parameters,
-                return_type,
-                ..
-            } => {
-                parameters.iter().any(parameter_contains_query)
-                    || return_type
-                        .as_ref()
-                        .is_some_and(TypeNode::contains_type_query)
-            }
-            TypeMemberKind::Index {
-                parameters,
-                value_type,
-            } => {
-                parameters.iter().any(parameter_contains_query)
-                    || value_type
-                        .as_ref()
-                        .is_some_and(TypeNode::contains_type_query)
-            }
-        }
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TypeContainment {
+    TypeQuery,
+    RecoveredTypeMembers,
+}
+
+impl TypeContainment {
+    fn contains_type_parameter(self, parameter: &TypeParameterDeclaration) -> bool {
+        parameter
+            .constraint
+            .as_ref()
+            .is_some_and(|node| node.contains(self))
+            || parameter
+                .default
+                .as_ref()
+                .is_some_and(|node| node.contains(self))
     }
 
-    fn contains_recovered_type_members(&self) -> bool {
+    fn contains_parameter(self, parameter: &Parameter) -> bool {
+        parameter
+            .annotation
+            .as_ref()
+            .is_some_and(|node| node.contains(self))
+            || self == Self::RecoveredTypeMembers
+                && parameter
+                    .initializer
+                    .as_ref()
+                    .is_some_and(expression_contains_recovered_type_members)
+    }
+}
+
+impl TypeMember {
+    fn contains(&self, containment: TypeContainment) -> bool {
         if self.recovered {
-            return true;
+            return containment == TypeContainment::RecoveredTypeMembers;
         }
-        let name_contains_recovery = match &self.kind {
-            TypeMemberKind::Property { name, .. }
-            | TypeMemberKind::Method { name, .. }
-            | TypeMemberKind::Accessor { name, .. } => matches!(
-                &name.kind,
-                TypeMemberNameKind::Computed(expression)
-                    if expression.contains_recovered_type_members()
-            ),
-            TypeMemberKind::Call { .. }
-            | TypeMemberKind::Construct { .. }
-            | TypeMemberKind::Index { .. } => false,
-        };
-        if name_contains_recovery {
+        if containment == TypeContainment::RecoveredTypeMembers
+            && matches!(
+                &self.kind,
+                TypeMemberKind::Property { name, .. }
+                    | TypeMemberKind::Method { name, .. }
+                    | TypeMemberKind::Accessor { name, .. }
+                    if matches!(
+                        &name.kind,
+                        TypeMemberNameKind::Computed(expression)
+                            if expression_contains_recovered_type_members(expression)
+                    )
+            )
+        {
             return true;
         }
         match &self.kind {
             TypeMemberKind::Property {
                 ty, initializer, ..
             } => {
-                ty.as_ref()
-                    .is_some_and(TypeNode::contains_recovered_type_members)
-                    || initializer
-                        .as_ref()
-                        .is_some_and(Expression::contains_recovered_type_members)
+                ty.as_ref().is_some_and(|node| node.contains(containment))
+                    || containment == TypeContainment::RecoveredTypeMembers
+                        && initializer
+                            .as_ref()
+                            .is_some_and(expression_contains_recovered_type_members)
             }
             TypeMemberKind::Method {
                 type_parameters,
@@ -1390,87 +1206,59 @@ impl TypeMember {
                 type_parameters,
                 parameters,
                 return_type,
-                ..
             }
             | TypeMemberKind::Construct {
                 type_parameters,
                 parameters,
                 return_type,
-                ..
             } => {
-                type_parameters_contain_recovery(type_parameters)
-                    || parameters.iter().any(parameter_contains_recovery)
+                type_parameters
+                    .iter()
+                    .any(|parameter| containment.contains_type_parameter(parameter))
+                    || parameters
+                        .iter()
+                        .any(|parameter| containment.contains_parameter(parameter))
                     || return_type
                         .as_ref()
-                        .is_some_and(TypeNode::contains_recovered_type_members)
+                        .is_some_and(|node| node.contains(containment))
             }
             TypeMemberKind::Accessor {
                 parameters,
                 return_type,
                 ..
             } => {
-                parameters.iter().any(parameter_contains_recovery)
+                parameters
+                    .iter()
+                    .any(|parameter| containment.contains_parameter(parameter))
                     || return_type
                         .as_ref()
-                        .is_some_and(TypeNode::contains_recovered_type_members)
+                        .is_some_and(|node| node.contains(containment))
             }
             TypeMemberKind::Index {
                 parameters,
                 value_type,
             } => {
-                parameters.iter().any(parameter_contains_recovery)
+                parameters
+                    .iter()
+                    .any(|parameter| containment.contains_parameter(parameter))
                     || value_type
                         .as_ref()
-                        .is_some_and(TypeNode::contains_recovered_type_members)
+                        .is_some_and(|node| node.contains(containment))
             }
         }
     }
 }
 
-fn type_parameter_contains_query(parameter: &TypeParameterDeclaration) -> bool {
-    parameter
-        .constraint
-        .as_ref()
-        .is_some_and(TypeNode::contains_type_query)
-        || parameter
-            .default
-            .as_ref()
-            .is_some_and(TypeNode::contains_type_query)
-}
-
-fn parameter_contains_query(parameter: &Parameter) -> bool {
-    parameter
-        .annotation
-        .as_ref()
-        .is_some_and(TypeNode::contains_type_query)
-}
-
-fn parameter_contains_recovery(parameter: &Parameter) -> bool {
-    parameter
-        .annotation
-        .as_ref()
-        .is_some_and(TypeNode::contains_recovered_type_members)
-        || parameter
-            .initializer
-            .as_ref()
-            .is_some_and(Expression::contains_recovered_type_members)
-}
-
 fn parameters_contain_recovery(parameters: &[Parameter]) -> bool {
-    parameters.iter().any(parameter_contains_recovery)
+    parameters
+        .iter()
+        .any(|parameter| TypeContainment::RecoveredTypeMembers.contains_parameter(parameter))
 }
 
 fn type_parameters_contain_recovery(parameters: &[TypeParameterDeclaration]) -> bool {
-    parameters.iter().any(|parameter| {
-        parameter
-            .constraint
-            .as_ref()
-            .is_some_and(TypeNode::contains_recovered_type_members)
-            || parameter
-                .default
-                .as_ref()
-                .is_some_and(TypeNode::contains_recovered_type_members)
-    })
+    parameters
+        .iter()
+        .any(|parameter| TypeContainment::RecoveredTypeMembers.contains_type_parameter(parameter))
 }
 
 #[derive(Debug, Clone)]
@@ -1511,11 +1299,7 @@ pub enum ExpressionKind {
         object: Box<Expression>,
         index: Box<Expression>,
     },
-    Arrow {
-        parameters: Vec<Parameter>,
-        return_type: Option<TypeNode>,
-        body: ArrowBody,
-    },
+    FunctionLike(Box<FunctionLikeExpression>),
     Binary {
         left: Box<Expression>,
         operator: BinaryOperator,
@@ -1538,146 +1322,61 @@ pub enum ExpressionKind {
     Missing,
 }
 
-impl Expression {
-    fn for_each_statement(&self, visit: &mut impl FnMut(&Statement)) {
-        match &self.kind {
-            ExpressionKind::Identifier { .. }
-            | ExpressionKind::This
-            | ExpressionKind::Literal(_)
-            | ExpressionKind::RegularExpression(_)
-            | ExpressionKind::Missing => {}
-            ExpressionKind::Object(properties) => {
-                for property in properties {
-                    property.value.for_each_statement(visit);
-                }
-            }
-            ExpressionKind::Array(elements) => {
-                for element in elements {
-                    element.for_each_statement(visit);
-                }
-            }
-            ExpressionKind::Call {
-                callee, arguments, ..
-            }
-            | ExpressionKind::New {
-                callee, arguments, ..
-            } => {
-                callee.for_each_statement(visit);
-                for argument in arguments {
-                    argument.for_each_statement(visit);
-                }
-            }
-            ExpressionKind::Member { object, .. }
-            | ExpressionKind::Unary {
-                operand: object, ..
-            }
-            | ExpressionKind::Parenthesized(object) => object.for_each_statement(visit),
-            ExpressionKind::ElementAccess { object, index } => {
-                object.for_each_statement(visit);
-                index.for_each_statement(visit);
-            }
-            ExpressionKind::Arrow {
-                parameters, body, ..
-            } => {
-                for parameter in parameters {
-                    if let Some(initializer) = &parameter.initializer {
-                        initializer.for_each_statement(visit);
-                    }
-                }
-                match body {
-                    ArrowBody::Expression(expression) => expression.for_each_statement(visit),
-                    ArrowBody::Block(statements) => {
-                        for statement in statements {
-                            statement.for_each_statement(visit);
-                        }
-                    }
-                }
-            }
-            ExpressionKind::Binary { left, right, .. }
-            | ExpressionKind::Assignment { left, right } => {
-                left.for_each_statement(visit);
-                right.for_each_statement(visit);
-            }
-            ExpressionKind::As { expression, .. } => expression.for_each_statement(visit),
-        }
-    }
+fn expression_contains_recovered_type_members(expression: &Expression) -> bool {
+    contains_matching_expression(
+        ExpressionRoot::Expression(expression),
+        ExpressionTraversal::All,
+        expression_owns_recovered_type_members,
+    )
+}
 
-    #[must_use]
-    pub fn contains_recovered_type_members(&self) -> bool {
-        match &self.kind {
-            ExpressionKind::Identifier { .. }
-            | ExpressionKind::This
-            | ExpressionKind::Literal(_)
-            | ExpressionKind::RegularExpression(_)
-            | ExpressionKind::Missing => false,
-            ExpressionKind::Object(properties) => properties
-                .iter()
-                .any(|property| property.value.contains_recovered_type_members()),
-            ExpressionKind::Array(elements) => elements
-                .iter()
-                .any(Expression::contains_recovered_type_members),
-            ExpressionKind::Call {
-                callee,
-                type_arguments,
-                arguments,
-            } => {
-                callee.contains_recovered_type_members()
-                    || type_arguments
-                        .iter()
-                        .flatten()
-                        .any(TypeNode::contains_recovered_type_members)
-                    || arguments
-                        .iter()
-                        .any(Expression::contains_recovered_type_members)
-            }
-            ExpressionKind::New {
-                callee,
-                type_arguments,
-                arguments,
-            } => {
-                callee.contains_recovered_type_members()
-                    || type_arguments
-                        .iter()
-                        .any(TypeNode::contains_recovered_type_members)
-                    || arguments
-                        .iter()
-                        .any(Expression::contains_recovered_type_members)
-            }
-            ExpressionKind::Member { object, .. }
-            | ExpressionKind::Unary {
-                operand: object, ..
-            }
-            | ExpressionKind::Parenthesized(object) => object.contains_recovered_type_members(),
-            ExpressionKind::ElementAccess { object, index } => {
-                object.contains_recovered_type_members() || index.contains_recovered_type_members()
-            }
-            ExpressionKind::Arrow {
-                parameters,
-                return_type,
-                body,
-            } => {
-                parameters_contain_recovery(parameters)
-                    || return_type
-                        .as_ref()
-                        .is_some_and(TypeNode::contains_recovered_type_members)
-                    || match body {
-                        ArrowBody::Expression(expression) => {
-                            expression.contains_recovered_type_members()
-                        }
-                        ArrowBody::Block(statements) => statements
-                            .iter()
-                            .any(Statement::contains_recovered_type_members),
-                    }
-            }
-            ExpressionKind::Binary { left, right, .. }
-            | ExpressionKind::Assignment { left, right } => {
-                left.contains_recovered_type_members() || right.contains_recovered_type_members()
-            }
-            ExpressionKind::As { expression, ty } => {
-                expression.contains_recovered_type_members() || ty.contains_recovered_type_members()
-            }
-        }
+fn expression_owns_recovered_type_members(expression: &Expression) -> bool {
+    match &expression.kind {
+        ExpressionKind::Call { type_arguments, .. } => type_arguments
+            .iter()
+            .flatten()
+            .any(TypeNode::contains_recovered_type_members),
+        ExpressionKind::New { type_arguments, .. } => type_arguments
+            .iter()
+            .any(TypeNode::contains_recovered_type_members),
+        ExpressionKind::FunctionLike(function) => signature_contains_recovered_type_members(
+            &function.type_parameters,
+            &function.parameters,
+            function.return_type.as_ref(),
+        ),
+        ExpressionKind::As { ty, .. } => ty.contains_recovered_type_members(),
+        ExpressionKind::Identifier { .. }
+        | ExpressionKind::This
+        | ExpressionKind::Literal(_)
+        | ExpressionKind::RegularExpression(_)
+        | ExpressionKind::Object(_)
+        | ExpressionKind::Array(_)
+        | ExpressionKind::Member { .. }
+        | ExpressionKind::ElementAccess { .. }
+        | ExpressionKind::Binary { .. }
+        | ExpressionKind::Unary { .. }
+        | ExpressionKind::Assignment { .. }
+        | ExpressionKind::Parenthesized(_)
+        | ExpressionKind::Missing => false,
     }
+}
+
+#[derive(Debug, Clone)]
+pub struct FunctionLikeExpression {
+    pub type_parameters: Vec<TypeParameterDeclaration>,
+    pub parameters: Vec<Parameter>,
+    pub return_type: Option<TypeNode>,
+    pub syntax: FunctionLikeSyntax,
+}
+
+#[derive(Debug, Clone)]
+pub enum FunctionLikeSyntax {
+    Arrow(ArrowBody),
+    Function {
+        name: Option<AuthoredBindingName>,
+        body: Vec<Statement>,
+        body_span: Span,
+    },
 }
 
 #[derive(Debug, Clone)]

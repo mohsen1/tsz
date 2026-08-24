@@ -1,4 +1,4 @@
-use super::{Parser, token_is_binding_identifier};
+use super::Parser;
 use crate::syntax::{
     AuthoredBindingName, ParserRecoveryKind, TokenKind, VariableDeclaration, VariableKind,
 };
@@ -14,7 +14,7 @@ impl Parser<'_> {
 
     pub(super) fn starts_type_alias_declaration(&self) -> bool {
         self.at(TokenKind::Type)
-            && token_is_binding_identifier(self.peek_kind(1))
+            && self.peek_kind(1).is_identifier()
             && self.tokens_are_on_same_line(self.index, self.index + 1)
     }
 
@@ -26,9 +26,9 @@ impl Parser<'_> {
         };
         self.bump();
         let binding_start = self.current().span;
-        let modeled_binding = token_is_binding_identifier(self.kind());
+        let modeled_binding = self.kind().is_identifier();
         let recovered_binding_names = self.recovered_binding_names(self.index);
-        let (name, name_span) = self.parse_name();
+        let (name, name_span) = self.parse_recovered_binding_head();
         self.retain_variable_declaration_recovery(
             binding_start,
             name_span,
@@ -37,6 +37,36 @@ impl Parser<'_> {
         );
         let annotation = self.eat(TokenKind::Colon).then(|| self.parse_type());
         let initializer = self.eat(TokenKind::Equals).then(|| self.parse_expression());
+        if initializer.as_ref().is_some_and(|expression| {
+            self.expression_starts_rejected_generic_arrow_prefix(expression.span)
+        }) && self.eat(TokenKind::Comma)
+        {
+            self.error_current("Variable declaration expected.", 1134);
+            self.bump();
+        }
+        if initializer.as_ref().is_some_and(|expression| {
+            matches!(expression.kind, crate::syntax::ExpressionKind::As { .. })
+                && !self.expression_starts_rejected_generic_arrow_prefix(expression.span)
+        }) && !self.at_any(&[
+            TokenKind::Semicolon,
+            TokenKind::RightBrace,
+            TokenKind::EndOfFile,
+        ]) && self.tokens_are_on_same_line(self.index.saturating_sub(1), self.index)
+        {
+            let authored_span = self.current().span;
+            let recovery_extent = self.recovery_extent_from_current(authored_span);
+            self.retain_parser_recovery(
+                ParserRecoveryKind::Declaration,
+                authored_span,
+                recovery_extent,
+            );
+            self.record_parser_recovery_for_analysis(
+                ParserRecoveryKind::VariableDeclaratorTail,
+                authored_span,
+                recovery_extent,
+            );
+            self.recover_statement(Some(recovery_extent));
+        }
         self.eat(TokenKind::Semicolon);
         VariableDeclaration {
             declaration_kind,
@@ -47,6 +77,72 @@ impl Parser<'_> {
             initializer,
             exported,
         }
+    }
+
+    /// Retain a structurally closed binding head without claiming its model.
+    /// The authored names and declaration recovery remain owned by the side scan.
+    pub(super) fn parse_recovered_binding_head(&mut self) -> (String, crate::source::Span) {
+        let opening = *self.current();
+        let closing_kind = match opening.kind {
+            TokenKind::LeftBrace => TokenKind::RightBrace,
+            TokenKind::LeftBracket => TokenKind::RightBracket,
+            _ => return self.parse_name(),
+        };
+        let first = self.peek_kind(1);
+        let valid_first = match opening.kind {
+            TokenKind::LeftBrace => {
+                matches!(
+                    first,
+                    TokenKind::RightBrace
+                        | TokenKind::DotDotDot
+                        | TokenKind::LeftBracket
+                        | TokenKind::StringLiteral
+                        | TokenKind::NumericLiteral
+                        | TokenKind::BigIntLiteral
+                ) || first.is_identifier_name()
+            }
+            TokenKind::LeftBracket => {
+                matches!(
+                    first,
+                    TokenKind::RightBracket
+                        | TokenKind::Comma
+                        | TokenKind::DotDotDot
+                        | TokenKind::LeftBrace
+                        | TokenKind::LeftBracket
+                ) || first.is_identifier()
+            }
+            _ => unreachable!(),
+        };
+        if !valid_first {
+            return self.parse_name();
+        }
+        let mut cursor = self.index;
+        let mut ignored_names = Vec::new();
+        self.scan_binding_target(&mut cursor, &mut ignored_names);
+        if cursor <= self.index + 1 || self.tokens[cursor - 1].kind != closing_kind {
+            return self.parse_name();
+        }
+        let closing = self.tokens[cursor - 1].span;
+        self.index = cursor;
+        ("<missing>".to_string(), opening.span.merge(closing))
+    }
+
+    pub(super) fn recovered_binding_names_in_target(
+        &self,
+        start: usize,
+    ) -> Vec<AuthoredBindingName> {
+        if self.tokens[start].kind == TokenKind::EndOfFile
+            || !matches!(
+                self.tokens[start].kind,
+                TokenKind::LeftBrace | TokenKind::LeftBracket
+            )
+        {
+            return Vec::new();
+        }
+        let mut names = Vec::new();
+        let mut cursor = start;
+        self.scan_binding_target(&mut cursor, &mut names);
+        names
     }
 
     fn recovered_binding_names(&self, start: usize) -> Vec<AuthoredBindingName> {
@@ -183,17 +279,22 @@ impl Parser<'_> {
     }
 
     fn scan_binding_target(&self, cursor: &mut usize, names: &mut Vec<AuthoredBindingName>) {
-        match self.tokens[*cursor].kind {
+        let Some(token) = self.tokens.get(*cursor) else {
+            return;
+        };
+        match token.kind {
             TokenKind::LeftBrace => self.scan_object_binding(cursor, names),
             TokenKind::LeftBracket => self.scan_array_binding(cursor, names),
-            kind if token_is_binding_identifier(kind) => {
-                let token = self.tokens[*cursor];
+            kind if kind.is_identifier() => {
+                let token = *token;
                 names.push(AuthoredBindingName {
                     name: self.text(token.span).to_string(),
                     span: token.span,
+                    token_kind: token.kind,
                 });
                 *cursor += 1;
             }
+            TokenKind::EndOfFile => {}
             _ => *cursor += 1,
         }
     }
@@ -227,10 +328,11 @@ impl Parser<'_> {
                 if self.tokens[*cursor].kind == TokenKind::Colon {
                     *cursor += 1;
                     self.scan_binding_target(cursor, names);
-                } else if token_is_binding_identifier(property.kind) {
+                } else if property.kind.is_identifier() {
                     names.push(AuthoredBindingName {
                         name: self.text(property.span).to_string(),
                         span: property.span,
+                        token_kind: property.kind,
                     });
                 }
             }

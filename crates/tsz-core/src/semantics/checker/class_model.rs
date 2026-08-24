@@ -265,12 +265,7 @@ impl Checker<'_> {
         argument_count: usize,
         depth: usize,
     ) -> Completion<TypeId> {
-        let callee = match self.force_type(callee, depth) {
-            Completion::Complete(callee) => callee,
-            Completion::Deferred => return Completion::Deferred,
-            Completion::Cycle => return Completion::Cycle,
-            Completion::Limit => return Completion::Limit,
-        };
+        let callee = completed!(self.force_type(callee, depth));
         match self.store.kind(callee).clone() {
             TypeKind::ClassConstructor { declaration, .. } => {
                 let Some(DeclarationModel::Class {

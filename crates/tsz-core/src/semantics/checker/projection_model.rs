@@ -291,19 +291,13 @@ impl Checker<'_> {
                 } else {
                     let mut found = false;
                     for property in shape.properties {
-                        match self.requires_authored_shape_display_inner(
+                        if completed!(self.requires_authored_shape_display_inner(
                             property.ty,
                             active,
                             references,
-                        ) {
-                            Completion::Complete(true) => {
-                                found = true;
-                                break;
-                            }
-                            Completion::Complete(false) => {}
-                            Completion::Deferred => return Completion::Deferred,
-                            Completion::Cycle => return Completion::Cycle,
-                            Completion::Limit => return Completion::Limit,
+                        )) {
+                            found = true;
+                            break;
                         }
                     }
                     Completion::Complete(found)
@@ -317,15 +311,11 @@ impl Checker<'_> {
             | TypeKind::Intersection(members) => {
                 let mut found = false;
                 for member in members {
-                    match self.requires_authored_shape_display_inner(member, active, references) {
-                        Completion::Complete(true) => {
-                            found = true;
-                            break;
-                        }
-                        Completion::Complete(false) => {}
-                        Completion::Deferred => return Completion::Deferred,
-                        Completion::Cycle => return Completion::Cycle,
-                        Completion::Limit => return Completion::Limit,
+                    if completed!(
+                        self.requires_authored_shape_display_inner(member, active, references)
+                    ) {
+                        found = true;
+                        break;
                     }
                 }
                 Completion::Complete(found)
@@ -339,15 +329,11 @@ impl Checker<'_> {
                 members.push(signature.return_type);
                 let mut found = false;
                 for member in members {
-                    match self.requires_authored_shape_display_inner(member, active, references) {
-                        Completion::Complete(true) => {
-                            found = true;
-                            break;
-                        }
-                        Completion::Complete(false) => {}
-                        Completion::Deferred => return Completion::Deferred,
-                        Completion::Cycle => return Completion::Cycle,
-                        Completion::Limit => return Completion::Limit,
+                    if completed!(
+                        self.requires_authored_shape_display_inner(member, active, references)
+                    ) {
+                        found = true;
+                        break;
                     }
                 }
                 Completion::Complete(found)
@@ -362,14 +348,9 @@ impl Checker<'_> {
                 };
                 let mut requires_authored = false;
                 for argument in arguments {
-                    match self.requires_authored_shape_display_inner(*argument, active, references)
-                    {
-                        Completion::Complete(true) => requires_authored = true,
-                        Completion::Complete(false) => {}
-                        Completion::Deferred => return Completion::Deferred,
-                        Completion::Cycle => return Completion::Cycle,
-                        Completion::Limit => return Completion::Limit,
-                    }
+                    requires_authored |= completed!(
+                        self.requires_authored_shape_display_inner(*argument, active, references)
+                    );
                 }
                 if requires_authored {
                     Completion::Complete(true)
@@ -490,12 +471,7 @@ impl Checker<'_> {
         name: &str,
         allow_shape_callable: bool,
     ) -> Completion<Option<TypeId>> {
-        let object = match self.force_type(object, 0) {
-            Completion::Complete(object) => object,
-            Completion::Deferred => return Completion::Deferred,
-            Completion::Cycle => return Completion::Cycle,
-            Completion::Limit => return Completion::Limit,
-        };
+        let object = completed!(self.force_type(object, 0));
         match self.store.kind(object) {
             TypeKind::Object(shape)
             | TypeKind::ClassInstance {
@@ -523,13 +499,8 @@ impl Checker<'_> {
                     }
                     return Completion::Complete(Some(index.value));
                 }
-                match self.requires_authored_shape_display(object) {
-                    Completion::Complete(false) => {}
-                    Completion::Complete(true) | Completion::Deferred => {
-                        return Completion::Deferred;
-                    }
-                    Completion::Cycle => return Completion::Cycle,
-                    Completion::Limit => return Completion::Limit,
+                if completed!(self.requires_authored_shape_display(object)) {
+                    return Completion::Deferred;
                 }
                 Completion::Complete(None)
             }
@@ -631,12 +602,7 @@ impl Checker<'_> {
         name: &str,
         depth: usize,
     ) -> Completion<TypeId> {
-        let object = match self.force_type(object, depth) {
-            Completion::Complete(object) => object,
-            Completion::Deferred => return Completion::Deferred,
-            Completion::Cycle => return Completion::Cycle,
-            Completion::Limit => return Completion::Limit,
-        };
+        let object = completed!(self.force_type(object, depth));
         match self.store.kind(object).clone() {
             TypeKind::Object(shape)
             | TypeKind::ClassInstance {
@@ -663,13 +629,8 @@ impl Checker<'_> {
                     }
                     return Completion::Complete(index.value);
                 }
-                match self.requires_authored_shape_display(object) {
-                    Completion::Complete(false) => {}
-                    Completion::Complete(true) | Completion::Deferred => {
-                        return Completion::Deferred;
-                    }
-                    Completion::Cycle => return Completion::Cycle,
-                    Completion::Limit => return Completion::Limit,
+                if completed!(self.requires_authored_shape_display(object)) {
+                    return Completion::Deferred;
                 }
                 Completion::Complete(self.store.intern(TypeKind::Invalid(
                     InvalidType::MissingProperty {
@@ -1231,12 +1192,7 @@ impl Checker<'_> {
     }
 
     pub(super) fn evaluate_keyof(&mut self, operand: TypeId, depth: usize) -> Completion<TypeId> {
-        let operand = match self.force_type(operand, depth) {
-            Completion::Complete(operand) => operand,
-            Completion::Deferred => return Completion::Deferred,
-            Completion::Cycle => return Completion::Cycle,
-            Completion::Limit => return Completion::Limit,
-        };
+        let operand = completed!(self.force_type(operand, depth));
         let properties = match self.store.kind(operand).clone() {
             TypeKind::Object(shape)
             | TypeKind::ClassInstance {
@@ -1309,18 +1265,8 @@ impl Checker<'_> {
         index: TypeId,
         depth: usize,
     ) -> Completion<TypeId> {
-        let object = match self.force_type(object, depth) {
-            Completion::Complete(object) => object,
-            Completion::Deferred => return Completion::Deferred,
-            Completion::Cycle => return Completion::Cycle,
-            Completion::Limit => return Completion::Limit,
-        };
-        let index = match self.force_type(index, depth) {
-            Completion::Complete(index) => index,
-            Completion::Deferred => return Completion::Deferred,
-            Completion::Cycle => return Completion::Cycle,
-            Completion::Limit => return Completion::Limit,
-        };
+        let object = completed!(self.force_type(object, depth));
+        let index = completed!(self.force_type(index, depth));
         let properties = match self.store.kind(object).clone() {
             TypeKind::Object(shape)
             | TypeKind::ClassInstance {
@@ -1368,13 +1314,8 @@ impl Checker<'_> {
             }
         }
         if !missing.is_empty() {
-            match self.requires_authored_shape_display(object) {
-                Completion::Complete(false) => {}
-                Completion::Complete(true) | Completion::Deferred => {
-                    return Completion::Deferred;
-                }
-                Completion::Cycle => return Completion::Cycle,
-                Completion::Limit => return Completion::Limit,
+            if completed!(self.requires_authored_shape_display(object)) {
+                return Completion::Deferred;
             }
             return Completion::Complete(self.store.intern(TypeKind::Invalid(
                 InvalidType::MissingProperties {

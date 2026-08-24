@@ -114,6 +114,10 @@ name = "rewrite_parser_recovery_completion"
 path = "rewrite-tests/parser_recovery_completion.rs"
 
 [[test]]
+name = "rewrite_function_expressions"
+path = "rewrite-tests/function_expressions.rs"
+
+[[test]]
 name = "rewrite_class_property_initialization"
 path = "rewrite-tests/class_property_initialization.rs"
 

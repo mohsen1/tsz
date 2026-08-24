@@ -580,7 +580,7 @@ fn invalid_assignment_targets_defer_before_relation_diagnostics() {
 }
 
 #[test]
-fn declaration_value_caches_replay_incomplete_value_provenance_in_every_root_order() {
+fn repeated_declaration_value_queries_preserve_incomplete_provenance_in_every_root_order() {
     let producer = concat!(
         "declare const box:{known:string};",
         "const seed='x'+box['missing'];",

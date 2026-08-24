@@ -1043,10 +1043,7 @@ fn recovery_contexts_do_not_reclassify_array_syntax_as_empty_element_access() {
     for (source, expected) in [
         ("const chosen = flag ? renamed : [];", vec![1109, 1109]),
         ("const nested = flag ? renamed : [1, 2];", vec![1109, 1109]),
-        (
-            "function nested([], {}): void {}",
-            vec![1003, 1005, 1109, 1109, 1109, 1109],
-        ),
+        ("function nested([], {}): void {}", vec![]),
         (
             "type Selected<Value> = Value extends never[] ? Value : [];",
             vec![],

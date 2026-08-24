@@ -59,6 +59,6 @@ pub(super) fn expression_has_recovered_left_edge(expression: &Expression) -> boo
         | ExpressionKind::RegularExpression(_)
         | ExpressionKind::Object(_)
         | ExpressionKind::Array(_)
-        | ExpressionKind::Arrow { .. } => false,
+        | ExpressionKind::FunctionLike(_) => false,
     }
 }

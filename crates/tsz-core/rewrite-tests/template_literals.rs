@@ -835,7 +835,7 @@ fn unmodeled_template_regions_skip_only_their_own_semantic_diagnostics() {
                 "let abc: \"AB\\r\\nC\" = `AB\nC`;\n",
                 "let de_NEWLINE_f: \"DE\\nF\" = `DE${\"\\n\"}F`;",
             ),
-            &[1109, 1109],
+            &[],
             false,
         ),
     ];

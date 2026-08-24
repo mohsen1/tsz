@@ -10,12 +10,53 @@ pub(super) struct PendingParserRecoveryFact {
     authored_span: Span,
     recovery_extent: Span,
     kind: ParserRecoveryKind,
+    participation: PendingParserRecoveryParticipation,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PendingParserRecoveryParticipation {
+    /// The recovery was observed while parsing and may still bound token consumption.
+    ControlAndAnalysis,
+    /// The recovery was synthesized for downstream ownership after its syntax was parsed.
+    AnalysisOnly,
 }
 
 impl Parser<'_> {
+    pub(super) fn consume_balanced_tokens(
+        &mut self,
+        open: TokenKind,
+        close: TokenKind,
+        missing_message: &str,
+    ) -> Span {
+        debug_assert!(self.at(open));
+        let start = self.bump().span;
+        let mut depth = 1_u32;
+        while depth != 0 && !self.at(TokenKind::EndOfFile) {
+            let kind = self.kind();
+            self.bump();
+            if kind == open {
+                depth += 1;
+            } else if kind == close {
+                depth -= 1;
+            }
+        }
+        if depth != 0 {
+            self.error_current(missing_message, 1005);
+        }
+        start.merge(self.previous().span)
+    }
+
     pub(super) fn observe_unmodeled_postfix_expression(&mut self, receiver: Span) {
         self.observe_unmodeled_non_null_template_adjacency();
         self.reject_tagged_template(receiver);
+        if self.at(TokenKind::Satisfies) {
+            let authored_span = self.current().span;
+            self.retain_parser_recovery(
+                ParserRecoveryKind::Expression,
+                authored_span,
+                self.recovery_extent_from_current(authored_span),
+            );
+        }
     }
 
     pub(super) fn retain_parser_recovery(
@@ -23,6 +64,51 @@ impl Parser<'_> {
         kind: ParserRecoveryKind,
         authored_span: Span,
         recovery_extent: Span,
+    ) {
+        self.record_parser_recovery(
+            kind,
+            authored_span,
+            recovery_extent,
+            PendingParserRecoveryParticipation::ControlAndAnalysis,
+        );
+    }
+
+    pub(super) fn record_parser_recovery_for_analysis(
+        &mut self,
+        kind: ParserRecoveryKind,
+        authored_span: Span,
+        recovery_extent: Span,
+    ) {
+        self.record_parser_recovery(
+            kind,
+            authored_span,
+            recovery_extent,
+            PendingParserRecoveryParticipation::AnalysisOnly,
+        );
+    }
+
+    pub(super) fn recover_statement(&mut self, recovery_extent: Option<Span>) {
+        while !self.at_any(&[
+            TokenKind::Semicolon,
+            TokenKind::RightBrace,
+            TokenKind::EndOfFile,
+        ]) && recovery_extent.is_none_or(|extent| self.current().span.start < extent.end)
+        {
+            self.observe_unmodeled_regular_expression_if_current();
+            self.observe_unmodeled_template_if_current();
+            self.bump();
+        }
+        if recovery_extent.is_none_or(|extent| self.current().span.end <= extent.end) {
+            self.eat(TokenKind::Semicolon);
+        }
+    }
+
+    fn record_parser_recovery(
+        &mut self,
+        kind: ParserRecoveryKind,
+        authored_span: Span,
+        recovery_extent: Span,
+        participation: PendingParserRecoveryParticipation,
     ) {
         if self.speculating {
             return;
@@ -34,6 +120,7 @@ impl Parser<'_> {
             authored_span,
             recovery_extent,
             kind,
+            participation,
         });
     }
 
@@ -84,14 +171,13 @@ impl Parser<'_> {
         }
     }
 
-    /// Whether a later postfix fragment is still part of an earlier recovery
-    /// segment. The receiver's trailing edge and `[` must remain in that
-    /// segment. A line break is accepted only while the recovery delimiter is
-    /// still open, so a following expression statement stays independent.
+    /// Whether `[` continues a retained recovery across the receiver's trailing
+    /// edge, including line breaks while the recovery delimiter remains open.
     pub(super) fn postfix_continues_retained_recovery(&self, receiver: Span) -> bool {
         let bracket = self.current().span;
         self.parser_recovery_facts.iter().any(|fact| {
-            fact.recovery_extent.file == receiver.file
+            fact.participation == PendingParserRecoveryParticipation::ControlAndAnalysis
+                && fact.recovery_extent.file == receiver.file
                 && fact.recovery_extent.start < receiver.end
                 && receiver.end <= fact.recovery_extent.end
                 && contains_authored_span(fact.recovery_extent, bracket)
@@ -100,6 +186,95 @@ impl Parser<'_> {
                         .partition_point(|token| token.span.start < fact.authored_span.start),
                     self.index,
                 ) || self.recovery_delimiter_remains_open(fact.authored_span.start))
+        })
+    }
+
+    pub(super) fn parenthesis_follows_recovered_generic_prefix(&self) -> bool {
+        if self.index == 0
+            || !matches!(
+                self.tokens[self.index - 1].kind,
+                TokenKind::GreaterThan
+                    | TokenKind::GreaterThanGreaterThan
+                    | TokenKind::GreaterThanGreaterThanGreaterThan
+                    | TokenKind::GreaterThanEquals
+                    | TokenKind::GreaterThanGreaterThanEquals
+                    | TokenKind::GreaterThanGreaterThanGreaterThanEquals
+            )
+        {
+            return false;
+        }
+        self.parser_recovery_facts.iter().any(|fact| {
+            fact.participation == PendingParserRecoveryParticipation::ControlAndAnalysis
+                && matches!(
+                    fact.kind,
+                    ParserRecoveryKind::Expression | ParserRecoveryKind::RejectedGenericArrowPrefix
+                )
+                && fact.recovery_extent.start <= self.current().span.start
+                && self.current().span.end <= fact.recovery_extent.end
+                && self.tokens.iter().any(|token| {
+                    token.kind == TokenKind::LessThan && token.span == fact.authored_span
+                })
+        })
+    }
+
+    pub(super) fn parenthesis_continues_recovered_function_declaration(&self) -> bool {
+        self.index > 0
+            && self.tokens[self.index - 1].kind.is_identifier_name()
+            && self.current_continues_recovered_function_declaration()
+    }
+
+    pub(super) fn current_continues_recovered_function_declaration(&self) -> bool {
+        self.parser_recovery_facts.iter().any(|fact| {
+            fact.kind == ParserRecoveryKind::GeneratorFunctionLike
+                && contains_authored_span(fact.recovery_extent, self.current().span)
+                && self.tokens.iter().any(|token| {
+                    token.kind == TokenKind::Function && token.span == fact.authored_span
+                })
+        })
+    }
+
+    pub(super) fn current_is_inside_recovered_generator(&self) -> bool {
+        self.parser_recovery_facts.iter().any(|fact| {
+            fact.kind == ParserRecoveryKind::GeneratorFunctionLike
+                && contains_authored_span(fact.recovery_extent, self.current().span)
+                && self
+                    .tokens
+                    .iter()
+                    .position(|token| token.span == fact.authored_span)
+                    .is_some_and(|index| {
+                        self.tokens[index].kind == TokenKind::Star
+                            || self.tokens[index].kind == TokenKind::Function
+                                && self.token_kind_at(index + 1) == TokenKind::Star
+                    })
+        })
+    }
+
+    pub(super) fn current_starts_rejected_generic_arrow_prefix(&self) -> bool {
+        self.parser_recovery_facts.iter().any(|fact| {
+            fact.kind == ParserRecoveryKind::RejectedGenericArrowPrefix
+                && fact.authored_span == self.current().span
+        })
+    }
+
+    pub(super) fn expression_starts_rejected_generic_arrow_prefix(&self, span: Span) -> bool {
+        self.parser_recovery_facts.iter().any(|fact| {
+            fact.kind == ParserRecoveryKind::RejectedGenericArrowPrefix
+                && fact.authored_span.start == span.start
+        })
+    }
+
+    pub(super) fn current_is_inside_rejected_generic_arrow_prefix(&self) -> bool {
+        self.parser_recovery_facts.iter().any(|fact| {
+            fact.kind == ParserRecoveryKind::RejectedGenericArrowPrefix
+                && fact.authored_span.start < self.current().span.start
+                && contains_authored_span(fact.recovery_extent, self.current().span)
+        })
+    }
+
+    pub(super) fn expression_is_inside_rejected_generic_arrow_prefix(&self, span: Span) -> bool {
+        self.parser_recovery_facts.iter().any(|fact| {
+            fact.kind == ParserRecoveryKind::RejectedGenericArrowPrefix
+                && contains_authored_span(fact.recovery_extent, span)
         })
     }
 
@@ -126,7 +301,7 @@ impl Parser<'_> {
         depth > 0
     }
 
-    pub(super) fn recover_missing_type(&mut self, token: Token) -> TypeNode {
+    pub(super) fn recover_missing_type(&mut self, token: Token, consume: bool) -> TypeNode {
         self.observe_unmodeled_regular_expression_if_current();
         self.observe_unmodeled_template_if_current();
         if !matches!(
@@ -140,7 +315,9 @@ impl Parser<'_> {
             self.retain_parser_recovery(ParserRecoveryKind::Type, token.span, recovery_extent);
         }
         self.error_current("Type expected.", 1110);
-        self.bump();
+        if consume {
+            self.bump();
+        }
         TypeNode {
             span: token.span,
             kind: TypeNodeKind::Missing,
@@ -157,7 +334,8 @@ impl Parser<'_> {
         if matches!(
             authored_token_boundary(self.kind()),
             RecoveryBoundary::Closed
-        ) {
+        ) && !closed_token_continues_recovered_owner(self.kind(), self.peek_kind(1))
+        {
             return authored_span.merge(current);
         }
 
@@ -304,5 +482,15 @@ const fn continues_recovered_owner(kind: TokenKind) -> bool {
             | TokenKind::Question
             | TokenKind::Extends
             | TokenKind::FatArrow
+            | TokenKind::As
+            | TokenKind::Satisfies
     )
+}
+
+const fn closed_token_continues_recovered_owner(current: TokenKind, next: TokenKind) -> bool {
+    matches!(current, TokenKind::RightBrace | TokenKind::RightBracket)
+        && matches!(
+            next,
+            TokenKind::Equals | TokenKind::Comma | TokenKind::As | TokenKind::Satisfies
+        )
 }

@@ -1,10 +1,98 @@
-use super::{Parser, token_is_binding_identifier};
+use super::Parser;
 use crate::source::Span;
 use crate::syntax::{
-    IfStatement, JumpStatement, SwitchClause, SwitchClauseKind, SwitchStatement, TokenKind,
+    IfStatement, JumpStatement, Statement, StatementKind, SwitchClause, SwitchClauseKind,
+    SwitchStatement, TokenKind, VariableDeclaration, VariableKind,
 };
 
 impl Parser<'_> {
+    pub(super) fn starts_unmodeled_for_binding_pattern(&self) -> bool {
+        let mut cursor = self.index + 1;
+        if self.token_kind_at(cursor) == TokenKind::Await {
+            cursor += 1;
+        }
+        self.token_kind_at(cursor) == TokenKind::LeftParen
+            && self.token_kind_at(cursor + 1) == TokenKind::Const
+            && matches!(
+                self.token_kind_at(cursor + 2),
+                TokenKind::LeftBrace | TokenKind::LeftBracket
+            )
+    }
+
+    pub(super) fn parse_unmodeled_for_statement(&mut self) -> Vec<Statement> {
+        let authored_span = self.bump().span;
+        self.eat(TokenKind::Await);
+        let mut statements = Vec::new();
+        if self.at(TokenKind::LeftParen) {
+            self.bump();
+            if matches!(
+                self.kind(),
+                TokenKind::Let | TokenKind::Const | TokenKind::Var
+            ) {
+                let declaration_start = self.current().span;
+                let declaration_kind = match self.kind() {
+                    TokenKind::Const => VariableKind::Const,
+                    TokenKind::Var => VariableKind::Var,
+                    _ => VariableKind::Let,
+                };
+                self.bump();
+                let binding_start = self.current().span;
+                let recovered_binding_names = self.recovered_binding_names_in_target(self.index);
+                let (name, name_span) = self.parse_recovered_binding_head();
+                let declaration_span = declaration_start.merge(name_span);
+                statements.push(Statement {
+                    id: self.alloc_node(),
+                    span: declaration_span,
+                    kind: StatementKind::Variable(VariableDeclaration {
+                        declaration_kind,
+                        name,
+                        name_span,
+                        recovered_binding_names,
+                        annotation: None,
+                        initializer: None,
+                        exported: false,
+                    }),
+                });
+                self.record_parser_recovery_for_analysis(
+                    crate::syntax::ParserRecoveryKind::ForStatement,
+                    binding_start,
+                    declaration_span,
+                );
+                debug_assert!(binding_start.start <= name_span.start);
+            }
+            let mut depth = 1_u32;
+            while depth != 0 && !self.at(TokenKind::EndOfFile) {
+                let kind = self.kind();
+                self.bump();
+                if kind == TokenKind::LeftParen {
+                    depth += 1;
+                } else if kind == TokenKind::RightParen {
+                    depth -= 1;
+                }
+            }
+            if depth != 0 {
+                self.error_current("')' expected.", 1005);
+            }
+        } else {
+            self.error_current("'(' expected.", 1005);
+        }
+        let body = if self.at(TokenKind::LeftBrace) {
+            self.parse_block()
+        } else if self.at(TokenKind::EndOfFile) {
+            Vec::new()
+        } else {
+            vec![self.parse_statement()]
+        };
+        statements.extend(body);
+        let recovery_extent = authored_span.merge(self.previous().span);
+        self.record_parser_recovery_for_analysis(
+            crate::syntax::ParserRecoveryKind::ForStatement,
+            authored_span,
+            recovery_extent,
+        );
+        statements
+    }
+
     pub(super) fn parse_if_statement(&mut self) -> IfStatement {
         self.bump();
         self.expect(TokenKind::LeftParen, "'(' expected.", 1005);
@@ -84,6 +172,11 @@ impl Parser<'_> {
         {
             return;
         }
+        if self.at(TokenKind::Colon) && self.current_is_inside_rejected_generic_arrow_prefix() {
+            self.error_current("';' expected.", 1005);
+            self.bump();
+            return;
+        }
         if self.tokens_are_on_same_line(self.index.saturating_sub(1), self.index) {
             self.has_unmodeled_top_level_syntax = true;
         }
@@ -100,7 +193,7 @@ impl Parser<'_> {
             ))
             .bytes()
             .any(|byte| matches!(byte, b'\n' | b'\r'));
-        let (label, label_span) = if !has_line_break && token_is_binding_identifier(self.kind()) {
+        let (label, label_span) = if !has_line_break && self.kind().is_identifier() {
             let (label, span) = self.parse_name();
             (Some(label), Some(span))
         } else {

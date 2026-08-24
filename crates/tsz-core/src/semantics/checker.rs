@@ -1,7 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
 use rustc_hash::FxHashMap;
-
 mod binary_expression;
 mod cache_model;
 mod call_model;
@@ -15,6 +14,7 @@ mod flow_reference;
 mod function_model;
 mod generic_call_instantiation;
 mod import_alias;
+mod model_collection;
 mod object_shape;
 mod primary_reference;
 mod projection_model;
@@ -33,12 +33,12 @@ use relation_diagnostic::{ContextualType, RelationDiagnosticStyle};
 
 use crate::bind::{DeclarationKind, Meaning, ScopeId};
 use crate::diagnostics::Diagnostic;
-use crate::program::{CapabilityAnalysis, CompilerOptions, Program, SemanticCompletion};
+use crate::program::{CapabilityAnalysis, CompilerOptions, Program};
 use crate::source::{DeclId, FileId, NodeId, Span};
 use crate::syntax::{
     ClassDeclaration, Expression, ExpressionKind, FunctionDeclaration, InterfaceDeclaration,
-    KeywordType, Parameter, Statement, StatementKind, TypeAliasDeclaration, TypeNode, TypeNodeKind,
-    UnaryOperator, VariableDeclaration, VariableKind,
+    KeywordType, Parameter, TypeAliasDeclaration, TypeNode, TypeNodeKind, UnaryOperator,
+    VariableDeclaration, VariableKind,
 };
 
 use super::relation::{RelationContext, RelationMode};
@@ -121,7 +121,6 @@ struct Checker<'a> {
     store: TypeStore,
     models: FxHashMap<DeclId, DeclarationModel<'a>>,
     parameter_type_overrides: FxHashMap<DeclId, TypeId>,
-    deferred_anonymous_parameters: HashSet<DeclId>,
     forbidden_default_type_parameters: Vec<HashSet<TypeId>>,
     value_queries: FxHashMap<DeclId, declaration_value::ValueQueryState>,
     force_queries: FxHashMap<TypeId, QueryState>,
@@ -156,7 +155,6 @@ impl<'a> Checker<'a> {
             store: TypeStore::new(),
             models: FxHashMap::default(),
             parameter_type_overrides: FxHashMap::default(),
-            deferred_anonymous_parameters: HashSet::new(),
             forbidden_default_type_parameters: Vec::new(),
             value_queries: FxHashMap::default(),
             force_queries: FxHashMap::default(),
@@ -176,171 +174,6 @@ impl<'a> Checker<'a> {
         };
         checker.collect_models();
         checker
-    }
-
-    fn collect_statement_model(&mut self, file: FileId, statement: &'a Statement, scope: ScopeId) {
-        let bound = &self.program.files[file.0 as usize].bindings;
-        match &statement.kind {
-            StatementKind::Variable(declaration) => {
-                if let Some(id) = self.find_declaration(
-                    file,
-                    statement.id,
-                    DeclarationKind::Variable,
-                    &declaration.name,
-                ) {
-                    self.models
-                        .insert(id, DeclarationModel::Variable { declaration, scope });
-                }
-            }
-            StatementKind::Function(declaration) => {
-                let function_scope = bound
-                    .scope_for_node
-                    .get(&statement.id)
-                    .copied()
-                    .unwrap_or(scope);
-                if let Some(id) = self.find_declaration(
-                    file,
-                    statement.id,
-                    DeclarationKind::Function,
-                    &declaration.name,
-                ) {
-                    self.models.insert(
-                        id,
-                        DeclarationModel::Function {
-                            declaration,
-                            scope: function_scope,
-                        },
-                    );
-                }
-                let mut seen_parameters = HashSet::new();
-                for parameter in declaration
-                    .parameters
-                    .iter()
-                    .filter(|parameter| seen_parameters.insert(parameter.name.as_str()))
-                {
-                    if let Some(id) = self.find_declaration(
-                        file,
-                        statement.id,
-                        DeclarationKind::Parameter,
-                        &parameter.name,
-                    ) {
-                        self.models.insert(
-                            id,
-                            DeclarationModel::Parameter {
-                                parameter,
-                                scope: function_scope,
-                            },
-                        );
-                    }
-                }
-                for nested in &declaration.body {
-                    let nested_scope = bound
-                        .scope_for_node
-                        .get(&nested.id)
-                        .copied()
-                        .unwrap_or(function_scope);
-                    self.collect_statement_model(file, nested, nested_scope);
-                }
-            }
-            StatementKind::TypeAlias(declaration) => {
-                if let Some(id) = self.find_declaration(
-                    file,
-                    statement.id,
-                    DeclarationKind::TypeAlias,
-                    &declaration.name,
-                ) {
-                    self.models
-                        .insert(id, DeclarationModel::TypeAlias { declaration, scope });
-                }
-            }
-            StatementKind::Interface(declaration) => {
-                if let Some(id) = self.find_declaration(
-                    file,
-                    statement.id,
-                    DeclarationKind::Interface,
-                    &declaration.name,
-                ) {
-                    self.models
-                        .insert(id, DeclarationModel::Interface { declaration, scope });
-                }
-            }
-            StatementKind::Class(declaration) => {
-                let ids = bound
-                    .declarations
-                    .iter()
-                    .filter(|candidate| {
-                        candidate.owner == statement.id
-                            && candidate.kind == DeclarationKind::Class
-                            && candidate.name == declaration.name
-                    })
-                    .map(|candidate| candidate.id)
-                    .collect::<Vec<_>>();
-                let Some(identity) = ids.first().copied() else {
-                    return;
-                };
-                for id in ids {
-                    self.models.insert(
-                        id,
-                        DeclarationModel::Class {
-                            identity,
-                            declaration,
-                            scope,
-                        },
-                    );
-                }
-            }
-            StatementKind::Block(statements) => {
-                for nested in statements {
-                    let nested_scope = bound
-                        .scope_for_node
-                        .get(&nested.id)
-                        .copied()
-                        .unwrap_or(scope);
-                    self.collect_statement_model(file, nested, nested_scope);
-                }
-            }
-            StatementKind::If(control_flow) => {
-                let then_scope = bound
-                    .scope_for_node
-                    .get(&control_flow.then_statement.id)
-                    .copied()
-                    .unwrap_or(scope);
-                self.collect_statement_model(file, &control_flow.then_statement, then_scope);
-                if let Some(else_statement) = &control_flow.else_statement {
-                    let else_scope = bound
-                        .scope_for_node
-                        .get(&else_statement.id)
-                        .copied()
-                        .unwrap_or(scope);
-                    self.collect_statement_model(file, else_statement, else_scope);
-                }
-            }
-            StatementKind::Switch(control_flow) => {
-                let switch_scope = bound
-                    .scope_for_node
-                    .get(&statement.id)
-                    .copied()
-                    .unwrap_or(scope);
-                for clause in &control_flow.clauses {
-                    for nested in &clause.statements {
-                        let nested_scope = bound
-                            .scope_for_node
-                            .get(&nested.id)
-                            .copied()
-                            .unwrap_or(switch_scope);
-                        self.collect_statement_model(file, nested, nested_scope);
-                    }
-                }
-            }
-            StatementKind::Import(_)
-            | StatementKind::Export(_)
-            | StatementKind::Break(_)
-            | StatementKind::Continue(_)
-            | StatementKind::Return(_)
-            | StatementKind::Expression(_)
-            | StatementKind::Empty
-            | StatementKind::Unknown => {}
-        }
     }
 
     fn find_declaration(
@@ -420,18 +253,12 @@ impl<'a> Checker<'a> {
             let value = annotation
                 .or(initializer)
                 .unwrap_or(self.store.builtins.any);
-            if annotation_is_complete && self.is_cacheable_type(value) {
-                self.value_queries.insert(
-                    id,
-                    declaration_value::ValueQueryState::Ready {
-                        value,
-                        completion: if annotation.is_some() {
-                            SemanticCompletion::Complete
-                        } else {
-                            initializer_completion
-                        },
-                    },
-                );
+            if annotation_is_complete
+                && (annotation.is_some() || initializer_completion.is_complete())
+                && self.is_cacheable_type(value)
+            {
+                self.value_queries
+                    .insert(id, declaration_value::ValueQueryState::Ready(value));
             } else {
                 self.value_queries.remove(&id);
             }
@@ -559,31 +386,9 @@ impl<'a> Checker<'a> {
                 type_parameters: signature_type_parameters,
                 parameters,
                 return_type,
-            } => {
-                if !signature_type_parameters.is_empty() {
-                    return self.store.deferred_generic_function();
-                }
-                let scope = self.node_scope(file, *id, scope);
-                self.register_anonymous_parameter_types(file, scope, parameters, type_parameters);
-                let parameters = match self.anonymous_signature_parameters(
-                    file,
-                    scope,
-                    parameters,
-                    type_parameters,
-                ) {
-                    Completion::Complete(parameters) => parameters,
-                    Completion::Deferred | Completion::Cycle | Completion::Limit => {
-                        return self.store.deferred_generic_function();
-                    }
-                };
-                let return_type = self.resolve_type_node(file, scope, return_type, type_parameters);
-                self.store.intern(TypeKind::Function(Signature {
-                    generic_declaration: None,
-                    parameters,
-                    return_type,
-                }))
+                ..
             }
-            TypeNodeKind::Constructor {
+            | TypeNodeKind::Constructor {
                 id,
                 type_parameters: signature_type_parameters,
                 parameters,
@@ -944,19 +749,9 @@ impl<'a> Checker<'a> {
                     index,
                     ElementAccessMode::Read,
                 ),
-            ExpressionKind::Arrow {
-                parameters,
-                return_type: annotation,
-                body,
-            } => self.infer_arrow_expression(
-                file,
-                scope,
-                expression.id,
-                parameters,
-                annotation.as_ref(),
-                body,
-                expected,
-            ),
+            ExpressionKind::FunctionLike(function) => {
+                self.infer_function_like_expression(file, scope, expression, function, expected)
+            }
             ExpressionKind::Binary { .. } => {
                 self.infer_authored_binary_expression(file, scope, expression)
             }
@@ -1047,17 +842,11 @@ impl<'a> Checker<'a> {
             DeferredType::Reference {
                 declaration,
                 arguments,
-            } => match reference_instantiation {
-                Some(Completion::Complete(
-                    reference_instantiation::ReferenceInstantiation::Exact,
-                )) => self.evaluate_reference(declaration, &arguments),
-                Some(Completion::Complete(
-                    reference_instantiation::ReferenceInstantiation::Defaulted { arguments },
-                )) => self.evaluate_defaulted_reference(declaration, &arguments),
-                Some(Completion::Deferred) | None => Completion::Deferred,
-                Some(Completion::Cycle) => Completion::Cycle,
-                Some(Completion::Limit) => Completion::Limit,
-            },
+            } => self.evaluate_reference_instantiation(
+                declaration,
+                &arguments,
+                reference_instantiation.unwrap_or(Completion::Deferred),
+            ),
             DeferredType::Value(declaration) => self.declaration_value_type(declaration),
             query @ DeferredType::FlowReference { .. } => self.force_flow(query, depth + 1),
             DeferredType::Call {

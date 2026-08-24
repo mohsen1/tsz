@@ -1,8 +1,10 @@
 use crate::diagnostics::Diagnostic;
 use crate::source::{NodeId, SourceText, Span};
 
+mod arrows;
 mod declarations;
 mod element_access;
+mod functions;
 mod literals;
 mod modifiers;
 mod numeric_literal;
@@ -17,18 +19,19 @@ mod type_arguments;
 mod type_members;
 mod type_parameters;
 
+use self::{arrows::ParenthesizedArrowToken, modifiers::Modifiers};
 use super::numeric_literal::{ScannedNumericLiteral, ScannedSeparatedNumberLiteral};
 use super::regular_expression::ScannedRegularExpressionLiteral;
 use super::string_literal::{ScannedLineContinuationStringLiteral, ScannedStringLiteral};
 use super::template_literal::ScannedTemplateLiteral;
 use super::{
-    AccessorKind, ArrowBody, ClassDeclaration, ClassMember, ClassMemberKind, ClassMemberModifiers,
-    CommentTrivia, ExportDeclaration, ExportSpecifier, Expression, ExpressionKind,
-    FunctionDeclaration, ImportBinding, ImportDeclaration, InterfaceDeclaration, ParameterModifier,
-    PropertyNameKind, Statement, StatementKind, Token, TokenKind, TypeAliasDeclaration, TypeNode,
-    TypeNodeKind, UnaryOperator, UnmodeledDeclarationHostFact, scan_source,
+    AccessorKind, ClassDeclaration, ClassMember, ClassMemberKind, ClassMemberModifiers,
+    CommentTrivia, ExportDeclaration, ExportSpecifier, Expression, ExpressionKind, ImportBinding,
+    ImportDeclaration, InterfaceDeclaration, ParameterModifier, ParserRecoveryKind,
+    PropertyNameKind, SourceSyntaxFact, Statement, StatementKind, Token, TokenKind,
+    TypeAliasDeclaration, TypeNode, TypeNodeKind, UnaryOperator, UnmodeledDeclarationHostFact,
+    scan_source,
 };
-use modifiers::{Modifiers, ProductCapabilities};
 use operators::{binary_operator, expression_has_recovered_left_edge};
 
 #[derive(Debug)]
@@ -66,7 +69,7 @@ struct Parser<'a> {
     has_unmodeled_top_level_syntax: bool,
     parser_recovery_facts: Vec<recovery::PendingParserRecoveryFact>,
     unmodeled_declaration_hosts: Vec<UnmodeledDeclarationHostFact>,
-    product_capabilities: ProductCapabilities,
+    source_syntax_facts: std::collections::BTreeSet<SourceSyntaxFact>,
 }
 
 impl<'a> Parser<'a> {
@@ -96,7 +99,7 @@ impl<'a> Parser<'a> {
             has_unmodeled_top_level_syntax: false,
             parser_recovery_facts: Vec::new(),
             unmodeled_declaration_hosts: Vec::new(),
-            product_capabilities: ProductCapabilities::all_supported(),
+            source_syntax_facts: std::collections::BTreeSet::new(),
         }
     }
 
@@ -114,7 +117,7 @@ impl<'a> Parser<'a> {
             if self.statement_nesting_depth > 0 {
                 self.has_unmodeled_top_level_syntax = true;
             }
-            let kind = StatementKind::Import(self.parse_product_owned_import_declaration());
+            let kind = StatementKind::Import(self.parse_import_declaration());
             let end = self.previous_end().max(start);
             return Statement {
                 id: self.alloc_node(),
@@ -126,7 +129,7 @@ impl<'a> Parser<'a> {
             if self.statement_nesting_depth > 0 {
                 self.has_unmodeled_top_level_syntax = true;
             }
-            let kind = StatementKind::Export(self.parse_product_owned_export_declaration());
+            let kind = StatementKind::Export(self.parse_export_declaration());
             let end = self.previous_end().max(start);
             return Statement {
                 id: self.alloc_node(),
@@ -147,15 +150,23 @@ impl<'a> Parser<'a> {
                 StatementKind::Class(declaration)
             }
             TokenKind::Type if self.starts_type_alias_declaration() => {
-                StatementKind::TypeAlias(self.parse_product_owned_type_alias(modifiers.exported))
+                StatementKind::TypeAlias(self.parse_type_alias(modifiers.exported))
             }
             TokenKind::Interface => {
-                StatementKind::Interface(self.parse_product_owned_interface(modifiers.exported))
+                StatementKind::Interface(self.parse_interface(modifiers.exported))
             }
             TokenKind::If => StatementKind::If(self.parse_if_statement()),
             TokenKind::Switch => StatementKind::Switch(self.parse_switch_statement()),
+            TokenKind::For if self.starts_unmodeled_for_binding_pattern() => {
+                StatementKind::Block(self.parse_unmodeled_for_statement())
+            }
             TokenKind::Break => StatementKind::Break(self.parse_jump_statement()),
             TokenKind::Continue => StatementKind::Continue(self.parse_jump_statement()),
+            TokenKind::FatArrow if self.current_is_inside_rejected_generic_arrow_prefix() => {
+                self.error_current("Declaration or statement expected.", 1128);
+                self.bump();
+                StatementKind::Unknown
+            }
             TokenKind::Return => {
                 self.bump();
                 let expression = if self.at_any(&[
@@ -179,7 +190,7 @@ impl<'a> Parser<'a> {
             }
             _ if modifiers.exported || modifiers.declared || modifiers.is_async => {
                 self.error_current("Declaration expected.", 1146);
-                self.recover_statement();
+                self.recover_statement(None);
                 StatementKind::Unknown
             }
             _ => {
@@ -211,13 +222,12 @@ impl<'a> Parser<'a> {
                 side_effect_only: true,
             };
         }
-
         let type_only = self.import_starts_with_type_only_clause();
         if type_only {
             self.bump();
         }
         let mut bindings = Vec::new();
-        if token_is_binding_identifier(self.kind()) {
+        if self.kind().is_identifier() {
             let (local, local_span) = self.parse_name();
             bindings.push(ImportBinding {
                 imported: Some("default".to_string()),
@@ -242,7 +252,6 @@ impl<'a> Parser<'a> {
             }
             self.eat(TokenKind::Comma);
         }
-
         if self.eat(TokenKind::Star) {
             self.expect(TokenKind::As, "'as' expected.", 1005);
             let (local, local_span) = self.parse_name();
@@ -275,7 +284,6 @@ impl<'a> Parser<'a> {
             }
             self.expect(TokenKind::RightBrace, "'}' expected.", 1005);
         }
-
         self.expect(TokenKind::From, "'from' expected.", 1005);
         let (module_specifier, module_span) = self.parse_module_specifier();
         self.eat(TokenKind::Semicolon);
@@ -292,9 +300,8 @@ impl<'a> Parser<'a> {
         if !self.at(TokenKind::Type) {
             return false;
         }
-
         let following = self.peek_kind(1);
-        let following_is_identifier = token_is_binding_identifier(following);
+        let following_is_identifier = following.is_identifier();
         let phase_can_precede_from = following != TokenKind::From
             || (following_is_identifier
                 && matches!(self.peek_kind(2), TokenKind::From | TokenKind::Equals));
@@ -304,7 +311,8 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_export_declaration(&mut self) -> ExportDeclaration {
-        self.product_capabilities.observe_module_export();
+        self.source_syntax_facts
+            .insert(SourceSyntaxFact::ModuleExport);
         self.expect(TokenKind::Export, "'export' expected.", 1005);
         let default_export = self.eat(TokenKind::Default);
         if default_export || self.eat(TokenKind::Equals) {
@@ -334,7 +342,6 @@ impl<'a> Parser<'a> {
                 assignment: None,
             };
         }
-
         let type_only = self.eat(TokenKind::Type);
         let export_all = self.eat(TokenKind::Star);
         let mut specifiers = Vec::new();
@@ -402,7 +409,6 @@ impl<'a> Parser<'a> {
         if !self.at(TokenKind::Type) {
             return false;
         }
-
         match self.peek_kind(1) {
             TokenKind::RightBrace | TokenKind::Comma | TokenKind::EndOfFile => false,
             TokenKind::As => match self.peek_kind(2) {
@@ -414,48 +420,6 @@ impl<'a> Parser<'a> {
                 _ => false,
             },
             _ => true,
-        }
-    }
-
-    fn parse_function(&mut self, modifiers: Modifiers) -> FunctionDeclaration {
-        let diagnostic_count = self.diagnostics.len();
-        self.expect(TokenKind::Function, "'function' expected.", 1005);
-        let (name, name_span) = self.parse_name();
-        let type_parameters = self.parse_type_parameters();
-        let parameters = self.parse_parameters();
-        let return_type = self.eat(TokenKind::Colon).then(|| self.parse_type());
-        let has_body = self.at(TokenKind::LeftBrace);
-        let body = if has_body {
-            self.parse_block()
-        } else {
-            self.eat(TokenKind::Semicolon);
-            Vec::new()
-        };
-        let overload_completion_supported = !modifiers.unsupported_for_overload_completion
-            && parameters.iter().all(|parameter| {
-                if has_body {
-                    parameter.function_implementation_completion_supported
-                } else {
-                    parameter.overload_completion_supported
-                }
-            })
-            && self.diagnostics.len() == diagnostic_count;
-        self.product_capabilities
-            .observe_function(modifiers, overload_completion_supported);
-        FunctionDeclaration {
-            name,
-            name_span,
-            type_parameters,
-            parameters,
-            return_type,
-            body,
-            has_body,
-            exported: modifiers.exported,
-            default_export: modifiers.default_export,
-            is_async: modifiers.is_async,
-            declared: modifiers.declared,
-            abstract_declaration: modifiers.abstract_declaration,
-            overload_completion_supported,
         }
     }
 
@@ -504,7 +468,6 @@ impl<'a> Parser<'a> {
             self.promote_parser_recovery_extent(recovery_fact_start, extent);
         }
         let member_syntax_recovery_free = self.diagnostics.len() == diagnostic_count;
-        self.product_capabilities.observe_class(modifiers, &members);
         ClassDeclaration {
             name,
             name_span,
@@ -540,7 +503,6 @@ impl<'a> Parser<'a> {
             }
             self.bump();
         }
-
         if self.at(TokenKind::Constructor) {
             let name_span = self.bump().span;
             let parameters = self.parse_parameters();
@@ -569,43 +531,53 @@ impl<'a> Parser<'a> {
                 },
             });
         }
-
+        let generator_span = self.at(TokenKind::Star).then(|| self.bump().span);
+        let generator_recovery = ParserRecoveryKind::GeneratorFunctionLike;
         let accessor = match self.kind() {
-            TokenKind::Get => {
+            TokenKind::Get if generator_span.is_none() && self.class_member_starts_accessor() => {
                 self.bump();
                 Some(AccessorKind::Get)
             }
-            TokenKind::Set => {
+            TokenKind::Set if generator_span.is_none() && self.class_member_starts_accessor() => {
                 self.bump();
                 Some(AccessorKind::Set)
             }
             _ => None,
         };
         let (name, name_span, name_kind) = self.parse_property_name();
-        let optional = self.eat(TokenKind::Question);
-        let definite = self.eat(TokenKind::Bang);
+        let (optional, definite) = (self.eat(TokenKind::Question), self.eat(TokenKind::Bang));
         let type_parameters = self.parse_type_parameters();
         if self.at(TokenKind::LeftParen) || accessor.is_some() {
             let parameters = self.parse_parameters();
             let return_type = self.eat(TokenKind::Colon).then(|| self.parse_type());
             let has_body = self.at(TokenKind::LeftBrace);
+            let generator_body_extent = generator_span.filter(|_| has_body).and_then(|generator| {
+                self.balanced_recovery_brace_extent(self.index)
+                    .map(|body| generator.merge(body))
+            });
+            if let (Some(generator), Some(extent)) = (generator_span, generator_body_extent) {
+                self.retain_parser_recovery(generator_recovery, generator, extent);
+            }
             let body = if has_body {
                 self.parse_block()
             } else {
                 self.eat(TokenKind::Semicolon);
                 Vec::new()
             };
-            return Some(ClassMember {
+            let member = ClassMember {
                 id: self.alloc_node(),
                 name,
                 name_span,
                 name_kind,
                 span: start.merge(self.previous().span),
                 overload_completion_supported: matches!(name_kind, PropertyNameKind::Identifier)
+                    && generator_span.is_none()
                     && !optional
                     && !definite
                     && self.diagnostics.len() == diagnostic_count,
                 emit_products_supported: modifiers.method_products_supported()
+                    && name_kind != PropertyNameKind::Unsupported
+                    && generator_span.is_none()
                     && !optional
                     && !definite
                     && self.diagnostics.len() == diagnostic_count,
@@ -618,20 +590,36 @@ impl<'a> Parser<'a> {
                     has_body,
                     accessor,
                 },
-            });
+            };
+            if let Some(generator_span) = generator_span
+                && generator_body_extent.is_none()
+            {
+                self.retain_parser_recovery(generator_recovery, generator_span, member.span);
+            }
+            if name_kind == PropertyNameKind::Computed {
+                self.record_parser_recovery_for_analysis(
+                    ParserRecoveryKind::ComputedPropertyName,
+                    name_span,
+                    member.span,
+                );
+            }
+            return Some(member);
         }
         let annotation = self.eat(TokenKind::Colon).then(|| self.parse_type());
         let initializer = self.eat(TokenKind::Equals).then(|| self.parse_expression());
         self.eat(TokenKind::Semicolon);
-        Some(ClassMember {
+        let member = ClassMember {
             id: self.alloc_node(),
             name,
             name_span,
             name_kind,
             span: start.merge(self.previous().span),
             overload_completion_supported: matches!(name_kind, PropertyNameKind::Identifier)
+                && generator_span.is_none()
                 && self.diagnostics.len() == diagnostic_count,
             emit_products_supported: modifiers.property_products_supported()
+                && name_kind != PropertyNameKind::Unsupported
+                && generator_span.is_none()
                 && self.diagnostics.len() == diagnostic_count,
             modifiers,
             kind: ClassMemberKind::Property {
@@ -640,7 +628,18 @@ impl<'a> Parser<'a> {
                 optional,
                 definite,
             },
-        })
+        };
+        if let Some(generator_span) = generator_span {
+            self.retain_parser_recovery(generator_recovery, generator_span, member.span);
+        }
+        if name_kind == PropertyNameKind::Computed {
+            self.record_parser_recovery_for_analysis(
+                ParserRecoveryKind::ComputedPropertyName,
+                name_span,
+                member.span,
+            );
+        }
+        Some(member)
     }
 
     fn parse_type_alias(&mut self, exported: bool) -> TypeAliasDeclaration {
@@ -897,6 +896,7 @@ impl<'a> Parser<'a> {
                 let abstract_constructor = self.eat(TokenKind::Abstract);
                 self.expect(TokenKind::New, "'new' expected.", 1005);
                 let type_parameters = self.parse_type_parameters();
+                let parameter_list_recovered = !self.at(TokenKind::LeftParen);
                 let parameters = self.parse_parameters();
                 self.expect(TokenKind::FatArrow, "'=>' expected.", 1005);
                 let return_type = self.parse_type();
@@ -906,6 +906,7 @@ impl<'a> Parser<'a> {
                         id: self.alloc_node(),
                         type_parameters,
                         parameters,
+                        parameter_list_recovered,
                         return_type: Box::new(return_type),
                         abstract_constructor,
                     },
@@ -937,25 +938,10 @@ impl<'a> Parser<'a> {
                     kind: TypeNodeKind::Object(members),
                 }
             }
-            TokenKind::LeftBracket => {
-                self.bump();
-                let mut members = Vec::new();
-                while !self.at_any(&[TokenKind::RightBracket, TokenKind::EndOfFile]) {
-                    members.push(self.parse_type());
-                    if !self.eat(TokenKind::Comma) {
-                        break;
-                    }
-                }
-                let end = self.current().span;
-                self.expect(TokenKind::RightBracket, "']' expected.", 1005);
-                TypeNode {
-                    span: token.span.merge(end),
-                    kind: TypeNodeKind::Tuple(members),
-                }
-            }
+            TokenKind::LeftBracket => self.parse_tuple_type(),
             TokenKind::LeftParen => self.parse_parenthesized_or_function_type(),
             TokenKind::LessThan => self.parse_generic_function_type(),
-            _ => self.recover_missing_type(token),
+            _ => self.recover_missing_type(token, true),
         }
     }
 
@@ -980,20 +966,7 @@ impl<'a> Parser<'a> {
 
     fn parse_mapped_type(&mut self) -> TypeNode {
         let left = self.bump().span;
-        let readonly = if self.eat(TokenKind::Readonly) {
-            Some(true)
-        } else if self.at_any(&[TokenKind::Plus, TokenKind::Minus])
-            && self.peek_kind(1) == TokenKind::Readonly
-        {
-            let add = self.eat(TokenKind::Plus);
-            if !add {
-                self.bump();
-            }
-            self.bump();
-            Some(add)
-        } else {
-            None
-        };
+        let readonly = self.parse_mapped_type_modifier(TokenKind::Readonly);
         self.expect(TokenKind::LeftBracket, "'[' expected.", 1005);
         let (parameter, parameter_span) = self.parse_name();
         self.expect(TokenKind::In, "'in' expected.", 1005);
@@ -1004,20 +977,7 @@ impl<'a> Parser<'a> {
             None
         };
         self.expect(TokenKind::RightBracket, "']' expected.", 1005);
-        let optional = if self.eat(TokenKind::Question) {
-            Some(true)
-        } else if self.at_any(&[TokenKind::Plus, TokenKind::Minus])
-            && self.peek_kind(1) == TokenKind::Question
-        {
-            let add = self.eat(TokenKind::Plus);
-            if !add {
-                self.bump();
-            }
-            self.bump();
-            Some(add)
-        } else {
-            None
-        };
+        let optional = self.parse_mapped_type_modifier(TokenKind::Question);
         self.expect(TokenKind::Colon, "':' expected.", 1005);
         let value_type = self.parse_type();
         self.eat(TokenKind::Semicolon);
@@ -1046,10 +1006,26 @@ impl<'a> Parser<'a> {
         }
     }
 
+    fn parse_mapped_type_modifier(&mut self, modifier: TokenKind) -> Option<bool> {
+        if self.eat(modifier) {
+            return Some(true);
+        }
+        if !self.at_any(&[TokenKind::Plus, TokenKind::Minus]) || self.peek_kind(1) != modifier {
+            return None;
+        }
+        let add = self.eat(TokenKind::Plus);
+        if !add {
+            self.bump();
+        }
+        self.bump();
+        Some(add)
+    }
+
     fn parse_generic_function_type(&mut self) -> TypeNode {
         let start = self.current().span;
         let type_parameters = self.parse_type_parameters();
-        let parameters = self.parse_parameters();
+        let parameter_list_recovered = !self.at(TokenKind::LeftParen);
+        let parameters = self.parse_signature_parameters();
         self.expect(TokenKind::FatArrow, "'=>' expected.", 1005);
         let return_type = self.parse_type();
         TypeNode {
@@ -1058,62 +1034,10 @@ impl<'a> Parser<'a> {
                 id: self.alloc_node(),
                 type_parameters,
                 parameters,
+                parameter_list_recovered,
                 return_type: Box::new(return_type),
             },
         }
-    }
-
-    fn parse_parenthesized_or_function_type(&mut self) -> TypeNode {
-        let left = self.bump().span;
-        if self.paren_is_parameter_list() {
-            let mut parameters = Vec::new();
-            while !self.at_any(&[TokenKind::RightParen, TokenKind::EndOfFile]) {
-                parameters.push(self.parse_parameter());
-                if !self.eat(TokenKind::Comma) {
-                    break;
-                }
-            }
-            self.expect(TokenKind::RightParen, "')' expected.", 1005);
-            self.expect(TokenKind::FatArrow, "'=>' expected.", 1005);
-            let return_type = self.parse_type();
-            return TypeNode {
-                span: left.merge(return_type.span),
-                kind: TypeNodeKind::Function {
-                    id: self.alloc_node(),
-                    type_parameters: Vec::new(),
-                    parameters,
-                    return_type: Box::new(return_type),
-                },
-            };
-        }
-        let inner = self.parse_type();
-        let right = self.current().span;
-        self.expect(TokenKind::RightParen, "')' expected.", 1005);
-        TypeNode {
-            span: left.merge(right),
-            kind: TypeNodeKind::Parenthesized(Box::new(inner)),
-        }
-    }
-
-    fn paren_is_parameter_list(&self) -> bool {
-        let mut depth = 1_u32;
-        let mut cursor = self.index;
-        while let Some(token) = self.tokens.get(cursor) {
-            match token.kind {
-                TokenKind::LeftParen => depth += 1,
-                TokenKind::RightParen => {
-                    depth -= 1;
-                    if depth == 0 {
-                        return self.tokens.get(cursor + 1).map(|token| token.kind)
-                            == Some(TokenKind::FatArrow);
-                    }
-                }
-                TokenKind::EndOfFile => return false,
-                _ => {}
-            }
-            cursor += 1;
-        }
-        false
     }
 
     fn parse_assignment_expression(&mut self) -> Expression {
@@ -1203,20 +1127,48 @@ impl<'a> Parser<'a> {
                 break;
             }
             let has_type_arguments = self.call_type_arguments_are_followed_by_left_paren();
-            if has_type_arguments || self.at(TokenKind::LeftParen) {
+            if matches!(expression.kind, ExpressionKind::Missing)
+                && self.expression_is_inside_rejected_generic_arrow_prefix(expression.span)
+            {
+                break;
+            } else if has_type_arguments || self.at(TokenKind::LeftParen) {
                 let type_arguments = if has_type_arguments {
-                    self.product_capabilities
-                        .observe_explicit_call_type_arguments();
+                    self.source_syntax_facts
+                        .insert(SourceSyntaxFact::ExplicitCallTypeArguments);
                     Some(self.parse_type_arguments())
                 } else {
                     None
                 };
                 self.expect(TokenKind::LeftParen, "'(' expected.", 1005);
                 let mut arguments = Vec::new();
+                let mut recover_rejected_generic_argument = false;
                 while !self.at_any(&[TokenKind::RightParen, TokenKind::EndOfFile]) {
-                    arguments.push(self.parse_expression());
-                    if !self.eat(TokenKind::Comma) {
+                    if recover_rejected_generic_argument && self.at(TokenKind::FatArrow) {
+                        self.error_current("Argument expression expected.", 1135);
+                        self.bump();
+                        continue;
+                    }
+                    recover_rejected_generic_argument |=
+                        self.current_starts_rejected_generic_arrow_prefix();
+                    let argument = self.parse_expression();
+                    recover_rejected_generic_argument |=
+                        self.expression_starts_rejected_generic_arrow_prefix(argument.span);
+                    let representational_fragment =
+                        matches!(argument.kind, ExpressionKind::Missing);
+                    arguments.push(argument);
+                    if self.eat(TokenKind::Comma) {
+                        continue;
+                    }
+                    if !recover_rejected_generic_argument
+                        || self.at_any(&[TokenKind::RightParen, TokenKind::EndOfFile])
+                    {
                         break;
+                    }
+                    if !representational_fragment {
+                        self.error_current("',' expected.", 1005);
+                        if self.at(TokenKind::Colon) {
+                            self.bump();
+                        }
                     }
                 }
                 let right = self.current().span;
@@ -1256,63 +1208,9 @@ impl<'a> Parser<'a> {
         expression
     }
 
-    fn parse_arrow_body(&mut self) -> ArrowBody {
-        if self.at(TokenKind::LeftBrace) {
-            ArrowBody::Block(self.parse_block())
-        } else {
-            ArrowBody::Expression(Box::new(self.parse_expression()))
-        }
-    }
-
-    fn paren_expression_is_arrow(&mut self) -> bool {
-        if !self.at(TokenKind::LeftParen) {
-            return false;
-        }
-        let mut depth = 0_u32;
-        for (cursor, token) in self.tokens.iter().enumerate().skip(self.index) {
-            match token.kind {
-                TokenKind::LeftParen => depth += 1,
-                TokenKind::RightParen => {
-                    depth = depth.saturating_sub(1);
-                    if depth == 0 {
-                        let following = self.tokens.get(cursor + 1).map(|token| token.kind);
-                        if following == Some(TokenKind::FatArrow) {
-                            return true;
-                        }
-                        if following != Some(TokenKind::Colon) {
-                            return false;
-                        }
-                        return self.type_annotation_is_followed_by_arrow(cursor + 2);
-                    }
-                }
-                TokenKind::EndOfFile => break,
-                _ => {}
-            }
-        }
-        false
-    }
-
-    fn type_annotation_is_followed_by_arrow(&mut self, start: usize) -> bool {
-        let saved_index = self.index;
-        let saved_next_node = self.next_node;
-        let saved_diagnostics = self.diagnostics.len();
-        self.index = start;
-        self.speculating = true;
-        let _ = self.parse_type();
-        let followed_by_arrow = self.at(TokenKind::FatArrow);
-        for (index, token) in self.speculative_token_rewrites.drain(..).rev() {
-            self.tokens[index] = token;
-        }
-        self.speculating = false;
-        self.index = saved_index;
-        self.next_node = saved_next_node;
-        self.diagnostics.truncate(saved_diagnostics);
-        followed_by_arrow
-    }
-
     fn parse_name(&mut self) -> (String, Span) {
         let token = *self.current();
-        if token_is_binding_identifier(token.kind) {
+        if token.kind.is_identifier() {
             self.bump();
             (self.text(token.span).to_string(), token.span)
         } else {
@@ -1337,7 +1235,7 @@ impl<'a> Parser<'a> {
 
     fn parse_identifier_name(&mut self) -> (String, Span) {
         let token = *self.current();
-        if token_is_identifier_name(token.kind) {
+        if token.kind.is_identifier_name() {
             self.bump();
             (self.text(token.span).to_string(), token.span)
         } else {
@@ -1366,7 +1264,16 @@ impl<'a> Parser<'a> {
                 };
                 (name, token.span, kind)
             }
-            _ if token_is_identifier_name(token.kind) => {
+            TokenKind::LeftBracket => (
+                "<computed>".to_string(),
+                self.consume_balanced_tokens(
+                    TokenKind::LeftBracket,
+                    TokenKind::RightBracket,
+                    "']' expected.",
+                ),
+                PropertyNameKind::Computed,
+            ),
+            _ if token.kind.is_identifier_name() => {
                 self.bump();
                 (
                     self.text(token.span).to_string(),
@@ -1379,19 +1286,6 @@ impl<'a> Parser<'a> {
                 (name, span, PropertyNameKind::Unsupported)
             }
         }
-    }
-
-    fn recover_statement(&mut self) {
-        while !self.at_any(&[
-            TokenKind::Semicolon,
-            TokenKind::RightBrace,
-            TokenKind::EndOfFile,
-        ]) {
-            self.observe_unmodeled_regular_expression_if_current();
-            self.observe_unmodeled_template_if_current();
-            self.bump();
-        }
-        self.eat(TokenKind::Semicolon);
     }
 
     fn error_current(&mut self, message: &str, code: u32) {
@@ -1423,88 +1317,32 @@ impl<'a> Parser<'a> {
 
     fn eat_type_close(&mut self) -> bool {
         let token = *self.current();
-        match token.kind {
+        let kind = match token.kind {
             TokenKind::GreaterThan => {
                 self.bump();
-                true
+                return true;
             }
-            TokenKind::GreaterThanGreaterThan => {
-                if self.speculating {
-                    self.speculative_token_rewrites
-                        .push((self.index, self.tokens[self.index]));
-                }
-                self.tokens[self.index] = Token {
-                    kind: TokenKind::GreaterThan,
-                    span: Span {
-                        file: token.span.file,
-                        start: token.span.start + 1,
-                        end: token.span.end,
-                    },
-                };
-                true
-            }
-            TokenKind::GreaterThanGreaterThanGreaterThan => {
-                if self.speculating {
-                    self.speculative_token_rewrites
-                        .push((self.index, self.tokens[self.index]));
-                }
-                self.tokens[self.index] = Token {
-                    kind: TokenKind::GreaterThanGreaterThan,
-                    span: Span {
-                        file: token.span.file,
-                        start: token.span.start + 1,
-                        end: token.span.end,
-                    },
-                };
-                true
-            }
-            TokenKind::GreaterThanEquals => {
-                if self.speculating {
-                    self.speculative_token_rewrites
-                        .push((self.index, self.tokens[self.index]));
-                }
-                self.tokens[self.index] = Token {
-                    kind: TokenKind::Equals,
-                    span: Span {
-                        file: token.span.file,
-                        start: token.span.start + 1,
-                        end: token.span.end,
-                    },
-                };
-                true
-            }
-            TokenKind::GreaterThanGreaterThanEquals => {
-                if self.speculating {
-                    self.speculative_token_rewrites
-                        .push((self.index, self.tokens[self.index]));
-                }
-                self.tokens[self.index] = Token {
-                    kind: TokenKind::GreaterThanEquals,
-                    span: Span {
-                        file: token.span.file,
-                        start: token.span.start + 1,
-                        end: token.span.end,
-                    },
-                };
-                true
-            }
+            TokenKind::GreaterThanGreaterThan => TokenKind::GreaterThan,
+            TokenKind::GreaterThanGreaterThanGreaterThan => TokenKind::GreaterThanGreaterThan,
+            TokenKind::GreaterThanEquals => TokenKind::Equals,
+            TokenKind::GreaterThanGreaterThanEquals => TokenKind::GreaterThanEquals,
             TokenKind::GreaterThanGreaterThanGreaterThanEquals => {
-                if self.speculating {
-                    self.speculative_token_rewrites
-                        .push((self.index, self.tokens[self.index]));
-                }
-                self.tokens[self.index] = Token {
-                    kind: TokenKind::GreaterThanGreaterThanEquals,
-                    span: Span {
-                        file: token.span.file,
-                        start: token.span.start + 1,
-                        end: token.span.end,
-                    },
-                };
-                true
+                TokenKind::GreaterThanGreaterThanEquals
             }
-            _ => false,
+            _ => return false,
+        };
+        if self.speculating {
+            self.speculative_token_rewrites
+                .push((self.index, self.tokens[self.index]));
         }
+        self.tokens[self.index] = Token {
+            kind,
+            span: Span {
+                start: token.span.start + 1,
+                ..token.span
+            },
+        };
+        true
     }
 
     fn eat(&mut self, kind: TokenKind) -> bool {
@@ -1593,84 +1431,4 @@ impl<'a> Parser<'a> {
         self.next_node += 1;
         id
     }
-}
-
-const fn token_is_binding_identifier(kind: TokenKind) -> bool {
-    kind.is_identifier()
-}
-
-const fn token_is_identifier_name(kind: TokenKind) -> bool {
-    !matches!(
-        kind,
-        TokenKind::EndOfFile
-            | TokenKind::PrivateIdentifier
-            | TokenKind::NumericLiteral
-            | TokenKind::BigIntLiteral
-            | TokenKind::StringLiteral
-            | TokenKind::RegularExpressionLiteral
-            | TokenKind::NoSubstitutionTemplateLiteral
-            | TokenKind::TemplateHead
-            | TokenKind::TemplateMiddle
-            | TokenKind::TemplateTail
-            | TokenKind::LeftBrace
-            | TokenKind::RightBrace
-            | TokenKind::LeftParen
-            | TokenKind::RightParen
-            | TokenKind::LeftBracket
-            | TokenKind::RightBracket
-            | TokenKind::Colon
-            | TokenKind::Semicolon
-            | TokenKind::Comma
-            | TokenKind::Dot
-            | TokenKind::DotDotDot
-            | TokenKind::Question
-            | TokenKind::QuestionDot
-            | TokenKind::QuestionQuestion
-            | TokenKind::Equals
-            | TokenKind::FatArrow
-            | TokenKind::Plus
-            | TokenKind::PlusPlus
-            | TokenKind::PlusEquals
-            | TokenKind::Minus
-            | TokenKind::MinusMinus
-            | TokenKind::MinusEquals
-            | TokenKind::Star
-            | TokenKind::StarStar
-            | TokenKind::StarEquals
-            | TokenKind::StarStarEquals
-            | TokenKind::Slash
-            | TokenKind::SlashEquals
-            | TokenKind::Percent
-            | TokenKind::PercentEquals
-            | TokenKind::Bar
-            | TokenKind::BarBar
-            | TokenKind::BarEquals
-            | TokenKind::BarBarEquals
-            | TokenKind::Ampersand
-            | TokenKind::AmpersandAmpersand
-            | TokenKind::AmpersandEquals
-            | TokenKind::AmpersandAmpersandEquals
-            | TokenKind::Caret
-            | TokenKind::CaretEquals
-            | TokenKind::LessThan
-            | TokenKind::LessThanSlash
-            | TokenKind::LessThanEquals
-            | TokenKind::LessThanLessThan
-            | TokenKind::LessThanLessThanEquals
-            | TokenKind::GreaterThan
-            | TokenKind::GreaterThanEquals
-            | TokenKind::GreaterThanGreaterThan
-            | TokenKind::GreaterThanGreaterThanEquals
-            | TokenKind::GreaterThanGreaterThanGreaterThan
-            | TokenKind::GreaterThanGreaterThanGreaterThanEquals
-            | TokenKind::Bang
-            | TokenKind::BangEquals
-            | TokenKind::BangEqualsEquals
-            | TokenKind::EqualsEquals
-            | TokenKind::EqualsEqualsEquals
-            | TokenKind::QuestionQuestionEquals
-            | TokenKind::Tilde
-            | TokenKind::At
-            | TokenKind::Hash
-    )
 }

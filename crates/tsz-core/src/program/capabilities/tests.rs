@@ -3,9 +3,15 @@ use std::sync::Arc;
 
 use crate::bind::bind_source;
 use crate::source::{FileId, SourceText};
-use crate::syntax::{ClassMemberKind, parse_source};
+use crate::syntax::{ClassMemberKind, TypeNodeKind, parse_source};
 
 use super::*;
+
+#[path = "../../../rewrite-tests/capabilities_emit_unit.rs"]
+mod emit;
+
+#[path = "../../../rewrite-tests/capabilities_recovery_unit.rs"]
+mod recovery;
 
 fn program_file(id: u32, path: &str, text: &str) -> ProgramFile {
     let source = SourceText::new(FileId(id), PathBuf::from(path), Arc::<str>::from(text));
@@ -16,6 +22,33 @@ fn program_file(id: u32, path: &str, text: &str) -> ProgramFile {
         syntax: parsed.unit,
         bindings,
     }
+}
+
+fn parser_recovery_statement_roles(
+    file: &ProgramFile,
+    recovery: &crate::syntax::ParserRecoveryFact,
+    recovery_extent: Span,
+) -> BTreeMap<NodeId, RecoveryStatementRole> {
+    recovery_statement_owners(
+        file,
+        recovery.owner,
+        recovery.authored_span,
+        recovery_extent,
+        RecoveryStatementSource::Parser {
+            recovered_declarator_initializers: &recovered_declarator_initializer_owners(file),
+        },
+    )
+}
+
+fn statement_starting_at(file: &ProgramFile, source: &str, text: &str) -> NodeId {
+    let start = source.find(text).expect("statement text") as u32;
+    let mut owner = None;
+    for_each_statement_in(&file.syntax.statements, &mut |statement| {
+        if statement.span.start == start {
+            owner = Some(statement.id);
+        }
+    });
+    owner.expect("represented statement")
 }
 
 #[test]
@@ -113,7 +146,148 @@ fn nested_parser_recovery_owns_the_smallest_statement() {
 }
 
 #[test]
+fn recovered_binding_pattern_extent_includes_declarator_continuations() {
+    for (source, dependent, expected_role, allows_identifiers) in [
+        (
+            "let {} = missingPattern; const outside = 1;",
+            "missingPattern",
+            RecoveryStatementRole::SemanticOwner,
+            false,
+        ),
+        (
+            "let {}, recovered = missingComma; const outside = 1;",
+            "missingComma",
+            RecoveryStatementRole::RecoveredDeclaratorInitializer,
+            true,
+        ),
+        (
+            concat!(
+                "const callback = function () { let {} = missingNested; ",
+                "MissingBody; }; const outside = 1;",
+            ),
+            "missingNested",
+            RecoveryStatementRole::SemanticOwner,
+            false,
+        ),
+    ] {
+        let file = program_file(0, "binding-pattern.ts", source);
+        let recovery = file
+            .syntax
+            .parser_recovery_facts()
+            .iter()
+            .find(|fact| fact.kind == ParserRecoveryKind::Declaration)
+            .expect("binding-pattern recovery fact");
+        let dependent_end = source.find(dependent).expect("dependent tail") + dependent.len();
+        let outside_start = source.find("const outside").expect("closed sibling");
+        assert!(recovery.recovery_extent.end >= dependent_end as u32);
+        assert!(recovery.recovery_extent.end <= outside_start as u32);
+
+        let dependent_start = source.find(dependent).expect("dependent tail") as u32;
+        let dependent_end = dependent_start + dependent.len() as u32;
+        let mut dependent_owner = None;
+        for_each_statement_in(&file.syntax.statements, &mut |statement| {
+            if statement.span.start <= dependent_start
+                && dependent_end <= statement.span.end
+                && dependent_owner.is_none_or(|(width, _)| statement.span.len() < width)
+            {
+                dependent_owner = Some((statement.span.len(), statement.id));
+            }
+        });
+        let (_, dependent_owner) = dependent_owner.expect("represented dependent tail");
+        let roles = parser_recovery_statement_roles(&file, recovery, recovery.recovery_extent);
+        assert_eq!(roles.get(&dependent_owner), Some(&expected_role),);
+        let analysis = CapabilityAnalysis::derive(
+            std::slice::from_ref(&file),
+            &CompilerOptions::default(),
+            CapabilityContext::default(),
+        );
+        assert!(!analysis.semantic_check_node_is_claimed(file.source.id, dependent_owner));
+        assert_eq!(
+            analysis
+                .semantic_check_node_allows_recovery_identifiers(file.source.id, dependent_owner,),
+            allows_identifiers,
+        );
+    }
+}
+
+#[test]
 fn recovery_statement_roles_separate_real_subtrees_from_flat_fragments() {
+    let object_source = concat!(
+        "const value = { kept: function () { MissingOwnedBody; }, ",
+        "method() { MissingTail; } };",
+    );
+    let object = program_file(0, "object-member-fragment.ts", object_source);
+    let object_recovery = object
+        .syntax
+        .parser_recovery_facts()
+        .iter()
+        .find(|fact| fact.authored_span.start == object_source.find("method").unwrap() as u32)
+        .expect("object member recovery fact");
+    let object_roles =
+        parser_recovery_statement_roles(&object, object_recovery, object_recovery.recovery_extent);
+    let body = statement_starting_at(&object, object_source, "MissingOwnedBody");
+    let tail = statement_starting_at(&object, object_source, "MissingTail");
+    assert_eq!(
+        object_recovery.recovery_extent.start,
+        object_recovery.authored_span.start,
+    );
+    assert_eq!(object_roles.get(&body), None);
+    assert_eq!(
+        object_roles.get(&tail),
+        Some(&RecoveryStatementRole::RepresentationalFragment),
+    );
+
+    let spread_source = "const value = { ...(function () { MissingSpreadBody; }) };";
+    let spread = program_file(0, "object-spread-fragment.ts", spread_source);
+    let spread_recovery = spread
+        .syntax
+        .parser_recovery_facts()
+        .iter()
+        .find(|fact| fact.authored_span.start == spread_source.find("...").unwrap() as u32)
+        .expect("object spread recovery fact");
+    let spread_roles =
+        parser_recovery_statement_roles(&spread, spread_recovery, spread_recovery.recovery_extent);
+    let spread_body = statement_starting_at(&spread, spread_source, "MissingSpreadBody");
+    assert_eq!(
+        spread_roles.get(&spread_body),
+        None,
+        "recovery outside a FunctionLike cannot absorb its body owner",
+    );
+
+    let arrow_source = "const value = { ...(() => { MissingArrowBody; }) };";
+    let arrow = program_file(0, "arrow-spread-fragment.ts", arrow_source);
+    let arrow_recovery = arrow
+        .syntax
+        .parser_recovery_facts()
+        .iter()
+        .find(|fact| fact.authored_span.start == arrow_source.find("...").unwrap() as u32)
+        .expect("arrow spread recovery fact");
+    let arrow_roles =
+        parser_recovery_statement_roles(&arrow, arrow_recovery, arrow_recovery.recovery_extent);
+    let arrow_body = statement_starting_at(&arrow, arrow_source, "MissingArrowBody");
+    assert_eq!(
+        arrow_roles.get(&arrow_body),
+        None,
+        "recovery outside an arrow cannot absorb its body owner",
+    );
+
+    let header_source = "const value = function broken(@) { MissingRecoveredBody; };";
+    let header = program_file(0, "recovered-function-header.ts", header_source);
+    let header_recovery = header
+        .syntax
+        .parser_recovery_facts()
+        .iter()
+        .find(|fact| fact.authored_span.start == header_source.find("function").unwrap() as u32)
+        .expect("function header recovery fact");
+    let header_roles =
+        parser_recovery_statement_roles(&header, header_recovery, header_recovery.recovery_extent);
+    let recovered_body = statement_starting_at(&header, header_source, "MissingRecoveredBody");
+    assert_eq!(
+        header_roles.get(&recovered_body),
+        Some(&RecoveryStatementRole::SemanticOwner),
+        "a FunctionLike containing its own recovery remains closed",
+    );
+
     let template = program_file(
         0,
         "template-fragment.ts",
@@ -125,14 +299,10 @@ fn recovery_statement_roles_separate_real_subtrees_from_flat_fragments() {
         .iter()
         .find(|fact| fact.kind == ParserRecoveryKind::Template)
         .expect("template recovery fact");
-    let template_initializers = recovered_declarator_initializer_owners(&template);
-    let template_roles = recovery_statement_owners(
+    let template_roles = parser_recovery_statement_roles(
         &template,
-        template_recovery.owner,
+        template_recovery,
         template_recovery.recovery_extent,
-        RecoveryStatementSource::Parser {
-            recovered_declarator_initializers: &template_initializers,
-        },
     );
     assert_eq!(
         template_roles.get(&template_recovery.owner.statement),
@@ -156,9 +326,16 @@ fn recovery_statement_roles_separate_real_subtrees_from_flat_fragments() {
         CapabilityContext::default(),
     );
     assert!(
-        !template_analysis
+        template_analysis
             .semantic_check_node_allows_claimed_descendants(template.source.id, template_fragment,),
-        "a recovery fragment outside flow containment cannot publish name descendants",
+        "mixed exact recovery may discover independently claimed nested owners",
+    );
+    assert!(
+        !template_analysis.semantic_check_node_allows_recovery_identifiers(
+            template.source.id,
+            template_fragment,
+        ),
+        "a represented recovery fragment cannot publish direct names",
     );
 
     let declaration_tail = program_file(
@@ -172,14 +349,10 @@ fn recovery_statement_roles_separate_real_subtrees_from_flat_fragments() {
         .iter()
         .find(|fact| fact.kind == ParserRecoveryKind::Template)
         .expect("template recovery fact with declaration tail");
-    let declaration_tail_initializers = recovered_declarator_initializer_owners(&declaration_tail);
-    let declaration_tail_roles = recovery_statement_owners(
+    let declaration_tail_roles = parser_recovery_statement_roles(
         &declaration_tail,
-        declaration_tail_recovery.owner,
+        declaration_tail_recovery,
         declaration_tail_recovery.recovery_extent,
-        RecoveryStatementSource::Parser {
-            recovered_declarator_initializers: &declaration_tail_initializers,
-        },
     );
     let mut leaked = None;
     let mut closed = None;
@@ -245,16 +418,12 @@ fn recovery_statement_roles_separate_real_subtrees_from_flat_fragments() {
         .iter()
         .find(|fact| fact.owner.statement == root.id)
         .expect("signature recovery fact");
-    let signature_initializers = recovered_declarator_initializer_owners(&signature);
-    let signature_roles = recovery_statement_owners(
+    let signature_roles = parser_recovery_statement_roles(
         &signature,
-        signature_recovery.owner,
+        signature_recovery,
         Span {
             end: root.span.end,
             ..signature_recovery.recovery_extent
-        },
-        RecoveryStatementSource::Parser {
-            recovered_declarator_initializers: &signature_initializers,
         },
     );
     assert_eq!(
@@ -274,14 +443,10 @@ fn recovery_statement_roles_separate_real_subtrees_from_flat_fragments() {
         .iter()
         .find(|fact| fact.kind == ParserRecoveryKind::Declaration)
         .expect("variable-list recovery fact");
-    let variable_initializers = recovered_declarator_initializer_owners(&variable_list);
-    let variable_roles = recovery_statement_owners(
+    let variable_roles = parser_recovery_statement_roles(
         &variable_list,
-        variable_recovery.owner,
+        variable_recovery,
         variable_recovery.recovery_extent,
-        RecoveryStatementSource::Parser {
-            recovered_declarator_initializers: &variable_initializers,
-        },
     );
     let attached_initializer = variable_list
         .syntax
@@ -310,6 +475,7 @@ fn recovery_statement_roles_separate_real_subtrees_from_flat_fragments() {
     let literal_roles = recovery_statement_owners(
         &variable_list,
         variable_recovery.owner,
+        variable_recovery.authored_span,
         variable_recovery.recovery_extent,
         RecoveryStatementSource::Literal,
     );
@@ -331,6 +497,13 @@ fn recovery_statement_roles_separate_real_subtrees_from_flat_fragments() {
         "overlapping recovery facts must agree on recovered initializer semantics; facts={:#?}, nonclaims={:#?}",
         variable_list.syntax.parser_recovery_facts(),
         variable_analysis.nonclaims,
+    );
+    assert!(
+        variable_analysis.semantic_check_node_allows_recovery_identifiers(
+            variable_list.source.id,
+            attached_initializer.id,
+        ),
+        "only a parser-identified recovered initializer may publish its RHS names",
     );
 
     let generic_source = "let actual = invoke<A, B, C>(), kept = 1;";
@@ -397,14 +570,18 @@ fn flow_contained_recovery_fragments_allow_name_only_descendant_discovery() {
                     return;
                 };
                 let reasons = reasons.collect::<Vec<_>>();
-                let has_fragment_recovery = reasons
-                    .iter()
-                    .any(|reason| matches!(reason.deletion, DeletionCondition::SyntaxOwner(_)));
+                let has_recovery = reasons.iter().any(|reason| {
+                    matches!(
+                        reason.deletion,
+                        DeletionCondition::DeepestSemanticOwner(_)
+                            | DeletionCondition::SyntaxOwner(_)
+                    )
+                });
                 let has_flow_region = reasons.iter().any(|reason| {
                     reason.deletion
                         == DeletionCondition::SemanticOwner(SemanticGap::FlowTypeOfReference)
                 });
-                if has_fragment_recovery && has_flow_region {
+                if has_recovery && has_flow_region {
                     mixed_owner_count += 1;
                     assert!(
                         analysis.semantic_check_node_allows_claimed_descendants(
@@ -412,6 +589,13 @@ fn flow_contained_recovery_fragments_allow_name_only_descendant_discovery() {
                             statement.id,
                         ),
                         "{name} must remain discoverable below {statement:#?}: {reasons:#?}",
+                    );
+                    assert!(
+                        analysis.semantic_check_node_allows_recovery_identifiers(
+                            file.source.id,
+                            statement.id,
+                        ),
+                        "{name} must retain name discovery below {statement:#?}: {reasons:#?}",
                     );
                 }
             });
@@ -879,10 +1063,12 @@ fn flow_region_closes_over_the_container_suffix_but_not_function_like_bodies() {
             );
         }
         assert!(
-            analysis.semantic_check_node_allows_function_like_expression_semantics(
-                file.source.id,
-                statement.id,
-            ),
+            analysis
+                .semantic_check_node_function_like_descendant_permissions(
+                    file.source.id,
+                    statement.id,
+                )
+                .0,
             "pure flow-region hosts may inventory independent arrows",
         );
     }
@@ -924,7 +1110,7 @@ fn flow_region_closes_over_the_container_suffix_but_not_function_like_bodies() {
             .iter()
             .find(|declaration| declaration.name == name)
             .unwrap_or_else(|| panic!("bound declaration {name}"));
-        let scope = declaration_capability_scope(std::slice::from_ref(&file), declaration.id)
+        let scope = declaration_scope(std::slice::from_ref(&file), declaration.id, &[])
             .expect("bound declaration has a stable statement owner");
         assert!(
             analysis
@@ -968,10 +1154,13 @@ fn recovery_in_a_signature_seeds_only_its_executable_body_container() {
     );
     assert!(analysis.semantic_check_node_allows_claimed_descendants(file.source.id, root.id));
     assert!(
-        !analysis.semantic_check_node_allows_function_like_expression_semantics(
-            file.source.id,
-            root.id,
-        ),
+        !analysis.semantic_check_node_allows_recovery_identifiers(file.source.id, root.id),
+        "a generic recovered signature may discover body statements, not header fragments",
+    );
+    assert!(
+        !analysis
+            .semantic_check_node_function_like_descendant_permissions(file.source.id, root.id)
+            .0,
         "syntax-recovery hosts cannot publish arrow signatures",
     );
     assert!(
@@ -1020,11 +1209,29 @@ fn claimed_descendant_descent_requires_exact_node_scoped_reasons() {
         reason: NonclaimReason::Syntax(SyntaxGap::TypeRecovery),
         deletion: DeletionCondition::DeepestSemanticOwner(SyntaxGap::TypeRecovery),
     };
+    let fragment = |scope| CapabilityNonclaim {
+        target: CapabilityTarget::SemanticCheck,
+        scope,
+        reason: NonclaimReason::Syntax(SyntaxGap::TypeRecovery),
+        deletion: DeletionCondition::SyntaxOwner(SyntaxGap::TypeRecovery),
+    };
     let flow = |scope| CapabilityNonclaim {
         target: CapabilityTarget::SemanticCheck,
         scope,
         reason: NonclaimReason::Semantic(SemanticGap::FlowTypeOfReference),
         deletion: DeletionCondition::SemanticOwner(SemanticGap::FlowTypeOfReference),
+    };
+    let function_like = |scope, gap| CapabilityNonclaim {
+        target: CapabilityTarget::SemanticCheck,
+        scope,
+        reason: NonclaimReason::Semantic(gap),
+        deletion: DeletionCondition::SemanticOwner(gap),
+    };
+    let required_recovery = |scope, deletion| CapabilityNonclaim {
+        target: CapabilityTarget::RequiredType,
+        scope,
+        reason: NonclaimReason::Syntax(SyntaxGap::TypeRecovery),
+        deletion,
     };
     let analysis = |nonclaims: Vec<CapabilityNonclaim>| CapabilityAnalysis {
         nonclaims: nonclaims.into_boxed_slice(),
@@ -1035,6 +1242,20 @@ fn claimed_descendant_descent_requires_exact_node_scoped_reasons() {
         analysis(vec![recovery(requested_scope)])
             .semantic_check_node_allows_claimed_descendants(file, owner),
         "an exact-node semantic recovery owner may enter independently claimed descendants",
+    );
+    let mixed = analysis(vec![recovery(requested_scope), fragment(requested_scope)]);
+    assert!(
+        mixed.semantic_check_node_allows_claimed_descendants(file, owner),
+        "an exact semantic owner may discover descendants through its represented fragment",
+    );
+    assert!(
+        !mixed.semantic_check_node_allows_recovery_identifiers(file, owner),
+        "a represented fragment does not publish direct names",
+    );
+    assert!(
+        !analysis(vec![fragment(requested_scope)])
+            .semantic_check_node_allows_claimed_descendants(file, owner),
+        "a representational fragment alone cannot discover semantic descendants",
     );
     assert!(
         analysis(vec![recovery(requested_scope), flow(requested_scope)])
@@ -1048,8 +1269,47 @@ fn claimed_descendant_descent_requires_exact_node_scoped_reasons() {
     );
     assert!(
         analysis(vec![flow(requested_scope)])
-            .semantic_check_node_allows_function_like_expression_semantics(file, owner),
+            .semantic_check_node_function_like_descendant_permissions(file, owner)
+            .0,
         "an exact-node flow region may inventory independent function-like expressions",
+    );
+    for gap in [
+        SemanticGap::FunctionLikeTypeParameters,
+        SemanticGap::ExplicitThisParameter,
+        SemanticGap::FunctionExpressionBindingName,
+    ] {
+        assert_eq!(
+            analysis(vec![function_like(requested_scope, gap)])
+                .semantic_check_node_function_like_descendant_permissions(file, owner)
+                .0,
+            gap != SemanticGap::FunctionLikeTypeParameters,
+            "generic environments remain dependency-closed while local binding gaps may enter a nested FunctionLike gate",
+        );
+        assert!(
+            !analysis(vec![
+                function_like(requested_scope, gap),
+                fragment(requested_scope),
+            ])
+            .semantic_check_node_function_like_descendant_permissions(file, owner)
+            .0,
+            "syntax recovery must keep nested FunctionLike signatures dependency-closed",
+        );
+    }
+    assert!(
+        analysis(vec![required_recovery(
+            requested_scope,
+            DeletionCondition::DeepestSemanticOwner(SyntaxGap::TypeRecovery),
+        )])
+        .required_type_node_allows_function_like_reentry(file, owner),
+        "an exact semantic recovery owner may re-enter a nested required-type owner",
+    );
+    assert!(
+        !analysis(vec![required_recovery(
+            requested_scope,
+            DeletionCondition::SyntaxOwner(SyntaxGap::TypeRecovery),
+        )])
+        .required_type_node_allows_function_like_reentry(file, owner),
+        "a representational fragment cannot publish a nested function signature",
     );
 
     for broader_scope in [CapabilityScope::Program, CapabilityScope::File(file)] {
@@ -1070,8 +1330,17 @@ fn claimed_descendant_descent_requires_exact_node_scoped_reasons() {
         );
         assert!(
             !analysis(vec![flow(broader_scope)])
-                .semantic_check_node_allows_function_like_expression_semantics(file, owner),
+                .semantic_check_node_function_like_descendant_permissions(file, owner)
+                .0,
             "a {broader_scope:?} flow reason cannot unlock node-owned function-like semantics",
+        );
+        assert!(
+            !analysis(vec![required_recovery(
+                broader_scope,
+                DeletionCondition::DeepestSemanticOwner(SyntaxGap::TypeRecovery),
+            )])
+            .required_type_node_allows_function_like_reentry(file, owner),
+            "a {broader_scope:?} recovery reason cannot unlock nested required-type owners",
         );
     }
 }
@@ -1103,4 +1372,578 @@ fn asserted_switch_expression_does_not_start_a_flow_region() {
             "assertions are not transparent narrowing references: {statement:#?}",
         );
     }
+}
+
+#[test]
+fn authored_function_expression_modifiers_fail_both_emit_products_closed() {
+    let gap = SyntaxGap::FunctionExpressionModifier;
+    for (path, source) in [
+        (
+            "async-expression.ts",
+            "const renamed = async function changed() {};\nconst independent = 1;",
+        ),
+        (
+            "generator-expression.ts",
+            "const renamed = function* changed() {};",
+        ),
+        (
+            "async-generator-expression.ts",
+            "const renamed = async function* changed() {};",
+        ),
+    ] {
+        let file = program_file(0, path, source);
+        assert!(
+            file.syntax
+                .has_source_syntax_fact(SourceSyntaxFact::AuthoredFunctionExpressionModifier),
+            "{path}",
+        );
+        let analysis = CapabilityAnalysis::derive(
+            std::slice::from_ref(&file),
+            &CompilerOptions::default(),
+            CapabilityContext::default(),
+        );
+        for target in [CapabilityTarget::JavaScript, CapabilityTarget::Declaration] {
+            let CapabilityClaim::Nonclaimed(reasons) =
+                analysis.claim(target, CapabilityScope::File(file.source.id))
+            else {
+                panic!("{target:?} must be withheld for {path}");
+            };
+            assert!(reasons.into_iter().any(|reason| {
+                reason.scope == CapabilityScope::File(file.source.id)
+                    && reason.reason == NonclaimReason::Syntax(gap)
+                    && reason.deletion == DeletionCondition::SyntaxOwner(gap)
+            }));
+        }
+        if path == "async-expression.ts" {
+            let async_start = source.find("async").expect("async token") as u32;
+            let recovery = file
+                .syntax
+                .parser_recovery_facts()
+                .iter()
+                .find(|recovery| recovery.authored_span.start == async_start)
+                .expect("async FunctionExpression recovery");
+            assert_eq!(recovery.kind, ParserRecoveryKind::Expression);
+            assert_eq!(
+                recovery.authored_span.end,
+                async_start + "async".len() as u32
+            );
+            assert_eq!(
+                recovery.recovery_extent.end,
+                source.find(";\n").expect("closed modifier expression") as u32 + 1,
+            );
+        }
+    }
+}
+
+#[test]
+fn rejected_generic_arrow_prefixes_fail_only_their_file_products_closed() {
+    let source = "export const value = <Cedar,>(): => 1;";
+    let affected = program_file(0, "affected.ts", source);
+    let stable = program_file(1, "stable.ts", "export const sibling = 1;");
+    let recovery = affected
+        .syntax
+        .parser_recovery_facts()
+        .iter()
+        .find(|recovery| recovery.kind == ParserRecoveryKind::RejectedGenericArrowPrefix)
+        .copied()
+        .expect("typed rejected generic-arrow prefix");
+    assert_eq!(
+        recovery.authored_span.start,
+        source.find('<').unwrap() as u32
+    );
+    assert_eq!(recovery.owner.statement, affected.syntax.statements[0].id);
+    let files = [affected, stable];
+    let analysis = CapabilityAnalysis::derive(
+        &files,
+        &CompilerOptions::default(),
+        CapabilityContext::default(),
+    );
+    let gap = SyntaxGap::RejectedGenericArrowPrefix;
+    let scope = CapabilityScope::node(files[0].source.id, recovery.owner.statement);
+    assert!(
+        analysis
+            .claim(CapabilityTarget::DeclarationModel, scope)
+            .is_claimed()
+    );
+    for target in [CapabilityTarget::JavaScript, CapabilityTarget::Declaration] {
+        let CapabilityClaim::Nonclaimed(reasons) =
+            analysis.claim(target, CapabilityScope::File(files[0].source.id))
+        else {
+            panic!("{target:?} must be withheld for the affected file");
+        };
+        assert!(reasons.into_iter().any(|reason| {
+            reason.scope == scope
+                && reason.reason == NonclaimReason::Syntax(gap)
+                && reason.deletion == DeletionCondition::SyntaxOwner(gap)
+        }));
+        assert!(
+            analysis
+                .claim(target, CapabilityScope::File(files[1].source.id))
+                .is_claimed(),
+            "the stable file must keep {target:?}",
+        );
+    }
+
+    for source in [
+        "const value = <Cedar>(renamed);",
+        "const value = <Cedar>({ renamed });",
+    ] {
+        let ordinary = program_file(0, "ordinary.ts", source);
+        assert!(
+            ordinary
+                .syntax
+                .parser_recovery_facts()
+                .iter()
+                .all(|recovery| recovery.kind != ParserRecoveryKind::RejectedGenericArrowPrefix),
+            "{source}",
+        );
+        assert!(
+            ordinary
+                .syntax
+                .parser_recovery_facts()
+                .iter()
+                .any(|recovery| { recovery.kind == ParserRecoveryKind::AngleAssertion })
+        );
+        let ordinary_analysis = CapabilityAnalysis::derive(
+            std::slice::from_ref(&ordinary),
+            &CompilerOptions::default(),
+            CapabilityContext::default(),
+        );
+        for target in [CapabilityTarget::JavaScript, CapabilityTarget::Declaration] {
+            assert!(
+                !ordinary_analysis
+                    .claim(target, CapabilityScope::File(ordinary.source.id))
+                    .is_claimed(),
+                "angle-assertion semantics and products remain explicitly nonclaimed: {source}",
+            );
+        }
+    }
+}
+
+#[test]
+fn recovered_function_like_binding_patterns_have_one_typed_product_boundary() {
+    let gap = SyntaxGap::FunctionLikeBindingPattern;
+    for (path, source) in [
+        (
+            "arrow-binding-pattern.ts",
+            "const callback = ({ renamed }: any) => renamed;",
+        ),
+        (
+            "function-binding-pattern.ts",
+            "const callback = function ({ renamed }: any) { return renamed; };",
+        ),
+        (
+            "empty-arrow-binding-pattern.ts",
+            "const callback = ({}) => 1;",
+        ),
+        (
+            "empty-function-binding-pattern.ts",
+            "const callback = function ([]) { return 1; };",
+        ),
+    ] {
+        let file = program_file(0, path, source);
+        let StatementKind::Variable(variable) = &file.syntax.statements[0].kind else {
+            panic!("variable expected: {:#?}", file.syntax.statements);
+        };
+        let function = variable.initializer.as_ref().expect("initializer");
+        assert!(matches!(function.kind, ExpressionKind::FunctionLike(_)));
+        let scope = CapabilityScope::node(file.source.id, function.id);
+        let analysis = CapabilityAnalysis::derive(
+            std::slice::from_ref(&file),
+            &CompilerOptions::default(),
+            CapabilityContext::default(),
+        );
+
+        for target in [
+            CapabilityTarget::SemanticCheck,
+            CapabilityTarget::DeclarationValue,
+            CapabilityTarget::RequiredType,
+            CapabilityTarget::SemanticDiagnostics,
+            CapabilityTarget::JavaScript,
+            CapabilityTarget::Declaration,
+            CapabilityTarget::QuickInfo,
+            CapabilityTarget::Definition,
+            CapabilityTarget::References,
+            CapabilityTarget::Highlights,
+            CapabilityTarget::Rename,
+        ] {
+            let CapabilityClaim::Nonclaimed(reasons) = analysis.claim(target, scope) else {
+                panic!("{path}: {target:?} must be nonclaimed");
+            };
+            assert!(reasons.into_iter().any(|reason| {
+                reason.scope == scope
+                    && reason.reason == NonclaimReason::Syntax(gap)
+                    && reason.deletion == DeletionCondition::SyntaxOwner(gap)
+            }));
+        }
+        if let Some(parameter) = file
+            .bindings
+            .declarations
+            .iter()
+            .find(|declaration| declaration.name == "renamed")
+        {
+            assert_eq!(parameter.kind, DeclarationKind::Parameter);
+            assert_eq!(parameter.owner, function.id);
+            assert!(
+                !analysis
+                    .semantic_declaration_is_claimed(std::slice::from_ref(&file), parameter.id,),
+                "{path}: recovered parameter values use the FunctionLike capability owner",
+            );
+        }
+    }
+}
+
+#[test]
+fn swallowed_template_identifiers_withhold_reference_enumeration_program_wide() {
+    for (path, source, contains_identifier) in [
+        (
+            "template-reference.ts",
+            "const safe = 1; const gap = `${safe}`; const useSafe = safe;",
+            true,
+        ),
+        (
+            "template-literal.ts",
+            "const safe = 1; const gap = `${\"safe\"}`; const useSafe = safe;",
+            false,
+        ),
+    ] {
+        let file = program_file(0, path, source);
+        assert_eq!(
+            file.syntax
+                .has_source_syntax_fact(SourceSyntaxFact::TemplateExpressionIdentifier),
+            contains_identifier,
+            "{path}",
+        );
+        let analysis = CapabilityAnalysis::derive(
+            std::slice::from_ref(&file),
+            &CompilerOptions::default(),
+            CapabilityContext::default(),
+        );
+        for target in &ALL_TARGETS[9..] {
+            let program_reason = analysis.nonclaims.iter().any(|nonclaim| {
+                nonclaim.target == *target
+                    && nonclaim.scope == CapabilityScope::Program
+                    && nonclaim.reason == NonclaimReason::Syntax(SyntaxGap::Template)
+                    && nonclaim.deletion == DeletionCondition::SyntaxOwner(SyntaxGap::Template)
+            });
+            assert_eq!(program_reason, contains_identifier, "{path}: {target:?}");
+        }
+    }
+}
+
+#[test]
+fn exact_template_recovery_may_reenter_a_claimed_arrow_required_type_owner() {
+    let source = "const values = [`head${\"gap\"}tail`, (value: MissingArrowType) => value];";
+    let file = program_file(0, "required-arrow.ts", source);
+    let statement = &file.syntax.statements[0];
+    let StatementKind::Variable(variable) = &statement.kind else {
+        panic!("variable expected: {statement:#?}");
+    };
+    let initializer = variable.initializer.as_ref().expect("array initializer");
+    let ExpressionKind::Array(elements) = &initializer.kind else {
+        panic!("array initializer expected: {variable:#?}");
+    };
+    let arrow = &elements[1];
+    let ExpressionKind::FunctionLike(function) = &arrow.kind else {
+        panic!("arrow expected: {arrow:#?}");
+    };
+    assert!(matches!(
+        function.parameters[0]
+            .annotation
+            .as_ref()
+            .map(|annotation| &annotation.kind),
+        Some(TypeNodeKind::Reference { name, .. }) if name == "MissingArrowType"
+    ));
+    let analysis = CapabilityAnalysis::derive(
+        std::slice::from_ref(&file),
+        &CompilerOptions::default(),
+        CapabilityContext::default(),
+    );
+    assert!(
+        !analysis
+            .claim(
+                CapabilityTarget::RequiredType,
+                CapabilityScope::node(file.source.id, statement.id),
+            )
+            .is_claimed()
+    );
+    assert!(
+        analysis.required_type_node_allows_function_like_reentry(file.source.id, statement.id,)
+    );
+    assert!(
+        analysis
+            .claim(
+                CapabilityTarget::RequiredType,
+                CapabilityScope::node(file.source.id, arrow.id),
+            )
+            .is_claimed()
+    );
+}
+
+#[test]
+fn named_tuple_arrow_recovery_is_owned_by_its_function_like_signature() {
+    let source = concat!(
+        "const renamed = (...values: [label: \"label\", item: \"item\"]): void => {",
+        "values; const dependent: MissingTupleBody = 1; };\n",
+        "const independent: MissingTupleSibling = 1;",
+    );
+    let file = program_file(0, "recovered-arrow-header.ts", source);
+    let labels = file
+        .syntax
+        .parser_recovery_facts()
+        .iter()
+        .filter(|recovery| recovery.kind == ParserRecoveryKind::Type)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        labels.len(),
+        2,
+        "{:#?}",
+        file.syntax.parser_recovery_facts()
+    );
+    assert!(labels.iter().all(|recovery| {
+        recovery.authored_span.start >= source.find("label").unwrap() as u32
+            && recovery.recovery_extent.end < source.find("values;").unwrap() as u32
+    }));
+
+    let StatementKind::Variable(variable) = &file.syntax.statements[0].kind else {
+        panic!("variable expected")
+    };
+    let arrow = variable.initializer.as_ref().expect("arrow initializer");
+    let analysis = CapabilityAnalysis::derive(
+        std::slice::from_ref(&file),
+        &CompilerOptions::default(),
+        CapabilityContext::default(),
+    );
+    assert!(
+        !analysis
+            .claim(
+                CapabilityTarget::RequiredType,
+                CapabilityScope::node(file.source.id, arrow.id),
+            )
+            .is_claimed()
+    );
+    assert!(
+        analysis
+            .claim(
+                CapabilityTarget::SemanticCheck,
+                CapabilityScope::node(file.source.id, file.syntax.statements[0].id),
+            )
+            .is_claimed(),
+        "the containing variable remains independently checkable",
+    );
+}
+
+#[test]
+fn non_expression_parameters_retain_their_containing_statement_capability_scope() {
+    let source = concat!(
+        "class Holder { method(value = `head${renamed}tail`) { return value; } } ",
+        "const renamed = 1;",
+    );
+    let file = program_file(0, "member-parameter.ts", source);
+    let parameter = file
+        .bindings
+        .declarations
+        .iter()
+        .find(|declaration| {
+            declaration.kind == DeclarationKind::Parameter && declaration.name == "value"
+        })
+        .expect("method parameter");
+    let analysis = CapabilityAnalysis::derive(
+        std::slice::from_ref(&file),
+        &CompilerOptions::default(),
+        CapabilityContext::default(),
+    );
+    assert!(
+        !analysis.semantic_declaration_is_claimed(std::slice::from_ref(&file), parameter.id),
+        "member parameters inherit the recovered class statement owner",
+    );
+}
+
+#[test]
+fn ordinary_and_line_break_function_expression_controls_remain_javascript_claimed() {
+    for (path, source) in [
+        (
+            "plain-expression.ts",
+            "const renamed = function changed() {};",
+        ),
+        (
+            "line-break-control.ts",
+            "const async = 1; const renamed = async\nfunction changed() {}",
+        ),
+    ] {
+        let file = program_file(0, path, source);
+        assert!(
+            !file
+                .syntax
+                .has_source_syntax_fact(SourceSyntaxFact::AuthoredFunctionExpressionModifier),
+            "{path}",
+        );
+        let analysis = CapabilityAnalysis::derive(
+            std::slice::from_ref(&file),
+            &CompilerOptions::default(),
+            CapabilityContext::default(),
+        );
+        let claim = analysis.claim(
+            CapabilityTarget::JavaScript,
+            CapabilityScope::File(file.source.id),
+        );
+        assert!(claim.is_claimed(), "{path}: {claim:#?}");
+    }
+}
+
+#[test]
+fn javascript_claims_stop_at_unowned_function_product_interactions() {
+    let assert_nonclaim =
+        |path: &str, source: &str, options: CompilerOptions, expected: SyntaxGap| {
+            let file = program_file(0, path, source);
+            let analysis = CapabilityAnalysis::derive(
+                std::slice::from_ref(&file),
+                &options,
+                CapabilityContext::default(),
+            );
+            let CapabilityClaim::Nonclaimed(reasons) = analysis.claim(
+                CapabilityTarget::JavaScript,
+                CapabilityScope::File(file.source.id),
+            ) else {
+                panic!("JavaScript must be withheld for {expected:?}");
+            };
+            assert!(reasons.into_iter().any(|record| {
+                record.reason == NonclaimReason::Syntax(expected)
+                    && record.deletion == DeletionCondition::SyntaxOwner(expected)
+            }));
+        };
+
+    assert_nonclaim(
+        "downlevel-class.ts",
+        concat!(
+            "class RenamedHost {\n",
+            "  retained = 1;\n",
+            "  method() { return function changed(value: number) { return value; }; }\n",
+            "}\n",
+        ),
+        CompilerOptions {
+            target: "es2015".to_string(),
+            ..CompilerOptions::default()
+        },
+        SyntaxGap::FunctionExpressionClassPropertyTransform,
+    );
+    assert_nonclaim(
+        "commonjs-module.ts",
+        concat!(
+            "import { renamed } from './dependency';\n",
+            "const callback = function changed() { return renamed; };\n",
+        ),
+        CompilerOptions {
+            module: "commonjs".to_string(),
+            ..CompilerOptions::default()
+        },
+        SyntaxGap::FunctionExpressionCommonJsTransform,
+    );
+    assert_nonclaim(
+        "outer-comment.ts",
+        "const callbacks = [/*outside*/ function changed() { }];\n",
+        CompilerOptions::default(),
+        SyntaxGap::FunctionExpressionOuterComments,
+    );
+    for (path, source, options) in [
+        (
+            "preserved-class.ts",
+            concat!(
+                "class RenamedHost {\n",
+                "  retained = 1;\n",
+                "  method() { return function changed(value: number) { return value; }; }\n",
+                "}\n",
+            ),
+            CompilerOptions {
+                target: "es2022".to_string(),
+                ..CompilerOptions::default()
+            },
+        ),
+        (
+            "comment-free.ts",
+            "const callback = function changed(value: number) { return value; };\n",
+            CompilerOptions::default(),
+        ),
+        (
+            "multiline-declaration.ts",
+            "function changed(value: number) {\n  return value;\n}\n",
+            CompilerOptions::default(),
+        ),
+    ] {
+        let file = program_file(0, path, source);
+        let analysis = CapabilityAnalysis::derive(
+            std::slice::from_ref(&file),
+            &options,
+            CapabilityContext::default(),
+        );
+        assert!(
+            analysis
+                .claim(
+                    CapabilityTarget::JavaScript,
+                    CapabilityScope::File(file.source.id),
+                )
+                .is_claimed(),
+            "control must remain claimed: {path}; nonclaims={:#?}",
+            analysis.nonclaims,
+        );
+    }
+}
+
+#[test]
+fn assertion_declarator_tail_has_typed_file_emit_nonclaims() {
+    let source = "export const x = value as T, y = 1;";
+    let file = program_file(0, "assertion-tail.ts", source);
+    let tail = file
+        .syntax
+        .parser_recovery_facts()
+        .iter()
+        .find(|fact| fact.kind == ParserRecoveryKind::VariableDeclaratorTail)
+        .expect("typed variable-declarator tail");
+    assert_eq!(tail.authored_span.start, source.find(',').unwrap() as u32);
+    let analysis = CapabilityAnalysis::derive(
+        std::slice::from_ref(&file),
+        &CompilerOptions::default(),
+        CapabilityContext::default(),
+    );
+    let scope = CapabilityScope::File(file.source.id);
+    for target in [CapabilityTarget::JavaScript, CapabilityTarget::Declaration] {
+        let records = analysis
+            .nonclaims
+            .iter()
+            .filter(|record| record.target == target && record.scope == scope)
+            .copied()
+            .collect::<Vec<_>>();
+        assert_eq!(
+            records,
+            vec![CapabilityNonclaim {
+                target,
+                scope,
+                reason: NonclaimReason::Syntax(SyntaxGap::VariableDeclaratorTail),
+                deletion: DeletionCondition::SyntaxOwner(SyntaxGap::VariableDeclaratorTail),
+            }],
+        );
+    }
+
+    let bounded = program_file(
+        0,
+        "bounded-tail.ts",
+        "const x = value as T changed\nconst y = 1;\ny;",
+    );
+    let [_, y_statement, y_reference] = bounded.syntax.statements.as_slice() else {
+        panic!("the later-line declaration and reference must remain represented")
+    };
+    assert!(matches!(
+        &y_statement.kind,
+        StatementKind::Variable(declaration) if declaration.name == "y"
+    ));
+    assert!(matches!(
+        &y_reference.kind,
+        StatementKind::Expression(expression)
+            if matches!(&expression.kind, ExpressionKind::Identifier { name, .. } if name == "y")
+    ));
+    assert!(bounded.bindings.declarations.iter().any(|declaration| {
+        declaration.kind == DeclarationKind::Variable
+            && declaration.name == "y"
+            && declaration.owner == y_statement.id
+    }));
 }

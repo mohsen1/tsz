@@ -8,9 +8,9 @@ use rustc_hash::FxHashMap;
 use crate::source::{DeclId, FileId, NodeId, Span};
 use crate::syntax::{
     ArrowBody, ClassDeclaration, ClassMemberKind, Expression, ExpressionKind, FunctionDeclaration,
-    SourceUnit, Statement, StatementKind, SwitchClauseKind, TypeMember, TypeMemberKind,
-    TypeMemberNameKind, TypeNode, TypeNodeKind, UnmodeledDeclarationHostFact,
-    UnmodeledDeclarationHostKind,
+    FunctionLikeSyntax, ParameterNameKind, SourceUnit, Statement, StatementKind, SwitchClauseKind,
+    TypeMember, TypeMemberKind, TypeMemberNameKind, TypeNode, TypeNodeKind,
+    UnmodeledDeclarationHostFact, UnmodeledDeclarationHostKind,
 };
 
 mod flow;
@@ -33,6 +33,7 @@ pub enum DeclarationKind {
     Parameter,
     Import,
     Function,
+    FunctionExpression,
     Class,
     TypeAlias,
     Interface,
@@ -546,6 +547,7 @@ impl Binder {
                 type_parameters,
                 parameters,
                 return_type,
+                ..
             }
             | TypeMemberKind::Construct {
                 type_parameters,
@@ -600,16 +602,32 @@ impl Binder {
         parameter_scope: ScopeId,
         return_scope: ScopeId,
     ) {
-        for parameter in parameters {
+        for parameter in parameters
+            .iter()
+            .filter(|parameter| parameter.name_kind != ParameterNameKind::This)
+        {
             if let Some(owner) = self.scopes[parameter_scope.0 as usize].owner {
-                self.declare_parameter(
-                    parameter_scope,
-                    owner,
-                    &parameter.name,
-                    parameter.name_span,
-                    DeclarationKind::Parameter,
-                    Meaning::Value,
-                );
+                if parameter.name_kind == ParameterNameKind::Binding {
+                    self.declare_parameter(
+                        parameter_scope,
+                        owner,
+                        &parameter.name,
+                        parameter.name_span,
+                        DeclarationKind::Parameter,
+                        Meaning::Value,
+                    );
+                } else {
+                    for binding in &parameter.recovered_binding_names {
+                        self.declare_parameter(
+                            parameter_scope,
+                            owner,
+                            &binding.name,
+                            binding.span,
+                            DeclarationKind::Parameter,
+                            Meaning::Value,
+                        );
+                    }
+                }
             }
         }
         for parameter in parameters {
@@ -647,6 +665,7 @@ impl Binder {
                 type_parameters,
                 parameters,
                 return_type,
+                ..
             }
             | TypeNodeKind::Constructor {
                 id,
@@ -897,38 +916,83 @@ impl Binder {
                 self.bind_expression_with_demand(object, scope, control, demand.element(index));
                 self.bind_expression(index, scope, control);
             }
-            ExpressionKind::Arrow {
-                parameters,
-                return_type,
-                body,
-            } => {
-                let lexical_this = self.scopes[scope.0 as usize].lexical_this;
-                let arrow_scope = self.new_flow_scope(
-                    scope,
-                    expression.id,
-                    lexical_this,
-                    FlowContainerKind::Creation,
-                );
-                self.scope_for_node.insert(expression.id, arrow_scope);
-                let body_scope = match body {
-                    ArrowBody::Expression(_) => arrow_scope,
-                    ArrowBody::Block(_) => self.new_anonymous_scope(arrow_scope),
-                };
-                self.bind_signature_types(
-                    parameters,
-                    return_type.as_ref(),
-                    arrow_scope,
-                    arrow_scope,
-                );
-                match body {
-                    ArrowBody::Expression(body) => self.bind_expression(body, body_scope, None),
-                    ArrowBody::Block(statements) => {
-                        for statement in statements {
-                            self.bind_statement(statement, body_scope, None);
+            ExpressionKind::FunctionLike(function) => match &function.syntax {
+                FunctionLikeSyntax::Arrow(body) => {
+                    let lexical_this = self.scopes[scope.0 as usize].lexical_this;
+                    let function_scope = self.new_flow_scope(
+                        scope,
+                        expression.id,
+                        lexical_this,
+                        FlowContainerKind::Creation,
+                    );
+                    self.scope_for_node.insert(expression.id, function_scope);
+                    self.bind_type_parameters(&function.type_parameters, function_scope);
+                    let body_scope = match body {
+                        ArrowBody::Expression(_) => function_scope,
+                        ArrowBody::Block(_) => self.new_anonymous_scope(function_scope),
+                    };
+                    self.bind_signature_types(
+                        &function.parameters,
+                        function.return_type.as_ref(),
+                        function_scope,
+                        function_scope,
+                    );
+                    match body {
+                        ArrowBody::Expression(body) => self.bind_expression(body, body_scope, None),
+                        ArrowBody::Block(statements) => {
+                            for statement in statements {
+                                self.bind_statement(statement, body_scope, None);
+                            }
                         }
                     }
                 }
-            }
+                FunctionLikeSyntax::Function { name, body, .. } => {
+                    let function_scope = self.new_flow_scope(
+                        scope,
+                        expression.id,
+                        None,
+                        FlowContainerKind::Ordinary,
+                    );
+                    self.scope_for_node.insert(expression.id, function_scope);
+                    match name {
+                        Some(name) => {
+                            self.declare(
+                                function_scope,
+                                expression.id,
+                                &name.name,
+                                name.span,
+                                DeclarationKind::FunctionExpression,
+                                Meaning::Value,
+                            );
+                        }
+                        None => {
+                            self.declare_unscoped(
+                                function_scope,
+                                expression.id,
+                                String::new(),
+                                Span {
+                                    file: expression.span.file,
+                                    start: expression.span.start,
+                                    end: expression.span.start,
+                                },
+                                DeclarationKind::FunctionExpression,
+                                Meaning::Value,
+                            );
+                        }
+                    }
+                    self.bind_type_parameters(&function.type_parameters, function_scope);
+                    let body_scope = self.new_anonymous_scope(function_scope);
+                    self.bind_signature_types(
+                        &function.parameters,
+                        function.return_type.as_ref(),
+                        function_scope,
+                        function_scope,
+                    );
+                    for statement in body {
+                        self.bind_statement(statement, body_scope, None);
+                    }
+                }
+            },
             ExpressionKind::Binary { left, right, .. } => {
                 self.bind_expression(left, scope, control);
                 self.bind_expression(right, scope, control);

@@ -1027,7 +1027,7 @@ fn quick_info_uses_the_compiled_file_claim_without_poisoning_its_sibling() {
         result_scope_service
             .references("results.ts", safe_declaration)
             .is_empty(),
-        "a reference result is a nonclaim when any returned location is unclaimed"
+        "opaque template substitutions cannot publish exhaustive references"
     );
     assert!(
         result_scope_service
@@ -1037,6 +1037,42 @@ fn quick_info_uses_the_compiled_file_claim_without_poisoning_its_sibling() {
     assert!(
         !result_scope_service
             .rename("results.ts", safe_declaration)
+            .info
+            .can_rename
+    );
+
+    let literal_scope_source = "const safe = 1; const gap = `${\"safe\"}`; const useSafe = safe;";
+    let mut literal_scope_service = LanguageService::new(CompilerOptions::default());
+    literal_scope_service.open("literal-results.ts", Arc::<str>::from(literal_scope_source));
+    let literal_safe = literal_scope_source.find("safe").expect("safe") as u32;
+    assert!(
+        !literal_scope_service
+            .references("literal-results.ts", literal_safe)
+            .is_empty(),
+        "identifier-free substitutions do not poison reference enumeration"
+    );
+    assert!(
+        literal_scope_service
+            .rename("literal-results.ts", literal_safe)
+            .info
+            .can_rename
+    );
+
+    let mut cross_file_service = LanguageService::new(CompilerOptions::default());
+    cross_file_service.open("declaration.ts", Arc::<str>::from("const shared = 1;"));
+    cross_file_service.open(
+        "opaque-use.ts",
+        Arc::<str>::from("const gap = `${shared}`;"),
+    );
+    assert!(
+        cross_file_service
+            .references("declaration.ts", "const ".len() as u32)
+            .is_empty(),
+        "an opaque substitution blocks exhaustive cross-file references"
+    );
+    assert!(
+        !cross_file_service
+            .rename("declaration.ts", "const ".len() as u32)
             .info
             .can_rename
     );
@@ -1765,5 +1801,97 @@ fn opaque_namespace_body_is_closed_without_poisoning_a_following_sibling() {
             "{:#?}",
             result.diagnostics,
         );
+    }
+}
+
+#[test]
+fn assertion_declarator_tail_withholds_only_its_file_emit_products() {
+    for affected in [
+        "export const x = value as T, y = 1;",
+        "export const renamed = <Renamed>value, changed = 1;",
+    ] {
+        let output = Compiler::new().compile(
+            vec![
+                SourceInput::new("affected.ts", Arc::<str>::from(affected)),
+                SourceInput::new("stable.ts", Arc::<str>::from("export const stable = 1;")),
+            ],
+            &CompilerOptions {
+                target: "es2022".to_string(),
+                declaration: true,
+                no_check: true,
+                no_emit_on_error: false,
+                ..CompilerOptions::default()
+            },
+        );
+        let mut paths = output
+            .emitted_files
+            .iter()
+            .map(|file| file.path.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        paths.sort();
+        assert_eq!(paths, ["stable.d.ts", "stable.js"], "{affected}");
+        assert!(output.diagnostics.is_empty(), "{affected}: {output:#?}");
+        assert_eq!(output.semantic_completion, SemanticCompletion::Deferred);
+        assert_eq!(output.exit_status, CompileExitStatus::SemanticIncomplete);
+    }
+
+    let source = concat!(
+        "const x = value as T changed\n",
+        "const y = 1;\n",
+        "y;\n",
+        "const independent: MissingIndependent = 1;",
+    );
+    let output = Compiler::new().compile(
+        vec![SourceInput::new(
+            "bounded-tail.ts",
+            Arc::<str>::from(source),
+        )],
+        &semantic_options(),
+    );
+    assert_eq!(output.semantic_completion, SemanticCompletion::Deferred);
+    assert_eq!(
+        diagnostic_fingerprint(&output),
+        vec![(
+            "bounded-tail.ts".to_string(),
+            2304,
+            source.find("MissingIndependent").unwrap() as u32,
+            "MissingIndependent".len() as u32,
+            DiagnosticCategory::Error,
+            "Cannot find name 'MissingIndependent'.".to_string(),
+            Vec::new(),
+        )],
+    );
+}
+
+#[test]
+fn opaque_object_members_and_loops_withhold_only_their_file_products() {
+    for affected in [
+        "export const value = { get renamed() { return 1; } };",
+        "for (const { renamed } of values) { renamed; } export const value = 1;",
+        "export const value = class Renamed {};",
+    ] {
+        let output = Compiler::new().compile(
+            vec![
+                SourceInput::new("affected.ts", Arc::<str>::from(affected)),
+                SourceInput::new("stable.ts", Arc::<str>::from("export const stable = 1;")),
+            ],
+            &CompilerOptions {
+                target: "es2022".to_string(),
+                declaration: true,
+                no_check: true,
+                no_emit_on_error: false,
+                ..CompilerOptions::default()
+            },
+        );
+        let mut paths = output
+            .emitted_files
+            .iter()
+            .map(|file| file.path.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        paths.sort();
+        assert_eq!(paths, ["stable.d.ts", "stable.js"], "{affected}");
+        assert!(output.diagnostics.is_empty(), "{affected}: {output:#?}");
+        assert_eq!(output.semantic_completion, SemanticCompletion::Deferred);
+        assert_eq!(output.exit_status, CompileExitStatus::SemanticIncomplete);
     }
 }

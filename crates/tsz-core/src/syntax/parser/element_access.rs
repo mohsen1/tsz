@@ -1,6 +1,6 @@
 use super::Parser;
 use super::operators::expression_has_recovered_left_edge;
-use crate::syntax::{Expression, ExpressionKind, TokenKind};
+use crate::syntax::{AuthoredLiteralKind, Expression, ExpressionKind, TokenKind};
 
 impl Parser<'_> {
     pub(super) fn at_recovered_element_access(&self, expression: &Expression) -> bool {
@@ -22,8 +22,7 @@ impl Parser<'_> {
         if super::super::erased_expression_separated_number(&object).is_some()
             && object.span.end != dot.start
         {
-            self.product_capabilities
-                .observe_unmodeled_numeric_separator();
+            self.observe_literal_unsupported_host(AuthoredLiteralKind::NumericSeparator);
         }
         let (name, name_span) = self.parse_identifier_name();
         Expression {

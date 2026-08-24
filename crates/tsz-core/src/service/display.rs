@@ -80,7 +80,7 @@ fn display_expression_type(
         | ExpressionKind::New { .. }
         | ExpressionKind::Member { .. }
         | ExpressionKind::ElementAccess { .. }
-        | ExpressionKind::Arrow { .. }
+        | ExpressionKind::FunctionLike(_)
         | ExpressionKind::Binary { .. }
         | ExpressionKind::Unary { .. }
         | ExpressionKind::Assignment { .. }

@@ -53,6 +53,27 @@ pub struct ShapeSignature {
     pub return_type: TypeId,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum CallArityGap {
+    Reference(TypeId, DeclId, Vec<TypeId>),
+    Type(TypeId),
+    Deferred,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CallArityResolution {
+    Expanded(TypeId),
+    OpaqueRequired,
+    RestArray(TypeId),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CallOmission {
+    Required,
+    Omittable,
+    Absorbing,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum IndexKeyKind {
     String,
@@ -540,6 +561,150 @@ impl TypeStore {
         &self.kinds[id.0 as usize]
     }
 
+    pub(crate) fn effective_call_arity(
+        &self,
+        signature: &ShapeSignature,
+        references: &HashMap<TypeId, Completion<CallArityResolution>>,
+    ) -> Result<(usize, Option<usize>), CallArityGap> {
+        let parameters = &signature.parameters;
+        let rest = parameters.iter().position(|parameter| parameter.rest);
+        let fixed = rest.unwrap_or(parameters.len());
+        let syntactic_minimum = parameters[..fixed]
+            .iter()
+            .rposition(|parameter| !parameter.optional)
+            .map_or(0, |index| index + 1);
+        let Some(rest) = rest else {
+            let minimum =
+                self.call_minimum(&parameters[..fixed], &[], syntactic_minimum, references)?;
+            return Ok((minimum, Some(parameters.len())));
+        };
+        if rest + 1 != parameters.len() || parameters[rest].optional {
+            return Err(CallArityGap::Deferred);
+        }
+        let fixed_minimum =
+            || self.call_minimum(&parameters[..rest], &[], syntactic_minimum, references);
+        let rest_type = match self.call_arity_type(parameters[rest].ty, references)? {
+            CallArityResolution::Expanded(rest_type) => rest_type,
+            CallArityResolution::RestArray(_) => return Ok((fixed_minimum()?, None)),
+            CallArityResolution::OpaqueRequired => return Err(CallArityGap::Deferred),
+        };
+        match self.kind(rest_type) {
+            TypeKind::Any
+            | TypeKind::Never
+            | TypeKind::Error
+            | TypeKind::Invalid(_)
+            | TypeKind::Array(_) => Ok((fixed_minimum()?, None)),
+            TypeKind::Tuple(elements) => {
+                let base = if elements.is_empty() {
+                    syntactic_minimum
+                } else {
+                    rest + elements.len()
+                };
+                let minimum = self.call_minimum(&parameters[..rest], elements, base, references)?;
+                Ok((minimum, Some(rest + elements.len())))
+            }
+            _ => Err(CallArityGap::Deferred),
+        }
+    }
+
+    fn call_arity_type(
+        &self,
+        mut ty: TypeId,
+        references: &HashMap<TypeId, Completion<CallArityResolution>>,
+    ) -> Result<CallArityResolution, CallArityGap> {
+        let mut seen = HashSet::new();
+        loop {
+            if !seen.insert(ty) {
+                return Err(CallArityGap::Deferred);
+            }
+            match references.get(&ty) {
+                Some(Completion::Complete(CallArityResolution::Expanded(resolved))) => {
+                    ty = *resolved
+                }
+                Some(Completion::Complete(resolved)) => return Ok(*resolved),
+                Some(_) => return Err(CallArityGap::Deferred),
+                None => match self.kind(ty) {
+                    TypeKind::Deferred(DeferredType::Reference {
+                        declaration,
+                        arguments,
+                    }) => {
+                        return Err(CallArityGap::Reference(ty, *declaration, arguments.clone()));
+                    }
+                    TypeKind::Deferred(_) => return Err(CallArityGap::Type(ty)),
+                    _ => return Ok(CallArityResolution::Expanded(ty)),
+                },
+            }
+        }
+    }
+
+    fn call_minimum(
+        &self,
+        fixed: &[ShapeParameter],
+        tail: &[TypeId],
+        base: usize,
+        references: &HashMap<TypeId, Completion<CallArityResolution>>,
+    ) -> Result<usize, CallArityGap> {
+        for index in (0..base).rev() {
+            let ty = if index < fixed.len() {
+                fixed[index].ty
+            } else {
+                tail[index - fixed.len()]
+            };
+            if self.call_omission(ty, references, &mut HashSet::new())? != CallOmission::Omittable {
+                return Ok(index + 1);
+            }
+        }
+        Ok(0)
+    }
+
+    fn call_omission(
+        &self,
+        ty: TypeId,
+        references: &HashMap<TypeId, Completion<CallArityResolution>>,
+        seen: &mut HashSet<TypeId>,
+    ) -> Result<CallOmission, CallArityGap> {
+        let ty = match self.call_arity_type(ty, references)? {
+            CallArityResolution::Expanded(ty) => ty,
+            _ => return Ok(CallOmission::Required),
+        };
+        if !seen.insert(ty) {
+            return Err(CallArityGap::Deferred);
+        }
+        let result = match self.kind(ty) {
+            TypeKind::Void => Ok(CallOmission::Omittable),
+            TypeKind::Any | TypeKind::Unknown | TypeKind::Error | TypeKind::Invalid(_) => {
+                Ok(CallOmission::Absorbing)
+            }
+            TypeKind::Intersection(_) => Err(CallArityGap::Deferred),
+            TypeKind::Union(members) => {
+                let mut omission = CallOmission::Required;
+                let mut pending = None;
+                for member in members {
+                    match self.call_omission(*member, references, seen) {
+                        Ok(CallOmission::Absorbing) => {
+                            omission = CallOmission::Absorbing;
+                            break;
+                        }
+                        Ok(CallOmission::Omittable) => omission = CallOmission::Omittable,
+                        Err(query)
+                            if !matches!(&query, CallArityGap::Deferred) || pending.is_none() =>
+                        {
+                            pending = Some(query);
+                        }
+                        Ok(CallOmission::Required) | Err(_) => {}
+                    }
+                }
+                match omission {
+                    CallOmission::Absorbing => Ok(omission),
+                    _ => pending.map_or(Ok(omission), Err),
+                }
+            }
+            _ => Ok(CallOmission::Required),
+        };
+        seen.remove(&ty);
+        result
+    }
+
     pub fn intern(&mut self, kind: TypeKind) -> TypeId {
         if let Some(id) = self.interned.get(&kind) {
             return *id;
@@ -595,52 +760,56 @@ impl TypeStore {
                 } if *owner == declaration => {
                     parameters.insert(*index);
                 }
-                TypeKind::Invalid(InvalidType::MissingProperty { object, .. })
-                | TypeKind::Invalid(InvalidType::MissingProperties { object, .. })
-                | TypeKind::Array(object) => pending.push(*object),
-                TypeKind::Tuple(elements)
-                | TypeKind::Union(elements)
-                | TypeKind::Intersection(elements) => pending.extend(elements.iter().copied()),
-                TypeKind::Object(shape) => Self::push_shape_children(shape, &mut pending),
-                TypeKind::ClassInstance {
-                    arguments,
-                    properties,
-                    ..
-                } => {
-                    pending.extend(arguments.iter().copied());
-                    Self::push_shape_children(properties, &mut pending);
-                }
-                TypeKind::Function(signature) => {
-                    pending.extend(signature.parameters.iter().map(|parameter| parameter.ty));
-                    pending.push(signature.return_type);
-                }
-                TypeKind::ShapeFunction(signature) => {
-                    Self::push_signature_children(signature, &mut pending);
-                }
-                TypeKind::Deferred(deferred) => {
-                    Self::push_deferred_children(deferred, &mut pending);
-                }
-                TypeKind::Error
-                | TypeKind::Any
-                | TypeKind::Unknown
-                | TypeKind::Never
-                | TypeKind::Void
-                | TypeKind::Undefined
-                | TypeKind::Null
-                | TypeKind::Boolean
-                | TypeKind::Number
-                | TypeKind::String
-                | TypeKind::BigInt
-                | TypeKind::ObjectKeyword
-                | TypeKind::Symbol
-                | TypeKind::LiteralBoolean(_, _)
-                | TypeKind::LiteralNumber(_, _)
-                | TypeKind::LiteralString(_, _)
-                | TypeKind::TypeParameter { .. }
-                | TypeKind::ClassConstructor { .. } => {}
+                kind => Self::push_type_children(kind, &mut pending),
             }
         }
         parameters
+    }
+
+    pub(crate) fn push_type_children(kind: &TypeKind, pending: &mut Vec<TypeId>) {
+        match kind {
+            TypeKind::Invalid(InvalidType::MissingProperty { object, .. })
+            | TypeKind::Invalid(InvalidType::MissingProperties { object, .. })
+            | TypeKind::Array(object) => pending.push(*object),
+            TypeKind::Tuple(elements)
+            | TypeKind::Union(elements)
+            | TypeKind::Intersection(elements) => pending.extend(elements.iter().copied()),
+            TypeKind::Object(shape) => Self::push_shape_children(shape, pending),
+            TypeKind::ClassInstance {
+                arguments,
+                properties,
+                ..
+            } => {
+                pending.extend(arguments.iter().copied());
+                Self::push_shape_children(properties, pending);
+            }
+            TypeKind::Function(signature) => {
+                pending.extend(signature.parameters.iter().map(|parameter| parameter.ty));
+                pending.push(signature.return_type);
+            }
+            TypeKind::ShapeFunction(signature) => {
+                Self::push_signature_children(signature, pending);
+            }
+            TypeKind::Deferred(deferred) => Self::push_deferred_children(deferred, pending),
+            TypeKind::Error
+            | TypeKind::Any
+            | TypeKind::Unknown
+            | TypeKind::Never
+            | TypeKind::Void
+            | TypeKind::Undefined
+            | TypeKind::Null
+            | TypeKind::Boolean
+            | TypeKind::Number
+            | TypeKind::String
+            | TypeKind::BigInt
+            | TypeKind::ObjectKeyword
+            | TypeKind::Symbol
+            | TypeKind::LiteralBoolean(_, _)
+            | TypeKind::LiteralNumber(_, _)
+            | TypeKind::LiteralString(_, _)
+            | TypeKind::TypeParameter { .. }
+            | TypeKind::ClassConstructor { .. } => {}
+        }
     }
 
     fn push_shape_children(shape: &ObjectShape, pending: &mut Vec<TypeId>) {
@@ -719,65 +888,50 @@ impl TypeStore {
     /// semantic identity. Required boundaries always force this to
     /// `Completion::Deferred`, and definitive caches reject it.
     pub fn deferred_object_shape(&mut self) -> TypeId {
-        let id = TypeId(self.kinds.len() as u32);
-        self.kinds
-            .push(TypeKind::Deferred(DeferredType::ObjectShape));
-        id
+        self.fresh_deferred(DeferredType::ObjectShape)
     }
 
     /// Allocate an identity-free nonclaim for generic function/constructor
     /// syntax until a binder-owned function-type declaration identity exists.
     pub fn deferred_generic_function(&mut self) -> TypeId {
-        let id = TypeId(self.kinds.len() as u32);
-        self.kinds
-            .push(TypeKind::Deferred(DeferredType::GenericFunction));
-        id
+        self.fresh_deferred(DeferredType::GenericFunction)
     }
 
     /// Allocate a query-local nonclaim for a generic call whose authored
     /// signature has not yet been instantiated. Keeping this fresh prevents
     /// unrelated call sites from sharing recursion identity or a force entry.
     pub fn deferred_generic_call(&mut self) -> TypeId {
-        let id = TypeId(self.kinds.len() as u32);
-        self.kinds
-            .push(TypeKind::Deferred(DeferredType::GenericCall));
-        id
+        self.fresh_deferred(DeferredType::GenericCall)
     }
 
     /// Allocate a source-free nonclaim for `unique symbol` until its
     /// declaration-owned nominal identity and host grammar are modeled.
     pub fn deferred_unique_symbol(&mut self) -> TypeId {
-        let id = TypeId(self.kinds.len() as u32);
-        self.kinds
-            .push(TypeKind::Deferred(DeferredType::UniqueSymbol));
-        id
+        self.fresh_deferred(DeferredType::UniqueSymbol)
     }
 
     /// Preserve `BigInt` literal syntax without collapsing distinct values to
     /// `bigint` before canonical arbitrary-precision identity is modeled.
     pub fn deferred_bigint_literal(&mut self) -> TypeId {
-        let id = TypeId(self.kinds.len() as u32);
-        self.kinds
-            .push(TypeKind::Deferred(DeferredType::BigIntLiteral));
-        id
+        self.fresh_deferred(DeferredType::BigIntLiteral)
     }
 
     /// Allocate a fresh nonclaim for scanner recovery whose numeric value is
     /// not owned. Authored malformed text never enters literal interning.
     pub fn deferred_numeric_recovery(&mut self) -> TypeId {
-        let id = TypeId(self.kinds.len() as u32);
-        self.kinds
-            .push(TypeKind::Deferred(DeferredType::NumericRecovery));
-        id
+        self.fresh_deferred(DeferredType::NumericRecovery)
     }
 
     /// Allocate an identity-free typed nonclaim for an ordinary string value
     /// that cannot be represented by Rust `String` without losing UTF-16
     /// code units. The authored units never enter the type interner.
     pub fn deferred_utf16_string_literal(&mut self) -> TypeId {
+        self.fresh_deferred(DeferredType::Utf16StringLiteral)
+    }
+
+    fn fresh_deferred(&mut self, deferred: DeferredType) -> TypeId {
         let id = TypeId(self.kinds.len() as u32);
-        self.kinds
-            .push(TypeKind::Deferred(DeferredType::Utf16StringLiteral));
+        self.kinds.push(TypeKind::Deferred(deferred));
         id
     }
 
@@ -1563,187 +1717,5 @@ pub enum Completion<T> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn utf16_string_nonclaims_are_identity_free_and_not_interned() {
-        let mut store = TypeStore::default();
-        let before = store.len();
-        let first = store.deferred_utf16_string_literal();
-        let second = store.deferred_utf16_string_literal();
-        assert_ne!(first, second);
-        assert_eq!(store.len(), before + 2);
-        assert!(matches!(
-            store.kind(first),
-            TypeKind::Deferred(DeferredType::Utf16StringLiteral)
-        ));
-        assert!(matches!(
-            store.kind(second),
-            TypeKind::Deferred(DeferredType::Utf16StringLiteral)
-        ));
-    }
-
-    #[test]
-    fn numeric_recovery_nonclaims_are_identity_free_and_not_interned() {
-        let mut store = TypeStore::default();
-        let before = store.len();
-        let first = store.deferred_numeric_recovery();
-        let second = store.deferred_numeric_recovery();
-        assert_ne!(first, second);
-        assert_eq!(store.len(), before + 2);
-        assert!(matches!(
-            store.kind(first),
-            TypeKind::Deferred(DeferredType::NumericRecovery)
-        ));
-        assert!(matches!(
-            store.kind(second),
-            TypeKind::Deferred(DeferredType::NumericRecovery)
-        ));
-    }
-
-    fn literal_array(store: &mut TypeStore, value: &str) -> TypeId {
-        let literal = store.intern(TypeKind::LiteralString(
-            value.to_string(),
-            LiteralProvenance::Regular,
-        ));
-        store.intern(TypeKind::Array(literal))
-    }
-
-    #[test]
-    fn union_order_follows_typed_structure_not_allocation_or_input_order() {
-        let mut reverse_allocation = TypeStore::new();
-        let reverse_b = literal_array(&mut reverse_allocation, "b");
-        let reverse_a = literal_array(&mut reverse_allocation, "a");
-        let reverse_union =
-            reverse_allocation.union([reverse_b, reverse_a], UnionPolicy::Canonical);
-
-        let mut forward_allocation = TypeStore::new();
-        let forward_a = literal_array(&mut forward_allocation, "a");
-        let forward_b = literal_array(&mut forward_allocation, "b");
-        let forward_union =
-            forward_allocation.union([forward_b, forward_a], UnionPolicy::Canonical);
-
-        assert_eq!(
-            reverse_allocation.display(reverse_union),
-            "\"a\"[] | \"b\"[]"
-        );
-        assert_eq!(
-            reverse_allocation.display(reverse_union),
-            forward_allocation.display(forward_union)
-        );
-    }
-
-    #[test]
-    fn canonical_union_reduces_literal_families_and_dominant_members() {
-        let mut store = TypeStore::new();
-        let string_literal = store.intern(TypeKind::LiteralString(
-            "value".to_string(),
-            LiteralProvenance::Regular,
-        ));
-        let true_literal = store.intern(TypeKind::LiteralBoolean(true, LiteralProvenance::Regular));
-        let false_literal =
-            store.intern(TypeKind::LiteralBoolean(false, LiteralProvenance::Regular));
-        let never = store.builtins.never;
-        let string = store.builtins.string;
-        let boolean = store.builtins.boolean;
-        let any = store.builtins.any;
-        let unknown = store.builtins.unknown;
-
-        assert_eq!(
-            store.union([never, string_literal], UnionPolicy::Canonical),
-            string_literal
-        );
-        assert_eq!(
-            store.union([string_literal, string], UnionPolicy::Canonical),
-            string
-        );
-        assert_eq!(
-            store.union([true_literal, false_literal], UnionPolicy::Canonical),
-            boolean
-        );
-        assert_eq!(
-            store.union([string_literal, any], UnionPolicy::Canonical),
-            any
-        );
-        assert_eq!(store.union([any, unknown], UnionPolicy::Canonical), any);
-    }
-
-    #[test]
-    fn numeric_order_is_value_order_and_authored_structural_order_is_explicit() {
-        let mut store = TypeStore::new();
-        let ten = store.numeric_literal("10", LiteralProvenance::Regular);
-        let two = store.numeric_literal("2", LiteralProvenance::Regular);
-        let numeric = store.union([ten, two], UnionPolicy::Canonical);
-        assert_eq!(store.display(numeric), "2 | 10");
-
-        let exponent = store.numeric_literal("1e3", LiteralProvenance::Regular);
-        let unsafe_integer = store.numeric_literal("9007199254740993", LiteralProvenance::Regular);
-        let rounded_integer = store.numeric_literal("9007199254740992", LiteralProvenance::Regular);
-        assert_eq!(store.display(exponent), "1000");
-        assert_eq!(unsafe_integer, rounded_integer);
-
-        let format_edges = [
-            ("0.1", "0.1"),
-            ("0.0001", "0.0001"),
-            ("1.25", "1.25"),
-            ("1e-7", "1e-7"),
-            ("1e-6", "0.000001"),
-            ("1e20", "100000000000000000000"),
-            ("1e21", "1e+21"),
-            ("1000000000000000000001", "1e+21"),
-        ];
-        for (source, expected) in format_edges {
-            let literal = store.numeric_literal(source, LiteralProvenance::Regular);
-            assert_eq!(store.display(literal), expected, "source: {source}");
-        }
-
-        let radix_edges = [
-            ("0x20000000000001", "9007199254740992"),
-            ("0x20000000000000", "9007199254740992"),
-            ("0b1010", "10"),
-            ("0o12", "10"),
-            ("0x10000000000000000", "18446744073709552000"),
-            ("0x20000000000000000", "36893488147419103000"),
-            ("0xfffffffffffffffff", "295147905179352830000"),
-        ];
-        for (source, expected) in radix_edges {
-            let literal = store.numeric_literal(source, LiteralProvenance::Regular);
-            assert_eq!(store.display(literal), expected, "source: {source}");
-        }
-
-        let before_invalid = store.len();
-        assert!(
-            store
-                .try_numeric_literal("not-a-number", LiteralProvenance::Regular)
-                .is_err()
-        );
-        assert_eq!(
-            store.numeric_literal("not-a-number", LiteralProvenance::Regular),
-            store.builtins.error
-        );
-        assert_eq!(store.len(), before_invalid);
-
-        let string = store.builtins.string;
-        let left = store.object(vec![Property {
-            name: "left".to_string(),
-            ty: string,
-            optional: false,
-            readonly: false,
-        }]);
-        let right = store.object(vec![Property {
-            name: "right".to_string(),
-            ty: string,
-            optional: false,
-            readonly: false,
-        }]);
-        let authored = store.union(
-            [right, left, right],
-            UnionPolicy::PreserveAuthoredStructuralOrder,
-        );
-        assert_eq!(
-            store.display(authored),
-            "{ right: string; } | { left: string; }"
-        );
-    }
-}
+#[path = "../../rewrite-tests/types_unit.rs"]
+mod tests;

@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 
 use crate::bind::{DeclarationKind, Meaning, ScopeId};
 use crate::standard_library::StandardLibraryEnvironment;
-use crate::syntax::StatementKind;
+use crate::syntax::{AuthoredLiteralKind, StatementKind};
 
 use super::{CompilerOptions, ProgramFile};
 
@@ -20,7 +20,8 @@ pub(super) fn roots_are_homogeneous_literal_products(
 ) -> bool {
     files.iter().all(|file| match family {
         LiteralProductFamily::NoSubstitutionTemplate => {
-            file.syntax.has_authored_no_substitution_template()
+            file.syntax
+                .has_authored_literal(AuthoredLiteralKind::Template)
                 && !file.syntax.has_unmodeled_template_products()
         }
         LiteralProductFamily::ExtendedUnicodeString => {
@@ -32,7 +33,8 @@ pub(super) fn roots_are_homogeneous_literal_products(
                 && !file.syntax.has_unmodeled_regular_expression_products()
         }
         LiteralProductFamily::NumericRecovery => {
-            file.syntax.has_authored_numeric_recovery()
+            file.syntax
+                .has_authored_literal(AuthoredLiteralKind::NumericRecovery)
                 && !file.syntax.has_unmodeled_numeric_recovery_products()
         }
     })

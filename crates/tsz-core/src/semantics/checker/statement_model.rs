@@ -2,8 +2,9 @@ use crate::bind::ScopeId;
 use crate::program::SemanticCompletion;
 use crate::source::{FileId, Span};
 use crate::syntax::{
-    ArrowBody, ClassMemberKind, Expression, ExpressionKind, Parameter, Statement, StatementKind,
-    SwitchClauseKind,
+    ClassMemberKind, DescendantAdapter, DescendantContainer, Expression, ExpressionKind,
+    FunctionLikeExpression, NestedStatement, Parameter, Statement, StatementKind, SwitchClauseKind,
+    walk_expression_descendants, walk_function_like_descendants, walk_statement_descendants,
 };
 
 use super::Checker;
@@ -16,6 +17,40 @@ enum FunctionLikeExpressionAction {
     BodyOnly,
     SemanticOwner,
     DeferredSemanticOwner,
+}
+
+#[derive(Clone, Copy)]
+struct SemanticDescendantContext<'a> {
+    scope: ScopeId,
+    expected_return: ContextualType,
+    expected_return_order: Option<&'a PropertyOrderTree>,
+    reenter_all_statements: bool,
+}
+
+impl SemanticDescendantContext<'_> {
+    const fn deferred(scope: ScopeId) -> Self {
+        Self {
+            scope,
+            expected_return: ContextualType::Deferred,
+            expected_return_order: None,
+            reenter_all_statements: false,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum NestedSemanticAction {
+    Recovery,
+    FunctionLikeOwners,
+}
+
+struct SemanticDescendantAdapter<'checker, 'program, 'order> {
+    checker: &'checker mut Checker<'program>,
+    file: FileId,
+    function_action: FunctionLikeExpressionAction,
+    nested_action: NestedSemanticAction,
+    allow_identifier_semantics: bool,
+    _order: std::marker::PhantomData<&'order PropertyOrderTree>,
 }
 
 impl Checker<'_> {
@@ -63,16 +98,18 @@ impl Checker<'_> {
                     expected_return,
                     expected_return_order,
                 );
-            } else if self
-                .capabilities
-                .semantic_check_node_allows_function_like_expression_semantics(file, statement.id)
-            {
-                self.check_nonclaimed_function_like_descendants(
-                    file,
-                    scope,
-                    statement,
-                    FunctionLikeExpressionAction::DeferredSemanticOwner,
-                );
+            } else {
+                let (allows_descendants, allow_identifier_semantics) = self
+                    .capabilities
+                    .semantic_check_node_function_like_descendant_permissions(file, statement.id);
+                if allows_descendants {
+                    self.check_nonclaimed_function_like_descendants(
+                        file,
+                        scope,
+                        statement,
+                        allow_identifier_semantics,
+                    );
+                }
             }
             return;
         }
@@ -187,140 +224,24 @@ impl Checker<'_> {
         expected_return: ContextualType,
         expected_return_order: Option<&PropertyOrderTree>,
     ) {
-        match &statement.kind {
-            StatementKind::Import(_)
-            | StatementKind::TypeAlias(_)
-            | StatementKind::Interface(_)
-            | StatementKind::Break(_)
-            | StatementKind::Continue(_)
-            | StatementKind::Empty
-            | StatementKind::Unknown => {}
-            StatementKind::Export(declaration) => {
-                if let Some(expression) = &declaration.assignment {
-                    self.discover_expression_statement_descendants(file, scope, expression);
-                }
-            }
-            StatementKind::Variable(declaration) => {
-                if let Some(expression) = &declaration.initializer {
-                    self.discover_expression_statement_descendants(file, scope, expression);
-                }
-            }
-            StatementKind::Function(declaration) => {
-                let function_scope = self.node_scope(file, statement.id, scope);
-                self.discover_parameter_initializer_statement_descendants(
-                    file,
-                    function_scope,
-                    &declaration.parameters,
-                );
-                self.check_statement_list(
-                    file,
-                    function_scope,
-                    &declaration.body,
-                    ContextualType::Deferred,
-                    None,
-                );
-            }
-            StatementKind::Class(declaration) => {
-                let class_scope = self.node_scope(file, statement.id, scope);
-                for member in &declaration.members {
-                    match &member.kind {
-                        ClassMemberKind::Constructor {
-                            parameters, body, ..
-                        }
-                        | ClassMemberKind::Method {
-                            parameters, body, ..
-                        } => {
-                            let member_scope = self.node_scope(file, member.id, class_scope);
-                            self.discover_parameter_initializer_statement_descendants(
-                                file,
-                                member_scope,
-                                parameters,
-                            );
-                            self.check_statement_list(
-                                file,
-                                member_scope,
-                                body,
-                                ContextualType::Deferred,
-                                None,
-                            );
-                        }
-                        ClassMemberKind::Property { initializer, .. } => {
-                            if let Some(initializer) = initializer {
-                                self.discover_expression_statement_descendants(
-                                    file,
-                                    class_scope,
-                                    initializer,
-                                );
-                            }
-                        }
-                    }
-                }
-            }
-            StatementKind::If(control_flow) => {
-                self.discover_expression_statement_descendants(
-                    file,
-                    scope,
-                    &control_flow.condition,
-                );
-                let then_scope = self.node_scope(file, control_flow.then_statement.id, scope);
-                self.check_statement(
-                    file,
-                    then_scope,
-                    &control_flow.then_statement,
-                    expected_return,
-                    expected_return_order,
-                );
-                if let Some(else_statement) = &control_flow.else_statement {
-                    let else_scope = self.node_scope(file, else_statement.id, scope);
-                    self.check_statement(
-                        file,
-                        else_scope,
-                        else_statement,
-                        expected_return,
-                        expected_return_order,
-                    );
-                }
-            }
-            StatementKind::Switch(control_flow) => {
-                let switch_scope = self.node_scope(file, statement.id, scope);
-                self.discover_expression_statement_descendants(
-                    file,
-                    switch_scope,
-                    &control_flow.expression,
-                );
-                for clause in &control_flow.clauses {
-                    if let SwitchClauseKind::Case(expression) = &clause.kind {
-                        self.discover_expression_statement_descendants(
-                            file,
-                            switch_scope,
-                            expression,
-                        );
-                    }
-                    self.check_statement_list(
-                        file,
-                        switch_scope,
-                        &clause.statements,
-                        expected_return,
-                        expected_return_order,
-                    );
-                }
-            }
-            StatementKind::Return(expression) => {
-                if let Some(expression) = expression {
-                    self.discover_expression_statement_descendants(file, scope, expression);
-                }
-            }
-            StatementKind::Block(statements) => self.check_statement_list(
-                file,
-                scope,
-                statements,
-                expected_return,
-                expected_return_order,
-            ),
-            StatementKind::Expression(expression) => {
-                self.discover_expression_statement_descendants(file, scope, expression);
-            }
-        }
+        let context = SemanticDescendantContext {
+            scope,
+            expected_return,
+            expected_return_order,
+            reenter_all_statements: false,
+        };
+        let allow_identifier_semantics = self
+            .capabilities
+            .semantic_check_node_allows_recovery_identifiers(file, statement.id);
+        let mut adapter = SemanticDescendantAdapter {
+            checker: self,
+            file,
+            function_action: FunctionLikeExpressionAction::SemanticOwner,
+            nested_action: NestedSemanticAction::Recovery,
+            allow_identifier_semantics,
+            _order: std::marker::PhantomData,
+        };
+        walk_statement_descendants(&mut adapter, &context, statement);
     }
 
     pub(super) fn check_parameter_initializer_statement_descendants(
@@ -329,43 +250,18 @@ impl Checker<'_> {
         scope: ScopeId,
         parameters: &[Parameter],
     ) {
-        self.check_parameter_initializer_statement_descendants_with_action(
+        let context = SemanticDescendantContext::deferred(scope);
+        let mut adapter = SemanticDescendantAdapter {
+            checker: self,
             file,
-            scope,
-            parameters,
-            FunctionLikeExpressionAction::SemanticOwner,
-        );
-    }
-
-    fn discover_parameter_initializer_statement_descendants(
-        &mut self,
-        file: FileId,
-        scope: ScopeId,
-        parameters: &[Parameter],
-    ) {
-        self.check_parameter_initializer_statement_descendants_with_action(
-            file,
-            scope,
-            parameters,
-            FunctionLikeExpressionAction::BodyOnly,
-        );
-    }
-
-    fn check_parameter_initializer_statement_descendants_with_action(
-        &mut self,
-        file: FileId,
-        scope: ScopeId,
-        parameters: &[Parameter],
-        action: FunctionLikeExpressionAction,
-    ) {
+            function_action: FunctionLikeExpressionAction::SemanticOwner,
+            nested_action: NestedSemanticAction::FunctionLikeOwners,
+            allow_identifier_semantics: false,
+            _order: std::marker::PhantomData,
+        };
         for parameter in parameters {
             if let Some(initializer) = &parameter.initializer {
-                self.check_expression_statement_descendants_with_action(
-                    file,
-                    scope,
-                    initializer,
-                    action,
-                );
+                walk_expression_descendants(&mut adapter, &context, initializer);
             }
         }
     }
@@ -380,162 +276,18 @@ impl Checker<'_> {
         file: FileId,
         scope: ScopeId,
         statement: &Statement,
-        action: FunctionLikeExpressionAction,
+        allow_identifier_semantics: bool,
     ) {
-        match &statement.kind {
-            StatementKind::Import(_)
-            | StatementKind::TypeAlias(_)
-            | StatementKind::Interface(_)
-            | StatementKind::Break(_)
-            | StatementKind::Continue(_)
-            | StatementKind::Empty
-            | StatementKind::Unknown => {}
-            StatementKind::Export(declaration) => {
-                if let Some(expression) = &declaration.assignment {
-                    self.check_expression_statement_descendants_with_action(
-                        file, scope, expression, action,
-                    );
-                }
-            }
-            StatementKind::Variable(declaration) => {
-                if let Some(initializer) = &declaration.initializer {
-                    self.check_expression_statement_descendants_with_action(
-                        file,
-                        scope,
-                        initializer,
-                        action,
-                    );
-                }
-            }
-            StatementKind::Function(declaration) => {
-                let function_scope = self.node_scope(file, statement.id, scope);
-                self.check_parameter_initializer_statement_descendants_with_action(
-                    file,
-                    function_scope,
-                    &declaration.parameters,
-                    action,
-                );
-                self.check_statement_list(
-                    file,
-                    function_scope,
-                    &declaration.body,
-                    ContextualType::Deferred,
-                    None,
-                );
-            }
-            StatementKind::Class(declaration) => {
-                let class_scope = self.node_scope(file, statement.id, scope);
-                for member in &declaration.members {
-                    match &member.kind {
-                        ClassMemberKind::Constructor {
-                            parameters, body, ..
-                        }
-                        | ClassMemberKind::Method {
-                            parameters, body, ..
-                        } => {
-                            let member_scope = self.node_scope(file, member.id, class_scope);
-                            self.check_parameter_initializer_statement_descendants_with_action(
-                                file,
-                                member_scope,
-                                parameters,
-                                action,
-                            );
-                            self.check_statement_list(
-                                file,
-                                member_scope,
-                                body,
-                                ContextualType::Deferred,
-                                None,
-                            );
-                        }
-                        ClassMemberKind::Property { initializer, .. } => {
-                            if let Some(initializer) = initializer {
-                                self.check_expression_statement_descendants_with_action(
-                                    file,
-                                    class_scope,
-                                    initializer,
-                                    action,
-                                );
-                            }
-                        }
-                    }
-                }
-            }
-            StatementKind::If(control_flow) => {
-                self.check_expression_statement_descendants_with_action(
-                    file,
-                    scope,
-                    &control_flow.condition,
-                    action,
-                );
-                self.check_nested_function_like_statement(
-                    file,
-                    scope,
-                    &control_flow.then_statement,
-                    action,
-                );
-                if let Some(else_statement) = &control_flow.else_statement {
-                    self.check_nested_function_like_statement(file, scope, else_statement, action);
-                }
-            }
-            StatementKind::Switch(control_flow) => {
-                self.check_expression_statement_descendants_with_action(
-                    file,
-                    scope,
-                    &control_flow.expression,
-                    action,
-                );
-                for clause in &control_flow.clauses {
-                    if let SwitchClauseKind::Case(expression) = &clause.kind {
-                        self.check_expression_statement_descendants_with_action(
-                            file, scope, expression, action,
-                        );
-                    }
-                    for statement in &clause.statements {
-                        self.check_nested_function_like_statement(file, scope, statement, action);
-                    }
-                }
-            }
-            StatementKind::Return(expression) => {
-                if let Some(expression) = expression {
-                    self.check_expression_statement_descendants_with_action(
-                        file, scope, expression, action,
-                    );
-                }
-            }
-            StatementKind::Block(statements) => {
-                for statement in statements {
-                    self.check_nested_function_like_statement(file, scope, statement, action);
-                }
-            }
-            StatementKind::Expression(expression) => {
-                self.check_expression_statement_descendants_with_action(
-                    file, scope, expression, action,
-                );
-            }
-        }
-    }
-
-    fn check_nested_function_like_statement(
-        &mut self,
-        file: FileId,
-        scope: ScopeId,
-        statement: &Statement,
-        action: FunctionLikeExpressionAction,
-    ) {
-        match &statement.kind {
-            StatementKind::Function(_) | StatementKind::Class(_) => {
-                let statement_scope = self.node_scope(file, statement.id, scope);
-                self.check_statement(
-                    file,
-                    statement_scope,
-                    statement,
-                    ContextualType::Deferred,
-                    None,
-                );
-            }
-            _ => self.check_nonclaimed_function_like_descendants(file, scope, statement, action),
-        }
+        let context = SemanticDescendantContext::deferred(scope);
+        let mut adapter = SemanticDescendantAdapter {
+            checker: self,
+            file,
+            function_action: FunctionLikeExpressionAction::DeferredSemanticOwner,
+            nested_action: NestedSemanticAction::FunctionLikeOwners,
+            allow_identifier_semantics,
+            _order: std::marker::PhantomData,
+        };
+        walk_statement_descendants(&mut adapter, &context, statement);
     }
 
     fn check_class_initializer_statement_descendants(
@@ -588,11 +340,10 @@ impl Checker<'_> {
                             if is_lexical_this_call_host(initializer) {
                                 self.infer_expression(file, member_scope, initializer, None);
                             } else {
-                                self.check_expression_statement_descendants_with_action(
+                                self.check_function_like_expression_descendants(
                                     file,
                                     member_scope,
                                     initializer,
-                                    FunctionLikeExpressionAction::SemanticOwner,
                                 );
                             }
                         }
@@ -602,144 +353,163 @@ impl Checker<'_> {
         }
     }
 
-    fn discover_expression_statement_descendants(
+    fn check_function_like_expression_descendants(
         &mut self,
         file: FileId,
         scope: ScopeId,
         expression: &Expression,
     ) {
-        self.check_expression_statement_descendants_with_action(
+        let context = SemanticDescendantContext::deferred(scope);
+        let mut adapter = SemanticDescendantAdapter {
+            checker: self,
             file,
-            scope,
-            expression,
-            FunctionLikeExpressionAction::BodyOnly,
-        );
+            function_action: FunctionLikeExpressionAction::SemanticOwner,
+            nested_action: NestedSemanticAction::FunctionLikeOwners,
+            allow_identifier_semantics: false,
+            _order: std::marker::PhantomData,
+        };
+        walk_expression_descendants(&mut adapter, &context, expression);
     }
 
-    fn check_expression_statement_descendants_with_action(
+    pub(super) fn check_function_like_expression_body_only(
         &mut self,
         file: FileId,
         scope: ScopeId,
         expression: &Expression,
-        action: FunctionLikeExpressionAction,
+        function: &FunctionLikeExpression,
     ) {
-        match &expression.kind {
-            ExpressionKind::Identifier { .. } => {
+        let context = SemanticDescendantContext::deferred(scope);
+        let function_action = if self
+            .capabilities
+            .semantic_check_node_function_like_descendant_permissions(file, expression.id)
+            .0
+        {
+            FunctionLikeExpressionAction::SemanticOwner
+        } else {
+            FunctionLikeExpressionAction::BodyOnly
+        };
+        let mut adapter = SemanticDescendantAdapter {
+            checker: self,
+            file,
+            function_action,
+            nested_action: NestedSemanticAction::Recovery,
+            allow_identifier_semantics: false,
+            _order: std::marker::PhantomData,
+        };
+        walk_function_like_descendants(&mut adapter, &context, expression, function);
+    }
+}
+
+impl<'ast, 'checker, 'program, 'order> DescendantAdapter<'ast>
+    for SemanticDescendantAdapter<'checker, 'program, 'order>
+{
+    type Context = SemanticDescendantContext<'order>;
+
+    fn context(
+        &mut self,
+        context: &Self::Context,
+        container: DescendantContainer<'ast>,
+    ) -> Self::Context {
+        let (owner, resets_return, reenter_all) = match container {
+            DescendantContainer::Statement(statement)
+            | DescendantContainer::Class(statement, _) => (statement.id, false, false),
+            DescendantContainer::Function(statement, _) => (statement.id, true, true),
+            DescendantContainer::ClassMember(member) => (member.id, true, true),
+            DescendantContainer::FunctionLike(expression, _) => (expression.id, true, true),
+        };
+        let mut next = SemanticDescendantContext {
+            scope: self.checker.node_scope(self.file, owner, context.scope),
+            ..*context
+        };
+        if resets_return {
+            next.expected_return = ContextualType::Deferred;
+            next.expected_return_order = None;
+        }
+        next.reenter_all_statements |= reenter_all;
+        next
+    }
+
+    fn nested_statement(
+        &mut self,
+        context: &Self::Context,
+        statement: &'ast Statement,
+        _next_statement: Option<&'ast Statement>,
+    ) -> NestedStatement {
+        match self.nested_action {
+            NestedSemanticAction::Recovery => {
+                self.checker.check_statement(
+                    self.file,
+                    context.scope,
+                    statement,
+                    context.expected_return,
+                    context.expected_return_order,
+                );
+                NestedStatement::Handled
+            }
+            NestedSemanticAction::FunctionLikeOwners
+                if context.reenter_all_statements
+                    || matches!(
+                        statement.kind,
+                        StatementKind::Function(_) | StatementKind::Class(_)
+                    ) =>
+            {
+                self.checker.check_statement(
+                    self.file,
+                    context.scope,
+                    statement,
+                    ContextualType::Deferred,
+                    None,
+                );
+                NestedStatement::Handled
+            }
+            NestedSemanticAction::FunctionLikeOwners => NestedStatement::Descend,
+        }
+    }
+
+    fn function_like(
+        &mut self,
+        context: &Self::Context,
+        expression: &'ast Expression,
+        function: &'ast FunctionLikeExpression,
+    ) {
+        match self.function_action {
+            FunctionLikeExpressionAction::BodyOnly => {
+                walk_function_like_descendants(self, context, expression, function);
+            }
+            FunctionLikeExpressionAction::SemanticOwner
                 if matches!(
-                    action,
-                    FunctionLikeExpressionAction::BodyOnly
-                        | FunctionLikeExpressionAction::DeferredSemanticOwner
+                    &function.syntax,
+                    crate::syntax::FunctionLikeSyntax::Arrow(_)
+                ) && matches!(self.nested_action, NestedSemanticAction::Recovery) =>
+            {
+                walk_function_like_descendants(self, context, expression, function);
+            }
+            FunctionLikeExpressionAction::SemanticOwner
+            | FunctionLikeExpressionAction::DeferredSemanticOwner => {
+                let expected = if matches!(
+                    self.function_action,
+                    FunctionLikeExpressionAction::DeferredSemanticOwner
                 ) {
-                    let _ = self.infer_identifier(file, scope, expression);
-                }
-            }
-            ExpressionKind::This
-            | ExpressionKind::Literal(_)
-            | ExpressionKind::RegularExpression(_)
-            | ExpressionKind::Missing => {}
-            ExpressionKind::Object(properties) => {
-                for property in properties {
-                    self.check_expression_statement_descendants_with_action(
-                        file,
-                        scope,
-                        &property.value,
-                        action,
-                    );
-                }
-            }
-            ExpressionKind::Array(elements) => {
-                for element in elements {
-                    self.check_expression_statement_descendants_with_action(
-                        file, scope, element, action,
-                    );
-                }
-            }
-            ExpressionKind::Call {
-                callee, arguments, ..
-            }
-            | ExpressionKind::New {
-                callee, arguments, ..
-            } => {
-                self.check_expression_statement_descendants_with_action(
-                    file, scope, callee, action,
+                    ContextualType::Deferred
+                } else {
+                    ContextualType::Absent
+                };
+                let _ = self.checker.infer_function_like_expression(
+                    self.file,
+                    context.scope,
+                    expression,
+                    function,
+                    expected,
                 );
-                for argument in arguments {
-                    self.check_expression_statement_descendants_with_action(
-                        file, scope, argument, action,
-                    );
-                }
             }
-            ExpressionKind::Member { object, .. }
-            | ExpressionKind::Unary {
-                operand: object, ..
-            }
-            | ExpressionKind::Parenthesized(object)
-            | ExpressionKind::As {
-                expression: object, ..
-            } => {
-                self.check_expression_statement_descendants_with_action(file, scope, object, action)
-            }
-            ExpressionKind::ElementAccess { object, index } => {
-                self.check_expression_statement_descendants_with_action(
-                    file, scope, object, action,
-                );
-                self.check_expression_statement_descendants_with_action(file, scope, index, action);
-            }
-            ExpressionKind::Arrow {
-                parameters,
-                return_type,
-                body,
-            } => match action {
-                FunctionLikeExpressionAction::SemanticOwner
-                | FunctionLikeExpressionAction::DeferredSemanticOwner => {
-                    let context =
-                        if matches!(action, FunctionLikeExpressionAction::DeferredSemanticOwner) {
-                            ContextualType::Deferred
-                        } else {
-                            ContextualType::Absent
-                        };
-                    let _ = self.infer_arrow_expression(
-                        file,
-                        scope,
-                        expression.id,
-                        parameters,
-                        return_type.as_ref(),
-                        body,
-                        context,
-                    );
-                }
-                FunctionLikeExpressionAction::BodyOnly => {
-                    let arrow_scope = self.node_scope(file, expression.id, scope);
-                    self.check_parameter_initializer_statement_descendants_with_action(
-                        file,
-                        arrow_scope,
-                        parameters,
-                        action,
-                    );
-                    match body {
-                        ArrowBody::Expression(expression) => {
-                            self.check_expression_statement_descendants_with_action(
-                                file,
-                                arrow_scope,
-                                expression,
-                                action,
-                            );
-                        }
-                        ArrowBody::Block(statements) => self.check_statement_list(
-                            file,
-                            arrow_scope,
-                            statements,
-                            ContextualType::Deferred,
-                            None,
-                        ),
-                    }
-                }
-            },
-            ExpressionKind::Binary { left, right, .. }
-            | ExpressionKind::Assignment { left, right } => {
-                self.check_expression_statement_descendants_with_action(file, scope, left, action);
-                self.check_expression_statement_descendants_with_action(file, scope, right, action);
-            }
+        }
+    }
+
+    fn identifier(&mut self, context: &Self::Context, expression: &'ast Expression) {
+        if self.allow_identifier_semantics {
+            let _ = self
+                .checker
+                .infer_identifier(self.file, context.scope, expression);
         }
     }
 }

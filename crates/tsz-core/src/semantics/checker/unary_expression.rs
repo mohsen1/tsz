@@ -9,12 +9,7 @@ impl Checker<'_> {
         operand: TypeId,
         depth: usize,
     ) -> Completion<TypeId> {
-        let operand = match self.force_operand(operand, depth) {
-            Completion::Complete(operand) => operand,
-            Completion::Deferred => return Completion::Deferred,
-            Completion::Cycle => return Completion::Cycle,
-            Completion::Limit => return Completion::Limit,
-        };
+        let operand = completed!(self.force_operand(operand, depth));
         if operator == DeferredUnaryOperator::Await {
             return Completion::Complete(operand);
         }

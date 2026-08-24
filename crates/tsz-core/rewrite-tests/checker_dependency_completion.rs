@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use tsz::diagnostics::DiagnosticCategory;
+use tsz::service::LanguageService;
 use tsz::{Compiler, CompilerOptions, SemanticCompletion, SourceInput};
 
 fn compile(source: &str) -> tsz::CompileOutput {
@@ -27,6 +28,398 @@ fn codes(output: &tsz::CompileOutput) -> Vec<u32> {
         .iter()
         .map(|diagnostic| diagnostic.code)
         .collect()
+}
+
+#[test]
+fn checker_schedules_claimed_empty_function_expression_inside_nonclaimed_host() {
+    let source = concat!(
+        "switch ((0).) { default:\n",
+        "  const nested = function(input: MissingOwnedSignature): void { };\n",
+        "}\n",
+    );
+    let mut service = LanguageService::new(CompilerOptions {
+        no_emit: true,
+        strict: true,
+        ..CompilerOptions::default()
+    });
+    service.open("case.ts", Arc::<str>::from(source));
+    let result = service.semantic_diagnostics("case.ts");
+    let [diagnostic] = result.diagnostics.as_slice() else {
+        panic!("unexpected diagnostics: {:#?}", result.diagnostics);
+    };
+    assert_eq!(diagnostic.code, 2304);
+    assert_eq!(
+        diagnostic.start,
+        source.find("MissingOwnedSignature").unwrap() as u32
+    );
+    assert_eq!(diagnostic.length, "MissingOwnedSignature".len() as u32);
+    assert_eq!(result.semantic_completion, SemanticCompletion::Deferred);
+}
+
+#[test]
+fn nonclaimed_host_reenters_an_independent_arrow_required_type_owner() {
+    let source = concat!(
+        "const values = [`head${\"gap\"}tail`, ",
+        "(value: MissingArrowType) => value, ",
+        "(): MissingArrowReturn => 1];\n",
+    );
+    let output = compile(source);
+    let [parameter, result] = output.diagnostics.as_slice() else {
+        panic!("unexpected diagnostics: {:#?}", output.diagnostics);
+    };
+    assert_eq!(parameter.code, 2304);
+    assert_eq!(
+        parameter.start,
+        source.find("MissingArrowType").unwrap() as u32
+    );
+    assert_eq!(parameter.length, "MissingArrowType".len() as u32);
+    assert_eq!(result.code, 2304);
+    assert_eq!(
+        result.start,
+        source.find("MissingArrowReturn").unwrap() as u32
+    );
+    assert_eq!(result.length, "MissingArrowReturn".len() as u32);
+    assert_eq!(output.semantic_completion, SemanticCompletion::Deferred);
+}
+
+#[test]
+fn nonclaimed_host_preserves_generic_arrow_required_type_context() {
+    let source = concat!(
+        "const outer = <Cedar,>(value: Cedar): Cedar => {",
+        "type Alias = Cedar; const kept: Cedar = value; ",
+        "const cast = value as Cedar; ",
+        "const nested = (leaf: Cedar): Cedar => leaf; return cast; };",
+        "const independent: MissingArrowType = 1;\n",
+    );
+    let output = compile(source);
+    let [diagnostic] = output.diagnostics.as_slice() else {
+        panic!("unexpected diagnostics: {:#?}", output.diagnostics);
+    };
+    assert_eq!(diagnostic.code, 2304);
+    assert_eq!(
+        diagnostic.start,
+        source.find("MissingArrowType").unwrap() as u32
+    );
+    assert_eq!(diagnostic.length, "MissingArrowType".len() as u32);
+    assert_eq!(output.semantic_completion, SemanticCompletion::Deferred);
+}
+
+#[test]
+fn class_heritage_defers_an_incomplete_value_producer() {
+    let source = concat!(
+        "declare function wrap(value: any, constructor: any): any;",
+        "const RenamedBase = wrap({ get value() { return 1; } }, class Inner {});",
+        "class Derived extends RenamedBase {}",
+        "const independent: MissingIndependent = 1;",
+    );
+    let output = compile(source);
+    let [independent] = output.diagnostics.as_slice() else {
+        panic!("unexpected diagnostics: {:#?}", output.diagnostics);
+    };
+    assert_eq!(independent.code, 2304);
+    assert_eq!(
+        (independent.start, independent.length),
+        (
+            source.find("MissingIndependent").unwrap() as u32,
+            "MissingIndependent".len() as u32,
+        )
+    );
+    assert_eq!(output.semantic_completion, SemanticCompletion::Deferred);
+}
+
+#[test]
+fn class_heritage_defers_a_complete_nonconstructor_value() {
+    let source = concat!(
+        "const RenamedBase = () => {};",
+        "class Derived extends RenamedBase {}",
+        "const independent: MissingIndependent = 1;",
+    );
+    let output = compile(source);
+    let [independent] = output.diagnostics.as_slice() else {
+        panic!("unexpected diagnostics: {:#?}", output.diagnostics);
+    };
+    assert_eq!(independent.code, 2304);
+    assert_eq!(
+        (independent.start, independent.length),
+        (
+            source.find("MissingIndependent").unwrap() as u32,
+            "MissingIndependent".len() as u32,
+        )
+    );
+    assert_eq!(output.semantic_completion, SemanticCompletion::Deferred);
+}
+
+#[test]
+fn class_heritage_defers_unowned_generic_constructor_arity() {
+    for heritage in ["RenamedBase", "RenamedBase<number, string>"] {
+        let source = format!(
+            "class RenamedBase<Cedar> {{}} class Derived extends {heritage} {{}}\
+             const independent: MissingIndependent = 1;",
+        );
+        let output = compile(&source);
+        let [independent] = output.diagnostics.as_slice() else {
+            panic!("unexpected diagnostics: {:#?}", output.diagnostics);
+        };
+        assert_eq!(independent.code, 2304);
+        assert_eq!(
+            (independent.start, independent.length),
+            (
+                source.find("MissingIndependent").unwrap() as u32,
+                "MissingIndependent".len() as u32,
+            )
+        );
+        assert_eq!(output.semantic_completion, SemanticCompletion::Deferred);
+    }
+}
+
+#[test]
+fn recovered_named_tuple_arrow_header_does_not_publish_label_lookup() {
+    let source = concat!(
+        "const renamed = (...values: [label: \"label\", item: \"item\"]): void => {",
+        "values; const dependent: MissingTupleBody = 1; };",
+        "const independent: MissingTupleSibling = 1;\n",
+    );
+    let output = compile(source);
+    let missing = output
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code == 2304)
+        .collect::<Vec<_>>();
+    let [body, sibling] = missing.as_slice() else {
+        panic!("unexpected diagnostics: {:#?}", output.diagnostics);
+    };
+    assert_eq!(
+        (body.start, body.length),
+        (
+            source.find("MissingTupleBody").unwrap() as u32,
+            "MissingTupleBody".len() as u32,
+        )
+    );
+    assert_eq!(
+        (sibling.start, sibling.length),
+        (
+            source.find("MissingTupleSibling").unwrap() as u32,
+            "MissingTupleSibling".len() as u32,
+        )
+    );
+    assert_eq!(output.semantic_completion, SemanticCompletion::Deferred);
+}
+
+#[test]
+fn recovered_named_tuple_arrow_keeps_same_call_siblings_independent() {
+    for source in [
+        concat!(
+            "declare const consume: (...values: any[]) => void;",
+            "consume((...values: [label: 'label', item: 'item']) => values, ",
+            "MissingSameCall);",
+        ),
+        concat!(
+            "declare const consume: (...values: any[]) => void;",
+            "consume((renamed: ) => renamed, MissingSameCall);",
+        ),
+        concat!(
+            "declare const consume: (...values: any[]) => void;",
+            "consume((...values: [label?: 'label']) => values, MissingSameCall);",
+        ),
+        concat!(
+            "declare const consume: (...values: any[]) => void;",
+            "consume((...values: [...items: string[]]) => values, MissingSameCall);",
+        ),
+        concat!(
+            "declare const consume: (...values: any[]) => void;",
+            "consume((): => 1, MissingSameCall);",
+        ),
+    ] {
+        let output = compile(source);
+        let missing = output
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.code == 2304)
+            .collect::<Vec<_>>();
+        let [diagnostic] = missing.as_slice() else {
+            panic!("unexpected diagnostics: {:#?}", output.diagnostics);
+        };
+        assert_eq!(
+            (diagnostic.start, diagnostic.length),
+            (
+                source.find("MissingSameCall").unwrap() as u32,
+                "MissingSameCall".len() as u32,
+            )
+        );
+        assert_eq!(output.semantic_completion, SemanticCompletion::Deferred);
+    }
+}
+
+#[test]
+fn malformed_generic_arrow_keeps_same_call_siblings_independent() {
+    let source = concat!(
+        "declare const consume: (...values: any[]) => void;",
+        "consume(<Cedar extends,>(renamed: Cedar) => renamed, MissingSameCall);",
+    );
+    for path in ["case.ts", "case.tsx"] {
+        let output = compile_files(&[(path, source)]);
+        let missing = output
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.code == 2304)
+            .collect::<Vec<_>>();
+        let [diagnostic] = missing.as_slice() else {
+            panic!("{path}: unexpected diagnostics: {:#?}", output.diagnostics);
+        };
+        assert_eq!(
+            (diagnostic.start, diagnostic.length),
+            (
+                source.find("MissingSameCall").unwrap() as u32,
+                "MissingSameCall".len() as u32,
+            )
+        );
+        assert_eq!(output.semantic_completion, SemanticCompletion::Deferred);
+    }
+}
+
+#[test]
+fn rejected_generic_arrow_prefix_keeps_same_call_names_independent() {
+    for prefix in ["", "type Cedar = number;", "const Cedar = 1;"] {
+        let source = format!(
+            "{prefix}declare const consume: (...values: any[]) => void;\
+             consume(<Cedar,>(): => 1, MissingSameCall);",
+        );
+        let output = compile(&source);
+        let syntax = output
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.code != 2304)
+            .map(|diagnostic| {
+                (
+                    diagnostic.code,
+                    diagnostic.start,
+                    diagnostic.length,
+                    diagnostic.message_text.as_str(),
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            syntax,
+            vec![
+                (1005, source.find(",>").unwrap() as u32, 1, "'>' expected.",),
+                (
+                    1109,
+                    source.find(">()").unwrap() as u32,
+                    1,
+                    "Expression expected.",
+                ),
+                (
+                    1109,
+                    source.find("): =>").unwrap() as u32,
+                    1,
+                    "Expression expected.",
+                ),
+                (
+                    1005,
+                    source.find(": =>").unwrap() as u32,
+                    1,
+                    "',' expected.",
+                ),
+                (
+                    1135,
+                    source.find("=> 1").unwrap() as u32,
+                    2,
+                    "Argument expression expected.",
+                ),
+            ],
+        );
+        let missing = output
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.code == 2304)
+            .collect::<Vec<_>>();
+        let [diagnostic] = missing.as_slice() else {
+            panic!("unexpected diagnostics: {:#?}", output.diagnostics);
+        };
+        assert_eq!(
+            (diagnostic.start, diagnostic.length),
+            (
+                source.find("MissingSameCall").unwrap() as u32,
+                "MissingSameCall".len() as u32,
+            ),
+        );
+        assert_eq!(output.semantic_completion, SemanticCompletion::Deferred);
+    }
+}
+
+#[test]
+fn generator_recovery_stops_at_independent_nested_execution_owners() {
+    for (path, source, expected) in [
+        (
+            "declared-generator.ts",
+            concat!(
+                "function* renamedItems() {",
+                "function nestedCedar() { MissingDeclaredNested; }",
+                "for (const { value: renamed } of this) { yield renamed;",
+                "function loopBirch() { MissingDeclaredLoopFunction; }",
+                "class LoopElm { changed() { MissingDeclaredLoopMethod; } }",
+                "yield MissingDeclaredYield; }}",
+                "const independent: MissingDeclaredIndependent = 1;",
+            ),
+            [
+                "MissingDeclaredNested",
+                "MissingDeclaredLoopFunction",
+                "MissingDeclaredLoopMethod",
+                "MissingDeclaredIndependent",
+            ],
+        ),
+        (
+            "expression-generator.ts",
+            concat!(
+                "const items = function* changedItems() {",
+                "function nestedMaple() { MissingExpressionNested; }",
+                "for (const { value: changed } of this) { yield changed;",
+                "function loopAsh() { MissingExpressionLoopFunction; }",
+                "class LoopPine { renamed() { MissingExpressionLoopMethod; } }",
+                "yield MissingExpressionYield; }};",
+                "const independent: MissingExpressionIndependent = 1;",
+            ),
+            [
+                "MissingExpressionNested",
+                "MissingExpressionLoopFunction",
+                "MissingExpressionLoopMethod",
+                "MissingExpressionIndependent",
+            ],
+        ),
+        (
+            "member-generator.ts",
+            concat!(
+                "class RenamedHost { *changedItems() {",
+                "function nestedWillow() { MissingMemberNested; }",
+                "for (const { value: item } of this) { yield item;",
+                "function loopFir() { MissingMemberLoopFunction; }",
+                "class LoopOak { cedar() { MissingMemberLoopMethod; } }",
+                "yield MissingMemberYield; }}}",
+                "const independent: MissingMemberIndependent = 1;",
+            ),
+            [
+                "MissingMemberNested",
+                "MissingMemberLoopFunction",
+                "MissingMemberLoopMethod",
+                "MissingMemberIndependent",
+            ],
+        ),
+    ] {
+        let output = compile_files(&[(path, source)]);
+        let actual = output
+            .diagnostics
+            .iter()
+            .map(|diagnostic| (diagnostic.code, diagnostic.start, diagnostic.length))
+            .collect::<Vec<_>>();
+        let expected =
+            expected.map(|name| (2304, source.find(name).unwrap() as u32, name.len() as u32));
+        assert_eq!(actual, expected, "{path}: {:#?}", output.diagnostics);
+        assert_eq!(
+            output.semantic_completion,
+            SemanticCompletion::Deferred,
+            "{path}"
+        );
+    }
 }
 
 #[test]
@@ -246,16 +639,7 @@ fn recovered_overload_hosts_do_not_publish_overload_or_duplicate_name_diagnostic
     assert_eq!(
         recovered,
         vec![
-            (
-                SemanticCompletion::Deferred,
-                vec![
-                    (1003, 8, 1, "Identifier expected.".to_string()),
-                    (1005, 10, 8, "'(' expected.".to_string()),
-                    (1005, 18, 1, "')' expected.".to_string()),
-                    (1109, 19, 1, "Expression expected.".to_string()),
-                    (1005, 21, 1, "')' expected.".to_string()),
-                ],
-            ),
+            (SemanticCompletion::Deferred, vec![]),
             (
                 SemanticCompletion::Deferred,
                 vec![

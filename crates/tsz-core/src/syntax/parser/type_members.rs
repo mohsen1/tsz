@@ -1,8 +1,9 @@
 use super::Parser;
 use crate::source::Span;
 use crate::syntax::{
-    AccessorKind, TokenKind, TypeMember, TypeMemberKind, TypeMemberModifier,
+    AccessorKind, ParserRecoveryKind, TokenKind, TypeMember, TypeMemberKind, TypeMemberModifier,
     TypeMemberModifierNode, TypeMemberModifiers, TypeMemberName, TypeMemberNameKind, TypeNode,
+    TypeNodeKind,
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -12,6 +13,49 @@ enum SignatureMemberKind {
 }
 
 impl Parser<'_> {
+    pub(super) fn parse_tuple_type(&mut self) -> TypeNode {
+        let left = self.bump().span;
+        let mut members = Vec::new();
+        while !self.at_any(&[TokenKind::RightBracket, TokenKind::EndOfFile]) {
+            let label = self.current().span;
+            let named = self.kind().is_identifier()
+                && (self.peek_kind(1) == TokenKind::Colon
+                    || self.peek_kind(1) == TokenKind::Question
+                        && self.peek_kind(2) == TokenKind::Colon)
+                || self.at(TokenKind::DotDotDot)
+                    && self.peek_kind(1).is_identifier()
+                    && (self.peek_kind(2) == TokenKind::Colon
+                        || self.peek_kind(2) == TokenKind::Question
+                            && self.peek_kind(3) == TokenKind::Colon);
+            if named {
+                while !self.at_any(&[TokenKind::Colon, TokenKind::EndOfFile]) {
+                    self.bump();
+                }
+                let colon = self.bump().span;
+                self.retain_parser_recovery(ParserRecoveryKind::Type, label, label.merge(colon));
+            }
+            let rest = (!named && self.at(TokenKind::DotDotDot)).then(|| self.bump().span);
+            let member = self.parse_type();
+            if let Some(rest) = rest {
+                self.retain_parser_recovery(
+                    ParserRecoveryKind::Type,
+                    rest,
+                    rest.merge(member.span),
+                );
+            }
+            members.push(member);
+            if !self.eat(TokenKind::Comma) {
+                break;
+            }
+        }
+        let end = self.current().span;
+        self.expect(TokenKind::RightBracket, "']' expected.", 1005);
+        TypeNode {
+            span: left.merge(end),
+            kind: TypeNodeKind::Tuple(members),
+        }
+    }
+
     /// Parse TypeScript's single ordered `TypeElement` list.
     ///
     /// The branch order follows the pinned TypeScript parser: call signature,
@@ -104,7 +148,10 @@ impl Parser<'_> {
             self.expect(TokenKind::New, "'new' expected.", 1005);
         }
         let type_parameters = self.parse_type_parameters();
-        let parameters = self.parse_parameters();
+        let parameters = match kind {
+            SignatureMemberKind::Call => self.parse_signature_parameters(),
+            SignatureMemberKind::Construct => self.parse_parameters(),
+        };
         let return_type = self.parse_type_annotation();
         self.parse_type_member_separator();
         TypeMember {

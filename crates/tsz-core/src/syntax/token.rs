@@ -220,6 +220,49 @@ impl TokenKind {
                 | Self::Defer
         )
     }
+
+    pub(crate) const fn is_identifier_name(self) -> bool {
+        self.is_identifier()
+            || matches!(
+                self,
+                Self::Const
+                    | Self::Var
+                    | Self::Break
+                    | Self::Case
+                    | Self::Catch
+                    | Self::Class
+                    | Self::Continue
+                    | Self::Debugger
+                    | Self::Delete
+                    | Self::Do
+                    | Self::Else
+                    | Self::Enum
+                    | Self::Extends
+                    | Self::Finally
+                    | Self::For
+                    | Self::Function
+                    | Self::If
+                    | Self::Import
+                    | Self::In
+                    | Self::InstanceOf
+                    | Self::New
+                    | Self::Return
+                    | Self::Super
+                    | Self::Switch
+                    | Self::This
+                    | Self::Throw
+                    | Self::Try
+                    | Self::TypeOf
+                    | Self::While
+                    | Self::With
+                    | Self::Export
+                    | Self::Default
+                    | Self::True
+                    | Self::False
+                    | Self::Null
+                    | Self::Void
+            )
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

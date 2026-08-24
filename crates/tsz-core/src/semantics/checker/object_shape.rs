@@ -3,8 +3,8 @@ use std::collections::{HashMap, HashSet};
 use crate::bind::{DeclarationKind, Meaning, ScopeId, TypeMemberSymbol};
 use crate::source::{DeclId, FileId};
 use crate::syntax::{
-    InterfaceDeclaration, KeywordType, Parameter, TypeMember, TypeMemberKind, TypeMemberModifiers,
-    TypeNode, TypeNodeKind, TypeParameterDeclaration,
+    InterfaceDeclaration, KeywordType, Parameter, ParameterNameKind, TypeMember, TypeMemberKind,
+    TypeMemberModifiers, TypeNode, TypeNodeKind, TypeParameterDeclaration,
 };
 
 use super::{
@@ -39,12 +39,8 @@ impl Checker<'_> {
         // unmodified property. Exact positional generic pass-through keeps
         // substitution declaration-owned; transitive and transformed bases
         // remain symbolic.
-        let base_declarations = match self.plain_property_interface_heritage_bases(declaration) {
-            Completion::Complete(bases) => bases,
-            Completion::Deferred => return Completion::Deferred,
-            Completion::Cycle => return Completion::Cycle,
-            Completion::Limit => return Completion::Limit,
-        };
+        let base_declarations =
+            completed!(self.plain_property_interface_heritage_bases(declaration));
         debug_assert_eq!(interface.extends.len(), base_declarations.len());
 
         let mut shape = ObjectShape::default();
@@ -77,12 +73,7 @@ impl Checker<'_> {
                 return Completion::Deferred;
             }
             for argument in &arguments {
-                match self.shape_child_type_supported(*argument, &mut HashSet::new()) {
-                    Completion::Complete(()) => {}
-                    Completion::Deferred => return Completion::Deferred,
-                    Completion::Cycle => return Completion::Cycle,
-                    Completion::Limit => return Completion::Limit,
-                }
+                completed!(self.shape_child_type_supported(*argument, &mut HashSet::new()));
             }
 
             // Bases have already been proven sole and heritage-free. Resolve
@@ -93,33 +84,23 @@ impl Checker<'_> {
             // active base query into an illegal-heritage Cycle.
             let base_parameters =
                 self.substitution(base_declaration, &base.type_parameters, &arguments);
-            let base_shape = match self.resolve_object_members(
+            let base_shape = completed!(self.resolve_object_members(
                 base_declaration.file,
                 base_scope,
                 &base.members,
                 &base_parameters,
-            ) {
-                Completion::Complete(shape) => shape,
-                Completion::Deferred => return Completion::Deferred,
-                Completion::Cycle => return Completion::Cycle,
-                Completion::Limit => return Completion::Limit,
-            };
+            ));
             if !merge_plain_property_shape(&mut shape, &mut property_indices, base_shape) {
                 return Completion::Deferred;
             }
         }
 
-        let own_shape = match self.resolve_object_members(
+        let own_shape = completed!(self.resolve_object_members(
             declaration.file,
             scope,
             &interface.members,
             type_parameters,
-        ) {
-            Completion::Complete(shape) => shape,
-            Completion::Deferred => return Completion::Deferred,
-            Completion::Cycle => return Completion::Cycle,
-            Completion::Limit => return Completion::Limit,
-        };
+        ));
         if !merge_plain_property_shape(&mut shape, &mut property_indices, own_shape) {
             return Completion::Deferred;
         }
@@ -516,12 +497,8 @@ impl Checker<'_> {
                     };
                     let ty = if let Some(ty) = ty {
                         let ty = self.resolve_type_node(file, member_scope, ty, type_parameters);
-                        match self.shape_child_type_supported(ty, &mut HashSet::new()) {
-                            Completion::Complete(()) => ty,
-                            Completion::Deferred => return Completion::Deferred,
-                            Completion::Cycle => return Completion::Cycle,
-                            Completion::Limit => return Completion::Limit,
-                        }
+                        completed!(self.shape_child_type_supported(ty, &mut HashSet::new()));
+                        ty
                     } else if self.options.effective_no_implicit_any() {
                         return Completion::Deferred;
                     } else {
@@ -548,18 +525,13 @@ impl Checker<'_> {
                     let Some(name) = name.semantic_name() else {
                         return Completion::Deferred;
                     };
-                    let signature = match self.resolve_shape_signature(
+                    let signature = completed!(self.resolve_shape_signature(
                         file,
                         member_scope,
                         parameters,
                         return_type.as_ref(),
                         type_parameters,
-                    ) {
-                        Completion::Complete(signature) => signature,
-                        Completion::Deferred => return Completion::Deferred,
-                        Completion::Cycle => return Completion::Cycle,
-                        Completion::Limit => return Completion::Limit,
-                    };
+                    ));
                     let ty = self.store.intern(TypeKind::ShapeFunction(signature));
                     shape.properties.push(Property {
                         name: name.to_string(),
@@ -576,18 +548,13 @@ impl Checker<'_> {
                     if member.modifiers.readonly || !signature_type_parameters.is_empty() {
                         return Completion::Deferred;
                     }
-                    let signature = match self.resolve_shape_signature(
+                    let signature = completed!(self.resolve_shape_signature(
                         file,
                         member_scope,
                         parameters,
                         return_type.as_ref(),
                         type_parameters,
-                    ) {
-                        Completion::Complete(signature) => signature,
-                        Completion::Deferred => return Completion::Deferred,
-                        Completion::Cycle => return Completion::Cycle,
-                        Completion::Limit => return Completion::Limit,
-                    };
+                    ));
                     shape.call_signatures.push(signature);
                 }
                 TypeMemberKind::Construct {
@@ -598,18 +565,13 @@ impl Checker<'_> {
                     if member.modifiers.readonly || !signature_type_parameters.is_empty() {
                         return Completion::Deferred;
                     }
-                    let signature = match self.resolve_shape_signature(
+                    let signature = completed!(self.resolve_shape_signature(
                         file,
                         member_scope,
                         parameters,
                         return_type.as_ref(),
                         type_parameters,
-                    ) {
-                        Completion::Complete(signature) => signature,
-                        Completion::Deferred => return Completion::Deferred,
-                        Completion::Cycle => return Completion::Cycle,
-                        Completion::Limit => return Completion::Limit,
-                    };
+                    ));
                     shape.construct_signatures.push(signature);
                 }
                 TypeMemberKind::Index {
@@ -651,12 +613,7 @@ impl Checker<'_> {
                     };
                     let value =
                         self.resolve_type_node(file, member_scope, value_type, type_parameters);
-                    match self.shape_child_type_supported(value, &mut HashSet::new()) {
-                        Completion::Complete(()) => {}
-                        Completion::Deferred => return Completion::Deferred,
-                        Completion::Cycle => return Completion::Cycle,
-                        Completion::Limit => return Completion::Limit,
-                    }
+                    completed!(self.shape_child_type_supported(value, &mut HashSet::new()));
                     shape.index_signatures.push(IndexSignature {
                         key,
                         value,
@@ -685,6 +642,12 @@ impl Checker<'_> {
         return_type: Option<&TypeNode>,
         type_parameters: &HashMap<String, TypeId>,
     ) -> Completion<ShapeSignature> {
+        if parameters
+            .iter()
+            .any(|parameter| parameter.name_kind == ParameterNameKind::This)
+        {
+            return Completion::Deferred;
+        }
         let mut semantic_parameters = Vec::with_capacity(parameters.len());
         for parameter in parameters {
             if parameter.rest || !parameter.modifiers.is_empty() {
@@ -692,19 +655,10 @@ impl Checker<'_> {
             }
             let ty = if let Some(annotation) = &parameter.annotation {
                 let ty = self.resolve_type_node(file, scope, annotation, type_parameters);
-                match self.shape_child_type_supported(ty, &mut HashSet::new()) {
-                    Completion::Complete(()) => ty,
-                    Completion::Deferred => return Completion::Deferred,
-                    Completion::Cycle => return Completion::Cycle,
-                    Completion::Limit => return Completion::Limit,
-                }
+                completed!(self.shape_child_type_supported(ty, &mut HashSet::new()));
+                ty
             } else if let Some(initializer) = &parameter.initializer {
-                match self.signature_initializer_type(file, scope, initializer) {
-                    Completion::Complete(ty) => ty,
-                    Completion::Deferred => return Completion::Deferred,
-                    Completion::Cycle => return Completion::Cycle,
-                    Completion::Limit => return Completion::Limit,
-                }
+                completed!(self.signature_initializer_type(file, scope, initializer))
             } else if self.options.effective_no_implicit_any() {
                 return Completion::Deferred;
             } else {
@@ -718,12 +672,8 @@ impl Checker<'_> {
         }
         let return_type = if let Some(return_type) = return_type {
             let ty = self.resolve_type_node(file, scope, return_type, type_parameters);
-            match self.shape_child_type_supported(ty, &mut HashSet::new()) {
-                Completion::Complete(()) => ty,
-                Completion::Deferred => return Completion::Deferred,
-                Completion::Cycle => return Completion::Cycle,
-                Completion::Limit => return Completion::Limit,
-            }
+            completed!(self.shape_child_type_supported(ty, &mut HashSet::new()));
+            ty
         } else if self.options.effective_no_implicit_any() {
             return Completion::Deferred;
         } else {
@@ -754,10 +704,7 @@ impl Checker<'_> {
             | TypeKind::Union(children)
             | TypeKind::Intersection(children) => {
                 for child in children {
-                    match self.shape_child_type_supported(child, active) {
-                        Completion::Complete(()) => {}
-                        other => return other,
-                    }
+                    completed!(self.shape_child_type_supported(child, active));
                 }
                 Completion::Complete(())
             }
@@ -768,10 +715,7 @@ impl Checker<'_> {
                 ..
             } => {
                 for argument in arguments {
-                    match self.shape_child_type_supported(argument, active) {
-                        Completion::Complete(()) => {}
-                        other => return other,
-                    }
+                    completed!(self.shape_child_type_supported(argument, active));
                 }
                 self.shape_children_supported(&properties, active)
             }
@@ -782,10 +726,7 @@ impl Checker<'_> {
                     .map(|parameter| parameter.ty)
                     .chain(std::iter::once(signature.return_type))
                 {
-                    match self.shape_child_type_supported(child, active) {
-                        Completion::Complete(()) => {}
-                        other => return other,
-                    }
+                    completed!(self.shape_child_type_supported(child, active));
                 }
                 Completion::Complete(())
             }
@@ -800,10 +741,7 @@ impl Checker<'_> {
                 // A provisional recursive edge cannot hide an unsupported
                 // callable or another incomplete form inside its arguments.
                 for argument in arguments {
-                    match self.shape_child_type_supported(*argument, active) {
-                        Completion::Complete(()) => {}
-                        other => return other,
-                    }
+                    completed!(self.shape_child_type_supported(*argument, active));
                 }
                 match self.shape_reference_recursion(ty, *declaration, arguments) {
                     ReferenceRecursion::Exact => {
@@ -912,10 +850,7 @@ impl Checker<'_> {
             )
             .chain(shape.index_signatures.iter().map(|index| index.value))
         {
-            match self.shape_child_type_supported(child, active) {
-                Completion::Complete(()) => {}
-                other => return other,
-            }
+            completed!(self.shape_child_type_supported(child, active));
         }
         Completion::Complete(())
     }

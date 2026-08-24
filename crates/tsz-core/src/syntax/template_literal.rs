@@ -1,9 +1,9 @@
 use crate::source::{SourceText, Span};
 
+use super::descendant_walk::{ExpressionRoot, ExpressionTraversal, contains_matching_expression};
 use super::scanner::is_plain_strict_binding_identifier;
 use super::{
-    ArrowBody, ClassDeclaration, ClassMemberKind, Expression, ExpressionKind, FunctionDeclaration,
-    Literal, Parameter, Statement, StatementKind, SwitchClauseKind, VariableKind,
+    ClassDeclaration, Expression, ExpressionKind, Literal, Statement, StatementKind, VariableKind,
 };
 
 /// Syntax-owned spelling and template value for a complete, valid,
@@ -297,68 +297,19 @@ fn push_character(body: &str, offset: &mut usize, cooked: &mut String) -> Result
 }
 
 pub(crate) fn expression_contains_no_substitution_template(expression: &Expression) -> bool {
-    match &expression.kind {
-        ExpressionKind::Literal(Literal::NoSubstitutionTemplate(_)) => true,
-        ExpressionKind::Identifier { .. }
-        | ExpressionKind::This
-        | ExpressionKind::Literal(_)
-        | ExpressionKind::RegularExpression(_)
-        | ExpressionKind::Missing => false,
-        ExpressionKind::Object(properties) => properties
-            .iter()
-            .any(|property| expression_contains_no_substitution_template(&property.value)),
-        ExpressionKind::Array(elements) => elements
-            .iter()
-            .any(expression_contains_no_substitution_template),
-        ExpressionKind::Call {
-            callee, arguments, ..
-        }
-        | ExpressionKind::New {
-            callee, arguments, ..
-        } => {
-            expression_contains_no_substitution_template(callee)
-                || arguments
-                    .iter()
-                    .any(expression_contains_no_substitution_template)
-        }
-        ExpressionKind::Member { object, .. }
-        | ExpressionKind::Unary {
-            operand: object, ..
-        }
-        | ExpressionKind::As {
-            expression: object, ..
-        }
-        | ExpressionKind::Parenthesized(object) => {
-            expression_contains_no_substitution_template(object)
-        }
-        ExpressionKind::ElementAccess { object, index } => {
-            expression_contains_no_substitution_template(object)
-                || expression_contains_no_substitution_template(index)
-        }
-        ExpressionKind::Arrow {
-            parameters, body, ..
-        } => {
-            parameters_contain_template(parameters)
-                || match body {
-                    ArrowBody::Expression(expression) => {
-                        expression_contains_no_substitution_template(expression)
-                    }
-                    ArrowBody::Block(statements) => {
-                        statements_contain_no_substitution_template(statements)
-                    }
-                }
-        }
-        ExpressionKind::Binary { left, right, .. } | ExpressionKind::Assignment { left, right } => {
-            expression_contains_no_substitution_template(left)
-                || expression_contains_no_substitution_template(right)
-        }
-    }
+    contains_matching_expression(
+        ExpressionRoot::Expression(expression),
+        ExpressionTraversal::All,
+        is_template_literal,
+    )
 }
 
 pub(crate) fn statements_contain_no_substitution_template(statements: &[Statement]) -> bool {
-    statements
-        .iter()
-        .any(statement_contains_no_substitution_template)
+    contains_matching_expression(
+        ExpressionRoot::Statements(statements),
+        ExpressionTraversal::All,
+        is_template_literal,
+    )
 }
 
 pub(crate) fn statements_form_no_substitution_template_safe_file(
@@ -411,81 +362,18 @@ pub(crate) fn statements_form_no_substitution_template_variable_file(
 }
 
 pub(crate) fn class_contains_no_substitution_template(declaration: &ClassDeclaration) -> bool {
-    declaration.members.iter().any(|member| match &member.kind {
-        ClassMemberKind::Property { initializer, .. } => initializer
-            .as_ref()
-            .is_some_and(expression_contains_no_substitution_template),
-        ClassMemberKind::Constructor {
-            parameters, body, ..
-        }
-        | ClassMemberKind::Method {
-            parameters, body, ..
-        } => {
-            parameters_contain_template(parameters)
-                || statements_contain_no_substitution_template(body)
-        }
-    })
+    contains_matching_expression(
+        ExpressionRoot::Class(declaration),
+        ExpressionTraversal::All,
+        is_template_literal,
+    )
 }
 
-fn statement_contains_no_substitution_template(statement: &Statement) -> bool {
-    match &statement.kind {
-        StatementKind::Variable(declaration) => declaration
-            .initializer
-            .as_ref()
-            .is_some_and(expression_contains_no_substitution_template),
-        StatementKind::Expression(expression) => {
-            expression_contains_no_substitution_template(expression)
-        }
-        StatementKind::Return(expression) => expression
-            .as_ref()
-            .is_some_and(expression_contains_no_substitution_template),
-        StatementKind::If(statement) => {
-            expression_contains_no_substitution_template(&statement.condition)
-                || statement_contains_no_substitution_template(&statement.then_statement)
-                || statement
-                    .else_statement
-                    .as_deref()
-                    .is_some_and(statement_contains_no_substitution_template)
-        }
-        StatementKind::Switch(statement) => {
-            expression_contains_no_substitution_template(&statement.expression)
-                || statement.clauses.iter().any(|clause| {
-                    matches!(
-                        &clause.kind,
-                        SwitchClauseKind::Case(expression)
-                            if expression_contains_no_substitution_template(expression)
-                    ) || statements_contain_no_substitution_template(&clause.statements)
-                })
-        }
-        StatementKind::Block(statements) => statements_contain_no_substitution_template(statements),
-        StatementKind::Function(declaration) => function_contains_template(declaration),
-        StatementKind::Class(declaration) => class_contains_no_substitution_template(declaration),
-        StatementKind::Export(declaration) => declaration
-            .assignment
-            .as_ref()
-            .is_some_and(expression_contains_no_substitution_template),
-        StatementKind::Import(_)
-        | StatementKind::TypeAlias(_)
-        | StatementKind::Interface(_)
-        | StatementKind::Break(_)
-        | StatementKind::Continue(_)
-        | StatementKind::Empty
-        | StatementKind::Unknown => false,
-    }
-}
-
-fn function_contains_template(declaration: &FunctionDeclaration) -> bool {
-    parameters_contain_template(&declaration.parameters)
-        || statements_contain_no_substitution_template(&declaration.body)
-}
-
-fn parameters_contain_template(parameters: &[Parameter]) -> bool {
-    parameters.iter().any(|parameter| {
-        parameter
-            .initializer
-            .as_ref()
-            .is_some_and(expression_contains_no_substitution_template)
-    })
+const fn is_template_literal(expression: &Expression) -> bool {
+    matches!(
+        &expression.kind,
+        ExpressionKind::Literal(Literal::NoSubstitutionTemplate(_))
+    )
 }
 
 const fn hex_value(byte: u8) -> Option<u32> {

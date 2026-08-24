@@ -1,6 +1,7 @@
 //! Per-file syntax pipeline. Parsed trees are immutable after construction.
 
 mod ast;
+mod descendant_walk;
 mod numeric_literal;
 mod parser;
 mod regular_expression;
@@ -11,6 +12,11 @@ mod token;
 mod trivia;
 
 pub use ast::*;
+pub(crate) use descendant_walk::{
+    DescendantAdapter, DescendantContainer, ExpressionRoot, ExpressionTraversal, NestedStatement,
+    contains_matching_expression, for_each_statement_in, walk_expression_descendants,
+    walk_function_like_descendants, walk_statement_descendants,
+};
 pub use numeric_literal::{NumberLiteral, NumericRecoveryLiteral, SeparatedNumberLiteral};
 pub(crate) use numeric_literal::{
     NumericRecoveryKind, erased_assertion_expression, erased_expression_separated_number,

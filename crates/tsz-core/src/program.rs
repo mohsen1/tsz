@@ -17,8 +17,8 @@ use crate::semantics::{CheckResult, check_program};
 use crate::source::{DeclId, FileId, SourceText};
 use crate::standard_library::{StandardLibraryDeclaration, StandardLibraryEnvironment};
 use crate::syntax::{
-    SourceUnit, StatementKind, TypeMemberKind, TypeMemberNameKind, parse_source,
-    statements_form_no_substitution_template_expression_file,
+    AuthoredLiteralKind, SourceUnit, StatementKind, TypeMemberKind, TypeMemberNameKind,
+    parse_source, statements_form_no_substitution_template_expression_file,
     statements_form_no_substitution_template_variable_file,
 };
 
@@ -190,9 +190,10 @@ pub(crate) fn has_unmodeled_no_substitution_template_program_products(
     files: &[ProgramFile],
     options: &CompilerOptions,
 ) -> bool {
-    let has_authored_template = files
-        .iter()
-        .any(|file| file.syntax.has_authored_no_substitution_template());
+    let has_authored_template = files.iter().any(|file| {
+        file.syntax
+            .has_authored_literal(AuthoredLiteralKind::Template)
+    });
     has_authored_template
         && (!no_substitution_template_program_options_supported(options)
             || options.source_map
@@ -632,14 +633,14 @@ impl Compiler {
         );
         let has_checkable_file = program.files.iter().any(|file| {
             capabilities.semantic_check_file_is_enabled(file.source.id)
-                && file.syntax.statements.iter().any(|statement| {
-                    let mut has_checkable_statement = false;
+                && (file.syntax.statements.iter().any(|statement| {
+                    let mut checkable = false;
                     statement.for_each_statement(&mut |statement| {
-                        has_checkable_statement |= capabilities
+                        checkable |= capabilities
                             .semantic_check_node_is_claimed(file.source.id, statement.id);
                     });
-                    has_checkable_statement
-                })
+                    checkable
+                }) || capabilities.has_claimed_function_like(file.source.id))
         });
 
         let check_start = Instant::now();

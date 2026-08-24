@@ -2,6 +2,8 @@ use std::sync::Arc;
 
 use tsz::diagnostics::{DiagnosticCategory, RelatedInformation};
 use tsz::service::LanguageService;
+use tsz::source::{FileId, SourceText};
+use tsz::syntax::parse_source;
 use tsz::{CompileExitStatus, CompilerOptions, SemanticCompletion};
 
 type DiagnosticFingerprint = (
@@ -59,6 +61,166 @@ fn options() -> CompilerOptions {
         no_emit: true,
         ..CompilerOptions::default()
     }
+}
+
+fn parser_codes(source: &str) -> Vec<u32> {
+    let source = SourceText::new(FileId(0), "parser-recovery.ts".into(), Arc::from(source));
+    parse_source(&source)
+        .diagnostics
+        .iter()
+        .map(|diagnostic| diagnostic.code)
+        .collect()
+}
+
+#[test]
+fn missing_arrow_types_preserve_structural_delimiters() {
+    for (source, marker) in [
+        ("const first = (renamed: ) => renamed;", ")"),
+        ("const second = (): => 1;", "=>"),
+        ("const typed = (renamed: string): => renamed;", "=>"),
+        ("const optional = (renamed?): => renamed;", "=>"),
+        ("const rest = (...renamed): => renamed;", "=>"),
+        (
+            "const modified = (public renamed: string): => renamed;",
+            "=>",
+        ),
+        ("const recovered = (renamed: string): @ => renamed;", "@"),
+        (
+            "declare function third(renamed:, sibling: string): void;",
+            ",",
+        ),
+        ("declare function fourth(renamed: = 1): void;", "="),
+        ("interface Fifth { [renamed: ]: string }", "]"),
+    ] {
+        let source_text =
+            SourceText::new(FileId(0), "missing-arrow-type.ts".into(), Arc::from(source));
+        let parsed = parse_source(&source_text);
+        let [diagnostic] = parsed.diagnostics.as_slice() else {
+            panic!(
+                "unexpected diagnostics for {source}: {:#?}",
+                parsed.diagnostics
+            );
+        };
+        assert_eq!(diagnostic.code, 1110);
+        assert_eq!(diagnostic.start, source.find(marker).unwrap() as u32);
+        assert_eq!(diagnostic.length, marker.len() as u32);
+    }
+}
+
+#[test]
+fn analysis_only_object_member_recovery_does_not_control_nested_postfix_parse() {
+    for operand in ["cnd[1]", "(renamed)[2]", "renamed\n[3]"] {
+        let source = format!(
+            "function f(cnd: any, renamed: any) {{ return {{ ...({operand} && {{ value: 1 }}), }}; }}"
+        );
+        assert_eq!(
+            parser_codes(&source),
+            vec![1003, 1005, 1109, 1109],
+            "{source}",
+        );
+    }
+}
+
+#[test]
+fn interpolated_template_recovery_consumes_the_owned_template_without_parser_fallout() {
+    let path = "interpolated-template.ts";
+    for source in [
+        "`${renamed}`;",
+        "tagged`${renamed}`;",
+        "await `${renamed}`;",
+    ] {
+        assert!(parser_codes(source).is_empty(), "{source}");
+    }
+    let source = concat!(
+        "const callback = ([renamed]) => `${renamed}=${String(renamed)}`;\n",
+        "const outside: MissingOutside = 1;\n",
+    );
+    assert!(parser_codes(source).is_empty());
+
+    let mut service = LanguageService::new(options());
+    service.open(path, Arc::<str>::from(source));
+    let result = service.semantic_diagnostics(path);
+    assert_eq!(result.semantic_completion, SemanticCompletion::Deferred);
+    assert_eq!(
+        semantic_fingerprint(&result),
+        vec![missing_name(path, source, "MissingOutside")],
+        "{:#?}",
+        result.diagnostics,
+    );
+}
+
+#[test]
+fn object_member_recovery_owns_a_postfix_assertion_but_not_the_next_statement() {
+    let path = "object-assertion.ts";
+    let source = concat!(
+        "function changed<T extends { a: string }>(obj: T): T { ",
+        "let { a, ...rest } = obj; return { a: 'hello', ...rest } as T; }\n",
+        "const outside: MissingOutside = 1;\n",
+    );
+    let mut service = LanguageService::new(options());
+    service.open(path, Arc::<str>::from(source));
+    let result = service.semantic_diagnostics(path);
+    assert_eq!(result.semantic_completion, SemanticCompletion::Deferred);
+    assert_eq!(
+        semantic_fingerprint(&result),
+        vec![missing_name(path, source, "MissingOutside")],
+        "{:#?}",
+        result.diagnostics,
+    );
+}
+
+#[test]
+fn recovered_class_member_lists_do_not_publish_overload_adjacency() {
+    let path = "recovered-class-members.ts";
+    let source = concat!(
+        "class Changed<Key, Value> { ",
+        "constructor(values: Iterable<[key: Key, value: Value]> | null = null) { ",
+        "for (const { 0: renamedKey, 1: renamedValue } of values) { ",
+        "this.renamed(renamedKey, renamedValue); } } ",
+        "renamed(key: Key, value: Value): this { return this; } }\n",
+        "const outside: MissingOutside = 1;\n",
+    );
+    let mut service = LanguageService::new(options());
+    service.open(path, Arc::<str>::from(source));
+    let result = service.semantic_diagnostics(path);
+    assert_eq!(result.semantic_completion, SemanticCompletion::Deferred);
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != 2391),
+        "{:#?}",
+        result.diagnostics,
+    );
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.start == source.find("MissingOutside").unwrap() as u32),
+        "{:#?}",
+        result.diagnostics,
+    );
+
+    let stable_path = "stable-member-after-body-recovery.ts";
+    let stable_source = "class Stable { body() { const broken = ; } renamed(): void; }";
+    let mut service = LanguageService::new(options());
+    service.open(stable_path, Arc::<str>::from(stable_source));
+    let result = service.semantic_diagnostics(stable_path);
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == 2391
+                && diagnostic.start == stable_source.find("renamed").unwrap() as u32),
+        "{:#?}",
+        result.diagnostics,
+    );
+}
+
+#[test]
+fn modified_binding_pattern_recovery_keeps_the_prior_parser_frontier() {
+    let source = "class Changed { scan(const { source: renamed } of values) {} *after() {} }";
+    assert_eq!(parser_codes(source), vec![1359, 1005, 1005, 1005]);
 }
 
 fn missing_name(path: &str, source: &str, name: &str) -> DiagnosticFingerprint {
@@ -541,6 +703,148 @@ fn recovered_binding_patterns_publish_only_authored_binding_identities() {
 }
 
 #[test]
+fn empty_binding_pattern_heads_preserve_function_expression_body_ownership() {
+    for (declaration_kind, pattern) in [
+        ("var", "{}"),
+        ("let", "{}"),
+        ("const", "{}"),
+        ("var", "[]"),
+        ("let", "[]"),
+        ("const", "[]"),
+    ] {
+        let path = format!("empty-{declaration_kind}-binding.ts");
+        let source = format!(
+            "const source: any = {{}}; const callback = function () {{ {declaration_kind} {pattern} = source; MissingBodySibling; }}; MissingOutside;"
+        );
+        assert!(parser_codes(&source).is_empty(), "{source}");
+
+        let mut service = LanguageService::new(options());
+        service.open(&path, Arc::<str>::from(source.as_str()));
+        let result = service.semantic_diagnostics(&path);
+        assert_eq!(result.semantic_completion, SemanticCompletion::Deferred);
+        assert_eq!(
+            semantic_fingerprint(&result),
+            vec![
+                missing_name(&path, &source, "MissingBodySibling"),
+                missing_name(&path, &source, "MissingOutside"),
+            ],
+            "{path}: {:#?}",
+            result.diagnostics,
+        );
+    }
+}
+
+#[test]
+fn balanced_binding_pattern_heads_preserve_nested_renamed_bindings_and_siblings() {
+    for (path, pattern, bindings) in [
+        (
+            "nested-object-binding.ts",
+            "{ outer: { value: renamed }, list: [head, ...tail] }",
+            "renamed; head; tail;",
+        ),
+        (
+            "nested-array-binding.ts",
+            "[renamed, { inner: deep }, ...rest]",
+            "renamed; deep; rest;",
+        ),
+    ] {
+        let source = format!(
+            "const source: any = {{}}; const callback = function () {{ let {pattern} = source; {bindings} MissingBodySibling; }}; MissingOutside;"
+        );
+        assert!(parser_codes(&source).is_empty(), "{source}");
+
+        let mut service = LanguageService::new(options());
+        service.open(path, Arc::<str>::from(source.as_str()));
+        let result = service.semantic_diagnostics(path);
+        assert_eq!(result.semantic_completion, SemanticCompletion::Deferred);
+        assert_eq!(
+            semantic_fingerprint(&result),
+            vec![
+                missing_name(path, &source, "MissingBodySibling"),
+                missing_name(path, &source, "MissingOutside"),
+            ],
+            "{path}: {:#?}",
+            result.diagnostics,
+        );
+    }
+}
+
+#[test]
+fn malformed_binding_pattern_heads_keep_identifier_recovery() {
+    for source in [
+        "const callback = function () { let { = value; };",
+        "const callback = function () { let [ = value; };",
+        "const callback = function () { let { : value; };",
+        "const callback = function () { let [ : value; };",
+    ] {
+        assert_eq!(parser_codes(source).first(), Some(&1003), "{source}");
+    }
+}
+
+#[test]
+fn recovered_parameter_binding_heads_preserve_default_and_body_ownership() {
+    let path = "parameter-binding-defaults.ts";
+    let source = concat!(
+        "const source: any = {}; const callback = function () { ",
+        "function nested({ value: renamed, ...rest } = source, [head] = source) { ",
+        "renamed; rest; head; MissingFunctionBody; } ",
+        "MissingIifeSibling; }; MissingOutside;",
+    );
+    assert!(parser_codes(source).is_empty(), "{source}");
+
+    let mut service = LanguageService::new(options());
+    service.open(path, Arc::<str>::from(source));
+    let result = service.semantic_diagnostics(path);
+    assert_eq!(result.semantic_completion, SemanticCompletion::Deferred);
+    assert_eq!(
+        semantic_fingerprint(&result),
+        vec![
+            missing_name(path, source, "MissingFunctionBody"),
+            missing_name(path, source, "MissingIifeSibling"),
+            missing_name(path, source, "MissingOutside"),
+        ],
+        "{:#?}",
+        result.diagnostics,
+    );
+}
+
+#[test]
+fn recovered_parameter_default_stays_dependency_closed() {
+    let path = "missing-parameter-default.ts";
+    let source = concat!(
+        "function nested({} = MissingDefault) { MissingFunctionBody; } ",
+        "MissingOutside;",
+    );
+    assert!(parser_codes(source).is_empty(), "{source}");
+
+    let mut service = LanguageService::new(options());
+    service.open(path, Arc::<str>::from(source));
+    let result = service.semantic_diagnostics(path);
+    assert_eq!(result.semantic_completion, SemanticCompletion::Deferred);
+    assert_eq!(
+        semantic_fingerprint(&result),
+        vec![
+            missing_name(path, source, "MissingFunctionBody"),
+            missing_name(path, source, "MissingOutside"),
+        ],
+        "{:#?}",
+        result.diagnostics,
+    );
+}
+
+#[test]
+fn malformed_parameter_binding_heads_keep_identifier_recovery() {
+    for source in [
+        "const callback = function () { function nested({ = source) {} };",
+        "const callback = function () { function nested([ = source) {} };",
+        "const callback = function ({...",
+        "const callback = function ([...",
+    ] {
+        assert_eq!(parser_codes(source).first(), Some(&1003), "{source}");
+    }
+}
+
+#[test]
 fn recovered_variable_lists_publish_every_authored_binding_identity() {
     let cases = [
         (
@@ -617,6 +921,126 @@ fn recovered_variable_list_scanner_skips_initializer_commas() {
         "{:#?}",
         result.diagnostics,
     );
+}
+
+#[test]
+fn naked_recovery_fragments_do_not_publish_identifier_diagnostics() {
+    let cases = [
+        (
+            "loop-fragment.ts",
+            concat!(
+                "const callback = function () { for (let loopKey in {}) {} ",
+                "MissingBodySibling; };\nMissingOutside;\n",
+            ),
+            vec!["MissingOutside"],
+        ),
+        (
+            "destructuring-fragment.ts",
+            concat!(
+                "const callback = function () { let {} = missingPattern; ",
+                "MissingBodySibling; };\nMissingOutside;\n",
+            ),
+            vec!["MissingBodySibling", "MissingOutside"],
+        ),
+        (
+            "satisfies-fragment.ts",
+            concat!(
+                "const callback = function () { MissingOwnedBody; } satisfies MissingTail;\n",
+                "MissingOutside;\n",
+            ),
+            vec!["MissingOwnedBody", "MissingOutside"],
+        ),
+        (
+            "object-member-fragment.ts",
+            concat!(
+                "const value = { kept: function () { MissingOwnedBody; }, method() { MissingTail; } };\n",
+                "MissingOutside;\n",
+            ),
+            vec!["MissingOwnedBody", "MissingOutside"],
+        ),
+        (
+            "object-spread-fragment.ts",
+            concat!(
+                "const value = { ...(function () { MissingOwnedBody; }) };\n",
+                "MissingOutside;\n",
+            ),
+            vec!["MissingOwnedBody", "MissingOutside"],
+        ),
+        (
+            "arrow-spread-fragment.ts",
+            concat!(
+                "const value = { ...(() => { MissingOwnedBody; }) };\n",
+                "MissingOutside;\n",
+            ),
+            vec!["MissingOwnedBody", "MissingOutside"],
+        ),
+    ];
+
+    for (path, source, expected) in cases {
+        let mut service = LanguageService::new(options());
+        service.open(path, Arc::<str>::from(source));
+        let result = service.semantic_diagnostics(path);
+        assert_eq!(
+            result.semantic_completion,
+            SemanticCompletion::Deferred,
+            "{path}"
+        );
+        assert_eq!(
+            semantic_fingerprint(&result),
+            expected
+                .into_iter()
+                .map(|name| missing_name(path, source, name))
+                .collect::<Vec<_>>(),
+            "{path}: {:#?}",
+            result.diagnostics,
+        );
+        if path == "loop-fragment.ts" {
+            // TypeScript diagnoses the same-body sibling; it becomes independent
+            // when the parser owns `for` rather than recovering through this suffix.
+            for name in ["loopKey", "MissingBodySibling"] {
+                let start = source.find(name).expect("recovery-path witness") as u32;
+                assert!(
+                    result
+                        .diagnostics
+                        .iter()
+                        .all(|diagnostic| diagnostic.start != start)
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn contextual_accessor_names_and_signature_this_parse_without_recovery() {
+    assert!(
+        parser_codes(concat!(
+            "class C { set: boolean; get = 1; set(x) {} get() {} ",
+            "get value() { return 1; } set value(x) {} }",
+        ))
+        .is_empty(),
+    );
+    assert!(
+        parser_codes(concat!(
+            "type Callback<This, Args extends any[], Return> = ",
+            "(this: This, ...args: Args) => Return; ",
+            "type Generic = <Value>(this: Value, value: Value) => Value;",
+        ))
+        .is_empty(),
+    );
+}
+
+#[test]
+fn explicit_this_call_signature_does_not_count_as_a_runtime_parameter() {
+    let path = "explicit-this-call-signature.ts";
+    let source = concat!(
+        "declare const callback: { ",
+        "(this: { tag: string }, value: number): void }; callback(1);",
+    );
+    let mut service = LanguageService::new(options());
+    service.open(path, Arc::<str>::from(source));
+    let result = service.semantic_diagnostics(path);
+    assert!(result.diagnostics.is_empty(), "{:#?}", result.diagnostics);
+    assert_eq!(result.semantic_completion, SemanticCompletion::Deferred);
 }
 
 #[test]
@@ -705,5 +1129,158 @@ fn eof_recovery_does_not_retroactively_claim_a_prior_statement() {
         vec![missing_name(path, source, "MissingBeforeEof")],
         "{:#?}",
         result.diagnostics,
+    );
+}
+
+#[test]
+fn opaque_member_and_loop_syntax_keep_their_recovery_local() {
+    let source = concat!(
+        "class Computed { *[renamed]() { MissingGeneratorBody; } }\n",
+        "const object = { get renamed() { MissingAccessorBody; return 1; } };\n",
+        "for (const { value: renamed } of values) { renamed; MissingLoopBody; }\n",
+        "const independent: MissingIndependent = 1;\n",
+    );
+    assert!(parser_codes(source).is_empty());
+
+    let path = "opaque-syntax-owners.ts";
+    let mut service = LanguageService::new(options());
+    service.open(path, Arc::<str>::from(source));
+    let result = service.semantic_diagnostics(path);
+    assert_eq!(result.semantic_completion, SemanticCompletion::Deferred);
+    assert_eq!(
+        semantic_fingerprint(&result),
+        vec![
+            missing_name(path, source, "MissingLoopBody"),
+            missing_name(path, source, "MissingIndependent"),
+        ],
+        "{:#?}",
+        result.diagnostics,
+    );
+}
+
+#[test]
+fn generator_member_for_yields_inherit_the_typed_member_nonclaim() {
+    let path = "generator-member-for-yield.ts";
+    let source = concat!(
+        "class Renamed { ",
+        "*renamedItems() { for (const { value: renamed } of this) { yield renamed; } } ",
+        "*nestedItems() { { for (const { value: changed } of this) { { yield changed; } } } } }\n",
+        "function* declaredItems() { for (const { value: declared } of this) { yield declared; } }\n",
+        "const expressionItems = function* changedItems() { for (const { value: wrapped } of this) { yield wrapped; } };\n",
+        "const independent: MissingIndependent = 1;\n",
+    );
+    assert!(parser_codes(source).is_empty());
+
+    let mut service = LanguageService::new(options());
+    service.open(path, Arc::<str>::from(source));
+    let result = service.semantic_diagnostics(path);
+    assert_eq!(result.semantic_completion, SemanticCompletion::Deferred);
+    assert_eq!(
+        semantic_fingerprint(&result),
+        vec![missing_name(path, source, "MissingIndependent")],
+        "{:#?}",
+        result.diagnostics,
+    );
+}
+
+#[test]
+fn generator_function_expression_for_yield_keeps_its_typed_owner() {
+    let path = "generator-expression-for-yield.ts";
+    let source = concat!(
+        "const expressionItems = function* renamedItems() { ",
+        "for (const { value: wrapped } of this) { { yield wrapped; } } };\n",
+        "const independent: MissingIndependent = 1;\n",
+    );
+    assert!(parser_codes(source).is_empty());
+
+    let mut service = LanguageService::new(options());
+    service.open(path, Arc::<str>::from(source));
+    let result = service.semantic_diagnostics(path);
+    assert_eq!(result.semantic_completion, SemanticCompletion::Deferred);
+    assert_eq!(
+        semantic_fingerprint(&result),
+        vec![missing_name(path, source, "MissingIndependent")],
+        "{:#?}",
+        result.diagnostics,
+    );
+}
+
+#[test]
+fn opaque_class_expression_heads_follow_heritage_grammar_and_stay_local() {
+    for (path, affected) in [
+        (
+            "anonymous-implements.ts",
+            "interface RenamedContract {} const affected = class implements RenamedContract {};",
+        ),
+        (
+            "implements-name.ts",
+            "const affected = class implements {};",
+        ),
+        (
+            "nested-generic-extends.ts",
+            concat!(
+                "declare class RenamedBase<First, Second = {}> {} ",
+                "const affected = class Vessel<Element> extends ",
+                "RenamedBase<Readonly<{ value: Element }> & Element, {}> {};",
+            ),
+        ),
+        (
+            "expression-heritage.ts",
+            concat!(
+                "declare const RenamedBase: unknown; ",
+                "declare function wrap<Element>(value: unknown): any; ",
+                "const affected = class Vessel<Element> extends wrap<Element>(RenamedBase) {};",
+            ),
+        ),
+        (
+            "multiple-implements.ts",
+            concat!(
+                "interface First<Element> {} interface Second {} ",
+                "const affected = class Vessel<Element> implements First<Element>, Second {};",
+            ),
+        ),
+    ] {
+        let source = format!("{affected} const independent: MissingIndependent = 1;");
+        assert!(parser_codes(&source).is_empty(), "{path}: {source}");
+
+        let mut service = LanguageService::new(options());
+        service.open(path, Arc::<str>::from(source.as_str()));
+        let result = service.semantic_diagnostics(path);
+        assert_eq!(
+            result.semantic_completion,
+            SemanticCompletion::Deferred,
+            "{path}"
+        );
+        assert_eq!(
+            semantic_fingerprint(&result),
+            vec![missing_name(path, &source, "MissingIndependent")],
+            "{path}: {:#?}",
+            result.diagnostics,
+        );
+        assert_eq!(
+            service.compile().exit_status,
+            CompileExitStatus::SemanticIncomplete,
+            "{path}"
+        );
+    }
+}
+
+#[test]
+fn malformed_class_expression_heritage_still_reports_the_missing_body() {
+    let source =
+        "declare const RenamedBase: unknown; const broken = class Vessel extends RenamedBase";
+    let source_text = SourceText::new(FileId(0), "missing-class-body.ts".into(), Arc::from(source));
+    let parsed = parse_source(&source_text);
+    let [diagnostic] = parsed.diagnostics.as_slice() else {
+        panic!("unexpected diagnostics: {:#?}", parsed.diagnostics);
+    };
+    assert_eq!(
+        (
+            diagnostic.code,
+            diagnostic.start,
+            diagnostic.length,
+            diagnostic.message_text.as_str(),
+        ),
+        (1005, source.len() as u32, 0, "'{' expected."),
     );
 }

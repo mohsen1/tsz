@@ -1,8 +1,9 @@
-use crate::bind::Meaning;
-use crate::source::{DeclId, FileId, NodeId, Span};
+use crate::bind::{DeclarationKind, Meaning};
+use crate::source::{DeclId, FileId, NodeId, SourceKind, Span};
 use crate::syntax::{
-    AuthoredLiteralKind, ExpressionKind, ParserRecoveryKind, SourceCheckDirectiveKind,
-    StatementKind, UnmodeledDeclarationHostKind,
+    AuthoredLiteralKind, CommentTrivia, DescendantContainer, ExpressionKind, ParserRecoveryKind,
+    SourceCheckDirectiveKind, SourceSyntaxFact, Statement, StatementKind,
+    UnmodeledDeclarationHostKind, for_each_statement_in,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -15,6 +16,7 @@ use super::{
 };
 
 mod flow_containment;
+use flow_containment::FileBoundary;
 
 /// A compiler operation or externally visible product whose answer must be
 /// either claimed or withheld for a specific scope.
@@ -36,6 +38,21 @@ pub(crate) enum CapabilityTarget {
     Rename,
 }
 
+const ALL_TARGETS: [CapabilityTarget; 12] = [
+    CapabilityTarget::DeclarationModel,
+    CapabilityTarget::DeclarationValue,
+    CapabilityTarget::SemanticCheck,
+    CapabilityTarget::SemanticDiagnostics,
+    CapabilityTarget::RequiredType,
+    CapabilityTarget::Declaration,
+    CapabilityTarget::JavaScript,
+    CapabilityTarget::QuickInfo,
+    CapabilityTarget::Definition,
+    CapabilityTarget::References,
+    CapabilityTarget::Highlights,
+    CapabilityTarget::Rename,
+];
+
 /// Scope of one capability decision, keyed by stable statement identity.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum CapabilityScope {
@@ -55,10 +72,25 @@ pub(crate) enum SyntaxGap {
     Function,
     Class,
     Declaration,
+    GeneratorFunctionLike,
+    VariableDeclaratorTail,
     CommonJsClass,
     DeclarationHost,
     DefaultExportHost,
     Expression,
+    ObjectMember,
+    ForStatement,
+    ComputedPropertyName,
+    ClassExpression,
+    FunctionExpressionClassPropertyTransform,
+    FunctionExpressionCommonJsTransform,
+    FunctionExpressionModifier,
+    FunctionLikeBindingPattern,
+    FunctionExpressionOuterComments,
+    FunctionExpressionRecovery,
+    FunctionExpressionPrinter,
+    AngleAssertion,
+    RejectedGenericArrowPrefix,
     Template,
     ExtendedUnicodeString,
     RegularExpression,
@@ -73,6 +105,11 @@ pub(crate) enum SyntaxGap {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum SemanticGap {
     FlowTypeOfReference,
+    FunctionLikeTypeParameters,
+    FunctionExpressionBindingName,
+    FunctionExpressionDeclaration,
+    FunctionExpressionQuickInfo,
+    ExplicitThisParameter,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -103,6 +140,9 @@ pub(crate) enum DeletionCondition {
     /// Remove once the deepest parser-authored semantic producer owns this
     /// recovered syntax rather than deferring its dependency-closed demand.
     DeepestSemanticOwner(SyntaxGap),
+    /// Remove once a recovered variable-list declarator has a first-class
+    /// initializer owner instead of a represented assignment fragment.
+    RecoveredDeclaratorInitializer(SyntaxGap),
     SemanticOwner(SemanticGap),
     LiteralProgramOwner(ProgramLiteralFamily),
     EssentialLibraryUniverse,
@@ -138,6 +178,7 @@ pub(crate) enum FileSemanticMode {
 pub(crate) struct CapabilityAnalysis {
     nonclaims: Box<[CapabilityNonclaim]>,
     file_semantic_modes: Box<[FileSemanticMode]>,
+    function_like_owners: Box<[(FileId, NodeId)]>,
 }
 
 impl CapabilityAnalysis {
@@ -147,6 +188,7 @@ impl CapabilityAnalysis {
         context: CapabilityContext,
     ) -> Self {
         let mut nonclaims = Vec::new();
+        let mut function_like_owners = Vec::new();
         let mut file_semantic_modes = vec![FileSemanticMode::Checked; files.len()];
         for file in files {
             let mode = match file
@@ -167,81 +209,80 @@ impl CapabilityAnalysis {
             // The missing global set is computed before checking and produces
             // the complete TS2318 diagnostic set. It blocks semantic models,
             // but does not make the aggregate diagnostic product speculative.
-            for target in [
-                CapabilityTarget::SemanticCheck,
-                CapabilityTarget::DeclarationModel,
-                CapabilityTarget::DeclarationValue,
-            ] {
-                push(
-                    &mut nonclaims,
-                    target,
-                    CapabilityScope::Program,
-                    NonclaimReason::MissingEssentialTypes,
-                    DeletionCondition::EssentialLibraryUniverse,
-                );
-            }
+            add_nonclaims(
+                &mut nonclaims,
+                &ALL_TARGETS[..3],
+                CapabilityScope::Program,
+                NonclaimReason::MissingEssentialTypes,
+                DeletionCondition::EssentialLibraryUniverse,
+            );
         }
         if context.has_fatal_option_error {
-            for target in [
-                CapabilityTarget::SemanticCheck,
-                CapabilityTarget::DeclarationModel,
-                CapabilityTarget::DeclarationValue,
-                CapabilityTarget::RequiredType,
-                CapabilityTarget::SemanticDiagnostics,
-                CapabilityTarget::JavaScript,
-                CapabilityTarget::Declaration,
-                CapabilityTarget::QuickInfo,
-                CapabilityTarget::Definition,
-                CapabilityTarget::References,
-                CapabilityTarget::Highlights,
-                CapabilityTarget::Rename,
-            ] {
-                push(
-                    &mut nonclaims,
-                    target,
-                    CapabilityScope::Program,
-                    NonclaimReason::FatalCompilerOption,
-                    DeletionCondition::CompilerOptionOwner,
-                );
-            }
+            add_nonclaims(
+                &mut nonclaims,
+                &ALL_TARGETS,
+                CapabilityScope::Program,
+                NonclaimReason::FatalCompilerOption,
+                DeletionCondition::CompilerOptionOwner,
+            );
             nonclaims.sort_unstable();
             nonclaims.dedup();
             return Self {
                 nonclaims: nonclaims.into_boxed_slice(),
                 file_semantic_modes: file_semantic_modes.into_boxed_slice(),
+                function_like_owners: Box::default(),
             };
         }
 
         for file in files {
-            derive_file_nonclaims(&mut nonclaims, file, options);
+            for owner in derive_file_nonclaims(&mut nonclaims, file, options) {
+                function_like_owners.push((file.source.id, owner));
+            }
+        }
+        if files.iter().any(|file| {
+            file.syntax
+                .has_source_syntax_fact(SourceSyntaxFact::TemplateExpressionIdentifier)
+        }) {
+            add_syntax(
+                &mut nonclaims,
+                &ALL_TARGETS[9..],
+                CapabilityScope::Program,
+                SyntaxGap::Template,
+            );
         }
         derive_program_literal_nonclaims(&mut nonclaims, files, options);
 
         if context.has_compiler_option_error
             && files.iter().any(|file| {
-                file.syntax.has_authored_no_substitution_template()
+                file.syntax
+                    .has_authored_literal(AuthoredLiteralKind::Template)
                     || file.syntax.has_authored_extended_unicode_string()
                     || file.syntax.has_authored_regular_expression()
-                    || file.syntax.has_authored_numeric_recovery()
-                    || file.syntax.has_authored_numeric_separator()
+                    || file
+                        .syntax
+                        .has_authored_literal(AuthoredLiteralKind::NumericRecovery)
+                    || file
+                        .syntax
+                        .has_authored_literal(AuthoredLiteralKind::NumericSeparator)
             })
         {
-            push(
+            add_nonclaims(
                 &mut nonclaims,
-                CapabilityTarget::SemanticDiagnostics,
+                &[CapabilityTarget::SemanticDiagnostics],
                 CapabilityScope::Program,
                 NonclaimReason::CompilerOptionWithAuthoredLiteral,
                 DeletionCondition::CompilerOptionOwner,
             );
         }
 
-        close_declaration_groups(&mut nonclaims, files);
+        close_declaration_groups(&mut nonclaims, files, &function_like_owners);
 
         nonclaims.sort_unstable();
         nonclaims.dedup();
         Self {
             nonclaims: nonclaims.into_boxed_slice(),
             file_semantic_modes: file_semantic_modes.into_boxed_slice(),
+            function_like_owners: function_like_owners.into_boxed_slice(),
         }
     }
 
@@ -278,31 +319,79 @@ impl CapabilityAnalysis {
         )
     }
 
+    pub(crate) fn has_claimed_function_like(&self, file: FileId) -> bool {
+        self.function_like_owners
+            .iter()
+            .any(|&(owner_file, owner)| {
+                owner_file == file && self.semantic_check_node_is_claimed(file, owner)
+            })
+    }
+
     /// Whether a nonclaimed syntax-recovery container may still enter nested
-    /// statements that carry their own stable capability identities. A local
-    /// flow region may accompany that recovery because every child rechecks
-    /// its own typed claim. Representational recovery fragments may expose
-    /// name-only descendants only when that same node is already contained by
-    /// the typed flow region; broader program/file gaps never allow descent.
+    /// statements that carry their own stable capability identities. Direct
+    /// names remain owned only by an identified recovered initializer or a
+    /// typed flow region; broader program/file gaps never allow descent.
     pub(crate) fn semantic_check_node_allows_claimed_descendants(
         &self,
         file: FileId,
         owner: NodeId,
     ) -> bool {
+        self.semantic_check_node_descendant_permissions(file, owner)
+            .0
+    }
+
+    pub(crate) fn semantic_check_node_allows_recovery_identifiers(
+        &self,
+        file: FileId,
+        owner: NodeId,
+    ) -> bool {
+        self.semantic_check_node_descendant_permissions(file, owner)
+            .1
+    }
+
+    fn semantic_check_node_descendant_permissions(
+        &self,
+        file: FileId,
+        owner: NodeId,
+    ) -> (bool, bool) {
         let CapabilityClaim::Nonclaimed(reasons) = self.claim(
             CapabilityTarget::SemanticCheck,
             CapabilityScope::node(file, owner),
         ) else {
-            return false;
+            return (false, false);
         };
         let requested_scope = CapabilityScope::node(file, owner);
-        let mut has_semantic_recovery = false;
+        let (mut has_semantic_recovery, mut has_recovered_initializer) = (false, false);
         let mut has_representational_recovery = false;
-        let mut has_flow_region = false;
+        let mut has_direct_identifier_recovery = false;
+        let (mut has_literal_semantic_recovery, mut has_flow_region) = (false, false);
+        let mut has_generator = false;
         for reason in reasons {
             match reason.deletion {
                 DeletionCondition::DeepestSemanticOwner(_) if reason.scope == requested_scope => {
                     has_semantic_recovery = true;
+                    match reason.reason {
+                        NonclaimReason::Syntax(
+                            SyntaxGap::RejectedGenericArrowPrefix | SyntaxGap::ForStatement,
+                        ) => has_direct_identifier_recovery = true,
+                        NonclaimReason::Syntax(
+                            SyntaxGap::Template
+                            | SyntaxGap::ExtendedUnicodeString
+                            | SyntaxGap::RegularExpression
+                            | SyntaxGap::NumericRecovery
+                            | SyntaxGap::NumericSeparator,
+                        ) => has_literal_semantic_recovery = true,
+                        NonclaimReason::Syntax(SyntaxGap::GeneratorFunctionLike) => {
+                            has_generator = true
+                        }
+                        _ => {}
+                    }
+                }
+                DeletionCondition::RecoveredDeclaratorInitializer(_)
+                    if reason.scope == requested_scope =>
+                {
+                    has_semantic_recovery = true;
+                    has_recovered_initializer = true;
                 }
                 DeletionCondition::SyntaxOwner(
                     SyntaxGap::Declaration
@@ -317,28 +406,80 @@ impl CapabilityAnalysis {
                 {
                     has_flow_region = true;
                 }
-                _ => return false,
+                _ => return (false, false),
             }
         }
-        has_semantic_recovery && !has_representational_recovery
-            || has_flow_region && (has_semantic_recovery || has_representational_recovery)
+        let allows_descent =
+            has_semantic_recovery || has_flow_region && has_representational_recovery;
+        (
+            allows_descent,
+            allows_descent
+                && !has_generator
+                && (has_recovered_initializer && !has_flow_region
+                    || has_direct_identifier_recovery
+                    || has_flow_region && has_literal_semantic_recovery),
+        )
     }
 
-    /// Whether a nonclaimed flow-region host may still run independently inventoried
-    /// function-like expression semantics; broader recovery cannot publish a signature.
-    pub(crate) fn semantic_check_node_allows_function_like_expression_semantics(
+    /// Whether an exact semantic `FunctionLike` owner may run independently inventoried
+    /// nested function-like semantics; broader recovery cannot publish a signature.
+    pub(crate) fn semantic_check_node_function_like_descendant_permissions(
+        &self,
+        file: FileId,
+        owner: NodeId,
+    ) -> (bool, bool) {
+        let scope = CapabilityScope::node(file, owner);
+        let CapabilityClaim::Nonclaimed(mut reasons) =
+            self.claim(CapabilityTarget::SemanticCheck, scope)
+        else {
+            return (false, false);
+        };
+        let mut identifiers = true;
+        let allowed = reasons.all(|reason| {
+            if reason.scope != scope {
+                return false;
+            }
+            match reason.deletion {
+                DeletionCondition::SemanticOwner(SemanticGap::FlowTypeOfReference) => true,
+                DeletionCondition::DeepestSemanticOwner(gap)
+                    if gap == SyntaxGap::GeneratorFunctionLike
+                        && reason.reason == NonclaimReason::Syntax(gap) =>
+                {
+                    identifiers = false;
+                    true
+                }
+                DeletionCondition::SemanticOwner(
+                    SemanticGap::ExplicitThisParameter | SemanticGap::FunctionExpressionBindingName,
+                ) => {
+                    identifiers = false;
+                    true
+                }
+                _ => false,
+            }
+        });
+        (allowed, allowed && identifiers)
+    }
+
+    /// Whether an exact nonclaim may ask nested function-like `RequiredType` gates.
+    pub(crate) fn required_type_node_allows_function_like_reentry(
         &self,
         file: FileId,
         owner: NodeId,
     ) -> bool {
         let scope = CapabilityScope::node(file, owner);
-        let CapabilityClaim::Nonclaimed(mut reasons) =
-            self.claim(CapabilityTarget::SemanticCheck, scope)
+        let CapabilityClaim::Nonclaimed(reasons) =
+            self.claim(CapabilityTarget::RequiredType, scope)
         else {
             return false;
         };
-        let flow = DeletionCondition::SemanticOwner(SemanticGap::FlowTypeOfReference);
-        reasons.all(|reason| reason.scope == scope && reason.deletion == flow)
+        reasons.into_iter().all(|reason| {
+            reason.scope == scope
+                && matches!(
+                    reason.deletion,
+                    DeletionCondition::DeepestSemanticOwner(_)
+                        | DeletionCondition::RecoveredDeclaratorInitializer(_)
+                )
+        })
     }
 
     pub(crate) fn semantic_declaration_is_claimed(
@@ -346,7 +487,7 @@ impl CapabilityAnalysis {
         files: &[ProgramFile],
         declaration: DeclId,
     ) -> bool {
-        declaration_capability_scope(files, declaration).is_some_and(|scope| {
+        declaration_scope(files, declaration, &self.function_like_owners).is_some_and(|scope| {
             self.claim(CapabilityTarget::DeclarationValue, scope)
                 .is_claimed()
         })
@@ -467,28 +608,22 @@ fn scope_applies(record: CapabilityScope, requested: CapabilityScope) -> bool {
     }
 }
 
-fn close_declaration_groups(nonclaims: &mut Vec<CapabilityNonclaim>, files: &[ProgramFile]) {
+fn close_declaration_groups(
+    nonclaims: &mut Vec<CapabilityNonclaim>,
+    files: &[ProgramFile],
+    function_like_owners: &[(FileId, NodeId)],
+) {
     let groups = declaration_groups(files);
-    let targets = [
-        CapabilityTarget::SemanticCheck,
-        CapabilityTarget::DeclarationModel,
-        CapabilityTarget::DeclarationValue,
-        CapabilityTarget::RequiredType,
-        CapabilityTarget::SemanticDiagnostics,
-        CapabilityTarget::QuickInfo,
-        CapabilityTarget::Definition,
-        CapabilityTarget::References,
-        CapabilityTarget::Highlights,
-        CapabilityTarget::Rename,
-    ];
     loop {
         let before = nonclaims.len();
         for group in &groups {
             let scopes = group
                 .iter()
-                .filter_map(|declaration| declaration_capability_scope(files, *declaration))
+                .filter_map(|declaration| {
+                    declaration_scope(files, *declaration, function_like_owners)
+                })
                 .collect::<BTreeSet<_>>();
-            for target in targets {
+            for &target in ALL_TARGETS[..5].iter().chain(&ALL_TARGETS[7..]) {
                 let inherited = nonclaims
                     .iter()
                     .filter(|nonclaim| {
@@ -501,7 +636,7 @@ fn close_declaration_groups(nonclaims: &mut Vec<CapabilityNonclaim>, files: &[Pr
                     .collect::<BTreeSet<_>>();
                 for scope in &scopes {
                     for (reason, deletion) in &inherited {
-                        push(nonclaims, target, *scope, *reason, *deletion);
+                        add_nonclaims(nonclaims, &[target], *scope, *reason, *deletion);
                     }
                 }
             }
@@ -516,16 +651,8 @@ fn close_declaration_groups(nonclaims: &mut Vec<CapabilityNonclaim>, files: &[Pr
                 .map(|nonclaim| (nonclaim.reason, nonclaim.deletion))
                 .collect::<BTreeSet<_>>();
             for scope in &scopes {
-                for target in [
-                    CapabilityTarget::QuickInfo,
-                    CapabilityTarget::Definition,
-                    CapabilityTarget::References,
-                    CapabilityTarget::Highlights,
-                    CapabilityTarget::Rename,
-                ] {
-                    for (reason, deletion) in &declaration_reasons {
-                        push(nonclaims, target, *scope, *reason, *deletion);
-                    }
+                for (reason, deletion) in &declaration_reasons {
+                    add_nonclaims(nonclaims, &ALL_TARGETS[7..], *scope, *reason, *deletion);
                 }
             }
         }
@@ -551,7 +678,10 @@ fn declaration_groups(files: &[ProgramFile]) -> Vec<Vec<DeclId>> {
                         .filter(|declaration| {
                             file.bindings
                                 .declaration(*declaration)
-                                .is_some_and(|declaration| declaration.meaning == meaning)
+                                .is_some_and(|declaration| {
+                                    declaration.meaning == meaning
+                                        && declaration.kind != DeclarationKind::FunctionExpression
+                                })
                         })
                         .collect::<Vec<_>>();
                     if group.len() > 1 {
@@ -591,20 +721,27 @@ fn declaration_groups(files: &[ProgramFile]) -> Vec<Vec<DeclId>> {
     groups.into_iter().collect()
 }
 
-fn declaration_capability_scope(
+fn declaration_scope(
     files: &[ProgramFile],
     declaration: DeclId,
+    function_like_owners: &[(FileId, NodeId)],
 ) -> Option<CapabilityScope> {
     let file = files.get(declaration.file.0 as usize)?;
     let declaration = file.bindings.declaration(declaration)?;
-    let mut exact_owner = None;
-    for statement in &file.syntax.statements {
-        statement.for_each_statement(&mut |statement| {
-            if statement.id == declaration.owner {
-                exact_owner = Some(statement.id);
-            }
-        });
+    if declaration.kind == DeclarationKind::FunctionExpression
+        || declaration.kind == DeclarationKind::Parameter
+            && function_like_owners
+                .binary_search(&(file.source.id, declaration.owner))
+                .is_ok()
+    {
+        return Some(CapabilityScope::node(file.source.id, declaration.owner));
     }
+    let mut exact_owner = None;
+    for_each_statement_in(&file.syntax.statements, &mut |statement| {
+        if statement.id == declaration.owner {
+            exact_owner = Some(statement.id);
+        }
+    });
     if let Some(owner) = exact_owner {
         return Some(CapabilityScope::node(file.source.id, owner));
     }
@@ -622,49 +759,191 @@ fn derive_file_nonclaims(
     nonclaims: &mut Vec<CapabilityNonclaim>,
     file: &ProgramFile,
     options: &CompilerOptions,
-) {
+) -> BTreeSet<NodeId> {
     let id = file.source.id;
     let scope = CapabilityScope::File(id);
     let declaration_statement_owners = declaration_statement_owners(file);
+    let mut nodes = flow_containment::semantic_node_inventory(
+        &file.syntax.statements,
+        file.syntax.parser_recovery_facts(),
+    );
 
     if file.syntax.has_unmodeled_function_products() {
         add_both_emit(nonclaims, scope, SyntaxGap::Function);
     }
-    if file.syntax.has_unmodeled_class_products() {
+    if [
+        SourceSyntaxFact::AsyncClassModifier,
+        SourceSyntaxFact::InvalidClassModifierOrder,
+    ]
+    .into_iter()
+    .any(|fact| file.syntax.has_source_syntax_fact(fact))
+        || nodes.boundaries.contains(&FileBoundary::ClassProduct)
+    {
         add_both_emit(nonclaims, scope, SyntaxGap::Class);
     }
-    if file.syntax.has_unmodeled_declaration_products() {
+    if file
+        .syntax
+        .has_source_syntax_fact(SourceSyntaxFact::ExplicitCallTypeArguments)
+    {
         add_syntax(
             nonclaims,
-            CapabilityTarget::Declaration,
+            &[CapabilityTarget::Declaration],
             scope,
             SyntaxGap::Declaration,
         );
     }
-    if file.syntax.has_unmodeled_declaration_hosts() {
+    if !file.syntax.unmodeled_declaration_hosts().is_empty()
+        || matches!(
+            file.source.kind(),
+            SourceKind::JavaScript | SourceKind::JavaScriptJsx
+        ) && nodes.boundaries.contains(&FileBoundary::Declaration)
+    {
         add_both_emit(nonclaims, scope, SyntaxGap::DeclarationHost);
         add_syntax(
             nonclaims,
-            CapabilityTarget::RequiredType,
+            &[CapabilityTarget::RequiredType],
             scope,
             SyntaxGap::DeclarationHost,
         );
         add_unmodeled_declaration_host_nodes(nonclaims, file);
     }
-    if file.syntax.has_unmodeled_default_export_hosts() {
+    if file
+        .syntax
+        .has_source_syntax_fact(SourceSyntaxFact::DefaultExportOnUnsupportedHost)
+    {
         add_both_emit(nonclaims, scope, SyntaxGap::DefaultExportHost);
         add_semantic_diagnostics(nonclaims, scope, SyntaxGap::DefaultExportHost);
     }
-    if file.syntax.has_unmodeled_expression_products() {
+    if file
+        .syntax
+        .has_source_syntax_fact(SourceSyntaxFact::ExplicitNewTypeArguments)
+    {
         add_both_emit(nonclaims, scope, SyntaxGap::Expression);
         add_semantic_diagnostics(nonclaims, scope, SyntaxGap::Expression);
     }
-    add_parser_recovery_semantic_nodes(nonclaims, file, &declaration_statement_owners);
-    for owner in flow_containment::flow_region_nodes(
-        &file.syntax.statements,
-        file.syntax.parser_recovery_facts(),
-    ) {
-        add_flow_region_nonclaims(nonclaims, CapabilityScope::node(id, owner));
+    if file
+        .syntax
+        .has_source_syntax_fact(SourceSyntaxFact::AuthoredFunctionExpressionModifier)
+    {
+        add_both_emit(nonclaims, scope, SyntaxGap::FunctionExpressionModifier);
+    }
+    let function_likes = std::mem::take(&mut nodes.function_likes);
+    add_parser_recovery_semantic_nodes(
+        nonclaims,
+        file,
+        &declaration_statement_owners,
+        &nodes.function_like_signatures,
+    );
+    let has_function_expression = !nodes.function_expressions.is_empty();
+    if has_function_expression
+        && target_requires_class_property_transform(&options.target)
+        && nodes.boundaries.contains(&FileBoundary::ClassProperty)
+    {
+        add_syntax(
+            nonclaims,
+            &[CapabilityTarget::JavaScript],
+            scope,
+            SyntaxGap::FunctionExpressionClassPropertyTransform,
+        );
+    }
+    if has_function_expression
+        && is_effective_commonjs(&file.source.path, &options.module)
+        && file.syntax.is_external_module()
+    {
+        add_syntax(
+            nonclaims,
+            &[CapabilityTarget::JavaScript],
+            scope,
+            SyntaxGap::FunctionExpressionCommonJsTransform,
+        );
+    }
+    for owner in nodes.flow_regions {
+        let gap = SemanticGap::FlowTypeOfReference;
+        add_nonclaims(
+            nonclaims,
+            &ALL_TARGETS[1..4],
+            CapabilityScope::node(id, owner),
+            NonclaimReason::Semantic(gap),
+            DeletionCondition::SemanticOwner(gap),
+        );
+    }
+    for (owner, gap) in nodes.function_like_gaps {
+        add_nonclaims(
+            nonclaims,
+            &ALL_TARGETS[1..6],
+            CapabilityScope::node(id, owner),
+            NonclaimReason::Semantic(gap),
+            DeletionCondition::SemanticOwner(gap),
+        );
+    }
+    for owner in nodes.function_like_binding_patterns {
+        add_function_like_recovery_nonclaims(
+            nonclaims,
+            CapabilityScope::node(id, owner),
+            SyntaxGap::FunctionLikeBindingPattern,
+        );
+    }
+    for function in nodes.function_expressions {
+        let owner = function.owner;
+        for (target, gap) in [
+            (
+                CapabilityTarget::Declaration,
+                SemanticGap::FunctionExpressionDeclaration,
+            ),
+            (
+                CapabilityTarget::QuickInfo,
+                SemanticGap::FunctionExpressionQuickInfo,
+            ),
+        ] {
+            add_nonclaims(
+                nonclaims,
+                &[target],
+                CapabilityScope::node(id, owner),
+                NonclaimReason::Semantic(gap),
+                DeletionCondition::SemanticOwner(gap),
+            );
+        }
+        let scope = CapabilityScope::node(id, owner);
+        if file.syntax.parser_recovery_facts().iter().any(|recovery| {
+            function.span.start <= recovery.authored_span.start
+                && recovery.authored_span.end <= function.span.end
+        }) {
+            add_syntax(
+                nonclaims,
+                &[CapabilityTarget::JavaScript],
+                scope,
+                SyntaxGap::FunctionExpressionRecovery,
+            );
+        }
+        let has_owned_comment = file
+            .syntax
+            .comments()
+            .iter()
+            .any(|comment| span_owns_comment(function.span, comment));
+        if let Some(root) = file.syntax.statements.iter().find(|root| {
+            root.span.start <= function.span.start && function.span.end <= root.span.end
+        }) && file.syntax.comments().iter().any(|comment| {
+            span_owns_comment(root.span, comment) && !span_owns_comment(function.span, comment)
+        }) {
+            add_syntax(
+                nonclaims,
+                &[CapabilityTarget::JavaScript],
+                CapabilityScope::node(id, root.id),
+                SyntaxGap::FunctionExpressionOuterComments,
+            );
+        }
+        let body_is_single_line = span_is_single_line(&file.source, function.body_span);
+        if has_owned_comment || body_is_single_line && !function.inline_body_supported {
+            add_syntax(
+                nonclaims,
+                &[CapabilityTarget::JavaScript],
+                scope,
+                SyntaxGap::FunctionExpressionPrinter,
+            );
+        }
+    }
+    for (owner, gap) in nodes.recovered_function_likes {
+        add_function_like_recovery_nonclaims(nonclaims, CapabilityScope::node(id, owner), gap);
     }
     if file.syntax.has_unmodeled_template_products() {
         add_both_emit(nonclaims, scope, SyntaxGap::Template);
@@ -686,7 +965,10 @@ fn derive_file_nonclaims(
     }
     if file.syntax.has_unmodeled_numeric_recovery_products() {
         add_both_emit(nonclaims, scope, SyntaxGap::NumericRecovery);
-        if file.syntax.has_authored_numeric_recovery() {
+        if file
+            .syntax
+            .has_authored_literal(AuthoredLiteralKind::NumericRecovery)
+        {
             add_literal_semantic_nodes(
                 nonclaims,
                 file,
@@ -700,7 +982,10 @@ fn derive_file_nonclaims(
     }
     if file.syntax.has_unmodeled_numeric_separator_products() {
         add_both_emit(nonclaims, scope, SyntaxGap::NumericSeparator);
-        if file.syntax.has_authored_numeric_separator() {
+        if file
+            .syntax
+            .has_authored_literal(AuthoredLiteralKind::NumericSeparator)
+        {
             add_literal_semantic_nodes(
                 nonclaims,
                 file,
@@ -719,58 +1004,117 @@ fn derive_file_nonclaims(
         add_both_emit(nonclaims, scope, SyntaxGap::JavaScriptModuleFormat);
     }
     if is_effective_commonjs(&file.source.path, &options.module)
-        && file.syntax.has_unmodeled_commonjs_class_products()
+        && file
+            .syntax
+            .has_source_syntax_fact(SourceSyntaxFact::ModuleExport)
+        && nodes.boundaries.contains(&FileBoundary::CommonJsClass)
     {
         add_both_emit(nonclaims, scope, SyntaxGap::CommonJsClass);
     }
+    function_likes
+}
+
+fn target_requires_class_property_transform(target: &str) -> bool {
+    [
+        "es3", "es5", "es6", "es2015", "es2016", "es2017", "es2018", "es2019", "es2020", "es2021",
+    ]
+    .iter()
+    .any(|candidate| target.trim().eq_ignore_ascii_case(candidate))
+}
+
+fn span_is_single_line(source: &crate::source::SourceText, span: Span) -> bool {
+    source
+        .slice(span)
+        .bytes()
+        .all(|byte| !matches!(byte, b'\n' | b'\r'))
+}
+
+fn span_owns_comment(span: Span, comment: &CommentTrivia) -> bool {
+    span.start <= comment.span.start && comment.span.end <= span.end
+        || comment
+            .preceding_token_end
+            .is_some_and(|end| span.start <= end && end <= span.end)
 }
 
 fn add_parser_recovery_semantic_nodes(
     nonclaims: &mut Vec<CapabilityNonclaim>,
     file: &ProgramFile,
     declaration_statement_owners: &BTreeSet<NodeId>,
+    function_like_signatures: &[Span],
 ) {
     let recovered_declarator_initializers = recovered_declarator_initializer_owners(file);
     for recovery in file.syntax.parser_recovery_facts() {
+        if recovery.kind != ParserRecoveryKind::GeneratorFunctionLike
+            && function_like_signatures.iter().any(|signature| {
+                signature.start <= recovery.authored_span.start
+                    && recovery.authored_span.end <= signature.end
+            })
+        {
+            continue;
+        }
         let gap = match recovery.kind {
             ParserRecoveryKind::Declaration => SyntaxGap::Declaration,
+            ParserRecoveryKind::GeneratorFunctionLike => SyntaxGap::GeneratorFunctionLike,
+            ParserRecoveryKind::VariableDeclaratorTail => {
+                let gap = SyntaxGap::VariableDeclaratorTail;
+                add_both_emit(nonclaims, CapabilityScope::File(file.source.id), gap);
+                continue;
+            }
             ParserRecoveryKind::Expression => SyntaxGap::Expression,
+            ParserRecoveryKind::ObjectMember => SyntaxGap::ObjectMember,
+            ParserRecoveryKind::ForStatement => SyntaxGap::ForStatement,
+            ParserRecoveryKind::ComputedPropertyName => SyntaxGap::ComputedPropertyName,
+            ParserRecoveryKind::ClassExpression => SyntaxGap::ClassExpression,
+            ParserRecoveryKind::AngleAssertion => SyntaxGap::AngleAssertion,
+            ParserRecoveryKind::RejectedGenericArrowPrefix => SyntaxGap::RejectedGenericArrowPrefix,
             ParserRecoveryKind::Type => SyntaxGap::TypeRecovery,
             ParserRecoveryKind::Template => SyntaxGap::Template,
         };
+        if matches!(
+            recovery.kind,
+            ParserRecoveryKind::ObjectMember
+                | ParserRecoveryKind::ForStatement
+                | ParserRecoveryKind::ComputedPropertyName
+                | ParserRecoveryKind::ClassExpression
+                | ParserRecoveryKind::AngleAssertion
+        ) {
+            add_both_emit(nonclaims, CapabilityScope::File(file.source.id), gap);
+        }
+        if recovery.kind == ParserRecoveryKind::RejectedGenericArrowPrefix {
+            let scope = CapabilityScope::node(file.source.id, recovery.owner.statement);
+            add_recovery_owner_nonclaims(
+                nonclaims,
+                scope,
+                gap,
+                RecoveryStatementRole::SemanticOwner,
+                DeletionCondition::DeepestSemanticOwner(gap),
+            );
+            add_nonclaims(
+                nonclaims,
+                &ALL_TARGETS[1..2],
+                scope,
+                NonclaimReason::Syntax(gap),
+                DeletionCondition::DeepestSemanticOwner(gap),
+            );
+            add_both_emit(nonclaims, scope, gap);
+            continue;
+        }
         for (owner, role) in recovery_statement_owners(
             file,
             recovery.owner,
+            recovery.authored_span,
             recovery.recovery_extent,
             RecoveryStatementSource::Parser {
                 recovered_declarator_initializers: &recovered_declarator_initializers,
             },
         ) {
             let scope = CapabilityScope::node(file.source.id, owner);
-            for target in [
-                CapabilityTarget::SemanticCheck,
-                CapabilityTarget::RequiredType,
-                CapabilityTarget::SemanticDiagnostics,
-            ] {
-                match role {
-                    RecoveryStatementRole::SemanticOwner
-                    | RecoveryStatementRole::RecoveredDeclaratorInitializer => {
-                        add_semantic_node_syntax(nonclaims, target, scope, gap);
-                    }
-                    RecoveryStatementRole::RepresentationalFragment => {
-                        add_syntax(nonclaims, target, scope, gap);
-                    }
-                }
-            }
-            add_service_nonclaims(
+            add_recovery_owner_nonclaims(
                 nonclaims,
                 scope,
                 gap,
-                matches!(
-                    role,
-                    RecoveryStatementRole::SemanticOwner
-                        | RecoveryStatementRole::RecoveredDeclaratorInitializer
-                ),
+                role,
+                DeletionCondition::RecoveredDeclaratorInitializer(gap),
             );
             add_recovery_fragment_declaration_nonclaims(
                 nonclaims,
@@ -791,21 +1135,25 @@ fn add_parser_recovery_semantic_nodes(
     }
 }
 
-fn add_flow_region_nonclaims(nonclaims: &mut Vec<CapabilityNonclaim>, scope: CapabilityScope) {
-    let gap = SemanticGap::FlowTypeOfReference;
-    for target in [
-        CapabilityTarget::SemanticCheck,
-        CapabilityTarget::DeclarationValue,
-        CapabilityTarget::SemanticDiagnostics,
-    ] {
-        push(
+fn add_function_like_recovery_nonclaims(
+    nonclaims: &mut Vec<CapabilityNonclaim>,
+    scope: CapabilityScope,
+    gap: SyntaxGap,
+) {
+    let generator = gap == SyntaxGap::GeneratorFunctionLike;
+    if generator {
+        add_nonclaims(
             nonclaims,
-            target,
+            &ALL_TARGETS[1..5],
             scope,
-            NonclaimReason::Semantic(gap),
-            DeletionCondition::SemanticOwner(gap),
+            NonclaimReason::Syntax(gap),
+            DeletionCondition::DeepestSemanticOwner(gap),
         );
+    } else {
+        add_syntax(nonclaims, &ALL_TARGETS[1..5], scope, gap);
     }
+    add_both_emit(nonclaims, scope, gap);
+    add_service_nonclaims(nonclaims, scope, gap, generator);
 }
 
 fn add_unmodeled_declaration_host_nodes(
@@ -816,20 +1164,12 @@ fn add_unmodeled_declaration_host_nodes(
     let mut unmapped = file.syntax.unmodeled_declaration_hosts().is_empty();
     for host in file.syntax.unmodeled_declaration_hosts() {
         if host.kind == UnmodeledDeclarationHostKind::Global {
-            for target in [
-                CapabilityTarget::SemanticCheck,
-                CapabilityTarget::DeclarationModel,
-                CapabilityTarget::DeclarationValue,
-                CapabilityTarget::RequiredType,
-                CapabilityTarget::SemanticDiagnostics,
-            ] {
-                add_syntax(
-                    nonclaims,
-                    target,
-                    CapabilityScope::Program,
-                    SyntaxGap::DeclarationHost,
-                );
-            }
+            add_syntax(
+                nonclaims,
+                &ALL_TARGETS[..5],
+                CapabilityScope::Program,
+                SyntaxGap::DeclarationHost,
+            );
             add_service_nonclaims(
                 nonclaims,
                 CapabilityScope::Program,
@@ -839,16 +1179,14 @@ fn add_unmodeled_declaration_host_nodes(
             continue;
         }
         let mut owners = BTreeSet::new();
-        for root in &file.syntax.statements {
-            root.for_each_statement(&mut |statement| {
-                if statement.span.start == host.owner_start
-                    || host.recovery_extent.start <= statement.span.start
-                        && statement.span.start < host.recovery_extent.end
-                {
-                    owners.insert(statement.id);
-                }
-            });
-        }
+        for_each_statement_in(&file.syntax.statements, &mut |statement| {
+            if statement.span.start == host.owner_start
+                || host.recovery_extent.start <= statement.span.start
+                    && statement.span.start < host.recovery_extent.end
+            {
+                owners.insert(statement.id);
+            }
+        });
         if owners.is_empty() {
             unmapped = true;
             continue;
@@ -856,29 +1194,23 @@ fn add_unmodeled_declaration_host_nodes(
         found = true;
         for owner in owners {
             let owner_scope = CapabilityScope::node(file.source.id, owner);
-            for target in [
-                CapabilityTarget::SemanticCheck,
-                CapabilityTarget::DeclarationModel,
-                CapabilityTarget::DeclarationValue,
-                CapabilityTarget::RequiredType,
-                CapabilityTarget::SemanticDiagnostics,
-            ] {
-                add_syntax(nonclaims, target, owner_scope, SyntaxGap::DeclarationHost);
-            }
+            add_syntax(
+                nonclaims,
+                &ALL_TARGETS[..5],
+                owner_scope,
+                SyntaxGap::DeclarationHost,
+            );
             add_service_nonclaims(nonclaims, owner_scope, SyntaxGap::DeclarationHost, false);
         }
     }
     if !found || unmapped {
         let scope = CapabilityScope::File(file.source.id);
-        for target in [
-            CapabilityTarget::SemanticCheck,
-            CapabilityTarget::DeclarationModel,
-            CapabilityTarget::DeclarationValue,
-            CapabilityTarget::RequiredType,
-            CapabilityTarget::SemanticDiagnostics,
-        ] {
-            add_syntax(nonclaims, target, scope, SyntaxGap::DeclarationHost);
-        }
+        add_syntax(
+            nonclaims,
+            &ALL_TARGETS[..5],
+            scope,
+            SyntaxGap::DeclarationHost,
+        );
         add_service_nonclaims(nonclaims, scope, SyntaxGap::DeclarationHost, false);
     }
 }
@@ -892,7 +1224,11 @@ fn derive_program_literal_nonclaims(
         .iter()
         .any(|file| file.syntax.has_unicode_line_comment_terminator())
     {
-        add_program_syntax_emit(nonclaims, SyntaxGap::UnicodeLineCommentTerminator);
+        add_both_emit(
+            nonclaims,
+            CapabilityScope::Program,
+            SyntaxGap::UnicodeLineCommentTerminator,
+        );
     }
     let families = [
         (
@@ -914,11 +1250,12 @@ fn derive_program_literal_nonclaims(
     ];
     for (family, unclaimed) in families {
         if unclaimed {
-            add_program_literal(nonclaims, family);
+            add_program_emit(nonclaims, family);
         }
     }
     if files.iter().any(|file| {
-        file.syntax.has_authored_numeric_separator()
+        file.syntax
+            .has_authored_literal(AuthoredLiteralKind::NumericSeparator)
             && file.syntax.has_unmodeled_numeric_separator_products()
     }) {
         add_program_emit(nonclaims, ProgramLiteralFamily::NumericSeparator);
@@ -928,7 +1265,7 @@ fn derive_program_literal_nonclaims(
     for id in overload_files {
         add_syntax(
             nonclaims,
-            CapabilityTarget::Declaration,
+            &[CapabilityTarget::Declaration],
             CapabilityScope::File(id),
             SyntaxGap::DeclarationOverloadSummary,
         );
@@ -936,7 +1273,7 @@ fn derive_program_literal_nonclaims(
         if is_effective_commonjs(&file.source.path, &options.module) {
             add_syntax(
                 nonclaims,
-                CapabilityTarget::JavaScript,
+                &[CapabilityTarget::JavaScript],
                 CapabilityScope::File(id),
                 SyntaxGap::DeclarationOverloadSummary,
             );
@@ -976,26 +1313,14 @@ fn declaration_overload_files(files: &[ProgramFile]) -> BTreeSet<FileId> {
     incomplete
 }
 
-fn add_program_literal(nonclaims: &mut Vec<CapabilityNonclaim>, family: ProgramLiteralFamily) {
-    add_program_emit(nonclaims, family);
-}
-
-fn add_program_syntax_emit(nonclaims: &mut Vec<CapabilityNonclaim>, gap: SyntaxGap) {
-    for target in [CapabilityTarget::JavaScript, CapabilityTarget::Declaration] {
-        add_syntax(nonclaims, target, CapabilityScope::Program, gap);
-    }
-}
-
 fn add_program_emit(nonclaims: &mut Vec<CapabilityNonclaim>, family: ProgramLiteralFamily) {
-    for target in [CapabilityTarget::JavaScript, CapabilityTarget::Declaration] {
-        push(
-            nonclaims,
-            target,
-            CapabilityScope::Program,
-            NonclaimReason::ProgramLiteralBoundary(family),
-            DeletionCondition::LiteralProgramOwner(family),
-        );
-    }
+    add_nonclaims(
+        nonclaims,
+        &ALL_TARGETS[5..7],
+        CapabilityScope::Program,
+        NonclaimReason::ProgramLiteralBoundary(family),
+        DeletionCondition::LiteralProgramOwner(family),
+    );
 }
 
 fn add_semantic_diagnostics(
@@ -1003,7 +1328,12 @@ fn add_semantic_diagnostics(
     scope: CapabilityScope,
     gap: SyntaxGap,
 ) {
-    add_syntax(nonclaims, CapabilityTarget::SemanticDiagnostics, scope, gap);
+    add_syntax(
+        nonclaims,
+        &[CapabilityTarget::SemanticDiagnostics],
+        scope,
+        gap,
+    );
 }
 
 fn add_literal_semantic_nodes(
@@ -1022,34 +1352,17 @@ fn add_literal_semantic_nodes(
         for (owner, role) in recovery_statement_owners(
             file,
             fact.owner,
+            fact.span,
             fact.recovery_extent,
             RecoveryStatementSource::Literal,
         ) {
             let scope = CapabilityScope::node(file.source.id, owner);
-            for target in [
-                CapabilityTarget::SemanticCheck,
-                CapabilityTarget::RequiredType,
-                CapabilityTarget::SemanticDiagnostics,
-            ] {
-                match role {
-                    RecoveryStatementRole::SemanticOwner
-                    | RecoveryStatementRole::RecoveredDeclaratorInitializer => {
-                        add_semantic_node_syntax(nonclaims, target, scope, gap);
-                    }
-                    RecoveryStatementRole::RepresentationalFragment => {
-                        add_syntax(nonclaims, target, scope, gap);
-                    }
-                }
-            }
-            add_service_nonclaims(
+            add_recovery_owner_nonclaims(
                 nonclaims,
                 scope,
                 gap,
-                matches!(
-                    role,
-                    RecoveryStatementRole::SemanticOwner
-                        | RecoveryStatementRole::RecoveredDeclaratorInitializer
-                ),
+                role,
+                DeletionCondition::DeepestSemanticOwner(gap),
             );
             add_recovery_fragment_declaration_nonclaims(
                 nonclaims,
@@ -1072,43 +1385,45 @@ fn add_declaration_semantic_nonclaims(
     gap: SyntaxGap,
 ) {
     let mut owner_is_return = false;
-    for statement in &file.syntax.statements {
-        statement.for_each_statement(&mut |statement| {
-            owner_is_return |= statement.id == semantic_owner
-                && matches!(statement.kind, StatementKind::Return(_));
-        });
-    }
+    for_each_statement_in(&file.syntax.statements, &mut |statement| {
+        owner_is_return |=
+            statement.id == semantic_owner && matches!(statement.kind, StatementKind::Return(_));
+    });
     let mut declaration_owner = None;
-    for statement in &file.syntax.statements {
-        statement.for_each_statement(&mut |statement| {
-            if statement.span.start <= authored_span.start
-                && authored_span.end <= statement.span.end
-                && (statement.id == semantic_owner || owner_is_return)
-                && matches!(
-                    statement.kind,
-                    StatementKind::Import(_)
-                        | StatementKind::Variable(_)
-                        | StatementKind::Function(_)
-                        | StatementKind::Class(_)
-                        | StatementKind::TypeAlias(_)
-                        | StatementKind::Interface(_)
-                )
-                && declaration_owner.is_none_or(|(width, _)| statement.span.len() < width)
-            {
-                declaration_owner = Some((statement.span.len(), statement.id));
-            }
-        });
-    }
+    for_each_statement_in(&file.syntax.statements, &mut |statement| {
+        if statement.span.start <= authored_span.start
+            && authored_span.end <= statement.span.end
+            && (statement.id == semantic_owner || owner_is_return)
+            && matches!(
+                statement.kind,
+                StatementKind::Import(_)
+                    | StatementKind::Variable(_)
+                    | StatementKind::Function(_)
+                    | StatementKind::Class(_)
+                    | StatementKind::TypeAlias(_)
+                    | StatementKind::Interface(_)
+            )
+            && declaration_owner.is_none_or(|(width, _)| statement.span.len() < width)
+        {
+            declaration_owner = Some((statement.span.len(), statement.id));
+        }
+    });
     let Some((_, owner)) = declaration_owner else {
         return;
     };
     let scope = CapabilityScope::node(file.source.id, owner);
-    for target in [
-        CapabilityTarget::DeclarationModel,
-        CapabilityTarget::DeclarationValue,
-    ] {
-        add_semantic_node_syntax(nonclaims, target, scope, gap);
-    }
+    let targets = if gap == SyntaxGap::GeneratorFunctionLike {
+        &ALL_TARGETS[1..2]
+    } else {
+        &ALL_TARGETS[..2]
+    };
+    add_nonclaims(
+        nonclaims,
+        targets,
+        scope,
+        NonclaimReason::Syntax(gap),
+        DeletionCondition::DeepestSemanticOwner(gap),
+    );
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1118,7 +1433,7 @@ enum RecoveryStatementRole {
     RepresentationalFragment,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Copy)]
 enum RecoveryStatementSource<'a> {
     Parser {
         recovered_declarator_initializers: &'a BTreeSet<NodeId>,
@@ -1135,35 +1450,31 @@ fn recovered_declarator_initializer_owners(file: &ProgramFile) -> BTreeSet<NodeI
         .filter(|recovery| recovery.kind == ParserRecoveryKind::Declaration)
     {
         let mut recovered_binding_spans = Vec::new();
-        for statement in &file.syntax.statements {
-            statement.for_each_statement(&mut |candidate| {
-                if candidate.id == recovery.owner.statement
-                    && let StatementKind::Variable(declaration) = &candidate.kind
-                {
-                    recovered_binding_spans.extend(
-                        declaration
-                            .recovered_binding_names
-                            .iter()
-                            .map(|binding| binding.span),
-                    );
-                }
-            });
-        }
+        for_each_statement_in(&file.syntax.statements, &mut |candidate| {
+            if candidate.id == recovery.owner.statement
+                && let StatementKind::Variable(declaration) = &candidate.kind
+            {
+                recovered_binding_spans.extend(
+                    declaration
+                        .recovered_binding_names
+                        .iter()
+                        .map(|binding| binding.span),
+                );
+            }
+        });
         if recovered_binding_spans.is_empty() {
             continue;
         }
-        for statement in &file.syntax.statements {
-            statement.for_each_statement(&mut |candidate| {
-                if recovery.recovery_extent.start <= candidate.span.start
-                    && candidate.span.start < recovery.recovery_extent.end
-                    && let StatementKind::Expression(expression) = &candidate.kind
-                    && let ExpressionKind::Assignment { left, .. } = &expression.kind
-                    && recovered_binding_spans.contains(&left.span)
-                {
-                    owners.insert(candidate.id);
-                }
-            });
-        }
+        for_each_statement_in(&file.syntax.statements, &mut |candidate| {
+            if recovery.recovery_extent.start <= candidate.span.start
+                && candidate.span.start < recovery.recovery_extent.end
+                && let StatementKind::Expression(expression) = &candidate.kind
+                && let ExpressionKind::Assignment { left, .. } = &expression.kind
+                && recovered_binding_spans.contains(&left.span)
+            {
+                owners.insert(candidate.id);
+            }
+        });
     }
     owners
 }
@@ -1171,6 +1482,7 @@ fn recovered_declarator_initializer_owners(file: &ProgramFile) -> BTreeSet<NodeI
 fn recovery_statement_owners(
     file: &ProgramFile,
     owner: crate::syntax::ParserRecoveryOwner,
+    authored_span: Span,
     recovery_extent: Span,
     source: RecoveryStatementSource<'_>,
 ) -> BTreeMap<NodeId, RecoveryStatementRole> {
@@ -1182,38 +1494,87 @@ fn recovery_statement_owners(
     );
 
     let mut owner_subtree = BTreeSet::new();
-    for statement in &file.syntax.statements {
-        statement.for_each_statement(&mut |candidate| {
-            if candidate.id == owner.statement {
-                candidate.for_each_statement(&mut |descendant| {
+    let mut absorbed_ancestor = None;
+    for_each_recovery_statement(&file.syntax.statements, authored_span, &mut |candidate| {
+        if candidate.id == owner.statement {
+            for_each_recovery_statement(
+                std::slice::from_ref(candidate),
+                authored_span,
+                &mut |descendant| {
                     owner_subtree.insert(descendant.id);
-                });
+                },
+            );
+        } else if candidate.span.start < recovery_extent.start
+            && candidate.span.end <= recovery_extent.end
+        {
+            let mut contains_owner = false;
+            for_each_recovery_statement(
+                std::slice::from_ref(candidate),
+                authored_span,
+                &mut |descendant| {
+                    contains_owner |= descendant.id == owner.statement;
+                },
+            );
+            if contains_owner
+                && absorbed_ancestor.is_none_or(|(width, _)| candidate.span.len() < width)
+            {
+                absorbed_ancestor = Some((candidate.span.len(), candidate.id));
             }
-        });
-    }
+        }
+    });
 
     let mut owners = BTreeMap::from([(owner.statement, RecoveryStatementRole::SemanticOwner)]);
-    for statement in &file.syntax.statements {
-        statement.for_each_statement(&mut |statement| {
-            if recovery_extent.start <= statement.span.start
-                && statement.span.start < recovery_extent.end
-            {
-                let role = match source {
-                    RecoveryStatementSource::Parser {
-                        recovered_declarator_initializers,
-                    } if recovered_declarator_initializers.contains(&statement.id) => {
-                        RecoveryStatementRole::RecoveredDeclaratorInitializer
-                    }
-                    _ if owner_subtree.contains(&statement.id) => {
-                        RecoveryStatementRole::SemanticOwner
-                    }
-                    _ => RecoveryStatementRole::RepresentationalFragment,
-                };
-                owners.insert(statement.id, role);
-            }
-        });
+    if let Some((_, ancestor)) = absorbed_ancestor {
+        owners.insert(ancestor, RecoveryStatementRole::SemanticOwner);
     }
+    for_each_recovery_statement(&file.syntax.statements, authored_span, &mut |statement| {
+        if recovery_extent.start <= statement.span.start
+            && statement.span.start < recovery_extent.end
+        {
+            let role = match source {
+                RecoveryStatementSource::Parser {
+                    recovered_declarator_initializers,
+                    ..
+                } if recovered_declarator_initializers.contains(&statement.id) => {
+                    RecoveryStatementRole::RecoveredDeclaratorInitializer
+                }
+                _ if owner_subtree.contains(&statement.id) => RecoveryStatementRole::SemanticOwner,
+                _ => RecoveryStatementRole::RepresentationalFragment,
+            };
+            owners.insert(statement.id, role);
+        }
+    });
     owners
+}
+
+fn for_each_recovery_statement<'ast>(
+    statements: &'ast [Statement],
+    authored_span: Span,
+    visit: &mut impl FnMut(&'ast Statement),
+) {
+    let owns_authored =
+        |span: Span| span.start <= authored_span.start && authored_span.end <= span.end;
+    let is_independent_owner = |statement: &Statement| {
+        matches!(
+            &statement.kind,
+            StatementKind::Function(_) | StatementKind::Class(_)
+        ) && !owns_authored(statement.span)
+    };
+    for statement in statements {
+        if is_independent_owner(statement) {
+            continue;
+        }
+        statement.for_each_statement_where(
+            &mut |container| match container {
+                DescendantContainer::Statement(statement) => !is_independent_owner(statement),
+                DescendantContainer::Function(statement, _)
+                | DescendantContainer::Class(statement, _) => owns_authored(statement.span),
+                DescendantContainer::ClassMember(member) => owns_authored(member.span),
+                DescendantContainer::FunctionLike(expression, _) => owns_authored(expression.span),
+            },
+            visit,
+        );
+    }
 }
 
 fn add_recovery_fragment_declaration_nonclaims(
@@ -1229,32 +1590,61 @@ fn add_recovery_fragment_declaration_nonclaims(
     {
         return;
     }
-    for target in [
-        CapabilityTarget::DeclarationModel,
-        CapabilityTarget::DeclarationValue,
-    ] {
-        add_syntax(nonclaims, target, CapabilityScope::node(file, owner), gap);
-    }
+    add_syntax(
+        nonclaims,
+        &ALL_TARGETS[..2],
+        CapabilityScope::node(file, owner),
+        gap,
+    );
 }
 
 fn declaration_statement_owners(file: &ProgramFile) -> BTreeSet<NodeId> {
     let mut owners = BTreeSet::new();
-    for statement in &file.syntax.statements {
-        statement.for_each_statement(&mut |statement| {
-            if matches!(
-                statement.kind,
-                StatementKind::Import(_)
-                    | StatementKind::Variable(_)
-                    | StatementKind::Function(_)
-                    | StatementKind::Class(_)
-                    | StatementKind::TypeAlias(_)
-                    | StatementKind::Interface(_)
-            ) {
-                owners.insert(statement.id);
-            }
-        });
-    }
+    for_each_statement_in(&file.syntax.statements, &mut |statement| {
+        if matches!(
+            statement.kind,
+            StatementKind::Import(_)
+                | StatementKind::Variable(_)
+                | StatementKind::Function(_)
+                | StatementKind::Class(_)
+                | StatementKind::TypeAlias(_)
+                | StatementKind::Interface(_)
+        ) {
+            owners.insert(statement.id);
+        }
+    });
     owners
+}
+
+fn add_recovery_owner_nonclaims(
+    nonclaims: &mut Vec<CapabilityNonclaim>,
+    scope: CapabilityScope,
+    gap: SyntaxGap,
+    role: RecoveryStatementRole,
+    recovered_declarator_deletion: DeletionCondition,
+) {
+    let semantic_node = role != RecoveryStatementRole::RepresentationalFragment;
+    let deletion = match role {
+        RecoveryStatementRole::SemanticOwner => DeletionCondition::DeepestSemanticOwner(gap),
+        RecoveryStatementRole::RecoveredDeclaratorInitializer => match gap {
+            SyntaxGap::GeneratorFunctionLike => DeletionCondition::DeepestSemanticOwner(gap),
+            _ => recovered_declarator_deletion,
+        },
+        RecoveryStatementRole::RepresentationalFragment => DeletionCondition::SyntaxOwner(gap),
+    };
+    let targets = if gap == SyntaxGap::TypeRecovery {
+        &ALL_TARGETS[2..6]
+    } else {
+        &ALL_TARGETS[2..5]
+    };
+    add_nonclaims(
+        nonclaims,
+        targets,
+        scope,
+        NonclaimReason::Syntax(gap),
+        deletion,
+    );
+    add_service_nonclaims(nonclaims, scope, gap, semantic_node);
 }
 
 fn add_service_nonclaims(
@@ -1263,69 +1653,54 @@ fn add_service_nonclaims(
     gap: SyntaxGap,
     semantic_node: bool,
 ) {
-    for target in [
-        CapabilityTarget::QuickInfo,
-        CapabilityTarget::Definition,
-        CapabilityTarget::References,
-        CapabilityTarget::Highlights,
-        CapabilityTarget::Rename,
-    ] {
-        if semantic_node {
-            add_semantic_node_syntax(nonclaims, target, scope, gap);
-        } else {
-            add_syntax(nonclaims, target, scope, gap);
-        }
-    }
+    let deletion = if semantic_node {
+        DeletionCondition::DeepestSemanticOwner(gap)
+    } else {
+        DeletionCondition::SyntaxOwner(gap)
+    };
+    add_nonclaims(
+        nonclaims,
+        &ALL_TARGETS[7..],
+        scope,
+        NonclaimReason::Syntax(gap),
+        deletion,
+    );
 }
 
 fn add_both_emit(nonclaims: &mut Vec<CapabilityNonclaim>, scope: CapabilityScope, gap: SyntaxGap) {
-    add_syntax(nonclaims, CapabilityTarget::JavaScript, scope, gap);
-    add_syntax(nonclaims, CapabilityTarget::Declaration, scope, gap);
+    add_syntax(nonclaims, &ALL_TARGETS[5..7], scope, gap);
 }
 
 fn add_syntax(
     nonclaims: &mut Vec<CapabilityNonclaim>,
-    target: CapabilityTarget,
+    targets: &[CapabilityTarget],
     scope: CapabilityScope,
     gap: SyntaxGap,
 ) {
-    push(
+    add_nonclaims(
         nonclaims,
-        target,
+        targets,
         scope,
         NonclaimReason::Syntax(gap),
         DeletionCondition::SyntaxOwner(gap),
     );
 }
 
-fn add_semantic_node_syntax(
+fn add_nonclaims(
     nonclaims: &mut Vec<CapabilityNonclaim>,
-    target: CapabilityTarget,
-    scope: CapabilityScope,
-    gap: SyntaxGap,
-) {
-    push(
-        nonclaims,
-        target,
-        scope,
-        NonclaimReason::Syntax(gap),
-        DeletionCondition::DeepestSemanticOwner(gap),
-    );
-}
-
-fn push(
-    nonclaims: &mut Vec<CapabilityNonclaim>,
-    target: CapabilityTarget,
+    targets: &[CapabilityTarget],
     scope: CapabilityScope,
     reason: NonclaimReason,
     deletion: DeletionCondition,
 ) {
-    nonclaims.push(CapabilityNonclaim {
-        target,
-        scope,
-        reason,
-        deletion,
-    });
+    for &target in targets {
+        nonclaims.push(CapabilityNonclaim {
+            target,
+            scope,
+            reason,
+            deletion,
+        });
+    }
 }
 
 pub(crate) fn is_declaration_source(path: &Path) -> bool {

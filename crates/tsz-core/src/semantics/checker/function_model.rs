@@ -1,10 +1,11 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::bind::{DeclarationKind, Meaning, ScopeId};
-use crate::source::{DeclId, FileId, NodeId, SourceKind};
+use crate::source::{DeclId, FileId, SourceKind};
 use crate::syntax::{
     ArrowBody, ClassMember, ClassMemberKind, Expression, ExpressionKind, FunctionDeclaration,
-    Parameter, Statement, StatementKind, TypeNode,
+    FunctionLikeExpression, FunctionLikeSyntax, Parameter, ParameterNameKind, Statement,
+    StatementKind,
 };
 
 use super::{Checker, DeclarationModel, relation_diagnostic::ContextualType};
@@ -511,25 +512,80 @@ impl Checker<'_> {
         .is_ok()
     }
 
-    pub(super) fn infer_arrow_expression(
+    pub(super) fn infer_function_like_expression(
         &mut self,
         file: FileId,
         scope: ScopeId,
-        owner: NodeId,
-        parameters: &[Parameter],
-        annotation: Option<&TypeNode>,
-        body: &ArrowBody,
+        expression: &Expression,
+        function: &FunctionLikeExpression,
         expected: ContextualType,
     ) -> TypeId {
-        let arrow_scope = self.program.files[file.0 as usize]
+        let owner = expression.id;
+        if !self
+            .capabilities
+            .semantic_check_node_is_claimed(file, owner)
+        {
+            let _ = self.require_completion(Completion::<()>::Deferred);
+            if self
+                .capabilities
+                .semantic_check_node_function_like_descendant_permissions(file, owner)
+                .0
+            {
+                self.check_function_like_expression_body_only(file, scope, expression, function);
+            }
+            return self.store.deferred_generic_function();
+        }
+        self.infer_function_like_expression_claimed(file, scope, expression, function, expected)
+    }
+
+    fn infer_function_like_expression_claimed(
+        &mut self,
+        file: FileId,
+        scope: ScopeId,
+        expression: &Expression,
+        function: &FunctionLikeExpression,
+        expected: ContextualType,
+    ) -> TypeId {
+        let owner = expression.id;
+        let function_scope = self.program.files[file.0 as usize]
             .bindings
             .scope_for_node
             .get(&owner)
             .copied()
             .unwrap_or(scope);
-        self.check_parameter_initializer_statement_descendants(file, arrow_scope, parameters);
-        let (expected_signature, signature_context) = match expected {
-            ContextualType::Known(expected) => {
+        self.check_parameter_initializer_statement_descendants(
+            file,
+            function_scope,
+            &function.parameters,
+        );
+        let (function_identity, named_function) = match &function.syntax {
+            FunctionLikeSyntax::Arrow(_) => (None, false),
+            FunctionLikeSyntax::Function { name, .. } => (
+                self.find_declaration(
+                    file,
+                    owner,
+                    DeclarationKind::FunctionExpression,
+                    name.as_ref().map_or("", |name| name.name.as_str()),
+                ),
+                name.is_some(),
+            ),
+        };
+        if matches!(&function.syntax, FunctionLikeSyntax::Function { .. })
+            && function_identity.is_none()
+        {
+            let _ = self.require_completion(Completion::<()>::Deferred);
+            self.check_function_like_expression_body_only(file, scope, expression, function);
+            return self.store.deferred_generic_function();
+        }
+        if function_identity.is_some() {
+            self.completion.begin_capture();
+        }
+        let (expected_signature, signature_context) = match (
+            function_expression_has_authored_signature(function),
+            expected,
+        ) {
+            (true, _) | (false, ContextualType::Absent) => (None, ContextualType::Absent),
+            (false, ContextualType::Known(expected)) => {
                 if let Some(expected) = self.complete_type(expected) {
                     if let Some(signature) = self.callable_signature(expected) {
                         (Some(signature), ContextualType::Known(expected))
@@ -540,11 +596,20 @@ impl Checker<'_> {
                     (None, ContextualType::Deferred)
                 }
             }
-            ContextualType::Absent => (None, ContextualType::Absent),
-            ContextualType::Deferred => (None, ContextualType::Deferred),
+            (false, ContextualType::Deferred) => (None, ContextualType::Deferred),
         };
-        let mut resolved = Vec::with_capacity(parameters.len());
-        for (index, parameter) in parameters.iter().enumerate() {
+        if matches!(&function.syntax, FunctionLikeSyntax::Function { .. })
+            && matches!(signature_context, ContextualType::Deferred)
+        {
+            let _ = self.require_completion(Completion::<()>::Deferred);
+        }
+        let runtime_parameters = function
+            .parameters
+            .iter()
+            .filter(|parameter| parameter.name_kind == ParameterNameKind::Binding)
+            .collect::<Vec<_>>();
+        let mut resolved = Vec::with_capacity(runtime_parameters.len());
+        for (index, parameter) in runtime_parameters.iter().copied().enumerate() {
             if parameter.initializer.is_some()
                 && (parameter.annotation.is_some()
                     || parameter.initializer.as_ref().is_some_and(|initializer| {
@@ -557,9 +622,9 @@ impl Checker<'_> {
                 if annotation.contains_type_query() {
                     let _ = self.require_completion(Completion::<()>::Deferred);
                 }
-                self.resolve_type_node(file, arrow_scope, annotation, &HashMap::new())
+                self.resolve_type_node(file, function_scope, annotation, &HashMap::new())
             } else if let Some(initializer) = &parameter.initializer {
-                let completion = self.signature_initializer_type(file, arrow_scope, initializer);
+                let completion = self.signature_initializer_type(file, function_scope, initializer);
                 match self.require_completion(completion) {
                     Completion::Complete(ty) => ty,
                     Completion::Deferred | Completion::Cycle | Completion::Limit => {
@@ -578,15 +643,19 @@ impl Checker<'_> {
                 && matches!(signature_context, ContextualType::Absent)
                 && self.options.effective_no_implicit_any()
             {
-                self.push_diagnostic(
-                    file,
-                    parameter.name_span,
-                    format!(
-                        "Parameter '{}' implicitly has an 'any' type.",
-                        parameter.name
-                    ),
-                    7006,
-                );
+                if matches!(&function.syntax, FunctionLikeSyntax::Function { .. }) {
+                    let _ = self.require_completion(Completion::<()>::Deferred);
+                } else {
+                    self.push_diagnostic(
+                        file,
+                        parameter.name_span,
+                        format!(
+                            "Parameter '{}' implicitly has an 'any' type.",
+                            parameter.name
+                        ),
+                        7006,
+                    );
+                }
             }
             resolved.push(ParameterType {
                 name: parameter.name.clone(),
@@ -595,13 +664,13 @@ impl Checker<'_> {
                 rest: parameter.rest,
             });
         }
-        let expected_return = if let Some(annotation) = annotation {
+        let expected_return = if let Some(annotation) = function.return_type.as_ref() {
             if annotation.contains_type_query() {
                 let _ = self.require_completion(Completion::<()>::Deferred);
             }
             ContextualType::Known(self.resolve_type_node(
                 file,
-                arrow_scope,
+                function_scope,
                 annotation,
                 &HashMap::new(),
             ))
@@ -614,10 +683,10 @@ impl Checker<'_> {
             ContextualType::Known(expected_return) => Some(expected_return),
             ContextualType::Absent | ContextualType::Deferred => None,
         };
-        let expected_return_order = annotation.and_then(|annotation| {
-            self.property_order_for_type_node_root(file, arrow_scope, annotation)
+        let expected_return_order = function.return_type.as_ref().and_then(|annotation| {
+            self.property_order_for_type_node_root(file, function_scope, annotation)
         });
-        for (parameter, resolved) in parameters.iter().zip(&resolved) {
+        for (parameter, resolved) in runtime_parameters.iter().copied().zip(&resolved) {
             if parameter.initializer.is_some()
                 || parameter.optional && self.options.effective_strict_null_checks()
                 || parameter.annotation.is_none()
@@ -634,26 +703,105 @@ impl Checker<'_> {
                     .insert(declaration, resolved.ty);
             }
         }
-        let return_type = match body {
-            ArrowBody::Expression(body) => {
-                self.infer_expression_contextual(file, arrow_scope, body, expected_return)
+        match &function.syntax {
+            FunctionLikeSyntax::Arrow(ArrowBody::Expression(body)) => {
+                let return_type =
+                    self.infer_expression_contextual(file, function_scope, body, expected_return);
+                self.store.intern(TypeKind::Function(Signature {
+                    generic_declaration: None,
+                    parameters: resolved,
+                    return_type,
+                }))
             }
-            ArrowBody::Block(statements) => {
+            FunctionLikeSyntax::Arrow(ArrowBody::Block(statements)) => {
                 self.check_statement_list(
                     file,
-                    arrow_scope,
+                    function_scope,
                     statements,
                     expected_return,
                     expected_return_order.as_ref(),
                 );
-                expected_return_type.unwrap_or(self.store.builtins.void)
+                self.store.intern(TypeKind::Function(Signature {
+                    generic_declaration: None,
+                    parameters: resolved,
+                    return_type: expected_return_type.unwrap_or(self.store.builtins.void),
+                }))
             }
-        };
-        self.store.intern(TypeKind::Function(Signature {
-            generic_declaration: None,
-            parameters: resolved,
-            return_type,
-        }))
+            FunctionLikeSyntax::Function { body, .. } => {
+                let previous_self_query =
+                    if named_function && let Some(identity) = function_identity {
+                        Some((
+                            identity,
+                            self.value_queries.insert(
+                                identity,
+                                super::declaration_value::ValueQueryState::Computing,
+                            ),
+                        ))
+                    } else {
+                        None
+                    };
+                let return_type = match expected_return_type {
+                    Some(return_type) => Completion::Complete(return_type),
+                    None => self.infer_block_return(file, body, function_scope),
+                };
+                let return_type = self.require_completion(return_type);
+                let signature_completion = self.completion.finish_capture();
+                let inferred = match return_type {
+                    Completion::Complete(return_type) if signature_completion.is_complete() => {
+                        let inferred = self.store.intern(TypeKind::Function(Signature {
+                            generic_declaration: None,
+                            parameters: resolved,
+                            return_type,
+                        }));
+                        if named_function
+                            && function_expression_has_authored_signature(function)
+                            && let Some(identity) = function_identity
+                        {
+                            self.value_queries.insert(
+                                identity,
+                                super::declaration_value::ValueQueryState::Ready(inferred),
+                            );
+                        }
+                        let body_expected_return = if function.return_type.is_none()
+                            && matches!(self.store.kind(return_type), TypeKind::Void)
+                        {
+                            ContextualType::Absent
+                        } else {
+                            ContextualType::Known(return_type)
+                        };
+                        self.check_statement_list(
+                            file,
+                            function_scope,
+                            body,
+                            body_expected_return,
+                            expected_return_order.as_ref(),
+                        );
+                        inferred
+                    }
+                    Completion::Complete(_)
+                    | Completion::Deferred
+                    | Completion::Cycle
+                    | Completion::Limit => {
+                        self.check_statement_list(
+                            file,
+                            function_scope,
+                            body,
+                            ContextualType::Deferred,
+                            None,
+                        );
+                        self.store.deferred_generic_function()
+                    }
+                };
+                if let Some((identity, previous)) = previous_self_query {
+                    if let Some(previous) = previous {
+                        self.value_queries.insert(identity, previous);
+                    } else {
+                        self.value_queries.remove(&identity);
+                    }
+                }
+                inferred
+            }
+        }
     }
 
     pub(super) fn parameter_value_type(
@@ -713,17 +861,18 @@ impl Checker<'_> {
         parameters: &[Parameter],
         type_parameters: &HashMap<String, TypeId>,
     ) -> Completion<Vec<ParameterType>> {
+        if parameters
+            .iter()
+            .any(|parameter| parameter.name_kind == ParameterNameKind::This)
+        {
+            return Completion::Deferred;
+        }
         let mut resolved = Vec::with_capacity(parameters.len());
         for parameter in parameters {
             let ty = if let Some(annotation) = &parameter.annotation {
                 self.resolve_type_node(file, scope, annotation, type_parameters)
             } else if let Some(initializer) = &parameter.initializer {
-                match self.signature_initializer_type(file, scope, initializer) {
-                    Completion::Complete(ty) => ty,
-                    Completion::Deferred => return Completion::Deferred,
-                    Completion::Cycle => return Completion::Cycle,
-                    Completion::Limit => return Completion::Limit,
-                }
+                completed!(self.signature_initializer_type(file, scope, initializer))
             } else {
                 self.store.builtins.any
             };
@@ -755,12 +904,7 @@ impl Checker<'_> {
                 }
                 self.resolve_type_node(id.file, scope, annotation, &type_parameters)
             } else if let Some(initializer) = &parameter.initializer {
-                match self.signature_initializer_type(id.file, scope, initializer) {
-                    Completion::Complete(ty) => ty,
-                    Completion::Deferred => return Completion::Deferred,
-                    Completion::Cycle => return Completion::Cycle,
-                    Completion::Limit => return Completion::Limit,
-                }
+                completed!(self.signature_initializer_type(id.file, scope, initializer))
             } else {
                 self.store.builtins.any
             };
@@ -782,12 +926,7 @@ impl Checker<'_> {
             // authored callable signature recovers with an `any` return.
             self.store.builtins.any
         } else {
-            match self.infer_function_return(id, declaration, scope) {
-                Completion::Complete(return_type) => return_type,
-                Completion::Deferred => return Completion::Deferred,
-                Completion::Cycle => return Completion::Cycle,
-                Completion::Limit => return Completion::Limit,
-            }
+            completed!(self.infer_function_return(id, declaration, scope))
         };
         Completion::Complete(self.store.intern(TypeKind::Function(Signature {
             generic_declaration: (!declaration.type_parameters.is_empty()).then_some(id),
@@ -855,18 +994,27 @@ impl Checker<'_> {
         if declaration.declared || declaration.is_async {
             return Completion::Deferred;
         }
+        self.infer_block_return(id.file, &declaration.body, scope)
+    }
+
+    fn infer_block_return(
+        &mut self,
+        file: FileId,
+        body: &[Statement],
+        scope: ScopeId,
+    ) -> Completion<TypeId> {
         let mut analysis = ReturnAnalysis {
             sites: Vec::new(),
             supported: true,
         };
-        collect_return_sites(&declaration.body, &mut analysis);
+        collect_return_sites(body, &mut analysis);
         if !analysis.supported {
             return Completion::Deferred;
         }
         if analysis.sites.iter().any(|site| {
             !self
                 .capabilities
-                .semantic_check_node_is_claimed(id.file, site.statement.id)
+                .semantic_check_node_is_claimed(file, site.statement.id)
         }) {
             return Completion::Deferred;
         }
@@ -874,7 +1022,7 @@ impl Checker<'_> {
         {
             return Completion::Complete(self.store.builtins.void);
         }
-        if !block_definitely_returns(&declaration.body) {
+        if !block_definitely_returns(body) {
             return Completion::Deferred;
         }
 
@@ -884,13 +1032,13 @@ impl Checker<'_> {
                 return_types.push(self.store.builtins.undefined);
                 continue;
             };
-            let expression_scope = self.program.files[id.file.0 as usize]
+            let expression_scope = self.program.files[file.0 as usize]
                 .bindings
                 .scope_for_node
                 .get(&site.statement.id)
                 .copied()
                 .unwrap_or(scope);
-            let inferred = self.infer_expression(id.file, expression_scope, expression, None);
+            let inferred = self.infer_expression(file, expression_scope, expression, None);
             let Some(inferred) = self.complete_type(inferred) else {
                 return Completion::Deferred;
             };
@@ -901,6 +1049,15 @@ impl Checker<'_> {
         }
         Completion::Complete(self.store.union(return_types, UnionPolicy::Canonical))
     }
+}
+
+fn function_expression_has_authored_signature(function: &FunctionLikeExpression) -> bool {
+    function.type_parameters.is_empty()
+        && function.return_type.is_some()
+        && function.parameters.iter().all(|parameter| {
+            parameter.name_kind == ParameterNameKind::Binding && parameter.annotation.is_some()
+        })
+        && matches!(&function.syntax, FunctionLikeSyntax::Function { .. })
 }
 
 const fn bounded_inferred_return(kind: &TypeKind) -> bool {

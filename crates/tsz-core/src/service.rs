@@ -13,8 +13,11 @@ use crate::program::{
     CapabilityScope, CapabilityTarget, CompileOutput, Compiler, CompilerOptions, ProgramFile,
     SemanticCompletion, SourceInput,
 };
-use crate::source::Span;
-use crate::syntax::{ClassMemberKind, Statement, StatementKind, VariableKind};
+use crate::source::{NodeId, Span};
+use crate::syntax::{
+    Expression, ExpressionKind, ExpressionRoot, ExpressionTraversal, FunctionLikeSyntax, Statement,
+    StatementKind, VariableKind, contains_matching_expression, for_each_statement_in,
+};
 
 mod display;
 mod navigation;
@@ -405,143 +408,163 @@ fn service_operation_claimed(
 }
 
 fn capability_scope_at(file: &ProgramFile, offset: u32) -> Option<CapabilityScope> {
+    if let Some(declaration) = file.bindings.declarations.iter().find(|declaration| {
+        contains(declaration.name_span, offset)
+            && file.bindings.declarations.iter().any(|candidate| {
+                candidate.kind == crate::bind::DeclarationKind::FunctionExpression
+                    && candidate.owner == declaration.owner
+            })
+    }) {
+        return Some(CapabilityScope::node(file.source.id, declaration.owner));
+    }
+    let mut function_expression_owner = None;
     let mut owner = None;
     let mut best = None;
-    for statement in &file.syntax.statements {
-        statement.for_each_statement(&mut |statement| {
-            if contains(statement.span, offset) {
+    for_each_statement_in(&file.syntax.statements, &mut |statement| {
+        if function_expression_owner.is_none()
+            && let StatementKind::Variable(declaration) = &statement.kind
+            && declaration.annotation.is_none()
+            && contains(declaration.name_span, offset)
+        {
+            function_expression_owner = declaration
+                .initializer
+                .as_ref()
+                .and_then(function_expression_initializer_owner);
+        }
+        if contains(statement.span, offset) {
+            let candidate = (
+                statement.span.start != offset,
+                statement.span.len(),
+                Reverse(statement.span.start),
+            );
+            if best.is_none_or(|current| candidate < current) {
+                owner = Some(statement.id);
+                best = Some(candidate);
+            }
+        }
+    });
+    contains_matching_expression(
+        ExpressionRoot::Statements(&file.syntax.statements),
+        ExpressionTraversal::All,
+        |expression| {
+            if matches!(expression.kind, ExpressionKind::FunctionLike(_))
+                && contains(expression.span, offset)
+            {
                 let candidate = (
-                    statement.span.start != offset,
-                    statement.span.len(),
-                    Reverse(statement.span.start),
+                    expression.span.start != offset,
+                    expression.span.len(),
+                    Reverse(expression.span.start),
                 );
                 if best.is_none_or(|current| candidate < current) {
-                    owner = Some(statement.id);
+                    owner = Some(expression.id);
                     best = Some(candidate);
                 }
             }
-        });
-    }
-    owner.map(|owner| CapabilityScope::node(file.source.id, owner))
+            false
+        },
+    );
+    function_expression_owner
+        .or(owner)
+        .map(|owner| CapabilityScope::node(file.source.id, owner))
 }
 
 fn quick_info_in_statements(statements: &[Statement], offset: u32) -> Option<QuickInfo> {
-    for statement in statements {
-        match &statement.kind {
-            StatementKind::Variable(declaration) if contains(declaration.name_span, offset) => {
-                let annotation = display_variable_type(declaration)?;
-                let declaration_kind = match declaration.declaration_kind {
-                    VariableKind::Const => "const",
-                    VariableKind::Let => "let",
-                    VariableKind::Var => "var",
-                };
-                return Some(QuickInfo {
-                    kind: declaration_kind.to_string(),
-                    text_span: text_span(declaration.name_span),
-                    display: format!("{declaration_kind} {}: {annotation}", declaration.name),
-                });
-            }
-            StatementKind::Function(declaration) if contains(declaration.name_span, offset) => {
-                if !declaration.type_parameters.is_empty() {
-                    return None;
-                }
-                let parameters = declaration
-                    .parameters
-                    .iter()
-                    .map(display_parameter)
-                    .collect::<Option<Vec<_>>>()?
-                    .join(", ");
-                let result = display_type_node(declaration.return_type.as_ref()?)?;
-                return Some(QuickInfo {
-                    kind: "function".to_string(),
-                    text_span: text_span(declaration.name_span),
-                    display: format!("function {}({parameters}): {result}", declaration.name),
-                });
-            }
-            StatementKind::TypeAlias(declaration) if contains(declaration.name_span, offset) => {
-                if !declaration.type_parameters.is_empty() {
-                    return None;
-                }
-                return Some(QuickInfo {
-                    kind: "type".to_string(),
-                    text_span: text_span(declaration.name_span),
-                    display: format!(
-                        "type {} = {}",
-                        declaration.name,
-                        display_type_node(&declaration.ty)?
-                    ),
-                });
-            }
-            StatementKind::Interface(declaration) if contains(declaration.name_span, offset) => {
-                if !declaration.type_parameters.is_empty() {
-                    return None;
-                }
-                return Some(QuickInfo {
-                    kind: "interface".to_string(),
-                    text_span: text_span(declaration.name_span),
-                    display: format!("interface {}", declaration.name),
-                });
-            }
-            StatementKind::Function(declaration) => {
-                if let Some(info) = quick_info_in_statements(&declaration.body, offset) {
-                    return Some(info);
-                }
-            }
-            StatementKind::Class(declaration) => {
-                for member in &declaration.members {
-                    match &member.kind {
-                        ClassMemberKind::Constructor { body, .. }
-                        | ClassMemberKind::Method { body, .. } => {
-                            if let Some(info) = quick_info_in_statements(body, offset) {
-                                return Some(info);
-                            }
-                        }
-                        ClassMemberKind::Property { .. } => {}
-                    }
-                }
-            }
-            StatementKind::Block(statements) => {
-                if let Some(info) = quick_info_in_statements(statements, offset) {
-                    return Some(info);
-                }
-            }
-            StatementKind::If(control_flow) => {
-                if let Some(info) = quick_info_in_statements(
-                    std::slice::from_ref(control_flow.then_statement.as_ref()),
-                    offset,
-                ) {
-                    return Some(info);
-                }
-                if let Some(else_statement) = &control_flow.else_statement
-                    && let Some(info) = quick_info_in_statements(
-                        std::slice::from_ref(else_statement.as_ref()),
-                        offset,
-                    )
-                {
-                    return Some(info);
-                }
-            }
-            StatementKind::Switch(control_flow) => {
-                for clause in &control_flow.clauses {
-                    if let Some(info) = quick_info_in_statements(&clause.statements, offset) {
-                        return Some(info);
-                    }
-                }
-            }
-            StatementKind::Import(_)
-            | StatementKind::Export(_)
-            | StatementKind::Break(_)
-            | StatementKind::Continue(_)
-            | StatementKind::Return(_)
-            | StatementKind::Expression(_)
-            | StatementKind::Empty
-            | StatementKind::Unknown
-            | StatementKind::Variable(_)
-            | StatementKind::TypeAlias(_)
-            | StatementKind::Interface(_) => {}
+    let mut info = None;
+    for_each_statement_in(statements, &mut |statement| {
+        if info.is_none() {
+            info = quick_info_at_statement(statement, offset);
         }
+    });
+    info
+}
+
+fn quick_info_at_statement(statement: &Statement, offset: u32) -> Option<QuickInfo> {
+    match &statement.kind {
+        StatementKind::Variable(declaration) if contains(declaration.name_span, offset) => {
+            let annotation = display_variable_type(declaration)?;
+            let declaration_kind = match declaration.declaration_kind {
+                VariableKind::Const => "const",
+                VariableKind::Let => "let",
+                VariableKind::Var => "var",
+            };
+            Some(QuickInfo {
+                kind: declaration_kind.to_string(),
+                text_span: text_span(declaration.name_span),
+                display: format!("{declaration_kind} {}: {annotation}", declaration.name),
+            })
+        }
+        StatementKind::Function(declaration) if contains(declaration.name_span, offset) => {
+            if !declaration.type_parameters.is_empty() {
+                return None;
+            }
+            let parameters = declaration
+                .parameters
+                .iter()
+                .map(display_parameter)
+                .collect::<Option<Vec<_>>>()?
+                .join(", ");
+            let result = display_type_node(declaration.return_type.as_ref()?)?;
+            Some(QuickInfo {
+                kind: "function".to_string(),
+                text_span: text_span(declaration.name_span),
+                display: format!("function {}({parameters}): {result}", declaration.name),
+            })
+        }
+        StatementKind::TypeAlias(declaration) if contains(declaration.name_span, offset) => {
+            if !declaration.type_parameters.is_empty() {
+                return None;
+            }
+            Some(QuickInfo {
+                kind: "type".to_string(),
+                text_span: text_span(declaration.name_span),
+                display: format!(
+                    "type {} = {}",
+                    declaration.name,
+                    display_type_node(&declaration.ty)?
+                ),
+            })
+        }
+        StatementKind::Interface(declaration) if contains(declaration.name_span, offset) => {
+            if !declaration.type_parameters.is_empty() {
+                return None;
+            }
+            Some(QuickInfo {
+                kind: "interface".to_string(),
+                text_span: text_span(declaration.name_span),
+                display: format!("interface {}", declaration.name),
+            })
+        }
+        StatementKind::Import(_)
+        | StatementKind::Export(_)
+        | StatementKind::Variable(_)
+        | StatementKind::Function(_)
+        | StatementKind::Class(_)
+        | StatementKind::TypeAlias(_)
+        | StatementKind::Interface(_)
+        | StatementKind::Break(_)
+        | StatementKind::Continue(_)
+        | StatementKind::Return(_)
+        | StatementKind::Block(_)
+        | StatementKind::If(_)
+        | StatementKind::Switch(_)
+        | StatementKind::Expression(_)
+        | StatementKind::Empty
+        | StatementKind::Unknown => None,
     }
-    None
+}
+
+fn function_expression_initializer_owner(mut expression: &Expression) -> Option<NodeId> {
+    while let ExpressionKind::Parenthesized(inner)
+    | ExpressionKind::As {
+        expression: inner, ..
+    } = &expression.kind
+    {
+        expression = inner;
+    }
+    let ExpressionKind::FunctionLike(function) = &expression.kind else {
+        return None;
+    };
+    matches!(&function.syntax, FunctionLikeSyntax::Function { .. }).then_some(expression.id)
 }
 
 fn normalize_path(path: &str) -> String {
@@ -560,77 +583,5 @@ const fn text_span(span: Span) -> TextSpan {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn compiled_snapshot_is_reused_and_invalidated_by_every_revision_owner() {
-        let mut service = LanguageService::new(CompilerOptions::default());
-        service.open(
-            "case.ts",
-            Arc::<str>::from("const gap = `plain`; const value: string = missing;"),
-        );
-        assert!(service.compiled_snapshot.get_mut().is_none());
-
-        let first = service.semantic_diagnostics("case.ts");
-        assert_eq!(first.diagnostics.len(), 1);
-        assert_eq!(first.semantic_completion, SemanticCompletion::Deferred);
-        assert!(service.compiled_snapshot.get_mut().is_some());
-        let uncached = service.compile();
-        let cached = service.compiled_snapshot.get_mut().as_ref().unwrap();
-        assert_eq!(cached.semantic_completion, uncached.semantic_completion);
-        assert_eq!(cached.diagnostics, uncached.diagnostics);
-
-        service.configure(CompilerOptions {
-            no_check: true,
-            ..CompilerOptions::default()
-        });
-        assert!(service.compiled_snapshot.get_mut().is_none());
-        let _ = service.semantic_diagnostics("case.ts");
-        assert!(service.compiled_snapshot.get_mut().is_some());
-
-        service.open("other.ts", Arc::<str>::from("const other = 1;"));
-        assert!(service.compiled_snapshot.get_mut().is_none());
-        service.quick_info("other.ts", 7);
-        assert!(service.compiled_snapshot.get_mut().is_some());
-
-        assert!(service.change("other.ts", Arc::<str>::from("const renamed = 1;")));
-        assert!(service.compiled_snapshot.get_mut().is_none());
-        service.quick_info("other.ts", 7);
-        assert!(service.compiled_snapshot.get_mut().is_some());
-
-        assert!(service.close("other.ts"));
-        assert!(service.compiled_snapshot.get_mut().is_none());
-        let _ = service.semantic_diagnostics("case.ts");
-        assert!(service.compiled_snapshot.get_mut().is_some());
-
-        service.reset();
-        assert!(service.compiled_snapshot.get_mut().is_none());
-    }
-
-    #[test]
-    fn capability_scope_prefers_adjacent_starts_and_nested_right_edges() {
-        let adjacent = "const g = `plain`;veryLongSiblingName;const veryLongSiblingName = 1;";
-        let adjacent_reference = adjacent.find("veryLongSiblingName").unwrap() as u32;
-        let mut service = LanguageService::new(CompilerOptions::default());
-        service.open("adjacent.ts", Arc::<str>::from(adjacent));
-
-        let definition = service
-            .definition_and_bound_span("adjacent.ts", adjacent_reference)
-            .expect("the adjacent statement start must not inherit the prior nonclaim");
-        assert_eq!(definition.definitions.len(), 1);
-        assert_eq!(definition.definitions[0].name, "veryLongSiblingName");
-
-        let nested = "function shell(bad: ){const sibling:string='x';sibling}";
-        let nested_reference = nested.rfind("sibling").unwrap() as u32;
-        let mut service = LanguageService::new(CompilerOptions::default());
-        service.open("nested.ts", Arc::<str>::from(nested));
-        for offset in [nested_reference, nested_reference + "sibling".len() as u32] {
-            let definition = service
-                .definition_and_bound_span("nested.ts", offset)
-                .expect("a nested statement owns both its token and right-edge query");
-            assert_eq!(definition.definitions.len(), 1);
-            assert_eq!(definition.definitions[0].name, "sibling");
-        }
-    }
-}
+#[path = "../rewrite-tests/service_unit.rs"]
+mod tests;

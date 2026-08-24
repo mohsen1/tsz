@@ -1,38 +1,39 @@
 use super::super::{
-    Expression, ExpressionKind, Statement, TokenKind, comments_form_regular_expression_safe_file,
-    statements_form_regular_expression_safe_file,
+    AuthoredLiteralKind, Expression, ExpressionKind, SourceSyntaxFact, Statement, TokenKind,
+    comments_form_regular_expression_safe_file, statements_form_regular_expression_safe_file,
 };
 use super::Parser;
 
 impl Parser<'_> {
-    pub(super) fn finish_regular_expression_source(&mut self, statements: &[Statement]) -> bool {
+    pub(super) fn finish_regular_expression_source(&mut self, statements: &[Statement]) {
         let has_authored_regular_expression = !self.regular_expression_literals.is_empty()
-            || !self
-                .product_capabilities
-                .regular_expression_products_supported;
+            || self.source_syntax_facts.iter().any(|fact| {
+                matches!(
+                    fact,
+                    SourceSyntaxFact::LiteralBoundary(AuthoredLiteralKind::RegularExpression, _)
+                )
+            });
+        if !has_authored_regular_expression {
+            return;
+        }
+        self.source_syntax_facts
+            .insert(SourceSyntaxFact::AuthoredRegularExpression);
         let supported_literal_count = self
             .regular_expression_literals
             .iter()
             .filter(|literal| literal.syntax_literal().validation_supported())
             .count();
-        if has_authored_regular_expression
-            && (self.has_unmodeled_trivia
-                || self.has_unmodeled_top_level_syntax
-                || !comments_form_regular_expression_safe_file(
-                    self.source,
-                    statements,
-                    &self.comments,
-                )
-                || !statements_form_regular_expression_safe_file(
-                    self.source,
-                    statements,
-                    supported_literal_count,
-                ))
+        if self.has_unmodeled_trivia
+            || self.has_unmodeled_top_level_syntax
+            || !comments_form_regular_expression_safe_file(self.source, statements, &self.comments)
+            || !statements_form_regular_expression_safe_file(
+                self.source,
+                statements,
+                supported_literal_count,
+            )
         {
-            self.product_capabilities
-                .observe_unmodeled_regular_expression();
+            self.observe_literal_source_context(AuthoredLiteralKind::RegularExpression);
         }
-        has_authored_regular_expression
     }
 
     pub(super) fn parse_regular_expression_literal(&mut self) -> Expression {
@@ -44,8 +45,7 @@ impl Parser<'_> {
             .map(|index| self.regular_expression_literals[index].syntax_literal());
         self.bump();
         let Some(literal) = literal else {
-            self.product_capabilities
-                .observe_unmodeled_regular_expression();
+            self.observe_literal_lexical_recovery(AuthoredLiteralKind::RegularExpression);
             return Expression {
                 id: self.alloc_node(),
                 span: token.span,
@@ -61,8 +61,7 @@ impl Parser<'_> {
 
     pub(super) fn observe_unmodeled_regular_expression_if_current(&mut self) {
         if matches!(self.kind(), TokenKind::Slash | TokenKind::SlashEquals) {
-            self.product_capabilities
-                .observe_unmodeled_regular_expression();
+            self.observe_literal_unsupported_host(AuthoredLiteralKind::RegularExpression);
         }
     }
 
@@ -104,8 +103,7 @@ impl Parser<'_> {
                         && matches!(tokens[1].kind, TokenKind::Slash | TokenKind::SlashEquals)
                 });
         if body_starts_with_slash || for_of_operand_starts_with_slash {
-            self.product_capabilities
-                .observe_unmodeled_regular_expression();
+            self.observe_literal_unsupported_host(AuthoredLiteralKind::RegularExpression);
         }
     }
 }

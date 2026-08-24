@@ -24,6 +24,25 @@ impl ReferenceInstantiation {
 }
 
 impl Checker<'_> {
+    pub(super) fn evaluate_reference_instantiation(
+        &mut self,
+        declaration: DeclId,
+        supplied: &[TypeId],
+        instantiation: Completion<ReferenceInstantiation>,
+    ) -> Completion<TypeId> {
+        match instantiation {
+            Completion::Complete(ReferenceInstantiation::Exact) => {
+                self.evaluate_reference(declaration, supplied)
+            }
+            Completion::Complete(ReferenceInstantiation::Defaulted { arguments }) => {
+                self.evaluate_defaulted_reference(declaration, &arguments)
+            }
+            Completion::Deferred => Completion::Deferred,
+            Completion::Cycle => Completion::Cycle,
+            Completion::Limit => Completion::Limit,
+        }
+    }
+
     /// Normalize only a trailing suffix of structurally closed defaults.
     ///
     /// This deliberately does not resolve arbitrary type syntax. References,

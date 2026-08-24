@@ -287,18 +287,8 @@ impl Checker<'_> {
         depth: usize,
     ) -> Completion<TypeId> {
         let [object, index] = self.force_operands([object, index], depth);
-        let object = match object {
-            Completion::Complete(object) => object,
-            Completion::Deferred => return Completion::Deferred,
-            Completion::Cycle => return Completion::Cycle,
-            Completion::Limit => return Completion::Limit,
-        };
-        let index = match index {
-            Completion::Complete(index) => index,
-            Completion::Deferred => return Completion::Deferred,
-            Completion::Cycle => return Completion::Cycle,
-            Completion::Limit => return Completion::Limit,
-        };
+        let object = completed!(object);
+        let index = completed!(index);
         self.evaluate_resolved_element_access(object, index, mode)
     }
 
@@ -356,12 +346,9 @@ impl Checker<'_> {
             TypeKind::Union(members) if mode.is_read() => {
                 let mut values = Vec::with_capacity(members.len());
                 for member in members {
-                    match self.evaluate_resolved_element_access(member, index, mode) {
-                        Completion::Complete(value) => values.push(value),
-                        Completion::Deferred => return Completion::Deferred,
-                        Completion::Cycle => return Completion::Cycle,
-                        Completion::Limit => return Completion::Limit,
-                    }
+                    values.push(completed!(
+                        self.evaluate_resolved_element_access(member, index, mode)
+                    ));
                 }
                 Completion::Complete(self.store.union(values, UnionPolicy::Canonical))
             }
@@ -410,12 +397,7 @@ impl Checker<'_> {
             TypeKind::Union(members) if mode.is_read() => {
                 let mut values = Vec::with_capacity(members.len());
                 for member in members {
-                    match self.object_element_access(shape, member, mode) {
-                        Completion::Complete(value) => values.push(value),
-                        Completion::Deferred => return Completion::Deferred,
-                        Completion::Cycle => return Completion::Cycle,
-                        Completion::Limit => return Completion::Limit,
-                    }
+                    values.push(completed!(self.object_element_access(shape, member, mode)));
                 }
                 return Completion::Complete(self.store.union(values, UnionPolicy::Canonical));
             }

@@ -41,19 +41,7 @@ struct Scanner<'a> {
     offset: usize,
     brace_depth: usize,
     template_expression_depths: Vec<usize>,
-    tokens: Vec<Token>,
-    diagnostics: Vec<Diagnostic>,
-    template_literals: Vec<ScannedTemplateLiteral>,
-    string_literals: Vec<ScannedStringLiteral>,
-    line_continuation_string_literals: Vec<ScannedLineContinuationStringLiteral>,
-    numeric_literals: Vec<ScannedNumericLiteral>,
-    separated_numeric_literals: Vec<ScannedSeparatedNumberLiteral>,
-    numeric_separator_spans: Vec<Span>,
-    has_unmodeled_numeric_separator: bool,
-    regular_expression_literals: Vec<ScannedRegularExpressionLiteral>,
-    comments: Vec<CommentTrivia>,
-    has_unicode_line_comment_terminator: bool,
-    has_unmodeled_trivia: bool,
+    output: ScanOutput,
 }
 
 impl<'a> Scanner<'a> {
@@ -64,19 +52,21 @@ impl<'a> Scanner<'a> {
             offset: 0,
             brace_depth: 0,
             template_expression_depths: Vec::new(),
-            tokens: Vec::new(),
-            diagnostics: Vec::new(),
-            template_literals: Vec::new(),
-            string_literals: Vec::new(),
-            line_continuation_string_literals: Vec::new(),
-            numeric_literals: Vec::new(),
-            separated_numeric_literals: Vec::new(),
-            numeric_separator_spans: Vec::new(),
-            has_unmodeled_numeric_separator: false,
-            regular_expression_literals: Vec::new(),
-            comments: Vec::new(),
-            has_unicode_line_comment_terminator: false,
-            has_unmodeled_trivia: false,
+            output: ScanOutput {
+                tokens: Vec::new(),
+                diagnostics: Vec::new(),
+                template_literals: Vec::new(),
+                string_literals: Vec::new(),
+                line_continuation_string_literals: Vec::new(),
+                numeric_literals: Vec::new(),
+                separated_numeric_literals: Vec::new(),
+                numeric_separator_spans: Vec::new(),
+                has_unmodeled_numeric_separator: false,
+                regular_expression_literals: Vec::new(),
+                comments: Vec::new(),
+                has_unicode_line_comment_terminator: false,
+                has_unmodeled_trivia: false,
+            },
         }
     }
 
@@ -114,30 +104,16 @@ impl<'a> Scanner<'a> {
             if matches!(kind, TokenKind::NumericLiteral | TokenKind::BigIntLiteral)
                 && self.bytes[start..self.offset].contains(&b'_')
             {
-                self.numeric_separator_spans.push(span);
+                self.output.numeric_separator_spans.push(span);
             }
-            self.tokens.push(Token { kind, span });
+            self.output.tokens.push(Token { kind, span });
         }
         let end = self.bytes.len();
-        self.tokens.push(Token {
+        self.output.tokens.push(Token {
             kind: TokenKind::EndOfFile,
             span: Span::new(self.source.id, end, end),
         });
-        ScanOutput {
-            tokens: self.tokens,
-            diagnostics: self.diagnostics,
-            template_literals: self.template_literals,
-            string_literals: self.string_literals,
-            line_continuation_string_literals: self.line_continuation_string_literals,
-            numeric_literals: self.numeric_literals,
-            separated_numeric_literals: self.separated_numeric_literals,
-            numeric_separator_spans: self.numeric_separator_spans,
-            has_unmodeled_numeric_separator: self.has_unmodeled_numeric_separator,
-            regular_expression_literals: self.regular_expression_literals,
-            comments: self.comments,
-            has_unicode_line_comment_terminator: self.has_unicode_line_comment_terminator,
-            has_unmodeled_trivia: self.has_unmodeled_trivia,
-        }
+        self.output
     }
 
     fn skip_trivia(&mut self) {
@@ -146,7 +122,7 @@ impl<'a> Scanner<'a> {
                 self.offset += 3;
             }
             if self.offset == 0 && self.bytes.get(..2) == Some(b"#!") {
-                self.has_unmodeled_trivia = true;
+                self.output.has_unmodeled_trivia = true;
                 self.offset += 2;
                 while self
                     .bytes
@@ -156,7 +132,7 @@ impl<'a> Scanner<'a> {
                 {
                     self.offset += 1;
                 }
-                self.has_unicode_line_comment_terminator |=
+                self.output.has_unicode_line_comment_terminator |=
                     self.is_unicode_line_separator_at(self.offset);
                 continue;
             }
@@ -174,23 +150,23 @@ impl<'a> Scanner<'a> {
                 {
                     self.offset += 1;
                 }
-                self.has_unicode_line_comment_terminator |=
+                self.output.has_unicode_line_comment_terminator |=
                     self.is_unicode_line_separator_at(self.offset);
                 let plain = self.is_plain_line_comment(start, self.offset);
-                self.comments.push(CommentTrivia {
+                self.output.comments.push(CommentTrivia {
                     span: Span::new(self.source.id, start, self.offset),
-                    preceding_token_end: self.tokens.last().map(|token| token.span.end),
+                    preceding_token_end: self.output.tokens.last().map(|token| token.span.end),
                     kind: CommentKind::Line,
                     placement,
                     source_position,
                     has_trailing_line_break: self.has_line_break_at_offset(),
                     plain,
                 });
-                self.has_unmodeled_trivia |= !plain;
+                self.output.has_unmodeled_trivia |= !plain;
                 continue;
             }
             if self.bytes.get(self.offset..self.offset + 2) == Some(b"/*") {
-                self.has_unmodeled_trivia = true;
+                self.output.has_unmodeled_trivia = true;
                 let start = self.offset;
                 let placement = self.comment_placement(start);
                 let source_position = self.comment_source_position();
@@ -203,7 +179,7 @@ impl<'a> Scanner<'a> {
                 if self.offset + 1 < self.bytes.len() {
                     self.offset += 2;
                 } else {
-                    self.diagnostics.push(Diagnostic::at(
+                    self.output.diagnostics.push(Diagnostic::at(
                         self.source,
                         Span::new(self.source.id, start, self.bytes.len()),
                         "'*/' expected.".to_string(),
@@ -211,9 +187,9 @@ impl<'a> Scanner<'a> {
                     ));
                     self.offset = self.bytes.len();
                 }
-                self.comments.push(CommentTrivia {
+                self.output.comments.push(CommentTrivia {
                     span: Span::new(self.source.id, start, self.offset),
-                    preceding_token_end: self.tokens.last().map(|token| token.span.end),
+                    preceding_token_end: self.output.tokens.last().map(|token| token.span.end),
                     kind: CommentKind::Block,
                     placement,
                     source_position,
@@ -227,7 +203,7 @@ impl<'a> Scanner<'a> {
     }
 
     fn comment_placement(&self, comment_start: usize) -> CommentPlacement {
-        let Some(previous) = self.tokens.last() else {
+        let Some(previous) = self.output.tokens.last() else {
             return CommentPlacement::Leading;
         };
         if self.contains_line_break(previous.span.end as usize, comment_start) {
@@ -238,7 +214,7 @@ impl<'a> Scanner<'a> {
     }
 
     const fn comment_source_position(&self) -> CommentSourcePosition {
-        if self.tokens.is_empty() {
+        if self.output.tokens.is_empty() {
             CommentSourcePosition::SourceLeading
         } else {
             CommentSourcePosition::AfterToken
@@ -357,16 +333,16 @@ impl<'a> Scanner<'a> {
     }
 
     fn scan_number(&mut self, start: usize) -> TokenKind {
-        let scanned = scan_numeric_literal(self.source, start, self.tokens.last().copied());
+        let scanned = scan_numeric_literal(self.source, start, self.output.tokens.last().copied());
         self.offset = scanned.end;
-        self.diagnostics.extend(scanned.diagnostics);
+        self.output.diagnostics.extend(scanned.diagnostics);
         if let Some(literal) = scanned.recovery_literal {
-            self.numeric_literals.push(literal);
+            self.output.numeric_literals.push(literal);
         }
         if let Some(literal) = scanned.separated_literal {
-            self.separated_numeric_literals.push(literal);
+            self.output.separated_numeric_literals.push(literal);
         }
-        self.has_unmodeled_numeric_separator |= scanned.has_unmodeled_separator;
+        self.output.has_unmodeled_numeric_separator |= scanned.has_unmodeled_separator;
         scanned.kind
     }
 
@@ -455,7 +431,7 @@ impl<'a> Scanner<'a> {
             b'\'' | b'"' => self.scan_string(start, byte),
             b'`' => self.scan_template_start(start),
             _ => {
-                self.diagnostics.push(Diagnostic::at(
+                self.output.diagnostics.push(Diagnostic::at(
                     self.source,
                     Span::new(self.source.id, start, self.offset),
                     "Invalid character.".to_string(),
@@ -478,6 +454,7 @@ impl<'a> Scanner<'a> {
 
     fn can_start_regular_expression(&self) -> bool {
         !self
+            .output
             .tokens
             .last()
             .is_some_and(|token| token_can_end_expression(token.kind))
@@ -487,7 +464,7 @@ impl<'a> Scanner<'a> {
         if self.can_start_regular_expression()
             && let Some(literal) = self.scan_regular_expression(start)
         {
-            self.regular_expression_literals.push(literal);
+            self.output.regular_expression_literals.push(literal);
             return TokenKind::RegularExpressionLiteral;
         }
         if self.consume_suffix(b"=") {
@@ -575,8 +552,9 @@ impl<'a> Scanner<'a> {
         end: usize,
         at_line_break: bool,
     ) -> Option<ScannedRegularExpressionLiteral> {
-        if !self.tokens.is_empty()
+        if !self.output.tokens.is_empty()
             && !self
+                .output
                 .tokens
                 .last()
                 .is_some_and(|token| token.kind == TokenKind::Equals)
@@ -586,7 +564,7 @@ impl<'a> Scanner<'a> {
         }
         self.offset = end;
         let span = Span::new(self.source.id, start, end);
-        self.diagnostics.push(Diagnostic::at(
+        self.output.diagnostics.push(Diagnostic::at(
             self.source,
             span,
             "Unterminated regular expression literal.".to_string(),
@@ -624,7 +602,8 @@ impl<'a> Scanner<'a> {
                     self.offset += 1;
                     if is_start {
                         let span = Span::new(self.source.id, start, self.offset);
-                        self.template_literals
+                        self.output
+                            .template_literals
                             .push(ScannedTemplateLiteral::terminated(
                                 span,
                                 &self.source.text[start..self.offset],
@@ -646,7 +625,7 @@ impl<'a> Scanner<'a> {
                 _ => self.advance_character(),
             }
         }
-        self.diagnostics.push(Diagnostic::at(
+        self.output.diagnostics.push(Diagnostic::at(
             self.source,
             Span::new(self.source.id, start, self.offset),
             "Unterminated template literal.".to_string(),
@@ -654,7 +633,8 @@ impl<'a> Scanner<'a> {
         ));
         if is_start {
             let span = Span::new(self.source.id, start, self.offset);
-            self.template_literals
+            self.output
+                .template_literals
                 .push(ScannedTemplateLiteral::unterminated(
                     span,
                     &self.source.text[start..self.offset],
@@ -685,12 +665,12 @@ impl<'a> Scanner<'a> {
     fn scan_string(&mut self, start: usize, quote: u8) -> TokenKind {
         let scanned = scan_ordinary_string_literal(self.source, start, quote);
         self.offset = scanned.end;
-        self.diagnostics.extend(scanned.diagnostics);
+        self.output.diagnostics.extend(scanned.diagnostics);
         if let Some(literal) = scanned.extended_literal {
-            self.string_literals.push(literal);
+            self.output.string_literals.push(literal);
         }
         if let Some(literal) = scanned.line_continuation_literal {
-            self.line_continuation_string_literals.push(literal);
+            self.output.line_continuation_string_literals.push(literal);
         }
         TokenKind::StringLiteral
     }
@@ -705,73 +685,27 @@ const fn is_identifier_continue(byte: u8) -> bool {
 }
 
 const fn token_can_end_expression(kind: TokenKind) -> bool {
-    matches!(
-        kind,
-        TokenKind::Identifier
-            | TokenKind::PrivateIdentifier
-            | TokenKind::NumericLiteral
-            | TokenKind::BigIntLiteral
-            | TokenKind::StringLiteral
-            | TokenKind::RegularExpressionLiteral
-            | TokenKind::NoSubstitutionTemplateLiteral
-            | TokenKind::TemplateTail
-            | TokenKind::RightBrace
-            | TokenKind::RightParen
-            | TokenKind::RightBracket
-            | TokenKind::PlusPlus
-            | TokenKind::MinusMinus
-            | TokenKind::This
-            | TokenKind::Super
-            | TokenKind::True
-            | TokenKind::False
-            | TokenKind::Null
-            | TokenKind::Undefined
-            | TokenKind::Abstract
-            | TokenKind::Accessor
-            | TokenKind::Any
-            | TokenKind::As
-            | TokenKind::Assert
-            | TokenKind::Asserts
-            | TokenKind::Async
-            | TokenKind::BigInt
-            | TokenKind::Boolean
-            | TokenKind::Constructor
-            | TokenKind::Declare
-            | TokenKind::Defer
-            | TokenKind::From
-            | TokenKind::Get
-            | TokenKind::Global
-            | TokenKind::Implements
-            | TokenKind::Infer
-            | TokenKind::Interface
-            | TokenKind::Intrinsic
-            | TokenKind::Is
-            | TokenKind::KeyOf
-            | TokenKind::Let
-            | TokenKind::Module
-            | TokenKind::Namespace
-            | TokenKind::Never
-            | TokenKind::Number
-            | TokenKind::Object
-            | TokenKind::Of
-            | TokenKind::Out
-            | TokenKind::Override
-            | TokenKind::Package
-            | TokenKind::Private
-            | TokenKind::Protected
-            | TokenKind::Public
-            | TokenKind::Readonly
-            | TokenKind::Require
-            | TokenKind::Satisfies
-            | TokenKind::Set
-            | TokenKind::Static
-            | TokenKind::String
-            | TokenKind::Symbol
-            | TokenKind::Type
-            | TokenKind::Unique
-            | TokenKind::Unknown
-            | TokenKind::Using
-    )
+    (kind.is_identifier() && !matches!(kind, TokenKind::Await | TokenKind::Yield))
+        || matches!(
+            kind,
+            TokenKind::PrivateIdentifier
+                | TokenKind::NumericLiteral
+                | TokenKind::BigIntLiteral
+                | TokenKind::StringLiteral
+                | TokenKind::RegularExpressionLiteral
+                | TokenKind::NoSubstitutionTemplateLiteral
+                | TokenKind::TemplateTail
+                | TokenKind::RightBrace
+                | TokenKind::RightParen
+                | TokenKind::RightBracket
+                | TokenKind::PlusPlus
+                | TokenKind::MinusMinus
+                | TokenKind::This
+                | TokenKind::Super
+                | TokenKind::True
+                | TokenKind::False
+                | TokenKind::Null
+        )
 }
 
 fn keyword_kind(text: &str) -> TokenKind {
@@ -920,197 +854,7 @@ mod tests {
         assert_eq!(output.tokens[0].span.end, text.len() as u32);
     }
 
-    #[test]
-    fn recognizes_the_complete_typescript_keyword_set() {
-        let cases = [
-            ("abstract", TokenKind::Abstract),
-            ("accessor", TokenKind::Accessor),
-            ("any", TokenKind::Any),
-            ("as", TokenKind::As),
-            ("assert", TokenKind::Assert),
-            ("asserts", TokenKind::Asserts),
-            ("async", TokenKind::Async),
-            ("await", TokenKind::Await),
-            ("bigint", TokenKind::BigInt),
-            ("boolean", TokenKind::Boolean),
-            ("break", TokenKind::Break),
-            ("case", TokenKind::Case),
-            ("catch", TokenKind::Catch),
-            ("class", TokenKind::Class),
-            ("const", TokenKind::Const),
-            ("constructor", TokenKind::Constructor),
-            ("continue", TokenKind::Continue),
-            ("debugger", TokenKind::Debugger),
-            ("declare", TokenKind::Declare),
-            ("default", TokenKind::Default),
-            ("defer", TokenKind::Defer),
-            ("delete", TokenKind::Delete),
-            ("do", TokenKind::Do),
-            ("else", TokenKind::Else),
-            ("enum", TokenKind::Enum),
-            ("export", TokenKind::Export),
-            ("extends", TokenKind::Extends),
-            ("false", TokenKind::False),
-            ("finally", TokenKind::Finally),
-            ("for", TokenKind::For),
-            ("from", TokenKind::From),
-            ("function", TokenKind::Function),
-            ("get", TokenKind::Get),
-            ("global", TokenKind::Global),
-            ("if", TokenKind::If),
-            ("implements", TokenKind::Implements),
-            ("import", TokenKind::Import),
-            ("in", TokenKind::In),
-            ("infer", TokenKind::Infer),
-            ("instanceof", TokenKind::InstanceOf),
-            ("interface", TokenKind::Interface),
-            ("intrinsic", TokenKind::Intrinsic),
-            ("is", TokenKind::Is),
-            ("keyof", TokenKind::KeyOf),
-            ("let", TokenKind::Let),
-            ("module", TokenKind::Module),
-            ("namespace", TokenKind::Namespace),
-            ("never", TokenKind::Never),
-            ("new", TokenKind::New),
-            ("null", TokenKind::Null),
-            ("number", TokenKind::Number),
-            ("object", TokenKind::Object),
-            ("of", TokenKind::Of),
-            ("out", TokenKind::Out),
-            ("override", TokenKind::Override),
-            ("package", TokenKind::Package),
-            ("private", TokenKind::Private),
-            ("protected", TokenKind::Protected),
-            ("public", TokenKind::Public),
-            ("readonly", TokenKind::Readonly),
-            ("require", TokenKind::Require),
-            ("return", TokenKind::Return),
-            ("satisfies", TokenKind::Satisfies),
-            ("set", TokenKind::Set),
-            ("static", TokenKind::Static),
-            ("string", TokenKind::String),
-            ("super", TokenKind::Super),
-            ("switch", TokenKind::Switch),
-            ("symbol", TokenKind::Symbol),
-            ("this", TokenKind::This),
-            ("throw", TokenKind::Throw),
-            ("true", TokenKind::True),
-            ("try", TokenKind::Try),
-            ("type", TokenKind::Type),
-            ("typeof", TokenKind::TypeOf),
-            ("undefined", TokenKind::Undefined),
-            ("unique", TokenKind::Unique),
-            ("unknown", TokenKind::Unknown),
-            ("using", TokenKind::Using),
-            ("var", TokenKind::Var),
-            ("void", TokenKind::Void),
-            ("while", TokenKind::While),
-            ("with", TokenKind::With),
-            ("yield", TokenKind::Yield),
-        ];
-        for (text, kind) in cases {
-            assert_one(text, kind);
-        }
-
-        // The pinned TS7 enum reserves `ImmediateKeyword`, but its scanner's
-        // `textToKeywordObj` does not map the source spelling to that kind.
-        assert_one("immediate", TokenKind::Identifier);
-    }
-
-    #[test]
-    fn recognizes_modern_punctuation_with_longest_match_spans() {
-        let cases = [
-            ("...", TokenKind::DotDotDot),
-            ("?.", TokenKind::QuestionDot),
-            ("??", TokenKind::QuestionQuestion),
-            ("??=", TokenKind::QuestionQuestionEquals),
-            ("++", TokenKind::PlusPlus),
-            ("+=", TokenKind::PlusEquals),
-            ("--", TokenKind::MinusMinus),
-            ("-=", TokenKind::MinusEquals),
-            ("**", TokenKind::StarStar),
-            ("*=", TokenKind::StarEquals),
-            ("**=", TokenKind::StarStarEquals),
-            ("%", TokenKind::Percent),
-            ("%=", TokenKind::PercentEquals),
-            ("||", TokenKind::BarBar),
-            ("|=", TokenKind::BarEquals),
-            ("||=", TokenKind::BarBarEquals),
-            ("&&", TokenKind::AmpersandAmpersand),
-            ("&=", TokenKind::AmpersandEquals),
-            ("&&=", TokenKind::AmpersandAmpersandEquals),
-            ("^", TokenKind::Caret),
-            ("^=", TokenKind::CaretEquals),
-            ("</", TokenKind::LessThanSlash),
-            ("<=", TokenKind::LessThanEquals),
-            ("<<", TokenKind::LessThanLessThan),
-            ("<<=", TokenKind::LessThanLessThanEquals),
-            (">=", TokenKind::GreaterThanEquals),
-            (">>", TokenKind::GreaterThanGreaterThan),
-            (">>=", TokenKind::GreaterThanGreaterThanEquals),
-            (">>>", TokenKind::GreaterThanGreaterThanGreaterThan),
-            (">>>=", TokenKind::GreaterThanGreaterThanGreaterThanEquals),
-            ("!=", TokenKind::BangEquals),
-            ("!==", TokenKind::BangEqualsEquals),
-            ("==", TokenKind::EqualsEquals),
-            ("===", TokenKind::EqualsEqualsEquals),
-            ("=>", TokenKind::FatArrow),
-            ("~", TokenKind::Tilde),
-            ("@", TokenKind::At),
-            ("#", TokenKind::Hash),
-        ];
-        for (text, kind) in cases {
-            assert_one(text, kind);
-        }
-
-        let (_, output) = scan("?.1");
-        assert!(output.diagnostics.is_empty());
-        assert_eq!(
-            output
-                .tokens
-                .iter()
-                .map(|token| token.kind)
-                .collect::<Vec<_>>(),
-            vec![
-                TokenKind::Question,
-                TokenKind::NumericLiteral,
-                TokenKind::EndOfFile,
-            ]
-        );
-    }
-
-    #[test]
-    fn scans_numeric_private_decorator_and_identifier_escape_forms() {
-        let text = r"@sealed #field 0 1. 0.25 .5 1e3 1_000 0xff 0b1010 0o755 42n 0xffn \u{006e}ame";
-        let (source, output) = scan(text);
-        assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
-        let actual = output
-            .tokens
-            .iter()
-            .map(|token| (token.kind, source.slice(token.span)))
-            .collect::<Vec<_>>();
-        assert_eq!(
-            actual,
-            vec![
-                (TokenKind::At, "@"),
-                (TokenKind::Identifier, "sealed"),
-                (TokenKind::PrivateIdentifier, "#field"),
-                (TokenKind::NumericLiteral, "0"),
-                (TokenKind::NumericLiteral, "1."),
-                (TokenKind::NumericLiteral, "0.25"),
-                (TokenKind::NumericLiteral, ".5"),
-                (TokenKind::NumericLiteral, "1e3"),
-                (TokenKind::NumericLiteral, "1_000"),
-                (TokenKind::NumericLiteral, "0xff"),
-                (TokenKind::NumericLiteral, "0b1010"),
-                (TokenKind::NumericLiteral, "0o755"),
-                (TokenKind::BigIntLiteral, "42n"),
-                (TokenKind::BigIntLiteral, "0xffn"),
-                (TokenKind::Identifier, "\\u{006e}ame"),
-                (TokenKind::EndOfFile, ""),
-            ]
-        );
-    }
+    include!("../../rewrite-tests/scanner_lexical_unit.rs");
 
     #[test]
     fn scans_nested_template_chunks_without_losing_delimiter_spans() {

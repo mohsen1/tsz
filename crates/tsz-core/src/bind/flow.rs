@@ -2,8 +2,9 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::source::{DeclId, NodeId, Span};
 use crate::syntax::{
-    BinaryOperator, Expression, ExpressionKind, IfStatement, Literal, SourceUnit, Statement,
-    StatementKind, StringLiteral, SwitchClauseKind, UnaryOperator, parse_number_literal,
+    BinaryOperator, Expression, ExpressionKind, ExpressionRoot, ExpressionTraversal, IfStatement,
+    Literal, SourceUnit, Statement, StatementKind, StringLiteral, SwitchClauseKind, UnaryOperator,
+    contains_matching_expression, for_each_statement_in, parse_number_literal,
 };
 
 use super::{BoundFile, Meaning, ScopeId};
@@ -281,12 +282,10 @@ impl BoundFlowGraph {
             graph: Self::default(),
             captured: Vec::new(),
         };
-        for statement in &unit.statements {
-            statement.for_each_statement(&mut |statement| {
-                builder.add_switch(statement);
-                builder.add_if(statement);
-            });
-        }
+        for_each_statement_in(&unit.statements, &mut |statement| {
+            builder.add_switch(statement);
+            builder.add_if(statement);
+        });
         for (expression, declaration, node) in builder.captured.drain(..) {
             builder
                 .graph
@@ -630,10 +629,16 @@ impl FlowBuilder<'_> {
                 .statements
                 .iter()
                 .all(|statement| statement_is_flow_neutral(statement, false));
-            has_semantic_exit |= clause
-                .statements
-                .iter()
-                .any(statement_contains_executed_call);
+            has_semantic_exit |= contains_matching_expression(
+                ExpressionRoot::Statements(&clause.statements),
+                ExpressionTraversal::Executed,
+                |expression| {
+                    matches!(
+                        expression.kind,
+                        ExpressionKind::Call { .. } | ExpressionKind::New { .. }
+                    )
+                },
+            );
             let direct = match &clause.kind {
                 SwitchClauseKind::Case(expression) => switch_label(expression, &mode),
                 SwitchClauseKind::Default => None,
@@ -1469,7 +1474,7 @@ fn expression_is_flow_neutral(expression: &Expression, path_writes: bool) -> boo
         | ExpressionKind::This
         | ExpressionKind::Literal(_)
         | ExpressionKind::RegularExpression(_)
-        | ExpressionKind::Arrow { .. } => true,
+        | ExpressionKind::FunctionLike(_) => true,
         ExpressionKind::Object(properties) => properties
             .iter()
             .all(|property| expression_is_flow_neutral(&property.value, path_writes)),
@@ -1480,8 +1485,8 @@ fn expression_is_flow_neutral(expression: &Expression, path_writes: bool) -> boo
             callee, arguments, ..
         } => {
             !matches!(
-                &unwrap_parentheses(callee).kind,
-                ExpressionKind::Arrow { .. }
+                &unwrap_flow_callee(callee).kind,
+                ExpressionKind::FunctionLike(_)
             ) && expression_is_flow_neutral(callee, path_writes)
                 && arguments
                     .iter()
@@ -1490,7 +1495,10 @@ fn expression_is_flow_neutral(expression: &Expression, path_writes: bool) -> boo
         ExpressionKind::New {
             callee, arguments, ..
         } => {
-            expression_is_flow_neutral(callee, path_writes)
+            !matches!(
+                &unwrap_flow_callee(callee).kind,
+                ExpressionKind::FunctionLike(_)
+            ) && expression_is_flow_neutral(callee, path_writes)
                 && arguments
                     .iter()
                     .all(|argument| expression_is_flow_neutral(argument, path_writes))
@@ -1537,84 +1545,13 @@ fn flow_assignment_root(expression: &Expression) -> Option<&Expression> {
     }
 }
 
-fn statement_contains_executed_call(statement: &Statement) -> bool {
-    match &statement.kind {
-        StatementKind::Export(declaration) => declaration
-            .assignment
-            .as_ref()
-            .is_some_and(expression_contains_executed_call),
-        StatementKind::Variable(declaration) => declaration
-            .initializer
-            .as_ref()
-            .is_some_and(expression_contains_executed_call),
-        StatementKind::If(statement) => {
-            expression_contains_executed_call(&statement.condition)
-                || statement_contains_executed_call(&statement.then_statement)
-                || statement
-                    .else_statement
-                    .as_deref()
-                    .is_some_and(statement_contains_executed_call)
-        }
-        StatementKind::Switch(statement) => {
-            expression_contains_executed_call(&statement.expression)
-                || statement.clauses.iter().any(|clause| {
-                    matches!(&clause.kind, SwitchClauseKind::Case(expression) if expression_contains_executed_call(expression))
-                        || clause.statements.iter().any(statement_contains_executed_call)
-                })
-        }
-        StatementKind::Return(expression) => expression
-            .as_ref()
-            .is_some_and(expression_contains_executed_call),
-        StatementKind::Block(statements) => statements.iter().any(statement_contains_executed_call),
-        StatementKind::Expression(expression) => expression_contains_executed_call(expression),
-        StatementKind::Import(_)
-        | StatementKind::Function(_)
-        | StatementKind::Class(_)
-        | StatementKind::TypeAlias(_)
-        | StatementKind::Interface(_)
-        | StatementKind::Break(_)
-        | StatementKind::Continue(_)
-        | StatementKind::Empty
-        | StatementKind::Unknown => false,
+fn unwrap_flow_callee(mut expression: &Expression) -> &Expression {
+    while let ExpressionKind::Parenthesized(inner)
+    | ExpressionKind::As {
+        expression: inner, ..
+    } = &expression.kind
+    {
+        expression = inner;
     }
-}
-
-fn expression_contains_executed_call(expression: &Expression) -> bool {
-    match &expression.kind {
-        ExpressionKind::Call { .. } => true,
-        ExpressionKind::Object(properties) => properties
-            .iter()
-            .any(|property| expression_contains_executed_call(&property.value)),
-        ExpressionKind::Array(elements) => elements.iter().any(expression_contains_executed_call),
-        ExpressionKind::New {
-            callee, arguments, ..
-        } => {
-            expression_contains_executed_call(callee)
-                || arguments.iter().any(expression_contains_executed_call)
-        }
-        ExpressionKind::Member { object, .. }
-        | ExpressionKind::Unary {
-            operand: object, ..
-        }
-        | ExpressionKind::As {
-            expression: object, ..
-        }
-        | ExpressionKind::Parenthesized(object) => expression_contains_executed_call(object),
-        ExpressionKind::ElementAccess { object, index }
-        | ExpressionKind::Binary {
-            left: object,
-            right: index,
-            ..
-        }
-        | ExpressionKind::Assignment {
-            left: object,
-            right: index,
-        } => expression_contains_executed_call(object) || expression_contains_executed_call(index),
-        ExpressionKind::Identifier { .. }
-        | ExpressionKind::This
-        | ExpressionKind::Literal(_)
-        | ExpressionKind::RegularExpression(_)
-        | ExpressionKind::Arrow { .. }
-        | ExpressionKind::Missing => false,
-    }
+    expression
 }

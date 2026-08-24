@@ -10,10 +10,7 @@ use super::{Checker, DeclarationModel};
 #[derive(Debug, Clone, Copy)]
 pub(super) enum ValueQueryState {
     Computing,
-    Ready {
-        value: TypeId,
-        completion: SemanticCompletion,
-    },
+    Ready(TypeId),
 }
 
 impl Checker<'_> {
@@ -36,7 +33,6 @@ impl Checker<'_> {
             .declaration_value_is_incomplete(id)
             || !self.semantic_declaration_is_claimed(id)
             || self.function_value_requires_overload_resolution(id)
-            || self.deferred_anonymous_parameters.contains(&id)
         {
             return Completion::Deferred;
         }
@@ -44,10 +40,7 @@ impl Checker<'_> {
             return Completion::Complete(*ty);
         }
         match self.value_queries.get(&id).copied() {
-            Some(ValueQueryState::Ready { value, completion }) => {
-                self.observe_file_completion(id.file, completion);
-                return Completion::Complete(value);
-            }
+            Some(ValueQueryState::Ready(value)) => return Completion::Complete(value),
             Some(ValueQueryState::Computing) => return Completion::Cycle,
             None => {}
         }
@@ -100,14 +93,10 @@ impl Checker<'_> {
         let captured = self.completion.finish_capture();
         self.observe_file_completion(id.file, captured);
         match result {
-            Completion::Complete(value) if self.is_cacheable_type(value) => {
-                self.value_queries.insert(
-                    id,
-                    ValueQueryState::Ready {
-                        value,
-                        completion: captured,
-                    },
-                );
+            Completion::Complete(value)
+                if captured == SemanticCompletion::Complete && self.is_cacheable_type(value) =>
+            {
+                self.value_queries.insert(id, ValueQueryState::Ready(value));
             }
             Completion::Complete(_)
             | Completion::Deferred

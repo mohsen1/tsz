@@ -1,11 +1,14 @@
+use std::collections::{HashMap, HashSet};
+
 use crate::bind::ScopeId;
 use crate::program::SemanticCompletion;
 use crate::semantics::relation::{RelationContext, RelationMode};
 use crate::semantics::types::{
-    Completion, DeferredType, ShapeParameter, ShapeSignature, TypeId, TypeKind,
+    CallArityGap, CallArityResolution, Completion, DeferredType, ShapeParameter, ShapeSignature,
+    TypeId, TypeKind,
 };
 use crate::source::{DeclId, FileId};
-use crate::syntax::{Expression, ExpressionKind};
+use crate::syntax::{Expression, ExpressionKind, FunctionLikeExpression, ParameterNameKind};
 
 use super::{
     Checker, DeclarationModel,
@@ -75,7 +78,7 @@ impl Checker<'_> {
                 return self.deferred_call_type(callee_query, arguments.len());
             }
         };
-        let Some(signature) = self.callable_signature(callee_type) else {
+        let Some(mut signature) = self.callable_signature(callee_type) else {
             if matches!(
                 self.store.kind(callee_type),
                 TypeKind::Boolean
@@ -125,35 +128,29 @@ impl Checker<'_> {
             TypeKind::Function(signature) => signature.generic_declaration,
             _ => None,
         };
+        let direct_function = match &member_callee.kind {
+            ExpressionKind::FunctionLike(function) => Some(function.as_ref()),
+            _ => None,
+        };
+        let arity = self.effective_call_arity(direct_function, &mut signature);
+        let arity = match self.require_completion(arity) {
+            Completion::Complete(arity) => Some(arity),
+            Completion::Deferred | Completion::Cycle | Completion::Limit => None,
+        };
         let rest_index = signature
             .parameters
             .iter()
             .position(|parameter| parameter.rest);
-        let fixed_rest_arity =
-            rest_index.and_then(
-                |index| match self.store.kind(signature.parameters[index].ty) {
-                    TypeKind::Tuple(elements) => Some(elements.len()),
-                    _ => None,
-                },
-            );
-        let required = signature
-            .parameters
-            .iter()
-            .take(rest_index.unwrap_or(signature.parameters.len()))
-            .filter(|parameter| !parameter.optional)
-            .count()
-            + fixed_rest_arity.unwrap_or(0);
-        let maximum = rest_index.map_or(Some(signature.parameters.len()), |index| {
-            fixed_rest_arity.map(|arity| index + arity)
-        });
-        let too_few = arguments.len() < required;
-        let too_many = maximum.is_some_and(|maximum| arguments.len() > maximum);
+        let too_few = arity.is_some_and(|(minimum, _)| arguments.len() < minimum);
+        let too_many = arity
+            .is_some_and(|(_, maximum)| maximum.is_some_and(|maximum| arguments.len() > maximum));
         let mut generic_instantiation = signature_owner
             .map(|owner| IdentityCallInstantiation::new(&self.store, owner, &signature));
         if too_many && let Some(instantiation) = &mut generic_instantiation {
             instantiation.reject();
         }
         if too_few || too_many {
+            let (required, maximum) = arity.expect("a count mismatch needs arity");
             let expected_count = if maximum.is_none() {
                 format!("at least {required}")
             } else if maximum == Some(required) {
@@ -172,10 +169,10 @@ impl Checker<'_> {
                     "Expected {expected_count} arguments, but got {}.",
                     arguments.len()
                 ),
-                2554,
+                if maximum.is_none() { 2555 } else { 2554 },
             );
         }
-        let mut stopped_argument_relations = too_few || too_many;
+        let mut stopped_argument_relations = arity.is_none() || too_few || too_many;
         for (index, argument) in arguments.iter().enumerate() {
             let Some(parameter) = signature
                 .parameters
@@ -274,6 +271,109 @@ impl Checker<'_> {
         signature.return_type
     }
 
+    fn effective_call_arity(
+        &mut self,
+        direct_function: Option<&FunctionLikeExpression>,
+        signature: &mut ShapeSignature,
+    ) -> Completion<(usize, Option<usize>)> {
+        if let Some(function) = direct_function {
+            let authored = function
+                .parameters
+                .iter()
+                .filter(|parameter| parameter.name_kind == ParameterNameKind::Binding);
+            if authored.clone().count() != signature.parameters.len() {
+                return Completion::Deferred;
+            }
+            for (parameter, authored) in signature.parameters.iter_mut().zip(authored) {
+                if authored.annotation.is_none()
+                    && authored.initializer.is_none()
+                    && !authored.optional
+                    && !authored.rest
+                {
+                    parameter.optional = true;
+                }
+            }
+        }
+        let mut references = HashMap::new();
+        let arity = loop {
+            match self.store.effective_call_arity(signature, &references) {
+                Ok((minimum, maximum)) => {
+                    break Completion::Complete((minimum, maximum));
+                }
+                Err(CallArityGap::Deferred) => break Completion::Deferred,
+                Err(CallArityGap::Type(ty)) => {
+                    let resolution = self.complete_type(ty).map_or(Completion::Deferred, |ty| {
+                        Completion::Complete(CallArityResolution::Expanded(ty))
+                    });
+                    references.insert(ty, resolution);
+                }
+                Err(CallArityGap::Reference(reference, declaration, arguments)) => {
+                    let resolution = match self.models.get(&declaration) {
+                        Some(DeclarationModel::TypeAlias { .. }) => {
+                            let instantiation =
+                                self.reference_instantiation(declaration, &arguments);
+                            let expansion = self.evaluate_reference_instantiation(
+                                declaration,
+                                &arguments,
+                                instantiation,
+                            );
+                            match self.require_completion(expansion) {
+                                Completion::Complete(ty) => {
+                                    Completion::Complete(CallArityResolution::Expanded(ty))
+                                }
+                                Completion::Deferred => Completion::Deferred,
+                                Completion::Cycle => Completion::Cycle,
+                                Completion::Limit => Completion::Limit,
+                            }
+                        }
+                        Some(
+                            DeclarationModel::Interface { .. } | DeclarationModel::Class { .. },
+                        ) => Completion::Complete(CallArityResolution::OpaqueRequired),
+                        _ if self
+                            .program
+                            .standard_library
+                            .is_rest_array_type(declaration)
+                            && arguments.len() == 1 =>
+                        {
+                            Completion::Complete(CallArityResolution::RestArray(arguments[0]))
+                        }
+                        _ if self
+                            .program
+                            .standard_library
+                            .is_string_record_type(declaration)
+                            && arguments.len() == 2 =>
+                        {
+                            Completion::Complete(CallArityResolution::OpaqueRequired)
+                        }
+                        _ => Completion::Deferred,
+                    };
+                    references.insert(reference, resolution);
+                }
+            }
+        };
+        for parameter in &mut signature.parameters {
+            let mut seen = HashSet::new();
+            while let Some(Completion::Complete(resolution)) = references.get(&parameter.ty) {
+                match *resolution {
+                    CallArityResolution::Expanded(resolved) => {
+                        if !seen.insert(parameter.ty) {
+                            return Completion::Deferred;
+                        }
+                        parameter.ty = resolved;
+                    }
+                    CallArityResolution::RestArray(element) if parameter.rest => {
+                        parameter.ty = self.store.intern(TypeKind::Array(element));
+                        break;
+                    }
+                    CallArityResolution::OpaqueRequired | CallArityResolution::RestArray(_) => {
+                        break;
+                    }
+                }
+            }
+        }
+        arity
+    }
+
     fn infer_deferred_call_arguments(
         &mut self,
         file: FileId,
@@ -353,12 +453,7 @@ impl Checker<'_> {
             TypeKind::Deferred(DeferredType::Value(declaration)) => Some(*declaration),
             _ => None,
         };
-        let callee = match self.force_type(callee, depth) {
-            Completion::Complete(callee) => callee,
-            Completion::Deferred => return Completion::Deferred,
-            Completion::Cycle => return Completion::Cycle,
-            Completion::Limit => return Completion::Limit,
-        };
+        let callee = completed!(self.force_type(callee, depth));
         self.direct_call_type(declaration, callee, None, argument_count)
     }
 

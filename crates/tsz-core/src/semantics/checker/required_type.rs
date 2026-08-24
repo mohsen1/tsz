@@ -1,15 +1,15 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::bind::{DeclarationKind, Meaning, ScopeId};
-use crate::program::SemanticCompletion;
+use crate::program::{CapabilityScope, CapabilityTarget, SemanticCompletion};
 use crate::semantics::relation::RelationContext;
 use crate::semantics::types::{Completion, DeferredType, TypeId, TypeKind};
 use crate::source::{DeclId, FileId, NodeId, SourceKind};
 use crate::syntax::{
-    AccessorKind, ArrowBody, ClassDeclaration, ClassMemberKind, Expression, ExpressionKind,
-    Literal, Parameter, Statement, StatementKind, SwitchClauseKind, TypeMember, TypeMemberKind,
-    TypeMemberName, TypeMemberNameKind, TypeNode, TypeNodeKind, TypeParameterDeclaration,
-    UnaryOperator,
+    AccessorKind, ClassDeclaration, ClassMemberKind, Expression, ExpressionKind, Literal,
+    Parameter, ParameterNameKind, Statement, StatementKind, SwitchClauseKind, TypeMember,
+    TypeMemberKind, TypeMemberName, TypeMemberNameKind, TypeNode, TypeNodeKind,
+    TypeParameterDeclaration, UnaryOperator,
 };
 
 use super::{
@@ -31,10 +31,8 @@ enum TypeMemberContainerKind {
 impl Checker<'_> {
     /// Require a type at a declaration boundary.
     ///
-    /// Forcing a deferred outer type is not enough: a concrete object,
-    /// signature, tuple, or union can contain deferred components. This visitor walks those
-    /// components. Its active set is keyed by program-local `TypeId`, so
-    /// productive recursive structural types close coinductively without a
+    /// A concrete object, signature, tuple, or union can contain deferred components.
+    /// Its program-local `TypeId` active set closes productive recursion coinductively without a
     /// second depth or fuel policy. Deferred evaluation keeps its own budget.
     pub(super) fn require_type_completion(&mut self, ty: TypeId) -> Completion<TypeId> {
         let mut active = HashSet::new();
@@ -257,7 +255,7 @@ impl Checker<'_> {
                     &class_types,
                 );
                 if let Some(heritage) = &declaration.extends {
-                    self.visit_required_type_node(file, class_scope, heritage, &class_types);
+                    self.visit_required_class_heritage(file, class_scope, heritage, &class_types);
                 }
                 for heritage in &declaration.implements {
                     self.visit_required_type_node(file, class_scope, heritage, &class_types);
@@ -407,6 +405,17 @@ impl Checker<'_> {
         member: &crate::syntax::ClassMember,
         type_parameters: &HashMap<String, TypeId>,
     ) {
+        if !self
+            .capabilities
+            .claim(
+                CapabilityTarget::RequiredType,
+                CapabilityScope::node(file, member.id),
+            )
+            .is_claimed()
+        {
+            let _ = self.require_completion(Completion::<()>::Deferred);
+            return;
+        }
         match &member.kind {
             ClassMemberKind::Property {
                 annotation,
@@ -641,25 +650,6 @@ impl Checker<'_> {
         true
     }
 
-    fn visit_required_body(
-        &mut self,
-        file: FileId,
-        scope: ScopeId,
-        body: &[Statement],
-        type_parameters: &HashMap<String, TypeId>,
-    ) {
-        for (index, statement) in body.iter().enumerate() {
-            let statement_scope = self.node_scope(file, statement.id, scope);
-            self.visit_required_statement(
-                file,
-                statement_scope,
-                statement,
-                body.get(index + 1),
-                type_parameters,
-            );
-        }
-    }
-
     fn visit_required_expression(
         &mut self,
         file: FileId,
@@ -718,40 +708,13 @@ impl Checker<'_> {
                 self.visit_required_expression(file, scope, object, type_parameters);
                 self.visit_required_expression(file, scope, index, type_parameters);
             }
-            ExpressionKind::Arrow {
-                parameters,
-                return_type,
-                body,
-            } => {
-                let arrow_scope = self.node_scope(file, expression.id, scope);
-                self.visit_required_parameters(
-                    file,
-                    arrow_scope,
-                    parameters,
-                    type_parameters,
-                    ParameterGrammarHost::Implementation { constructor: false },
-                );
-                if let Some(return_type) = return_type {
-                    if return_type.contains_type_query() {
-                        let _ = self.require_completion(Completion::<()>::Deferred);
-                    } else {
-                        self.visit_required_type_node(
-                            file,
-                            arrow_scope,
-                            return_type,
-                            type_parameters,
-                        );
-                    }
-                }
-                match body {
-                    ArrowBody::Expression(body) => {
-                        self.visit_required_expression(file, arrow_scope, body, type_parameters)
-                    }
-                    ArrowBody::Block(statements) => {
-                        self.visit_required_body(file, arrow_scope, statements, type_parameters);
-                    }
-                }
-            }
+            ExpressionKind::FunctionLike(function) => self.visit_required_function_like_expression(
+                file,
+                scope,
+                expression,
+                function,
+                type_parameters,
+            ),
             ExpressionKind::Binary { left, right, .. }
             | ExpressionKind::Assignment { left, right } => {
                 self.visit_required_expression(file, scope, left, type_parameters);
@@ -914,6 +877,7 @@ impl Checker<'_> {
                 type_parameters: signature_type_parameters,
                 parameters,
                 return_type,
+                ..
             }
             | TypeNodeKind::Constructor {
                 id: signature_id,
@@ -1241,38 +1205,32 @@ impl Checker<'_> {
         parameters: &[Parameter],
         type_parameters: &HashMap<String, TypeId>,
     ) {
+        if !type_parameters.is_empty() {
+            return;
+        }
         let mut seen = HashSet::new();
         let declarations = parameters
             .iter()
+            .filter(|parameter| parameter.name_kind == ParameterNameKind::Binding)
             .filter(|parameter| seen.insert(parameter.name.as_str()))
             .filter_map(|parameter| {
                 self.resolve_name(file, scope, &parameter.name, Meaning::Value)
                     .map(|declaration| (parameter, declaration))
             })
             .collect::<Vec<_>>();
-        if !type_parameters.is_empty() {
-            self.deferred_anonymous_parameters
-                .extend(declarations.into_iter().map(|(_, declaration)| declaration));
-            return;
-        }
         for (parameter, declaration) in declarations {
             let ty = if let Some(annotation) = &parameter.annotation {
                 self.resolve_type_node(file, scope, annotation, type_parameters)
             } else if let Some(initializer) = &parameter.initializer {
                 match self.signature_initializer_type(file, scope, initializer) {
                     Completion::Complete(ty) => ty,
-                    Completion::Deferred | Completion::Cycle | Completion::Limit => {
-                        self.deferred_anonymous_parameters.insert(declaration);
-                        continue;
-                    }
+                    Completion::Deferred | Completion::Cycle | Completion::Limit => continue,
                 }
             } else {
                 self.store.builtins.any
             };
             if self.is_cacheable_type(ty) {
                 self.parameter_type_overrides.insert(declaration, ty);
-            } else if !matches!(self.store.kind(ty), TypeKind::Error | TypeKind::Invalid(_)) {
-                self.deferred_anonymous_parameters.insert(declaration);
             }
         }
     }
@@ -1809,7 +1767,7 @@ fn is_bindable_computed_name(expression: &Expression) -> bool {
         | ExpressionKind::ElementAccess { .. }
         | ExpressionKind::Call { .. }
         | ExpressionKind::New { .. }
-        | ExpressionKind::Arrow { .. }
+        | ExpressionKind::FunctionLike(_)
         | ExpressionKind::Binary { .. }
         | ExpressionKind::Unary { .. }
         | ExpressionKind::Assignment { .. }
@@ -1831,7 +1789,7 @@ fn is_entity_name_expression(expression: &Expression) -> bool {
         | ExpressionKind::ElementAccess { .. }
         | ExpressionKind::Call { .. }
         | ExpressionKind::New { .. }
-        | ExpressionKind::Arrow { .. }
+        | ExpressionKind::FunctionLike(_)
         | ExpressionKind::Binary { .. }
         | ExpressionKind::Unary { .. }
         | ExpressionKind::Assignment { .. }

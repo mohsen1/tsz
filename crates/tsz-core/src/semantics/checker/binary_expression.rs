@@ -326,12 +326,7 @@ impl Checker<'_> {
         right: TypeId,
         depth: usize,
     ) -> Completion<TypeId> {
-        let left = match self.force_type(left, depth) {
-            Completion::Complete(left) => left,
-            Completion::Deferred => return Completion::Deferred,
-            Completion::Cycle => return Completion::Cycle,
-            Completion::Limit => return Completion::Limit,
-        };
+        let left = completed!(self.force_type(left, depth));
         let left_kind = self.store.kind(left);
         if matches!(left_kind, TypeKind::Error | TypeKind::Invalid(_)) {
             return Completion::Complete(left);

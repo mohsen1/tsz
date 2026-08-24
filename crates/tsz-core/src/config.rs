@@ -77,83 +77,110 @@ pub struct ResolvedProject {
     pub(crate) provenance: ProjectProvenance,
 }
 
-/// A compiler option whose source can affect diagnostic ownership.
-///
-/// Process adapters clear an origin when a command-line value replaces the
-/// configuration value. This keeps config-owned diagnostics located without
-/// making provenance ambient compiler state.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum CompilerOptionKey {
-    Strict,
-    StrictNullChecks,
-    StrictPropertyInitialization,
-    NoImplicitAny,
-    NoLib,
-    Lib,
-    AllowJs,
-    NoCheck,
-    NoEmit,
-    NoEmitOnError,
-    Declaration,
-    DeclarationMap,
-    SourceMap,
-    InlineSourceMap,
-    RemoveComments,
-    Target,
-    Module,
-    RootDir,
-    OutDir,
-    DeclarationDir,
+macro_rules! compiler_option_schema {
+    (@type bool) => { Option<bool> };
+    (@type optional_bool) => { Option<bool> };
+    (@type string_array) => { Option<Vec<String>> };
+    (@type string) => { Option<String> };
+    (@type path) => { Option<PathBuf> };
+    (@decode bool, $options:ident, $json:literal, $origin:ident) => {
+        bool_property($options, $json)
+    };
+    (@decode optional_bool, $options:ident, $json:literal, $origin:ident) => {
+        bool_property($options, $json)
+    };
+    (@decode string_array, $options:ident, $json:literal, $origin:ident) => {
+        string_array_property($options, $json)
+    };
+    (@decode string, $options:ident, $json:literal, $origin:ident) => {
+        string_property($options, $json)
+    };
+    (@decode path, $options:ident, $json:literal, $origin:ident) => {
+        path_property($options, $json, $origin)
+    };
+    (@apply bool, $source:expr, $target:expr) => {
+        if let Some(value) = $source { $target = *value; }
+    };
+    (@apply optional_bool, $source:expr, $target:expr) => {
+        if let Some(value) = $source { $target = Some(*value); }
+    };
+    (@apply string_array, $source:expr, $target:expr) => {
+        if let Some(value) = $source { $target = Some(value.clone()); }
+    };
+    (@apply string, $source:expr, $target:expr) => {
+        if let Some(value) = $source { $target.clone_from(value); }
+    };
+    (@apply path, $source:expr, $target:expr) => {
+        if let Some(value) = $source { $target = Some(value.clone()); }
+    };
+    ($($variant:ident => $field:ident, $json:literal, $kind:ident;)+) => {
+        /// A compiler option whose source can affect diagnostic ownership.
+        ///
+        /// Process adapters clear an origin when a command-line value replaces
+        /// the configuration value. This keeps config-owned diagnostics located
+        /// without making provenance ambient compiler state.
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+        pub enum CompilerOptionKey { $($variant,)+ }
+
+        impl CompilerOptionKey {
+            const ALL: &'static [Self] = &[$(Self::$variant,)+];
+
+            const fn json_name(self) -> &'static str {
+                match self { $(Self::$variant => $json,)+ }
+            }
+        }
+
+        #[derive(Debug, Clone, Default)]
+        struct PartialCompilerOptions {
+            $($field: compiler_option_schema!(@type $kind),)+
+        }
+
+        impl PartialCompilerOptions {
+            const fn contains(&self, key: CompilerOptionKey) -> bool {
+                match key { $(CompilerOptionKey::$variant => self.$field.is_some(),)+ }
+            }
+
+            fn merge_from(&mut self, other: &Self) {
+                $(if other.$field.is_some() { self.$field.clone_from(&other.$field); })+
+            }
+
+            fn apply_to(&self, options: &mut CompilerOptions) {
+                $(compiler_option_schema!(@apply $kind, &self.$field, options.$field);)+
+            }
+        }
+
+        fn partial_options(object: &Map<String, Value>, origin: &Path) -> PartialCompilerOptions {
+            let Some(options) = object.get("compilerOptions").and_then(Value::as_object) else {
+                return PartialCompilerOptions::default();
+            };
+            PartialCompilerOptions {
+                $($field: compiler_option_schema!(@decode $kind, options, $json, origin),)+
+            }
+        }
+    };
 }
 
-impl CompilerOptionKey {
-    const ALL: [Self; 20] = [
-        Self::Strict,
-        Self::StrictNullChecks,
-        Self::StrictPropertyInitialization,
-        Self::NoImplicitAny,
-        Self::NoLib,
-        Self::Lib,
-        Self::AllowJs,
-        Self::NoCheck,
-        Self::NoEmit,
-        Self::NoEmitOnError,
-        Self::Declaration,
-        Self::DeclarationMap,
-        Self::SourceMap,
-        Self::InlineSourceMap,
-        Self::RemoveComments,
-        Self::Target,
-        Self::Module,
-        Self::RootDir,
-        Self::OutDir,
-        Self::DeclarationDir,
-    ];
-
-    const fn json_name(self) -> &'static str {
-        match self {
-            Self::Strict => "strict",
-            Self::StrictNullChecks => "strictNullChecks",
-            Self::StrictPropertyInitialization => "strictPropertyInitialization",
-            Self::NoImplicitAny => "noImplicitAny",
-            Self::NoLib => "noLib",
-            Self::Lib => "lib",
-            Self::AllowJs => "allowJs",
-            Self::NoCheck => "noCheck",
-            Self::NoEmit => "noEmit",
-            Self::NoEmitOnError => "noEmitOnError",
-            Self::Declaration => "declaration",
-            Self::DeclarationMap => "declarationMap",
-            Self::SourceMap => "sourceMap",
-            Self::InlineSourceMap => "inlineSourceMap",
-            Self::RemoveComments => "removeComments",
-            Self::Target => "target",
-            Self::Module => "module",
-            Self::RootDir => "rootDir",
-            Self::OutDir => "outDir",
-            Self::DeclarationDir => "declarationDir",
-        }
-    }
+compiler_option_schema! {
+    Strict => strict, "strict", bool;
+    StrictNullChecks => strict_null_checks, "strictNullChecks", optional_bool;
+    StrictPropertyInitialization => strict_property_initialization, "strictPropertyInitialization", optional_bool;
+    NoImplicitAny => no_implicit_any, "noImplicitAny", optional_bool;
+    NoLib => no_lib, "noLib", bool;
+    Lib => lib, "lib", string_array;
+    AllowJs => allow_js, "allowJs", bool;
+    NoCheck => no_check, "noCheck", bool;
+    NoEmit => no_emit, "noEmit", bool;
+    NoEmitOnError => no_emit_on_error, "noEmitOnError", bool;
+    Declaration => declaration, "declaration", bool;
+    DeclarationMap => declaration_map, "declarationMap", bool;
+    SourceMap => source_map, "sourceMap", bool;
+    InlineSourceMap => inline_source_map, "inlineSourceMap", bool;
+    RemoveComments => remove_comments, "removeComments", bool;
+    Target => target, "target", string;
+    Module => module, "module", string;
+    RootDir => root_dir, "rootDir", path;
+    OutDir => out_dir, "outDir", path;
+    DeclarationDir => declaration_dir, "declarationDir", path;
 }
 
 #[derive(Debug, Clone)]
@@ -880,165 +907,6 @@ impl Selector {
     }
 }
 
-#[derive(Debug, Clone, Default)]
-struct PartialCompilerOptions {
-    strict: Option<bool>,
-    strict_null_checks: Option<bool>,
-    strict_property_initialization: Option<bool>,
-    no_implicit_any: Option<bool>,
-    no_lib: Option<bool>,
-    lib: Option<Vec<String>>,
-    allow_js: Option<bool>,
-    no_check: Option<bool>,
-    no_emit: Option<bool>,
-    no_emit_on_error: Option<bool>,
-    declaration: Option<bool>,
-    declaration_map: Option<bool>,
-    source_map: Option<bool>,
-    inline_source_map: Option<bool>,
-    remove_comments: Option<bool>,
-    target: Option<String>,
-    module: Option<String>,
-    root_dir: Option<PathBuf>,
-    out_dir: Option<PathBuf>,
-    declaration_dir: Option<PathBuf>,
-}
-
-impl PartialCompilerOptions {
-    const fn contains(&self, key: CompilerOptionKey) -> bool {
-        match key {
-            CompilerOptionKey::Strict => self.strict.is_some(),
-            CompilerOptionKey::StrictNullChecks => self.strict_null_checks.is_some(),
-            CompilerOptionKey::StrictPropertyInitialization => {
-                self.strict_property_initialization.is_some()
-            }
-            CompilerOptionKey::NoImplicitAny => self.no_implicit_any.is_some(),
-            CompilerOptionKey::NoLib => self.no_lib.is_some(),
-            CompilerOptionKey::Lib => self.lib.is_some(),
-            CompilerOptionKey::AllowJs => self.allow_js.is_some(),
-            CompilerOptionKey::NoCheck => self.no_check.is_some(),
-            CompilerOptionKey::NoEmit => self.no_emit.is_some(),
-            CompilerOptionKey::NoEmitOnError => self.no_emit_on_error.is_some(),
-            CompilerOptionKey::Declaration => self.declaration.is_some(),
-            CompilerOptionKey::DeclarationMap => self.declaration_map.is_some(),
-            CompilerOptionKey::SourceMap => self.source_map.is_some(),
-            CompilerOptionKey::InlineSourceMap => self.inline_source_map.is_some(),
-            CompilerOptionKey::RemoveComments => self.remove_comments.is_some(),
-            CompilerOptionKey::Target => self.target.is_some(),
-            CompilerOptionKey::Module => self.module.is_some(),
-            CompilerOptionKey::RootDir => self.root_dir.is_some(),
-            CompilerOptionKey::OutDir => self.out_dir.is_some(),
-            CompilerOptionKey::DeclarationDir => self.declaration_dir.is_some(),
-        }
-    }
-
-    fn merge_from(&mut self, other: &Self) {
-        macro_rules! replace_present {
-            ($($field:ident),* $(,)?) => {
-                $(if other.$field.is_some() { self.$field.clone_from(&other.$field); })*
-            };
-        }
-        replace_present!(
-            strict,
-            strict_null_checks,
-            strict_property_initialization,
-            no_implicit_any,
-            no_lib,
-            lib,
-            allow_js,
-            no_check,
-            no_emit,
-            no_emit_on_error,
-            declaration,
-            declaration_map,
-            source_map,
-            inline_source_map,
-            remove_comments,
-            target,
-            module,
-            root_dir,
-            out_dir,
-            declaration_dir,
-        );
-    }
-
-    fn apply_to(&self, options: &mut CompilerOptions) {
-        macro_rules! assign_copy {
-            ($($field:ident),* $(,)?) => {
-                $(if let Some(value) = self.$field { options.$field = value; })*
-            };
-        }
-        assign_copy!(
-            strict,
-            no_lib,
-            allow_js,
-            no_check,
-            no_emit,
-            no_emit_on_error,
-            declaration,
-            declaration_map,
-            source_map,
-            inline_source_map,
-            remove_comments,
-        );
-        if let Some(value) = self.strict_null_checks {
-            options.strict_null_checks = Some(value);
-        }
-        if let Some(value) = self.strict_property_initialization {
-            options.strict_property_initialization = Some(value);
-        }
-        if let Some(value) = self.no_implicit_any {
-            options.no_implicit_any = Some(value);
-        }
-        if let Some(value) = &self.lib {
-            options.lib = Some(value.clone());
-        }
-        if let Some(value) = &self.target {
-            options.target.clone_from(value);
-        }
-        if let Some(value) = &self.module {
-            options.module.clone_from(value);
-        }
-        if let Some(value) = &self.root_dir {
-            options.root_dir = Some(value.clone());
-        }
-        if let Some(value) = &self.out_dir {
-            options.out_dir = Some(value.clone());
-        }
-        if let Some(value) = &self.declaration_dir {
-            options.declaration_dir = Some(value.clone());
-        }
-    }
-}
-
-fn partial_options(object: &Map<String, Value>, origin: &Path) -> PartialCompilerOptions {
-    let Some(options) = object.get("compilerOptions").and_then(Value::as_object) else {
-        return PartialCompilerOptions::default();
-    };
-    PartialCompilerOptions {
-        strict: bool_property(options, "strict"),
-        strict_null_checks: bool_property(options, "strictNullChecks"),
-        strict_property_initialization: bool_property(options, "strictPropertyInitialization"),
-        no_implicit_any: bool_property(options, "noImplicitAny"),
-        no_lib: bool_property(options, "noLib"),
-        lib: string_array_property(options, "lib"),
-        allow_js: bool_property(options, "allowJs"),
-        no_check: bool_property(options, "noCheck"),
-        no_emit: bool_property(options, "noEmit"),
-        no_emit_on_error: bool_property(options, "noEmitOnError"),
-        declaration: bool_property(options, "declaration"),
-        declaration_map: bool_property(options, "declarationMap"),
-        source_map: bool_property(options, "sourceMap"),
-        inline_source_map: bool_property(options, "inlineSourceMap"),
-        remove_comments: bool_property(options, "removeComments"),
-        target: string_property(options, "target"),
-        module: string_property(options, "module"),
-        root_dir: path_property(options, "rootDir", origin),
-        out_dir: path_property(options, "outDir", origin),
-        declaration_dir: path_property(options, "declarationDir", origin),
-    }
-}
-
 fn compiler_option_origins(
     options: &PartialCompilerOptions,
     source_text: &Arc<str>,
@@ -1046,7 +914,8 @@ fn compiler_option_origins(
 ) -> BTreeMap<CompilerOptionKey, CompilerOptionOrigin> {
     let spans = compiler_option_spans(source_text);
     CompilerOptionKey::ALL
-        .into_iter()
+        .iter()
+        .copied()
         .filter(|key| options.contains(*key))
         .filter_map(|key| {
             let span = spans.get(key.json_name())?;

@@ -5,12 +5,14 @@
 
 mod comments;
 mod element_access;
+mod functions;
 mod literals;
 mod operators;
 mod reachability;
 mod regular_expression;
 #[cfg(test)]
-mod test_support;
+#[path = "emit/test_support.rs"]
+mod tests;
 mod type_members;
 use self::comments::CommentCursor;
 use crate::emit_paths::EmitFilePlan;
@@ -19,11 +21,11 @@ use crate::program::{
 };
 use crate::source::{SourceText, Span};
 use crate::syntax::{
-    AccessorKind, ArrowBody, BinaryOperator, ClassDeclaration, ClassMemberKind, ExportDeclaration,
-    Expression, ExpressionKind, FunctionDeclaration, ImportDeclaration, InterfaceDeclaration,
-    KeywordType, ObjectProperty, Parameter, SourceUnit, Statement, StatementKind, SwitchClauseKind,
-    TypeAliasDeclaration, TypeNode, TypeNodeKind, VariableDeclaration, VariableKind,
-    erased_assertion_expression,
+    AccessorKind, BinaryOperator, ClassDeclaration, ClassMemberKind, ExportDeclaration, Expression,
+    ExpressionKind, FunctionDeclaration, FunctionLikeSyntax, ImportDeclaration,
+    InterfaceDeclaration, KeywordType, ObjectProperty, Parameter, ParameterNameKind, SourceUnit,
+    Statement, StatementKind, SwitchClauseKind, TypeAliasDeclaration, TypeNode, TypeNodeKind,
+    VariableDeclaration, VariableKind, erased_assertion_expression,
 };
 use operators::*;
 pub(crate) fn emit_file_with_plan(
@@ -322,6 +324,15 @@ impl<'a> Printer<'a> {
         if top_level && declaration.exported && self.module_format == ModuleFormat::EsModule {
             self.output.push_str("export ");
         }
+        self.write_runtime_variable(declaration);
+        self.output.push('\n');
+
+        if top_level && declaration.exported && self.module_format == ModuleFormat::CommonJs {
+            self.write_commonjs_export(&declaration.name);
+        }
+    }
+
+    fn write_runtime_variable(&mut self, declaration: &VariableDeclaration) {
         self.output
             .push_str(self.runtime_variable_kind(declaration.declaration_kind));
         self.output.push(' ');
@@ -330,11 +341,7 @@ impl<'a> Printer<'a> {
             self.output.push_str(" = ");
             self.write_expression(initializer, PREC_ASSIGNMENT);
         }
-        self.output.push_str(";\n");
-
-        if top_level && declaration.exported && self.module_format == ModuleFormat::CommonJs {
-            self.write_commonjs_export(&declaration.name);
-        }
+        self.output.push(';');
     }
 
     fn write_javascript_function(
@@ -718,18 +725,36 @@ impl<'a> Printer<'a> {
 
     fn write_runtime_parameters(&mut self, parameters: &[Parameter]) {
         self.output.push('(');
-        for (index, parameter) in parameters.iter().enumerate() {
-            if index != 0 {
-                self.output.push_str(", ");
+        if !parameters.is_empty()
+            && parameters
+                .iter()
+                .all(|parameter| parameter.name_kind == ParameterNameKind::This)
+        {
+            self.write_comments_after_parameter_open();
+        }
+        let mut wrote_parameter = false;
+        for parameter in parameters {
+            if parameter.name_kind == ParameterNameKind::This {
+                self.discard_comments_through_token(parameter.span.end);
+                continue;
             }
+            self.output
+                .push_str(if wrote_parameter { ", " } else { "" });
+            self.write_comments_before_parameter(parameter.span.start);
             if parameter.rest {
                 self.output.push_str("...");
+                if let Some(rest_span) = parameter.rest_span {
+                    self.write_comments_through_token(rest_span.end);
+                }
             }
             self.output.push_str(&parameter.name);
+            self.write_comments_through_token(parameter.name_span.end);
             if let Some(initializer) = &parameter.initializer {
                 self.output.push_str(" = ");
                 self.write_expression(initializer, PREC_LOWEST);
             }
+            self.write_comments_through_token(parameter.span.end);
+            wrote_parameter = true;
         }
         self.output.push(')');
     }
@@ -816,10 +841,8 @@ impl<'a> Printer<'a> {
             ExpressionKind::ElementAccess { object, index } => {
                 self.write_element_access(object, index);
             }
-            ExpressionKind::Arrow {
-                parameters, body, ..
-            } => {
-                self.write_arrow(parameters, body);
+            ExpressionKind::FunctionLike(function) => {
+                self.write_function_like(function);
             }
             ExpressionKind::Binary {
                 left,
@@ -887,41 +910,13 @@ impl<'a> Printer<'a> {
         self.output.push('}');
     }
 
-    fn write_arrow(&mut self, parameters: &[Parameter], body: &ArrowBody) {
-        if self.preserve_arrows {
-            self.write_runtime_parameters(parameters);
-            self.output.push_str(" => ");
-            match body {
-                ArrowBody::Expression(expression) => {
-                    self.write_expression(expression, PREC_ASSIGNMENT);
-                }
-                ArrowBody::Block(statements) => self.write_braced_statements(statements),
-            }
-            return;
-        }
-
-        self.output.push_str("function ");
-        self.write_runtime_parameters(parameters);
-        self.output.push(' ');
-        match body {
-            ArrowBody::Expression(expression) => {
-                self.output.push_str("{\n");
-                self.indent += 1;
-                self.write_indent();
-                self.output.push_str("return ");
-                self.write_expression(expression, PREC_LOWEST);
-                self.output.push_str(";\n");
-                self.indent = self.indent.saturating_sub(1);
-                self.write_indent();
-                self.output.push('}');
-            }
-            ArrowBody::Block(statements) => self.write_braced_statements(statements),
-        }
-    }
-
     fn expression_precedence(&self, expression: &Expression) -> u8 {
         match &expression.kind {
-            ExpressionKind::Arrow { .. } | ExpressionKind::Assignment { .. } => PREC_ASSIGNMENT,
+            ExpressionKind::FunctionLike(function) => match &function.syntax {
+                FunctionLikeSyntax::Arrow(_) => PREC_ASSIGNMENT,
+                FunctionLikeSyntax::Function { .. } => PREC_PRIMARY,
+            },
+            ExpressionKind::Assignment { .. } => PREC_ASSIGNMENT,
             ExpressionKind::Binary { operator, .. } => match operator {
                 BinaryOperator::LogicalOr | BinaryOperator::NullishCoalesce => PREC_LOGICAL_OR,
                 BinaryOperator::LogicalAnd => PREC_LOGICAL_AND,
@@ -1631,273 +1626,4 @@ fn quote_string(value: &str) -> String {
     }
     quoted.push('"');
     quoted
-}
-
-#[cfg(test)]
-mod tests {
-    use std::path::{Path, PathBuf};
-    use std::sync::Arc;
-
-    use crate::bind::bind_source;
-    use crate::program::{CompilerOptions, ProgramFile};
-    use crate::source::{FileId, SourceText};
-    use crate::syntax::parse_source;
-
-    use super::test_support::emit_file;
-
-    fn program_file(path: &str, text: &str) -> ProgramFile {
-        let source = SourceText::new(FileId(0), PathBuf::from(path), Arc::<str>::from(text));
-        let parsed = parse_source(&source);
-        assert!(
-            parsed.diagnostics.is_empty(),
-            "test source must parse without diagnostics: {:?}",
-            parsed.diagnostics
-        );
-        let bindings = bind_source(source.id, &parsed.unit);
-        ProgramFile {
-            source,
-            syntax: parsed.unit,
-            bindings,
-        }
-    }
-
-    #[test]
-    fn erases_type_only_syntax_and_annotations() {
-        let file = program_file(
-            "input.ts",
-            concat!(
-                "interface Point { x: number; }\n",
-                "type Scalar = number;\n",
-                "const point: Point = { x: 1 };\n",
-                "function add(a: number, b: number): number { return a + b; }\n",
-            ),
-        );
-        let options = CompilerOptions {
-            target: "esnext".to_string(),
-            module: "esnext".to_string(),
-            ..CompilerOptions::default()
-        };
-
-        let output = emit_file(&file, &options);
-        assert_eq!(output.len(), 1);
-        assert_eq!(
-            output[0].text,
-            concat!(
-                "\"use strict\";\n",
-                "const point = { x: 1 };\n",
-                "function add(a, b) {\n",
-                "    return a + b;\n",
-                "}\n",
-            )
-        );
-    }
-
-    #[test]
-    fn emits_written_declaration_shapes_without_checking() {
-        let file = program_file(
-            "src/api.ts",
-            concat!(
-                "export const greeting: string = \"hello\";\n",
-                "export interface Box<T> { readonly value?: T; }\n",
-                "export function id<T>(value: T): T { return value; }\n",
-            ),
-        );
-        let options = CompilerOptions {
-            declaration: true,
-            target: "esnext".to_string(),
-            module: "esnext".to_string(),
-            out_dir: Some(PathBuf::from("dist")),
-            declaration_dir: Some(PathBuf::from("types")),
-            ..CompilerOptions::default()
-        };
-
-        let output = emit_file(&file, &options);
-        assert_eq!(output.len(), 2);
-        assert_eq!(output[0].path, Path::new("dist/api.js"));
-        assert_eq!(output[1].path, Path::new("types/api.d.ts"));
-        assert_eq!(
-            output[0].text,
-            concat!(
-                "export const greeting = \"hello\";\n",
-                "export function id(value) {\n",
-                "    return value;\n",
-                "}\n",
-            )
-        );
-        assert_eq!(
-            output[1].text,
-            concat!(
-                "export declare const greeting: string;\n",
-                "export interface Box<T> {\n",
-                "    readonly value?: T;\n",
-                "}\n",
-                "export declare function id<T>(value: T): T;\n",
-            )
-        );
-    }
-
-    #[test]
-    fn preserves_es_modules_at_the_ts7_defaults() {
-        let file = program_file("value.ts", "export const value: number = 1;\n");
-        let output = emit_file(&file, &CompilerOptions::default());
-        assert_eq!(output[0].text, "export const value = 1;\n");
-    }
-
-    #[test]
-    fn keeps_expression_grouping_while_erasing_assertions() {
-        let file = program_file(
-            "math.ts",
-            "const result: number = (1 + 2) * (3 as number);\n",
-        );
-        let options = CompilerOptions {
-            target: "esnext".to_string(),
-            module: "esnext".to_string(),
-            ..CompilerOptions::default()
-        };
-        let output = emit_file(&file, &options);
-        assert_eq!(
-            output[0].text,
-            "\"use strict\";\nconst result = (1 + 2) * 3;\n"
-        );
-    }
-
-    #[test]
-    fn derives_module_extension_outputs_without_losing_module_identity() {
-        let file = program_file("src/value.mts", "export const value: number = 1;\n");
-        let options = CompilerOptions {
-            declaration: true,
-            target: "esnext".to_string(),
-            module: "nodenext".to_string(),
-            ..CompilerOptions::default()
-        };
-        let output = emit_file(&file, &options);
-        assert_eq!(output[0].path, Path::new("src/value.mjs"));
-        assert_eq!(output[1].path, Path::new("src/value.d.mts"));
-        assert_eq!(output[0].text, "export const value = 1;\n");
-        assert_eq!(output[1].text, "export declare const value: number;\n");
-    }
-
-    #[test]
-    fn emits_modern_module_classes_from_structured_nodes() {
-        let file = program_file(
-            "src/service.ts",
-            concat!(
-                "import { token } from \"./token\";\n",
-                "export class Service extends Base {\n",
-                "  value: number = token;\n",
-                "  constructor(value: number) { this.value = value; }\n",
-                "  static create(value: number): Service { return new Service(value); }\n",
-                "}\n",
-            ),
-        );
-        let options = CompilerOptions {
-            target: "es2022".to_string(),
-            module: "esnext".to_string(),
-            ..CompilerOptions::default()
-        };
-        let output = emit_file(&file, &options);
-        assert_eq!(
-            output[0].text,
-            concat!(
-                "import { token } from \"./token\";\n",
-                "export class Service extends Base {\n",
-                "    value = token;\n",
-                "    constructor(value) {\n",
-                "        this.value = value;\n",
-                "    }\n",
-                "    static create(value) {\n",
-                "        return new Service(value);\n",
-                "    }\n",
-                "}\n",
-            )
-        );
-    }
-
-    #[test]
-    fn erases_class_overload_signatures_but_keeps_empty_implementations() {
-        let file = program_file(
-            "service.ts",
-            concat!(
-                "class Service {\n",
-                "  constructor(value: string);\n",
-                "  constructor() {}\n",
-                "  method(value: string): void;\n",
-                "  method() {}\n",
-                "}\n",
-            ),
-        );
-        let options = CompilerOptions {
-            target: "es2022".to_string(),
-            module: "esnext".to_string(),
-            ..CompilerOptions::default()
-        };
-        let output = emit_file(&file, &options);
-        assert_eq!(
-            output[0].text,
-            concat!(
-                "\"use strict\";\n",
-                "class Service {\n",
-                "    constructor() { }\n",
-                "    method() { }\n",
-                "}\n",
-            )
-        );
-    }
-
-    #[test]
-    fn rewrites_mixed_esm_clauses_and_assertions_from_structured_nodes() {
-        let file = program_file(
-            "module.ts",
-            concat!(
-                "import Default, { type Shape, live as renamed } from \"./dep\";\n",
-                "export { type Shape, renamed as exposed } from \"./dep\";\n",
-                "const value = [Default, renamed] as unknown;\n",
-                "export default (value as unknown);\n",
-            ),
-        );
-        let options = CompilerOptions {
-            target: "es2022".to_string(),
-            module: "esnext".to_string(),
-            ..CompilerOptions::default()
-        };
-        let output = emit_file(&file, &options);
-        assert_eq!(
-            output[0].text,
-            concat!(
-                "import Default, { live as renamed } from \"./dep\";\n",
-                "export { renamed as exposed } from \"./dep\";\n",
-                "const value = [Default, renamed];\n",
-                "export default value;\n",
-            )
-        );
-    }
-
-    #[test]
-    fn emits_supported_class_fields_and_preserves_private_names() {
-        let file = program_file(
-            "model.ts",
-            concat!(
-                "class Model {\n",
-                "  #secret = 1;\n",
-                "  visible: number;\n",
-                "}\n",
-            ),
-        );
-        let options = CompilerOptions {
-            target: "es2022".to_string(),
-            module: "esnext".to_string(),
-            ..CompilerOptions::default()
-        };
-        let output = emit_file(&file, &options);
-        assert_eq!(
-            output[0].text,
-            concat!(
-                "\"use strict\";\n",
-                "class Model {\n",
-                "    #secret = 1;\n",
-                "    visible;\n",
-                "}\n",
-            )
-        );
-    }
 }

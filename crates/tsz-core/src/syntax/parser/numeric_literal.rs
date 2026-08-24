@@ -1,6 +1,6 @@
 use super::super::{
-    Expression, ExpressionKind, Literal, NumberLiteral, NumericRecoveryKind, Statement, Token,
-    TokenKind, statements_form_numeric_recovery_safe_file,
+    AuthoredLiteralKind, Expression, ExpressionKind, Literal, NumberLiteral, NumericRecoveryKind,
+    Statement, Token, TokenKind, statements_form_numeric_recovery_safe_file,
 };
 use super::Parser;
 use crate::diagnostics::Diagnostic;
@@ -37,8 +37,7 @@ impl Parser<'_> {
             .ok()
             .is_some_and(|index| self.separated_numeric_literals[index].span == span)
         {
-            self.product_capabilities
-                .observe_unmodeled_numeric_separator();
+            self.observe_literal_unsupported_host(AuthoredLiteralKind::NumericSeparator);
         }
     }
 
@@ -51,12 +50,11 @@ impl Parser<'_> {
                 && literal.span.start >= span.start
                 && literal.span.end <= span.end
         }) {
-            self.product_capabilities
-                .observe_unmodeled_numeric_separator();
+            self.observe_literal_unsupported_host(AuthoredLiteralKind::NumericSeparator);
         }
     }
 
-    pub(super) const fn finish_numeric_separator_source(&mut self) -> bool {
+    pub(super) fn finish_numeric_separator_source(&mut self) {
         let has_authored = !self.numeric_separator_spans.is_empty();
         if has_authored
             && (self.has_unmodeled_numeric_separator
@@ -65,10 +63,8 @@ impl Parser<'_> {
                 || self.has_unmodeled_trivia
                 || self.has_unmodeled_top_level_syntax)
         {
-            self.product_capabilities
-                .observe_unmodeled_numeric_separator();
+            self.observe_literal_source_context(AuthoredLiteralKind::NumericSeparator);
         }
-        has_authored
     }
 
     /// TypeScript terminates a legacy-octal token before a following decimal
@@ -107,10 +103,10 @@ impl Parser<'_> {
         true
     }
 
-    pub(super) fn finish_numeric_recovery_source(&mut self, statements: &[Statement]) -> bool {
+    pub(super) fn finish_numeric_recovery_source(&mut self, statements: &[Statement]) {
         let has_authored = !self.numeric_literals.is_empty();
         if !has_authored {
-            return false;
+            return;
         }
         let owned = match self.numeric_literals.as_slice() {
             [literal] => {
@@ -124,9 +120,7 @@ impl Parser<'_> {
             _ => false,
         };
         if !owned {
-            self.product_capabilities
-                .observe_unmodeled_numeric_recovery();
+            self.observe_literal_source_context(AuthoredLiteralKind::NumericRecovery);
         }
-        true
     }
 }

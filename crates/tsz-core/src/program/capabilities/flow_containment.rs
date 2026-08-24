@@ -2,29 +2,59 @@ use std::collections::BTreeSet;
 
 use crate::source::{NodeId, Span};
 use crate::syntax::{
-    ArrowBody, ClassMember, ClassMemberKind, Expression, ExpressionKind, Parameter,
-    ParserRecoveryFact, Statement, StatementKind, SwitchClauseKind,
+    ArrowBody, ClassMember, ClassMemberKind, Expression, ExpressionKind, FunctionLikeSyntax,
+    Parameter, ParameterNameKind, ParserRecoveryFact, ParserRecoveryKind, Statement, StatementKind,
+    SwitchClauseKind, TokenKind,
 };
+
+use super::{SemanticGap, SyntaxGap};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(super) enum FileBoundary {
+    ClassProduct,
+    CommonJsClass,
+    Declaration,
+    ClassProperty,
+}
 
 /// Computes immutable statement ownership for flow-sensitive type-of-reference
 /// work that the checker does not own yet. A region begins at an unsupported
 /// narrowing entry and covers the executable suffix of the same container.
 /// Function-like bodies are inventoried as fresh containers.
-pub(super) fn flow_region_nodes(
+#[derive(Default)]
+pub(super) struct SemanticNodeInventory {
+    pub(super) flow_regions: BTreeSet<NodeId>,
+    pub(super) function_likes: BTreeSet<NodeId>,
+    pub(super) function_like_gaps: Vec<(NodeId, SemanticGap)>,
+    pub(super) function_like_binding_patterns: BTreeSet<NodeId>,
+    pub(super) function_like_signatures: Vec<Span>,
+    pub(super) function_expressions: Vec<FunctionExpressionProducts>,
+    pub(super) recovered_function_likes: BTreeSet<(NodeId, SyntaxGap)>,
+    pub(super) boundaries: BTreeSet<FileBoundary>,
+}
+
+pub(super) struct FunctionExpressionProducts {
+    pub(super) owner: NodeId,
+    pub(super) span: Span,
+    pub(super) body_span: Span,
+    pub(super) inline_body_supported: bool,
+}
+
+pub(super) fn semantic_node_inventory(
     statements: &[Statement],
     recoveries: &[ParserRecoveryFact],
-) -> BTreeSet<NodeId> {
+) -> SemanticNodeInventory {
     let mut collector = FlowRegionCollector {
         recoveries,
-        nodes: BTreeSet::new(),
+        out: SemanticNodeInventory::default(),
     };
     collector.visit_statement_list(statements, false);
-    collector.nodes
+    collector.out
 }
 
 struct FlowRegionCollector<'a> {
     recoveries: &'a [ParserRecoveryFact],
-    nodes: BTreeSet<NodeId>,
+    out: SemanticNodeInventory,
 }
 
 impl FlowRegionCollector<'_> {
@@ -42,18 +72,35 @@ impl FlowRegionCollector<'_> {
         let entry = self.statement_starts_flow_region(statement);
         let local_active = active || entry;
         if local_active && statement_is_executable_region_member(statement) {
-            self.nodes.insert(statement.id);
+            self.out.flow_regions.insert(statement.id);
         }
 
         match &statement.kind {
-            StatementKind::Import(_)
-            | StatementKind::TypeAlias(_)
-            | StatementKind::Interface(_)
-            | StatementKind::Break(_)
+            StatementKind::Import(declaration) => {
+                if declaration.type_only
+                    || declaration.bindings.iter().any(|binding| binding.type_only)
+                {
+                    self.out.boundaries.insert(FileBoundary::Declaration);
+                }
+                local_active
+            }
+            StatementKind::TypeAlias(_) | StatementKind::Interface(_) => {
+                self.out.boundaries.insert(FileBoundary::Declaration);
+                local_active
+            }
+            StatementKind::Break(_)
             | StatementKind::Continue(_)
             | StatementKind::Empty
             | StatementKind::Unknown => local_active,
             StatementKind::Export(declaration) => {
+                if declaration.type_only
+                    || declaration
+                        .specifiers
+                        .iter()
+                        .any(|specifier| specifier.type_only)
+                {
+                    self.out.boundaries.insert(FileBoundary::Declaration);
+                }
                 if let Some(expression) = &declaration.assignment {
                     self.visit_expression(expression);
                 }
@@ -67,7 +114,8 @@ impl FlowRegionCollector<'_> {
             }
             StatementKind::Function(declaration) => {
                 self.visit_parameter_initializers(&declaration.parameters);
-                let recovered = self.signature_contains_recovery(
+                let recovered = self.record_recovery(
+                    statement.id,
                     statement.span,
                     first_statement_start(&declaration.body, statement.span.end),
                 );
@@ -75,6 +123,9 @@ impl FlowRegionCollector<'_> {
                 local_active
             }
             StatementKind::Class(declaration) => {
+                if declaration.abstract_class {
+                    self.out.boundaries.insert(FileBoundary::ClassProduct);
+                }
                 for member in &declaration.members {
                     self.visit_class_member(member);
                 }
@@ -115,21 +166,35 @@ impl FlowRegionCollector<'_> {
     }
 
     fn visit_class_member(&mut self, member: &ClassMember) {
+        if !member.emit_products_supported {
+            self.out.boundaries.insert(FileBoundary::ClassProduct);
+        }
         match &member.kind {
             ClassMemberKind::Constructor {
-                parameters, body, ..
+                parameters,
+                body,
+                has_body,
+                ..
             }
             | ClassMemberKind::Method {
-                parameters, body, ..
+                parameters,
+                body,
+                has_body,
+                ..
             } => {
+                if !has_body {
+                    self.out.boundaries.insert(FileBoundary::CommonJsClass);
+                }
                 self.visit_parameter_initializers(parameters);
-                let recovered = self.signature_contains_recovery(
+                let recovered = self.record_recovery(
+                    member.id,
                     member.span,
                     first_statement_start(body, member.span.end),
                 );
                 self.visit_statement_list(body, recovered);
             }
             ClassMemberKind::Property { initializer, .. } => {
+                self.out.boundaries.insert(FileBoundary::ClassProperty);
                 if let Some(initializer) = initializer {
                     self.visit_expression(initializer);
                 }
@@ -182,22 +247,83 @@ impl FlowRegionCollector<'_> {
                 self.visit_expression(object);
                 self.visit_expression(index);
             }
-            ExpressionKind::Arrow {
-                parameters, body, ..
-            } => {
-                self.visit_parameter_initializers(parameters);
-                let recovered = self.signature_contains_recovery(
-                    expression.span,
-                    match body {
-                        ArrowBody::Expression(body) => body.span.start,
-                        ArrowBody::Block(statements) => {
-                            first_statement_start(statements, expression.span.end)
-                        }
-                    },
-                );
-                match body {
-                    ArrowBody::Expression(body) => self.visit_expression(body),
-                    ArrowBody::Block(statements) => {
+            ExpressionKind::FunctionLike(function) => {
+                self.out.function_likes.insert(expression.id);
+                if let FunctionLikeSyntax::Function {
+                    body, body_span, ..
+                } = &function.syntax
+                {
+                    self.out
+                        .function_expressions
+                        .push(FunctionExpressionProducts {
+                            owner: expression.id,
+                            span: expression.span,
+                            body_span: *body_span,
+                            inline_body_supported: body.iter().all(|statement| {
+                                matches!(
+                                    statement.kind,
+                                    StatementKind::Variable(_)
+                                        | StatementKind::Return(_)
+                                        | StatementKind::Expression(_)
+                                        | StatementKind::Empty
+                                )
+                            }),
+                        });
+                }
+                if matches!(
+                    &function.syntax,
+                    FunctionLikeSyntax::Function { name: Some(name), .. }
+                        if name.token_kind != TokenKind::Identifier
+                ) {
+                    self.out
+                        .function_like_gaps
+                        .push((expression.id, SemanticGap::FunctionExpressionBindingName));
+                }
+                if !function.type_parameters.is_empty() {
+                    self.out
+                        .function_like_gaps
+                        .push((expression.id, SemanticGap::FunctionLikeTypeParameters));
+                }
+                if function
+                    .parameters
+                    .iter()
+                    .any(|parameter| parameter.name_kind == ParameterNameKind::This)
+                {
+                    self.out
+                        .function_like_gaps
+                        .push((expression.id, SemanticGap::ExplicitThisParameter));
+                }
+                if function
+                    .parameters
+                    .iter()
+                    .any(|parameter| parameter.name_kind == ParameterNameKind::BindingPattern)
+                {
+                    self.out
+                        .function_like_binding_patterns
+                        .insert(expression.id);
+                }
+                let body_start = match &function.syntax {
+                    FunctionLikeSyntax::Arrow(ArrowBody::Expression(body)) => body.span.start,
+                    FunctionLikeSyntax::Arrow(ArrowBody::Block(statements))
+                    | FunctionLikeSyntax::Function {
+                        body: statements, ..
+                    } => first_statement_start(statements, expression.span.end),
+                };
+                self.out.function_like_signatures.push(Span {
+                    file: expression.span.file,
+                    start: expression.span.start,
+                    end: body_start,
+                });
+                let recovered = self.record_recovery(expression.id, expression.span, body_start);
+                self.visit_parameter_initializers(&function.parameters);
+                match &function.syntax {
+                    FunctionLikeSyntax::Arrow(ArrowBody::Expression(body)) => {
+                        self.visit_expression(body)
+                    }
+                    FunctionLikeSyntax::Arrow(ArrowBody::Block(statements))
+                    | FunctionLikeSyntax::Function {
+                        body: statements, ..
+                    } => {
                         self.visit_statement_list(statements, recovered);
                     }
                 }
@@ -210,13 +336,24 @@ impl FlowRegionCollector<'_> {
             ExpressionKind::As { expression, .. } => self.visit_expression(expression),
         }
     }
-
-    fn signature_contains_recovery(&self, span: Span, body_start: u32) -> bool {
-        self.recoveries.iter().any(|recovery| {
-            span.start <= recovery.authored_span.start
-                && recovery.authored_span.end <= span.end
-                && recovery.authored_span.start < body_start
-        })
+    fn record_recovery(&mut self, owner: NodeId, span: Span, body_start: u32) -> bool {
+        let gap = self
+            .recoveries
+            .iter()
+            .filter(|recovery| {
+                span.start <= recovery.authored_span.start
+                    && recovery.authored_span.end <= span.end
+                    && recovery.authored_span.start < body_start
+            })
+            .max_by_key(|recovery| recovery.kind == ParserRecoveryKind::GeneratorFunctionLike)
+            .map(|recovery| match recovery.kind {
+                ParserRecoveryKind::GeneratorFunctionLike => SyntaxGap::GeneratorFunctionLike,
+                _ => SyntaxGap::Expression,
+            });
+        if let Some(gap) = gap {
+            self.out.recovered_function_likes.insert((owner, gap));
+        }
+        gap.is_some()
     }
 
     fn statement_starts_flow_region(&self, statement: &Statement) -> bool {

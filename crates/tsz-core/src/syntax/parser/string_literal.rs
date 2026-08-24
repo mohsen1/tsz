@@ -1,5 +1,6 @@
 use super::super::{
-    ExtendedUnicodeStringLiteral, Statement, comments_form_extended_unicode_string_safe_file,
+    AuthoredLiteralKind, ExtendedUnicodeStringLiteral, SourceSyntaxFact, Statement,
+    comments_form_extended_unicode_string_safe_file,
     statements_form_extended_unicode_string_safe_file,
 };
 use super::{Parser, literals::unquote};
@@ -30,14 +31,13 @@ impl Parser<'_> {
         (scanned.span == token.span).then(|| scanned.syntax_literal())
     }
 
-    pub(super) fn finish_extended_unicode_string_source(
-        &mut self,
-        statements: &[Statement],
-    ) -> bool {
+    pub(super) fn finish_extended_unicode_string_source(&mut self, statements: &[Statement]) {
         let has_authored_string = !self.string_literals.is_empty();
         if !has_authored_string {
-            return false;
+            return;
         }
+        self.source_syntax_facts
+            .insert(SourceSyntaxFact::AuthoredExtendedUnicodeString);
         let owned = match self.string_literals.as_slice() {
             [literal] => {
                 literal.syntax_literal().validation_supported()
@@ -54,9 +54,7 @@ impl Parser<'_> {
             _ => false,
         };
         if !owned {
-            self.product_capabilities
-                .observe_unmodeled_extended_unicode_string();
+            self.observe_literal_source_context(AuthoredLiteralKind::ExtendedUnicodeString);
         }
-        true
     }
 }
