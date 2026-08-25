@@ -7,8 +7,8 @@ use rustc_hash::FxHashMap;
 
 use crate::source::{DeclId, FileId, NodeId, SourceKind, Span};
 use crate::syntax::{
-    ArrowBody, ClassDeclaration, ClassMemberKind, Expression, ExpressionKind, FunctionDeclaration,
-    FunctionLikeSyntax, Literal, ParameterNameKind, SourceUnit, Statement, StatementKind,
+    ClassDeclaration, ClassMemberKind, Expression, ExpressionKind, FunctionDeclaration,
+    FunctionLikeBody, Literal, ParameterNameKind, SourceUnit, Statement, StatementKind,
     SwitchClauseKind, TypeMember, TypeMemberKind, TypeMemberNameKind, TypeNode, TypeNodeKind,
     UnmodeledDeclarationHostFact, UnmodeledDeclarationHostKind,
 };
@@ -433,12 +433,10 @@ impl Binder {
                     Meaning::Type,
                 );
                 let member_scope = self.new_scope(scope, statement.id);
-                self.scope_for_node.insert(statement.id, member_scope);
                 self.bind_type_members(&declaration.members, member_scope);
             }
             StatementKind::Block(statements) => {
                 let child = self.new_scope(scope, statement.id);
-                self.scope_for_node.insert(statement.id, child);
                 for nested in statements {
                     self.bind_statement(nested, child, control);
                 }
@@ -452,7 +450,6 @@ impl Binder {
             }
             StatementKind::Switch(control_flow) => {
                 let child = self.new_scope(scope, statement.id);
-                self.scope_for_node.insert(statement.id, child);
                 self.bind_expression(&control_flow.expression, scope, control);
                 for clause in &control_flow.clauses {
                     if let SwitchClauseKind::Case(expression) = &clause.kind {
@@ -548,81 +545,30 @@ impl Binder {
         );
 
         let member_scope = self.new_scope(container, member.id);
-        self.scope_for_node.insert(member.id, member_scope);
-        match &member.kind {
-            TypeMemberKind::Property {
-                name,
-                ty,
-                initializer,
-                ..
-            } => {
-                self.bind_type_member_name(name, container);
-                if let Some(ty) = ty {
-                    self.bind_type_node(ty, member_scope);
-                }
-                if let Some(initializer) = initializer {
-                    self.bind_expression(initializer, member_scope, None);
-                }
+        if let TypeMemberKind::Property {
+            name,
+            ty,
+            initializer,
+            ..
+        } = &member.kind
+        {
+            self.bind_type_member_name(name, container);
+            if let Some(ty) = ty {
+                self.bind_type_node(ty, member_scope);
             }
-            TypeMemberKind::Method {
-                name,
-                type_parameters,
-                parameters,
-                return_type,
-                ..
-            } => {
-                self.bind_type_member_name(name, container);
-                self.bind_type_parameters(type_parameters, member_scope);
-                self.bind_signature_types(
-                    parameters,
-                    return_type.as_ref(),
-                    member_scope,
-                    member_scope,
-                );
+            if let Some(initializer) = initializer {
+                self.bind_expression(initializer, member_scope, None);
             }
-            TypeMemberKind::Accessor {
-                name,
-                parameters,
-                return_type,
-                ..
-            } => {
-                self.bind_type_member_name(name, container);
-                self.bind_signature_types(
-                    parameters,
-                    return_type.as_ref(),
-                    member_scope,
-                    member_scope,
-                );
-            }
-            TypeMemberKind::Call {
-                type_parameters,
-                parameters,
-                return_type,
-                ..
-            }
-            | TypeMemberKind::Construct {
-                type_parameters,
-                parameters,
-                return_type,
-            } => {
-                self.bind_type_parameters(type_parameters, member_scope);
-                self.bind_signature_types(
-                    parameters,
-                    return_type.as_ref(),
-                    member_scope,
-                    member_scope,
-                );
-            }
-            TypeMemberKind::Index {
-                parameters,
-                value_type,
-            } => self.bind_signature_types(
-                parameters,
-                value_type.as_ref(),
-                member_scope,
-                member_scope,
-            ),
+            return;
         }
+        let Some((name, type_parameters, parameters, return_type)) = member.kind.signature() else {
+            return;
+        };
+        if let Some(name) = name {
+            self.bind_type_member_name(name, container);
+        }
+        self.bind_type_parameters(type_parameters, member_scope);
+        self.bind_signature_types(parameters, return_type, member_scope, member_scope);
     }
 
     fn bind_type_member_name(&mut self, name: &crate::syntax::TypeMemberName, scope: ScopeId) {
@@ -735,7 +681,6 @@ impl Binder {
                 );
                 self.anonymous_signatures.insert(*id, declaration);
                 let signature_scope = self.new_scope(scope, *id);
-                self.scope_for_node.insert(*id, signature_scope);
                 self.bind_type_parameters(type_parameters, signature_scope);
                 self.bind_signature_types(
                     parameters,
@@ -804,15 +749,15 @@ impl Binder {
         instance: DeclId,
         constructor: DeclId,
     ) {
-        let class_scope = self.new_scope_with_lexical_this(parent, owner, None);
-        self.scope_for_node.insert(owner, class_scope);
+        let class_scope = self.new_scope_with_lexical_this(parent, Some(owner), None);
         for member in &declaration.members {
             let lexical_this = if member.modifiers.static_member {
                 LexicalThisOwner::ClassConstructor(constructor)
             } else {
                 LexicalThisOwner::ClassInstance(instance)
             };
-            match &member.kind {
+            let (type_parameters, parameters, return_type, body, lexical_this) = match &member.kind
+            {
                 ClassMemberKind::Property {
                     annotation,
                     initializer,
@@ -824,56 +769,48 @@ impl Binder {
                         Some(lexical_this),
                         FlowContainerKind::Creation,
                     );
-                    self.scope_for_node.insert(member.id, member_scope);
                     if let Some(annotation) = annotation {
                         self.bind_type_node(annotation, member_scope);
                     }
                     if let Some(initializer) = initializer {
                         self.bind_expression(initializer, member_scope, None);
                     }
+                    continue;
                 }
                 ClassMemberKind::Constructor {
                     parameters, body, ..
-                } => {
-                    let member_scope = self.new_flow_scope(
-                        class_scope,
-                        member.id,
-                        Some(LexicalThisOwner::ClassInstance(instance)),
-                        FlowContainerKind::Ordinary,
-                    );
-                    self.scope_for_node.insert(member.id, member_scope);
-                    let body_scope = self.new_anonymous_scope(member_scope);
-                    self.bind_signature_types(parameters, None, member_scope, member_scope);
-                    for statement in body {
-                        self.bind_statement(statement, body_scope, None);
-                    }
-                }
+                } => (
+                    &[][..],
+                    parameters.as_slice(),
+                    None,
+                    body.as_slice(),
+                    LexicalThisOwner::ClassInstance(instance),
+                ),
                 ClassMemberKind::Method {
                     type_parameters,
                     parameters,
                     return_type,
                     body,
                     ..
-                } => {
-                    let member_scope = self.new_flow_scope(
-                        class_scope,
-                        member.id,
-                        Some(lexical_this),
-                        FlowContainerKind::Ordinary,
-                    );
-                    self.scope_for_node.insert(member.id, member_scope);
-                    self.bind_type_parameters(type_parameters, member_scope);
-                    let body_scope = self.new_anonymous_scope(member_scope);
-                    self.bind_signature_types(
-                        parameters,
-                        return_type.as_ref(),
-                        member_scope,
-                        member_scope,
-                    );
-                    for statement in body {
-                        self.bind_statement(statement, body_scope, None);
-                    }
-                }
+                } => (
+                    type_parameters.as_slice(),
+                    parameters.as_slice(),
+                    return_type.as_ref(),
+                    body.as_slice(),
+                    lexical_this,
+                ),
+            };
+            let member_scope = self.new_flow_scope(
+                class_scope,
+                member.id,
+                Some(lexical_this),
+                FlowContainerKind::Ordinary,
+            );
+            self.bind_type_parameters(type_parameters, member_scope);
+            let body_scope = self.new_anonymous_scope(member_scope);
+            self.bind_signature_types(parameters, return_type, member_scope, member_scope);
+            for statement in body {
+                self.bind_statement(statement, body_scope, None);
             }
         }
     }
@@ -968,83 +905,67 @@ impl Binder {
                 self.bind_expression_with_demand(object, scope, control, demand.element(index));
                 self.bind_expression(index, scope, control);
             }
-            ExpressionKind::FunctionLike(function) => match &function.syntax {
-                FunctionLikeSyntax::Arrow(body) => {
-                    let lexical_this = self.scopes[scope.0 as usize].lexical_this;
-                    let function_scope = self.new_flow_scope(
-                        scope,
-                        expression.id,
-                        lexical_this,
-                        FlowContainerKind::Creation,
-                    );
-                    self.scope_for_node.insert(expression.id, function_scope);
-                    self.bind_type_parameters(&function.type_parameters, function_scope);
-                    let body_scope = match body {
-                        ArrowBody::Expression(_) => function_scope,
-                        ArrowBody::Block(_) => self.new_anonymous_scope(function_scope),
-                    };
-                    self.bind_signature_types(
-                        &function.parameters,
-                        function.return_type.as_ref(),
-                        function_scope,
-                        function_scope,
-                    );
-                    match body {
-                        ArrowBody::Expression(body) => self.bind_expression(body, body_scope, None),
-                        ArrowBody::Block(statements) => {
-                            for statement in statements {
-                                self.bind_statement(statement, body_scope, None);
-                            }
+            ExpressionKind::FunctionLike(function) => {
+                let ordinary = function.syntax.function();
+                let (lexical_this, kind) = ordinary.map_or_else(
+                    || {
+                        (
+                            self.scopes[scope.0 as usize].lexical_this,
+                            FlowContainerKind::Creation,
+                        )
+                    },
+                    |_| (None, FlowContainerKind::Ordinary),
+                );
+                let function_scope = self.new_flow_scope(scope, expression.id, lexical_this, kind);
+                if let Some((name, _)) = ordinary {
+                    if let Some(name) = name {
+                        self.declare(
+                            function_scope,
+                            expression.id,
+                            &name.name,
+                            name.span,
+                            DeclarationKind::FunctionExpression,
+                            Meaning::Value,
+                        );
+                    } else {
+                        let start = expression.span.start;
+                        self.declare_unscoped(
+                            function_scope,
+                            expression.id,
+                            String::new(),
+                            Span {
+                                file: expression.span.file,
+                                start,
+                                end: start,
+                            },
+                            DeclarationKind::FunctionExpression,
+                            Meaning::Value,
+                        );
+                    }
+                }
+                self.bind_type_parameters(&function.type_parameters, function_scope);
+                let body = function.syntax.body();
+                let body_scope = match body {
+                    FunctionLikeBody::Expression(_) => function_scope,
+                    FunctionLikeBody::Statements(_) => self.new_anonymous_scope(function_scope),
+                };
+                self.bind_signature_types(
+                    &function.parameters,
+                    function.return_type.as_ref(),
+                    function_scope,
+                    function_scope,
+                );
+                match body {
+                    FunctionLikeBody::Expression(body) => {
+                        self.bind_expression(body, body_scope, None)
+                    }
+                    FunctionLikeBody::Statements(body) => {
+                        for statement in body {
+                            self.bind_statement(statement, body_scope, None);
                         }
                     }
                 }
-                FunctionLikeSyntax::Function { name, body, .. } => {
-                    let function_scope = self.new_flow_scope(
-                        scope,
-                        expression.id,
-                        None,
-                        FlowContainerKind::Ordinary,
-                    );
-                    self.scope_for_node.insert(expression.id, function_scope);
-                    match name {
-                        Some(name) => {
-                            self.declare(
-                                function_scope,
-                                expression.id,
-                                &name.name,
-                                name.span,
-                                DeclarationKind::FunctionExpression,
-                                Meaning::Value,
-                            );
-                        }
-                        None => {
-                            self.declare_unscoped(
-                                function_scope,
-                                expression.id,
-                                String::new(),
-                                Span {
-                                    file: expression.span.file,
-                                    start: expression.span.start,
-                                    end: expression.span.start,
-                                },
-                                DeclarationKind::FunctionExpression,
-                                Meaning::Value,
-                            );
-                        }
-                    }
-                    self.bind_type_parameters(&function.type_parameters, function_scope);
-                    let body_scope = self.new_anonymous_scope(function_scope);
-                    self.bind_signature_types(
-                        &function.parameters,
-                        function.return_type.as_ref(),
-                        function_scope,
-                        function_scope,
-                    );
-                    for statement in body {
-                        self.bind_statement(statement, body_scope, None);
-                    }
-                }
-            },
+            }
             ExpressionKind::Binary { left, right, .. } => {
                 self.bind_expression(left, scope, control);
                 self.bind_expression(right, scope, control);
@@ -1131,7 +1052,6 @@ impl Binder {
 
     fn bind_function(&mut self, owner: NodeId, declaration: &FunctionDeclaration, parent: ScopeId) {
         let scope = self.new_flow_scope(parent, owner, None, FlowContainerKind::Ordinary);
-        self.scope_for_node.insert(owner, scope);
         self.bind_type_parameters(&declaration.type_parameters, scope);
         let body_scope = if declaration.has_body {
             self.new_anonymous_scope(scope)
@@ -1151,13 +1071,13 @@ impl Binder {
 
     fn new_scope(&mut self, parent: ScopeId, owner: NodeId) -> ScopeId {
         let lexical_this = self.scopes[parent.0 as usize].lexical_this;
-        self.new_scope_with_lexical_this(parent, owner, lexical_this)
+        self.new_scope_with_lexical_this(parent, Some(owner), lexical_this)
     }
 
     fn new_scope_with_lexical_this(
         &mut self,
         parent: ScopeId,
-        owner: NodeId,
+        owner: Option<NodeId>,
         lexical_this: Option<LexicalThisOwner>,
     ) -> ScopeId {
         let id = ScopeId(self.scopes.len() as u32);
@@ -1165,11 +1085,14 @@ impl Binder {
         self.scopes.push(Scope {
             id,
             parent: Some(parent),
-            owner: Some(owner),
+            owner,
             names: BTreeMap::new(),
             lexical_this,
             flow_container,
         });
+        if let Some(owner) = owner {
+            self.scope_for_node.insert(owner, id);
+        }
         id
     }
 
@@ -1180,24 +1103,14 @@ impl Binder {
         lexical_this: Option<LexicalThisOwner>,
         kind: FlowContainerKind,
     ) -> ScopeId {
-        let scope = self.new_scope_with_lexical_this(parent, owner, lexical_this);
+        let scope = self.new_scope_with_lexical_this(parent, Some(owner), lexical_this);
         self.scopes[scope.0 as usize].flow_container = Some(FlowContainer { owner, kind });
         scope
     }
 
     fn new_anonymous_scope(&mut self, parent: ScopeId) -> ScopeId {
-        let id = ScopeId(self.scopes.len() as u32);
         let lexical_this = self.scopes[parent.0 as usize].lexical_this;
-        let flow_container = self.scopes[parent.0 as usize].flow_container;
-        self.scopes.push(Scope {
-            id,
-            parent: Some(parent),
-            owner: None,
-            names: BTreeMap::new(),
-            lexical_this,
-            flow_container,
-        });
-        id
+        self.new_scope_with_lexical_this(parent, None, lexical_this)
     }
 
     fn declare_unscoped(
@@ -1234,19 +1147,7 @@ impl Binder {
         kind: DeclarationKind,
         meaning: Meaning,
     ) -> DeclId {
-        let id = DeclId {
-            file: self.file,
-            local: self.declarations.len() as u32,
-        };
-        self.declarations.push(BoundDeclaration {
-            id,
-            scope,
-            owner,
-            name: name.to_string(),
-            name_span,
-            kind,
-            meaning,
-        });
+        let id = self.declare_unscoped(scope, owner, name.to_string(), name_span, kind, meaning);
         self.scopes[scope.0 as usize]
             .names
             .entry(name.to_string())

@@ -5,11 +5,20 @@ use crate::semantics::relation::RelationContext;
 use crate::semantics::types::{Completion, DeferredType, TypeId, TypeKind};
 use crate::source::{DeclId, FileId, NodeId};
 use crate::syntax::{
-    ExpressionKind, KeywordType, Parameter, ParameterModifier, TypeMember, TypeMemberKind,
-    TypeNode, TypeNodeKind,
+    ExpressionKind, KeywordType, Parameter, ParameterModifier, ParameterModifierNode, TypeMember,
+    TypeMemberKind, TypeNode, TypeNodeKind,
 };
 
 use super::{Checker, DeclarationModel};
+
+macro_rules! d {
+    ($checker:expr, $file:expr, $span:expr, $code:expr) => {
+        $checker.push_diagnostic($file, $span, grammar_message($code).into(), $code)
+    };
+    ($checker:expr, $file:expr, $span:expr, $message:expr, $code:expr) => {
+        $checker.push_diagnostic($file, $span, ($message).into(), $code)
+    };
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum IndexKeySyntax {
@@ -83,12 +92,7 @@ impl Checker<'_> {
             | TypeMemberKind::Construct { .. }
             | TypeMemberKind::Index { .. } => first.span,
         };
-        self.push_diagnostic(
-            file,
-            span,
-            "A mapped type may not declare properties or methods.".to_string(),
-            7061,
-        );
+        d!(self, file, span, 7061);
     }
 
     /// TypeScript reports the declaration-level implicit-`any` facts for
@@ -107,12 +111,8 @@ impl Checker<'_> {
                 ..
             } => {
                 if let Some(name_text) = name.semantic_name() {
-                    self.push_diagnostic(
-                        file,
-                        name.span,
-                        format!("Member '{name_text}' implicitly has an 'any' type."),
-                        7008,
-                    );
+                    let message = format!("Member '{name_text}' implicitly has an 'any' type.");
+                    d!(self, file, name.span, message, 7008);
                 } else {
                     let _ = self.require_completion(Completion::<()>::Deferred);
                 }
@@ -123,36 +123,20 @@ impl Checker<'_> {
                 ..
             } => {
                 if let Some(name_text) = name.semantic_name() {
-                    self.push_diagnostic(
-                        file,
-                        member.span,
-                        format!(
-                            "'{name_text}', which lacks return-type annotation, implicitly has an 'any' return type."
-                        ),
-                        7010,
+                    let message = format!(
+                        "'{name_text}', which lacks return-type annotation, implicitly has an 'any' return type."
                     );
+                    d!(self, file, member.span, message, 7010);
                 } else {
                     let _ = self.require_completion(Completion::<()>::Deferred);
                 }
             }
             TypeMemberKind::Call {
                 return_type: None, ..
-            } => self.push_diagnostic(
-                file,
-                member.span,
-                "Call signature, which lacks return-type annotation, implicitly has an 'any' return type."
-                    .to_string(),
-                7020,
-            ),
+            } => d!(self, file, member.span, 7020),
             TypeMemberKind::Construct {
                 return_type: None, ..
-            } => self.push_diagnostic(
-                file,
-                member.span,
-                "Construct signature, which lacks return-type annotation, implicitly has an 'any' return type."
-                    .to_string(),
-                7013,
-            ),
+            } => d!(self, file, member.span, 7013),
             TypeMemberKind::Property { .. }
             | TypeMemberKind::Method { .. }
             | TypeMemberKind::Call { .. }
@@ -174,23 +158,12 @@ impl Checker<'_> {
             .iter()
             .filter(|parameter| parameter.annotation.is_none() && parameter.initializer.is_none())
         {
-            let (code, message) = if parameter.rest {
-                (
-                    7019,
-                    format!(
-                        "Rest parameter '{}' implicitly has an 'any[]' type.",
-                        parameter.name
-                    ),
-                )
+            let (code, kind, ty) = if parameter.rest {
+                (7019, "Rest parameter", "any[]")
             } else {
-                (
-                    7006,
-                    format!(
-                        "Parameter '{}' implicitly has an 'any' type.",
-                        parameter.name
-                    ),
-                )
+                (7006, "Parameter", "any")
             };
+            let message = format!("{kind} '{}' implicitly has an '{ty}' type.", parameter.name);
             let span = if parameter.rest {
                 parameter
                     .rest_span
@@ -198,7 +171,7 @@ impl Checker<'_> {
             } else {
                 parameter.name_span
             };
-            self.push_diagnostic(file, span, message, code);
+            d!(self, file, span, message, code);
         }
     }
 
@@ -220,12 +193,8 @@ impl Checker<'_> {
             parameter.implementation_name_is_recovery_free()
                 && occurrences[parameter.name.as_str()] > 1
         }) {
-            self.push_diagnostic(
-                file,
-                parameter.name_span,
-                format!("Duplicate identifier '{}'.", parameter.name),
-                2300,
-            );
+            let message = format!("Duplicate identifier '{}'.", parameter.name);
+            d!(self, file, parameter.name_span, message, 2300);
         }
 
         for parameter in parameters.iter().filter(|parameter| parameter.rest) {
@@ -241,70 +210,34 @@ impl Checker<'_> {
     ) {
         for parameter in parameters {
             if parameter.optional && parameter.initializer.is_some() {
-                self.push_diagnostic(
-                    file,
-                    parameter.name_span,
-                    "Parameter cannot have question mark and initializer.".to_string(),
-                    1015,
-                );
+                d!(self, file, parameter.name_span, 1015);
             }
             if parameter.rest && parameter.initializer.is_some() {
-                self.push_diagnostic(
-                    file,
-                    parameter.name_span,
-                    "A rest parameter cannot have an initializer.".to_string(),
-                    1048,
-                );
+                d!(self, file, parameter.name_span, 1048);
             }
-            let parameter_property_modifiers = parameter.modifiers.iter().any(|modifier| {
-                matches!(
-                    modifier.kind,
-                    ParameterModifier::Public
-                        | ParameterModifier::Protected
-                        | ParameterModifier::Private
-                        | ParameterModifier::Readonly
-                        | ParameterModifier::Override
-                )
-            });
-            if parameter_property_modifiers
+            let has_property_modifier = parameter.modifiers.iter().any(is_property_modifier);
+            if has_property_modifier
                 && !matches!(
                     host,
                     ParameterGrammarHost::Implementation { constructor: true }
                 )
             {
-                self.push_diagnostic(
-                    file,
-                    parameter.span,
-                    "A parameter property is only allowed in a constructor implementation."
-                        .to_string(),
-                    2369,
-                );
-            } else if parameter_property_modifiers {
+                d!(self, file, parameter.span, 2369);
+            } else if has_property_modifier {
                 // Parameter properties also synthesize instance members and
                 // runtime assignments. Until the class-shape owner consumes
                 // them, the checker must not cache a property-free instance.
                 let _ = self.require_completion(Completion::<()>::Deferred);
             }
-            if parameter.modifiers.iter().any(|modifier| {
-                !matches!(
-                    modifier.kind,
-                    ParameterModifier::Public
-                        | ParameterModifier::Protected
-                        | ParameterModifier::Private
-                        | ParameterModifier::Readonly
-                        | ParameterModifier::Override
-                )
-            }) {
+            if parameter
+                .modifiers
+                .iter()
+                .any(|modifier| !is_property_modifier(modifier))
+            {
                 let _ = self.require_completion(Completion::<()>::Deferred);
             }
             if parameter.initializer.is_some() && matches!(host, ParameterGrammarHost::Signature) {
-                self.push_diagnostic(
-                    file,
-                    parameter.span,
-                    "A parameter initializer is only allowed in a function or constructor implementation."
-                        .to_string(),
-                    2371,
-                );
+                d!(self, file, parameter.span, 2371);
             }
             if parameter.annotation.is_none()
                 && parameter.initializer.as_ref().is_some_and(|initializer| {
@@ -346,22 +279,12 @@ impl Checker<'_> {
                 Some(RestTypeSyntax::Any | RestTypeSyntax::ErrorCascade)
             );
         if matches!(declared_array_like, Some(RestTypeSyntax::NonArray)) || optional_breaks_array {
-            self.push_diagnostic(
-                file,
-                parameter.span,
-                "A rest parameter must be of an array type.".to_string(),
-                2370,
-            );
+            d!(self, file, parameter.span, 2370);
         } else if matches!(declared_array_like, Some(RestTypeSyntax::Unknown)) {
             let _ = self.require_completion(Completion::<()>::Deferred);
         }
         if report_optional && let Some(optional_span) = parameter.optional_span {
-            self.push_diagnostic(
-                file,
-                optional_span,
-                "A rest parameter cannot be optional.".to_string(),
-                1047,
-            );
+            d!(self, file, optional_span, 1047);
         }
     }
 
@@ -536,12 +459,7 @@ impl Checker<'_> {
             {
                 for (span, optional) in methods {
                     if optional != canonical_optional {
-                        self.push_diagnostic(
-                            file,
-                            span,
-                            "Overload signatures must all be optional or required.".to_string(),
-                            2386,
-                        );
+                        d!(self, file, span, 2386);
                     }
                 }
             }
@@ -561,95 +479,39 @@ impl Checker<'_> {
             let span = parameters
                 .first()
                 .map_or(member.span, |parameter| parameter.name_span);
-            self.push_diagnostic(
-                file,
-                span,
-                "An index signature must have exactly one parameter.".to_string(),
-                1096,
-            );
+            d!(self, file, span, 1096);
             return;
         };
         if let Some(span) = parameter.rest_span {
-            self.push_diagnostic(
-                file,
-                span,
-                "An index signature cannot have a rest parameter.".to_string(),
-                1017,
-            );
+            d!(self, file, span, 1017);
             self.validate_rest_parameter_type(file, scope, parameter, type_parameters, false);
             return;
         }
         if !parameter.modifiers.is_empty() {
-            if parameter.modifiers.iter().any(|modifier| {
-                matches!(
-                    modifier.kind,
-                    ParameterModifier::Public
-                        | ParameterModifier::Protected
-                        | ParameterModifier::Private
-                        | ParameterModifier::Readonly
-                        | ParameterModifier::Override
-                )
-            }) {
-                self.push_diagnostic(
-                    file,
-                    parameter.span,
-                    "A parameter property is only allowed in a constructor implementation."
-                        .to_string(),
-                    2369,
-                );
+            if parameter.modifiers.iter().any(is_property_modifier) {
+                d!(self, file, parameter.span, 2369);
             }
-            self.push_diagnostic(
-                file,
-                parameter.name_span,
-                "An index signature parameter cannot have an accessibility modifier.".to_string(),
-                1018,
-            );
+            d!(self, file, parameter.name_span, 1018);
             return;
         }
         if let Some(span) = parameter.optional_span {
-            self.push_diagnostic(
-                file,
-                span,
-                "An index signature parameter cannot have a question mark.".to_string(),
-                1019,
-            );
+            d!(self, file, span, 1019);
             return;
         }
         if parameter.initializer.is_some() {
-            self.push_diagnostic(
-                file,
-                parameter.name_span,
-                "An index signature parameter cannot have an initializer.".to_string(),
-                1020,
-            );
-            self.push_diagnostic(
-                file,
-                parameter.span,
-                "A parameter initializer is only allowed in a function or constructor implementation."
-                    .to_string(),
-                2371,
-            );
+            d!(self, file, parameter.name_span, 1020);
+            d!(self, file, parameter.span, 2371);
             return;
         }
         let Some(annotation) = &parameter.annotation else {
-            self.push_diagnostic(
-                file,
-                parameter.name_span,
-                "An index signature parameter must have a type annotation.".to_string(),
-                1022,
-            );
+            d!(self, file, parameter.name_span, 1022);
             return;
         };
         if matches!(
             annotation.kind,
             TypeNodeKind::Keyword(KeywordType::UniqueSymbol)
         ) {
-            self.push_diagnostic(
-                file,
-                annotation.span,
-                "'unique symbol' types are not allowed here.".to_string(),
-                1335,
-            );
+            d!(self, file, annotation.span, 1335);
             return;
         }
         let invalid = match self.index_key_syntax(
@@ -659,27 +521,16 @@ impl Checker<'_> {
             type_parameters,
             &mut HashSet::new(),
         ) {
-            IndexKeySyntax::LiteralOrGeneric => Some((
-                1337,
-                "An index signature parameter type cannot be a literal type or generic type. Consider using a mapped object type instead.",
-            )),
-            IndexKeySyntax::Invalid => Some((
-                1268,
-                "An index signature parameter type must be 'string', 'number', 'symbol', or a template literal type.",
-            )),
+            IndexKeySyntax::LiteralOrGeneric => Some(1337),
+            IndexKeySyntax::Invalid => Some(1268),
             IndexKeySyntax::Valid | IndexKeySyntax::Unknown => None,
         };
-        if let Some((code, message)) = invalid {
-            self.push_diagnostic(file, parameter.name_span, message.to_string(), code);
+        if let Some(code) = invalid {
+            d!(self, file, parameter.name_span, code);
             return;
         }
         if value_type.is_none() {
-            self.push_diagnostic(
-                file,
-                member.span,
-                "An index signature must have a type annotation.".to_string(),
-                1021,
-            );
+            d!(self, file, member.span, 1021);
         }
     }
 
@@ -786,5 +637,52 @@ const fn combine_index_key_syntax(left: IndexKeySyntax, right: IndexKeySyntax) -
         (IndexKeySyntax::Invalid, _) | (_, IndexKeySyntax::Invalid) => IndexKeySyntax::Invalid,
         (IndexKeySyntax::Unknown, _) | (_, IndexKeySyntax::Unknown) => IndexKeySyntax::Unknown,
         (IndexKeySyntax::Valid, IndexKeySyntax::Valid) => IndexKeySyntax::Valid,
+    }
+}
+
+const fn is_property_modifier(modifier: &ParameterModifierNode) -> bool {
+    matches!(
+        modifier.kind,
+        ParameterModifier::Public
+            | ParameterModifier::Protected
+            | ParameterModifier::Private
+            | ParameterModifier::Readonly
+            | ParameterModifier::Override
+    )
+}
+
+const fn grammar_message(code: u32) -> &'static str {
+    match code {
+        1015 => "Parameter cannot have question mark and initializer.",
+        1017 => "An index signature cannot have a rest parameter.",
+        1018 => "An index signature parameter cannot have an accessibility modifier.",
+        1019 => "An index signature parameter cannot have a question mark.",
+        1020 => "An index signature parameter cannot have an initializer.",
+        1021 => "An index signature must have a type annotation.",
+        1022 => "An index signature parameter must have a type annotation.",
+        1047 => "A rest parameter cannot be optional.",
+        1048 => "A rest parameter cannot have an initializer.",
+        1096 => "An index signature must have exactly one parameter.",
+        1268 => {
+            "An index signature parameter type must be 'string', 'number', 'symbol', or a template literal type."
+        }
+        1335 => "'unique symbol' types are not allowed here.",
+        1337 => {
+            "An index signature parameter type cannot be a literal type or generic type. Consider using a mapped object type instead."
+        }
+        2369 => "A parameter property is only allowed in a constructor implementation.",
+        2370 => "A rest parameter must be of an array type.",
+        2371 => {
+            "A parameter initializer is only allowed in a function or constructor implementation."
+        }
+        2386 => "Overload signatures must all be optional or required.",
+        7013 => {
+            "Construct signature, which lacks return-type annotation, implicitly has an 'any' return type."
+        }
+        7020 => {
+            "Call signature, which lacks return-type annotation, implicitly has an 'any' return type."
+        }
+        7061 => "A mapped type may not declare properties or methods.",
+        _ => unreachable!(),
     }
 }

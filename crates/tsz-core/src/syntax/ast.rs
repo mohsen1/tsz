@@ -958,6 +958,53 @@ pub enum TypeMemberKind {
     },
 }
 
+type TypeMemberSignature<'a> = (
+    Option<&'a TypeMemberName>,
+    &'a [TypeParameterDeclaration],
+    &'a [Parameter],
+    Option<&'a TypeNode>,
+);
+
+impl TypeMemberKind {
+    pub(crate) fn signature(&self) -> Option<TypeMemberSignature<'_>> {
+        match self {
+            Self::Method {
+                name,
+                type_parameters,
+                parameters,
+                return_type,
+                ..
+            } => Some((
+                Some(name),
+                type_parameters,
+                parameters,
+                return_type.as_ref(),
+            )),
+            Self::Accessor {
+                name,
+                parameters,
+                return_type,
+                ..
+            } => Some((Some(name), &[], parameters, return_type.as_ref())),
+            Self::Call {
+                type_parameters,
+                parameters,
+                return_type,
+            }
+            | Self::Construct {
+                type_parameters,
+                parameters,
+                return_type,
+            } => Some((None, type_parameters, parameters, return_type.as_ref())),
+            Self::Index {
+                parameters,
+                value_type,
+            } => Some((None, &[], parameters, value_type.as_ref())),
+            Self::Property { .. } => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct TypeNode {
     pub span: Span,
@@ -1430,9 +1477,50 @@ pub struct FunctionLikeExpression {
 pub enum FunctionLikeSyntax {
     Arrow(ArrowBody),
     Function {
+        kind: FunctionLikeFunctionKind,
         name: Option<AuthoredBindingName>,
         body: Vec<Statement>,
     },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FunctionLikeFunctionKind {
+    Expression,
+    ObjectMethod,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) enum FunctionLikeBody<'a> {
+    Expression(&'a Expression),
+    Statements(&'a [Statement]),
+}
+
+impl FunctionLikeSyntax {
+    pub(crate) fn body(&self) -> FunctionLikeBody<'_> {
+        match self {
+            Self::Arrow(ArrowBody::Expression(body)) => FunctionLikeBody::Expression(body),
+            Self::Arrow(ArrowBody::Block(body)) | Self::Function { body, .. } => {
+                FunctionLikeBody::Statements(body)
+            }
+        }
+    }
+
+    pub(crate) fn function(&self) -> Option<(&Option<AuthoredBindingName>, &[Statement])> {
+        match self {
+            Self::Function { name, body, .. } => Some((name, body)),
+            Self::Arrow(_) => None,
+        }
+    }
+
+    pub(crate) const fn is_object_method(&self) -> bool {
+        matches!(
+            self,
+            Self::Function {
+                kind: FunctionLikeFunctionKind::ObjectMethod,
+                ..
+            }
+        )
+    }
 }
 
 #[derive(Debug, Clone)]

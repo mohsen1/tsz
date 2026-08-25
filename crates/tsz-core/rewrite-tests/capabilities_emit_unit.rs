@@ -3,6 +3,36 @@ use super::*;
 use crate::program::{CompileExitStatus, Compiler, SemanticCompletion, SourceInput};
 
 #[test]
+fn bodyless_object_method_records_typed_model_and_program_service_nonclaims() {
+    let file = program_file(
+        0,
+        "bodyless.ts",
+        "const holder = { renamed<Value>();, sibling: 1 };",
+    );
+    let analysis = default_analysis(&file);
+    let owner = analysis.function_like_owners[0].1;
+    let node = CapabilityScope::node(file.source.id, owner);
+    for (target, scope) in [
+        (CapabilityTarget::DeclarationModel, node),
+        (CapabilityTarget::QuickInfo, CapabilityScope::Program),
+        (CapabilityTarget::Definition, CapabilityScope::Program),
+        (CapabilityTarget::References, CapabilityScope::Program),
+        (CapabilityTarget::Highlights, CapabilityScope::Program),
+        (CapabilityTarget::Rename, CapabilityScope::Program),
+    ] {
+        let CapabilityClaim::Nonclaimed(reasons) = analysis.claim(target, scope) else {
+            panic!("{target:?} must wait for object-method identity");
+        };
+        assert!(reasons.into_iter().any(|reason| {
+            reason.scope == scope
+                && reason.reason == NonclaimReason::Semantic(SemanticGap::FunctionLikeService)
+                && reason.deletion
+                    == DeletionCondition::SemanticOwner(SemanticGap::FunctionLikeService)
+        }));
+    }
+}
+
+#[test]
 fn typescript_type_declarations_preserve_emit_claims() {
     let file = program_file(
         0,

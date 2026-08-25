@@ -17,6 +17,7 @@ use super::{
 };
 
 mod flow_containment;
+mod function_products;
 use flow_containment::FileBoundary;
 
 /// A compiler operation or externally visible product whose answer must be
@@ -90,7 +91,7 @@ pub(crate) enum SyntaxGap {
     FunctionLikeBindingPattern,
     FunctionExpressionOuterComments,
     FunctionExpressionRecovery,
-    FunctionExpressionPrinter,
+    FunctionLikePrinter,
     AngleAssertion,
     RejectedGenericArrowPrefix,
     Template,
@@ -115,7 +116,7 @@ pub(crate) enum SemanticGap {
     FunctionLikeTypeParameters,
     FunctionExpressionBindingName,
     DeclarationFunctionSummary,
-    FunctionExpressionQuickInfo,
+    FunctionLikeService,
     ExplicitThisParameter,
 }
 
@@ -1114,45 +1115,13 @@ fn derive_file_nonclaims(
             add_javascript(nonclaims, CapabilityScope::node(id, statement.id), gap);
         }
     }
-    for function in nodes.function_expressions {
-        let owner = function.owner;
-        for (target, gap) in [
-            (
-                CapabilityTarget::Declaration,
-                SemanticGap::DeclarationFunctionSummary,
-            ),
-            (
-                CapabilityTarget::QuickInfo,
-                SemanticGap::FunctionExpressionQuickInfo,
-            ),
-        ] {
-            add_semantic(nonclaims, &[target], CapabilityScope::node(id, owner), gap);
-        }
-        let scope = CapabilityScope::node(id, owner);
-        if file.syntax.parser_recovery_facts().iter().any(|recovery| {
-            function.span.start <= recovery.authored_span.start
-                && recovery.authored_span.end <= function.span.end
-        }) {
-            add_javascript(nonclaims, scope, SyntaxGap::FunctionExpressionRecovery);
-        }
-        let has_owned_comment = file
-            .syntax
-            .comments()
-            .iter()
-            .any(|comment| span_owns_comment(function.span, comment));
-        if let Some(root) = file.syntax.statements.iter().find(|root| {
-            root.span.start <= function.span.start && function.span.end <= root.span.end
-        }) && file.syntax.comments().iter().any(|comment| {
-            span_owns_comment(root.span, comment) && !span_owns_comment(function.span, comment)
-        }) {
-            let gap = SyntaxGap::FunctionExpressionOuterComments;
-            add_javascript(nonclaims, CapabilityScope::node(id, root.id), gap);
-        }
-        let body_is_single_line = span_is_single_line(&file.source, function.body_span);
-        if has_owned_comment || body_is_single_line && !function.inline_body_supported {
-            add_javascript(nonclaims, scope, SyntaxGap::FunctionExpressionPrinter);
-        }
-    }
+    function_products::add_nonclaims(
+        nonclaims,
+        file,
+        nodes.function_expressions,
+        nodes.object_method_owners,
+        nodes.object_methods,
+    );
     for (owner, gap) in nodes.recovered_function_likes {
         add_function_like_recovery_nonclaims(nonclaims, CapabilityScope::node(id, owner), gap);
     }

@@ -6,9 +6,9 @@ use crate::program::{CapabilityScope, CapabilityTarget};
 use crate::semantics::types::{Completion, TypeId};
 use crate::source::FileId;
 use crate::syntax::{
-    ArrowBody, ClassMemberKind, DescendantAdapter, DescendantContainer, Expression,
-    FunctionLikeExpression, FunctionLikeSyntax, NestedStatement, Statement, TypeNode, TypeNodeKind,
-    walk_function_like_descendants, walk_statement_descendants,
+    ClassMemberKind, DescendantAdapter, DescendantContainer, Expression, FunctionLikeBody,
+    FunctionLikeExpression, NestedStatement, Statement, TypeNode, TypeNodeKind,
+    TypeParameterDeclaration, walk_function_like_descendants, walk_statement_descendants,
 };
 
 use super::super::Checker;
@@ -68,14 +68,13 @@ impl Checker<'_> {
                 self.visit_required_type_node(file, function_scope, return_type, type_parameters);
             }
         }
-        match &function.syntax {
-            FunctionLikeSyntax::Arrow(ArrowBody::Expression(body)) => {
-                self.visit_required_expression(file, function_scope, body, type_parameters);
+        match function.syntax.body() {
+            FunctionLikeBody::Expression(body) => {
+                self.visit_required_expression(file, function_scope, body, type_parameters)
             }
-            FunctionLikeSyntax::Arrow(ArrowBody::Block(statements))
-            | FunctionLikeSyntax::Function {
-                body: statements, ..
-            } => self.visit_required_body(file, function_scope, statements, type_parameters),
+            FunctionLikeBody::Statements(body) => {
+                self.visit_required_body(file, function_scope, body, type_parameters)
+            }
         }
     }
 
@@ -249,10 +248,8 @@ impl<'ast, 'checker, 'program> DescendantAdapter<'ast>
         context: &Self::Context,
         container: DescendantContainer<'ast>,
     ) -> Self::Context {
-        let (owner, type_parameters) = match container {
-            DescendantContainer::Statement(statement) => {
-                (statement.id, Rc::clone(&context.type_parameters))
-            }
+        let (owner, identity, declarations): (_, _, &[TypeParameterDeclaration]) = match container {
+            DescendantContainer::Statement(statement) => (statement.id, None, &[]),
             DescendantContainer::Function(statement, declaration) => {
                 let identity = self
                     .checker
@@ -263,14 +260,7 @@ impl<'ast, 'checker, 'program> DescendantAdapter<'ast>
                         &declaration.name,
                     )
                     .unwrap_or_else(|| synthetic_identity(self.file, declaration.name_span.start));
-                (
-                    statement.id,
-                    Rc::new(self.checker.extend_type_parameters(
-                        identity,
-                        &declaration.type_parameters,
-                        &context.type_parameters,
-                    )),
-                )
+                (statement.id, Some(identity), &declaration.type_parameters)
             }
             DescendantContainer::Class(statement, declaration) => {
                 let identity = self
@@ -282,57 +272,45 @@ impl<'ast, 'checker, 'program> DescendantAdapter<'ast>
                         &declaration.name,
                     )
                     .unwrap_or_else(|| synthetic_identity(self.file, declaration.name_span.start));
-                (
-                    statement.id,
-                    Rc::new(self.checker.extend_type_parameters(
-                        identity,
-                        &declaration.type_parameters,
-                        &context.type_parameters,
-                    )),
-                )
+                (statement.id, Some(identity), &declaration.type_parameters)
             }
-            DescendantContainer::ClassMember(member) => {
-                let types = match &member.kind {
-                    ClassMemberKind::Method {
-                        type_parameters, ..
-                    } => Rc::new(self.checker.extend_type_parameters(
-                        super::synthetic_identity(self.file, member.name_span.start),
-                        type_parameters,
-                        &context.type_parameters,
-                    )),
-                    ClassMemberKind::Constructor { .. } | ClassMemberKind::Property { .. } => {
-                        Rc::clone(&context.type_parameters)
-                    }
-                };
-                (member.id, types)
-            }
+            DescendantContainer::ClassMember(member) => match &member.kind {
+                ClassMemberKind::Method {
+                    type_parameters, ..
+                } => (
+                    member.id,
+                    Some(synthetic_identity(self.file, member.name_span.start)),
+                    type_parameters.as_slice(),
+                ),
+                ClassMemberKind::Constructor { .. } | ClassMemberKind::Property { .. } => {
+                    (member.id, None, &[])
+                }
+            },
             DescendantContainer::FunctionLike(expression, function) => {
                 let owner = expression.id;
-                let identity = match &function.syntax {
-                    FunctionLikeSyntax::Function { name, .. } => self.checker.find_declaration(
+                let identity = match function.syntax.function() {
+                    Some((name, _)) => self.checker.find_declaration(
                         self.file,
                         owner,
                         DeclarationKind::FunctionExpression,
                         name.as_ref().map_or("", |name| name.name.as_str()),
                     ),
-                    FunctionLikeSyntax::Arrow(_) => {
-                        Some(super::synthetic_identity(self.file, expression.span.start))
-                    }
+                    None => Some(synthetic_identity(self.file, expression.span.start)),
                 };
-                let types = if function.type_parameters.is_empty() {
-                    Rc::clone(&context.type_parameters)
-                } else if let Some(identity) = identity {
-                    Rc::new(self.checker.extend_type_parameters(
-                        identity,
-                        &function.type_parameters,
-                        &context.type_parameters,
-                    ))
-                } else {
-                    let _ = self.checker.require_completion(Completion::<()>::Deferred);
-                    Rc::clone(&context.type_parameters)
-                };
-                (owner, types)
+                (owner, identity, &function.type_parameters)
             }
+        };
+        let type_parameters = if declarations.is_empty() {
+            Rc::clone(&context.type_parameters)
+        } else if let Some(identity) = identity {
+            Rc::new(self.checker.extend_type_parameters(
+                identity,
+                declarations,
+                &context.type_parameters,
+            ))
+        } else {
+            let _ = self.checker.require_completion(Completion::<()>::Deferred);
+            Rc::clone(&context.type_parameters)
         };
         RequiredDescendantContext {
             scope: self.checker.node_scope(self.file, owner, context.scope),

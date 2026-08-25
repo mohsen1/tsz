@@ -2,7 +2,7 @@ use super::Parser;
 use super::modifiers::Modifiers;
 use crate::syntax::{
     AuthoredBindingName, Expression, ExpressionKind, FunctionDeclaration, FunctionLikeExpression,
-    FunctionLikeSyntax, ParserRecoveryKind, TokenKind,
+    FunctionLikeFunctionKind, FunctionLikeSyntax, ParserRecoveryKind, TokenKind,
 };
 
 impl Parser<'_> {
@@ -69,8 +69,6 @@ impl Parser<'_> {
         }
     }
     pub(super) fn parse_function_expression(&mut self) -> Expression {
-        let diagnostic_count = self.diagnostics.len();
-        let recovery_fact_start = self.parser_recovery_facts.len();
         let has_leading_jsdoc = self.current_has_leading_jsdoc();
         let function_keyword = self.bump().span;
         let unmodeled_generator = self.eat(TokenKind::Star);
@@ -83,20 +81,43 @@ impl Parser<'_> {
                 token_kind,
             }
         });
+        self.parse_block_function_like(
+            function_keyword,
+            has_leading_jsdoc,
+            FunctionLikeFunctionKind::Expression,
+            name,
+            unmodeled_generator,
+        )
+    }
+
+    pub(super) fn parse_block_function_like(
+        &mut self,
+        start: crate::source::Span,
+        has_leading_jsdoc: bool,
+        kind: FunctionLikeFunctionKind,
+        name: Option<AuthoredBindingName>,
+        intrinsically_recovered: bool,
+    ) -> Expression {
+        let diagnostic_count = self.diagnostics.len();
+        let recovery_fact_start = self.parser_recovery_facts.len();
         let type_parameters = self.parse_type_parameters();
         let parameters = self.parse_signature_parameters();
         let return_type = self.eat(TokenKind::Colon).then(|| self.parse_type());
-        let header_recovered = unmodeled_generator
+        let header_recovered = intrinsically_recovered
             || self.diagnostics.len() != diagnostic_count
             || self.parser_recovery_facts.len() != recovery_fact_start;
         let has_opening_brace = self.at(TokenKind::LeftBrace);
-        let authored_body_extent = has_opening_brace
+        let authored_body_extent = (kind == FunctionLikeFunctionKind::Expression
+            && has_opening_brace)
             .then(|| self.balanced_recovery_brace_extent(self.index))
             .flatten();
         let (body, body_span) = if has_opening_brace {
             self.parse_block()
         } else {
             self.expect(TokenKind::LeftBrace, "'{' expected.", 1005);
+            if kind == FunctionLikeFunctionKind::ObjectMethod {
+                self.eat(TokenKind::Semicolon);
+            }
             (Vec::new(), None)
         };
         if header_recovered && let Some(extent) = authored_body_extent {
@@ -105,7 +126,7 @@ impl Parser<'_> {
             }
         }
         let has_closing_brace = has_opening_brace && self.previous().kind == TokenKind::RightBrace;
-        let span = function_keyword.merge(self.previous().span);
+        let span = start.merge(self.previous().span);
         let expression = Expression {
             id: self.alloc_node(),
             span,
@@ -115,16 +136,16 @@ impl Parser<'_> {
                 return_type,
                 body_span,
                 has_leading_jsdoc,
-                syntax: FunctionLikeSyntax::Function { name, body },
+                syntax: FunctionLikeSyntax::Function { kind, name, body },
             })),
         };
         if header_recovered || !has_opening_brace || !has_closing_brace {
-            let kind = if unmodeled_generator {
+            let recovery = if intrinsically_recovered {
                 ParserRecoveryKind::GeneratorFunctionLike
             } else {
                 ParserRecoveryKind::Expression
             };
-            self.retain_parser_recovery(kind, function_keyword, span);
+            self.retain_parser_recovery(recovery, start, span);
         }
         expression
     }

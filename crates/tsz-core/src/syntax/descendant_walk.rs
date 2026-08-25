@@ -1,6 +1,6 @@
 use super::{
-    ArrowBody, ClassDeclaration, ClassMember, ClassMemberKind, Expression, ExpressionKind,
-    FunctionDeclaration, FunctionLikeExpression, FunctionLikeSyntax, Parameter, Statement,
+    ClassDeclaration, ClassMember, ClassMemberKind, Expression, ExpressionKind,
+    FunctionDeclaration, FunctionLikeBody, FunctionLikeExpression, Parameter, Statement,
     StatementKind, SwitchClauseKind,
 };
 
@@ -157,14 +157,9 @@ pub(crate) fn walk_function_like_descendants<'ast, A>(
         DescendantContainer::FunctionLike(expression, function),
     );
     walk_parameter_initializers(adapter, &context, &function.parameters);
-    match &function.syntax {
-        FunctionLikeSyntax::Arrow(ArrowBody::Expression(body)) => {
-            walk_expression_descendants(adapter, &context, body);
-        }
-        FunctionLikeSyntax::Arrow(ArrowBody::Block(statements))
-        | FunctionLikeSyntax::Function {
-            body: statements, ..
-        } => walk_statement_list(adapter, &context, statements),
+    match function.syntax.body() {
+        FunctionLikeBody::Expression(body) => walk_expression_descendants(adapter, &context, body),
+        FunctionLikeBody::Statements(body) => walk_statement_list(adapter, &context, body),
     }
 }
 

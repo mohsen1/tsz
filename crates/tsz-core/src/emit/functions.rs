@@ -1,22 +1,47 @@
 use crate::syntax::{
-    ArrowBody, Expression, ExpressionKind, FunctionLikeExpression, FunctionLikeSyntax, Statement,
-    StatementKind, erased_assertion_expression,
+    ArrowBody, Expression, ExpressionKind, FunctionLikeExpression, FunctionLikeFunctionKind,
+    FunctionLikeSyntax, ObjectProperty, Statement, StatementKind, erased_assertion_expression,
 };
 
 use super::{PREC_ASSIGNMENT, PREC_LOWEST, Printer};
 
 impl Printer<'_> {
+    pub(super) fn write_object_property(&mut self, property: &ObjectProperty) {
+        self.write_property_name(&property.name, property.name_span);
+        if matches!(
+            &property.value.kind,
+            ExpressionKind::FunctionLike(function) if function.syntax.is_object_method()
+        ) {
+            self.write_expression(&property.value, PREC_LOWEST);
+        } else if property.shorthand {
+            if let (Some(_), ExpressionKind::Assignment { right, .. }) =
+                (property.shorthand_equals_span, &property.value.kind)
+            {
+                self.output.push_str(" = ");
+                self.write_expression(right, PREC_ASSIGNMENT);
+            }
+        } else {
+            self.output.push_str(": ");
+            self.write_expression(&property.value, PREC_LOWEST);
+        }
+    }
+
     pub(super) fn write_function_like(&mut self, function: &FunctionLikeExpression) {
         match &function.syntax {
             FunctionLikeSyntax::Arrow(body) => {
                 self.write_arrow(&function.parameters, body, function.body_span);
             }
-            FunctionLikeSyntax::Function { name, body } => {
-                self.output.push_str("function ");
-                if let Some(name) = name {
-                    self.output.push_str(&name.name);
+            FunctionLikeSyntax::Function { kind, name, body } => {
+                if *kind == FunctionLikeFunctionKind::Expression {
+                    self.output.push_str("function ");
+                    if let Some(name) = name {
+                        self.output.push_str(&name.name);
+                    }
                 }
-                self.write_runtime_parameters(&function.parameters);
+                self.write_runtime_parameters(
+                    &function.parameters,
+                    *kind == FunctionLikeFunctionKind::Expression,
+                );
                 self.output.push(' ');
                 self.write_inline_function_body(function.body_span, body);
             }
@@ -109,11 +134,11 @@ impl Printer<'_> {
     ) {
         let preserve = self.preserve_arrows;
         if preserve {
-            self.write_runtime_parameters(parameters);
+            self.write_runtime_parameters(parameters, true);
             self.output.push_str(" => ");
         } else {
             self.output.push_str("function ");
-            self.write_runtime_parameters(parameters);
+            self.write_runtime_parameters(parameters, true);
             self.output.push(' ');
         }
         match body {

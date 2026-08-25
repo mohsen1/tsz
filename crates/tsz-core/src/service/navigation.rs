@@ -12,10 +12,10 @@ use crate::bind::{DeclarationKind, Meaning, ScopeId};
 use crate::program::{Program, ProgramFile};
 use crate::source::{DeclId, FileId, NodeId, Span};
 use crate::syntax::{
-    ArrowBody, ClassMemberKind, DescendantAdapter, DescendantContainer, Expression, ExpressionKind,
-    FunctionLikeExpression, FunctionLikeSyntax, NestedStatement, Parameter, Statement,
-    StatementKind, SwitchClauseKind, TypeMember, TypeMemberKind, TypeMemberNameKind, TypeNode,
-    TypeNodeKind, TypeParameterDeclaration, VariableKind, walk_function_like_descendants,
+    ClassMemberKind, DescendantAdapter, DescendantContainer, Expression, ExpressionKind,
+    FunctionLikeBody, FunctionLikeExpression, NestedStatement, Parameter, Statement, StatementKind,
+    SwitchClauseKind, TypeMember, TypeMemberKind, TypeMemberNameKind, TypeNode, TypeNodeKind,
+    TypeParameterDeclaration, VariableKind, walk_function_like_descendants,
     walk_statement_descendants,
 };
 
@@ -587,75 +587,67 @@ impl ReferenceVisitor<'_> {
                     self.visit_type(implemented, scope);
                 }
                 for member in &declaration.members {
-                    match &member.kind {
-                        ClassMemberKind::Property {
-                            annotation,
-                            initializer,
-                            ..
-                        } => {
-                            if let Some(annotation) = annotation {
-                                self.visit_type(annotation, class_scope);
-                            }
-                            if let Some(initializer) = initializer {
-                                self.visit_expression(initializer, class_scope, false);
-                            }
-                        }
-                        ClassMemberKind::Constructor {
-                            parameters,
-                            body,
-                            has_body,
-                            ..
-                        } => {
-                            let retained_type_locals = self.visit_signature_types_with_host(
-                                member.id,
-                                class_scope,
-                                &[],
-                                parameters,
-                                None,
-                                *has_body,
-                            );
-                            let member_scope = self.scope_for_node(member.id, class_scope);
-                            if *has_body {
-                                for parameter in parameters {
-                                    if let Some(initializer) = &parameter.initializer {
-                                        self.visit_expression(initializer, member_scope, false);
-                                    }
+                    let (type_parameters, parameters, return_type, body, has_body) =
+                        match &member.kind {
+                            ClassMemberKind::Property {
+                                annotation,
+                                initializer,
+                                ..
+                            } => {
+                                if let Some(annotation) = annotation {
+                                    self.visit_type(annotation, class_scope);
                                 }
+                                if let Some(initializer) = initializer {
+                                    self.visit_expression(initializer, class_scope, false);
+                                }
+                                continue;
                             }
-                            self.visit_bound_statements(body, member_scope);
-                            if retained_type_locals {
-                                self.type_locals.pop();
-                            }
-                        }
-                        ClassMemberKind::Method {
-                            type_parameters,
-                            parameters,
-                            return_type,
-                            body,
-                            has_body,
-                            ..
-                        } => {
-                            let retained_type_locals = self.visit_signature_types_with_host(
-                                member.id,
-                                class_scope,
+                            ClassMemberKind::Constructor {
+                                parameters,
+                                body,
+                                has_body,
+                                ..
+                            } => (
+                                &[][..],
+                                parameters.as_slice(),
+                                None,
+                                body.as_slice(),
+                                *has_body,
+                            ),
+                            ClassMemberKind::Method {
                                 type_parameters,
                                 parameters,
+                                return_type,
+                                body,
+                                has_body,
+                                ..
+                            } => (
+                                type_parameters.as_slice(),
+                                parameters.as_slice(),
                                 return_type.as_ref(),
+                                body.as_slice(),
                                 *has_body,
-                            );
-                            let member_scope = self.scope_for_node(member.id, class_scope);
-                            if *has_body {
-                                for parameter in parameters {
-                                    if let Some(initializer) = &parameter.initializer {
-                                        self.visit_expression(initializer, member_scope, false);
-                                    }
-                                }
-                            }
-                            self.visit_bound_statements(body, member_scope);
-                            if retained_type_locals {
-                                self.type_locals.pop();
+                            ),
+                        };
+                    let retained_type_locals = self.visit_signature_types_with_host(
+                        member.id,
+                        class_scope,
+                        type_parameters,
+                        parameters,
+                        return_type,
+                        has_body,
+                    );
+                    let member_scope = self.scope_for_node(member.id, class_scope);
+                    if has_body {
+                        for parameter in parameters {
+                            if let Some(initializer) = &parameter.initializer {
+                                self.visit_expression(initializer, member_scope, false);
                             }
                         }
+                    }
+                    self.visit_bound_statements(body, member_scope);
+                    if retained_type_locals {
+                        self.type_locals.pop();
                     }
                 }
                 self.type_locals.pop();
@@ -790,14 +782,13 @@ impl ReferenceVisitor<'_> {
                         self.visit_expression(initializer, function_scope, false);
                     }
                 }
-                match &function.syntax {
-                    FunctionLikeSyntax::Arrow(ArrowBody::Expression(expression)) => {
-                        self.visit_expression(expression, function_scope, false);
+                match function.syntax.body() {
+                    FunctionLikeBody::Expression(body) => {
+                        self.visit_expression(body, function_scope, false)
                     }
-                    FunctionLikeSyntax::Arrow(ArrowBody::Block(statements))
-                    | FunctionLikeSyntax::Function {
-                        body: statements, ..
-                    } => self.visit_bound_statements(statements, function_scope),
+                    FunctionLikeBody::Statements(body) => {
+                        self.visit_bound_statements(body, function_scope)
+                    }
                 }
                 if retained_type_locals {
                     self.type_locals.pop();
@@ -939,79 +930,35 @@ impl ReferenceVisitor<'_> {
             return;
         }
         let member_scope = self.file.bindings.scope_for_node.get(&member.id).copied();
-        match &member.kind {
-            TypeMemberKind::Property {
-                name,
-                ty,
-                initializer,
-                ..
-            } => {
-                if let TypeMemberNameKind::Computed(expression) = &name.kind {
-                    self.visit_expression(expression, scope, false);
+        if let TypeMemberKind::Property {
+            name,
+            ty,
+            initializer,
+            ..
+        } = &member.kind
+        {
+            if let TypeMemberNameKind::Computed(expression) = &name.kind {
+                self.visit_expression(expression, scope, false);
+            }
+            if let Some(member_scope) = member_scope {
+                if let Some(ty) = ty {
+                    self.visit_type(ty, member_scope);
                 }
-                if let Some(member_scope) = member_scope {
-                    if let Some(ty) = ty {
-                        self.visit_type(ty, member_scope);
-                    }
-                    if let Some(initializer) = initializer {
-                        self.visit_expression(initializer, member_scope, false);
-                    }
+                if let Some(initializer) = initializer {
+                    self.visit_expression(initializer, member_scope, false);
                 }
             }
-            TypeMemberKind::Method {
-                name,
-                type_parameters,
-                parameters,
-                return_type,
-                ..
-            } => {
-                if let TypeMemberNameKind::Computed(expression) = &name.kind {
-                    self.visit_expression(expression, scope, false);
-                }
-                self.visit_signature_types(
-                    member.id,
-                    scope,
-                    type_parameters,
-                    parameters,
-                    return_type.as_ref(),
-                );
-            }
-            TypeMemberKind::Accessor {
-                name,
-                parameters,
-                return_type,
-                ..
-            } => {
-                if let TypeMemberNameKind::Computed(expression) = &name.kind {
-                    self.visit_expression(expression, scope, false);
-                }
-                self.visit_signature_types(member.id, scope, &[], parameters, return_type.as_ref());
-            }
-            TypeMemberKind::Call {
-                type_parameters,
-                parameters,
-                return_type,
-            }
-            | TypeMemberKind::Construct {
-                type_parameters,
-                parameters,
-                return_type,
-            } => {
-                self.visit_signature_types(
-                    member.id,
-                    scope,
-                    type_parameters,
-                    parameters,
-                    return_type.as_ref(),
-                );
-            }
-            TypeMemberKind::Index {
-                parameters,
-                value_type,
-            } => {
-                self.visit_signature_types(member.id, scope, &[], parameters, value_type.as_ref());
-            }
+            return;
         }
+        let Some((name, type_parameters, parameters, return_type)) = member.kind.signature() else {
+            return;
+        };
+        if let Some(name) = name
+            && let TypeMemberNameKind::Computed(expression) = &name.kind
+        {
+            self.visit_expression(expression, scope, false);
+        }
+        self.visit_signature_types(member.id, scope, type_parameters, parameters, return_type);
     }
 
     fn visit_signature_types(

@@ -254,7 +254,7 @@ impl<'a> Printer<'a> {
             self.output.push_str("async ");
         }
         self.write_parts(&["function ", &declaration.name]);
-        self.write_runtime_parameters(&declaration.parameters);
+        self.write_runtime_parameters(&declaration.parameters, true);
         self.output.push(' ');
         self.write_braced_statements(declaration.body_span, &declaration.body);
         self.output.push('\n');
@@ -492,7 +492,7 @@ impl<'a> Printer<'a> {
         }
     }
 
-    fn write_runtime_parameters(&mut self, parameters: &[Parameter]) {
+    fn write_runtime_parameters(&mut self, parameters: &[Parameter], consume_close_comments: bool) {
         self.output.push('(');
         if parameters.is_empty() {
             let open = Kind(crate::syntax::TokenKind::LeftParen, u32::MAX);
@@ -526,7 +526,9 @@ impl<'a> Printer<'a> {
             self.write_gap(End(parameter.span.end), true, Gap::Indent);
             wrote_parameter = true;
         }
-        self.consume_parameter_close_comments();
+        if consume_close_comments {
+            self.consume_parameter_close_comments();
+        }
         self.output.push(')');
     }
 
@@ -693,18 +695,7 @@ impl<'a> Printer<'a> {
             if !multiline && self.write_comments_before(property.span.start) {
                 self.write_indent();
             }
-            self.write_property_name(&property.name, property.name_span);
-            if property.shorthand {
-                if let (Some(_), ExpressionKind::Assignment { right, .. }) =
-                    (property.shorthand_equals_span, &property.value.kind)
-                {
-                    self.output.push_str(" = ");
-                    self.write_expression(right, PREC_ASSIGNMENT);
-                }
-            } else {
-                self.output.push_str(": ");
-                self.write_expression(&property.value, PREC_LOWEST);
-            }
+            self.write_object_property(property);
             let (comment_ended_line, _) = self.write_gap(End(property.span.end), true, Gap::None);
             if multiline {
                 if index + 1 < properties.len() || trailing_comma {

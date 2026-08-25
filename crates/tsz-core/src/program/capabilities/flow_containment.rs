@@ -2,9 +2,8 @@ use std::collections::BTreeSet;
 
 use crate::source::{NodeId, Span};
 use crate::syntax::{
-    ArrowBody, ClassMember, ClassMemberKind, Expression, ExpressionKind, FunctionLikeSyntax,
-    Parameter, ParameterNameKind, ParserRecoveryFact, ParserRecoveryKind, Statement, StatementKind,
-    SwitchClauseKind, TokenKind,
+    ClassMember, ClassMemberKind, Expression, ExpressionKind, Parameter, ParameterNameKind,
+    ParserRecoveryFact, ParserRecoveryKind, Statement, StatementKind, SwitchClauseKind, TokenKind,
 };
 
 use super::{SemanticGap, SyntaxGap};
@@ -31,6 +30,8 @@ pub(super) struct SemanticNodeInventory {
     pub(super) function_like_binding_patterns: BTreeSet<NodeId>,
     pub(super) function_like_signatures: Vec<Span>,
     pub(super) function_expressions: Vec<FunctionExpressionProducts>,
+    pub(super) object_method_owners: BTreeSet<NodeId>,
+    pub(super) object_methods: Vec<FunctionExpressionProducts>,
     pub(super) recovered_function_likes: BTreeSet<(NodeId, SyntaxGap)>,
     pub(super) boundaries: BTreeSet<FileBoundary>,
 }
@@ -283,29 +284,28 @@ impl FlowRegionCollector<'_> {
                         .function_like_gaps
                         .push((expression.id, SemanticGap::JavaScriptJSDocSignature));
                 }
-                if let FunctionLikeSyntax::Function { body, .. } = &function.syntax
+                let object_method = function.syntax.is_object_method();
+                if object_method {
+                    self.out.object_method_owners.insert(expression.id);
+                }
+                if let Some((_, body)) = function.syntax.function()
                     && let Some(body_span) = function.body_span
                 {
-                    self.out
-                        .function_expressions
-                        .push(FunctionExpressionProducts {
-                            owner: expression.id,
-                            span: expression.span,
-                            body_span,
-                            inline_body_supported: body.iter().all(|statement| {
-                                matches!(
-                                    statement.kind,
-                                    StatementKind::Variable(_)
-                                        | StatementKind::Return(_)
-                                        | StatementKind::Expression(_)
-                                        | StatementKind::Empty
-                                )
-                            }),
-                        });
+                    let products = FunctionExpressionProducts {
+                        owner: expression.id,
+                        span: expression.span,
+                        body_span,
+                        inline_body_supported: inline_body_supported(body),
+                    };
+                    if object_method {
+                        self.out.object_methods.push(products);
+                    } else {
+                        self.out.function_expressions.push(products);
+                    }
                 }
                 if matches!(
-                    &function.syntax,
-                    FunctionLikeSyntax::Function { name: Some(name), .. }
+                    function.syntax.function(),
+                    Some((Some(name), _))
                         if name.token_kind != TokenKind::Identifier
                 ) {
                     self.out
@@ -335,12 +335,11 @@ impl FlowRegionCollector<'_> {
                         .function_like_binding_patterns
                         .insert(expression.id);
                 }
-                let body_start = match &function.syntax {
-                    FunctionLikeSyntax::Arrow(ArrowBody::Expression(body)) => body.span.start,
-                    FunctionLikeSyntax::Arrow(ArrowBody::Block(statements))
-                    | FunctionLikeSyntax::Function {
-                        body: statements, ..
-                    } => first_statement_start(statements, expression.span.end),
+                let body_start = match function.syntax.body() {
+                    crate::syntax::FunctionLikeBody::Expression(body) => body.span.start,
+                    crate::syntax::FunctionLikeBody::Statements(body) => {
+                        first_statement_start(body, expression.span.end)
+                    }
                 };
                 self.out.function_like_signatures.push(Span {
                     file: expression.span.file,
@@ -349,15 +348,12 @@ impl FlowRegionCollector<'_> {
                 });
                 let recovered = self.record_recovery(expression.id, expression.span, body_start);
                 self.visit_parameter_initializers(&function.parameters, owners);
-                match &function.syntax {
-                    FunctionLikeSyntax::Arrow(ArrowBody::Expression(body)) => {
+                match function.syntax.body() {
+                    crate::syntax::FunctionLikeBody::Expression(body) => {
                         self.visit_expression(body, owners)
                     }
-                    FunctionLikeSyntax::Arrow(ArrowBody::Block(statements))
-                    | FunctionLikeSyntax::Function {
-                        body: statements, ..
-                    } => {
-                        self.visit_statement_list(statements, recovered);
+                    crate::syntax::FunctionLikeBody::Statements(body) => {
+                        self.visit_statement_list(body, recovered);
                     }
                 }
             }
@@ -431,6 +427,18 @@ fn first_statement_start(statements: &[Statement], fallback: u32) -> u32 {
     statements
         .first()
         .map_or(fallback, |statement| statement.span.start)
+}
+
+fn inline_body_supported(body: &[Statement]) -> bool {
+    body.iter().all(|statement| {
+        matches!(
+            statement.kind,
+            StatementKind::Variable(_)
+                | StatementKind::Return(_)
+                | StatementKind::Expression(_)
+                | StatementKind::Empty
+        )
+    })
 }
 
 const fn statement_is_executable_region_member(statement: &Statement) -> bool {

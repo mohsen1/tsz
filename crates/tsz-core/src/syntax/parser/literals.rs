@@ -1,8 +1,9 @@
 use super::super::{
     AuthoredLiteralFact, AuthoredLiteralKind, ClassDeclaration, Expression, ExpressionKind,
-    FunctionLikeExpression, FunctionLikeSyntax, Literal, ObjectProperty, Parameter,
-    ParameterNameKind, ParserRecoveryFact, ParserRecoveryKind, PropertyNameKind, SourceSyntaxFact,
-    Statement, StringLiteral, Token, TokenKind, class_contains_no_substitution_template,
+    FunctionLikeExpression, FunctionLikeFunctionKind, FunctionLikeSyntax, Literal, ObjectProperty,
+    Parameter, ParameterNameKind, ParserRecoveryFact, ParserRecoveryKind, PropertyNameKind,
+    SourceSyntaxFact, Statement, StringLiteral, Token, TokenKind,
+    class_contains_no_substitution_template,
     comments_form_no_substitution_template_expression_file,
     expression_contains_no_substitution_template,
     statements_form_no_substitution_template_safe_file,
@@ -604,10 +605,19 @@ impl Parser<'_> {
             }
             let starts_on_new_line =
                 !self.tokens_are_on_same_line(self.index.saturating_sub(1), self.index);
+            let has_leading_jsdoc = self.current_has_leading_jsdoc();
             let start = self.current().span;
             let (name, name_span, name_kind) = self.parse_property_name();
             let has_colon = self.eat(TokenKind::Colon);
+            let method_start = !has_colon
+                && !matches!(
+                    name_kind,
+                    PropertyNameKind::PrivateIdentifier | PropertyNameKind::Unsupported
+                )
+                && self.source.kind().supports_expression_type_arguments()
+                && self.at(TokenKind::LessThan);
             if !has_colon
+                && !method_start
                 && !self.at_any(&[
                     TokenKind::Comma,
                     TokenKind::Equals,
@@ -618,8 +628,13 @@ impl Parser<'_> {
                 let continuation = self.recovery_extent_from_current(name_span);
                 let extent =
                     object_extent.map_or(continuation, |extent| extent.merge(continuation));
+                let kind = if self.at_any(&[TokenKind::LeftParen, TokenKind::LessThan]) {
+                    ParserRecoveryKind::ObjectMember
+                } else {
+                    ParserRecoveryKind::Expression
+                };
                 member_recoveries.push((
-                    ParserRecoveryKind::Expression,
+                    kind,
                     name_span,
                     Span {
                         start: name_span.start,
@@ -627,9 +642,18 @@ impl Parser<'_> {
                     },
                 ));
             }
-            let shorthand = !has_colon && name_kind == PropertyNameKind::Identifier;
+            let shorthand =
+                !has_colon && !method_start && name_kind == PropertyNameKind::Identifier;
             let value = if has_colon {
                 self.parse_expression()
+            } else if method_start {
+                self.parse_block_function_like(
+                    start,
+                    has_leading_jsdoc,
+                    FunctionLikeFunctionKind::ObjectMethod,
+                    None,
+                    false,
+                )
             } else {
                 Expression {
                     id: self.alloc_node(),

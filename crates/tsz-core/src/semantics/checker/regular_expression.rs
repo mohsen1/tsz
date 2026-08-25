@@ -6,6 +6,12 @@ use crate::syntax::RegularExpressionLiteral;
 
 use super::Checker;
 
+macro_rules! diag {
+    ($checker:expr, $file:expr, $span:expr, $code:expr) => {
+        $checker.push_diagnostic($file, $span, regex_message($code).into(), $code)
+    };
+}
+
 impl Checker<'_> {
     /// TypeScript 7 validates a regular-expression pattern only on the checked
     /// path. The scanner owns token extent and unterminated recovery; this
@@ -72,21 +78,11 @@ impl Checker<'_> {
         for (offset, flag) in literal.flags.char_indices() {
             let span = relative_span(literal.flags_span, offset, flag.len_utf8());
             let Some(index) = "gimuy".find(flag) else {
-                self.push_diagnostic(
-                    file,
-                    span,
-                    "Unknown regular expression flag.".to_string(),
-                    1499,
-                );
+                diag!(self, file, span, 1499);
                 continue;
             };
             if std::mem::replace(&mut seen[index], true) {
-                self.push_diagnostic(
-                    file,
-                    span,
-                    "Duplicate regular expression flag.".to_string(),
-                    1500,
-                );
+                diag!(self, file, span, 1500);
             }
         }
     }
@@ -122,29 +118,17 @@ impl Checker<'_> {
             let close = digits_start + relative_close;
             let digits = &bytes[digits_start..close];
             if digits.is_empty() {
-                self.push_diagnostic(
-                    file,
-                    relative_span(literal.pattern_span, close, 1),
-                    "Hexadecimal digit expected.".to_string(),
-                    1125,
-                );
+                let span = relative_span(literal.pattern_span, close, 1);
+                diag!(self, file, span, 1125);
                 offset = close + 1;
                 continue;
             }
 
             if let Some(invalid) = digits.iter().position(|byte| !byte.is_ascii_hexdigit()) {
-                self.push_diagnostic(
-                    file,
-                    relative_span(literal.pattern_span, digits_start + invalid, 1),
-                    "Hexadecimal digit expected.".to_string(),
-                    1125,
-                );
-                self.push_diagnostic(
-                    file,
-                    relative_span(literal.pattern_span, close, 1),
-                    "Unexpected '}'. Did you mean to escape it with backslash?".to_string(),
-                    1508,
-                );
+                let invalid_span = relative_span(literal.pattern_span, digits_start + invalid, 1);
+                diag!(self, file, invalid_span, 1125);
+                let close_span = relative_span(literal.pattern_span, close, 1);
+                diag!(self, file, close_span, 1508);
                 offset = close + 1;
                 continue;
             }
@@ -157,17 +141,23 @@ impl Checker<'_> {
                 ))
             });
             if value > 0x10_ffff {
-                self.push_diagnostic(
-                    file,
-                    relative_span(literal.pattern_span, digits_start, digits.len()),
-                    "An extended Unicode escape value must be between 0x0 and 0x10FFFF inclusive."
-                        .to_string(),
-                    1198,
-                );
+                let span = relative_span(literal.pattern_span, digits_start, digits.len());
+                diag!(self, file, span, 1198);
             }
             offset = close + 1;
         }
         true
+    }
+}
+
+const fn regex_message(code: u32) -> &'static str {
+    match code {
+        1125 => "Hexadecimal digit expected.",
+        1198 => "An extended Unicode escape value must be between 0x0 and 0x10FFFF inclusive.",
+        1499 => "Unknown regular expression flag.",
+        1500 => "Duplicate regular expression flag.",
+        1508 => "Unexpected '}'. Did you mean to escape it with backslash?",
+        _ => unreachable!(),
     }
 }
 

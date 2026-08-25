@@ -118,6 +118,10 @@ name = "rewrite_function_expressions"
 path = "rewrite-tests/function_expressions.rs"
 
 [[test]]
+name = "rewrite_object_literal_methods"
+path = "rewrite-tests/object_literal_methods.rs"
+
+[[test]]
 name = "rewrite_class_property_initialization"
 path = "rewrite-tests/class_property_initialization.rs"
 
