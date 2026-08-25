@@ -32,9 +32,16 @@ pub(crate) enum SourceSyntaxFact {
     ExplicitCallTypeArguments,
     ExplicitNewTypeArguments,
     InvalidClassModifierOrder,
+    JavaScriptJSDocCast(NodeId, JavaScriptJSDocCastKind),
     LiteralBoundary(AuthoredLiteralKind, LiteralSyntaxBoundary),
     ModuleExport,
     TemplateExpressionIdentifier,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum JavaScriptJSDocCastKind {
+    Type,
+    Satisfies,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -150,6 +157,17 @@ impl SourceUnit {
     #[must_use]
     pub(crate) fn has_source_syntax_fact(&self, fact: SourceSyntaxFact) -> bool {
         self.source_syntax_facts.binary_search(&fact).is_ok()
+    }
+
+    pub(crate) fn javascript_jsdoc_casts(
+        &self,
+    ) -> impl Iterator<Item = (NodeId, JavaScriptJSDocCastKind)> + '_ {
+        self.source_syntax_facts
+            .iter()
+            .filter_map(|fact| match fact {
+                SourceSyntaxFact::JavaScriptJSDocCast(owner, kind) => Some((*owner, *kind)),
+                _ => None,
+            })
     }
 
     #[must_use]
@@ -533,7 +551,10 @@ pub struct VariableDeclaration {
     pub(crate) recovered_binding_names: Vec<AuthoredBindingName>,
     pub annotation: Option<TypeNode>,
     pub initializer: Option<Expression>,
+    /// A JSDoc comment occurs in this declaration's leading trivia range.
+    pub has_leading_jsdoc: bool,
     pub exported: bool,
+    pub declared: bool,
 }
 
 /// An authored binding identity retained independently from its declaration.
@@ -553,6 +574,10 @@ pub struct FunctionDeclaration {
     pub return_type: Option<TypeNode>,
     pub body: Vec<Statement>,
     pub has_body: bool,
+    /// Parser-authored span from the opening through closing body brace.
+    pub body_span: Option<Span>,
+    /// A JSDoc comment occurs in this declaration's leading trivia range.
+    pub has_leading_jsdoc: bool,
     pub exported: bool,
     pub default_export: bool,
     pub is_async: bool,
@@ -579,6 +604,8 @@ pub struct ClassDeclaration {
     pub extends: Option<TypeNode>,
     pub implements: Vec<TypeNode>,
     pub members: Vec<ClassMember>,
+    /// Parser-authored span from the opening through closing class-body brace.
+    pub body_span: Option<Span>,
     pub exported: bool,
     pub default_export: bool,
     pub declared: bool,
@@ -688,6 +715,7 @@ pub enum ClassMemberKind {
         parameters: Vec<Parameter>,
         body: Vec<Statement>,
         has_body: bool,
+        body_span: Option<Span>,
     },
     Property {
         annotation: Option<TypeNode>,
@@ -701,6 +729,7 @@ pub enum ClassMemberKind {
         return_type: Option<TypeNode>,
         body: Vec<Statement>,
         has_body: bool,
+        body_span: Option<Span>,
         accessor: Option<AccessorKind>,
     },
 }
@@ -1313,6 +1342,8 @@ pub enum ExpressionKind {
     Assignment {
         left: Box<Expression>,
         right: Box<Expression>,
+        /// A JSDoc comment occurs before the assignment's left edge.
+        has_leading_jsdoc: bool,
     },
     As {
         expression: Box<Expression>,
@@ -1320,6 +1351,28 @@ pub enum ExpressionKind {
     },
     Parenthesized(Box<Expression>),
     Missing,
+}
+
+impl Expression {
+    pub(crate) fn peel_parentheses(&self) -> &Self {
+        let mut expression = self;
+        while let ExpressionKind::Parenthesized(inner) = &expression.kind {
+            expression = inner;
+        }
+        expression
+    }
+
+    pub(crate) fn peel_parentheses_and_assertions(&self) -> &Self {
+        let mut expression = self;
+        while let ExpressionKind::Parenthesized(inner)
+        | ExpressionKind::As {
+            expression: inner, ..
+        } = &expression.kind
+        {
+            expression = inner;
+        }
+        expression
+    }
 }
 
 fn expression_contains_recovered_type_members(expression: &Expression) -> bool {
@@ -1366,6 +1419,10 @@ pub struct FunctionLikeExpression {
     pub type_parameters: Vec<TypeParameterDeclaration>,
     pub parameters: Vec<Parameter>,
     pub return_type: Option<TypeNode>,
+    /// Parser-authored brace span for function expressions and block arrows.
+    pub body_span: Option<Span>,
+    /// A JSDoc comment occurs in this expression's leading trivia range.
+    pub has_leading_jsdoc: bool,
     pub syntax: FunctionLikeSyntax,
 }
 
@@ -1375,7 +1432,6 @@ pub enum FunctionLikeSyntax {
     Function {
         name: Option<AuthoredBindingName>,
         body: Vec<Statement>,
-        body_span: Span,
     },
 }
 
@@ -1393,6 +1449,9 @@ pub struct ObjectProperty {
     pub shorthand_equals_span: Option<Span>,
     pub value: Expression,
     pub span: Span,
+    pub starts_on_new_line: bool,
+    pub trailing_comma: bool,
+    pub closing_brace_on_new_line: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]

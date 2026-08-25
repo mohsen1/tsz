@@ -31,6 +31,7 @@ pub struct Signature {
     /// signature's own uninstantiated binders from type parameters captured
     /// from an enclosing declaration.
     pub generic_declaration: Option<DeclId>,
+    pub untyped_javascript: bool,
     pub parameters: Vec<ParameterType>,
     pub return_type: TypeId,
 }
@@ -49,8 +50,27 @@ pub struct ShapeParameter {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ShapeSignature {
+    pub untyped_javascript: bool,
     pub parameters: Vec<ShapeParameter>,
     pub return_type: TypeId,
+}
+
+impl From<&Signature> for ShapeSignature {
+    fn from(signature: &Signature) -> Self {
+        Self {
+            untyped_javascript: signature.untyped_javascript,
+            parameters: signature
+                .parameters
+                .iter()
+                .map(|parameter| ShapeParameter {
+                    ty: parameter.ty,
+                    optional: parameter.optional,
+                    rest: parameter.rest,
+                })
+                .collect(),
+            return_type: signature.return_type,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -410,8 +430,8 @@ enum TypeOrderKey {
     },
     ClassInstance(DeclId, Vec<TypeOrderKey>, Vec<PropertyOrderKey>),
     ClassConstructor(DeclId),
-    Function(Option<DeclId>, Vec<ParameterOrderKey>, Box<TypeOrderKey>),
-    ShapeFunction(Vec<ParameterOrderKey>, Box<TypeOrderKey>),
+    Function(Option<DeclId>, SignatureOrderKey),
+    ShapeFunction(SignatureOrderKey),
     Deferred(DeferredOrderKey),
     Truncated,
 }
@@ -433,6 +453,7 @@ struct ParameterOrderKey {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 struct SignatureOrderKey {
+    untyped_javascript: bool,
     parameters: Vec<ParameterOrderKey>,
     return_type: Box<TypeOrderKey>,
 }
@@ -571,7 +592,7 @@ impl TypeStore {
         let fixed = rest.unwrap_or(parameters.len());
         let syntactic_minimum = parameters[..fixed]
             .iter()
-            .rposition(|parameter| !parameter.optional)
+            .rposition(|parameter| !signature.untyped_javascript && !parameter.optional)
             .map_or(0, |index| index + 1);
         let Some(rest) = rest else {
             let minimum =
@@ -904,6 +925,21 @@ impl TypeStore {
         self.fresh_deferred(DeferredType::GenericCall)
     }
 
+    pub fn function(
+        &mut self,
+        generic_declaration: Option<DeclId>,
+        untyped_javascript: bool,
+        parameters: Vec<ParameterType>,
+        return_type: TypeId,
+    ) -> TypeId {
+        self.intern(TypeKind::Function(Signature {
+            generic_declaration,
+            untyped_javascript,
+            parameters,
+            return_type,
+        }))
+    }
+
     /// Allocate a source-free nonclaim for `unique symbol` until its
     /// declaration-owned nominal identity and host grammar are modeled.
     pub fn deferred_unique_symbol(&mut self) -> TypeId {
@@ -1140,34 +1176,12 @@ impl TypeStore {
                 call_signatures: shape
                     .call_signatures
                     .iter()
-                    .map(|signature| SignatureOrderKey {
-                        parameters: signature
-                            .parameters
-                            .iter()
-                            .map(|parameter| ParameterOrderKey {
-                                ty: nested(parameter.ty),
-                                optional: parameter.optional,
-                                rest: parameter.rest,
-                            })
-                            .collect(),
-                        return_type: Box::new(nested(signature.return_type)),
-                    })
+                    .map(|signature| self.shape_signature_order_key(signature, depth + 1))
                     .collect(),
                 construct_signatures: shape
                     .construct_signatures
                     .iter()
-                    .map(|signature| SignatureOrderKey {
-                        parameters: signature
-                            .parameters
-                            .iter()
-                            .map(|parameter| ParameterOrderKey {
-                                ty: nested(parameter.ty),
-                                optional: parameter.optional,
-                                rest: parameter.rest,
-                            })
-                            .collect(),
-                        return_type: Box::new(nested(signature.return_type)),
-                    })
+                    .map(|signature| self.shape_signature_order_key(signature, depth + 1))
                     .collect(),
                 index_signatures: shape
                     .index_signatures
@@ -1190,32 +1204,62 @@ impl TypeStore {
             }
             TypeKind::Function(signature) => TypeOrderKey::Function(
                 signature.generic_declaration,
-                signature
-                    .parameters
-                    .iter()
-                    .map(|parameter| ParameterOrderKey {
-                        ty: nested(parameter.ty),
-                        optional: parameter.optional,
-                        rest: parameter.rest,
-                    })
-                    .collect(),
-                Box::new(nested(signature.return_type)),
+                self.signature_order_key(signature, depth + 1),
             ),
-            TypeKind::ShapeFunction(signature) => TypeOrderKey::ShapeFunction(
-                signature
-                    .parameters
-                    .iter()
-                    .map(|parameter| ParameterOrderKey {
-                        ty: nested(parameter.ty),
-                        optional: parameter.optional,
-                        rest: parameter.rest,
-                    })
-                    .collect(),
-                Box::new(nested(signature.return_type)),
-            ),
+            TypeKind::ShapeFunction(signature) => {
+                TypeOrderKey::ShapeFunction(self.shape_signature_order_key(signature, depth + 1))
+            }
             TypeKind::Deferred(deferred) => {
                 TypeOrderKey::Deferred(self.deferred_order_key(deferred, depth + 1))
             }
+        }
+    }
+
+    fn signature_order_key(&self, signature: &Signature, depth: usize) -> SignatureOrderKey {
+        self.signature_parts_order_key(
+            signature.untyped_javascript,
+            signature
+                .parameters
+                .iter()
+                .map(|parameter| (parameter.ty, parameter.optional, parameter.rest)),
+            signature.return_type,
+            depth,
+        )
+    }
+
+    fn shape_signature_order_key(
+        &self,
+        signature: &ShapeSignature,
+        depth: usize,
+    ) -> SignatureOrderKey {
+        self.signature_parts_order_key(
+            signature.untyped_javascript,
+            signature
+                .parameters
+                .iter()
+                .map(|parameter| (parameter.ty, parameter.optional, parameter.rest)),
+            signature.return_type,
+            depth,
+        )
+    }
+
+    fn signature_parts_order_key(
+        &self,
+        untyped_javascript: bool,
+        parameters: impl Iterator<Item = (TypeId, bool, bool)>,
+        return_type: TypeId,
+        depth: usize,
+    ) -> SignatureOrderKey {
+        SignatureOrderKey {
+            untyped_javascript,
+            parameters: parameters
+                .map(|(ty, optional, rest)| ParameterOrderKey {
+                    ty: self.stable_order_key(ty, depth),
+                    optional,
+                    rest,
+                })
+                .collect(),
+            return_type: Box::new(self.stable_order_key(return_type, depth)),
         }
     }
 

@@ -1,11 +1,11 @@
 //! Per-file binding. This phase owns declarations and lexical scopes, and
 //! intentionally performs no type computation.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use rustc_hash::FxHashMap;
 
-use crate::source::{DeclId, FileId, NodeId, Span};
+use crate::source::{DeclId, FileId, NodeId, SourceKind, Span};
 use crate::syntax::{
     ArrowBody, ClassDeclaration, ClassMemberKind, Expression, ExpressionKind, FunctionDeclaration,
     FunctionLikeSyntax, ParameterNameKind, SourceUnit, Statement, StatementKind, SwitchClauseKind,
@@ -34,6 +34,7 @@ pub enum DeclarationKind {
     Import,
     Function,
     FunctionExpression,
+    JavaScriptPropertyAssignment,
     Class,
     TypeAlias,
     Interface,
@@ -104,8 +105,21 @@ pub struct BoundFile {
     pub type_members: FxHashMap<NodeId, BoundTypeMember>,
     pub anonymous_signatures: FxHashMap<NodeId, DeclId>,
     pub type_member_groups: BTreeMap<(ScopeId, TypeMemberSymbol), Vec<DeclId>>,
+    pub(crate) javascript_property_assignments: Vec<BoundJavaScriptPropertyAssignment>,
+    pub(crate) javascript_property_uses: Vec<NodeId>,
+    pub(crate) javascript_expando_initializers: BTreeSet<DeclId>,
     pub(crate) flow: BoundFlowGraph,
     flow_facts: PendingFlowFacts,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct BoundJavaScriptPropertyAssignment {
+    pub(crate) left: NodeId,
+    pub(crate) right: NodeId,
+    pub(crate) scope: ScopeId,
+    pub(crate) declaration: Option<DeclId>,
+    pub(crate) root: Option<String>,
+    pub(crate) properties: Vec<String>,
 }
 
 impl BoundFile {
@@ -163,8 +177,17 @@ impl BoundFile {
 }
 
 pub fn bind_source(file: FileId, unit: &SourceUnit) -> BoundFile {
+    bind_source_with_kind(file, SourceKind::TypeScript, unit)
+}
+
+pub(crate) fn bind_source_with_kind(
+    file: FileId,
+    source_kind: SourceKind,
+    unit: &SourceUnit,
+) -> BoundFile {
     let mut binder = Binder {
         file,
+        source_kind,
         declarations: Vec::new(),
         scopes: vec![Scope {
             id: ScopeId(0),
@@ -178,6 +201,9 @@ pub fn bind_source(file: FileId, unit: &SourceUnit) -> BoundFile {
         type_members: FxHashMap::default(),
         anonymous_signatures: FxHashMap::default(),
         type_member_groups: BTreeMap::new(),
+        javascript_property_assignments: Vec::new(),
+        javascript_property_uses: Vec::new(),
+        javascript_expando_initializers: BTreeSet::new(),
         flow_facts: PendingFlowFacts::default(),
         unmodeled_declaration_hosts: unit.unmodeled_declaration_hosts().to_vec(),
     };
@@ -192,6 +218,9 @@ pub fn bind_source(file: FileId, unit: &SourceUnit) -> BoundFile {
         type_members: binder.type_members,
         anonymous_signatures: binder.anonymous_signatures,
         type_member_groups: binder.type_member_groups,
+        javascript_property_assignments: binder.javascript_property_assignments,
+        javascript_property_uses: binder.javascript_property_uses,
+        javascript_expando_initializers: binder.javascript_expando_initializers,
         flow: BoundFlowGraph::default(),
         flow_facts: binder.flow_facts,
     }
@@ -199,12 +228,16 @@ pub fn bind_source(file: FileId, unit: &SourceUnit) -> BoundFile {
 
 struct Binder {
     file: FileId,
+    source_kind: SourceKind,
     declarations: Vec<BoundDeclaration>,
     scopes: Vec<Scope>,
     scope_for_node: FxHashMap<NodeId, ScopeId>,
     type_members: FxHashMap<NodeId, BoundTypeMember>,
     anonymous_signatures: FxHashMap<NodeId, DeclId>,
     type_member_groups: BTreeMap<(ScopeId, TypeMemberSymbol), Vec<DeclId>>,
+    javascript_property_assignments: Vec<BoundJavaScriptPropertyAssignment>,
+    javascript_property_uses: Vec<NodeId>,
+    javascript_expando_initializers: BTreeSet<DeclId>,
     flow_facts: PendingFlowFacts,
     unmodeled_declaration_hosts: Vec<UnmodeledDeclarationHostFact>,
 }
@@ -316,6 +349,13 @@ impl Binder {
                 {
                     self.flow_facts.evolving_array_declarations.push(declared);
                 }
+                if let (Some(declared), None, Some(initializer)) =
+                    (declared, &declaration.annotation, &declaration.initializer)
+                    && is_javascript_expando_initializer(initializer)
+                    && !self.source_kind.supports_expression_type_arguments()
+                {
+                    self.javascript_expando_initializers.insert(declared);
+                }
                 if let Some(initializer) = &declaration.initializer {
                     self.bind_expression(initializer, scope, control);
                 }
@@ -332,7 +372,7 @@ impl Binder {
                 }
             }
             StatementKind::Function(declaration) => {
-                self.declare(
+                let declared = self.declare(
                     scope,
                     statement.id,
                     &declaration.name,
@@ -340,6 +380,9 @@ impl Binder {
                     DeclarationKind::Function,
                     Meaning::Value,
                 );
+                if !self.source_kind.supports_expression_type_arguments() {
+                    self.javascript_expando_initializers.insert(declared);
+                }
                 self.bind_function(statement.id, declaration, scope);
             }
             StatementKind::Class(declaration) => {
@@ -899,6 +942,7 @@ impl Binder {
                 }
             }
             ExpressionKind::Member { object, name, .. } => {
+                self.bind_javascript_property_use(expression);
                 self.bind_expression_with_demand(object, scope, control, demand.member(name));
             }
             ExpressionKind::Parenthesized(object) => {
@@ -997,9 +1041,10 @@ impl Binder {
                 self.bind_expression(left, scope, control);
                 self.bind_expression(right, scope, control);
             }
-            ExpressionKind::Assignment { left, right } => {
+            ExpressionKind::Assignment { left, right, .. } => {
                 self.bind_expression(left, scope, control);
                 self.bind_expression(right, scope, control);
+                self.bind_javascript_property_assignment(expression, left, right, scope);
                 if let Some(target) = flow_assignment_root(left) {
                     self.flow_facts.mutations.push(PendingFlowMutation {
                         target: target.id,
@@ -1014,6 +1059,59 @@ impl Binder {
                 }
             }
         }
+    }
+
+    fn bind_javascript_property_use(&mut self, expression: &Expression) {
+        if !self.source_kind.supports_expression_type_arguments() {
+            self.javascript_property_uses.push(expression.id);
+        }
+    }
+
+    fn bind_javascript_property_assignment(
+        &mut self,
+        expression: &Expression,
+        left: &Expression,
+        right: &Expression,
+        scope: ScopeId,
+    ) {
+        if self.source_kind.supports_expression_type_arguments()
+            || !matches!(
+                left.peel_parentheses().kind,
+                ExpressionKind::Member { .. } | ExpressionKind::ElementAccess { .. }
+            )
+        {
+            return;
+        }
+        let root = flow_assignment_root(left).and_then(|root| match &root.kind {
+            ExpressionKind::Identifier { name, .. } => Some(name.clone()),
+            _ => None,
+        });
+        let (declaration, properties) = javascript_named_property_path(left).map_or(
+            (None, Vec::new()),
+            |(_, properties, name_span)| {
+                let declaration = self.declare_unscoped(
+                    scope,
+                    expression.id,
+                    properties.last().expect("member path").clone(),
+                    name_span,
+                    DeclarationKind::JavaScriptPropertyAssignment,
+                    Meaning::Value,
+                );
+                if is_javascript_expando_initializer(right) {
+                    self.javascript_expando_initializers.insert(declaration);
+                }
+                (Some(declaration), properties)
+            },
+        );
+        self.javascript_property_assignments
+            .push(BoundJavaScriptPropertyAssignment {
+                left: left.id,
+                right: right.id,
+                scope,
+                declaration,
+                root,
+                properties,
+            });
     }
 
     fn bind_function(&mut self, owner: NodeId, declaration: &FunctionDeclaration, parent: ScopeId) {
@@ -1167,17 +1265,13 @@ impl Binder {
     }
 }
 
-fn simple_assignment_target(mut expression: &Expression) -> Option<&Expression> {
-    while let ExpressionKind::Parenthesized(inner) = &expression.kind {
-        expression = inner;
-    }
+fn simple_assignment_target(expression: &Expression) -> Option<&Expression> {
+    let expression = expression.peel_parentheses();
     matches!(expression.kind, ExpressionKind::Identifier { .. }).then_some(expression)
 }
 
-fn flow_assignment_root(mut expression: &Expression) -> Option<&Expression> {
-    while let ExpressionKind::Parenthesized(inner) = &expression.kind {
-        expression = inner;
-    }
+fn flow_assignment_root(expression: &Expression) -> Option<&Expression> {
+    let expression = expression.peel_parentheses();
     match &expression.kind {
         ExpressionKind::Identifier { .. } => Some(expression),
         ExpressionKind::Member { object, .. } | ExpressionKind::ElementAccess { object, .. } => {
@@ -1187,19 +1281,44 @@ fn flow_assignment_root(mut expression: &Expression) -> Option<&Expression> {
     }
 }
 
-fn element_assignment_receiver(mut expression: &Expression) -> Option<&Expression> {
-    while let ExpressionKind::Parenthesized(inner) = &expression.kind {
-        expression = inner;
-    }
+fn element_assignment_receiver(expression: &Expression) -> Option<&Expression> {
+    let expression = expression.peel_parentheses();
     let ExpressionKind::ElementAccess { object, .. } = &expression.kind else {
         return None;
     };
     simple_assignment_target(object)
 }
 
-fn is_empty_array_expression(mut expression: &Expression) -> bool {
-    while let ExpressionKind::Parenthesized(inner) = &expression.kind {
-        expression = inner;
-    }
+fn is_empty_array_expression(expression: &Expression) -> bool {
+    let expression = expression.peel_parentheses();
     matches!(&expression.kind, ExpressionKind::Array(elements) if elements.is_empty())
+}
+
+fn javascript_named_property_path(
+    mut expression: &Expression,
+) -> Option<(String, Vec<String>, Span)> {
+    let ExpressionKind::Member { name_span, .. } = &expression.peel_parentheses().kind else {
+        return None;
+    };
+    let mut properties = Vec::new();
+    loop {
+        expression = expression.peel_parentheses();
+        match &expression.kind {
+            ExpressionKind::Member { object, name, .. } => {
+                properties.push(name.clone());
+                expression = object;
+            }
+            ExpressionKind::Identifier { name, .. } => {
+                properties.reverse();
+                return Some((name.clone(), properties, *name_span));
+            }
+            _ => return None,
+        }
+    }
+}
+
+fn is_javascript_expando_initializer(expression: &Expression) -> bool {
+    let expression = expression.peel_parentheses();
+    matches!(&expression.kind, ExpressionKind::Object(properties) if properties.is_empty())
+        || matches!(expression.kind, ExpressionKind::FunctionLike(_))
 }

@@ -109,6 +109,7 @@ impl Checker<'_> {
             body,
             has_body,
             accessor: None,
+            ..
         } = &member.kind
         else {
             return None;

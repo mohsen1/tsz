@@ -454,7 +454,8 @@ impl Checker<'_> {
                     Some(
                         DeclarationModel::Variable { .. }
                         | DeclarationModel::Parameter { .. }
-                        | DeclarationModel::Function { .. },
+                        | DeclarationModel::Function { .. }
+                        | DeclarationModel::JavaScriptProperty(..),
                     )
                     | None => RestTypeSyntax::Unknown,
                 };
@@ -749,6 +750,7 @@ impl Checker<'_> {
                     | Some(DeclarationModel::Variable { .. })
                     | Some(DeclarationModel::Parameter { .. })
                     | Some(DeclarationModel::Function { .. })
+                    | Some(DeclarationModel::JavaScriptProperty(..))
                     | None => IndexKeySyntax::Unknown,
                 }
             }

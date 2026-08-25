@@ -87,13 +87,7 @@ pub struct SourceText {
 /// into UTF-16 only once, when they become a public product.
 #[derive(Debug, Clone)]
 pub(crate) struct SourceCoordinateIndex {
-    line_starts: Vec<LineStart>,
-}
-
-#[derive(Debug, Clone, Copy)]
-struct LineStart {
-    byte: u32,
-    utf16: u32,
+    line_starts: Vec<(u32, u32)>,
 }
 
 /// Syntax family selected from the logical source extension.
@@ -135,17 +129,21 @@ impl SourceText {
     /// extension-selected module/JSX source families.
     #[must_use]
     pub(crate) fn is_regular_typescript_source(&self) -> bool {
-        self.kind() == SourceKind::TypeScript
-            && self
-                .path
-                .extension()
-                .and_then(|extension| extension.to_str())
-                .is_some_and(|extension| extension == "ts")
-            && !self
-                .path
-                .file_name()
-                .and_then(|name| name.to_str())
-                .is_some_and(|name| name.to_ascii_lowercase().ends_with(".d.ts"))
+        self.path.extension().and_then(std::ffi::OsStr::to_str) == Some("ts")
+            && !self.is_declaration_source()
+    }
+
+    #[must_use]
+    pub(crate) fn is_declaration_source(&self) -> bool {
+        self.path
+            .file_name()
+            .and_then(std::ffi::OsStr::to_str)
+            .is_some_and(|name| {
+                let name = name.to_ascii_lowercase();
+                [".d.ts", ".d.mts", ".d.cts"]
+                    .iter()
+                    .any(|suffix| name.ends_with(suffix))
+            })
     }
 
     #[must_use]
@@ -173,9 +171,9 @@ impl SourceText {
     #[must_use]
     pub fn slice(&self, span: Span) -> &str {
         debug_assert_eq!(self.id, span.file);
-        let start = span.start as usize;
-        let end = span.end as usize;
-        self.text.get(start..end).unwrap_or("")
+        self.text
+            .get(span.start as usize..span.end as usize)
+            .unwrap_or("")
     }
 
     /// Return one-based line and column for an absolute UTF-16 offset,
@@ -204,7 +202,7 @@ impl SourceText {
 impl SourceCoordinateIndex {
     #[must_use]
     pub(crate) fn new(text: &str) -> Self {
-        let mut line_starts = vec![LineStart { byte: 0, utf16: 0 }];
+        let mut line_starts = vec![(0, 0)];
         let mut utf16 = 0_u32;
         let mut characters = text.char_indices().peekable();
         while let Some((byte, character)) = characters.next() {
@@ -215,10 +213,7 @@ impl SourceCoordinateIndex {
                 _ => false,
             };
             if is_line_end {
-                line_starts.push(LineStart {
-                    byte: (byte + character.len_utf8()) as u32,
-                    utf16,
-                });
+                line_starts.push(((byte + character.len_utf8()) as u32, utf16));
             }
         }
         Self { line_starts }
@@ -227,17 +222,16 @@ impl SourceCoordinateIndex {
     #[must_use]
     pub(crate) fn byte_span(&self, text: &str, start: u32, end: u32) -> (u32, u32) {
         let start = self.byte_offset(text, start);
-        let end = self.byte_offset(text, end);
-        (start, end.saturating_sub(start))
+        (start, self.byte_offset(text, end).saturating_sub(start))
     }
 
     #[must_use]
     pub(crate) fn line_and_column(&self, offset: u32) -> (u32, u32) {
-        let line = self
+        let index = self
             .line_starts
-            .partition_point(|line_start| line_start.utf16 <= offset);
-        let index = line.saturating_sub(1);
-        let column = offset.saturating_sub(self.line_starts[index].utf16);
+            .partition_point(|line_start| line_start.1 <= offset)
+            .saturating_sub(1);
+        let column = offset.saturating_sub(self.line_starts[index].1);
         ((index + 1) as u32, column + 1)
     }
 
@@ -251,11 +245,11 @@ impl SourceCoordinateIndex {
         );
         let line = self
             .line_starts
-            .partition_point(|line_start| line_start.byte as usize <= offset);
+            .partition_point(|line_start| line_start.0 as usize <= offset);
         let line_start = self.line_starts[line.saturating_sub(1)];
-        let prefix = &text[line_start.byte as usize..offset];
+        let prefix = &text[line_start.0 as usize..offset];
         line_start
-            .utf16
+            .1
             .saturating_add(prefix.encode_utf16().count() as u32)
     }
 }

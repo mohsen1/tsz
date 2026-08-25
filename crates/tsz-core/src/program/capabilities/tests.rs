@@ -24,6 +24,14 @@ fn program_file(id: u32, path: &str, text: &str) -> ProgramFile {
     }
 }
 
+fn default_analysis(file: &ProgramFile) -> CapabilityAnalysis {
+    CapabilityAnalysis::derive(
+        std::slice::from_ref(file),
+        &CompilerOptions::default(),
+        CapabilityContext::default(),
+    )
+}
+
 fn parser_recovery_statement_roles(
     file: &ProgramFile,
     recovery: &crate::syntax::ParserRecoveryFact,
@@ -58,11 +66,7 @@ fn typed_region_reason_does_not_poison_a_sibling_statement() {
         "mixed.ts",
         "const gap = `plain`; const sibling: string = missingOwned;",
     );
-    let analysis = CapabilityAnalysis::derive(
-        std::slice::from_ref(&file),
-        &CompilerOptions::default(),
-        CapabilityContext::default(),
-    );
+    let analysis = default_analysis(&file);
     let [gap, sibling] = file.syntax.statements.as_slice() else {
         panic!("two statements expected");
     };
@@ -128,11 +132,7 @@ fn nested_parser_recovery_owns_the_smallest_statement() {
         "gap={gap:#?}, kept={kept:#?}, facts={:#?}",
         file.syntax.parser_recovery_facts(),
     );
-    let analysis = CapabilityAnalysis::derive(
-        std::slice::from_ref(&file),
-        &CompilerOptions::default(),
-        CapabilityContext::default(),
-    );
+    let analysis = default_analysis(&file);
     assert!(
         analysis
             .claim(
@@ -196,11 +196,7 @@ fn recovered_binding_pattern_extent_includes_declarator_continuations() {
         let (_, dependent_owner) = dependent_owner.expect("represented dependent tail");
         let roles = parser_recovery_statement_roles(&file, recovery, recovery.recovery_extent);
         assert_eq!(roles.get(&dependent_owner), Some(&expected_role),);
-        let analysis = CapabilityAnalysis::derive(
-            std::slice::from_ref(&file),
-            &CompilerOptions::default(),
-            CapabilityContext::default(),
-        );
+        let analysis = default_analysis(&file);
         assert!(!analysis.semantic_check_node_is_claimed(file.source.id, dependent_owner));
         assert_eq!(
             analysis
@@ -320,11 +316,7 @@ fn recovery_statement_roles_separate_real_subtrees_from_flat_fragments() {
             (*role == RecoveryStatementRole::RepresentationalFragment).then_some(*owner)
         })
         .expect("represented template fragment");
-    let template_analysis = CapabilityAnalysis::derive(
-        std::slice::from_ref(&template),
-        &CompilerOptions::default(),
-        CapabilityContext::default(),
-    );
+    let template_analysis = default_analysis(&template);
     assert!(
         template_analysis
             .semantic_check_node_allows_claimed_descendants(template.source.id, template_fragment,),
@@ -373,11 +365,7 @@ fn recovery_statement_roles_separate_real_subtrees_from_flat_fragments() {
         declaration_tail_roles.get(&leaked),
         Some(&RecoveryStatementRole::RepresentationalFragment),
     );
-    let declaration_tail_analysis = CapabilityAnalysis::derive(
-        std::slice::from_ref(&declaration_tail),
-        &CompilerOptions::default(),
-        CapabilityContext::default(),
-    );
+    let declaration_tail_analysis = default_analysis(&declaration_tail);
     for target in [
         CapabilityTarget::DeclarationModel,
         CapabilityTarget::DeclarationValue,
@@ -484,11 +472,7 @@ fn recovery_statement_roles_separate_real_subtrees_from_flat_fragments() {
         Some(&RecoveryStatementRole::RepresentationalFragment),
         "authored-literal recovery cannot inherit the parser-only declarator exception",
     );
-    let variable_analysis = CapabilityAnalysis::derive(
-        std::slice::from_ref(&variable_list),
-        &CompilerOptions::default(),
-        CapabilityContext::default(),
-    );
+    let variable_analysis = default_analysis(&variable_list);
     assert!(
         variable_analysis.semantic_check_node_allows_claimed_descendants(
             variable_list.source.id,
@@ -548,11 +532,7 @@ fn flow_contained_recovery_fragments_allow_name_only_descendant_discovery() {
         "}\n",
     );
     let file = program_file(0, "flow-recovery-fragments.ts", source);
-    let analysis = CapabilityAnalysis::derive(
-        std::slice::from_ref(&file),
-        &CompilerOptions::default(),
-        CapabilityContext::default(),
-    );
+    let analysis = default_analysis(&file);
 
     for name in ["MissingAfter", "MissingThen", "MissingElse"] {
         let start = source.find(name).expect("name witness") as u32;
@@ -617,11 +597,7 @@ fn declaration_nonclaims_follow_direct_and_return_value_owners() {
             "function shell(value: string | number) {{\n  const before: string = value;\n  {body}\n}}\n"
         );
         let file = program_file(0, path, &source);
-        let analysis = CapabilityAnalysis::derive(
-            std::slice::from_ref(&file),
-            &CompilerOptions::default(),
-            CapabilityContext::default(),
-        );
+        let analysis = default_analysis(&file);
         for name in ["shell", "value"] {
             let declaration = file
                 .bindings
@@ -659,11 +635,7 @@ fn declaration_nonclaims_follow_direct_and_return_value_owners() {
         ),
     ] {
         let file = program_file(0, path, source);
-        let analysis = CapabilityAnalysis::derive(
-            std::slice::from_ref(&file),
-            &CompilerOptions::default(),
-            CapabilityContext::default(),
-        );
+        let analysis = default_analysis(&file);
         let declaration = file
             .bindings
             .declarations
@@ -676,11 +648,7 @@ fn declaration_nonclaims_follow_direct_and_return_value_owners() {
     }
 
     let signature = program_file(0, "signature.ts", "function broken(value: ) {}");
-    let analysis = CapabilityAnalysis::derive(
-        std::slice::from_ref(&signature),
-        &CompilerOptions::default(),
-        CapabilityContext::default(),
-    );
+    let analysis = default_analysis(&signature);
     for name in ["broken", "value"] {
         let declaration = signature
             .bindings
@@ -720,11 +688,7 @@ fn zero_width_eof_recovery_keeps_its_nested_statement_owner() {
         .find(|declaration| declaration.name == "Broken")
         .expect("recovered type-alias declaration")
         .id;
-    let analysis = CapabilityAnalysis::derive(
-        std::slice::from_ref(&file),
-        &CompilerOptions::default(),
-        CapabilityContext::default(),
-    );
+    let analysis = default_analysis(&file);
     assert!(!analysis.semantic_declaration_is_claimed(std::slice::from_ref(&file), declaration,));
 }
 
@@ -747,11 +711,7 @@ fn opaque_namespace_extent_nonclaims_every_recovered_root_fragment() {
         .unmodeled_declaration_hosts()
         .first()
         .expect("namespace host fact");
-    let analysis = CapabilityAnalysis::derive(
-        std::slice::from_ref(&file),
-        &CompilerOptions::default(),
-        CapabilityContext::default(),
-    );
+    let analysis = default_analysis(&file);
     let host_declaration = file
         .bindings
         .declarations
@@ -1946,4 +1906,88 @@ fn assertion_declarator_tail_has_typed_file_emit_nonclaims() {
             && declaration.name == "y"
             && declaration.owner == y_statement.id
     }));
+}
+
+#[test]
+fn javascript_property_navigation_records_one_exact_tuple_per_scope_and_target() {
+    use crate::program::{Compiler, SourceInput};
+
+    let assignments = "renamedRoot.renamedProperty = 1;".repeat(16);
+    let uses = "renamedRoot.renamedProperty;".repeat(64);
+    for source in [
+        format!("const renamedRoot = {{}};{assignments}{uses}"),
+        format!("{uses}const renamedRoot = {{}};{assignments}"),
+        format!("const renamedRoot = {{known: 1}};{assignments}{uses}"),
+    ] {
+        let output = Compiler::new().compile(
+            vec![SourceInput::new("navigation.js", Arc::<str>::from(source))],
+            &CompilerOptions {
+                allow_js: true,
+                no_emit: true,
+                ..CompilerOptions::default()
+            },
+        );
+        let mut scopes = output
+            .program
+            .javascript_assignments
+            .property_uses()
+            .map(|(file, owner)| CapabilityScope::node(file, owner))
+            .collect::<BTreeSet<_>>();
+        scopes.extend(
+            output
+                .program
+                .javascript_assignments
+                .property_declarations()
+                .filter_map(|id| {
+                    output.program.files[id.file.0 as usize]
+                        .bindings
+                        .declaration(id)
+                        .map(|declaration| CapabilityScope::node(id.file, declaration.owner))
+                }),
+        );
+        let records = output.capabilities.nonclaims.iter().filter(|record| {
+            record.reason == NonclaimReason::Semantic(SemanticGap::JavaScriptPropertyNavigation)
+        });
+        assert_eq!(
+            records.clone().count(),
+            scopes.len() * ALL_TARGETS[7..].len()
+        );
+        assert!(records.into_iter().all(|record| {
+            scopes.contains(&record.scope)
+                && ALL_TARGETS[7..].contains(&record.target)
+                && record.deletion
+                    == DeletionCondition::SemanticOwner(SemanticGap::JavaScriptPropertyNavigation)
+        }));
+        let file = output.program.files[0].source.id;
+        for requested in [
+            CapabilityScope::Program,
+            CapabilityScope::File(file),
+            *scopes.first().expect("member scope"),
+        ] {
+            let expected = output
+                .capabilities
+                .nonclaims
+                .iter()
+                .filter(|record| {
+                    record.target == CapabilityTarget::QuickInfo
+                        && scope_applies(record.scope, requested)
+                })
+                .collect::<Vec<_>>();
+            let CapabilityClaim::Nonclaimed(reasons) = output
+                .capabilities
+                .claim(CapabilityTarget::QuickInfo, requested)
+            else {
+                panic!("indexed stress claim must be nonclaimed")
+            };
+            assert_eq!(reasons.clone().collect::<Vec<_>>(), expected);
+            assert_eq!(
+                reasons
+                    .ranges
+                    .iter()
+                    .map(|range| range.len())
+                    .sum::<usize>(),
+                expected.len()
+            );
+        }
+    }
 }

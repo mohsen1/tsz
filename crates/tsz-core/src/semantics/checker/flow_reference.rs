@@ -321,22 +321,19 @@ impl Checker<'_> {
 
     fn predicate_leaf(&mut self, ty: TypeId, asserted: TypeId, truthy: bool) -> Completion<TypeId> {
         let never = self.store.builtins.never;
+        let select = |when_true, when_false| {
+            Completion::Complete(if truthy { when_true } else { when_false })
+        };
         if ty == asserted {
-            return Completion::Complete(if truthy { ty } else { never });
+            return select(ty, never);
         }
         use TypeKind::*;
         match (self.store.kind(ty), self.store.kind(asserted)) {
             (_, Error | Invalid(_)) | (Never, _) => return Completion::Complete(ty),
-            (Unknown, Any) => {
-                return Completion::Complete(if truthy { asserted } else { never });
-            }
-            (Error | Invalid(_), _) | (Any, _) | (Unknown, _) => {
-                return Completion::Complete(if truthy { asserted } else { ty });
-            }
-            (_, Any | Unknown) => {
-                return Completion::Complete(if truthy { ty } else { never });
-            }
-            (_, Never) => return Completion::Complete(if truthy { never } else { ty }),
+            (Unknown, Any) => return select(asserted, never),
+            (Error | Invalid(_), _) | (Any, _) | (Unknown, _) => return select(asserted, ty),
+            (_, Any | Unknown) => return select(ty, never),
+            (_, Never) => return select(never, ty),
             _ => {}
         }
         let source = self.predicate_constituents(ty);
@@ -439,16 +436,16 @@ impl Checker<'_> {
         }
     }
 
-    const fn predicate_scalar_domain(kind: &TypeKind) -> Option<u8> {
+    const fn predicate_scalar_domain(kind: &TypeKind) -> Option<TypeofWitness> {
         use TypeKind::*;
         match kind {
-            String | LiteralString(_, _) => Some(0),
-            Number | LiteralNumber(_, _) => Some(1),
-            BigInt => Some(2),
-            Boolean | LiteralBoolean(_, _) => Some(3),
-            Symbol => Some(4),
-            Null => Some(5),
-            Undefined => Some(6),
+            String | LiteralString(_, _) => Some(TypeofWitness::String),
+            Number | LiteralNumber(_, _) => Some(TypeofWitness::Number),
+            BigInt => Some(TypeofWitness::BigInt),
+            Boolean | LiteralBoolean(_, _) => Some(TypeofWitness::Boolean),
+            Symbol => Some(TypeofWitness::Symbol),
+            Null => Some(TypeofWitness::Object),
+            Undefined => Some(TypeofWitness::Undefined),
             _ => None,
         }
     }
@@ -603,37 +600,24 @@ impl Checker<'_> {
     }
 
     fn typeof_witness_for_type(&self, ty: TypeId) -> Option<TypeofWitness> {
-        match self.store.kind(ty) {
-            TypeKind::Undefined => Some(TypeofWitness::Undefined),
-            TypeKind::Null
-            | TypeKind::Array(_)
-            | TypeKind::Tuple(_)
-            | TypeKind::ClassInstance { .. } => Some(TypeofWitness::Object),
+        let kind = self.store.kind(ty);
+        if let Some(witness) = Self::predicate_scalar_domain(kind) {
+            return Some(witness);
+        }
+        match kind {
+            TypeKind::Array(_) | TypeKind::Tuple(_) | TypeKind::ClassInstance { .. } => {
+                Some(TypeofWitness::Object)
+            }
             TypeKind::Object(shape)
                 if shape.call_signatures.is_empty() && shape.construct_signatures.is_empty() =>
             {
                 Some(TypeofWitness::Object)
             }
-            TypeKind::Object(_) | TypeKind::Function(_) | TypeKind::ShapeFunction(_) => {
-                Some(TypeofWitness::Function)
-            }
-            TypeKind::ClassConstructor { .. } => Some(TypeofWitness::Function),
-            TypeKind::Boolean | TypeKind::LiteralBoolean(_, _) => Some(TypeofWitness::Boolean),
-            TypeKind::Number | TypeKind::LiteralNumber(_, _) => Some(TypeofWitness::Number),
-            TypeKind::BigInt => Some(TypeofWitness::BigInt),
-            TypeKind::String | TypeKind::LiteralString(_, _) => Some(TypeofWitness::String),
-            TypeKind::Symbol => Some(TypeofWitness::Symbol),
-            TypeKind::Any
-            | TypeKind::Unknown
-            | TypeKind::Void
-            | TypeKind::ObjectKeyword
-            | TypeKind::TypeParameter { .. }
-            | TypeKind::Union(_)
-            | TypeKind::Intersection(_)
-            | TypeKind::Deferred(_)
-            | TypeKind::Never
-            | TypeKind::Error
-            | TypeKind::Invalid(_) => None,
+            TypeKind::Object(_)
+            | TypeKind::ClassConstructor { .. }
+            | TypeKind::Function(_)
+            | TypeKind::ShapeFunction(_) => Some(TypeofWitness::Function),
+            _ => None,
         }
     }
 }

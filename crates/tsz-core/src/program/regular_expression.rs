@@ -18,10 +18,9 @@ pub(crate) fn has_unmodeled_regular_expression_program_products(
     files: &[ProgramFile],
     options: &CompilerOptions,
 ) -> bool {
-    let has_authored = files
+    files
         .iter()
-        .any(|file| file.syntax.has_authored_regular_expression());
-    has_authored
+        .any(|file| file.syntax.has_authored_regular_expression())
         && (!regular_expression_program_options_supported(options)
             || options.declaration
             || options.source_map
@@ -39,18 +38,12 @@ fn regular_expression_program_sources_supported(
     files: &[ProgramFile],
     options: &CompilerOptions,
 ) -> bool {
-    if !ambient_regular_expression_type_is_unambiguous(files, options) {
-        return false;
-    }
-    if files
-        .iter()
-        .all(|file| statements_form_regular_expression_expression_file(&file.syntax.statements))
-    {
-        return true;
-    }
-    files.iter().all(|file| {
-        statements_form_regular_expression_variable_file(&file.source, &file.syntax.statements)
-    }) && unique_top_level_value_bindings_supported(files, options)
+    ambient_regular_expression_type_is_unambiguous(files, options)
+        && (files.iter().all(|file| {
+            statements_form_regular_expression_expression_file(&file.syntax.statements)
+        }) || files.iter().all(|file| {
+            statements_form_regular_expression_variable_file(&file.source, &file.syntax.statements)
+        }) && unique_top_level_value_bindings_supported(files, options))
 }
 
 fn ambient_regular_expression_type_is_unambiguous(

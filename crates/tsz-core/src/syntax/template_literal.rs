@@ -2,6 +2,7 @@ use crate::source::{SourceText, Span};
 
 use super::descendant_walk::{ExpressionRoot, ExpressionTraversal, contains_matching_expression};
 use super::scanner::is_plain_strict_binding_identifier;
+use super::string_literal::hex_value;
 use super::{
     ClassDeclaration, Expression, ExpressionKind, Literal, Statement, StatementKind, VariableKind,
 };
@@ -376,48 +377,6 @@ const fn is_template_literal(expression: &Expression) -> bool {
     )
 }
 
-const fn hex_value(byte: u8) -> Option<u32> {
-    match byte {
-        b'0'..=b'9' => Some((byte - b'0') as u32),
-        b'a'..=b'f' => Some((byte - b'a' + 10) as u32),
-        b'A'..=b'F' => Some((byte - b'A' + 10) as u32),
-        _ => None,
-    }
-}
-
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::source::FileId;
-
-    fn cooked(raw: &str) -> Option<String> {
-        ScannedTemplateLiteral::terminated(Span::new(FileId(0), 0, raw.len()), raw)
-            .syntax_literal()
-            .map(|literal| literal.cooked)
-    }
-
-    #[test]
-    fn cooks_control_unicode_identity_and_line_continuation_escapes() {
-        assert_eq!(
-            cooked(r"`\0\x19\u001f\u{20}\t\v\f\b\r\n\world\``"),
-            Some("\0\u{19}\u{1f} \t\u{b}\u{c}\u{8}\r\nworld`".to_string())
-        );
-        assert_eq!(cooked("`a\\\r\nb\\\nc`").as_deref(), Some("abc"));
-        assert_eq!(cooked("`a\rb\r\nc`").as_deref(), Some("a\nb\nc"));
-    }
-
-    #[test]
-    fn rejects_legacy_octal_malformed_unicode_and_unrepresentable_surrogates() {
-        for raw in [
-            r"`\00`",
-            r"`\8`",
-            r"`\x0`",
-            r"`\u123`",
-            r"`\u{}`",
-            r"`\u{110000}`",
-            r"`\uD800`",
-        ] {
-            assert_eq!(cooked(raw), None, "{raw}");
-        }
-    }
-}
+#[path = "../../rewrite-tests/template_literal_unit.rs"]
+mod tests;

@@ -451,11 +451,13 @@ impl Checker<'_> {
         self.signatures_are_compatibly_modeled(
             &Signature {
                 generic_declaration: None,
+                untyped_javascript: false,
                 parameters: implementation_parameters,
                 return_type: implementation_return,
             },
             &Signature {
                 generic_declaration: None,
+                untyped_javascript: false,
                 parameters: overload_parameters,
                 return_type: overload_return,
             },
@@ -686,6 +688,13 @@ impl Checker<'_> {
         let expected_return_order = function.return_type.as_ref().and_then(|annotation| {
             self.property_order_for_type_node_root(file, function_scope, annotation)
         });
+        let untyped_javascript = javascript_signature_is_untyped(
+            self.program.files[file.0 as usize].source.kind(),
+            &function.parameters,
+            function.type_parameters.is_empty(),
+            function.return_type.is_none(),
+            matches!(signature_context, ContextualType::Absent),
+        );
         for (parameter, resolved) in runtime_parameters.iter().copied().zip(&resolved) {
             if parameter.initializer.is_some()
                 || parameter.optional && self.options.effective_strict_null_checks()
@@ -707,11 +716,8 @@ impl Checker<'_> {
             FunctionLikeSyntax::Arrow(ArrowBody::Expression(body)) => {
                 let return_type =
                     self.infer_expression_contextual(file, function_scope, body, expected_return);
-                self.store.intern(TypeKind::Function(Signature {
-                    generic_declaration: None,
-                    parameters: resolved,
-                    return_type,
-                }))
+                self.store
+                    .function(None, untyped_javascript, resolved, return_type)
             }
             FunctionLikeSyntax::Arrow(ArrowBody::Block(statements)) => {
                 self.check_statement_list(
@@ -721,11 +727,12 @@ impl Checker<'_> {
                     expected_return,
                     expected_return_order.as_ref(),
                 );
-                self.store.intern(TypeKind::Function(Signature {
-                    generic_declaration: None,
-                    parameters: resolved,
-                    return_type: expected_return_type.unwrap_or(self.store.builtins.void),
-                }))
+                self.store.function(
+                    None,
+                    untyped_javascript,
+                    resolved,
+                    expected_return_type.unwrap_or(self.store.builtins.void),
+                )
             }
             FunctionLikeSyntax::Function { body, .. } => {
                 let previous_self_query =
@@ -748,11 +755,9 @@ impl Checker<'_> {
                 let signature_completion = self.completion.finish_capture();
                 let inferred = match return_type {
                     Completion::Complete(return_type) if signature_completion.is_complete() => {
-                        let inferred = self.store.intern(TypeKind::Function(Signature {
-                            generic_declaration: None,
-                            parameters: resolved,
-                            return_type,
-                        }));
+                        let inferred =
+                            self.store
+                                .function(None, untyped_javascript, resolved, return_type);
                         if named_function
                             && function_expression_has_authored_signature(function)
                             && let Some(identity) = function_identity
@@ -928,11 +933,18 @@ impl Checker<'_> {
         } else {
             completed!(self.infer_function_return(id, declaration, scope))
         };
-        Completion::Complete(self.store.intern(TypeKind::Function(Signature {
-            generic_declaration: (!declaration.type_parameters.is_empty()).then_some(id),
+        Completion::Complete(self.store.function(
+            (!declaration.type_parameters.is_empty()).then_some(id),
+            javascript_signature_is_untyped(
+                self.program.files[id.file.0 as usize].source.kind(),
+                &declaration.parameters,
+                declaration.type_parameters.is_empty(),
+                declaration.return_type.is_none(),
+                true,
+            ),
             parameters,
             return_type,
-        })))
+        ))
     }
 
     fn enclosing_function_type_parameters(
@@ -1058,6 +1070,24 @@ fn function_expression_has_authored_signature(function: &FunctionLikeExpression)
             parameter.name_kind == ParameterNameKind::Binding && parameter.annotation.is_some()
         })
         && matches!(&function.syntax, FunctionLikeSyntax::Function { .. })
+}
+
+fn javascript_signature_is_untyped(
+    source_kind: SourceKind,
+    parameters: &[Parameter],
+    has_no_type_parameters: bool,
+    has_no_return_type: bool,
+    has_no_contextual_signature: bool,
+) -> bool {
+    matches!(
+        source_kind,
+        SourceKind::JavaScript | SourceKind::JavaScriptJsx
+    ) && has_no_type_parameters
+        && has_no_return_type
+        && has_no_contextual_signature
+        && parameters
+            .iter()
+            .all(|parameter| parameter.annotation.is_none())
 }
 
 const fn bounded_inferred_return(kind: &TypeKind) -> bool {

@@ -1,7 +1,7 @@
 use crate::syntax::statements_form_extended_unicode_string_variable_file;
 
 use super::literal_products::{
-    LiteralProductFamily, exact_option_value, roots_are_homogeneous_literal_products,
+    self, LiteralProductFamily, roots_are_homogeneous_literal_products,
     unique_top_level_value_bindings_supported,
 };
 use super::{CompilerOptions, ProgramFile};
@@ -17,7 +17,7 @@ pub(crate) fn has_unmodeled_extended_unicode_string_program_products(
         .iter()
         .any(|file| file.syntax.has_authored_extended_unicode_string());
     has_authored
-        && (!extended_unicode_string_program_options_supported(options)
+        && (!literal_products::direct_literal_program_options_supported(options)
             || !roots_are_homogeneous_literal_products(
                 files,
                 LiteralProductFamily::ExtendedUnicodeString,
@@ -29,20 +29,4 @@ pub(crate) fn has_unmodeled_extended_unicode_string_program_products(
                 )
             })
             || !unique_top_level_value_bindings_supported(files, options))
-}
-
-fn extended_unicode_string_program_options_supported(options: &CompilerOptions) -> bool {
-    !options.no_lib
-        && options.lib.is_none()
-        && !options.no_emit_on_error
-        && !options.declaration
-        && !options.declaration_map
-        && !options.source_map
-        && !options.inline_source_map
-        && !options.remove_comments
-        && options.root_dir.is_none()
-        && options.out_dir.is_none()
-        && options.declaration_dir.is_none()
-        && exact_option_value(&options.target, &["es6", "es2015"])
-        && exact_option_value(&options.module, &["commonjs", "esnext", "preserve"])
 }

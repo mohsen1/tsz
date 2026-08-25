@@ -32,8 +32,7 @@ impl Parser<'_> {
     }
 
     pub(super) fn finish_extended_unicode_string_source(&mut self, statements: &[Statement]) {
-        let has_authored_string = !self.string_literals.is_empty();
-        if !has_authored_string {
+        if self.string_literals.is_empty() {
             return;
         }
         self.source_syntax_facts

@@ -129,19 +129,6 @@ impl ScannedRegularExpressionLiteral {
     }
 }
 
-pub(crate) fn statements_form_regular_expression_safe_file(
-    source: &SourceText,
-    statements: &[Statement],
-    supported_literal_count: usize,
-) -> bool {
-    source.is_regular_typescript_source()
-        && source_uses_supported_line_breaks(source)
-        && statement_starts_at_supported_column(source, statements)
-        && supported_literal_count == 1
-        && (statements_form_regular_expression_expression_file(statements)
-            || statements_form_regular_expression_variable_file(source, statements))
-}
-
 pub(crate) fn statements_form_regular_expression_expression_file(statements: &[Statement]) -> bool {
     matches!(
         statements,
@@ -155,47 +142,13 @@ pub(crate) fn statements_form_regular_expression_expression_file(statements: &[S
     )
 }
 
-pub(crate) fn statements_form_regular_expression_variable_file(
-    source: &SourceText,
-    statements: &[Statement],
-) -> bool {
-    let [
-        Statement {
-            kind: StatementKind::Variable(declaration),
-            ..
-        },
-    ] = statements
-    else {
-        return false;
-    };
-    declaration.declaration_kind == VariableKind::Var
-        && !declaration.exported
-        && declaration.annotation.is_none()
-        && is_plain_strict_binding_identifier(source.slice(declaration.name_span))
-        && matches!(
-            declaration.initializer.as_ref(),
-            Some(Expression {
-                kind: ExpressionKind::RegularExpression(_),
-                ..
-            })
-        )
-}
-
-pub(crate) fn comments_form_regular_expression_safe_file(
-    source: &SourceText,
-    statements: &[Statement],
-    comments: &[CommentTrivia],
-) -> bool {
-    if comments.is_empty() {
-        return source.text.is_ascii();
-    }
-    let [statement] = statements else {
-        return false;
-    };
-    statements_form_regular_expression_variable_file(source, statements)
-        && comments_form_contiguous_plain_leading_run(source, statement, comments)
-        && source_is_ascii_outside_comments(source, comments)
-}
+direct_var_literal_predicates!(
+    statements_form_regular_expression_safe_file,
+    statements_form_regular_expression_variable_file,
+    comments_form_regular_expression_safe_file,
+    ExpressionKind::RegularExpression(_),
+    statements_form_regular_expression_expression_file
+);
 
 fn basic_ascii_pattern_supported(pattern: &str) -> bool {
     let bytes = pattern.as_bytes();

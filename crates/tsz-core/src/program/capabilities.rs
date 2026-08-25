@@ -9,7 +9,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use super::{
-    CompilerOptions, ProgramFile, has_unmodeled_no_substitution_template_program_products,
+    CompilerOptions, JavaScriptAssignments, ProgramFile,
+    has_unmodeled_no_substitution_template_program_products,
     numeric_literal::has_unmodeled_numeric_recovery_program_products,
     regular_expression::has_unmodeled_regular_expression_program_products,
     string_literal::has_unmodeled_extended_unicode_string_program_products,
@@ -99,6 +100,7 @@ pub(crate) enum SyntaxGap {
     TypeRecovery,
     UnicodeLineCommentTerminator,
     JavaScriptModuleFormat,
+    ModuleClauseComment,
     DeclarationOverloadSummary,
 }
 
@@ -106,6 +108,9 @@ pub(crate) enum SyntaxGap {
 pub(crate) enum SemanticGap {
     FlowTypeOfReference,
     UnusedFunctionExpressionBindings,
+    JavaScriptJSDocSignature,
+    JavaScriptJSDocValue,
+    JavaScriptPropertyNavigation,
     FunctionLikeTypeParameters,
     FunctionExpressionBindingName,
     FunctionExpressionDeclaration,
@@ -183,10 +188,29 @@ pub(crate) struct CapabilityAnalysis {
 }
 
 impl CapabilityAnalysis {
+    #[cfg(test)]
     pub(crate) fn derive(
         files: &[ProgramFile],
         options: &CompilerOptions,
         context: CapabilityContext,
+    ) -> Self {
+        Self::derive_inner(files, options, context, None)
+    }
+
+    pub(crate) fn derive_with_javascript_assignments(
+        files: &[ProgramFile],
+        options: &CompilerOptions,
+        context: CapabilityContext,
+        javascript_assignments: &JavaScriptAssignments,
+    ) -> Self {
+        Self::derive_inner(files, options, context, Some(javascript_assignments))
+    }
+
+    fn derive_inner(
+        files: &[ProgramFile],
+        options: &CompilerOptions,
+        context: CapabilityContext,
+        javascript_assignments: Option<&JavaScriptAssignments>,
     ) -> Self {
         let mut nonclaims = Vec::new();
         let mut function_like_owners = Vec::new();
@@ -276,6 +300,13 @@ impl CapabilityAnalysis {
         }
 
         close_declaration_groups(&mut nonclaims, files, &function_like_owners);
+        if let Some(javascript_assignments) = javascript_assignments {
+            add_javascript_property_navigation_nonclaims(
+                &mut nonclaims,
+                files,
+                javascript_assignments,
+            );
+        }
 
         nonclaims.sort_unstable();
         nonclaims.dedup();
@@ -291,17 +322,59 @@ impl CapabilityAnalysis {
         target: CapabilityTarget,
         scope: CapabilityScope,
     ) -> CapabilityClaim<'_> {
+        let empty = 0..0;
+        let ranges = match scope {
+            CapabilityScope::Program => [self.target_range(target), empty.clone(), empty],
+            CapabilityScope::File(file) => [
+                self.scope_range(target, CapabilityScope::Program, CapabilityScope::Program),
+                self.scope_range(target, scope, scope),
+                self.scope_range(
+                    target,
+                    CapabilityScope::node(file, NodeId(0)),
+                    CapabilityScope::node(file, NodeId(u32::MAX)),
+                ),
+            ],
+            CapabilityScope::Node { file, .. } => [
+                self.scope_range(target, CapabilityScope::Program, CapabilityScope::Program),
+                self.scope_range(
+                    target,
+                    CapabilityScope::File(file),
+                    CapabilityScope::File(file),
+                ),
+                self.scope_range(target, scope, scope),
+            ],
+        };
         let reasons = CapabilityReasons {
-            analysis: self,
-            target,
-            scope,
-            index: 0,
+            nonclaims: &self.nonclaims,
+            ranges,
+            range: 0,
         };
         if reasons.clone().next().is_some() {
             CapabilityClaim::Nonclaimed(reasons)
         } else {
             CapabilityClaim::Claimed
         }
+    }
+
+    fn target_range(&self, target: CapabilityTarget) -> std::ops::Range<usize> {
+        self.nonclaims
+            .partition_point(|record| record.target < target)
+            ..self
+                .nonclaims
+                .partition_point(|record| record.target <= target)
+    }
+
+    fn scope_range(
+        &self,
+        target: CapabilityTarget,
+        start: CapabilityScope,
+        end: CapabilityScope,
+    ) -> std::ops::Range<usize> {
+        self.nonclaims
+            .partition_point(|record| (record.target, record.scope) < (target, start))
+            ..self
+                .nonclaims
+                .partition_point(|record| (record.target, record.scope) <= (target, end))
     }
 
     pub(crate) fn semantic_check_node_is_claimed(&self, file: FileId, owner: NodeId) -> bool {
@@ -406,6 +479,12 @@ impl CapabilityAnalysis {
                 {
                     has_flow_region = true;
                 }
+                DeletionCondition::SemanticOwner(SemanticGap::JavaScriptJSDocValue)
+                    if reason.scope == requested_scope =>
+                {
+                    has_semantic_recovery = true;
+                    has_direct_identifier_recovery = true;
+                }
                 _ => return (false, false),
             }
         }
@@ -440,7 +519,11 @@ impl CapabilityAnalysis {
                 return false;
             }
             match reason.deletion {
-                DeletionCondition::SemanticOwner(SemanticGap::FlowTypeOfReference) => true,
+                DeletionCondition::SemanticOwner(
+                    SemanticGap::FlowTypeOfReference
+                    | SemanticGap::JavaScriptJSDocSignature
+                    | SemanticGap::JavaScriptJSDocValue,
+                ) => true,
                 DeletionCondition::DeepestSemanticOwner(gap)
                     if gap == SyntaxGap::GeneratorFunctionLike
                         && reason.reason == NonclaimReason::Syntax(gap) =>
@@ -494,23 +577,30 @@ impl CapabilityAnalysis {
     }
 
     pub(crate) fn semantic_diagnostics_file_is_claimed(&self, file: FileId) -> bool {
-        !self.nonclaims.iter().any(|nonclaim| {
-            nonclaim.target == CapabilityTarget::SemanticDiagnostics
-                && scope_applies(nonclaim.scope, CapabilityScope::File(file))
-                && (matches!(nonclaim.scope, CapabilityScope::Program)
-                    || self.semantic_check_file_is_enabled(file))
+        let CapabilityClaim::Nonclaimed(mut reasons) = self.claim(
+            CapabilityTarget::SemanticDiagnostics,
+            CapabilityScope::File(file),
+        ) else {
+            return true;
+        };
+        !reasons.any(|reason| {
+            matches!(reason.scope, CapabilityScope::Program)
+                || self.semantic_check_file_is_enabled(file)
         })
     }
 
     pub(crate) fn semantic_diagnostics_are_claimed(&self) -> bool {
-        !self.nonclaims.iter().any(|nonclaim| {
-            nonclaim.target == CapabilityTarget::SemanticDiagnostics
-                && match nonclaim.scope {
-                    CapabilityScope::Program => true,
-                    CapabilityScope::File(file) | CapabilityScope::Node { file, .. } => {
-                        self.semantic_check_file_is_enabled(file)
-                    }
-                }
+        let CapabilityClaim::Nonclaimed(mut reasons) = self.claim(
+            CapabilityTarget::SemanticDiagnostics,
+            CapabilityScope::Program,
+        ) else {
+            return true;
+        };
+        !reasons.any(|reason| match reason.scope {
+            CapabilityScope::Program => true,
+            CapabilityScope::File(file) | CapabilityScope::Node { file, .. } => {
+                self.semantic_check_file_is_enabled(file)
+            }
         })
     }
 
@@ -542,6 +632,37 @@ impl CapabilityAnalysis {
     }
 }
 
+fn add_javascript_property_navigation_nonclaims(
+    nonclaims: &mut Vec<CapabilityNonclaim>,
+    files: &[ProgramFile],
+    javascript_assignments: &JavaScriptAssignments,
+) {
+    let gap = SemanticGap::JavaScriptPropertyNavigation;
+    for (file, member) in javascript_assignments.property_uses() {
+        add_semantic(
+            nonclaims,
+            &ALL_TARGETS[7..],
+            CapabilityScope::node(file, member),
+            gap,
+        );
+    }
+    for declaration in javascript_assignments.property_declarations() {
+        let Some(owner) = files
+            .get(declaration.file.0 as usize)
+            .and_then(|file| file.bindings.declaration(declaration))
+            .map(|declaration| declaration.owner)
+        else {
+            continue;
+        };
+        add_semantic(
+            nonclaims,
+            &ALL_TARGETS[7..],
+            CapabilityScope::node(declaration.file, owner),
+            gap,
+        );
+    }
+}
+
 #[derive(Debug)]
 pub(crate) enum CapabilityClaim<'a> {
     Claimed,
@@ -562,23 +683,21 @@ impl CapabilityClaim<'_> {
 
 #[derive(Debug, Clone)]
 pub(crate) struct CapabilityReasons<'a> {
-    analysis: &'a CapabilityAnalysis,
-    target: CapabilityTarget,
-    scope: CapabilityScope,
-    index: usize,
+    nonclaims: &'a [CapabilityNonclaim],
+    ranges: [std::ops::Range<usize>; 3],
+    range: usize,
 }
 
 impl<'a> Iterator for CapabilityReasons<'a> {
     type Item = &'a CapabilityNonclaim;
 
     fn next(&mut self) -> Option<Self::Item> {
-        while let Some(nonclaim) = self.analysis.nonclaims.get(self.index) {
-            self.index += 1;
-            if nonclaim.target == self.target && scope_applies(nonclaim.scope, self.scope) {
-                return Some(nonclaim);
+        loop {
+            if let Some(index) = self.ranges.get_mut(self.range)?.next() {
+                return self.nonclaims.get(index);
             }
+            self.range += 1;
         }
-        None
     }
 }
 
@@ -728,11 +847,13 @@ fn declaration_scope(
 ) -> Option<CapabilityScope> {
     let file = files.get(declaration.file.0 as usize)?;
     let declaration = file.bindings.declaration(declaration)?;
-    if declaration.kind == DeclarationKind::FunctionExpression
-        || declaration.kind == DeclarationKind::Parameter
-            && function_like_owners
-                .binary_search(&(file.source.id, declaration.owner))
-                .is_ok()
+    if matches!(
+        declaration.kind,
+        DeclarationKind::FunctionExpression | DeclarationKind::JavaScriptPropertyAssignment
+    ) || declaration.kind == DeclarationKind::Parameter
+        && function_like_owners
+            .binary_search(&(file.source.id, declaration.owner))
+            .is_ok()
     {
         return Some(CapabilityScope::node(file.source.id, declaration.owner));
     }
@@ -762,11 +883,37 @@ fn derive_file_nonclaims(
 ) -> BTreeSet<NodeId> {
     let id = file.source.id;
     let scope = CapabilityScope::File(id);
+    let is_javascript = matches!(
+        file.source.kind(),
+        SourceKind::JavaScript | SourceKind::JavaScriptJsx
+    );
     let declaration_statement_owners = declaration_statement_owners(file);
+    let javascript_jsdoc_casts = file
+        .syntax
+        .javascript_jsdoc_casts()
+        .map(|(owner, _)| owner)
+        .collect();
     let mut nodes = flow_containment::semantic_node_inventory(
         &file.syntax.statements,
         file.syntax.parser_recovery_facts(),
+        &javascript_jsdoc_casts,
     );
+
+    if file.syntax.statements.iter().any(|statement| {
+        matches!(
+            statement.kind,
+            StatementKind::Import(_) | StatementKind::Export(_)
+        ) && file.syntax.comments().iter().any(|comment| {
+            statement.span.start < comment.span.start && comment.span.end < statement.span.end
+        })
+    }) {
+        add_syntax(
+            nonclaims,
+            &[CapabilityTarget::JavaScript],
+            scope,
+            SyntaxGap::ModuleClauseComment,
+        );
+    }
 
     if file.syntax.has_unmodeled_function_products() {
         add_both_emit(nonclaims, scope, SyntaxGap::Function);
@@ -793,10 +940,7 @@ fn derive_file_nonclaims(
         );
     }
     if !file.syntax.unmodeled_declaration_hosts().is_empty()
-        || matches!(
-            file.source.kind(),
-            SourceKind::JavaScript | SourceKind::JavaScriptJsx
-        ) && nodes.boundaries.contains(&FileBoundary::Declaration)
+        || is_javascript && nodes.boundaries.contains(&FileBoundary::Declaration)
     {
         add_both_emit(nonclaims, scope, SyntaxGap::DeclarationHost);
         add_syntax(
@@ -838,12 +982,11 @@ fn derive_file_nonclaims(
     if options.no_unused_locals || options.no_unused_parameters {
         for products in &nodes.function_expressions {
             let gap = SemanticGap::UnusedFunctionExpressionBindings;
-            add_nonclaims(
+            add_semantic(
                 nonclaims,
                 &[CapabilityTarget::SemanticDiagnostics],
                 CapabilityScope::node(id, products.owner),
-                NonclaimReason::Semantic(gap),
-                DeletionCondition::SemanticOwner(gap),
+                gap,
             );
         }
     }
@@ -871,22 +1014,57 @@ fn derive_file_nonclaims(
     }
     for owner in nodes.flow_regions {
         let gap = SemanticGap::FlowTypeOfReference;
-        add_nonclaims(
+        add_semantic(
             nonclaims,
             &ALL_TARGETS[1..4],
             CapabilityScope::node(id, owner),
-            NonclaimReason::Semantic(gap),
-            DeletionCondition::SemanticOwner(gap),
+            gap,
         );
     }
     for (owner, gap) in nodes.function_like_gaps {
-        add_nonclaims(
+        if gap == SemanticGap::JavaScriptJSDocSignature && !is_javascript {
+            continue;
+        }
+        add_semantic(
             nonclaims,
             &ALL_TARGETS[1..6],
             CapabilityScope::node(id, owner),
-            NonclaimReason::Semantic(gap),
-            DeletionCondition::SemanticOwner(gap),
+            gap,
         );
+        if gap == SemanticGap::JavaScriptJSDocSignature {
+            add_semantic(
+                nonclaims,
+                &[CapabilityTarget::QuickInfo],
+                CapabilityScope::node(id, owner),
+                gap,
+            );
+        }
+    }
+    if is_javascript {
+        for owner in nodes.javascript_jsdoc_values {
+            let gap = SemanticGap::JavaScriptJSDocValue;
+            add_semantic(
+                nonclaims,
+                &[
+                    CapabilityTarget::DeclarationValue,
+                    CapabilityTarget::SemanticDiagnostics,
+                    CapabilityTarget::RequiredType,
+                    CapabilityTarget::Declaration,
+                    CapabilityTarget::QuickInfo,
+                ],
+                CapabilityScope::node(id, owner),
+                gap,
+            );
+        }
+        for owner in nodes.javascript_jsdoc_checks {
+            let gap = SemanticGap::JavaScriptJSDocValue;
+            add_semantic(
+                nonclaims,
+                &[CapabilityTarget::SemanticCheck],
+                CapabilityScope::node(id, owner),
+                gap,
+            );
+        }
     }
     for owner in nodes.function_like_binding_patterns {
         add_function_like_recovery_nonclaims(
@@ -907,13 +1085,7 @@ fn derive_file_nonclaims(
                 SemanticGap::FunctionExpressionQuickInfo,
             ),
         ] {
-            add_nonclaims(
-                nonclaims,
-                &[target],
-                CapabilityScope::node(id, owner),
-                NonclaimReason::Semantic(gap),
-                DeletionCondition::SemanticOwner(gap),
-            );
+            add_semantic(nonclaims, &[target], CapabilityScope::node(id, owner), gap);
         }
         let scope = CapabilityScope::node(id, owner);
         if file.syntax.parser_recovery_facts().iter().any(|recovery| {
@@ -1695,6 +1867,21 @@ fn add_syntax(
         scope,
         NonclaimReason::Syntax(gap),
         DeletionCondition::SyntaxOwner(gap),
+    );
+}
+
+fn add_semantic(
+    nonclaims: &mut Vec<CapabilityNonclaim>,
+    targets: &[CapabilityTarget],
+    scope: CapabilityScope,
+    gap: SemanticGap,
+) {
+    add_nonclaims(
+        nonclaims,
+        targets,
+        scope,
+        NonclaimReason::Semantic(gap),
+        DeletionCondition::SemanticOwner(gap),
     );
 }
 

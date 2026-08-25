@@ -1,9 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use super::checker::recursion::{ReferenceDemand, ReferenceExpansionStack};
-use super::types::{
-    Completion, DeferredType, Property, ShapeParameter, ShapeSignature, Signature, TypeId, TypeKind,
-};
+use super::types::{Completion, DeferredType, Property, ShapeSignature, TypeId, TypeKind};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum RelationMode {
@@ -139,28 +137,6 @@ pub(crate) trait RelationContext {
     ) -> bool;
     fn strict_null_checks(&self) -> bool;
     fn canonical_union(&mut self, members: &[TypeId]) -> TypeId;
-}
-
-/// Relate two types in one query-local session.
-///
-/// TypeScript's recursive structural comparison is coinductive: a repeated
-/// active `(source, target, mode)` pair is provisionally related. Keeping that
-/// identity before forcing deferred references lets recursive symbolic shapes
-/// meet the same active pair instead of materializing without a bound.
-#[cfg(test)]
-pub(crate) fn relate<C: RelationContext>(
-    context: &mut C,
-    source: TypeId,
-    target: TypeId,
-    mode: RelationMode,
-) -> Result<(), RelationFailure> {
-    relate_with_property_order(
-        context,
-        source,
-        target,
-        mode,
-        RelationPropertyOrder::default(),
-    )
 }
 
 pub(crate) fn relate_with_property_order<C: RelationContext>(
@@ -510,8 +486,8 @@ impl<C: RelationContext> Relation<'_, C> {
                 .relate_signatures(
                     source,
                     target,
-                    &signature_parts(source_signature),
-                    &signature_parts(target_signature),
+                    &ShapeSignature::from(source_signature),
+                    &ShapeSignature::from(target_signature),
                     mode,
                     depth,
                 ),
@@ -532,7 +508,7 @@ impl<C: RelationContext> Relation<'_, C> {
                 self.relate_signatures(
                     source,
                     target,
-                    &signature_parts(source_signature),
+                    &ShapeSignature::from(source_signature),
                     target_signature,
                     mode,
                     depth,
@@ -544,7 +520,7 @@ impl<C: RelationContext> Relation<'_, C> {
                     source,
                     target,
                     source_signature,
-                    &signature_parts(target_signature),
+                    &ShapeSignature::from(target_signature),
                     mode,
                     depth,
                 )
@@ -714,7 +690,8 @@ impl<C: RelationContext> Relation<'_, C> {
             .parameters
             .iter()
             .filter(|parameter| {
-                !parameter.optional
+                !source_signature.untyped_javascript
+                    && !parameter.optional
                     && !parameter.rest
                     && !matches!(self.context.type_kind(parameter.ty), TypeKind::Void)
             })
@@ -870,21 +847,6 @@ fn deferred_reference(kind: TypeKind) -> Option<(crate::source::DeclId, Vec<Type
     Some((declaration, arguments))
 }
 
-fn signature_parts(signature: &Signature) -> ShapeSignature {
-    ShapeSignature {
-        parameters: signature
-            .parameters
-            .iter()
-            .map(|parameter| ShapeParameter {
-                ty: parameter.ty,
-                optional: parameter.optional,
-                rest: parameter.rest,
-            })
-            .collect(),
-        return_type: signature.return_type,
-    }
-}
-
 const fn object_shape(kind: &TypeKind) -> Option<&super::types::ObjectShape> {
     match kind {
         TypeKind::Object(shape)
@@ -935,6 +897,5 @@ const fn failure(source: TypeId, target: TypeId, kind: RelationFailureKind) -> R
 }
 
 #[cfg(test)]
-mod tests {
-    include!("../../rewrite-tests/relation_unit.rs");
-}
+#[path = "../../rewrite-tests/relation_unit.rs"]
+mod tests;

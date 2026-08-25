@@ -111,9 +111,8 @@ impl Checker<'_> {
                     let _ = self.require_completion(Completion::<()>::Deferred);
                 }
                 if declaration.is_async || declaration.abstract_declaration {
-                    // Async return validation (TS1064) and the invalid
-                    // abstract-function modifier (TS1242) are not owned yet.
-                    // Preserve both and fail closed until their hosts are owned.
+                    // Async return validation (TS1064) and invalid abstract modifiers (TS1242)
+                    // fail closed until their hosts are owned.
                     let _ = self.require_completion(Completion::<()>::Deferred);
                 }
                 if declaration.bodyless_overload_is_recovery_free()
@@ -433,6 +432,7 @@ impl Checker<'_> {
                 parameters,
                 body,
                 has_body,
+                ..
             } => {
                 let member_scope = self.node_scope(file, member.id, class_scope);
                 self.visit_required_parameters(
@@ -520,10 +520,8 @@ impl Checker<'_> {
             return false;
         }
 
-        // `check_class` does not inspect bodies. This bounded promotion owns
-        // only ordinary, nongeneric overload syntax with an empty body; every
-        // other class host remains deferred until its diagnostics/body summary
-        // have a semantic owner.
+        // `check_class` skips bodies. Only ordinary, nongeneric overload syntax with an empty
+        // body is promoted; every other class host remains deferred pending a body summary.
         for member in &declaration.members {
             let supported_modifiers = !member.modifiers.readonly
                 && !member.modifiers.abstract_member
@@ -538,6 +536,7 @@ impl Checker<'_> {
                     parameters,
                     body,
                     has_body,
+                    ..
                 } => {
                     if !supported_modifiers
                         || !member.overload_context_is_recovery_free()
@@ -555,6 +554,7 @@ impl Checker<'_> {
                     body,
                     has_body,
                     accessor,
+                    ..
                 } => {
                     if !supported_modifiers
                         || !member.overload_context_is_recovery_free()
@@ -716,7 +716,7 @@ impl Checker<'_> {
                 type_parameters,
             ),
             ExpressionKind::Binary { left, right, .. }
-            | ExpressionKind::Assignment { left, right } => {
+            | ExpressionKind::Assignment { left, right, .. } => {
                 self.visit_required_expression(file, scope, left, type_parameters);
                 self.visit_required_expression(file, scope, right, type_parameters);
             }

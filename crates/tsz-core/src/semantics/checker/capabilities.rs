@@ -164,7 +164,7 @@ impl Checker<'_> {
         for file_id in &self.program.source_order {
             let file = &self.program.files[file_id.0 as usize];
             for statement in &file.syntax.statements {
-                self.collect_statement_model(file.source.id, statement, ScopeId(0));
+                self.collect_statement_model(file.source.id, statement);
             }
         }
     }

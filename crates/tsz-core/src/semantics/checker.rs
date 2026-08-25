@@ -29,6 +29,7 @@ mod type_member_grammar;
 mod unary_expression;
 
 pub use entry::{CheckResult, check_program};
+use model_collection::DeclarationModel;
 use relation_diagnostic::{ContextualType, RelationDiagnosticStyle};
 
 use crate::bind::{DeclarationKind, Meaning, ScopeId};
@@ -36,46 +37,16 @@ use crate::diagnostics::Diagnostic;
 use crate::program::{CapabilityAnalysis, CompilerOptions, Program};
 use crate::source::{DeclId, FileId, NodeId, Span};
 use crate::syntax::{
-    ClassDeclaration, Expression, ExpressionKind, FunctionDeclaration, InterfaceDeclaration,
-    KeywordType, Parameter, TypeAliasDeclaration, TypeNode, TypeNodeKind, UnaryOperator,
-    VariableDeclaration, VariableKind,
+    Expression, ExpressionKind, FunctionDeclaration, KeywordType, TypeNode, TypeNodeKind,
+    UnaryOperator, VariableDeclaration, VariableKind,
 };
 
 use super::relation::{RelationContext, RelationMode};
 use super::types::{
     Completion, DeferredType, DeferredUnaryOperator, ElementAccessMode, IndexKeyKind,
-    IndexSignature, LiteralProvenance, ObjectShape, Property, Signature, TypeId, TypeKind,
-    TypeStore, UnionPolicy,
+    IndexSignature, LiteralProvenance, ObjectShape, Property, TypeId, TypeKind, TypeStore,
+    UnionPolicy,
 };
-
-#[derive(Clone, Copy)]
-enum DeclarationModel<'a> {
-    Variable {
-        declaration: &'a VariableDeclaration,
-        scope: ScopeId,
-    },
-    Parameter {
-        parameter: &'a Parameter,
-        scope: ScopeId,
-    },
-    Function {
-        declaration: &'a FunctionDeclaration,
-        scope: ScopeId,
-    },
-    TypeAlias {
-        declaration: &'a TypeAliasDeclaration,
-        scope: ScopeId,
-    },
-    Interface {
-        declaration: &'a InterfaceDeclaration,
-        scope: ScopeId,
-    },
-    Class {
-        identity: DeclId,
-        declaration: &'a ClassDeclaration,
-        scope: ScopeId,
-    },
-}
 
 #[derive(Debug, Clone, Copy)]
 enum QueryState {
@@ -256,6 +227,8 @@ impl<'a> Checker<'a> {
             if annotation_is_complete
                 && (annotation.is_some() || initializer_completion.is_complete())
                 && self.is_cacheable_type(value)
+                && self.semantic_declaration_is_claimed(id)
+                && self.program.javascript_assignments.root(id).is_none()
             {
                 self.value_queries
                     .insert(id, declaration_value::ValueQueryState::Ready(value));
@@ -412,11 +385,7 @@ impl<'a> Checker<'a> {
                     }
                 };
                 let return_type = self.resolve_type_node(file, scope, return_type, type_parameters);
-                self.store.intern(TypeKind::Function(Signature {
-                    generic_declaration: None,
-                    parameters,
-                    return_type,
-                }))
+                self.store.function(None, false, parameters, return_type)
             }
             TypeNodeKind::Reference {
                 name,
@@ -785,8 +754,8 @@ impl<'a> Checker<'a> {
                     }
                 }
             }
-            ExpressionKind::Assignment { left, right } => {
-                self.infer_assignment_expression(file, scope, left, right)
+            ExpressionKind::Assignment { left, right, .. } => {
+                self.infer_assignment(file, scope, left, right)
             }
             ExpressionKind::As { expression, ty } => {
                 self.infer_expression(file, scope, expression, None);
@@ -1007,7 +976,8 @@ impl<'a> Checker<'a> {
             } => Some(class.type_parameters.as_slice()),
             DeclarationModel::Variable { .. }
             | DeclarationModel::Parameter { .. }
-            | DeclarationModel::Function { .. } => None,
+            | DeclarationModel::Function { .. }
+            | DeclarationModel::JavaScriptProperty(..) => None,
         };
         if reference_parameters.is_some_and(|parameters| {
             arguments.len() != parameters.len() || !object_shape::plain_type_parameters(parameters)
@@ -1045,7 +1015,8 @@ impl<'a> Checker<'a> {
             } => self.evaluate_class_instance(identity, class, scope, arguments),
             DeclarationModel::Variable { .. }
             | DeclarationModel::Parameter { .. }
-            | DeclarationModel::Function { .. } => Completion::Deferred,
+            | DeclarationModel::Function { .. }
+            | DeclarationModel::JavaScriptProperty(..) => Completion::Deferred,
         }
     }
 
@@ -1101,6 +1072,7 @@ impl<'a> Checker<'a> {
                     DeclarationModel::Parameter { parameter, .. } => parameter.name_span,
                     DeclarationModel::Function { declaration, .. } => declaration.name_span,
                     DeclarationModel::Class { declaration, .. } => declaration.name_span,
+                    DeclarationModel::JavaScriptProperty(right, _) => right.span,
                 })
             }
             DeferredType::Call { .. }

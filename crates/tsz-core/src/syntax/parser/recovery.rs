@@ -331,10 +331,8 @@ impl Parser<'_> {
     pub(super) fn recovery_extent_from_current(&self, authored_span: Span) -> Span {
         let current = self.current().span;
         debug_assert_eq!(authored_span.file, current.file);
-        if matches!(
-            authored_token_boundary(self.kind()),
-            RecoveryBoundary::Closed
-        ) && !closed_token_continues_recovered_owner(self.kind(), self.peek_kind(1))
+        if authored_token_closes_recovery(self.kind())
+            && !closed_token_continues_recovered_owner(self.kind(), self.peek_kind(1))
         {
             return authored_span.merge(current);
         }
@@ -358,10 +356,7 @@ impl Parser<'_> {
                 TokenKind::RightParen | TokenKind::RightBracket | TokenKind::RightBrace
                     if relative_depth == 0 =>
                 {
-                    let next = self
-                        .tokens
-                        .get(index + 1)
-                        .map_or(TokenKind::EndOfFile, |next| next.kind);
+                    let next = self.token_kind_at(index + 1);
                     if !continues_recovered_owner(next) {
                         break;
                     }
@@ -383,12 +378,7 @@ impl Parser<'_> {
 
     pub(super) fn later_line_starts_declaration(&self, previous: usize, index: usize) -> bool {
         !self.tokens_are_on_same_line(previous, index)
-            && starts_declaration_boundary(
-                self.tokens[index].kind,
-                self.tokens
-                    .get(index + 1)
-                    .map_or(TokenKind::EndOfFile, |next| next.kind),
-            )
+            && starts_declaration_boundary(self.tokens[index].kind, self.token_kind_at(index + 1))
     }
 }
 
@@ -407,16 +397,15 @@ pub(super) fn recovery_owner(
                 .find(|statement| statement.span.start <= authored_span.start)
         })?;
     let mut statement = root.id;
-    let mut best = (root.span.len(), root.span.start);
+    let mut best = (root.span.len(), std::cmp::Reverse(root.span.start));
     root.for_each_statement(&mut |candidate| {
-        if contains_authored_span(candidate.span, authored_span)
-            && (
-                candidate.span.len(),
-                std::cmp::Reverse(candidate.span.start),
-            ) < (best.0, std::cmp::Reverse(best.1))
-        {
+        let order = (
+            candidate.span.len(),
+            std::cmp::Reverse(candidate.span.start),
+        );
+        if contains_authored_span(candidate.span, authored_span) && order < best {
             statement = candidate.id;
-            best = (candidate.span.len(), candidate.span.start);
+            best = order;
         }
     });
     Some(ParserRecoveryOwner {
@@ -429,25 +418,15 @@ const fn contains_authored_span(owner: Span, authored: Span) -> bool {
     owner.file.0 == authored.file.0 && owner.start <= authored.start && authored.end <= owner.end
 }
 
-#[derive(Clone, Copy)]
-enum RecoveryBoundary {
-    Open,
-    Closed,
-}
-
-const fn authored_token_boundary(kind: TokenKind) -> RecoveryBoundary {
-    if matches!(
+const fn authored_token_closes_recovery(kind: TokenKind) -> bool {
+    matches!(
         kind,
         TokenKind::RightParen
             | TokenKind::RightBracket
             | TokenKind::RightBrace
             | TokenKind::Semicolon
             | TokenKind::EndOfFile
-    ) {
-        RecoveryBoundary::Closed
-    } else {
-        RecoveryBoundary::Open
-    }
+    )
 }
 
 fn starts_declaration_boundary(kind: TokenKind, next: TokenKind) -> bool {

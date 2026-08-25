@@ -8,12 +8,10 @@ use super::{PREC_ASSIGNMENT, PREC_LOWEST, Printer};
 impl Printer<'_> {
     pub(super) fn write_function_like(&mut self, function: &FunctionLikeExpression) {
         match &function.syntax {
-            FunctionLikeSyntax::Arrow(body) => self.write_arrow(&function.parameters, body),
-            FunctionLikeSyntax::Function {
-                name,
-                body,
-                body_span,
-            } => {
+            FunctionLikeSyntax::Arrow(body) => {
+                self.write_arrow(&function.parameters, body, function.body_span);
+            }
+            FunctionLikeSyntax::Function { name, body } => {
                 self.output.push_str("function");
                 self.output.push(' ');
                 if let Some(name) = name {
@@ -21,35 +19,35 @@ impl Printer<'_> {
                 }
                 self.write_runtime_parameters(&function.parameters);
                 self.output.push(' ');
-                self.write_inline_function_body(*body_span, body);
+                self.write_inline_function_body(function.body_span, body);
             }
         }
     }
 
     pub(super) fn write_inline_function_body(
         &mut self,
-        body_span: crate::source::Span,
+        body_span: Option<crate::source::Span>,
         body: &[Statement],
     ) {
-        let inline = self
-            .source
-            .slice(body_span)
-            .bytes()
-            .all(|byte| !matches!(byte, b'\n' | b'\r'))
-            && !self
-                .comment_cursor
-                .has_comment_within(body_span.start, body_span.end)
-            && body.iter().all(|statement| {
-                matches!(
-                    statement.kind,
-                    StatementKind::Variable(_)
-                        | StatementKind::Return(_)
-                        | StatementKind::Expression(_)
-                        | StatementKind::Empty
-                )
-            });
+        let inline = body_span.is_some_and(|body_span| {
+            self.source
+                .slice(body_span)
+                .bytes()
+                .all(|byte| !matches!(byte, b'\n' | b'\r'))
+                && !self
+                    .comment_index
+                    .has_comment_within(body_span.start, body_span.end)
+        }) && body.iter().all(|statement| {
+            matches!(
+                statement.kind,
+                StatementKind::Variable(_)
+                    | StatementKind::Return(_)
+                    | StatementKind::Expression(_)
+                    | StatementKind::Empty
+            )
+        });
         if !inline || body.is_empty() {
-            self.write_braced_statements(body);
+            self.write_braced_statements(body_span, body);
             return;
         }
         self.output.push_str("{ ");
@@ -109,7 +107,12 @@ impl Printer<'_> {
         }
     }
 
-    fn write_arrow(&mut self, parameters: &[crate::syntax::Parameter], body: &ArrowBody) {
+    fn write_arrow(
+        &mut self,
+        parameters: &[crate::syntax::Parameter],
+        body: &ArrowBody,
+        body_span: Option<crate::source::Span>,
+    ) {
         let preserve = self.preserve_arrows;
         if preserve {
             self.write_runtime_parameters(parameters);
@@ -134,7 +137,7 @@ impl Printer<'_> {
                 self.write_indent();
                 self.output.push('}');
             }
-            ArrowBody::Block(statements) => self.write_braced_statements(statements),
+            ArrowBody::Block(statements) => self.write_braced_statements(body_span, statements),
         }
     }
 }

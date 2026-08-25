@@ -218,7 +218,8 @@ pub(crate) fn walk_expression_descendants<'ast, A>(
         ExpressionKind::FunctionLike(function) => {
             adapter.function_like(context, expression, function);
         }
-        ExpressionKind::Binary { left, right, .. } | ExpressionKind::Assignment { left, right } => {
+        ExpressionKind::Binary { left, right, .. }
+        | ExpressionKind::Assignment { left, right, .. } => {
             walk_expression_descendants(adapter, context, left);
             walk_expression_descendants(adapter, context, right);
         }

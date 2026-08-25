@@ -71,15 +71,13 @@ impl ImportAliases {
                     allow_js,
                 );
                 for binding in &import.bindings {
-                    let target = target_file.zip(binding.imported.as_deref()).and_then(
-                        |(target_file, imported)| {
-                            (!binding.namespace)
-                                .then(|| {
-                                    direct_exported_value(&files[target_file.0 as usize], imported)
-                                })
-                                .flatten()
-                        },
-                    );
+                    let target = match (binding.namespace, target_file, binding.imported.as_deref())
+                    {
+                        (false, Some(target), Some(imported)) => {
+                            direct_exported_value(&files[target.0 as usize], imported)
+                        }
+                        _ => None,
+                    };
                     for declaration in file.bindings.declarations.iter().filter(|declaration| {
                         declaration.owner == statement.id
                             && declaration.kind == DeclarationKind::Import
@@ -93,10 +91,6 @@ impl ImportAliases {
         }
 
         Self { value_targets }
-    }
-
-    fn target(&self, declaration: DeclId) -> Option<Option<DeclId>> {
-        self.value_targets.get(&declaration).copied()
     }
 }
 
@@ -112,24 +106,22 @@ impl Program {
         name: &str,
     ) -> Option<TypeQueryRoot> {
         let bound = &self.files.get(file.0 as usize)?.bindings;
-        if let Some(declaration) = bound.resolve(scope, name, Meaning::Value) {
-            return Some(self.type_query_root_for(declaration));
-        }
-        if let Some(declaration) = self.resolve_import_alias(bound, scope, name) {
-            return Some(self.type_query_root_for(declaration));
+        if let Some(declaration) = bound
+            .resolve(scope, name, Meaning::Value)
+            .or_else(|| self.resolve_import_alias(bound, scope, name))
+        {
+            return Some(
+                match self.import_aliases.value_targets.get(&declaration).copied() {
+                    Some(target) => TypeQueryRoot::ImportAlias {
+                        declaration,
+                        target,
+                    },
+                    None => TypeQueryRoot::Declaration(declaration),
+                },
+            );
         }
         self.resolve_global(name, Meaning::Value)
             .map(TypeQueryRoot::Declaration)
-    }
-
-    fn type_query_root_for(&self, declaration: DeclId) -> TypeQueryRoot {
-        match self.import_aliases.target(declaration) {
-            Some(target) => TypeQueryRoot::ImportAlias {
-                declaration,
-                target,
-            },
-            None => TypeQueryRoot::Declaration(declaration),
-        }
     }
 
     fn resolve_import_alias(
@@ -141,11 +133,10 @@ impl Program {
         loop {
             let current = bound.scopes.get(scope.0 as usize)?;
             if let Some(ids) = current.names.get(name)
-                && let Some(declaration) = ids
-                    .iter()
-                    .rev()
-                    .copied()
-                    .find(|declaration| self.import_aliases.target(*declaration).is_some())
+                && let Some(declaration) =
+                    ids.iter().rev().copied().find(|declaration| {
+                        self.import_aliases.value_targets.contains_key(declaration)
+                    })
             {
                 return Some(declaration);
             }
@@ -172,11 +163,10 @@ fn resolve_relative_source(
         return source_paths.get(&base).copied();
     }
 
-    let mut extensions = vec!["ts", "tsx", "d.ts", "mts", "d.mts", "cts", "d.cts"];
-    if allow_js {
-        extensions.extend(["js", "jsx", "mjs", "cjs"]);
-    }
-    for extension in extensions {
+    let extensions = [
+        "ts", "tsx", "d.ts", "mts", "d.mts", "cts", "d.cts", "js", "jsx", "mjs", "cjs",
+    ];
+    for extension in &extensions[..if allow_js { extensions.len() } else { 7 }] {
         let mut candidate = base.clone();
         candidate.set_extension(extension);
         if let Some(file) = source_paths.get(&candidate).copied() {
@@ -209,8 +199,7 @@ fn direct_exported_value(file: &ProgramFile, name: &str) -> Option<DeclId> {
                 )
         })
     });
-    let declaration = values.next()?;
-    values.next().is_none().then_some(declaration)
+    values.next().filter(|_| values.next().is_none())
 }
 
 fn statement_directly_exports_value(
@@ -230,19 +219,7 @@ fn statement_directly_exports_value(
                 StatementKind::Class(declaration) => {
                     declaration.exported && !declaration.default_export && declaration.name == name
                 }
-                StatementKind::Import(_)
-                | StatementKind::Export(_)
-                | StatementKind::TypeAlias(_)
-                | StatementKind::Interface(_)
-                | StatementKind::If(_)
-                | StatementKind::Switch(_)
-                | StatementKind::Break(_)
-                | StatementKind::Continue(_)
-                | StatementKind::Return(_)
-                | StatementKind::Block(_)
-                | StatementKind::Expression(_)
-                | StatementKind::Empty
-                | StatementKind::Unknown => false,
+                _ => false,
             }
     })
 }
@@ -257,10 +234,10 @@ fn normalize_path(path: &Path) -> PathBuf {
                     normalized.pop();
                 }
                 Some(Component::RootDir) => {}
-                Some(Component::Prefix(_) | Component::ParentDir) | None => {
+                Some(Component::CurDir) => unreachable!("current directories are removed eagerly"),
+                _ => {
                     normalized.push(component.as_os_str());
                 }
-                Some(Component::CurDir) => unreachable!("current directories are removed eagerly"),
             },
             Component::Prefix(_) | Component::RootDir | Component::Normal(_) => {
                 normalized.push(component.as_os_str());

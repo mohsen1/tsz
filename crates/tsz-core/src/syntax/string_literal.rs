@@ -570,7 +570,7 @@ fn push_code_point(value: u32, cooked: &mut Vec<u16>) {
     }
 }
 
-const fn hex_value(byte: u8) -> Option<u32> {
+pub(super) const fn hex_value(byte: u8) -> Option<u32> {
     match byte {
         b'0'..=b'9' => Some((byte - b'0') as u32),
         b'a'..=b'f' => Some((byte - b'a' + 10) as u32),
@@ -579,56 +579,10 @@ const fn hex_value(byte: u8) -> Option<u32> {
     }
 }
 
-pub(crate) fn statements_form_extended_unicode_string_safe_file(
-    source: &SourceText,
-    statements: &[Statement],
-    supported_literal_count: usize,
-) -> bool {
-    source.is_regular_typescript_source()
-        && source_uses_supported_line_breaks(source)
-        && statement_starts_at_supported_column(source, statements)
-        && supported_literal_count == 1
-        && statements_form_extended_unicode_string_variable_file(source, statements)
-}
-
-pub(crate) fn statements_form_extended_unicode_string_variable_file(
-    source: &SourceText,
-    statements: &[Statement],
-) -> bool {
-    let [
-        Statement {
-            kind: StatementKind::Variable(declaration),
-            ..
-        },
-    ] = statements
-    else {
-        return false;
-    };
-    declaration.declaration_kind == VariableKind::Var
-        && !declaration.exported
-        && declaration.annotation.is_none()
-        && is_plain_strict_binding_identifier(source.slice(declaration.name_span))
-        && matches!(
-            declaration.initializer.as_ref(),
-            Some(Expression {
-                kind: ExpressionKind::Literal(Literal::String(StringLiteral::Extended(literal))),
-                ..
-            }) if literal.validation_supported()
-        )
-}
-
-pub(crate) fn comments_form_extended_unicode_string_safe_file(
-    source: &SourceText,
-    statements: &[Statement],
-    comments: &[CommentTrivia],
-) -> bool {
-    if comments.is_empty() {
-        return source.text.is_ascii();
-    }
-    let [statement] = statements else {
-        return false;
-    };
-    statements_form_extended_unicode_string_variable_file(source, statements)
-        && comments_form_contiguous_plain_leading_run(source, statement, comments)
-        && source_is_ascii_outside_comments(source, comments)
-}
+direct_var_literal_predicates!(
+    statements_form_extended_unicode_string_safe_file,
+    statements_form_extended_unicode_string_variable_file,
+    comments_form_extended_unicode_string_safe_file,
+    ExpressionKind::Literal(Literal::String(StringLiteral::Extended(literal)))
+        if literal.validation_supported(),
+);

@@ -1,150 +1,157 @@
-use crate::source::SourceText;
+use crate::source::Span;
 use crate::syntax::{
-    CommentKind, CommentPlacement, CommentTrivia, Expression, SourceUnit, Statement, StatementKind,
+    CommentClass, CommentKind, CommentPlacement, CommentSourcePosition, CommentTrivia, Expression,
+    SourceUnit, Statement, TokenKind,
 };
 
 use super::Printer;
 
+/// Source-ordered comment identities consumed once across overlapping ranges.
 #[derive(Default)]
-pub(super) struct CommentCursor {
+pub(super) struct CommentIndex {
     comments: Vec<CommentTrivia>,
     next: usize,
 }
 
-impl CommentCursor {
+impl CommentIndex {
     pub(super) fn has_comment_within(&self, start: u32, end: u32) -> bool {
+        let first = self
+            .comments
+            .partition_point(|comment| comment.span.start < start);
         self.comments
+            .get(first.max(self.next))
+            .is_some_and(|comment| comment.span.end <= end)
+    }
+
+    fn reset(&mut self, comments: &[CommentTrivia], preserve_comments: bool) {
+        self.comments = comments
             .iter()
-            .skip(self.next)
-            .any(|comment| start <= comment.span.start && comment.span.end <= end)
+            .copied()
+            .filter(|comment| preserve_comments || comment.class == CommentClass::DetachedPinned)
+            .collect();
+        self.next = 0;
     }
 
-    fn reset(&mut self, comments: &[CommentTrivia]) {
-        *self = Self {
-            comments: comments.to_vec(),
-            next: 0,
-        };
-    }
-
-    fn write_while(
+    fn take_prefix(
         &mut self,
-        source: &SourceText,
-        output: &mut String,
-        followed_by_token: bool,
-        mut take: impl FnMut(CommentTrivia) -> bool,
-    ) {
-        let mut separate_from_token = false;
-        while let Some(&comment) = self.comments.get(self.next) {
-            if !take(comment) {
-                break;
-            }
-            self.next += 1;
-            if comment.placement == CommentPlacement::Leading
-                && !output.is_empty()
-                && !output.ends_with('\n')
-            {
-                output.push('\n');
-            } else if comment.placement == CommentPlacement::Trailing
-                && !output.chars().last().is_some_and(char::is_whitespace)
-            {
-                output.push(' ');
-            }
-            output.push_str(source.slice(comment.span));
-            if comment.kind == CommentKind::Line && !output.ends_with('\n') {
-                output.push('\n');
-            }
-            separate_from_token = comment.kind == CommentKind::Block
-                && comment.placement == CommentPlacement::Leading;
-        }
-        if followed_by_token
-            && separate_from_token
-            && !output.chars().last().is_some_and(char::is_whitespace)
+        mut predicate: impl FnMut(CommentTrivia) -> bool,
+    ) -> Vec<CommentTrivia> {
+        let start = self.next;
+        while self
+            .comments
+            .get(self.next)
+            .copied()
+            .is_some_and(&mut predicate)
         {
-            output.push(' ');
+            self.next += 1;
         }
+        self.comments[start..self.next].to_vec()
     }
 
-    fn discard_while(&mut self, mut take: impl FnMut(CommentTrivia) -> bool) {
-        while self.comments.get(self.next).copied().is_some_and(&mut take) {
-            self.next += 1;
-        }
+    fn take_before(&mut self, offset: u32) -> Vec<CommentTrivia> {
+        self.take_prefix(|comment| comment.span.start < offset)
+    }
+
+    fn take_through_token(&mut self, end: u32) -> Vec<CommentTrivia> {
+        self.take_prefix(
+            |comment| matches!(comment.preceding_token_end, Some(start) if start <= end),
+        )
     }
 }
 
 impl Printer<'_> {
     pub(super) fn write_javascript_statements(&mut self, unit: &SourceUnit) {
-        if self.preserve_comments {
-            self.comment_cursor.reset(unit.comments());
-        }
+        self.comment_index
+            .reset(unit.comments(), self.preserve_comments);
         for statement in &unit.statements {
             self.write_javascript_statement(statement, true);
         }
-        self.comment_cursor
-            .write_while(self.source, &mut self.output, false, |_| true);
+        let tail_start = unit
+            .statements
+            .last()
+            .map_or(unit.span.start, |statement| statement.span.end);
+        let _ = self.comment_index.take_before(tail_start);
+        let tail = self
+            .comment_index
+            .take_prefix(|comment| comment.span.end <= unit.span.end);
+        self.write_comment_sequence(&tail, false, true);
     }
 
-    pub(super) fn write_comments_before(&mut self, offset: u32) {
-        self.comment_cursor
-            .write_while(self.source, &mut self.output, true, |comment| {
-                comment.span.start < offset
-            });
+    pub(super) fn write_comments_before_node(&mut self, span: Span, emitted: bool) {
+        let comments = self.comment_index.take_before(span.start);
+        if emitted {
+            self.write_comment_sequence(&comments, true, true);
+        } else {
+            let preserved = comments
+                .into_iter()
+                .filter(|comment| {
+                    comment.class == CommentClass::DetachedPinned
+                        || comment.source_position == CommentSourcePosition::SourceLeading
+                            && comment.class == CommentClass::TripleSlashReference
+                })
+                .collect::<Vec<_>>();
+            self.write_comment_sequence(&preserved, true, true);
+        }
     }
 
-    pub(super) fn write_comments_through_token(&mut self, token_end: u32) {
-        self.comment_cursor
-            .write_while(self.source, &mut self.output, true, |comment| {
-                comment
-                    .preceding_token_end
-                    .is_some_and(|preceding| preceding <= token_end)
-            });
+    /// Defensively reject emitted nodes with a comment slot not claimed earlier.
+    pub(super) fn write_comments_after_node(&mut self, span: Span, emitted: bool) {
+        let unresolved = self.comment_index.take_before(span.end);
+        if emitted && !unresolved.is_empty() {
+            self.javascript_supported = false;
+        }
+        let trailing = self.comment_index.take_prefix(|comment| {
+            comment.placement == CommentPlacement::Trailing
+                && comment.preceding_token_end == Some(span.end)
+        });
+        if emitted {
+            self.write_node_trailing_comments(&trailing);
+        }
+    }
+
+    pub(super) fn write_comments_before(&mut self, offset: u32) -> bool {
+        let comments = self.comment_index.take_before(offset);
+        self.write_comment_sequence(&comments, true, true)
+    }
+
+    pub(super) fn write_comments_through_token(&mut self, end: u32) -> bool {
+        let comments = self.comment_index.take_through_token(end);
+        self.write_comment_sequence(&comments, true, true)
+    }
+
+    pub(super) fn write_comments_before_close(&mut self, end: u32) -> bool {
+        let comments = self.comment_index.take_before(end);
+        self.write_comment_sequence(&comments, false, true)
     }
 
     pub(super) fn write_comments_before_parameter(&mut self, offset: u32) {
-        let boundary = self.output.len();
         self.write_comments_before(offset);
-        if self.output.len() > boundary {
-            if self.output[boundary..].starts_with(' ') {
-                self.output.remove(boundary);
-            }
-            if !self.output.chars().last().is_some_and(char::is_whitespace) {
-                self.output.push(' ');
-            }
+        if self.output.ends_with('\n') {
+            self.write_indent();
         }
     }
 
     pub(super) fn write_comments_after_parameter_open(&mut self) {
-        let bytes = self.source.text.as_bytes();
-        self.comment_cursor
-            .write_while(self.source, &mut self.output, false, |comment| {
-                comment
-                    .preceding_token_end
-                    .and_then(|end| bytes.get(end.saturating_sub(1) as usize))
-                    == Some(&b'(')
-            });
-    }
-
-    pub(super) fn discard_comments_through_token(&mut self, token_end: u32) {
-        self.comment_cursor.discard_while(|comment| {
-            comment
-                .preceding_token_end
-                .is_some_and(|preceding| preceding <= token_end)
+        let comments = self.comment_index.take_prefix(|comment| {
+            comment.preceding_token_kind == Some(crate::syntax::TokenKind::LeftParen)
         });
-    }
-
-    pub(super) fn discard_erased_statement_comments(&mut self, statement: &Statement) -> bool {
-        if !matches!(
-            statement.kind,
-            StatementKind::TypeAlias(_) | StatementKind::Interface(_)
-        ) {
-            return false;
+        if self.write_comment_sequence(&comments, true, true) {
+            self.write_indent();
         }
-        let end = statement.span.end;
-        self.comment_cursor.discard_while(|comment| {
-            comment.span.start < end
-                || comment.preceding_token_end == Some(end)
-                    && comment.placement == CommentPlacement::Trailing
-        });
-        true
+    }
+
+    pub(super) fn consume_comments_through_token(&mut self, end: u32) {
+        let _ = self.comment_index.take_through_token(end);
+    }
+
+    pub(super) fn consume_comments_before(&mut self, offset: u32) {
+        let _ = self.comment_index.take_before(offset);
+    }
+
+    pub(super) fn consume_parameter_close_comments(&mut self) {
+        let _ = self
+            .comment_index
+            .take_prefix(|comment| comment.preceding_token_kind == Some(TokenKind::Comma));
     }
 
     pub(super) fn write_commented_expression_statement(
@@ -154,17 +161,68 @@ impl Printer<'_> {
     ) {
         self.write_indent();
         self.write_expression_statement_expression(expression);
-        if statement.span.end > expression.span.end {
-            self.write_comments_through_token(expression.span.end);
+        if statement.span.end > expression.span.end
+            && self.write_comments_through_token(expression.span.end)
+        {
+            self.write_indent();
         }
-        self.output.push(';');
-        self.comment_cursor
-            .write_while(self.source, &mut self.output, false, |comment| {
-                comment.preceding_token_end == Some(statement.span.end)
-                    && comment.placement == CommentPlacement::Trailing
-            });
-        if !self.output.ends_with('\n') {
+        self.output.push_str(";\n");
+    }
+
+    fn write_node_trailing_comments(&mut self, comments: &[CommentTrivia]) {
+        if comments.is_empty() {
+            return;
+        }
+        let restore_line_break = self.output.ends_with('\n');
+        if restore_line_break {
+            self.output.pop();
+        }
+        self.write_comment_sequence(comments, false, false);
+        if restore_line_break && !self.output.ends_with('\n') {
             self.output.push('\n');
         }
+    }
+
+    fn write_comment_sequence(
+        &mut self,
+        comments: &[CommentTrivia],
+        followed_by_token: bool,
+        indent_at_line_start: bool,
+    ) -> bool {
+        let mut wrote = false;
+        for (index, comment) in comments.iter().copied().enumerate() {
+            wrote = true;
+            let separated_before = self.output.chars().last().is_some_and(char::is_whitespace);
+            if comment.placement == CommentPlacement::Leading
+                && !self.output.is_empty()
+                && !self.output.ends_with('\n')
+            {
+                self.output.push('\n');
+            } else if comment.placement == CommentPlacement::Trailing
+                && !self.output.chars().last().is_some_and(char::is_whitespace)
+            {
+                self.output.push(' ');
+            }
+            if indent_at_line_start && self.output.ends_with('\n') {
+                self.write_indent();
+            }
+            self.output
+                .push_str(&self.source.slice(comment.span).replace("\r\n", "\n"));
+            if comment.kind == CommentKind::Line
+                || comment.has_trailing_line_break
+                    && (comment.placement == CommentPlacement::Leading || !followed_by_token)
+            {
+                if !self.output.ends_with('\n') {
+                    self.output.push('\n');
+                }
+            } else if comment.kind == CommentKind::Block
+                && (followed_by_token || index + 1 < comments.len())
+                && (separated_before || comment.placement == CommentPlacement::Leading)
+                && !self.output.chars().last().is_some_and(char::is_whitespace)
+            {
+                self.output.push(' ');
+            }
+        }
+        wrote && self.output.ends_with('\n')
     }
 }

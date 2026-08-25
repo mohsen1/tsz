@@ -26,6 +26,8 @@ pub(super) struct SemanticNodeInventory {
     pub(super) flow_regions: BTreeSet<NodeId>,
     pub(super) function_likes: BTreeSet<NodeId>,
     pub(super) function_like_gaps: Vec<(NodeId, SemanticGap)>,
+    pub(super) javascript_jsdoc_values: BTreeSet<NodeId>,
+    pub(super) javascript_jsdoc_checks: BTreeSet<NodeId>,
     pub(super) function_like_binding_patterns: BTreeSet<NodeId>,
     pub(super) function_like_signatures: Vec<Span>,
     pub(super) function_expressions: Vec<FunctionExpressionProducts>,
@@ -43,9 +45,11 @@ pub(super) struct FunctionExpressionProducts {
 pub(super) fn semantic_node_inventory(
     statements: &[Statement],
     recoveries: &[ParserRecoveryFact],
+    javascript_jsdoc_casts: &BTreeSet<NodeId>,
 ) -> SemanticNodeInventory {
     let mut collector = FlowRegionCollector {
         recoveries,
+        javascript_jsdoc_casts,
         out: SemanticNodeInventory::default(),
     };
     collector.visit_statement_list(statements, false);
@@ -54,6 +58,7 @@ pub(super) fn semantic_node_inventory(
 
 struct FlowRegionCollector<'a> {
     recoveries: &'a [ParserRecoveryFact],
+    javascript_jsdoc_casts: &'a BTreeSet<NodeId>,
     out: SemanticNodeInventory,
 }
 
@@ -74,6 +79,7 @@ impl FlowRegionCollector<'_> {
         if local_active && statement_is_executable_region_member(statement) {
             self.out.flow_regions.insert(statement.id);
         }
+        let owners = (statement.id, statement.id);
 
         match &statement.kind {
             StatementKind::Import(declaration) => {
@@ -102,18 +108,35 @@ impl FlowRegionCollector<'_> {
                     self.out.boundaries.insert(FileBoundary::Declaration);
                 }
                 if let Some(expression) = &declaration.assignment {
-                    self.visit_expression(expression);
+                    self.visit_expression(expression, owners);
                 }
                 local_active
             }
             StatementKind::Variable(declaration) => {
+                if declaration.has_leading_jsdoc {
+                    self.out.javascript_jsdoc_values.insert(statement.id);
+                }
                 if let Some(initializer) = &declaration.initializer {
-                    self.visit_expression(initializer);
+                    self.visit_expression(initializer, owners);
                 }
                 local_active
             }
             StatementKind::Function(declaration) => {
-                self.visit_parameter_initializers(&declaration.parameters);
+                if declaration
+                    .parameters
+                    .iter()
+                    .any(|parameter| parameter.name_kind == ParameterNameKind::This)
+                {
+                    self.out
+                        .function_like_gaps
+                        .push((statement.id, SemanticGap::ExplicitThisParameter));
+                }
+                if declaration.has_leading_jsdoc {
+                    self.out
+                        .function_like_gaps
+                        .push((statement.id, SemanticGap::JavaScriptJSDocSignature));
+                }
+                self.visit_parameter_initializers(&declaration.parameters, owners);
                 let recovered = self.record_recovery(
                     statement.id,
                     statement.span,
@@ -132,7 +155,7 @@ impl FlowRegionCollector<'_> {
                 local_active
             }
             StatementKind::If(if_statement) => {
-                self.visit_expression(&if_statement.condition);
+                self.visit_expression(&if_statement.condition, owners);
                 let then_active = self.visit_statement(&if_statement.then_statement, local_active);
                 let else_active = if_statement
                     .else_statement
@@ -141,11 +164,11 @@ impl FlowRegionCollector<'_> {
                 local_active || then_active || else_active
             }
             StatementKind::Switch(switch_statement) => {
-                self.visit_expression(&switch_statement.expression);
+                self.visit_expression(&switch_statement.expression, owners);
                 let mut clause_active = local_active;
                 for clause in &switch_statement.clauses {
                     if let SwitchClauseKind::Case(expression) = &clause.kind {
-                        self.visit_expression(expression);
+                        self.visit_expression(expression, owners);
                     }
                     clause_active = self.visit_statement_list(&clause.statements, clause_active);
                 }
@@ -153,13 +176,13 @@ impl FlowRegionCollector<'_> {
             }
             StatementKind::Return(expression) => {
                 if let Some(expression) = expression {
-                    self.visit_expression(expression);
+                    self.visit_expression(expression, owners);
                 }
                 local_active
             }
             StatementKind::Block(statements) => self.visit_statement_list(statements, local_active),
             StatementKind::Expression(expression) => {
-                self.visit_expression(expression);
+                self.visit_expression(expression, owners);
                 local_active
             }
         }
@@ -169,6 +192,7 @@ impl FlowRegionCollector<'_> {
         if !member.emit_products_supported {
             self.out.boundaries.insert(FileBoundary::ClassProduct);
         }
+        let owners = (member.id, member.id);
         match &member.kind {
             ClassMemberKind::Constructor {
                 parameters,
@@ -185,7 +209,7 @@ impl FlowRegionCollector<'_> {
                 if !has_body {
                     self.out.boundaries.insert(FileBoundary::CommonJsClass);
                 }
-                self.visit_parameter_initializers(parameters);
+                self.visit_parameter_initializers(parameters, owners);
                 let recovered = self.record_recovery(
                     member.id,
                     member.span,
@@ -196,21 +220,25 @@ impl FlowRegionCollector<'_> {
             ClassMemberKind::Property { initializer, .. } => {
                 self.out.boundaries.insert(FileBoundary::ClassProperty);
                 if let Some(initializer) = initializer {
-                    self.visit_expression(initializer);
+                    self.visit_expression(initializer, owners);
                 }
             }
         }
     }
 
-    fn visit_parameter_initializers(&mut self, parameters: &[Parameter]) {
+    fn visit_parameter_initializers(&mut self, parameters: &[Parameter], owners: (NodeId, NodeId)) {
         for parameter in parameters {
             if let Some(initializer) = &parameter.initializer {
-                self.visit_expression(initializer);
+                self.visit_expression(initializer, owners);
             }
         }
     }
 
-    fn visit_expression(&mut self, expression: &Expression) {
+    fn visit_expression(&mut self, expression: &Expression, owners: (NodeId, NodeId)) {
+        if self.javascript_jsdoc_casts.contains(&expression.id) {
+            self.out.javascript_jsdoc_values.insert(owners.0);
+            self.out.javascript_jsdoc_checks.insert(owners.1);
+        }
         match &expression.kind {
             ExpressionKind::Identifier { .. }
             | ExpressionKind::This
@@ -219,12 +247,12 @@ impl FlowRegionCollector<'_> {
             | ExpressionKind::Missing => {}
             ExpressionKind::Object(properties) => {
                 for property in properties {
-                    self.visit_expression(&property.value);
+                    self.visit_expression(&property.value, owners);
                 }
             }
             ExpressionKind::Array(elements) => {
                 for element in elements {
-                    self.visit_expression(element);
+                    self.visit_expression(element, owners);
                 }
             }
             ExpressionKind::Call {
@@ -233,32 +261,37 @@ impl FlowRegionCollector<'_> {
             | ExpressionKind::New {
                 callee, arguments, ..
             } => {
-                self.visit_expression(callee);
+                self.visit_expression(callee, owners);
                 for argument in arguments {
-                    self.visit_expression(argument);
+                    self.visit_expression(argument, owners);
                 }
             }
             ExpressionKind::Member { object, .. }
             | ExpressionKind::Unary {
                 operand: object, ..
             }
-            | ExpressionKind::Parenthesized(object) => self.visit_expression(object),
+            | ExpressionKind::Parenthesized(object) => self.visit_expression(object, owners),
             ExpressionKind::ElementAccess { object, index } => {
-                self.visit_expression(object);
-                self.visit_expression(index);
+                self.visit_expression(object, owners);
+                self.visit_expression(index, owners);
             }
             ExpressionKind::FunctionLike(function) => {
                 self.out.function_likes.insert(expression.id);
-                if let FunctionLikeSyntax::Function {
-                    body, body_span, ..
-                } = &function.syntax
+                let owners = (expression.id, expression.id);
+                if function.has_leading_jsdoc {
+                    self.out
+                        .function_like_gaps
+                        .push((expression.id, SemanticGap::JavaScriptJSDocSignature));
+                }
+                if let FunctionLikeSyntax::Function { body, .. } = &function.syntax
+                    && let Some(body_span) = function.body_span
                 {
                     self.out
                         .function_expressions
                         .push(FunctionExpressionProducts {
                             owner: expression.id,
                             span: expression.span,
-                            body_span: *body_span,
+                            body_span,
                             inline_body_supported: body.iter().all(|statement| {
                                 matches!(
                                     statement.kind,
@@ -315,10 +348,10 @@ impl FlowRegionCollector<'_> {
                     end: body_start,
                 });
                 let recovered = self.record_recovery(expression.id, expression.span, body_start);
-                self.visit_parameter_initializers(&function.parameters);
+                self.visit_parameter_initializers(&function.parameters, owners);
                 match &function.syntax {
                     FunctionLikeSyntax::Arrow(ArrowBody::Expression(body)) => {
-                        self.visit_expression(body)
+                        self.visit_expression(body, owners)
                     }
                     FunctionLikeSyntax::Arrow(ArrowBody::Block(statements))
                     | FunctionLikeSyntax::Function {
@@ -328,12 +361,22 @@ impl FlowRegionCollector<'_> {
                     }
                 }
             }
-            ExpressionKind::Binary { left, right, .. }
-            | ExpressionKind::Assignment { left, right } => {
-                self.visit_expression(left);
-                self.visit_expression(right);
+            ExpressionKind::Binary { left, right, .. } => {
+                self.visit_expression(left, owners);
+                self.visit_expression(right, owners);
             }
-            ExpressionKind::As { expression, .. } => self.visit_expression(expression),
+            ExpressionKind::Assignment {
+                left,
+                right,
+                has_leading_jsdoc,
+            } => {
+                if *has_leading_jsdoc {
+                    self.out.javascript_jsdoc_values.insert(expression.id);
+                }
+                self.visit_expression(left, owners);
+                self.visit_expression(right, (expression.id, owners.1));
+            }
+            ExpressionKind::As { expression, .. } => self.visit_expression(expression, owners),
         }
     }
     fn record_recovery(&mut self, owner: NodeId, span: Span, body_start: u32) -> bool {

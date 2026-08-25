@@ -12,6 +12,41 @@ enum SignatureMemberKind {
     Construct,
 }
 
+macro_rules! type_member_modifiers {
+    ($($token:ident => $modifier:ident, $field:ident;)*) => {
+        const fn type_member_modifier(kind: TokenKind) -> Option<TypeMemberModifier> {
+            match kind {
+                $(TokenKind::$token => Some(TypeMemberModifier::$modifier),)*
+                _ => None,
+            }
+        }
+
+        const fn apply_modifier(modifiers: &mut TypeMemberModifiers, kind: TypeMemberModifier) {
+            match kind {
+                $(TypeMemberModifier::$modifier => modifiers.$field = true,)*
+            }
+        }
+    };
+}
+
+type_member_modifiers! {
+    Public => Public, public;
+    Protected => Protected, protected;
+    Private => Private, private;
+    Readonly => Readonly, readonly;
+    Static => Static, static_member;
+    Abstract => Abstract, abstract_member;
+    Declare => Declare, declared;
+    Accessor => Accessor, accessor;
+    Async => Async, async_member;
+    Const => Const, const_member;
+    Default => Default, default_member;
+    Export => Export, exported;
+    In => In, in_variance;
+    Out => Out, out_variance;
+    Override => Override, override_member;
+}
+
 impl Parser<'_> {
     pub(super) fn parse_tuple_type(&mut self) -> TypeNode {
         let left = self.bump().span;
@@ -127,19 +162,16 @@ impl Parser<'_> {
         let parameters = self.parse_parameters();
         let return_type = self.parse_type_annotation();
         self.parse_type_member_separator();
-        TypeMember {
-            id: self.alloc_node(),
-            span: start.merge(self.previous().span),
-            recovered: false,
-            recovery_incomplete: false,
+        self.finish_type_member(
+            start,
             modifiers,
-            kind: TypeMemberKind::Accessor {
+            TypeMemberKind::Accessor {
                 name,
                 accessor,
                 parameters,
                 return_type,
             },
-        }
+        )
     }
 
     fn parse_signature_member(&mut self, kind: SignatureMemberKind) -> TypeMember {
@@ -154,25 +186,19 @@ impl Parser<'_> {
         };
         let return_type = self.parse_type_annotation();
         self.parse_type_member_separator();
-        TypeMember {
-            id: self.alloc_node(),
-            span: start.merge(self.previous().span),
-            recovered: false,
-            recovery_incomplete: false,
-            modifiers: TypeMemberModifiers::default(),
-            kind: match kind {
-                SignatureMemberKind::Call => TypeMemberKind::Call {
-                    type_parameters,
-                    parameters,
-                    return_type,
-                },
-                SignatureMemberKind::Construct => TypeMemberKind::Construct {
-                    type_parameters,
-                    parameters,
-                    return_type,
-                },
+        let kind = match kind {
+            SignatureMemberKind::Call => TypeMemberKind::Call {
+                type_parameters,
+                parameters,
+                return_type,
             },
-        }
+            SignatureMemberKind::Construct => TypeMemberKind::Construct {
+                type_parameters,
+                parameters,
+                return_type,
+            },
+        };
+        self.finish_type_member(start, TypeMemberModifiers::default(), kind)
     }
 
     fn parse_index_signature(&mut self, start: Span, modifiers: TypeMemberModifiers) -> TypeMember {
@@ -187,17 +213,14 @@ impl Parser<'_> {
         self.expect(TokenKind::RightBracket, "']' expected.", 1005);
         let value_type = self.parse_type_annotation();
         self.parse_type_member_separator();
-        TypeMember {
-            id: self.alloc_node(),
-            span: start.merge(self.previous().span),
-            recovered: false,
-            recovery_incomplete: false,
+        self.finish_type_member(
+            start,
             modifiers,
-            kind: TypeMemberKind::Index {
+            TypeMemberKind::Index {
                 parameters,
                 value_type,
             },
-        }
+        )
     }
 
     fn parse_property_or_method_signature(
@@ -233,6 +256,15 @@ impl Parser<'_> {
             }
         };
         self.parse_type_member_separator();
+        self.finish_type_member(start, modifiers, kind)
+    }
+
+    fn finish_type_member(
+        &mut self,
+        start: Span,
+        modifiers: TypeMemberModifiers,
+        kind: TypeMemberKind,
+    ) -> TypeMember {
         TypeMember {
             id: self.alloc_node(),
             span: start.merge(self.previous().span),
@@ -250,11 +282,7 @@ impl Parser<'_> {
     fn parse_recovered_type_member(&mut self) -> TypeMember {
         let start = self.current().span;
         let name = self.parse_type_member_name();
-        let initializer = if self.eat(TokenKind::Equals) {
-            Some(self.parse_expression())
-        } else {
-            None
-        };
+        let initializer = self.eat(TokenKind::Equals).then(|| self.parse_expression());
         let recovery_incomplete = !self.at(TokenKind::RightBrace);
         while !self.at_any(&[TokenKind::RightBrace, TokenKind::EndOfFile]) {
             self.bump();
@@ -296,9 +324,7 @@ impl Parser<'_> {
     }
 
     fn parse_type_member_separator(&mut self) {
-        if !self.eat(TokenKind::Comma) {
-            self.eat(TokenKind::Semicolon);
-        }
+        let _ = self.eat(TokenKind::Comma) || self.eat(TokenKind::Semicolon);
     }
 
     fn parse_type_member_name(&mut self) -> TypeMemberName {
@@ -314,18 +340,16 @@ impl Parser<'_> {
                     ),
                 }
             }
-            TokenKind::NumericLiteral => {
+            TokenKind::NumericLiteral | TokenKind::BigIntLiteral => {
                 self.bump();
+                let name = self.text(token.span).to_string();
                 TypeMemberName {
                     span: token.span,
-                    kind: TypeMemberNameKind::NumericLiteral(self.text(token.span).to_string()),
-                }
-            }
-            TokenKind::BigIntLiteral => {
-                self.bump();
-                TypeMemberName {
-                    span: token.span,
-                    kind: TypeMemberNameKind::BigIntLiteral(self.text(token.span).to_string()),
+                    kind: match token.kind {
+                        TokenKind::NumericLiteral => TypeMemberNameKind::NumericLiteral(name),
+                        TokenKind::BigIntLiteral => TypeMemberNameKind::BigIntLiteral(name),
+                        _ => unreachable!("matched numeric type-member name"),
+                    },
                 }
             }
             TokenKind::LeftBracket => {
@@ -351,46 +375,12 @@ impl Parser<'_> {
 
     fn parse_type_member_modifiers(&mut self) -> TypeMemberModifiers {
         let mut modifiers = TypeMemberModifiers::default();
-        loop {
-            let kind = match self.kind() {
-                TokenKind::Public => TypeMemberModifier::Public,
-                TokenKind::Protected => TypeMemberModifier::Protected,
-                TokenKind::Private => TypeMemberModifier::Private,
-                TokenKind::Readonly => TypeMemberModifier::Readonly,
-                TokenKind::Static => TypeMemberModifier::Static,
-                TokenKind::Abstract => TypeMemberModifier::Abstract,
-                TokenKind::Declare => TypeMemberModifier::Declare,
-                TokenKind::Accessor => TypeMemberModifier::Accessor,
-                TokenKind::Async => TypeMemberModifier::Async,
-                TokenKind::Const => TypeMemberModifier::Const,
-                TokenKind::Default => TypeMemberModifier::Default,
-                TokenKind::Export => TypeMemberModifier::Export,
-                TokenKind::In => TypeMemberModifier::In,
-                TokenKind::Out => TypeMemberModifier::Out,
-                TokenKind::Override => TypeMemberModifier::Override,
-                _ => break,
-            };
+        while let Some(kind) = type_member_modifier(self.kind()) {
             if !self.type_member_modifier_has_follower() {
                 break;
             }
             let span = self.bump().span;
-            match kind {
-                TypeMemberModifier::Public => modifiers.public = true,
-                TypeMemberModifier::Protected => modifiers.protected = true,
-                TypeMemberModifier::Private => modifiers.private = true,
-                TypeMemberModifier::Readonly => modifiers.readonly = true,
-                TypeMemberModifier::Static => modifiers.static_member = true,
-                TypeMemberModifier::Abstract => modifiers.abstract_member = true,
-                TypeMemberModifier::Declare => modifiers.declared = true,
-                TypeMemberModifier::Accessor => modifiers.accessor = true,
-                TypeMemberModifier::Async => modifiers.async_member = true,
-                TypeMemberModifier::Const => modifiers.const_member = true,
-                TypeMemberModifier::Default => modifiers.default_member = true,
-                TypeMemberModifier::Export => modifiers.exported = true,
-                TypeMemberModifier::In => modifiers.in_variance = true,
-                TypeMemberModifier::Out => modifiers.out_variance = true,
-                TypeMemberModifier::Override => modifiers.override_member = true,
-            }
+            apply_modifier(&mut modifiers, kind);
             modifiers.nodes.push(TypeMemberModifierNode { kind, span });
         }
         modifiers
@@ -421,24 +411,7 @@ impl Parser<'_> {
             return true;
         }
 
-        if matches!(
-            kind,
-            TokenKind::Abstract
-                | TokenKind::Accessor
-                | TokenKind::Async
-                | TokenKind::Const
-                | TokenKind::Declare
-                | TokenKind::Default
-                | TokenKind::Export
-                | TokenKind::In
-                | TokenKind::Out
-                | TokenKind::Override
-                | TokenKind::Public
-                | TokenKind::Protected
-                | TokenKind::Private
-                | TokenKind::Readonly
-                | TokenKind::Static
-        ) {
+        if is_type_member_modifier(kind) {
             cursor += 1;
             kind = self.token_kind_at(cursor);
             // TypeScript deliberately commits to index-signature recovery as
@@ -470,24 +443,7 @@ impl Parser<'_> {
 }
 
 const fn is_type_member_modifier(kind: TokenKind) -> bool {
-    matches!(
-        kind,
-        TokenKind::Public
-            | TokenKind::Protected
-            | TokenKind::Private
-            | TokenKind::Readonly
-            | TokenKind::Static
-            | TokenKind::Abstract
-            | TokenKind::Declare
-            | TokenKind::Accessor
-            | TokenKind::Async
-            | TokenKind::Const
-            | TokenKind::Default
-            | TokenKind::Export
-            | TokenKind::In
-            | TokenKind::Out
-            | TokenKind::Override
-    )
+    type_member_modifier(kind).is_some()
 }
 
 fn type_member_start_at(parser: &Parser<'_>, offset: usize) -> bool {

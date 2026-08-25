@@ -80,3 +80,19 @@ pub(super) fn exact_option_value(value: &str, supported: &[&str]) -> bool {
             .iter()
             .any(|candidate| value.eq_ignore_ascii_case(candidate))
 }
+
+pub(super) fn direct_literal_program_options_supported(options: &CompilerOptions) -> bool {
+    !options.no_lib
+        && options.lib.is_none()
+        && !options.no_emit_on_error
+        && !options.declaration
+        && !options.declaration_map
+        && !options.source_map
+        && !options.inline_source_map
+        && !options.remove_comments
+        && options.root_dir.is_none()
+        && options.out_dir.is_none()
+        && options.declaration_dir.is_none()
+        && exact_option_value(&options.target, &["es6", "es2015"])
+        && exact_option_value(&options.module, &["commonjs", "esnext", "preserve"])
+}

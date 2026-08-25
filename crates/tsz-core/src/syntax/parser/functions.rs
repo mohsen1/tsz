@@ -6,7 +6,11 @@ use crate::syntax::{
 };
 
 impl Parser<'_> {
-    pub(super) fn parse_function(&mut self, modifiers: Modifiers) -> FunctionDeclaration {
+    pub(super) fn parse_function(
+        &mut self,
+        modifiers: Modifiers,
+        has_leading_jsdoc: bool,
+    ) -> FunctionDeclaration {
         let diagnostic_count = self.diagnostics.len();
         let function_keyword = self.current().span;
         let unmodeled_generator = self.peek_kind(1) == TokenKind::Star;
@@ -16,15 +20,15 @@ impl Parser<'_> {
         }
         let (name, name_span) = self.parse_name();
         let type_parameters = self.parse_type_parameters();
-        let parameters = self.parse_parameters();
+        let parameters = self.parse_signature_parameters();
         let return_type = self.eat(TokenKind::Colon).then(|| self.parse_type());
         let has_body = self.at(TokenKind::LeftBrace);
         let body_extent = self.balanced_recovery_brace_extent(self.index);
-        let body = if has_body {
+        let (body, body_span) = if has_body {
             self.parse_block()
         } else {
             self.eat(TokenKind::Semicolon);
-            Vec::new()
+            (Vec::new(), None)
         };
         if unmodeled_generator && let Some(extent) = body_extent {
             while self.current().span.start < extent.end {
@@ -54,6 +58,8 @@ impl Parser<'_> {
             return_type,
             body,
             has_body,
+            body_span,
+            has_leading_jsdoc,
             exported: modifiers.exported,
             default_export: modifiers.default_export,
             is_async: modifiers.is_async,
@@ -65,6 +71,7 @@ impl Parser<'_> {
     pub(super) fn parse_function_expression(&mut self) -> Expression {
         let diagnostic_count = self.diagnostics.len();
         let recovery_fact_start = self.parser_recovery_facts.len();
+        let has_leading_jsdoc = self.current_has_leading_jsdoc();
         let function_keyword = self.bump().span;
         let unmodeled_generator = self.eat(TokenKind::Star);
         let name = self.kind().is_identifier().then(|| {
@@ -82,16 +89,15 @@ impl Parser<'_> {
         let header_recovered = unmodeled_generator
             || self.diagnostics.len() != diagnostic_count
             || self.parser_recovery_facts.len() != recovery_fact_start;
-        let body_start = self.current().span;
         let has_opening_brace = self.at(TokenKind::LeftBrace);
         let authored_body_extent = has_opening_brace
             .then(|| self.balanced_recovery_brace_extent(self.index))
             .flatten();
-        let body = if has_opening_brace {
+        let (body, body_span) = if has_opening_brace {
             self.parse_block()
         } else {
             self.expect(TokenKind::LeftBrace, "'{' expected.", 1005);
-            Vec::new()
+            (Vec::new(), None)
         };
         if header_recovered && let Some(extent) = authored_body_extent {
             while self.current().span.start < extent.end {
@@ -99,7 +105,6 @@ impl Parser<'_> {
             }
         }
         let has_closing_brace = has_opening_brace && self.previous().kind == TokenKind::RightBrace;
-        let body_span = body_start.merge(self.previous().span);
         let span = function_keyword.merge(self.previous().span);
         let expression = Expression {
             id: self.alloc_node(),
@@ -108,11 +113,9 @@ impl Parser<'_> {
                 type_parameters,
                 parameters,
                 return_type,
-                syntax: FunctionLikeSyntax::Function {
-                    name,
-                    body,
-                    body_span,
-                },
+                body_span,
+                has_leading_jsdoc,
+                syntax: FunctionLikeSyntax::Function { name, body },
             })),
         };
         if header_recovered || !has_opening_brace || !has_closing_brace {

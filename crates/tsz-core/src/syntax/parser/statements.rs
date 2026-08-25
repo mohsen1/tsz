@@ -6,6 +6,27 @@ use crate::syntax::{
 };
 
 impl Parser<'_> {
+    pub(super) fn parse_block(&mut self) -> (Vec<Statement>, Option<Span>) {
+        let has_opening_brace = self.at(TokenKind::LeftBrace);
+        let opening_brace = self.current().span;
+        self.expect(TokenKind::LeftBrace, "'{' expected.", 1005);
+        let mut statements = Vec::new();
+        while !self.at_any(&[TokenKind::RightBrace, TokenKind::EndOfFile]) {
+            let before = self.index;
+            statements.push(self.parse_statement());
+            if before == self.index {
+                self.bump();
+            }
+        }
+        let has_closing_brace = self.at(TokenKind::RightBrace);
+        let closing_brace = self.current().span;
+        self.expect(TokenKind::RightBrace, "'}' expected.", 1005);
+        (
+            statements,
+            (has_opening_brace && has_closing_brace).then(|| opening_brace.merge(closing_brace)),
+        )
+    }
+
     pub(super) fn starts_unmodeled_for_binding_pattern(&self) -> bool {
         let mut cursor = self.index + 1;
         if self.token_kind_at(cursor) == TokenKind::Await {
@@ -50,7 +71,9 @@ impl Parser<'_> {
                         recovered_binding_names,
                         annotation: None,
                         initializer: None,
+                        has_leading_jsdoc: false,
                         exported: false,
+                        declared: false,
                     }),
                 });
                 self.record_parser_recovery_for_analysis(
@@ -77,7 +100,7 @@ impl Parser<'_> {
             self.error_current("'(' expected.", 1005);
         }
         let body = if self.at(TokenKind::LeftBrace) {
-            self.parse_block()
+            self.parse_block().0
         } else if self.at(TokenKind::EndOfFile) {
             Vec::new()
         } else {

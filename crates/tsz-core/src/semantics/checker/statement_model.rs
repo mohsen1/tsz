@@ -8,7 +8,7 @@ use crate::syntax::{
 };
 
 use super::Checker;
-use super::projection_model::{PropertyOrderTree, peel_expression_parentheses};
+use super::projection_model::PropertyOrderTree;
 use super::relation_diagnostic::{ContextualType, RelationDiagnosticStyle};
 use crate::semantics::relation::RelationMode;
 
@@ -379,11 +379,10 @@ impl Checker<'_> {
         function: &FunctionLikeExpression,
     ) {
         let context = SemanticDescendantContext::deferred(scope);
-        let function_action = if self
+        let (allows_descendants, allow_identifier_semantics) = self
             .capabilities
-            .semantic_check_node_function_like_descendant_permissions(file, expression.id)
-            .0
-        {
+            .semantic_check_node_function_like_descendant_permissions(file, expression.id);
+        let function_action = if allows_descendants {
             FunctionLikeExpressionAction::SemanticOwner
         } else {
             FunctionLikeExpressionAction::BodyOnly
@@ -393,7 +392,7 @@ impl Checker<'_> {
             file,
             function_action,
             nested_action: NestedSemanticAction::Recovery,
-            allow_identifier_semantics: false,
+            allow_identifier_semantics,
             _order: std::marker::PhantomData,
         };
         walk_function_like_descendants(&mut adapter, &context, expression, function);
@@ -515,10 +514,10 @@ impl<'ast, 'checker, 'program, 'order> DescendantAdapter<'ast>
 }
 
 fn is_lexical_this_call_host(expression: &Expression) -> bool {
-    let ExpressionKind::Call { callee, .. } = &peel_expression_parentheses(expression).kind else {
+    let ExpressionKind::Call { callee, .. } = &expression.peel_parentheses().kind else {
         return false;
     };
-    let ExpressionKind::Member { object, .. } = &peel_expression_parentheses(callee).kind else {
+    let ExpressionKind::Member { object, .. } = &callee.peel_parentheses().kind else {
         return false;
     };
     matches!(object.kind, ExpressionKind::This)

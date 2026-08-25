@@ -1,4 +1,4 @@
-use super::Parser;
+use super::{Modifiers, Parser};
 use crate::syntax::{
     AuthoredBindingName, ParserRecoveryKind, TokenKind, VariableDeclaration, VariableKind,
 };
@@ -18,7 +18,11 @@ impl Parser<'_> {
             && self.tokens_are_on_same_line(self.index, self.index + 1)
     }
 
-    pub(super) fn parse_variable(&mut self, exported: bool) -> VariableDeclaration {
+    pub(super) fn parse_variable(
+        &mut self,
+        modifiers: Modifiers,
+        has_leading_jsdoc: bool,
+    ) -> VariableDeclaration {
         let declaration_kind = match self.kind() {
             TokenKind::Const => VariableKind::Const,
             TokenKind::Var => VariableKind::Var,
@@ -75,7 +79,9 @@ impl Parser<'_> {
             recovered_binding_names,
             annotation,
             initializer,
-            exported,
+            has_leading_jsdoc,
+            exported: modifiers.exported,
+            declared: modifiers.declared,
         }
     }
 

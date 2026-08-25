@@ -83,6 +83,11 @@ macro_rules! compiler_option_schema {
     (@type string_array) => { Option<Vec<String>> };
     (@type string) => { Option<String> };
     (@type path) => { Option<PathBuf> };
+    (@value_kind bool) => { CompilerOptionValueKind::Boolean };
+    (@value_kind optional_bool) => { CompilerOptionValueKind::Boolean };
+    (@value_kind string_array) => { CompilerOptionValueKind::StringArray };
+    (@value_kind string) => { CompilerOptionValueKind::String };
+    (@value_kind path) => { CompilerOptionValueKind::Path };
     (@decode bool, $options:ident, $json:literal, $origin:ident) => {
         bool_property($options, $json)
     };
@@ -113,6 +118,25 @@ macro_rules! compiler_option_schema {
     (@apply path, $source:expr, $target:expr) => {
         if let Some(value) = $source { $target = Some(value.clone()); }
     };
+    (@set bool, $target:expr, $value:expr) => {{
+        let CompilerOptionValue::Boolean(value) = $value else { return false; };
+        $target = Some(value); true
+    }};
+    (@set optional_bool, $target:expr, $value:expr) => {
+        compiler_option_schema!(@set bool, $target, $value)
+    };
+    (@set string_array, $target:expr, $value:expr) => {{
+        let CompilerOptionValue::StringArray(value) = $value else { return false; };
+        $target = Some(value); true
+    }};
+    (@set string, $target:expr, $value:expr) => {{
+        let CompilerOptionValue::String(value) = $value else { return false; };
+        $target = Some(value); true
+    }};
+    (@set path, $target:expr, $value:expr) => {{
+        let CompilerOptionValue::Path(value) = $value else { return false; };
+        $target = Some(value); true
+    }};
     ($($variant:ident => $field:ident, $json:literal, $kind:ident;)+) => {
         /// A compiler option whose source can affect diagnostic ownership.
         ///
@@ -128,14 +152,32 @@ macro_rules! compiler_option_schema {
             const fn json_name(self) -> &'static str {
                 match self { $(Self::$variant => $json,)+ }
             }
+
+            /// Resolve the case-insensitive command-line spelling used by
+            /// TypeScript. The spelling is the JSON option name with case
+            /// folded by the process adapter.
+            #[must_use]
+            pub fn from_cli_name(name: &str) -> Option<Self> {
+                Self::ALL
+                    .iter()
+                    .copied()
+                    .find(|key| key.json_name().eq_ignore_ascii_case(name))
+            }
+
+            #[must_use]
+            pub const fn value_kind(self) -> CompilerOptionValueKind {
+                match self { $(Self::$variant => compiler_option_schema!(@value_kind $kind),)+ }
+            }
         }
 
-        #[derive(Debug, Clone, Default)]
-        struct PartialCompilerOptions {
-            $($field: compiler_option_schema!(@type $kind),)+
+        /// Explicit compiler-option values from a configuration layer or a
+        /// process invocation. Absence is distinct from a false/default value.
+        #[derive(Debug, Clone, Default, PartialEq, Eq)]
+        pub struct CompilerOptionPatch {
+            $(pub $field: compiler_option_schema!(@type $kind),)+
         }
 
-        impl PartialCompilerOptions {
+        impl CompilerOptionPatch {
             const fn contains(&self, key: CompilerOptionKey) -> bool {
                 match key { $(CompilerOptionKey::$variant => self.$field.is_some(),)+ }
             }
@@ -147,17 +189,44 @@ macro_rules! compiler_option_schema {
             fn apply_to(&self, options: &mut CompilerOptions) {
                 $(compiler_option_schema!(@apply $kind, &self.$field, options.$field);)+
             }
+
+            /// Set a typed option value selected by the shared schema.
+            pub fn set(&mut self, key: CompilerOptionKey, value: CompilerOptionValue) -> bool {
+                match key {
+                    $(CompilerOptionKey::$variant =>
+                        compiler_option_schema!(@set $kind, self.$field, value),)+
+                }
+            }
         }
 
-        fn partial_options(object: &Map<String, Value>, origin: &Path) -> PartialCompilerOptions {
+        fn partial_options(object: &Map<String, Value>, origin: &Path) -> CompilerOptionPatch {
             let Some(options) = object.get("compilerOptions").and_then(Value::as_object) else {
-                return PartialCompilerOptions::default();
+                return CompilerOptionPatch::default();
             };
-            PartialCompilerOptions {
+            CompilerOptionPatch {
                 $($field: compiler_option_schema!(@decode $kind, options, $json, origin),)+
             }
         }
     };
+}
+
+/// Value domain for one compiler option in the shared configuration/process
+/// schema.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CompilerOptionValueKind {
+    Boolean,
+    StringArray,
+    String,
+    Path,
+}
+
+/// Explicit value supplied for one compiler option.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CompilerOptionValue {
+    Boolean(bool),
+    StringArray(Vec<String>),
+    String(String),
+    Path(PathBuf),
 }
 
 compiler_option_schema! {
@@ -300,9 +369,20 @@ impl ResolvedProject {
         self.graph.reference_count()
     }
 
-    /// Mark a configuration option as replaced by the process invocation.
-    pub fn mark_command_line_option(&mut self, key: CompilerOptionKey) {
-        self.provenance.option_origins.remove(&key);
+    /// Apply explicit process/service overrides and remove configuration
+    /// provenance for exactly the keys that supplied a value.
+    #[must_use]
+    pub fn apply_option_patch(&mut self, patch: &CompilerOptionPatch) -> CompilerOptions {
+        for key in CompilerOptionKey::ALL
+            .iter()
+            .copied()
+            .filter(|key| patch.contains(*key))
+        {
+            self.provenance.option_origins.remove(&key);
+        }
+        let mut options = self.options.clone();
+        patch.apply_to(&mut options);
+        options
     }
 }
 
@@ -631,8 +711,8 @@ impl<'a> Resolver<'a> {
                 return None;
             }
         };
-        let value = match parse_jsonc(&text) {
-            Ok(value) => value,
+        let document = match parse_jsonc(&text) {
+            Ok(document) => document,
             Err(()) => {
                 self.diagnostics.push(Diagnostic::global(
                     format!("Cannot read file '{}'.", display_path(&path)),
@@ -641,7 +721,7 @@ impl<'a> Resolver<'a> {
                 return None;
             }
         };
-        let object = value.as_object().cloned().unwrap_or_default();
+        let object = document.value.as_object().cloned().unwrap_or_default();
         stack.push(path.clone());
 
         let directory = path.parent().unwrap_or_else(|| Path::new("."));
@@ -664,6 +744,7 @@ impl<'a> Resolver<'a> {
         let own_origins = compiler_option_origins(
             &own_options,
             &text,
+            &document.tokens,
             &logical_path_from_host(self.host.current_directory(), &path),
         );
         merged.options.merge_from(&own_options);
@@ -681,7 +762,7 @@ impl<'a> Resolver<'a> {
         merged.own_has_references = object.contains_key("references");
 
         let references = if is_entry {
-            project_references(&object, &text, directory, id)
+            project_references(&object, &document.tokens, directory, id)
         } else {
             Vec::new()
         };
@@ -865,7 +946,7 @@ struct LoadedConfig {
 
 #[derive(Debug, Clone, Default)]
 struct MergedConfig {
-    options: PartialCompilerOptions,
+    options: CompilerOptionPatch,
     option_origins: BTreeMap<CompilerOptionKey, CompilerOptionOrigin>,
     files: Option<Selector>,
     include: Option<Selector>,
@@ -906,11 +987,12 @@ impl Selector {
 }
 
 fn compiler_option_origins(
-    options: &PartialCompilerOptions,
+    options: &CompilerOptionPatch,
     source_text: &Arc<str>,
+    tokens: &[JsonToken],
     logical_path: &Path,
 ) -> BTreeMap<CompilerOptionKey, CompilerOptionOrigin> {
-    let spans = compiler_option_spans(source_text);
+    let spans = compiler_option_spans(tokens);
     CompilerOptionKey::ALL
         .iter()
         .copied()
@@ -934,11 +1016,11 @@ fn compiler_option_origins(
 
 fn project_references(
     object: &Map<String, Value>,
-    source_text: &str,
+    tokens: &[JsonToken],
     origin: &Path,
     owner: ProjectConfigId,
 ) -> Vec<ProjectReference> {
-    let spans = reference_object_spans(source_text);
+    let spans = reference_object_spans(tokens);
     object
         .get("references")
         .and_then(Value::as_array)
@@ -965,11 +1047,7 @@ fn project_references(
 enum JsonTokenKind {
     String(String),
     Literal,
-    LeftBrace,
-    RightBrace,
-    LeftBracket,
-    RightBracket,
-    Colon,
+    Punctuation(u8),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -977,6 +1055,11 @@ struct JsonToken {
     kind: JsonTokenKind,
     start: usize,
     end: usize,
+}
+
+struct JsoncDocument {
+    value: Value,
+    tokens: Vec<JsonToken>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -991,36 +1074,37 @@ struct ConfigOptionSpans {
 ///
 /// The JSON value is parsed separately. This scanner owns only source
 /// provenance, retaining the spelling and byte spans that diagnostics need.
-fn compiler_option_spans(source_text: &str) -> BTreeMap<String, ConfigOptionSpans> {
-    let tokens = jsonc_tokens(source_text);
+fn top_level_container(tokens: &[JsonToken], name: &str, opening: u8) -> Option<usize> {
     let mut object_depth = 0usize;
     let mut array_depth = 0usize;
-    let mut options_open = None;
     for (index, token) in tokens.iter().enumerate() {
         match &token.kind {
-            JsonTokenKind::LeftBrace => object_depth += 1,
-            JsonTokenKind::RightBrace => object_depth = object_depth.saturating_sub(1),
-            JsonTokenKind::LeftBracket => array_depth += 1,
-            JsonTokenKind::RightBracket => array_depth = array_depth.saturating_sub(1),
+            JsonTokenKind::Punctuation(b'{') => object_depth += 1,
+            JsonTokenKind::Punctuation(b'}') => object_depth = object_depth.saturating_sub(1),
+            JsonTokenKind::Punctuation(b'[') => array_depth += 1,
+            JsonTokenKind::Punctuation(b']') => array_depth = array_depth.saturating_sub(1),
             JsonTokenKind::String(value) if object_depth == 1 && array_depth == 0 => {
-                if value == "compilerOptions"
+                if value == name
                     && matches!(
                         tokens.get(index + 1).map(|token| &token.kind),
-                        Some(JsonTokenKind::Colon)
+                        Some(JsonTokenKind::Punctuation(b':'))
                     )
                     && matches!(
                         tokens.get(index + 2).map(|token| &token.kind),
-                        Some(JsonTokenKind::LeftBrace)
+                        Some(JsonTokenKind::Punctuation(byte)) if *byte == opening
                     )
                 {
-                    options_open = Some(index + 2);
-                    break;
+                    return Some(index + 2);
                 }
             }
-            JsonTokenKind::String(_) | JsonTokenKind::Literal | JsonTokenKind::Colon => {}
+            JsonTokenKind::String(_) | JsonTokenKind::Literal | JsonTokenKind::Punctuation(_) => {}
         }
     }
-    let Some(options_open) = options_open else {
+    None
+}
+
+fn compiler_option_spans(tokens: &[JsonToken]) -> BTreeMap<String, ConfigOptionSpans> {
+    let Some(options_open) = top_level_container(tokens, "compilerOptions", b'{') else {
         return BTreeMap::new();
     };
 
@@ -1030,15 +1114,15 @@ fn compiler_option_spans(source_text: &str) -> BTreeMap<String, ConfigOptionSpan
     let mut index = options_open + 1;
     while let Some(token) = tokens.get(index) {
         match &token.kind {
-            JsonTokenKind::RightBrace if nested_objects == 0 && nested_arrays == 0 => break,
-            JsonTokenKind::LeftBrace => nested_objects += 1,
-            JsonTokenKind::RightBrace => nested_objects = nested_objects.saturating_sub(1),
-            JsonTokenKind::LeftBracket => nested_arrays += 1,
-            JsonTokenKind::RightBracket => nested_arrays = nested_arrays.saturating_sub(1),
+            JsonTokenKind::Punctuation(b'}') if nested_objects == 0 && nested_arrays == 0 => break,
+            JsonTokenKind::Punctuation(b'{') => nested_objects += 1,
+            JsonTokenKind::Punctuation(b'}') => nested_objects = nested_objects.saturating_sub(1),
+            JsonTokenKind::Punctuation(b'[') => nested_arrays += 1,
+            JsonTokenKind::Punctuation(b']') => nested_arrays = nested_arrays.saturating_sub(1),
             JsonTokenKind::String(name) if nested_objects == 0 && nested_arrays == 0 => {
                 if matches!(
                     tokens.get(index + 1).map(|token| &token.kind),
-                    Some(JsonTokenKind::Colon)
+                    Some(JsonTokenKind::Punctuation(b':'))
                 ) {
                     let value = tokens.get(index + 2);
                     spans.insert(
@@ -1052,7 +1136,7 @@ fn compiler_option_spans(source_text: &str) -> BTreeMap<String, ConfigOptionSpan
                     );
                 }
             }
-            JsonTokenKind::String(_) | JsonTokenKind::Literal | JsonTokenKind::Colon => {}
+            JsonTokenKind::String(_) | JsonTokenKind::Literal | JsonTokenKind::Punctuation(_) => {}
         }
         index += 1;
     }
@@ -1061,36 +1145,8 @@ fn compiler_option_spans(source_text: &str) -> BTreeMap<String, ConfigOptionSpan
 
 /// Locate each object element of the top-level `references` array while
 /// preserving byte offsets in the original JSONC source.
-fn reference_object_spans(source_text: &str) -> Vec<Option<(u32, u32)>> {
-    let tokens = jsonc_tokens(source_text);
-    let mut object_depth = 0usize;
-    let mut array_depth = 0usize;
-    let mut references_open = None;
-    for (index, token) in tokens.iter().enumerate() {
-        match &token.kind {
-            JsonTokenKind::LeftBrace => object_depth += 1,
-            JsonTokenKind::RightBrace => object_depth = object_depth.saturating_sub(1),
-            JsonTokenKind::LeftBracket => array_depth += 1,
-            JsonTokenKind::RightBracket => array_depth = array_depth.saturating_sub(1),
-            JsonTokenKind::String(value) if object_depth == 1 && array_depth == 0 => {
-                if value == "references"
-                    && matches!(
-                        tokens.get(index + 1).map(|token| &token.kind),
-                        Some(JsonTokenKind::Colon)
-                    )
-                    && matches!(
-                        tokens.get(index + 2).map(|token| &token.kind),
-                        Some(JsonTokenKind::LeftBracket)
-                    )
-                {
-                    references_open = Some(index + 2);
-                    break;
-                }
-            }
-            JsonTokenKind::String(_) | JsonTokenKind::Literal | JsonTokenKind::Colon => {}
-        }
-    }
-    let Some(references_open) = references_open else {
+fn reference_object_spans(tokens: &[JsonToken]) -> Vec<Option<(u32, u32)>> {
+    let Some(references_open) = top_level_container(tokens, "references", b'[') else {
         return Vec::new();
     };
 
@@ -1100,34 +1156,30 @@ fn reference_object_spans(source_text: &str) -> Vec<Option<(u32, u32)>> {
     let mut object_start = None;
     for token in &tokens[references_open + 1..] {
         match token.kind {
-            JsonTokenKind::LeftBracket => nested_arrays += 1,
-            JsonTokenKind::RightBracket if nested_arrays > 0 => nested_arrays -= 1,
-            JsonTokenKind::RightBracket if nested_objects == 0 => break,
-            JsonTokenKind::LeftBrace if nested_objects == 0 && nested_arrays == 0 => {
+            JsonTokenKind::Punctuation(b'[') => nested_arrays += 1,
+            JsonTokenKind::Punctuation(b']') if nested_arrays > 0 => nested_arrays -= 1,
+            JsonTokenKind::Punctuation(b']') if nested_objects == 0 => break,
+            JsonTokenKind::Punctuation(b'{') if nested_objects == 0 && nested_arrays == 0 => {
                 nested_objects = 1;
                 object_start = Some(token.start);
             }
-            JsonTokenKind::LeftBrace if nested_objects > 0 => nested_objects += 1,
-            JsonTokenKind::RightBrace if nested_objects > 1 => nested_objects -= 1,
-            JsonTokenKind::RightBrace if nested_objects == 1 => {
+            JsonTokenKind::Punctuation(b'{') if nested_objects > 0 => nested_objects += 1,
+            JsonTokenKind::Punctuation(b'}') if nested_objects > 1 => nested_objects -= 1,
+            JsonTokenKind::Punctuation(b'}') if nested_objects == 1 => {
                 nested_objects = 0;
                 if let Some(start) = object_start.take() {
                     spans.push(Some((start as u32, (token.end - start) as u32)));
                 }
             }
-            JsonTokenKind::String(_)
-            | JsonTokenKind::Literal
-            | JsonTokenKind::Colon
-            | JsonTokenKind::RightBrace
-            | JsonTokenKind::LeftBrace
-            | JsonTokenKind::RightBracket => {}
+            JsonTokenKind::String(_) | JsonTokenKind::Literal | JsonTokenKind::Punctuation(_) => {}
         }
     }
     spans
 }
 
-fn jsonc_tokens(source_text: &str) -> Vec<JsonToken> {
+fn scan_jsonc(source_text: &str) -> (String, Vec<JsonToken>) {
     let bytes = source_text.as_bytes();
+    let mut normalized = bytes.to_vec();
     let mut tokens = Vec::new();
     let mut index = 0usize;
     while index < bytes.len() {
@@ -1135,70 +1187,39 @@ fn jsonc_tokens(source_text: &str) -> Vec<JsonToken> {
             index += 1;
             continue;
         }
-        if bytes.get(index..index + 2) == Some(b"//") {
-            index += 2;
-            while index < bytes.len() && !matches!(bytes[index], b'\n' | b'\r') {
-                index += 1;
-            }
-            continue;
-        }
-        if bytes.get(index..index + 2) == Some(b"/*") {
-            index += 2;
-            while index + 1 < bytes.len() && bytes.get(index..index + 2) != Some(b"*/") {
-                index += 1;
-            }
-            index = (index + 2).min(bytes.len());
+        if let Some(end) = mask_jsonc_comment(bytes, &mut normalized, index) {
+            index = end;
             continue;
         }
         let start = index;
         let kind = match bytes[index] {
-            b'{' => {
-                index += 1;
-                Some(JsonTokenKind::LeftBrace)
-            }
-            b'}' => {
-                index += 1;
-                Some(JsonTokenKind::RightBrace)
-            }
-            b'[' => {
-                index += 1;
-                Some(JsonTokenKind::LeftBracket)
-            }
-            b']' => {
-                index += 1;
-                Some(JsonTokenKind::RightBracket)
-            }
-            b':' => {
-                index += 1;
-                Some(JsonTokenKind::Colon)
-            }
             b'"' => {
-                index += 1;
-                while index < bytes.len() {
-                    if bytes[index] == b'\\' && index + 1 < bytes.len() {
-                        index += 2;
-                    } else if bytes[index] == b'"' {
-                        index += 1;
-                        break;
-                    } else {
-                        index += 1;
-                    }
-                }
+                index = json_string_end(bytes, index);
                 serde_json::from_str(&source_text[start..index])
                     .ok()
                     .map(JsonTokenKind::String)
             }
             b',' => {
+                if matches!(
+                    bytes.get(skip_jsonc_trivia(bytes, index + 1)),
+                    Some(b'}' | b']')
+                ) {
+                    normalized[index] = b' ';
+                }
                 index += 1;
                 None
             }
+            byte @ (b'{' | b'}' | b'[' | b']' | b':') => {
+                index += 1;
+                Some(JsonTokenKind::Punctuation(byte))
+            }
             _ => {
                 index += 1;
-                while index < bytes.len()
-                    && !bytes[index].is_ascii_whitespace()
-                    && !matches!(bytes[index], b'{' | b'}' | b'[' | b']' | b':' | b',' | b'"')
-                {
-                    index += 1;
+                while bytes.get(index).is_some_and(|byte| {
+                    !byte.is_ascii_whitespace()
+                        && !matches!(byte, b'{' | b'}' | b'[' | b']' | b':' | b',' | b'"')
+                }) {
+                    index = mask_jsonc_comment(bytes, &mut normalized, index).unwrap_or(index + 1);
                 }
                 Some(JsonTokenKind::Literal)
             }
@@ -1211,7 +1232,64 @@ fn jsonc_tokens(source_text: &str) -> Vec<JsonToken> {
             });
         }
     }
-    tokens
+    (
+        String::from_utf8(normalized).expect("JSONC input started as UTF-8"),
+        tokens,
+    )
+}
+
+fn jsonc_comment_end(bytes: &[u8], start: usize) -> Option<usize> {
+    if bytes.get(start..start + 2) == Some(b"//") {
+        return Some(
+            bytes[start + 2..]
+                .iter()
+                .position(|byte| matches!(byte, b'\n' | b'\r'))
+                .map_or(bytes.len(), |end| start + 2 + end),
+        );
+    }
+    (bytes.get(start..start + 2) == Some(b"/*")).then(|| {
+        bytes[start + 2..]
+            .windows(2)
+            .position(|pair| pair == b"*/")
+            .map_or(bytes.len(), |end| start + 4 + end)
+    })
+}
+
+fn mask_jsonc_comment(bytes: &[u8], normalized: &mut [u8], start: usize) -> Option<usize> {
+    let end = jsonc_comment_end(bytes, start)?;
+    for index in start..end {
+        if !matches!(bytes[index], b'\n' | b'\r') {
+            normalized[index] = b' ';
+        }
+    }
+    Some(end)
+}
+
+fn json_string_end(bytes: &[u8], start: usize) -> usize {
+    let mut index = start + 1;
+    while let Some(&byte) = bytes.get(index) {
+        if byte == b'\\' && index + 1 < bytes.len() {
+            index += 2;
+        } else {
+            index += 1;
+            if byte == b'"' {
+                break;
+            }
+        }
+    }
+    index
+}
+
+fn skip_jsonc_trivia(bytes: &[u8], mut index: usize) -> usize {
+    loop {
+        while bytes.get(index).is_some_and(u8::is_ascii_whitespace) {
+            index += 1;
+        }
+        let Some(end) = jsonc_comment_end(bytes, index) else {
+            return index;
+        };
+        index = end;
+    }
 }
 
 fn package_config_candidates(host: &dyn ProgramHost, package: &Path) -> Vec<PathBuf> {
@@ -1222,8 +1300,8 @@ fn package_config_candidates(host: &dyn ProgramHost, package: &Path) -> Vec<Path
     if host.directory_exists(package) {
         let package_json = package.join("package.json");
         if let Ok(text) = host.read_file(&package_json)
-            && let Ok(value) = parse_jsonc(&text)
-            && let Some(config) = value.get("tsconfig").and_then(Value::as_str)
+            && let Ok(document) = parse_jsonc(&text)
+            && let Some(config) = document.value.get("tsconfig").and_then(Value::as_str)
         {
             candidates.push(absolute_path(package, Path::new(config)));
         }
@@ -1570,93 +1648,10 @@ fn root_file_diagnostic(message_text: String, code: u32, reason: RootReason) -> 
     ])
 }
 
-fn parse_jsonc(text: &str) -> Result<Value, ()> {
-    let uncommented = strip_json_comments(text.trim_start_matches('\u{feff}'));
-    let normalized = strip_trailing_commas(&uncommented);
-    serde_json::from_str(&normalized).map_err(|_| ())
-}
-
-fn strip_json_comments(input: &str) -> String {
-    let bytes = input.as_bytes();
-    let mut output = Vec::with_capacity(bytes.len());
-    let mut index = 0;
-    let mut in_string = false;
-    while index < bytes.len() {
-        if in_string {
-            output.push(bytes[index]);
-            if bytes[index] == b'\\' && index + 1 < bytes.len() {
-                index += 1;
-                output.push(bytes[index]);
-            } else if bytes[index] == b'"' {
-                in_string = false;
-            }
-            index += 1;
-        } else if bytes[index] == b'"' {
-            in_string = true;
-            output.push(b'"');
-            index += 1;
-        } else if bytes.get(index..index + 2) == Some(b"//") {
-            while index < bytes.len() && !matches!(bytes[index], b'\n' | b'\r') {
-                output.push(b' ');
-                index += 1;
-            }
-        } else if bytes.get(index..index + 2) == Some(b"/*") {
-            output.extend_from_slice(b"  ");
-            index += 2;
-            while index < bytes.len() && bytes.get(index..index + 2) != Some(b"*/") {
-                output.push(if matches!(bytes[index], b'\n' | b'\r') {
-                    bytes[index]
-                } else {
-                    b' '
-                });
-                index += 1;
-            }
-            if index < bytes.len() {
-                output.extend_from_slice(b"  ");
-                index = (index + 2).min(bytes.len());
-            }
-        } else {
-            output.push(bytes[index]);
-            index += 1;
-        }
-    }
-    String::from_utf8(output).expect("JSONC input started as UTF-8")
-}
-
-fn strip_trailing_commas(input: &str) -> String {
-    let bytes = input.as_bytes();
-    let mut output = Vec::with_capacity(bytes.len());
-    let mut index = 0;
-    let mut in_string = false;
-    while index < bytes.len() {
-        let byte = bytes[index];
-        if byte == b'"' {
-            in_string = !in_string;
-            output.push(b'"');
-            index += 1;
-        } else if in_string && byte == b'\\' && index + 1 < bytes.len() {
-            output.push(byte);
-            index += 1;
-            output.push(bytes[index]);
-            index += 1;
-        } else if !in_string && byte == b',' {
-            let mut lookahead = index + 1;
-            while bytes.get(lookahead).is_some_and(u8::is_ascii_whitespace) {
-                lookahead += 1;
-            }
-            if matches!(bytes.get(lookahead), Some(b'}' | b']')) {
-                output.push(b' ');
-                index += 1;
-            } else {
-                output.push(b',');
-                index += 1;
-            }
-        } else {
-            output.push(byte);
-            index += 1;
-        }
-    }
-    String::from_utf8(output).expect("JSONC input started as UTF-8")
+fn parse_jsonc(text: &str) -> Result<JsoncDocument, ()> {
+    let (normalized, tokens) = scan_jsonc(text);
+    let value = serde_json::from_str(normalized.trim_start_matches('\u{feff}')).map_err(|_| ())?;
+    Ok(JsoncDocument { value, tokens })
 }
 
 fn string_array_property(object: &Map<String, Value>, name: &str) -> Option<Vec<String>> {
@@ -1795,3 +1790,7 @@ fn logical_path_from_host(current_directory: &Path, path: &Path) -> PathBuf {
     }
     relative
 }
+
+#[cfg(test)]
+#[path = "../rewrite-tests/config_jsonc_unit.rs"]
+mod tests;

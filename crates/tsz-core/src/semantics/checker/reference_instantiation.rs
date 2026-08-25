@@ -73,7 +73,8 @@ impl Checker<'_> {
             } => class.type_parameters.as_slice(),
             DeclarationModel::Variable { .. }
             | DeclarationModel::Parameter { .. }
-            | DeclarationModel::Function { .. } => {
+            | DeclarationModel::Function { .. }
+            | DeclarationModel::JavaScriptProperty(..) => {
                 return Completion::Complete(ReferenceInstantiation::Exact);
             }
         };
@@ -203,7 +204,8 @@ impl Checker<'_> {
             } => self.evaluate_class_instance(identity, class, scope, arguments),
             DeclarationModel::Variable { .. }
             | DeclarationModel::Parameter { .. }
-            | DeclarationModel::Function { .. } => Completion::Deferred,
+            | DeclarationModel::Function { .. }
+            | DeclarationModel::JavaScriptProperty(..) => Completion::Deferred,
         }
     }
 }

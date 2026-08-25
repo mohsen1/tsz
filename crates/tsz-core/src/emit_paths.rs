@@ -6,7 +6,6 @@
 //! each other.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::ffi::OsString;
 use std::path::{Component, Path, PathBuf};
 
 use crate::config::{CompilerOptionKey, ProjectProvenance};
@@ -70,60 +69,50 @@ impl EmitPlan {
             if is_declaration_source(&file.source.path) {
                 continue;
             }
-            let javascript_claimed = capabilities
-                .claim(
+            let declarations = options
+                .declaration_dir
+                .as_deref()
+                .or(options.out_dir.as_deref());
+            let products_for_file = [
+                (
                     CapabilityTarget::JavaScript,
-                    CapabilityScope::File(file.source.id),
-                )
-                .is_claimed();
-            if javascript_claimed {
-                let javascript =
-                    paths.output_target(&file.source, options.out_dir.as_deref(), false);
-                let javascript_map = javascript.map();
-                plan.files[file.source.id.0 as usize].javascript = Some(javascript.path.clone());
-                products.push(PlannedProduct::new(
-                    file.source.id,
-                    ProductKind::Javascript,
-                    javascript,
-                ));
-                if options.source_map && !options.inline_source_map {
-                    products.push(PlannedProduct::new(
-                        file.source.id,
-                        ProductKind::JavascriptMap,
-                        javascript_map,
-                    ));
+                    options.out_dir.as_deref(),
+                    false,
+                    options.source_map && !options.inline_source_map,
+                ),
+                (
+                    CapabilityTarget::Declaration,
+                    declarations,
+                    true,
+                    options.declaration_map,
+                ),
+            ];
+            for (capability, directory, declaration, map_enabled) in products_for_file
+                .into_iter()
+                .take(if options.declaration { 2 } else { 1 })
+            {
+                if !capabilities
+                    .claim(capability, CapabilityScope::File(file.source.id))
+                    .is_claimed()
+                {
+                    continue;
                 }
-            }
-
-            if options.declaration {
-                let declaration_claimed = capabilities
-                    .claim(
-                        CapabilityTarget::Declaration,
-                        CapabilityScope::File(file.source.id),
-                    )
-                    .is_claimed();
-                if declaration_claimed {
-                    let directory = options
-                        .declaration_dir
-                        .as_deref()
-                        .or(options.out_dir.as_deref());
-                    let declaration = paths.output_target(&file.source, directory, true);
-                    let declaration_map = declaration.map();
-                    plan.files[file.source.id.0 as usize].declaration =
-                        Some(declaration.path.clone());
-                    products.push(PlannedProduct::new(
-                        file.source.id,
-                        ProductKind::Declaration,
-                        declaration,
-                    ));
-                    if options.declaration_map {
-                        products.push(PlannedProduct::new(
-                            file.source.id,
-                            ProductKind::DeclarationMap,
-                            declaration_map,
-                        ));
-                    }
-                }
+                let output = paths.output_target(&file.source, directory, declaration);
+                let map = map_enabled.then(|| output.map());
+                let kind = if declaration {
+                    plan.files[file.source.id.0 as usize].declaration = Some(output.path.clone());
+                    ProductKind::Declaration
+                } else {
+                    plan.files[file.source.id.0 as usize].javascript = Some(output.path.clone());
+                    ProductKind::Javascript
+                };
+                let product = |kind, target| PlannedProduct {
+                    source: file.source.id,
+                    kind,
+                    target,
+                };
+                products.push(product(kind, output));
+                products.extend(map.map(|target| product(ProductKind::Map, target)));
             }
         }
 
@@ -161,31 +150,31 @@ impl EmitPlan {
 
         for (key, products) in by_target {
             let target = &products[0].target.host_path;
-            if input_paths.contains(&key) {
-                self.diagnostics.push(Diagnostic::global(
+            let diagnostic = if input_paths.contains(&key) {
+                Diagnostic::global(
                     format!(
                         "Cannot write file '{}' because it would overwrite input file.",
                         display_path(target)
                     ),
                     5055,
-                ));
-                for product in products {
-                    self.block_product(product);
-                }
-                continue;
-            }
-            let sources: BTreeSet<FileId> = products.iter().map(|product| product.source).collect();
-            if sources.len() > 1 {
-                self.diagnostics.push(Diagnostic::global(
+                )
+            } else if products
+                .iter()
+                .any(|product| product.source != products[0].source)
+            {
+                Diagnostic::global(
                     format!(
                         "Cannot write file '{}' because it would be overwritten by multiple input files.",
                         display_path(target)
                     ),
                     5056,
-                ));
-                for product in products {
-                    self.block_product(product);
-                }
+                )
+            } else {
+                continue;
+            };
+            self.diagnostics.push(diagnostic);
+            for product in products {
+                self.block_product(product);
             }
         }
     }
@@ -196,7 +185,7 @@ impl EmitPlan {
         match product.kind {
             ProductKind::Javascript => file.javascript = None,
             ProductKind::Declaration => file.declaration = None,
-            ProductKind::JavascriptMap | ProductKind::DeclarationMap => {}
+            ProductKind::Map => {}
         }
     }
 }
@@ -208,22 +197,11 @@ struct PlannedProduct {
     target: OutputTarget,
 }
 
-impl PlannedProduct {
-    const fn new(source: FileId, kind: ProductKind, target: OutputTarget) -> Self {
-        Self {
-            source,
-            kind,
-            target,
-        }
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ProductKind {
     Javascript,
-    JavascriptMap,
     Declaration,
-    DeclarationMap,
+    Map,
 }
 
 #[derive(Debug, Clone)]
@@ -234,10 +212,12 @@ struct OutputTarget {
 
 impl OutputTarget {
     fn map(&self) -> Self {
-        Self {
-            path: append_map_extension(&self.path),
-            host_path: append_map_extension(&self.host_path),
-        }
+        let [path, host_path] = [&self.path, &self.host_path].map(|path| {
+            let mut path = path.clone();
+            path.as_mut_os_string().push(".map");
+            path
+        });
+        Self { path, host_path }
     }
 }
 
@@ -279,11 +259,12 @@ impl EmitPaths {
         declaration: bool,
     ) -> OutputTarget {
         let name = output_file_name(&source.path, declaration);
+        let beside_source = || OutputTarget {
+            path: source.path.with_file_name(&name),
+            host_path: source.host_path.with_file_name(&name),
+        };
         let Some(directory) = directory else {
-            return OutputTarget {
-                path: source.path.with_file_name(&name),
-                host_path: source.host_path.with_file_name(name),
-            };
+            return beside_source();
         };
 
         let source_path = normalize_lexically(&source.host_path);
@@ -297,10 +278,7 @@ impl EmitPaths {
             // emit root and leaves that source's product beside the source.
             // The diagnostics owner is separate; path mapping must still not
             // collapse multiple outside roots to a shared basename.
-            return OutputTarget {
-                path: source.path.with_file_name(&name),
-                host_path: source.host_path.with_file_name(name),
-            };
+            return beside_source();
         };
         let path = directory.join(relative.with_file_name(name));
         OutputTarget {
@@ -402,11 +380,7 @@ fn common_source_directory(files: &[ProgramFile]) -> Option<PathBuf> {
         });
     let mut common = directories.next()?;
     for directory in directories {
-        while !directory.starts_with(&common) {
-            if !common.pop() {
-                return Some(PathBuf::new());
-            }
-        }
+        while !directory.starts_with(&common) && common.pop() {}
     }
     Some(common)
 }
@@ -422,25 +396,15 @@ fn output_file_name(source: &Path, declaration: bool) -> String {
         .and_then(|extension| extension.to_str())
         .unwrap_or_default()
         .to_ascii_lowercase();
-    if declaration {
-        match extension.as_str() {
-            "mts" => format!("{stem}.d.mts"),
-            "cts" => format!("{stem}.d.cts"),
-            _ => format!("{stem}.d.ts"),
-        }
-    } else {
-        match extension.as_str() {
-            "mts" => format!("{stem}.mjs"),
-            "cts" => format!("{stem}.cjs"),
-            _ => format!("{stem}.js"),
-        }
-    }
-}
-
-fn append_map_extension(path: &Path) -> PathBuf {
-    let mut value = OsString::from(path.as_os_str());
-    value.push(".map");
-    PathBuf::from(value)
+    let extension = match (declaration, extension.as_str()) {
+        (true, "mts") => "d.mts",
+        (true, "cts") => "d.cts",
+        (true, _) => "d.ts",
+        (false, "mts") => "mjs",
+        (false, "cts") => "cjs",
+        (false, _) => "js",
+    };
+    format!("{stem}.{extension}")
 }
 
 fn relative_path(base: &Path, target: &Path) -> String {
@@ -494,13 +458,7 @@ fn normalize_lexically(path: &Path) -> PathBuf {
                 Some(Component::ParentDir) | None if !path.is_absolute() => {
                     normalized.push(component.as_os_str());
                 }
-                Some(
-                    Component::Prefix(_)
-                    | Component::RootDir
-                    | Component::CurDir
-                    | Component::ParentDir,
-                )
-                | None => {}
+                _ => {}
             },
             Component::Prefix(_) | Component::RootDir | Component::Normal(_) => {
                 normalized.push(component.as_os_str());

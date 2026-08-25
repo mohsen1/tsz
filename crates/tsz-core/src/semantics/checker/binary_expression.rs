@@ -23,6 +23,33 @@ struct BinaryDiagnostics {
     incompatible: Option<(TypeId, TypeId)>,
 }
 
+macro_rules! binary_operator_schema {
+    ($($syntax:ident => $deferred:ident, $text:literal;)*) => {
+        const fn deferred_operator(operator: BinaryOperator) -> Option<DeferredBinaryOperator> {
+            match operator {
+                $(BinaryOperator::$syntax => Some(DeferredBinaryOperator::$deferred),)*
+                _ => None,
+            }
+        }
+
+        const fn operator_text(operator: DeferredBinaryOperator) -> &'static str {
+            match operator {
+                $(DeferredBinaryOperator::$deferred => $text,)*
+            }
+        }
+    };
+}
+
+binary_operator_schema! {
+    Add => Add, "+";
+    Subtract => Subtract, "-";
+    Multiply => Multiply, "*";
+    Divide => Divide, "/";
+    Remainder => Remainder, "%";
+    BitwiseAnd => BitwiseAnd, "&";
+    BitwiseOr => BitwiseOr, "|";
+}
+
 impl BinaryEvaluation {
     fn into_completion(self) -> Completion<TypeId> {
         if let Some(value) = self.value {
@@ -36,31 +63,6 @@ impl BinaryEvaluation {
                 unreachable!("a complete binary evaluation has a value")
             }
         }
-    }
-}
-
-const fn deferred_operator(operator: BinaryOperator) -> Option<DeferredBinaryOperator> {
-    match operator {
-        BinaryOperator::Add => Some(DeferredBinaryOperator::Add),
-        BinaryOperator::Subtract => Some(DeferredBinaryOperator::Subtract),
-        BinaryOperator::Multiply => Some(DeferredBinaryOperator::Multiply),
-        BinaryOperator::Divide => Some(DeferredBinaryOperator::Divide),
-        BinaryOperator::Remainder => Some(DeferredBinaryOperator::Remainder),
-        BinaryOperator::BitwiseAnd => Some(DeferredBinaryOperator::BitwiseAnd),
-        BinaryOperator::BitwiseOr => Some(DeferredBinaryOperator::BitwiseOr),
-        BinaryOperator::LessThan
-        | BinaryOperator::LessThanEquals
-        | BinaryOperator::GreaterThan
-        | BinaryOperator::GreaterThanEquals
-        | BinaryOperator::Equals
-        | BinaryOperator::NotEquals
-        | BinaryOperator::StrictEquals
-        | BinaryOperator::StrictNotEquals
-        | BinaryOperator::LogicalAnd
-        | BinaryOperator::LogicalOr
-        | BinaryOperator::NullishCoalesce
-        | BinaryOperator::In
-        | BinaryOperator::InstanceOf => None,
     }
 }
 
@@ -164,49 +166,54 @@ impl Checker<'_> {
         };
         let left_kind = self.store.kind(left);
         let right_kind = self.store.kind(right);
+        let [left_flags, right_flags] = [left_kind, right_kind].map(binary_kind_flags);
         let mut diagnostics = BinaryDiagnostics {
             boolean_bitwise: matches!(
                 operator,
                 DeferredBinaryOperator::BitwiseAnd | DeferredBinaryOperator::BitwiseOr
-            ) && is_boolean_like(left_kind)
-                && is_boolean_like(right_kind),
+            ) && has_flag(left_flags, BOOLEAN_LIKE)
+                && has_flag(right_flags, BOOLEAN_LIKE),
             ..BinaryDiagnostics::default()
         };
         let mut value = if diagnostics.boolean_bitwise {
             Some(self.store.builtins.number)
         } else if operator == DeferredBinaryOperator::Add {
-            if ((is_string_like(left_kind) || is_string_like(right_kind))
-                && (is_string_add_operand(left_kind) || is_error_sentinel(left_kind))
-                && (is_string_add_operand(right_kind) || is_error_sentinel(right_kind)))
-                || is_any_never_pair(left_kind, right_kind)
+            if ((has_flag(left_flags | right_flags, STRING_LIKE))
+                && has_flag(left_flags, STRING_ADD_OPERAND | ERROR_SENTINEL)
+                && has_flag(right_flags, STRING_ADD_OPERAND | ERROR_SENTINEL))
+                || is_any_never_pair(left_flags, right_flags)
             {
                 Some(self.store.builtins.string)
-            } else if is_error_sentinel(left_kind) {
+            } else if has_flag(left_flags, ERROR_SENTINEL) {
                 Some(left)
-            } else if is_error_sentinel(right_kind) {
+            } else if has_flag(right_flags, ERROR_SENTINEL) {
                 Some(right)
-            } else if is_number_never_pair(left_kind, right_kind) {
+            } else if is_number_never_pair(left_flags, right_flags) {
                 Some(self.store.builtins.number)
-            } else if is_bigint_never_pair(left_kind, right_kind) {
+            } else if is_bigint_never_pair(left_flags, right_flags) {
                 Some(self.store.builtins.bigint)
-            } else if matches!(left_kind, TypeKind::Any) || matches!(right_kind, TypeKind::Any) {
+            } else if has_flag(left_flags | right_flags, ANY) {
                 Some(self.store.builtins.any)
             } else {
                 None
             }
-        } else if is_error_sentinel(left_kind) {
+        } else if has_flag(left_flags, ERROR_SENTINEL) {
             Some(left)
-        } else if is_error_sentinel(right_kind) {
+        } else if has_flag(right_flags, ERROR_SENTINEL) {
             Some(right)
-        } else if is_number_pair(left_kind, right_kind) || is_any_never_pair(left_kind, right_kind)
+        } else if is_number_never_pair(left_flags, right_flags)
+            || unordered_pair(left_flags, right_flags, ANY, ANY | NUMBER_LIKE)
+            || is_any_never_pair(left_flags, right_flags)
         {
             Some(self.store.builtins.number)
-        } else if is_bigint_pair(left_kind, right_kind) {
+        } else if is_bigint_never_pair(left_flags, right_flags)
+            || unordered_pair(left_flags, right_flags, ANY, BIGINT)
+        {
             Some(self.store.builtins.bigint)
         } else {
             None
         };
-        if value.is_none() && is_number_bigint_mismatch(left_kind, right_kind) {
+        if value.is_none() && unordered_pair(left_flags, right_flags, NUMBER_LIKE, BIGINT) {
             diagnostics.incompatible = Some((left, right));
             value = Some(if operator == DeferredBinaryOperator::Add {
                 self.store.builtins.any
@@ -214,10 +221,10 @@ impl Checker<'_> {
                 self.store.builtins.error
             });
         } else if value.is_none() && operator != DeferredBinaryOperator::Add {
-            diagnostics.invalid_left = is_known_invalid_arithmetic(left_kind);
-            diagnostics.invalid_right = is_known_invalid_arithmetic(right_kind);
+            diagnostics.invalid_left = has_flag(left_flags, INVALID_ARITHMETIC);
+            diagnostics.invalid_right = has_flag(right_flags, INVALID_ARITHMETIC);
             if diagnostics.invalid_left || diagnostics.invalid_right {
-                if matches!(left_kind, TypeKind::BigInt) || matches!(right_kind, TypeKind::BigInt) {
+                if has_flag(left_flags | right_flags, BIGINT) {
                     diagnostics.incompatible = Some((left, right));
                     value = Some(self.store.builtins.error);
                 } else {
@@ -332,35 +339,16 @@ impl Checker<'_> {
             return Completion::Complete(left);
         }
         match operator {
-            DeferredLogicalOperator::And => match known_truthiness(left_kind) {
-                Some(true) => Completion::Complete(right),
-                Some(false) => Completion::Complete(left),
-                None => Completion::Deferred,
-            },
-            DeferredLogicalOperator::Or => match known_truthiness(left_kind) {
-                Some(true) => Completion::Complete(left),
-                Some(false) => Completion::Complete(right),
-                None => Completion::Deferred,
-            },
+            DeferredLogicalOperator::And | DeferredLogicalOperator::Or => {
+                known_truthiness(left_kind).map_or(Completion::Deferred, |truthy| {
+                    let select_right = truthy == matches!(operator, DeferredLogicalOperator::And);
+                    Completion::Complete(if select_right { right } else { left })
+                })
+            }
             DeferredLogicalOperator::Nullish => {
                 if matches!(left_kind, TypeKind::Null | TypeKind::Undefined) {
                     Completion::Complete(right)
-                } else if matches!(
-                    left_kind,
-                    TypeKind::Boolean
-                        | TypeKind::Number
-                        | TypeKind::String
-                        | TypeKind::BigInt
-                        | TypeKind::ObjectKeyword
-                        | TypeKind::Symbol
-                        | TypeKind::LiteralBoolean(_, _)
-                        | TypeKind::LiteralNumber(_, _)
-                        | TypeKind::LiteralString(_, _)
-                        | TypeKind::Array(_)
-                        | TypeKind::Tuple(_)
-                        | TypeKind::Object(_)
-                        | TypeKind::Function(_)
-                ) {
+                } else if has_flag(binary_kind_flags(left_kind), DEFINITELY_NON_NULLISH) {
                     Completion::Complete(left)
                 } else {
                     Completion::Deferred
@@ -371,33 +359,53 @@ impl Checker<'_> {
 }
 
 fn type_is_string(store: &crate::semantics::types::TypeStore, ty: Option<TypeId>) -> bool {
-    let Some(ty) = ty else {
-        return false;
-    };
-    is_string_like(store.kind(ty))
+    ty.is_some_and(|ty| has_flag(binary_kind_flags(store.kind(ty)), STRING_LIKE))
 }
 
-const fn is_number_like(kind: &TypeKind) -> bool {
-    matches!(kind, TypeKind::Number | TypeKind::LiteralNumber(_, _))
+const ANY: u16 = 1 << 0;
+const NEVER: u16 = 1 << 1;
+const NUMBER_LIKE: u16 = 1 << 2;
+const BIGINT: u16 = 1 << 3;
+const STRING_LIKE: u16 = 1 << 4;
+const BOOLEAN_LIKE: u16 = 1 << 5;
+const INVALID_ARITHMETIC: u16 = 1 << 6;
+const DEFINITELY_NON_NULLISH: u16 = 1 << 7;
+const STRING_ADD_OPERAND: u16 = 1 << 8;
+const ERROR_SENTINEL: u16 = 1 << 9;
+
+const fn binary_kind_flags(kind: &TypeKind) -> u16 {
+    match kind {
+        TypeKind::Any => ANY | STRING_ADD_OPERAND,
+        TypeKind::Never => NEVER | STRING_ADD_OPERAND,
+        TypeKind::Null | TypeKind::Undefined => STRING_ADD_OPERAND,
+        TypeKind::Boolean | TypeKind::LiteralBoolean(_, _) => {
+            BOOLEAN_LIKE | INVALID_ARITHMETIC | STRING_ADD_OPERAND | DEFINITELY_NON_NULLISH
+        }
+        TypeKind::Number | TypeKind::LiteralNumber(_, _) => {
+            NUMBER_LIKE | STRING_ADD_OPERAND | DEFINITELY_NON_NULLISH
+        }
+        TypeKind::String | TypeKind::LiteralString(_, _) => {
+            STRING_LIKE | INVALID_ARITHMETIC | STRING_ADD_OPERAND | DEFINITELY_NON_NULLISH
+        }
+        TypeKind::BigInt => BIGINT | STRING_ADD_OPERAND | DEFINITELY_NON_NULLISH,
+        TypeKind::ObjectKeyword
+        | TypeKind::Symbol
+        | TypeKind::Array(_)
+        | TypeKind::Tuple(_)
+        | TypeKind::Object(_)
+        | TypeKind::Function(_) => DEFINITELY_NON_NULLISH,
+        TypeKind::Error | TypeKind::Invalid(_) => ERROR_SENTINEL,
+        _ => 0,
+    }
 }
 
-const fn is_boolean_like(kind: &TypeKind) -> bool {
-    matches!(kind, TypeKind::Boolean | TypeKind::LiteralBoolean(_, _))
+const fn has_flag(flags: u16, flag: u16) -> bool {
+    flags & flag != 0
 }
 
-const fn is_number_bigint_mismatch(left: &TypeKind, right: &TypeKind) -> bool {
-    is_number_like(left) && matches!(right, TypeKind::BigInt)
-        || is_number_like(right) && matches!(left, TypeKind::BigInt)
-}
-
-const fn is_known_invalid_arithmetic(kind: &TypeKind) -> bool {
-    matches!(
-        kind,
-        TypeKind::Boolean
-            | TypeKind::String
-            | TypeKind::LiteralBoolean(_, _)
-            | TypeKind::LiteralString(_, _)
-    )
+const fn unordered_pair(left: u16, right: u16, first: u16, second: u16) -> bool {
+    has_flag(left, first) && has_flag(right, second)
+        || has_flag(right, first) && has_flag(left, second)
 }
 
 fn diagnostic_type_name(
@@ -415,75 +423,16 @@ fn diagnostic_type_name(
     }
 }
 
-const fn operator_text(operator: DeferredBinaryOperator) -> &'static str {
-    match operator {
-        DeferredBinaryOperator::Add => "+",
-        DeferredBinaryOperator::Subtract => "-",
-        DeferredBinaryOperator::Multiply => "*",
-        DeferredBinaryOperator::Divide => "/",
-        DeferredBinaryOperator::Remainder => "%",
-        DeferredBinaryOperator::BitwiseAnd => "&",
-        DeferredBinaryOperator::BitwiseOr => "|",
-    }
+const fn is_any_never_pair(left: u16, right: u16) -> bool {
+    unordered_pair(left, right, ANY, NEVER)
 }
 
-const fn is_string_like(kind: &TypeKind) -> bool {
-    matches!(kind, TypeKind::String | TypeKind::LiteralString(_, _))
+const fn is_number_never_pair(left: u16, right: u16) -> bool {
+    unordered_pair(left, right, NUMBER_LIKE, NUMBER_LIKE | NEVER) || has_flag(left & right, NEVER)
 }
 
-const fn is_string_add_operand(kind: &TypeKind) -> bool {
-    matches!(
-        kind,
-        TypeKind::Any
-            | TypeKind::Null
-            | TypeKind::Undefined
-            | TypeKind::Boolean
-            | TypeKind::Number
-            | TypeKind::String
-            | TypeKind::BigInt
-            | TypeKind::LiteralBoolean(_, _)
-            | TypeKind::LiteralNumber(_, _)
-            | TypeKind::LiteralString(_, _)
-            | TypeKind::Never
-    )
-}
-
-const fn is_error_sentinel(kind: &TypeKind) -> bool {
-    matches!(kind, TypeKind::Error | TypeKind::Invalid(_))
-}
-
-const fn is_any_number_pair(left: &TypeKind, right: &TypeKind) -> bool {
-    matches!(left, TypeKind::Any) && (matches!(right, TypeKind::Any) || is_number_like(right))
-        || matches!(right, TypeKind::Any) && is_number_like(left)
-}
-
-const fn is_any_never_pair(left: &TypeKind, right: &TypeKind) -> bool {
-    matches!(left, TypeKind::Any) && matches!(right, TypeKind::Never)
-        || matches!(right, TypeKind::Any) && matches!(left, TypeKind::Never)
-}
-
-const fn is_number_pair(left: &TypeKind, right: &TypeKind) -> bool {
-    is_number_never_pair(left, right) || is_any_number_pair(left, right)
-}
-
-const fn is_number_never_pair(left: &TypeKind, right: &TypeKind) -> bool {
-    is_number_like(left) && (is_number_like(right) || matches!(right, TypeKind::Never))
-        || is_number_like(right) && matches!(left, TypeKind::Never)
-        || matches!(left, TypeKind::Never) && matches!(right, TypeKind::Never)
-}
-
-const fn is_bigint_pair(left: &TypeKind, right: &TypeKind) -> bool {
-    is_bigint_never_pair(left, right) || is_any_bigint_pair(left, right)
-}
-
-const fn is_bigint_never_pair(left: &TypeKind, right: &TypeKind) -> bool {
-    matches!(left, TypeKind::BigInt) && matches!(right, TypeKind::BigInt | TypeKind::Never)
-        || matches!(right, TypeKind::BigInt) && matches!(left, TypeKind::Never)
-}
-
-const fn is_any_bigint_pair(left: &TypeKind, right: &TypeKind) -> bool {
-    matches!(left, TypeKind::Any) && matches!(right, TypeKind::BigInt)
-        || matches!(right, TypeKind::Any) && matches!(left, TypeKind::BigInt)
+const fn is_bigint_never_pair(left: u16, right: u16) -> bool {
+    unordered_pair(left, right, BIGINT, BIGINT | NEVER)
 }
 
 fn known_truthiness(kind: &TypeKind) -> Option<bool> {

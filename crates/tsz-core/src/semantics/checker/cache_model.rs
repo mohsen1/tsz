@@ -3,6 +3,16 @@ use std::collections::HashSet;
 use super::Checker;
 use crate::semantics::types::{ObjectShape, TypeId, TypeKind};
 
+macro_rules! cacheable_signature {
+    ($checker:expr, $signature:expr, $active:expr) => {
+        $signature
+            .parameters
+            .iter()
+            .all(|parameter| $checker.is_cacheable_type_inner(parameter.ty, $active))
+            && $checker.is_cacheable_type_inner($signature.return_type, $active)
+    };
+}
+
 impl Checker<'_> {
     /// Definitive caches may only retain graphs whose complete structure is
     /// itself definitive. A clean outer array/object/union must not conceal
@@ -34,20 +44,8 @@ impl Checker<'_> {
                     .all(|argument| self.is_cacheable_type_inner(*argument, active))
                     && self.is_cacheable_object_shape(properties, active)
             }
-            TypeKind::Function(signature) => {
-                signature
-                    .parameters
-                    .iter()
-                    .all(|parameter| self.is_cacheable_type_inner(parameter.ty, active))
-                    && self.is_cacheable_type_inner(signature.return_type, active)
-            }
-            TypeKind::ShapeFunction(signature) => {
-                signature
-                    .parameters
-                    .iter()
-                    .all(|parameter| self.is_cacheable_type_inner(parameter.ty, active))
-                    && self.is_cacheable_type_inner(signature.return_type, active)
-            }
+            TypeKind::Function(signature) => cacheable_signature!(self, signature, active),
+            TypeKind::ShapeFunction(signature) => cacheable_signature!(self, signature, active),
             TypeKind::Any
             | TypeKind::Unknown
             | TypeKind::Never
@@ -75,20 +73,11 @@ impl Checker<'_> {
             .properties
             .iter()
             .all(|property| self.is_cacheable_type_inner(property.ty, active))
-            && shape.call_signatures.iter().all(|signature| {
-                signature
-                    .parameters
-                    .iter()
-                    .all(|parameter| self.is_cacheable_type_inner(parameter.ty, active))
-                    && self.is_cacheable_type_inner(signature.return_type, active)
-            })
-            && shape.construct_signatures.iter().all(|signature| {
-                signature
-                    .parameters
-                    .iter()
-                    .all(|parameter| self.is_cacheable_type_inner(parameter.ty, active))
-                    && self.is_cacheable_type_inner(signature.return_type, active)
-            })
+            && shape
+                .call_signatures
+                .iter()
+                .chain(&shape.construct_signatures)
+                .all(|signature| cacheable_signature!(self, signature, active))
             && shape
                 .index_signatures
                 .iter()

@@ -30,16 +30,14 @@ const fn combine_diagnostic_outcomes(
     left: RelationDiagnosticOutcome,
     right: RelationDiagnosticOutcome,
 ) -> RelationDiagnosticOutcome {
-    if matches!(left, RelationDiagnosticOutcome::Reported)
-        || matches!(right, RelationDiagnosticOutcome::Reported)
-    {
-        RelationDiagnosticOutcome::Reported
-    } else if matches!(left, RelationDiagnosticOutcome::Deferred)
-        || matches!(right, RelationDiagnosticOutcome::Deferred)
-    {
-        RelationDiagnosticOutcome::Deferred
-    } else {
-        RelationDiagnosticOutcome::Compatible
+    match (left, right) {
+        (RelationDiagnosticOutcome::Reported, _) | (_, RelationDiagnosticOutcome::Reported) => {
+            RelationDiagnosticOutcome::Reported
+        }
+        (RelationDiagnosticOutcome::Deferred, _) | (_, RelationDiagnosticOutcome::Deferred) => {
+            RelationDiagnosticOutcome::Deferred
+        }
+        _ => RelationDiagnosticOutcome::Compatible,
     }
 }
 
@@ -376,7 +374,7 @@ impl Checker<'_> {
         target_order: Option<&PropertyOrderTree>,
         mode: RelationMode,
     ) -> RelationDiagnosticOutcome {
-        let expression = peel_parentheses(expression);
+        let expression = expression.peel_parentheses();
         let ExpressionKind::Array(elements) = &expression.kind else {
             return RelationDiagnosticOutcome::Compatible;
         };
@@ -398,7 +396,7 @@ impl Checker<'_> {
         };
         let mut outcome = RelationDiagnosticOutcome::Compatible;
         for (element, source_element) in elements.iter().zip(element_types) {
-            let diagnostic_expression = peel_parentheses(element);
+            let diagnostic_expression = element.peel_parentheses();
             let child = self.report_relation(
                 source_element,
                 target_element,
@@ -423,17 +421,10 @@ impl Checker<'_> {
         match self.store.kind(target).clone() {
             TypeKind::Array(element) => ContextualType::Known(element),
             TypeKind::Union(members) => {
-                let Some(elements) = members
-                    .into_iter()
-                    .map(|member| {
-                        let member = self.complete_type(member)?;
-                        match self.store.kind(member) {
-                            TypeKind::Array(element) => Some(*element),
-                            _ => None,
-                        }
-                    })
-                    .collect::<Option<Vec<_>>>()
-                else {
+                let Some(elements) = self.complete_union_members(members, |kind| match kind {
+                    TypeKind::Array(element) => Some(*element),
+                    _ => None,
+                }) else {
                     return ContextualType::Deferred;
                 };
                 ContextualType::Known(self.store.union(elements, UnionPolicy::Canonical))
@@ -473,21 +464,14 @@ impl Checker<'_> {
                 })
                 .unwrap_or(ContextualType::Absent),
             TypeKind::Union(members) => {
-                let Some(member_properties) = members
-                    .into_iter()
-                    .map(|member| {
-                        let member = self.complete_type(member)?;
-                        match self.store.kind(member) {
-                            TypeKind::Object(shape)
-                            | TypeKind::ClassInstance {
-                                properties: shape, ..
-                            } if shape.index_signatures.is_empty() => {
-                                Some(shape.properties.clone())
-                            }
-                            _ => None,
-                        }
+                let Some(member_properties) =
+                    self.complete_union_members(members, |kind| match kind {
+                        TypeKind::Object(shape)
+                        | TypeKind::ClassInstance {
+                            properties: shape, ..
+                        } if shape.index_signatures.is_empty() => Some(shape.properties.clone()),
+                        _ => None,
                     })
-                    .collect::<Option<Vec<_>>>()
                 else {
                     return ContextualType::Deferred;
                 };
@@ -526,12 +510,26 @@ impl Checker<'_> {
         }
     }
 
+    fn complete_union_members<T>(
+        &mut self,
+        members: Vec<TypeId>,
+        select: impl Fn(&TypeKind) -> Option<T>,
+    ) -> Option<Vec<T>> {
+        members
+            .into_iter()
+            .map(|member| {
+                let member = self.complete_type(member)?;
+                select(self.store.kind(member))
+            })
+            .collect()
+    }
+
     fn contextually_applicable_members(
         &mut self,
         members: &[Vec<crate::semantics::types::Property>],
         source: &Expression,
     ) -> Option<Vec<usize>> {
-        let ExpressionKind::Object(source_properties) = &peel_parentheses(source).kind else {
+        let ExpressionKind::Object(source_properties) = &source.peel_parentheses().kind else {
             return None;
         };
         let mut applicable = (0..members.len()).collect::<Vec<_>>();
@@ -548,9 +546,7 @@ impl Checker<'_> {
                         .any(|property| property.name == source_property.name)
                 })
                 .collect::<Vec<_>>();
-            if declared.iter().all(|declared| !declared)
-                || declared.iter().all(|declared| *declared)
-            {
+            if declared.windows(2).all(|pair| pair[0] == pair[1]) {
                 continue;
             }
             found_applicability_evidence = true;
@@ -560,7 +556,7 @@ impl Checker<'_> {
             }
         }
         for source_property in source_properties {
-            let ExpressionKind::Literal(literal) = &peel_parentheses(&source_property.value).kind
+            let ExpressionKind::Literal(literal) = &source_property.value.peel_parentheses().kind
             else {
                 continue;
             };
@@ -659,7 +655,7 @@ impl Checker<'_> {
         target_order: Option<&PropertyOrderTree>,
         mode: RelationMode,
     ) -> RelationDiagnosticOutcome {
-        let expression = peel_parentheses(expression);
+        let expression = expression.peel_parentheses();
         let ExpressionKind::Object(properties) = &expression.kind else {
             return RelationDiagnosticOutcome::Compatible;
         };
@@ -793,41 +789,24 @@ impl Checker<'_> {
                 child = leaf;
                 continue;
             }
-            let message = match &reason.kind {
-                RelationFailureKind::MissingProperty(name) => {
-                    let source_origin = self.origin_for(reason.source, source_origins).cloned();
-                    let target_origin = self.origin_for(reason.target, target_origins).cloned();
-                    let source_name =
-                        self.source_name(reason.source, reason.target, source_origin.as_ref());
-                    let target_name =
-                        self.type_name_with_order(reason.target, target_origin.as_ref());
-                    format!(
+            let message = if let RelationFailureKind::ArrayToTupleLength { required } = &reason.kind
+            {
+                format!("Target requires {required} element(s) but source may have fewer.")
+            } else {
+                let source_origin = self.origin_for(reason.source, source_origins).cloned();
+                let target_origin = self.origin_for(reason.target, target_origins).cloned();
+                let source_name =
+                    self.source_name(reason.source, reason.target, source_origin.as_ref());
+                let target_name = self.type_name_with_order(reason.target, target_origin.as_ref());
+                match &reason.kind {
+                    RelationFailureKind::MissingProperty(name) => format!(
                         "Property '{name}' is missing in type '{source_name}' but required in type '{target_name}'."
-                    )
-                }
-                RelationFailureKind::MissingProperties(names) => {
-                    let source_origin = self.origin_for(reason.source, source_origins).cloned();
-                    let target_origin = self.origin_for(reason.target, target_origins).cloned();
-                    let source_name =
-                        self.source_name(reason.source, reason.target, source_origin.as_ref());
-                    let target_name =
-                        self.type_name_with_order(reason.target, target_origin.as_ref());
-                    format!(
+                    ),
+                    RelationFailureKind::MissingProperties(names) => format!(
                         "Type '{source_name}' is missing the following properties from type '{target_name}': {}",
                         names.join(", ")
-                    )
-                }
-                RelationFailureKind::ArrayToTupleLength { required } => {
-                    format!("Target requires {required} element(s) but source may have fewer.")
-                }
-                _ => {
-                    let source_origin = self.origin_for(reason.source, source_origins).cloned();
-                    let target_origin = self.origin_for(reason.target, target_origins).cloned();
-                    let source_name =
-                        self.source_name(reason.source, reason.target, source_origin.as_ref());
-                    let target_name =
-                        self.type_name_with_order(reason.target, target_origin.as_ref());
-                    format!("Type '{source_name}' is not assignable to type '{target_name}'.")
+                    ),
+                    _ => format!("Type '{source_name}' is not assignable to type '{target_name}'."),
                 }
             };
             related.push(RelatedInformation::unlocated(message, code, depth));
@@ -979,13 +958,6 @@ fn expression_is_recovered_number(expression: &Expression) -> bool {
         } => expression_is_recovered_number(operand),
         _ => false,
     }
-}
-
-fn peel_parentheses(mut expression: &Expression) -> &Expression {
-    while let ExpressionKind::Parenthesized(inner) = &expression.kind {
-        expression = inner;
-    }
-    expression
 }
 
 fn object_property_span(expression: &Expression, name: &str) -> Option<Span> {

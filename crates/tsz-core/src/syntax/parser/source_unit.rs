@@ -2,10 +2,47 @@ use crate::source::Span;
 
 use super::{ParseOutput, Parser};
 use crate::syntax::{
-    CommentKind, CommentSourcePosition, SourceUnit, TokenKind, parse_source_check_directive,
+    CommentKind, CommentSourcePosition, CommentTrivia, JavaScriptJSDocCastKind, SourceUnit,
+    TokenKind, parse_source_check_directive,
 };
 
 impl Parser<'_> {
+    /// Whether the current token's trivia range contains an authored JSDoc
+    /// comment. Token boundaries, rather than declaration spelling, establish
+    /// the association.
+    pub(super) fn current_has_leading_jsdoc(&self) -> bool {
+        self.current_leading_jsdoc().is_some()
+    }
+
+    pub(super) fn current_leading_jsdoc_cast_kind(&self) -> Option<JavaScriptJSDocCastKind> {
+        self.current_leading_jsdoc()
+            .and_then(|comment| jsdoc_cast_kind(self.source.slice(comment.span)))
+    }
+
+    fn current_leading_jsdoc(&self) -> Option<&CommentTrivia> {
+        let start = self
+            .index
+            .checked_sub(1)
+            .and_then(|index| self.tokens.get(index))
+            .map_or(0, |token| token.span.end);
+        let end = self.current().span.start;
+        let first = self
+            .comments
+            .partition_point(|comment| comment.span.end <= start);
+        let comment = self.comments[first..]
+            .iter()
+            .take_while(|comment| comment.span.start < end)
+            .last()?;
+        (comment.jsdoc
+            && self.source.line_and_column(end).0
+                <= self
+                    .source
+                    .line_and_column(comment.span.end)
+                    .0
+                    .saturating_add(1))
+        .then_some(comment)
+    }
+
     pub(super) fn tokens_are_on_same_line(&self, left: usize, right: usize) -> bool {
         let Some(left) = self.tokens.get(left) else {
             return false;
@@ -68,4 +105,49 @@ impl Parser<'_> {
             diagnostics: self.diagnostics,
         }
     }
+}
+
+fn jsdoc_cast_kind(comment: &str) -> Option<JavaScriptJSDocCastKind> {
+    let body = comment
+        .strip_prefix("/**")
+        .and_then(|body| body.strip_suffix("*/"))
+        .unwrap_or(comment);
+    let mut in_backticks = false;
+    let mut line_prefix = true;
+    let mut previous_whitespace = true;
+    for (index, character) in body.char_indices() {
+        if character == '`' {
+            in_backticks = !in_backticks;
+        } else if character == '@'
+            && !in_backticks
+            && (previous_whitespace || line_prefix)
+            && let Some(kind) = jsdoc_cast_tag(&body[index + 1..])
+        {
+            return Some(kind);
+        }
+        if matches!(character, '\n' | '\r' | '\u{2028}' | '\u{2029}') {
+            line_prefix = true;
+        } else if !character.is_whitespace() && !(line_prefix && character == '*') {
+            line_prefix = false;
+        }
+        previous_whitespace = character.is_whitespace();
+    }
+    None
+}
+
+fn jsdoc_cast_tag(text: &str) -> Option<JavaScriptJSDocCastKind> {
+    [
+        ("type", JavaScriptJSDocCastKind::Type),
+        ("satisfies", JavaScriptJSDocCastKind::Satisfies),
+    ]
+    .into_iter()
+    .find_map(|(name, kind)| {
+        text.strip_prefix(name)
+            .filter(|tail| {
+                tail.chars().next().is_none_or(|character| {
+                    !character.is_alphanumeric() && !matches!(character, '_' | '$')
+                })
+            })
+            .map(|_| kind)
+    })
 }

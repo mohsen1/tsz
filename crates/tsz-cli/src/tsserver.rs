@@ -6,7 +6,7 @@ use serde::ser::{SerializeMap, SerializeSeq};
 use serde::{Serialize, Serializer};
 use serde_json::{Value, json};
 use tsz::CompilerOptions;
-use tsz::diagnostics::{Diagnostic, DiagnosticCategory};
+use tsz::diagnostics::Diagnostic;
 use tsz::service::{
     DefinitionInfo, DocumentHighlights, LanguageService, ReferenceEntry, ReferencedSymbol,
     RenameLocation, RenameResult, TextSpan,
@@ -104,7 +104,7 @@ impl<R: Read, W: Write> Server<R, W> {
             "syntacticDiagnosticsSync" => {
                 let path = file_argument(arguments)?;
                 let diagnostics = self.service.syntactic_diagnostics(path);
-                Ok(Some(self.diagnostics_body(path, diagnostics)))
+                Ok(Some(self.diagnostics_body(path, diagnostics, arguments)))
             }
             "semanticDiagnosticsSync" => {
                 let path = file_argument(arguments)?;
@@ -115,7 +115,8 @@ impl<R: Read, W: Write> Server<R, W> {
                         result.semantic_completion.as_str()
                     ));
                 }
-                Ok(Some(self.diagnostics_body(path, result.diagnostics)))
+                let body = self.diagnostics_body(path, result.diagnostics, arguments);
+                Ok(Some(body))
             }
             "quickinfo" => {
                 let path = file_argument(arguments)?;
@@ -440,24 +441,34 @@ impl<R: Read, W: Write> Server<R, W> {
         Ok(())
     }
 
-    fn diagnostics_body(&self, path: &str, diagnostics: Vec<Diagnostic>) -> Value {
+    fn diagnostics_body(&self, path: &str, diagnostics: Vec<Diagnostic>, args: &Value) -> Value {
         let Some(text) = self.service.text(path) else {
             return json!([]);
         };
         let source = SourceText::new(FileId(0), path.into(), text);
+        let include_line_position = args.get("includeLinePosition").is_some_and(|value| {
+            !matches!(value, Value::Null | Value::Bool(false))
+                && value.as_f64() != Some(0.0)
+                && value.as_str() != Some("")
+        });
         Value::Array(
             diagnostics
                 .into_iter()
                 .map(|diagnostic| {
                     let start = source.line_and_column(diagnostic.start);
                     let end = source.line_and_column(diagnostic.start + diagnostic.length);
-                    json!({
-                        "start": {"line": start.0, "offset": start.1},
-                        "end": {"line": end.0, "offset": end.1},
-                        "text": diagnostic.message_text,
-                        "code": diagnostic.code,
-                        "category": category_number(diagnostic.category),
-                    })
+                    match include_line_position {
+                        false => json!({
+                            "start": {"line": start.0, "offset": start.1}, "end": {"line": end.0, "offset": end.1},
+                            "text": diagnostic.message_text, "code": diagnostic.code,
+                            "category": diagnostic.category.as_str(),
+                        }),
+                        true => json!({
+                            "message": diagnostic.message_text, "start": diagnostic.start, "length": diagnostic.length,
+                            "startLocation": {"line": start.0, "offset": start.1}, "endLocation": {"line": end.0, "offset": end.1},
+                            "category": diagnostic.category.as_str(), "code": diagnostic.code,
+                        }),
+                    }
                 })
                 .collect(),
         )
@@ -732,19 +743,7 @@ fn byte_to_utf16_offset(text: &str, offset: u32) -> u32 {
     let end = usize::try_from(offset)
         .unwrap_or(usize::MAX)
         .min(text.len());
-    text[..end]
-        .chars()
-        .map(|character| character.len_utf16() as u32)
-        .sum()
-}
-
-const fn category_number(category: DiagnosticCategory) -> u8 {
-    match category {
-        DiagnosticCategory::Warning => 0,
-        DiagnosticCategory::Error => 1,
-        DiagnosticCategory::Suggestion => 2,
-        DiagnosticCategory::Message => 3,
-    }
+    text[..end].encode_utf16().count() as u32
 }
 
 pub fn run_legacy_server(input: impl Read, mut output: impl Write) -> Result<()> {

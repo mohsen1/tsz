@@ -220,18 +220,9 @@ impl StandardLibraryEnvironment {
             let Some(library) = library(name) else {
                 continue;
             };
-            names.extend(
-                library
-                    .type_names
-                    .iter()
-                    .map(|name| ((*name).to_string(), 0_u8)),
-            );
-            names.extend(
-                library
-                    .value_names
-                    .iter()
-                    .map(|name| ((*name).to_string(), 1_u8)),
-            );
+            for (entries, meaning) in [(library.type_names, 0_u8), (library.value_names, 1)] {
+                names.extend(entries.iter().map(|name| ((*name).to_string(), meaning)));
+            }
             string_record_type_names.extend(
                 library
                     .string_record_type_names

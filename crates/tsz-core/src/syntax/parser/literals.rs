@@ -155,6 +155,8 @@ impl Parser<'_> {
 
     pub(super) fn parse_primary_expression(&mut self) -> Expression {
         let token = *self.current();
+        let has_leading_jsdoc = self.current_has_leading_jsdoc();
+        let jsdoc_cast_kind = self.current_leading_jsdoc_cast_kind();
         let async_arrow = token.kind == TokenKind::Async
             && self.peek_kind(1) == TokenKind::LeftParen
             && self.tokens_are_on_same_line(self.index, self.index + 1)
@@ -200,6 +202,9 @@ impl Parser<'_> {
                 } else {
                     self.parse_parenthesized_arrow(false)
                 };
+                if let ExpressionKind::FunctionLike(function) = &mut expression.kind {
+                    function.has_leading_jsdoc |= has_leading_jsdoc;
+                }
                 expression.span = modifier.merge(expression.span);
                 self.retain_parser_recovery(
                     ParserRecoveryKind::Expression,
@@ -234,7 +239,7 @@ impl Parser<'_> {
                         function_implementation_completion_supported: token.kind.is_identifier(),
                         span: token.span,
                     };
-                    let body = self.parse_arrow_body();
+                    let (body, body_span) = self.parse_arrow_body();
                     let end = self.previous().span;
                     return Expression {
                         id: self.alloc_node(),
@@ -243,6 +248,8 @@ impl Parser<'_> {
                             type_parameters: Vec::new(),
                             parameters: vec![parameter],
                             return_type: None,
+                            body_span,
+                            has_leading_jsdoc,
                             syntax: FunctionLikeSyntax::Arrow(body),
                         })),
                     };
@@ -299,11 +306,16 @@ impl Parser<'_> {
                 };
                 let right = self.current().span;
                 self.expect(TokenKind::RightParen, "')' expected.", 1005);
-                Expression {
+                let expression = Expression {
                     id: self.alloc_node(),
                     span: left.merge(right),
                     kind: ExpressionKind::Parenthesized(Box::new(inner)),
+                };
+                if let Some(kind) = jsdoc_cast_kind {
+                    self.source_syntax_facts
+                        .insert(SourceSyntaxFact::JavaScriptJSDocCast(expression.id, kind));
                 }
+                expression
             }
             _ => {
                 self.observe_unmodeled_regular_expression_if_current();
@@ -434,6 +446,7 @@ impl Parser<'_> {
 
     fn parse_parenthesized_arrow(&mut self, generic: bool) -> Expression {
         let diagnostic_count = self.diagnostics.len();
+        let has_leading_jsdoc = self.current_has_leading_jsdoc();
         let left = self.current().span;
         let type_parameters = if generic {
             self.parse_type_parameters()
@@ -465,7 +478,7 @@ impl Parser<'_> {
             .at(TokenKind::LeftBrace)
             .then(|| self.balanced_recovery_brace_extent(self.index))
             .flatten();
-        let body = self.parse_recovered_arrow_body(arrow_index.is_some());
+        let (body, body_span) = self.parse_recovered_arrow_body(arrow_index.is_some());
         let body_recovered = self.diagnostics.len() != body_diagnostic_count
             || self.parser_recovery_facts.len() != body_recovery_count;
         if body_recovered && let Some(extent) = authored_body_extent {
@@ -481,6 +494,8 @@ impl Parser<'_> {
                 type_parameters,
                 parameters,
                 return_type,
+                body_span,
+                has_leading_jsdoc,
                 syntax: FunctionLikeSyntax::Arrow(body),
             })),
         };
@@ -600,6 +615,8 @@ impl Parser<'_> {
                 self.eat(TokenKind::Comma);
                 continue;
             }
+            let starts_on_new_line =
+                !self.tokens_are_on_same_line(self.index.saturating_sub(1), self.index);
             let start = self.current().span;
             let (name, name_span, name_kind) = self.parse_property_name();
             let has_colon = self.eat(TokenKind::Colon);
@@ -647,6 +664,7 @@ impl Parser<'_> {
                         kind: ExpressionKind::Assignment {
                             left: Box::new(value),
                             right: Box::new(right),
+                            has_leading_jsdoc: false,
                         },
                     },
                     Some(equals_span),
@@ -672,12 +690,21 @@ impl Parser<'_> {
                 shorthand_equals_span,
                 value,
                 span,
+                starts_on_new_line,
+                trailing_comma: false,
+                closing_brace_on_new_line: false,
             });
-            if !self.eat(TokenKind::Comma) {
+            let trailing_comma = self.eat(TokenKind::Comma);
+            properties.last_mut().unwrap().trailing_comma = trailing_comma;
+            if !trailing_comma {
                 break;
             }
         }
         let right = self.current().span;
+        if let Some(property) = properties.last_mut() {
+            property.closing_brace_on_new_line =
+                !self.tokens_are_on_same_line(self.index.saturating_sub(1), self.index);
+        }
         self.expect(TokenKind::RightBrace, "'}' expected.", 1005);
         for (kind, authored_span, recovery_extent) in member_recoveries {
             self.record_parser_recovery_for_analysis(kind, authored_span, recovery_extent);

@@ -1,0 +1,63 @@
+use std::ffi::OsString;
+use std::path::PathBuf;
+
+use super::{CompilerOptionPatch, parse_arguments};
+
+#[test]
+fn shared_schema_mutates_every_supported_option_outside_debug_assertions() {
+    let arguments = [
+        "--strict=false",
+        "--strictNullChecks=true",
+        "--strictPropertyInitialization=false",
+        "--noImplicitAny=true",
+        "--noUnusedLocals=false",
+        "--noUnusedParameters=true",
+        "--noLib=false",
+        "--lib=es5, dom,,",
+        "--noCheck=true",
+        "--noEmit=false",
+        "--noEmitOnError=true",
+        "--declaration=false",
+        "--declarationMap=true",
+        "--sourceMap=false",
+        "--inlineSourceMap=true",
+        "--removeComments=false",
+        "--allowJs=true",
+        "--target=es2022",
+        "--module=preserve",
+        "--rootDir=source",
+        "--outDir=output",
+        "--declarationDir=types",
+    ]
+    .map(OsString::from);
+
+    let invocation = parse_arguments(&arguments).expect("all schema options parse");
+    assert!(invocation.unknown_options.is_empty());
+    assert_eq!(
+        invocation.options,
+        CompilerOptionPatch {
+            strict: Some(false),
+            strict_null_checks: Some(true),
+            strict_property_initialization: Some(false),
+            no_implicit_any: Some(true),
+            no_unused_locals: Some(false),
+            no_unused_parameters: Some(true),
+            no_lib: Some(false),
+            lib: Some(vec!["es5".into(), "dom".into()]),
+            no_check: Some(true),
+            no_emit: Some(false),
+            no_emit_on_error: Some(true),
+            declaration: Some(false),
+            declaration_map: Some(true),
+            source_map: Some(false),
+            inline_source_map: Some(true),
+            remove_comments: Some(false),
+            allow_js: Some(true),
+            target: Some("es2022".into()),
+            module: Some("preserve".into()),
+            root_dir: Some(PathBuf::from("source")),
+            out_dir: Some(PathBuf::from("output")),
+            declaration_dir: Some(PathBuf::from("types")),
+        }
+    );
+}

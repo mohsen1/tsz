@@ -14,7 +14,7 @@ use super::{
 use crate::semantics::relation::RelationContext;
 use crate::semantics::types::{
     Completion, DeferredType, IndexKeyKind, InvalidType, LiteralProvenance, ParameterType,
-    Property, Signature, TypeId, TypeKind, UnionPolicy,
+    Property, TypeId, TypeKind, UnionPolicy,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -230,11 +230,7 @@ impl Checker<'_> {
             None if empty_body => self.store.builtins.void,
             None => return None,
         };
-        Some(self.store.intern(TypeKind::Function(Signature {
-            generic_declaration: None,
-            parameters: resolved,
-            return_type,
-        })))
+        Some(self.store.function(None, false, resolved, return_type))
     }
 
     /// Whether rendering this semantic type would require authored object-
@@ -518,7 +514,7 @@ impl Checker<'_> {
         index: usize,
         rest: bool,
     ) -> Option<PropertyOrderTree> {
-        let callee = peel_expression_parentheses(callee);
+        let callee = callee.peel_parentheses();
         let ExpressionKind::Identifier { name, .. } = &callee.kind else {
             return None;
         };
@@ -988,7 +984,7 @@ impl Checker<'_> {
                     })
                     .collect(),
             )),
-            DeclarationModel::Function { .. } => None,
+            DeclarationModel::Function { .. } | DeclarationModel::JavaScriptProperty(..) => None,
         };
         active.remove(&declaration);
         result
@@ -1131,7 +1127,8 @@ impl Checker<'_> {
             Some(
                 DeclarationModel::Variable { .. }
                 | DeclarationModel::Parameter { .. }
-                | DeclarationModel::Function { .. },
+                | DeclarationModel::Function { .. }
+                | DeclarationModel::JavaScriptProperty(..),
             )
             | None => false,
         }
@@ -1403,11 +1400,4 @@ fn diagnostic_alias_shape(node: &TypeNode) -> bool {
         }
         _ => false,
     }
-}
-
-pub(super) fn peel_expression_parentheses(mut expression: &Expression) -> &Expression {
-    while let ExpressionKind::Parenthesized(inner) = &expression.kind {
-        expression = inner;
-    }
-    expression
 }

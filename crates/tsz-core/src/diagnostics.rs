@@ -1,6 +1,5 @@
 //! Structured diagnostics. Rendering is a process-adapter concern.
 
-use std::cmp::Ordering;
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
@@ -118,33 +117,23 @@ impl Diagnostic {
         let coordinates = SourceCoordinateIndex::new(&source_text);
         let (start, length) =
             coordinates.byte_span(&source_text, start, start.saturating_add(length));
-        Self {
-            file,
-            start,
-            length,
-            message_text,
-            category: DiagnosticCategory::Error,
-            code,
-            related_information: Vec::new(),
-            file_id: None,
-            external_source: Some(source_text),
-        }
+        let mut diagnostic = Self::error(file, start, length, message_text, code);
+        diagnostic.external_source = Some(source_text);
+        diagnostic
     }
 
     #[must_use]
     pub fn at(source: &SourceText, span: Span, message_text: String, code: u32) -> Self {
         let (start, length) = source.utf16_span(span);
-        Self {
-            file: source.path.to_string_lossy().replace('\\', "/"),
+        let mut diagnostic = Self::error(
+            source.path.to_string_lossy().replace('\\', "/"),
             start,
             length,
             message_text,
-            category: DiagnosticCategory::Error,
             code,
-            related_information: Vec::new(),
-            file_id: Some(source.id),
-            external_source: None,
-        }
+        );
+        diagnostic.file_id = Some(source.id);
+        diagnostic
     }
 
     #[must_use]
@@ -163,40 +152,26 @@ impl Diagnostic {
 
     #[must_use]
     pub fn render(&self, source: Option<&SourceText>) -> String {
+        let suffix = format!(
+            "{} TS{}: {}",
+            self.category.as_str(),
+            self.code,
+            self.message_text
+        );
         let mut rendered = if let Some(source) = source {
             let (line, column) = source.line_and_column(self.start);
             format!(
-                "{}({line},{column}): {} TS{}: {}",
-                source.path.to_string_lossy().replace('\\', "/"),
-                self.category.as_str(),
-                self.code,
-                self.message_text
+                "{}({line},{column}): {suffix}",
+                source.path.to_string_lossy().replace('\\', "/")
             )
         } else if let Some(source_text) = &self.external_source {
             let (line, column) =
                 SourceCoordinateIndex::new(source_text).line_and_column(self.start);
-            format!(
-                "{}({line},{column}): {} TS{}: {}",
-                self.file,
-                self.category.as_str(),
-                self.code,
-                self.message_text
-            )
+            format!("{}({line},{column}): {suffix}", self.file)
         } else if self.file.is_empty() {
-            format!(
-                "{} TS{}: {}",
-                self.category.as_str(),
-                self.code,
-                self.message_text
-            )
+            suffix
         } else {
-            format!(
-                "{}: {} TS{}: {}",
-                self.file,
-                self.category.as_str(),
-                self.code,
-                self.message_text
-            )
+            format!("{}: {suffix}", self.file)
         };
         for related in &self.related_information {
             rendered.push('\n');
@@ -234,12 +209,9 @@ fn sort_and_deduplicate_by<K: Ord>(
             right.category,
             &right.message_text,
         );
-        let ordering = left_key.cmp(&right_key);
-        if ordering == Ordering::Equal {
-            left.length.cmp(&right.length)
-        } else {
-            ordering
-        }
+        left_key
+            .cmp(&right_key)
+            .then_with(|| left.length.cmp(&right.length))
     });
     diagnostics.dedup_by(|left, right| {
         left.file == right.file

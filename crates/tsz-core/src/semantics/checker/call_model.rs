@@ -4,8 +4,7 @@ use crate::bind::ScopeId;
 use crate::program::SemanticCompletion;
 use crate::semantics::relation::{RelationContext, RelationMode};
 use crate::semantics::types::{
-    CallArityGap, CallArityResolution, Completion, DeferredType, ShapeParameter, ShapeSignature,
-    TypeId, TypeKind,
+    CallArityGap, CallArityResolution, Completion, DeferredType, ShapeSignature, TypeId, TypeKind,
 };
 use crate::source::{DeclId, FileId};
 use crate::syntax::{Expression, ExpressionKind, FunctionLikeExpression, ParameterNameKind};
@@ -13,25 +12,13 @@ use crate::syntax::{Expression, ExpressionKind, FunctionLikeExpression, Paramete
 use super::{
     Checker, DeclarationModel,
     generic_call_instantiation::IdentityCallInstantiation,
-    projection_model::peel_expression_parentheses,
     relation_diagnostic::{ContextualType, RelationDiagnosticOutcome, RelationDiagnosticStyle},
 };
 
 impl Checker<'_> {
     pub(super) fn callable_signature(&self, ty: TypeId) -> Option<ShapeSignature> {
         match self.store.kind(ty) {
-            TypeKind::Function(signature) => Some(ShapeSignature {
-                parameters: signature
-                    .parameters
-                    .iter()
-                    .map(|parameter| ShapeParameter {
-                        ty: parameter.ty,
-                        optional: parameter.optional,
-                        rest: parameter.rest,
-                    })
-                    .collect(),
-                return_type: signature.return_type,
-            }),
+            TypeKind::Function(signature) => Some(ShapeSignature::from(signature)),
             TypeKind::ShapeFunction(signature) => Some(signature.clone()),
             TypeKind::Object(shape) if shape.call_signatures.len() == 1 => {
                 shape.call_signatures.first().cloned()
@@ -48,7 +35,7 @@ impl Checker<'_> {
         has_type_arguments: bool,
         arguments: &[Expression],
     ) -> TypeId {
-        let member_callee = peel_expression_parentheses(callee);
+        let member_callee = callee.peel_parentheses();
         let callee_query = if let ExpressionKind::Member {
             object,
             name,
@@ -132,7 +119,7 @@ impl Checker<'_> {
             ExpressionKind::FunctionLike(function) => Some(function.as_ref()),
             _ => None,
         };
-        let arity = self.effective_call_arity(direct_function, &mut signature);
+        let arity = self.effective_call_arity(direct_function, arguments.len(), &mut signature);
         let arity = match self.require_completion(arity) {
             Completion::Complete(arity) => Some(arity),
             Completion::Deferred | Completion::Cycle | Completion::Limit => None,
@@ -274,9 +261,11 @@ impl Checker<'_> {
     fn effective_call_arity(
         &mut self,
         direct_function: Option<&FunctionLikeExpression>,
+        argument_count: usize,
         signature: &mut ShapeSignature,
     ) -> Completion<(usize, Option<usize>)> {
         if let Some(function) = direct_function {
+            signature.untyped_javascript = false;
             let authored = function
                 .parameters
                 .iter()
@@ -284,14 +273,13 @@ impl Checker<'_> {
             if authored.clone().count() != signature.parameters.len() {
                 return Completion::Deferred;
             }
-            for (parameter, authored) in signature.parameters.iter_mut().zip(authored) {
-                if authored.annotation.is_none()
-                    && authored.initializer.is_none()
-                    && !authored.optional
-                    && !authored.rest
-                {
-                    parameter.optional = true;
-                }
+            for (parameter, authored) in signature
+                .parameters
+                .iter_mut()
+                .zip(authored)
+                .skip(argument_count)
+            {
+                parameter.optional |= authored.annotation.is_none() && !authored.rest;
             }
         }
         let mut references = HashMap::new();
@@ -486,7 +474,7 @@ impl Checker<'_> {
 
 fn transparent_identity_argument(expression: &Expression) -> bool {
     matches!(
-        peel_expression_parentheses(expression).kind,
+        expression.peel_parentheses().kind,
         ExpressionKind::Identifier { entity_name, .. } if entity_name
     )
 }

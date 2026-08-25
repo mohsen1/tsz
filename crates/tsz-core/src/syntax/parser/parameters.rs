@@ -20,25 +20,23 @@ impl Parser<'_> {
     fn parse_parameters_with_this(
         &mut self,
         allow_this: bool,
-        recover_missing_separator: bool,
+        mut recover_missing_separator: bool,
     ) -> Vec<Parameter> {
         self.expect(TokenKind::LeftParen, "'(' expected.", 1005);
         let mut parameters = Vec::new();
-        let mut recover_missing_separator = recover_missing_separator;
         while !self.at_any(&[TokenKind::RightParen, TokenKind::EndOfFile]) {
             recover_missing_separator |=
                 matches!(self.kind(), TokenKind::Const | TokenKind::Default);
             parameters.push(self.parse_parameter_with_this(allow_this));
-            if self.eat(TokenKind::Comma) {
-                continue;
+            if !self.eat(TokenKind::Comma) {
+                if !recover_missing_separator
+                    || self.at_any(&[TokenKind::RightParen, TokenKind::EndOfFile])
+                    || !self.parameter_starts_arrow_speculation()
+                {
+                    break;
+                }
+                self.error_current("',' expected.", 1005);
             }
-            if !recover_missing_separator
-                || self.at_any(&[TokenKind::RightParen, TokenKind::EndOfFile])
-                || !self.parameter_starts_arrow_speculation()
-            {
-                break;
-            }
-            self.error_current("',' expected.", 1005);
         }
         self.expect(TokenKind::RightParen, "')' expected.", 1005);
         parameters
@@ -133,13 +131,12 @@ impl Parser<'_> {
         };
         let initializer = self.eat(TokenKind::Equals).then(|| self.parse_expression());
         let end = self.previous_end().max(start);
-        let overload_completion_supported = (ordinary_identifier || this_parameter)
-            && modifiers.is_empty()
-            && self.diagnostics.len() == diagnostic_count;
-        let function_implementation_completion_supported = (token_kind.is_identifier()
-            || this_parameter)
-            && modifiers.is_empty()
-            && self.diagnostics.len() == diagnostic_count;
+        let completion_supported =
+            modifiers.is_empty() && self.diagnostics.len() == diagnostic_count;
+        let overload_completion_supported =
+            (ordinary_identifier || this_parameter) && completion_supported;
+        let function_implementation_completion_supported =
+            (token_kind.is_identifier() || this_parameter) && completion_supported;
         Parameter {
             name,
             name_span,

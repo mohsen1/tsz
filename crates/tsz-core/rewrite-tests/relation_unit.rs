@@ -5,6 +5,27 @@ use crate::source::{DeclId, FileId};
 use super::*;
 use crate::semantics::types::{DeferredType, InvalidType, LiteralProvenance};
 
+/// Relate two types in one query-local session.
+///
+/// TypeScript's recursive structural comparison is coinductive: a repeated
+/// active `(source, target, mode)` pair is provisionally related. Keeping that
+/// identity before forcing deferred references lets recursive symbolic shapes
+/// meet the same active pair instead of materializing without a bound.
+fn relate<C: RelationContext>(
+    context: &mut C,
+    source: TypeId,
+    target: TypeId,
+    mode: RelationMode,
+) -> Result<(), RelationFailure> {
+    relate_with_property_order(
+        context,
+        source,
+        target,
+        mode,
+        RelationPropertyOrder::default(),
+    )
+}
+
 struct TestContext {
     kinds: Vec<TypeKind>,
     completions: HashMap<TypeId, Completion<TypeId>>,

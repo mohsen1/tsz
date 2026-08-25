@@ -89,7 +89,7 @@ fn expression_shape(expression: &Expression) -> String {
                 .collect::<Vec<_>>()
                 .join(", ")
         ),
-        ExpressionKind::Assignment { left, right } => format!(
+        ExpressionKind::Assignment { left, right, .. } => format!(
             "Assign({}, {})",
             expression_shape(left),
             expression_shape(right)

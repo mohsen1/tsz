@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use crate::bind::{BoundFile, DeclarationKind, Meaning, bind_source};
+use crate::bind::{BoundFile, DeclarationKind, Meaning, bind_source_with_kind};
 use crate::config::{CompilerOptionKey, ProjectProvenance, ResolvedProject};
 use crate::diagnostics::{Diagnostic, DiagnosticCategory, sort_and_deduplicate};
 use crate::emit::emit_file_with_plan;
@@ -24,6 +24,7 @@ use crate::syntax::{
 
 mod capabilities;
 mod import_aliases;
+mod javascript_assignments;
 mod literal_products;
 mod numeric_literal;
 mod regular_expression;
@@ -33,6 +34,7 @@ pub(crate) use capabilities::{
     CapabilityAnalysis, CapabilityContext, CapabilityScope, CapabilityTarget,
     is_declaration_source, is_effective_commonjs,
 };
+pub(crate) use javascript_assignments::{JavaScriptAssignmentDisposition, JavaScriptAssignments};
 use literal_products::{
     LiteralProductFamily, exact_option_value, roots_are_homogeneous_literal_products,
     unique_top_level_value_bindings_supported,
@@ -252,6 +254,7 @@ pub struct Program {
     pub global_values: BTreeMap<String, Vec<DeclId>>,
     pub global_types: BTreeMap<String, Vec<DeclId>>,
     pub standard_library: StandardLibraryEnvironment,
+    pub(crate) javascript_assignments: JavaScriptAssignments,
     import_aliases: import_aliases::ImportAliases,
 }
 
@@ -578,7 +581,7 @@ impl Compiler {
                 let parsed = parse_source(&source);
                 let parse_time = parse_start.elapsed();
                 let bind_start = Instant::now();
-                let bindings = bind_source(source.id, &parsed.unit);
+                let bindings = bind_source_with_kind(source.id, source.kind(), &parsed.unit);
                 let bind_time = bind_start.elapsed();
                 ParseBindJob {
                     file: ProgramFile {
@@ -626,7 +629,7 @@ impl Compiler {
             program.missing_essential_global_types()
         };
         let has_missing_essential_types = !missing_essential_types.is_empty();
-        let capabilities = CapabilityAnalysis::derive(
+        let capabilities = CapabilityAnalysis::derive_with_javascript_assignments(
             &program.files,
             options,
             CapabilityContext {
@@ -634,6 +637,7 @@ impl Compiler {
                 has_fatal_option_error,
                 has_missing_essential_types,
             },
+            &program.javascript_assignments,
         );
         let has_checkable_file = program.files.iter().any(|file| {
             capabilities.semantic_check_file_is_enabled(file.source.id)
@@ -907,12 +911,14 @@ fn build_program(
                 .and_then(|declarations| declarations.first().copied())
         });
     }
+    let javascript_assignments = JavaScriptAssignments::build(&files, &global_values);
     Program {
         source_order,
         files,
         global_values,
         global_types,
         standard_library: StandardLibraryEnvironment::from_options(options),
+        javascript_assignments,
         import_aliases,
     }
 }

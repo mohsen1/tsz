@@ -10,11 +10,12 @@ mod literals;
 mod operators;
 mod reachability;
 mod regular_expression;
+mod statements;
 #[cfg(test)]
 #[path = "emit/test_support.rs"]
 mod tests;
 mod type_members;
-use self::comments::CommentCursor;
+use self::comments::CommentIndex;
 use crate::emit_paths::EmitFilePlan;
 use crate::program::{
     CompilerOptions, EmittedFile, ProgramFile, is_declaration_source, is_effective_commonjs,
@@ -24,8 +25,8 @@ use crate::syntax::{
     AccessorKind, BinaryOperator, ClassDeclaration, ClassMemberKind, ExportDeclaration, Expression,
     ExpressionKind, FunctionDeclaration, FunctionLikeSyntax, ImportDeclaration,
     InterfaceDeclaration, KeywordType, ObjectProperty, Parameter, ParameterNameKind, SourceUnit,
-    Statement, StatementKind, SwitchClauseKind, TypeAliasDeclaration, TypeNode, TypeNodeKind,
-    VariableDeclaration, VariableKind, erased_assertion_expression,
+    Statement, StatementKind, TypeAliasDeclaration, TypeNode, TypeNodeKind, VariableDeclaration,
+    VariableKind, erased_assertion_expression,
 };
 use operators::*;
 pub(crate) fn emit_file_with_plan(
@@ -87,7 +88,7 @@ struct Printer<'a> {
     preserve_class_fields: bool,
     preserve_numeric_separators: bool,
     preserve_comments: bool,
-    comment_cursor: CommentCursor,
+    comment_index: CommentIndex,
     emitting_declaration: bool,
     javascript_supported: bool,
     declaration_supported: bool,
@@ -124,7 +125,7 @@ impl<'a> Printer<'a> {
                 "es2021" | "es2022" | "es2023" | "es2024" | "es2025" | "esnext"
             ),
             preserve_comments: !options.remove_comments,
-            comment_cursor: CommentCursor::default(),
+            comment_index: CommentIndex::default(),
             emitting_declaration: false,
             javascript_supported: true,
             declaration_supported: true,
@@ -201,124 +202,6 @@ impl<'a> Printer<'a> {
         }
     }
 
-    fn write_javascript_statement(&mut self, statement: &Statement, top_level: bool) {
-        if self.discard_erased_statement_comments(statement) {
-            return;
-        }
-        self.write_comments_before(statement.span.start);
-        match &statement.kind {
-            StatementKind::Import(declaration) => {
-                self.write_javascript_import(statement, declaration);
-            }
-            StatementKind::Export(declaration) => {
-                self.write_javascript_export(statement, declaration);
-            }
-            StatementKind::Variable(declaration) => {
-                self.write_javascript_variable(declaration, top_level);
-            }
-            StatementKind::Function(declaration) => {
-                self.write_javascript_function(statement, declaration, top_level);
-            }
-            StatementKind::Class(declaration) => {
-                self.write_javascript_class(declaration, top_level);
-            }
-            // Type-only and unknown syntax has no safe JavaScript product.
-            // Copying unknown source could leak TypeScript-only syntax.
-            StatementKind::TypeAlias(_) | StatementKind::Interface(_) | StatementKind::Unknown => {}
-            StatementKind::Return(expression) => {
-                self.write_indent();
-                self.output.push_str("return");
-                if let Some(expression) = expression {
-                    self.output.push(' ');
-                    self.write_expression(expression, PREC_LOWEST);
-                }
-                self.output.push_str(";\n");
-            }
-            StatementKind::If(control_flow) => self.write_javascript_if(control_flow),
-            StatementKind::Switch(control_flow) => {
-                self.write_indent();
-                self.output.push_str("switch (");
-                self.write_expression(&control_flow.expression, PREC_LOWEST);
-                self.output.push_str(") {\n");
-                self.indent += 1;
-                for clause in &control_flow.clauses {
-                    self.write_indent();
-                    match &clause.kind {
-                        SwitchClauseKind::Case(expression) => {
-                            self.output.push_str("case ");
-                            self.write_expression(expression, PREC_LOWEST);
-                            self.output.push(':');
-                        }
-                        SwitchClauseKind::Default => self.output.push_str("default:"),
-                    }
-                    self.output.push('\n');
-                    self.indent += 1;
-                    for nested in &clause.statements {
-                        self.write_javascript_statement(nested, false);
-                    }
-                    self.indent = self.indent.saturating_sub(1);
-                }
-                self.indent = self.indent.saturating_sub(1);
-                self.write_indent();
-                self.output.push_str("}\n");
-            }
-            StatementKind::Break(jump) => {
-                self.write_jump_statement("break", jump.label.as_deref());
-            }
-            StatementKind::Continue(jump) => {
-                self.write_jump_statement("continue", jump.label.as_deref());
-            }
-            StatementKind::Block(statements) => {
-                self.write_indent();
-                self.write_braced_statements(statements);
-                self.output.push('\n');
-            }
-            StatementKind::Expression(expression) => {
-                self.write_commented_expression_statement(statement, expression);
-            }
-            StatementKind::Empty => {
-                self.write_indent();
-                self.output.push_str(";\n");
-            }
-        }
-    }
-
-    fn write_javascript_if(&mut self, control_flow: &crate::syntax::IfStatement) {
-        self.write_indent();
-        self.output.push_str("if (");
-        self.write_expression(&control_flow.condition, PREC_LOWEST);
-        self.output.push(')');
-        self.write_control_flow_body(&control_flow.then_statement);
-        if let Some(else_statement) = &control_flow.else_statement {
-            self.write_indent();
-            self.output.push_str("else");
-            self.write_control_flow_body(else_statement);
-        }
-    }
-
-    fn write_control_flow_body(&mut self, statement: &Statement) {
-        if let StatementKind::Block(statements) = &statement.kind {
-            self.output.push(' ');
-            self.write_braced_statements(statements);
-            self.output.push('\n');
-        } else {
-            self.output.push('\n');
-            self.indent += 1;
-            self.write_javascript_statement(statement, false);
-            self.indent = self.indent.saturating_sub(1);
-        }
-    }
-
-    fn write_jump_statement(&mut self, keyword: &str, label: Option<&str>) {
-        self.write_indent();
-        self.output.push_str(keyword);
-        if let Some(label) = label {
-            self.output.push(' ');
-            self.output.push_str(label);
-        }
-        self.output.push_str(";\n");
-    }
-
     fn write_javascript_variable(&mut self, declaration: &VariableDeclaration, top_level: bool) {
         self.write_indent();
         if top_level && declaration.exported && self.module_format == ModuleFormat::EsModule {
@@ -346,11 +229,11 @@ impl<'a> Printer<'a> {
 
     fn write_javascript_function(
         &mut self,
-        statement: &Statement,
+        _statement: &Statement,
         declaration: &FunctionDeclaration,
         top_level: bool,
     ) {
-        if declaration.declared || !self.function_has_body(statement) {
+        if declaration.declared || !declaration.has_body {
             return;
         }
         self.write_indent();
@@ -364,7 +247,7 @@ impl<'a> Printer<'a> {
         self.output.push_str(&declaration.name);
         self.write_runtime_parameters(&declaration.parameters);
         self.output.push(' ');
-        self.write_braced_statements(&declaration.body);
+        self.write_braced_statements(declaration.body_span, &declaration.body);
         self.output.push('\n');
 
         if top_level && declaration.exported && self.module_format == ModuleFormat::CommonJs {
@@ -587,99 +470,6 @@ impl<'a> Printer<'a> {
         self.output.push_str(";\n");
     }
 
-    fn write_javascript_class(&mut self, declaration: &ClassDeclaration, top_level: bool) {
-        if declaration.declared {
-            return;
-        }
-        self.write_indent();
-        if top_level && declaration.exported && self.module_format == ModuleFormat::EsModule {
-            self.output.push_str("export ");
-            if declaration.default_export {
-                self.output.push_str("default ");
-            }
-        }
-        self.output.push_str("class ");
-        self.output.push_str(&declaration.name);
-        if let Some(base) = &declaration.extends {
-            self.output.push_str(" extends ");
-            self.write_heritage_type(base);
-        }
-        self.output.push_str(" {\n");
-        self.indent += 1;
-        for member in &declaration.members {
-            if member.modifiers.declared
-                || member.modifiers.abstract_member
-                || matches!(
-                    &member.kind,
-                    ClassMemberKind::Constructor {
-                        has_body: false,
-                        ..
-                    } | ClassMemberKind::Method {
-                        has_body: false,
-                        ..
-                    }
-                )
-            {
-                continue;
-            }
-            if self.preserve_class_fields
-                && let ClassMemberKind::Constructor { parameters, .. } = &member.kind
-            {
-                self.write_parameter_property_fields(parameters);
-            }
-            self.write_indent();
-            if member.modifiers.static_member {
-                self.output.push_str("static ");
-            }
-            match &member.kind {
-                ClassMemberKind::Constructor {
-                    parameters, body, ..
-                } => {
-                    self.output.push_str("constructor");
-                    self.write_runtime_parameters(parameters);
-                    self.output.push(' ');
-                    self.write_constructor_body(body, parameters, declaration.extends.is_some());
-                    self.output.push('\n');
-                }
-                ClassMemberKind::Property { initializer, .. } => {
-                    self.write_property_name(&member.name, member.name_span);
-                    if let Some(initializer) = initializer {
-                        self.output.push_str(" = ");
-                        self.write_expression(initializer, PREC_ASSIGNMENT);
-                    }
-                    self.output.push_str(";\n");
-                }
-                ClassMemberKind::Method {
-                    parameters,
-                    body,
-                    accessor,
-                    ..
-                } => {
-                    if member.modifiers.async_member {
-                        self.output.push_str("async ");
-                    }
-                    if let Some(accessor) = accessor {
-                        self.output.push_str(match accessor {
-                            AccessorKind::Get => "get ",
-                            AccessorKind::Set => "set ",
-                        });
-                    }
-                    self.write_property_name(&member.name, member.name_span);
-                    self.write_runtime_parameters(parameters);
-                    self.output.push(' ');
-                    self.write_braced_statements(body);
-                    self.output.push('\n');
-                }
-            }
-        }
-        self.indent = self.indent.saturating_sub(1);
-        self.write_indent();
-        self.output.push_str("}\n");
-        if top_level && declaration.exported && self.module_format == ModuleFormat::CommonJs {
-            self.write_commonjs_export(&declaration.name);
-        }
-    }
-
     fn write_raw_statement(&mut self, statement: &Statement) {
         self.write_indent();
         self.output
@@ -708,34 +498,15 @@ impl<'a> Printer<'a> {
         }
     }
 
-    fn write_braced_statements(&mut self, statements: &[Statement]) {
-        if statements.is_empty() {
-            self.output.push_str("{ }");
-            return;
-        }
-        self.output.push_str("{\n");
-        self.indent += 1;
-        for statement in statements {
-            self.write_javascript_statement(statement, false);
-        }
-        self.indent = self.indent.saturating_sub(1);
-        self.write_indent();
-        self.output.push('}');
-    }
-
     fn write_runtime_parameters(&mut self, parameters: &[Parameter]) {
         self.output.push('(');
-        if !parameters.is_empty()
-            && parameters
-                .iter()
-                .all(|parameter| parameter.name_kind == ParameterNameKind::This)
-        {
+        if parameters.is_empty() {
             self.write_comments_after_parameter_open();
         }
         let mut wrote_parameter = false;
         for parameter in parameters {
             if parameter.name_kind == ParameterNameKind::This {
-                self.discard_comments_through_token(parameter.span.end);
+                self.consume_comments_through_token(parameter.span.end);
                 continue;
             }
             self.output
@@ -743,19 +514,27 @@ impl<'a> Printer<'a> {
             self.write_comments_before_parameter(parameter.span.start);
             if parameter.rest {
                 self.output.push_str("...");
-                if let Some(rest_span) = parameter.rest_span {
-                    self.write_comments_through_token(rest_span.end);
+                if let Some(rest_span) = parameter.rest_span
+                    && self.write_comments_through_token(rest_span.end)
+                {
+                    self.write_indent();
                 }
             }
             self.output.push_str(&parameter.name);
-            self.write_comments_through_token(parameter.name_span.end);
+            if self.write_comments_through_token(parameter.name_span.end) {
+                self.write_indent();
+            }
             if let Some(initializer) = &parameter.initializer {
+                self.consume_comments_before(initializer.span.start);
                 self.output.push_str(" = ");
                 self.write_expression(initializer, PREC_LOWEST);
             }
-            self.write_comments_through_token(parameter.span.end);
+            if self.write_comments_through_token(parameter.span.end) {
+                self.write_indent();
+            }
             wrote_parameter = true;
         }
+        self.consume_parameter_close_comments();
         self.output.push(')');
     }
 
@@ -769,7 +548,9 @@ impl<'a> Printer<'a> {
     }
 
     fn write_expression(&mut self, expression: &Expression, parent_precedence: u8) {
-        self.write_comments_before(expression.span.start);
+        if self.write_comments_before(expression.span.start) {
+            self.write_indent();
+        }
         // Parentheses used only to contain a TypeScript assertion disappear
         // with the assertion. The recursive call restores any grouping that
         // the underlying JavaScript expression still requires.
@@ -792,7 +573,9 @@ impl<'a> Printer<'a> {
                 self.output.push_str(&text);
             }
             ExpressionKind::RegularExpression(literal) => self.write_regular_expression(literal),
-            ExpressionKind::Object(properties) => self.write_object_literal(properties),
+            ExpressionKind::Object(properties) => {
+                self.write_object_literal(expression.span, properties);
+            }
             ExpressionKind::Array(elements) => {
                 self.output.push('[');
                 for (index, element) in elements.iter().enumerate() {
@@ -800,6 +583,9 @@ impl<'a> Printer<'a> {
                         self.output.push_str(", ");
                     }
                     self.write_expression(element, PREC_LOWEST);
+                }
+                if self.write_comments_before_close(expression.span.end) {
+                    self.write_indent();
                 }
                 self.output.push(']');
             }
@@ -813,6 +599,9 @@ impl<'a> Printer<'a> {
                         self.output.push_str(", ");
                     }
                     self.write_expression(argument, PREC_LOWEST);
+                }
+                if self.write_comments_before_close(expression.span.end) {
+                    self.write_indent();
                 }
                 self.output.push(')');
             }
@@ -831,13 +620,12 @@ impl<'a> Printer<'a> {
                     }
                     self.write_expression(argument, PREC_LOWEST);
                 }
+                if self.write_comments_before_close(expression.span.end) {
+                    self.write_indent();
+                }
                 self.output.push(')');
             }
-            ExpressionKind::Member { object, name, .. } => {
-                self.write_member_object(object);
-                self.output.push('.');
-                self.output.push_str(name);
-            }
+            ExpressionKind::Member { object, name, .. } => self.write_member_access(object, name),
             ExpressionKind::ElementAccess { object, index } => {
                 self.write_element_access(object, index);
             }
@@ -863,15 +651,18 @@ impl<'a> Printer<'a> {
                 }
                 self.write_expression(operand, PREC_UNARY);
             }
-            ExpressionKind::Assignment { left, right } => {
+            ExpressionKind::Assignment { left, right, .. } => {
                 self.write_expression(left, PREC_ASSIGNMENT.saturating_add(1));
                 self.output.push_str(" = ");
                 self.write_expression(right, PREC_ASSIGNMENT);
             }
             ExpressionKind::As { .. } => unreachable!("assertions are erased before printing"),
-            ExpressionKind::Parenthesized(expression) => {
+            ExpressionKind::Parenthesized(inner) => {
                 self.output.push('(');
-                self.write_expression(expression, PREC_LOWEST);
+                self.write_expression(inner, PREC_LOWEST);
+                if self.write_comments_before_close(expression.span.end) {
+                    self.write_indent();
+                }
                 self.output.push(')');
             }
             ExpressionKind::Missing => self.output.push_str("void 0"),
@@ -882,14 +673,46 @@ impl<'a> Printer<'a> {
         }
     }
 
-    fn write_object_literal(&mut self, properties: &[ObjectProperty]) {
+    fn write_object_literal(&mut self, span: Span, properties: &[ObjectProperty]) {
+        let multiline = properties
+            .iter()
+            .any(|property| property.starts_on_new_line)
+            || properties
+                .last()
+                .is_some_and(|property| property.closing_brace_on_new_line);
+        let trailing_comma = properties
+            .last()
+            .is_some_and(|property| property.trailing_comma);
         self.output.push('{');
-        if !properties.is_empty() {
+        if properties.is_empty() {
+            self.indent += 1;
+            let ended_on_line = self.write_comments_before_close(span.end);
+            self.indent = self.indent.saturating_sub(1);
+            if ended_on_line {
+                self.write_indent();
+            } else if !self.output.ends_with('{')
+                && !self.output.chars().last().is_some_and(char::is_whitespace)
+            {
+                self.output.push(' ');
+            }
+            self.output.push('}');
+            return;
+        }
+        if multiline && !properties.is_empty() {
+            self.output.push('\n');
+            self.indent += 1;
+        } else if !properties.is_empty() {
             self.output.push(' ');
         }
         for (index, property) in properties.iter().enumerate() {
-            if index != 0 {
+            if multiline {
+                self.write_comments_before(property.span.start);
+                self.write_indent();
+            } else if index != 0 {
                 self.output.push_str(", ");
+            }
+            if !multiline && self.write_comments_before(property.span.start) {
+                self.write_indent();
             }
             self.write_property_name(&property.name, property.name_span);
             if property.shorthand {
@@ -903,8 +726,28 @@ impl<'a> Printer<'a> {
                 self.output.push_str(": ");
                 self.write_expression(&property.value, PREC_LOWEST);
             }
+            let comment_ended_line = self.write_comments_through_token(property.span.end);
+            if multiline {
+                if index + 1 < properties.len() || trailing_comma {
+                    self.output.push(',');
+                }
+                if !comment_ended_line {
+                    self.output.push('\n');
+                }
+            } else if index + 1 == properties.len() && trailing_comma {
+                self.output.push(',');
+            }
         }
-        if !properties.is_empty() {
+        let ended_on_line = self.write_comments_before_close(span.end);
+        if multiline {
+            self.indent = self.indent.saturating_sub(1);
+            if !self.output.ends_with('\n') {
+                self.output.push('\n');
+            }
+            self.write_indent();
+        } else if ended_on_line {
+            self.write_indent();
+        } else if !self.output.chars().last().is_some_and(char::is_whitespace) {
             self.output.push(' ');
         }
         self.output.push('}');
@@ -1458,9 +1301,9 @@ impl<'a> Printer<'a> {
                             .any(|specifier| !specifier.type_only))
             }
             StatementKind::Class(declaration) => declaration.exported && !declaration.declared,
-            StatementKind::Variable(declaration) => declaration.exported,
+            StatementKind::Variable(declaration) => declaration.exported && !declaration.declared,
             StatementKind::Function(declaration) => {
-                declaration.exported && !declaration.declared && self.function_has_body(statement)
+                declaration.exported && !declaration.declared && declaration.has_body
             }
             StatementKind::Import(_)
             | StatementKind::TypeAlias(_)
@@ -1477,11 +1320,10 @@ impl<'a> Printer<'a> {
         }
     }
 
-    fn function_has_body(&self, statement: &Statement) -> bool {
-        self.source.slice(statement.span).trim_end().ends_with('}')
-    }
-
     fn write_indent(&mut self) {
+        if !self.output.is_empty() && !self.output.ends_with('\n') {
+            return;
+        }
         for _ in 0..self.indent {
             self.output.push_str("    ");
         }

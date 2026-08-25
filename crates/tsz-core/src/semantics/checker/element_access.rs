@@ -1,8 +1,9 @@
 use crate::bind::{Meaning, ScopeId};
+use crate::program::{JavaScriptAssignmentDisposition, SemanticCompletion};
 use crate::semantics::relation::RelationMode;
 use crate::semantics::types::{
-    Completion, DeferredType, ElementAccessMode, IndexKeyKind, ObjectShape, Property, Signature,
-    TypeId, TypeKind, UnionPolicy,
+    Completion, DeferredType, ElementAccessMode, IndexKeyKind, ObjectShape, Property, TypeId,
+    TypeKind, UnionPolicy,
 };
 use crate::source::FileId;
 use crate::standard_library::{StandardLibraryMemberKind, StandardLibraryValueMemberLookup};
@@ -12,6 +13,51 @@ use super::relation_diagnostic::RelationDiagnosticStyle;
 use super::{Checker, DeclarationModel};
 
 impl Checker<'_> {
+    pub(super) fn infer_assignment(
+        &mut self,
+        file: FileId,
+        scope: ScopeId,
+        left: &Expression,
+        right: &Expression,
+    ) -> TypeId {
+        match self
+            .program
+            .javascript_assignments
+            .assignment(file, left.id)
+        {
+            None => self.infer_assignment_expression(file, scope, left, right),
+            Some(JavaScriptAssignmentDisposition::Complete(_)) => {
+                self.infer_expression(file, scope, right, None)
+            }
+            Some(JavaScriptAssignmentDisposition::Incomplete) => {
+                self.observe_incomplete_javascript_assignment_target(file, scope, left);
+                let source = self.infer_expression(file, scope, right, None);
+                self.observe_file_completion(file, SemanticCompletion::Deferred);
+                source
+            }
+        }
+    }
+
+    fn observe_incomplete_javascript_assignment_target(
+        &mut self,
+        file: FileId,
+        scope: ScopeId,
+        expression: &Expression,
+    ) {
+        match &expression.kind {
+            ExpressionKind::Parenthesized(object) | ExpressionKind::Member { object, .. } => {
+                self.observe_incomplete_javascript_assignment_target(file, scope, object);
+            }
+            ExpressionKind::ElementAccess { object, index } => {
+                self.observe_incomplete_javascript_assignment_target(file, scope, object);
+                self.infer_expression(file, scope, index, None);
+            }
+            _ => {
+                self.infer_expression(file, scope, expression, None);
+            }
+        }
+    }
+
     pub(super) fn infer_expression_statement(
         &mut self,
         file: FileId,
@@ -122,7 +168,7 @@ impl Checker<'_> {
         scope: ScopeId,
         expression: &Expression,
     ) -> Option<TypeId> {
-        let ExpressionKind::Assignment { left, right } = &expression.kind else {
+        let ExpressionKind::Assignment { left, right, .. } = &expression.kind else {
             if let ExpressionKind::Parenthesized(inner) = &expression.kind {
                 return self.infer_destructuring_target(file, scope, inner);
             }
@@ -167,7 +213,7 @@ impl Checker<'_> {
         scope: ScopeId,
         expression: &Expression,
     ) -> bool {
-        let expression = unwrap_parentheses(expression);
+        let expression = expression.peel_parentheses();
         let ExpressionKind::Identifier {
             name,
             entity_name: true,
@@ -225,7 +271,7 @@ impl Checker<'_> {
     ) -> Option<TypeId> {
         let mut pairs = Vec::new();
         if !matches!(
-            &unwrap_parentheses(left).kind,
+            &left.peel_parentheses().kind,
             ExpressionKind::Array(_) | ExpressionKind::Object(_)
         ) || !collect_paired_assignment_leaves(left, right, &mut pairs)
         {
@@ -252,7 +298,7 @@ impl Checker<'_> {
                 }
             }
             let diagnostic_target = match &target_expression.kind {
-                ExpressionKind::Assignment { left, .. } => unwrap_parentheses(left),
+                ExpressionKind::Assignment { left, .. } => left.peel_parentheses(),
                 _ => target_expression,
             };
             self.report_relation(
@@ -434,11 +480,12 @@ impl Checker<'_> {
             StandardLibraryValueMemberLookup::Found {
                 kind: StandardLibraryMemberKind::ZeroArgumentStringMethod,
                 ..
-            } => Completion::Complete(self.store.intern(TypeKind::Function(Signature {
-                generic_declaration: None,
-                parameters: Vec::new(),
-                return_type: self.store.builtins.string,
-            }))),
+            } => Completion::Complete(self.store.function(
+                None,
+                false,
+                Vec::new(),
+                self.store.builtins.string,
+            )),
             StandardLibraryValueMemberLookup::Missing
                 if self.program.standard_library.is_array_value(declaration)
                     && !self.options.effective_no_implicit_any()
@@ -523,20 +570,13 @@ fn exact_tuple_index(index: Option<usize>, elements: &[TypeId]) -> Completion<Ty
         .map_or(Completion::Deferred, Completion::Complete)
 }
 
-fn unwrap_parentheses(mut expression: &Expression) -> &Expression {
-    while let ExpressionKind::Parenthesized(inner) = &expression.kind {
-        expression = inner;
-    }
-    expression
-}
-
 fn collect_paired_assignment_leaves<'a>(
     target: &'a Expression,
     source: &'a Expression,
     leaves: &mut Vec<(&'a Expression, &'a Expression)>,
 ) -> bool {
-    let target = unwrap_parentheses(target);
-    let source = unwrap_parentheses(source);
+    let target = target.peel_parentheses();
+    let source = source.peel_parentheses();
     match (&target.kind, &source.kind) {
         (ExpressionKind::Array(targets), ExpressionKind::Array(sources)) => {
             targets.len() == sources.len()
@@ -569,7 +609,7 @@ fn collect_paired_assignment_leaves<'a>(
 
 fn is_plain_assignment_target(expression: &Expression) -> bool {
     matches!(
-        &unwrap_parentheses(expression).kind,
+        &expression.peel_parentheses().kind,
         ExpressionKind::Identifier { .. }
             | ExpressionKind::Member { .. }
             | ExpressionKind::ElementAccess { .. }

@@ -8,20 +8,31 @@ pub(super) enum ParenthesizedArrowToken {
 }
 
 impl Parser<'_> {
-    pub(super) fn parse_arrow_body(&mut self) -> ArrowBody {
+    pub(super) fn parse_arrow_body(&mut self) -> (ArrowBody, Option<crate::source::Span>) {
         if self.at(TokenKind::LeftBrace) {
-            ArrowBody::Block(self.parse_block())
+            let (statements, span) = self.parse_block();
+            (ArrowBody::Block(statements), span)
         } else {
-            ArrowBody::Expression(Box::new(self.parse_expression()))
+            (
+                ArrowBody::Expression(Box::new(self.parse_expression())),
+                None,
+            )
         }
     }
 
-    pub(super) fn parse_recovered_arrow_body(&mut self, has_arrow: bool) -> ArrowBody {
+    pub(super) fn parse_recovered_arrow_body(
+        &mut self,
+        has_arrow: bool,
+    ) -> (ArrowBody, Option<crate::source::Span>) {
         if self.at(TokenKind::LeftBrace) {
-            return ArrowBody::Block(self.parse_block());
+            let (statements, span) = self.parse_block();
+            return (ArrowBody::Block(statements), span);
         }
         if has_arrow {
-            return ArrowBody::Expression(Box::new(self.parse_expression()));
+            return (
+                ArrowBody::Expression(Box::new(self.parse_expression())),
+                None,
+            );
         }
         let token = *self.current();
         let expression = if token.kind.is_identifier() {
@@ -33,7 +44,7 @@ impl Parser<'_> {
                 kind: ExpressionKind::Missing,
             }
         };
-        ArrowBody::Expression(Box::new(expression))
+        (ArrowBody::Expression(Box::new(expression)), None)
     }
 
     pub(super) fn paren_expression_arrow_token(

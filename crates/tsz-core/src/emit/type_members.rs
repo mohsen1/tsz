@@ -119,12 +119,13 @@ impl Printer<'_> {
 
     pub(super) fn write_constructor_body(
         &mut self,
+        body_span: Option<crate::source::Span>,
         statements: &[Statement],
         parameters: &[Parameter],
         derived: bool,
     ) {
         if statements.is_empty() && !parameters.iter().any(is_parameter_property) {
-            self.output.push_str("{ }");
+            self.write_braced_statements(body_span, statements);
             return;
         }
         self.output.push_str("{\n");
@@ -150,6 +151,12 @@ impl Printer<'_> {
         }
         if !wrote_assignments {
             self.write_parameter_property_assignments(parameters);
+        }
+        if let Some(body_span) = body_span {
+            let ended_on_line = self.write_comments_before_close(body_span.end);
+            if !ended_on_line && !self.output.ends_with('\n') {
+                self.output.push('\n');
+            }
         }
         self.indent = self.indent.saturating_sub(1);
         self.write_indent();

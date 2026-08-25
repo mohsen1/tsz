@@ -157,5 +157,13 @@ path = "rewrite-tests/flow_reference.rs"
 name = "rewrite_file_nocheck_pragma"
 path = "rewrite-tests/file_nocheck_pragma.rs"
 
+[[test]]
+name = "rewrite_javascript_assignment_declarations"
+path = "rewrite-tests/javascript_assignment_declarations.rs"
+
+[[test]]
+name = "rewrite_emit_comments"
+path = "rewrite-tests/emit_comments.rs"
+
 [lints]
 workspace = true

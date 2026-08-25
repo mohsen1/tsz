@@ -55,8 +55,7 @@ impl Parser<'_> {
     }
 
     pub(super) fn finish_numeric_separator_source(&mut self) {
-        let has_authored = !self.numeric_separator_spans.is_empty();
-        if has_authored
+        if !self.numeric_separator_spans.is_empty()
             && (self.has_unmodeled_numeric_separator
                 || !self.diagnostics.is_empty()
                 || !self.comments.is_empty()
@@ -104,8 +103,7 @@ impl Parser<'_> {
     }
 
     pub(super) fn finish_numeric_recovery_source(&mut self, statements: &[Statement]) {
-        let has_authored = !self.numeric_literals.is_empty();
-        if !has_authored {
+        if self.numeric_literals.is_empty() {
             return;
         }
         let owned = match self.numeric_literals.as_slice() {

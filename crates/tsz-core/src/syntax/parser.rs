@@ -139,13 +139,16 @@ impl<'a> Parser<'a> {
                 kind,
             };
         }
+        let has_leading_jsdoc = self.current_has_leading_jsdoc();
         let modifiers = self.parse_modifiers(start);
         self.observe_statement_modifiers(modifiers);
         let kind = match self.kind() {
             TokenKind::Let | TokenKind::Const | TokenKind::Var => {
-                StatementKind::Variable(self.parse_variable(modifiers.exported))
+                StatementKind::Variable(self.parse_variable(modifiers, has_leading_jsdoc))
             }
-            TokenKind::Function => StatementKind::Function(self.parse_function(modifiers)),
+            TokenKind::Function => {
+                StatementKind::Function(self.parse_function(modifiers, has_leading_jsdoc))
+            }
             TokenKind::Class => {
                 let declaration = self.parse_class(modifiers);
                 self.observe_class_template_semantics(&declaration);
@@ -185,7 +188,7 @@ impl<'a> Parser<'a> {
                 self.eat(TokenKind::Semicolon);
                 StatementKind::Return(expression)
             }
-            TokenKind::LeftBrace => StatementKind::Block(self.parse_block()),
+            TokenKind::LeftBrace => StatementKind::Block(self.parse_block().0),
             TokenKind::Semicolon => {
                 self.bump();
                 StatementKind::Empty
@@ -445,10 +448,11 @@ impl<'a> Parser<'a> {
                 }
             }
         }
-        let authored_body_extent = self
-            .at(TokenKind::LeftBrace)
+        let has_opening_brace = self.at(TokenKind::LeftBrace);
+        let authored_body_extent = has_opening_brace
             .then(|| self.balanced_recovery_brace_extent(self.index))
             .flatten();
+        let opening_brace = self.current().span;
         self.expect(TokenKind::LeftBrace, "'{' expected.", 1005);
         let mut members = Vec::new();
         while !self.at_any(&[TokenKind::RightBrace, TokenKind::EndOfFile]) {
@@ -463,6 +467,8 @@ impl<'a> Parser<'a> {
                 self.bump();
             }
         }
+        let has_closing_brace = self.at(TokenKind::RightBrace);
+        let closing_brace = self.current().span;
         self.expect(TokenKind::RightBrace, "'}' expected.", 1005);
         if let Some(extent) = authored_body_extent
             && self.previous().span.end < extent.end
@@ -477,6 +483,8 @@ impl<'a> Parser<'a> {
             extends,
             implements,
             members,
+            body_span: (has_opening_brace && has_closing_brace)
+                .then(|| opening_brace.merge(closing_brace)),
             exported: modifiers.exported,
             default_export: modifiers.default_export,
             declared: modifiers.declared,
@@ -509,11 +517,11 @@ impl<'a> Parser<'a> {
             let name_span = self.bump().span;
             let parameters = self.parse_parameters();
             let has_body = self.at(TokenKind::LeftBrace);
-            let body = if has_body {
+            let (body, body_span) = if has_body {
                 self.parse_block()
             } else {
                 self.eat(TokenKind::Semicolon);
-                Vec::new()
+                (Vec::new(), None)
             };
             return Some(ClassMember {
                 id: self.alloc_node(),
@@ -530,6 +538,7 @@ impl<'a> Parser<'a> {
                     parameters,
                     body,
                     has_body,
+                    body_span,
                 },
             });
         }
@@ -560,11 +569,11 @@ impl<'a> Parser<'a> {
             if let (Some(generator), Some(extent)) = (generator_span, generator_body_extent) {
                 self.retain_parser_recovery(generator_recovery, generator, extent);
             }
-            let body = if has_body {
+            let (body, body_span) = if has_body {
                 self.parse_block()
             } else {
                 self.eat(TokenKind::Semicolon);
-                Vec::new()
+                (Vec::new(), None)
             };
             let member = ClassMember {
                 id: self.alloc_node(),
@@ -590,6 +599,7 @@ impl<'a> Parser<'a> {
                     return_type,
                     body,
                     has_body,
+                    body_span,
                     accessor,
                 },
             };
@@ -682,20 +692,6 @@ impl<'a> Parser<'a> {
             members,
             exported,
         }
-    }
-
-    fn parse_block(&mut self) -> Vec<Statement> {
-        self.expect(TokenKind::LeftBrace, "'{' expected.", 1005);
-        let mut statements = Vec::new();
-        while !self.at_any(&[TokenKind::RightBrace, TokenKind::EndOfFile]) {
-            let before = self.index;
-            statements.push(self.parse_statement());
-            if before == self.index {
-                self.bump();
-            }
-        }
-        self.expect(TokenKind::RightBrace, "'}' expected.", 1005);
-        statements
     }
 
     fn parse_type(&mut self) -> TypeNode {
@@ -1043,6 +1039,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_assignment_expression(&mut self) -> Expression {
+        let has_leading_jsdoc = self.current_has_leading_jsdoc();
         let left = self.parse_binary_expression(0);
         if self.eat(TokenKind::Equals) {
             self.observe_template_expression_semantics(&left);
@@ -1054,6 +1051,7 @@ impl<'a> Parser<'a> {
                 kind: ExpressionKind::Assignment {
                     left: Box::new(left),
                     right: Box::new(right),
+                    has_leading_jsdoc,
                 },
             }
         } else {

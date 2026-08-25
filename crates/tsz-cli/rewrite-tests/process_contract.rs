@@ -98,6 +98,124 @@ fn tsserver_uses_content_length_and_reports_unsupported_commands_honestly() {
 }
 
 #[test]
+fn tsserver_diagnostics_select_the_exact_session_client_wire_shape() {
+    let diagnostic_path = "renamed/nested/wire-contract.ts";
+    let clean_path = "renamed/nested/empty-control.ts";
+    let requests = [
+        json!({
+            "seq": 1,
+            "type": "request",
+            "command": "open",
+            "arguments": {
+                "file": diagnostic_path,
+                "fileContent": "const icon = \"😀\";\nconst count: number = \"wrong\";"
+            }
+        }),
+        json!({
+            "seq": 2,
+            "type": "request",
+            "command": "semanticDiagnosticsSync",
+            "arguments": {"file": diagnostic_path, "includeLinePosition": true}
+        }),
+        json!({
+            "seq": 3,
+            "type": "request",
+            "command": "semanticDiagnosticsSync",
+            "arguments": {"file": diagnostic_path, "includeLinePosition": false}
+        }),
+        json!({
+            "seq": 4,
+            "type": "request",
+            "command": "semanticDiagnosticsSync",
+            "arguments": {"file": diagnostic_path}
+        }),
+        json!({
+            "seq": 5,
+            "type": "request",
+            "command": "semanticDiagnosticsSync",
+            "arguments": {"file": diagnostic_path, "includeLinePosition": null}
+        }),
+        json!({
+            "seq": 6,
+            "type": "request",
+            "command": "semanticDiagnosticsSync",
+            "arguments": {"file": diagnostic_path, "includeLinePosition": 0}
+        }),
+        json!({
+            "seq": 7,
+            "type": "request",
+            "command": "semanticDiagnosticsSync",
+            "arguments": {"file": diagnostic_path, "includeLinePosition": ""}
+        }),
+        json!({
+            "seq": 8,
+            "type": "request",
+            "command": "semanticDiagnosticsSync",
+            "arguments": {"file": diagnostic_path, "includeLinePosition": "malformed"}
+        }),
+        json!({
+            "seq": 9,
+            "type": "request",
+            "command": "open",
+            "arguments": {
+                "file": clean_path,
+                "fileContent": "const café: number = 1;"
+            }
+        }),
+        json!({
+            "seq": 10,
+            "type": "request",
+            "command": "semanticDiagnosticsSync",
+            "arguments": {"file": clean_path, "includeLinePosition": true}
+        }),
+        json!({
+            "seq": 11,
+            "type": "request",
+            "command": "syntacticDiagnosticsSync",
+            "arguments": {"file": clean_path, "includeLinePosition": false}
+        }),
+    ];
+    let mut input = Vec::new();
+    for request in requests {
+        let body = serde_json::to_vec(&request).unwrap();
+        input.extend_from_slice(format!("Content-Length: {}\r\n\r\n", body.len()).as_bytes());
+        input.extend_from_slice(&body);
+    }
+
+    let mut output = Vec::new();
+    tsz_cli::tsserver::run_tsserver(Cursor::new(input), &mut output).unwrap();
+    let responses = decode_messages(&output);
+    assert_eq!(responses.len(), 11);
+
+    let with_line_position = json!([{
+        "message": "Type 'string' is not assignable to type 'number'.",
+        "start": 25,
+        "length": 5,
+        "startLocation": {"line": 2, "offset": 7},
+        "endLocation": {"line": 2, "offset": 12},
+        "category": "error",
+        "code": 2322,
+    }]);
+    let event_form = json!([{
+        "start": {"line": 2, "offset": 7},
+        "end": {"line": 2, "offset": 12},
+        "text": "Type 'string' is not assignable to type 'number'.",
+        "category": "error",
+        "code": 2322,
+    }]);
+
+    assert_eq!(responses[1]["body"], with_line_position);
+    assert_eq!(responses[2]["body"], event_form);
+    assert_eq!(responses[3]["body"], event_form);
+    assert_eq!(responses[4]["body"], event_form);
+    assert_eq!(responses[5]["body"], event_form);
+    assert_eq!(responses[6]["body"], event_form);
+    assert_eq!(responses[7]["body"], with_line_position);
+    assert_eq!(responses[9]["body"], json!([]));
+    assert_eq!(responses[10]["body"], json!([]));
+}
+
+#[test]
 fn tsserver_semantic_diagnostics_fail_without_fabricating_a_diagnostic_body() {
     let source = "const text:string=''; const textSize:number=text.length; \
                   const values:number[]=[]; const count:number=values.length;";

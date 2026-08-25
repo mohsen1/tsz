@@ -6,6 +6,15 @@ use super::{
     source_uses_supported_line_breaks, statement_starts_at_supported_column,
 };
 
+macro_rules! string_field_accessors {
+    ($($field:ident),+ $(,)?) => {$(
+        #[must_use]
+        pub fn $field(&self) -> &str {
+            &self.$field
+        }
+    )+};
+}
+
 /// Syntax-owned spelling for an ordinary or scanner-recovered number token.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NumberLiteral {
@@ -101,15 +110,7 @@ impl SeparatedNumberLiteral {
         })
     }
 
-    #[must_use]
-    pub fn raw(&self) -> &str {
-        &self.raw
-    }
-
-    #[must_use]
-    pub fn canonical(&self) -> &str {
-        &self.canonical
-    }
+    string_field_accessors!(raw, canonical);
 }
 
 /// Canonical JavaScript Number value produced from source spelling. Scanner
@@ -123,21 +124,8 @@ pub(crate) struct ParsedNumberLiteral {
 
 pub(crate) fn parse_number_literal(source: &str) -> Option<ParsedNumberLiteral> {
     let compact = source.replace('_', "");
-    let value = if let Some(digits) = compact
-        .strip_prefix("0x")
-        .or_else(|| compact.strip_prefix("0X"))
-    {
-        parse_power_of_two_integer(digits, 4)?
-    } else if let Some(digits) = compact
-        .strip_prefix("0b")
-        .or_else(|| compact.strip_prefix("0B"))
-    {
-        parse_power_of_two_integer(digits, 1)?
-    } else if let Some(digits) = compact
-        .strip_prefix("0o")
-        .or_else(|| compact.strip_prefix("0O"))
-    {
-        parse_power_of_two_integer(digits, 3)?
+    let value = if let Some((digits, radix)) = prefixed_numeric(&compact) {
+        parse_power_of_two_integer(digits, radix.ilog2() as usize)?
     } else if compact.len() > 1
         && compact.starts_with('0')
         && compact.bytes().all(|byte| matches!(byte, b'0'..=b'7'))
@@ -192,20 +180,7 @@ pub struct NumericRecoveryLiteral {
 }
 
 impl NumericRecoveryLiteral {
-    #[must_use]
-    pub fn raw(&self) -> &str {
-        &self.raw
-    }
-
-    #[must_use]
-    pub fn semantic_text(&self) -> &str {
-        &self.semantic_text
-    }
-
-    #[must_use]
-    pub fn emit_text(&self) -> &str {
-        &self.emit_text
-    }
+    string_field_accessors!(raw, semantic_text, emit_text);
 
     #[must_use]
     pub const fn validation_supported(&self) -> bool {
@@ -223,15 +198,10 @@ pub(crate) enum NumericRecoveryKind {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct NumericDiagnosticEvent {
-    diagnostic: Diagnostic,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct ScannedNumericLiteral {
     pub span: Span,
     literal: NumericRecoveryLiteral,
-    diagnostic_events: Vec<NumericDiagnosticEvent>,
+    diagnostic_events: Vec<Diagnostic>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -269,16 +239,9 @@ impl ScannedNumericLiteral {
         diagnostics: &[Diagnostic],
         parser_diagnostics: &[Diagnostic],
     ) -> bool {
-        diagnostics.len() == self.diagnostic_events.len() + parser_diagnostics.len()
-            && diagnostics
-                .iter()
-                .zip(
-                    self.diagnostic_events
-                        .iter()
-                        .map(|event| &event.diagnostic)
-                        .chain(parser_diagnostics),
-                )
-                .all(|(actual, expected)| actual == expected)
+        diagnostics
+            .strip_prefix(self.diagnostic_events.as_slice())
+            .is_some_and(|remaining| remaining == parser_diagnostics)
     }
 }
 
@@ -314,21 +277,9 @@ pub(super) fn scan_numeric_literal(
             fraction_run.invalid_separator,
             fraction_run.saw_separator,
         )
-    } else if bytes.get(offset..offset + 2) == Some(b"0x")
-        || bytes.get(offset..offset + 2) == Some(b"0X")
-    {
+    } else if let Some((_, radix)) = prefixed_numeric(&source.text[offset..]) {
         offset += 2;
-        scan_prefixed_numeric(source, start, offset, 16)
-    } else if bytes.get(offset..offset + 2) == Some(b"0b")
-        || bytes.get(offset..offset + 2) == Some(b"0B")
-    {
-        offset += 2;
-        scan_prefixed_numeric(source, start, offset, 2)
-    } else if bytes.get(offset..offset + 2) == Some(b"0o")
-        || bytes.get(offset..offset + 2) == Some(b"0O")
-    {
-        offset += 2;
-        scan_prefixed_numeric(source, start, offset, 8)
+        scan_prefixed_numeric(source, start, offset, radix)
     } else {
         let leading_zero = bytes.get(start) == Some(&b'0');
         let mut invalid_separator = false;
@@ -368,19 +319,19 @@ pub(super) fn scan_numeric_literal(
                 diagnostic.length = diagnostic.length.saturating_add(1);
             }
             let canonical_text = canonical_bounded_integer(integer, 8);
-            return recovered_numeric_token(
+            let recovered_text = canonical_text
+                .clone()
+                .unwrap_or_else(|| integer.to_string());
+            return recovered_numeric_token_with_kind(
                 source,
                 start,
                 integer_end,
-                canonical_text
-                    .clone()
-                    .unwrap_or_else(|| integer.to_string()),
-                canonical_text
-                    .clone()
-                    .unwrap_or_else(|| integer.to_string()),
+                recovered_text.clone(),
+                recovered_text,
                 NumericRecoveryKind::LegacyOctal,
                 canonical_text.is_some(),
                 vec![diagnostic],
+                TokenKind::NumericLiteral,
             );
         }
 
@@ -521,29 +472,6 @@ fn finish_decimal_numeric(
     )
 }
 
-fn recovered_numeric_token(
-    source: &SourceText,
-    start: usize,
-    end: usize,
-    semantic_text: String,
-    emit_text: String,
-    kind: NumericRecoveryKind,
-    validation_supported: bool,
-    diagnostics: Vec<Diagnostic>,
-) -> ScannedNumericToken {
-    recovered_numeric_token_with_kind(
-        source,
-        start,
-        end,
-        semantic_text,
-        emit_text,
-        kind,
-        validation_supported,
-        diagnostics,
-        TokenKind::NumericLiteral,
-    )
-}
-
 #[allow(clippy::too_many_arguments)]
 fn recovered_numeric_token_with_kind(
     source: &SourceText,
@@ -562,15 +490,9 @@ fn recovered_numeric_token_with_kind(
             kind,
             NumericRecoveryKind::InvalidSeparator | NumericRecoveryKind::IncompleteRadix
         );
-    let diagnostic_events = diagnostics
-        .iter()
-        .cloned()
-        .map(|diagnostic| NumericDiagnosticEvent { diagnostic })
-        .collect();
     ScannedNumericToken {
         end,
         kind: token_kind,
-        diagnostics,
         recovery_literal: Some(ScannedNumericLiteral {
             span: Span::new(source.id, start, end),
             literal: NumericRecoveryLiteral {
@@ -580,8 +502,9 @@ fn recovered_numeric_token_with_kind(
                 kind,
                 validation_supported,
             },
-            diagnostic_events,
+            diagnostic_events: diagnostics.clone(),
         }),
+        diagnostics,
         separated_literal: None,
         has_unmodeled_separator,
     }
@@ -596,12 +519,7 @@ fn scan_prefixed_numeric(
     let bytes = source.text.as_bytes();
     let run = consume_digits(bytes, &mut offset, radix);
     if run.digit_count == 0 && !run.invalid_separator {
-        let token_kind = if bytes.get(offset) == Some(&b'n') {
-            offset += 1;
-            TokenKind::BigIntLiteral
-        } else {
-            TokenKind::NumericLiteral
-        };
+        let token_kind = consume_numeric_suffix(bytes, &mut offset);
         return recovered_numeric_token_with_kind(
             source,
             start,
@@ -615,7 +533,7 @@ fn scan_prefixed_numeric(
         );
     }
     let plain = plain_numeric_token(source, start, bytes, offset, run.saw_separator, true);
-    if run.digit_count != 0 && !run.invalid_separator {
+    if !run.invalid_separator {
         return plain;
     }
     let kind = if run.digit_count == 0 {
@@ -649,12 +567,7 @@ fn plain_numeric_token(
     saw_separator: bool,
     with_radix_specifier: bool,
 ) -> ScannedNumericToken {
-    let kind = if bytes.get(offset) == Some(&b'n') {
-        offset += 1;
-        TokenKind::BigIntLiteral
-    } else {
-        TokenKind::NumericLiteral
-    };
+    let kind = consume_numeric_suffix(bytes, &mut offset);
     let span = Span::new(source.id, start, offset);
     let separated_literal = (kind == TokenKind::NumericLiteral && saw_separator)
         .then(|| {
@@ -682,9 +595,20 @@ struct DigitRun {
     saw_separator: bool,
 }
 
-fn consume_ascii_digits(bytes: &[u8], offset: &mut usize) {
+fn consume_ascii_digits(bytes: &[u8], offset: &mut usize) -> usize {
+    let start = *offset;
     while bytes.get(*offset).is_some_and(u8::is_ascii_digit) {
         *offset += 1;
+    }
+    *offset - start
+}
+
+fn consume_numeric_suffix(bytes: &[u8], offset: &mut usize) -> TokenKind {
+    if bytes.get(*offset) == Some(&b'n') {
+        *offset += 1;
+        TokenKind::BigIntLiteral
+    } else {
+        TokenKind::NumericLiteral
     }
 }
 
@@ -701,13 +625,8 @@ fn consume_digits(bytes: &[u8], offset: &mut usize, radix: u32) -> DigitRun {
     let mut invalid_separator = false;
     while bytes.get(*offset).is_some_and(|byte| {
         *byte == b'_'
-            || match radix {
-                2 => matches!(byte, b'0' | b'1'),
-                8 => matches!(byte, b'0'..=b'7'),
-                10 => byte.is_ascii_digit(),
-                16 => byte.is_ascii_hexdigit(),
-                _ => false,
-            }
+            || matches!(radix, 2 | 8 | 10 | 16)
+                && radix_digit(*byte).is_some_and(|digit| u32::from(digit) < radix)
     }) {
         if bytes[*offset] == b'_' {
             saw_separator = true;
@@ -732,16 +651,10 @@ fn is_decimal_literal(source: &str) -> bool {
     let mut position = 0;
     let mut mantissa_digits = 0;
 
-    while bytes.get(position).is_some_and(u8::is_ascii_digit) {
-        position += 1;
-        mantissa_digits += 1;
-    }
+    mantissa_digits += consume_ascii_digits(bytes, &mut position);
     if bytes.get(position) == Some(&b'.') {
         position += 1;
-        while bytes.get(position).is_some_and(u8::is_ascii_digit) {
-            position += 1;
-            mantissa_digits += 1;
-        }
+        mantissa_digits += consume_ascii_digits(bytes, &mut position);
     }
     if mantissa_digits == 0 {
         return false;
@@ -752,9 +665,7 @@ fn is_decimal_literal(source: &str) -> bool {
             position += 1;
         }
         let exponent_start = position;
-        while bytes.get(position).is_some_and(u8::is_ascii_digit) {
-            position += 1;
-        }
+        consume_ascii_digits(bytes, &mut position);
         if position == exponent_start {
             return false;
         }
@@ -787,12 +698,10 @@ fn parse_power_of_two_integer(digits: &str, bits_per_digit: usize) -> Option<f64
 
     let first_width = (u8::BITS - first_value.leading_zeros()) as usize;
     let trailing_digits = digits.len() - first_index - 1;
-    let Some(bit_length) = trailing_digits
+    let bit_length = trailing_digits
         .checked_mul(bits_per_digit)
         .and_then(|width| width.checked_add(first_width))
-    else {
-        return Some(f64::INFINITY);
-    };
+        .unwrap_or(usize::MAX);
     if bit_length > 1024 {
         return Some(f64::INFINITY);
     }
@@ -847,6 +756,15 @@ const fn radix_digit(byte: u8) -> Option<u8> {
         b'0'..=b'9' => Some(byte - b'0'),
         b'a'..=b'f' => Some(byte - b'a' + 10),
         b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
+}
+
+fn prefixed_numeric(source: &str) -> Option<(&str, u32)> {
+    match source.as_bytes().get(..2)? {
+        [b'0', b'x' | b'X'] => Some((&source[2..], 16)),
+        [b'0', b'b' | b'B'] => Some((&source[2..], 2)),
+        [b'0', b'o' | b'O'] => Some((&source[2..], 8)),
         _ => None,
     }
 }
@@ -964,34 +882,24 @@ pub(crate) fn statements_form_numeric_recovery_safe_file(
 
 pub(crate) fn numeric_recovery_family(statements: &[Statement]) -> Option<NumericRecoveryKind> {
     match statements {
-        [
-            Statement {
+        [statement] => {
+            if let Some((number, _)) = numeric_expression_statement(statement) {
+                return number
+                    .recovery_kind()
+                    .filter(|_| number.validation_supported());
+            }
+            let StatementKind::Expression(Expression {
+                span,
                 kind:
-                    StatementKind::Expression(Expression {
-                        kind: ExpressionKind::Literal(Literal::Number(number)),
-                        ..
-                    }),
+                    ExpressionKind::Unary {
+                        operator: UnaryOperator::Minus,
+                        operand,
+                    },
                 ..
-            },
-        ] => number
-            .validation_supported()
-            .then(|| number.recovery_kind())
-            .flatten(),
-        [
-            Statement {
-                kind:
-                    StatementKind::Expression(Expression {
-                        span,
-                        kind:
-                            ExpressionKind::Unary {
-                                operator: UnaryOperator::Minus,
-                                operand,
-                            },
-                        ..
-                    }),
-                ..
-            },
-        ] => {
+            }) = &statement.kind
+            else {
+                return None;
+            };
             let ExpressionKind::Literal(Literal::Number(number)) = &operand.kind else {
                 return None;
             };
@@ -1000,31 +908,26 @@ pub(crate) fn numeric_recovery_family(statements: &[Statement]) -> Option<Numeri
                 && span.start.saturating_add(1) == operand.span.start)
                 .then_some(NumericRecoveryKind::LegacyOctal)
         }
-        [
-            Statement {
-                kind:
-                    StatementKind::Expression(Expression {
-                        kind: ExpressionKind::Literal(Literal::Number(first)),
-                        span: first_span,
-                        ..
-                    }),
-                ..
-            },
-            Statement {
-                kind:
-                    StatementKind::Expression(Expression {
-                        kind: ExpressionKind::Literal(Literal::Number(second)),
-                        span: second_span,
-                        ..
-                    }),
-                ..
-            },
-        ] => (first.validation_supported()
-            && first.recovery_kind() == Some(NumericRecoveryKind::LegacyOctal)
-            && second.recovery_kind().is_none()
-            && second.raw().starts_with('.')
-            && first_span.end == second_span.start)
-            .then_some(NumericRecoveryKind::LegacyOctal),
+        [first, second] => {
+            let (first, first_span) = numeric_expression_statement(first)?;
+            let (second, second_span) = numeric_expression_statement(second)?;
+            (first.validation_supported()
+                && first.recovery_kind() == Some(NumericRecoveryKind::LegacyOctal)
+                && second.recovery_kind().is_none()
+                && second.raw().starts_with('.')
+                && first_span.end == second_span.start)
+                .then_some(NumericRecoveryKind::LegacyOctal)
+        }
         _ => None,
     }
+}
+
+const fn numeric_expression_statement(statement: &Statement) -> Option<(&NumberLiteral, Span)> {
+    let StatementKind::Expression(expression) = &statement.kind else {
+        return None;
+    };
+    let ExpressionKind::Literal(Literal::Number(number)) = &expression.kind else {
+        return None;
+    };
+    Some((number, expression.span))
 }

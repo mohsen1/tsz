@@ -1,0 +1,623 @@
+use std::fmt::Write as _;
+use std::{collections::BTreeMap, sync::Arc};
+
+use tsz::source::{FileId, SourceText};
+use tsz::syntax::{ExpressionKind, StatementKind, parse_source};
+use tsz::{Compiler, CompilerOptions, SourceInput};
+
+fn javascript(source: &str, module: &str, remove_comments: bool) -> String {
+    let output = Compiler::new().compile(
+        vec![SourceInput::new("case.ts", Arc::<str>::from(source))],
+        &CompilerOptions {
+            target: "es2015".to_string(),
+            module: module.to_string(),
+            no_check: true,
+            remove_comments,
+            ..CompilerOptions::default()
+        },
+    );
+    assert_eq!(output.diagnostics, [], "{:#?}", output.diagnostics);
+    output
+        .emitted_files
+        .into_iter()
+        .find(|file| !file.declaration)
+        .expect("JavaScript output")
+        .text
+}
+
+fn javascript_files(sources: &[(&str, &str)]) -> BTreeMap<String, String> {
+    let output = Compiler::new().compile(
+        sources
+            .iter()
+            .map(|(path, source)| SourceInput::new(*path, Arc::<str>::from(*source)))
+            .collect(),
+        &CompilerOptions {
+            target: "es2015".to_string(),
+            no_check: true,
+            ..CompilerOptions::default()
+        },
+    );
+    assert_eq!(output.diagnostics, [], "{:#?}", output.diagnostics);
+    output
+        .emitted_files
+        .into_iter()
+        .filter(|file| !file.declaration)
+        .map(|file| (file.path.to_string_lossy().into_owned(), file.text))
+        .collect()
+}
+
+#[test]
+fn emitted_nodes_own_leading_trailing_inline_detached_and_eof_comments() {
+    let source = concat!(
+        "/*! source pinned */\n",
+        "const first = 1; // same-line\n",
+        "/* block leading */ const second = 2;\n",
+        "// line leading\n",
+        "const third = /* inline block */ 3;\n\n",
+        "// detached line\n\n",
+        "const fourth = 4;\n",
+        "// eof detached\n",
+    );
+    assert_eq!(
+        javascript(source, "", false),
+        concat!(
+            "\"use strict\";\n",
+            "/*! source pinned */\n",
+            "const first = 1; // same-line\n",
+            "/* block leading */ const second = 2;\n",
+            "// line leading\n",
+            "const third = /* inline block */ 3;\n",
+            "// detached line\n",
+            "const fourth = 4;\n",
+            "// eof detached\n",
+        )
+    );
+}
+
+#[test]
+fn erased_statements_and_overloads_consume_their_comment_ranges_once() {
+    let source = concat!(
+        "// erased type lead\n",
+        "type Hidden = string; // erased type tail\n",
+        "// erased ambient lead\n",
+        "declare let ambient: {}; // erased ambient tail\n",
+        "class Renamed {\n",
+        "    // erased overload lead\n",
+        "    method(value: string); // erased overload tail\n",
+        "    // kept implementation lead\n",
+        "    method(value: string) { } // kept implementation tail\n",
+        "}\n",
+        "// erased export lead\n",
+        "export type { Hidden }; // erased export tail\n",
+        "// kept export lead\n",
+        "export const kept = 1; // kept export tail\n",
+    );
+    assert_eq!(
+        javascript(source, "esnext", false),
+        concat!(
+            "class Renamed {\n",
+            "    // kept implementation lead\n",
+            "    method(value) { } // kept implementation tail\n",
+            "}\n",
+            "// kept export lead\n",
+            "export const kept = 1; // kept export tail\n",
+        )
+    );
+}
+
+#[test]
+fn nested_multiline_object_comments_use_authored_layout_facts() {
+    let source = concat!(
+        "const renamed = {\n",
+        "    outer: /*! outer */ {\n",
+        "        line:\n",
+        "        // before value\n",
+        "        1,\n",
+        "        block:\n",
+        "        /* before block value */\n",
+        "        2,\n",
+        "    },\n",
+        "};\n",
+    );
+    assert_eq!(
+        javascript(source, "", false),
+        concat!(
+            "\"use strict\";\n",
+            "const renamed = {\n",
+            "    outer: /*! outer */ {\n",
+            "        line: \n",
+            "        // before value\n",
+            "        1,\n",
+            "        block: \n",
+            "        /* before block value */\n",
+            "        2,\n",
+            "    },\n",
+            "};\n",
+        )
+    );
+}
+
+#[test]
+fn erased_attached_comments_drop_but_recognized_source_reference_transfers() {
+    let source = concat!(
+        "/// <reference path=\"./a.d.ts\" />\n",
+        "/// ordinary triple slash\n",
+        "/*! erased pinned */\n",
+        "/** @license erased */\n",
+        "type Hidden = string;\n",
+        "/*! kept pinned */\n",
+        "/** @license kept */\n",
+        "const kept = 1;\n",
+        "/// <reference path=\"./later.d.ts\" />\n",
+        "type Later = number;\n",
+        "const finalValue = 2;\n",
+    );
+    assert_eq!(
+        javascript(source, "", false),
+        concat!(
+            "\"use strict\";\n",
+            "/// <reference path=\"./a.d.ts\" />\n",
+            "/*! kept pinned */\n",
+            "/** @license kept */\n",
+            "const kept = 1;\n",
+            "const finalValue = 2;\n",
+        )
+    );
+}
+
+#[test]
+fn source_detached_pinned_policy_matches_remove_comments_and_erased_nodes() {
+    let ambient = concat!(
+        "/*! detached pinned */\r\n\r\n",
+        "/*! attached pinned */\r\n",
+        "/** @license attached */\r\n",
+        "declare var erased: number;\r\n",
+    );
+    let expected = concat!("\"use strict\";\n", "/*! detached pinned */\n");
+    assert_eq!(javascript(ambient, "", false), expected);
+    assert_eq!(javascript(ambient, "", true), expected);
+
+    let emitted = concat!(
+        "/*! attached emitted pinned */\n",
+        "/** @license emitted */\n",
+        "const kept = 1;\n",
+    );
+    assert_eq!(
+        javascript(emitted, "", false),
+        concat!(
+            "\"use strict\";\n",
+            "/*! attached emitted pinned */\n",
+            "/** @license emitted */\n",
+            "const kept = 1;\n",
+        )
+    );
+    assert_eq!(
+        javascript(emitted, "", true),
+        "\"use strict\";\nconst kept = 1;\n"
+    );
+
+    let non_top = "const first = 1;\n/*! non-top pinned */\n\ndeclare var erased: number;\n";
+    assert_eq!(
+        javascript(non_top, "", false),
+        "\"use strict\";\nconst first = 1;\n"
+    );
+}
+
+#[test]
+fn parameter_comment_slots_consume_first_middle_final_this_default_and_trailing_comma() {
+    let source = concat!(
+        "function slots(\n",
+        " /* first before */ first /* first after */,\n",
+        " /* middle before */ middle: number /* after type */ = /* after equals */ 1 /* after default */,\n",
+        " /* final before */ ... /* after rest */ final: number[] /* final after */\n",
+        ") {}\n",
+        "function withThis(\n",
+        " /* this before */ this: void /* this after */,\n",
+        " /* kept before */ kept: number /* kept after */\n",
+        ") {}\n",
+        "function trailing(first /* first tail */, /* dropped trailing */) {}\n",
+    );
+    assert_eq!(
+        javascript(source, "", false),
+        concat!(
+            "\"use strict\";\n",
+            "function slots(\n",
+            "/* first before */ first /* first after */, \n",
+            "/* middle before */ middle = 1 /* after default */, \n",
+            "/* final before */ ... /* after rest */final /* final after */) { }\n",
+            "function withThis(\n",
+            "/* kept before */ kept /* kept after */) { }\n",
+            "function trailing(first /* first tail */) { }\n",
+        )
+    );
+}
+
+#[test]
+fn element_access_slots_follow_token_adjacency_not_comment_placement() {
+    let source = concat!(
+        "/*0*/ Array /*1*/[ /*2*/ \"toString\" /*3*/ ] /*4*/; /*5*/\n\n",
+        "/*0*/ Array \n",
+        "    // single line\n",
+        "    /*1*/[ /*2*/ \"toString\"\n",
+        "    // single line\n",
+        "    /*3*/ ] /*4*/\n",
+    );
+    assert_eq!(
+        javascript(source, "", false),
+        concat!(
+            "\"use strict\";\n",
+            "/*0*/ Array /*1*/[ /*2*/\"toString\" /*3*/] /*4*/; /*5*/\n",
+            "/*0*/ Array\n",
+            "// single line\n",
+            "/*1*/ [ /*2*/\"toString\"\n",
+            "// single line\n",
+            "/*3*/ ]; /*4*/\n",
+        )
+    );
+}
+
+#[test]
+fn unsupported_module_comment_slot_is_nonclaimed_before_emit_and_other_files_survive() {
+    let sources = [
+        (
+            "blocked.ts",
+            "const value = 1;\nexport { /* module slot */ value };\n",
+        ),
+        ("unrelated.ts", "const unrelated = 2;\n"),
+    ];
+    let compile = |sources: &[(&str, &str)]| {
+        Compiler::new().compile(
+            sources
+                .iter()
+                .map(|(path, source)| SourceInput::new(*path, Arc::<str>::from(*source)))
+                .collect(),
+            &CompilerOptions {
+                target: "es2015".to_string(),
+                module: "esnext".to_string(),
+                no_check: true,
+                ..CompilerOptions::default()
+            },
+        )
+    };
+    for roots in [&sources[..], &[sources[1], sources[0]][..]] {
+        let output = compile(roots);
+        assert_eq!(output.diagnostics, []);
+        assert_eq!(
+            output.semantic_completion,
+            tsz::SemanticCompletion::Deferred
+        );
+        assert_eq!(
+            output
+                .emitted_files
+                .iter()
+                .filter(|file| !file.declaration)
+                .map(|file| (file.path.to_string_lossy().into_owned(), file.text.as_str()))
+                .collect::<Vec<_>>(),
+            vec![(
+                "unrelated.js".to_string(),
+                "\"use strict\";\nconst unrelated = 2;\n"
+            )]
+        );
+    }
+}
+
+#[test]
+fn remove_comments_and_repeated_root_order_do_not_reuse_comment_identity() {
+    let commented = "/*! lead */ const first = 1; // tail\n// eof\n";
+    assert_eq!(
+        javascript(commented, "", true),
+        "\"use strict\";\nconst first = 1;\n"
+    );
+
+    let sources = [
+        ("alpha.ts", "// alpha\nconst alpha = 1; // alpha tail\n"),
+        ("beta.ts", "/* beta */ const beta = 2; // beta tail\n"),
+    ];
+    let forward = javascript_files(&sources);
+    let reverse = javascript_files(&[sources[1], sources[0]]);
+    assert_eq!(forward, reverse);
+    assert_eq!(
+        forward.get("alpha.js").map(String::as_str),
+        Some("\"use strict\";\n// alpha\nconst alpha = 1; // alpha tail\n")
+    );
+    assert_eq!(
+        forward.get("beta.js").map(String::as_str),
+        Some("\"use strict\";\n/* beta */ const beta = 2; // beta tail\n")
+    );
+}
+
+#[test]
+fn indentation_change_keeps_representative_comment_free_emit_exact() {
+    let source = concat!(
+        "function kept(value: number) {\n",
+        "    if (value) {\n",
+        "        return value;\n",
+        "    }\n",
+        "    else {\n",
+        "        return 0;\n",
+        "    }\n",
+        "}\n",
+        "class Box {\n",
+        "    read() { }\n",
+        "}\n",
+    );
+    assert_eq!(
+        javascript(source, "", false),
+        concat!(
+            "\"use strict\";\n",
+            "function kept(value) {\n",
+            "    if (value) {\n",
+            "        return value;\n",
+            "    }\n",
+            "    else {\n",
+            "        return 0;\n",
+            "    }\n",
+            "}\n",
+            "class Box {\n",
+            "    read() { }\n",
+            "}\n",
+        )
+    );
+}
+
+#[test]
+fn erased_export_declare_keeps_the_external_module_marker() {
+    assert_eq!(
+        javascript("export declare const renamed: number;\n", "esnext", false),
+        "export {};\n"
+    );
+}
+
+#[test]
+fn jsdoc_attachment_is_node_scoped_and_captured_before_async() {
+    let source = SourceText::new(
+        FileId(0),
+        "authored.js".into(),
+        Arc::<str>::from(concat!(
+            "/** attached declaration */ async function renamed() {}\n",
+            "/** detached declaration */\n\nasync function detached() {}\n",
+            "const arrow = /** attached arrow */ async () => {};\n",
+            "const detachedArrow = /** detached arrow */\n\nasync () => {};\n",
+            "const ordinary = /* ordinary block */ async () => {};\n",
+        )),
+    );
+    let parsed = parse_source(&source);
+    assert!(parsed.diagnostics.is_empty(), "{:#?}", parsed.diagnostics);
+
+    let declaration_jsdoc = |index: usize| match &parsed.unit.statements[index].kind {
+        StatementKind::Function(declaration) => declaration.has_leading_jsdoc,
+        _ => panic!("expected function declaration at {index}"),
+    };
+    let expression_jsdoc = |index: usize| match &parsed.unit.statements[index].kind {
+        StatementKind::Variable(declaration) => match declaration.initializer.as_ref() {
+            Some(expression) => match &expression.kind {
+                ExpressionKind::FunctionLike(function) => function.has_leading_jsdoc,
+                _ => panic!("expected function-like initializer at {index}"),
+            },
+            None => panic!("expected initializer at {index}"),
+        },
+        _ => panic!("expected variable declaration at {index}"),
+    };
+
+    assert!(declaration_jsdoc(0));
+    assert!(!declaration_jsdoc(1));
+    assert!(expression_jsdoc(2));
+    assert!(!expression_jsdoc(3));
+    assert!(!expression_jsdoc(4));
+}
+
+#[test]
+fn one_line_object_comments_and_trailing_comma_keep_authored_slots() {
+    let source = concat!(
+        "const renamed = { /* before */ alpha: 1, /* between */ beta: 2, };\n",
+        "const closing = { value: 1, /* before close */ };\n",
+    );
+    assert_eq!(
+        javascript(source, "", false),
+        concat!(
+            "\"use strict\";\n",
+            "const renamed = { /* before */ alpha: 1, /* between */ beta: 2, };\n",
+            "const closing = { value: 1, /* before close */ };\n",
+        )
+    );
+}
+
+#[test]
+fn closing_delimiter_comments_dedent_with_the_delimiter_owner() {
+    let source = concat!(
+        "const nested = {\n",
+        "    alpha: 1,\n",
+        "    // before object close\n",
+        "};\n",
+    );
+    assert_eq!(
+        javascript(source, "", false),
+        concat!(
+            "\"use strict\";\n",
+            "const nested = {\n",
+            "    alpha: 1,\n",
+            "    // before object close\n",
+            "};\n",
+        )
+    );
+}
+
+#[test]
+fn authored_body_spans_own_empty_and_nested_closing_comments() {
+    let source = concat!(
+        "function renamed() {\n",
+        "    // function close\n",
+        "}\n",
+        "function sameLine() { /* same-line body comment */ }\n",
+        "class Container {\n",
+        "    constructor() {\n",
+        "        // constructor close\n",
+        "    }\n",
+        "    method() {\n",
+        "        // method close\n",
+        "    }\n",
+        "    // class close\n",
+        "}\n",
+        "const arrow = () => {\n",
+        "    // arrow close\n",
+        "};\n",
+        "{\n",
+        "    // block close\n",
+        "}\n",
+    );
+    assert_eq!(
+        javascript(source, "", false),
+        concat!(
+            "\"use strict\";\n",
+            "function renamed() {\n",
+            "    // function close\n",
+            "}\n",
+            "function sameLine() { /* same-line body comment */ }\n",
+            "class Container {\n",
+            "    constructor() {\n",
+            "        // constructor close\n",
+            "    }\n",
+            "    method() {\n",
+            "        // method close\n",
+            "    }\n",
+            "    // class close\n",
+            "}\n",
+            "const arrow = () => {\n",
+            "    // arrow close\n",
+            "};\n",
+            "{\n",
+            "    // block close\n",
+            "}\n",
+        )
+    );
+}
+
+#[test]
+fn represented_empty_delimiters_consume_their_interior_comments_once() {
+    let source = concat!(
+        "declare function call(): void;\n",
+        "declare class Renamed { }\n",
+        "const object = { /* object */ };\n",
+        "const array = [/* array */];\n",
+        "call(/* call */);\n",
+        "new Renamed(/* new */);\n",
+        "const grouped = (/* grouped */ object /* close */);\n",
+        "function parameters(/** nothing */) { }\n",
+    );
+    assert_eq!(
+        javascript(source, "", false),
+        concat!(
+            "\"use strict\";\n",
+            "const object = { /* object */ };\n",
+            "const array = [ /* array */];\n",
+            "call( /* call */);\n",
+            "new Renamed( /* new */);\n",
+            "const grouped = ( /* grouped */object /* close */);\n",
+            "function parameters( /** nothing */) { }\n",
+        )
+    );
+}
+
+#[test]
+fn nested_delimiter_owners_keep_inline_and_multiline_closing_trivia() {
+    let source = concat!(
+        "declare function target(value?: number): void;\n",
+        "declare class Constructed { }\n",
+        "function nested() {\n",
+        "    const inlineArray = [1 /* array inline */];\n",
+        "    target(1 /* call inline */);\n",
+        "    new Constructed(1 /* new inline */);\n",
+        "    const inlineGroup = (/* group open */ 1 /* group inline */);\n",
+        "    const emptyArray = [\n",
+        "        // empty array close\n",
+        "    ];\n",
+        "    target(\n",
+        "        // empty call close\n",
+        "    );\n",
+        "    new Constructed(\n",
+        "        // empty new close\n",
+        "    );\n",
+        "    const multilineArray = [1\n",
+        "        // array close\n",
+        "    ];\n",
+        "    target(1\n",
+        "        // call close\n",
+        "    );\n",
+        "    new Constructed(1\n",
+        "        // new close\n",
+        "    );\n",
+        "    const multilineGroup = (\n",
+        "        // group open\n",
+        "        1\n",
+        "        // group close\n",
+        "    );\n",
+        "}\n",
+    );
+    assert_eq!(
+        javascript(source, "", false),
+        concat!(
+            "\"use strict\";\n",
+            "function nested() {\n",
+            "    const inlineArray = [1 /* array inline */];\n",
+            "    target(1 /* call inline */);\n",
+            "    new Constructed(1 /* new inline */);\n",
+            "    const inlineGroup = ( /* group open */1 /* group inline */);\n",
+            "    const emptyArray = [\n",
+            "    // empty array close\n",
+            "    ];\n",
+            "    target(\n",
+            "    // empty call close\n",
+            "    );\n",
+            "    new Constructed(\n",
+            "    // empty new close\n",
+            "    );\n",
+            "    const multilineArray = [1\n",
+            "    // array close\n",
+            "    ];\n",
+            "    target(1\n",
+            "    // call close\n",
+            "    );\n",
+            "    new Constructed(1\n",
+            "    // new close\n",
+            "    );\n",
+            "    const multilineGroup = (\n",
+            "    // group open\n",
+            "    1\n",
+            "    // group close\n",
+            "    );\n",
+            "}\n",
+        )
+    );
+    assert_eq!(
+        javascript(source, "", true),
+        concat!(
+            "\"use strict\";\n",
+            "function nested() {\n",
+            "    const inlineArray = [1];\n",
+            "    target(1);\n",
+            "    new Constructed(1);\n",
+            "    const inlineGroup = (1);\n",
+            "    const emptyArray = [];\n",
+            "    target();\n",
+            "    new Constructed();\n",
+            "    const multilineArray = [1];\n",
+            "    target(1);\n",
+            "    new Constructed(1);\n",
+            "    const multilineGroup = (1);\n",
+            "}\n",
+        )
+    );
+}
+
+#[test]
+fn comment_index_scales_by_consumed_comment_count_and_is_repeatable() {
+    const COMMENT_COUNT: usize = 1_024;
+    let mut source = String::new();
+    for index in 0..COMMENT_COUNT {
+        writeln!(source, "// owned {index}\nconst value{index} = {index};").unwrap();
+    }
+    let first = javascript(&source, "", false);
+    let second = javascript(&source, "", false);
+    assert_eq!(first, second);
+    assert_eq!(first.matches("// owned ").count(), COMMENT_COUNT);
+}

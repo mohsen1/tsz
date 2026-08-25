@@ -10,6 +10,14 @@ pub(crate) enum CommentKind {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CommentClass {
+    Ordinary,
+    Pinned,
+    DetachedPinned,
+    TripleSlashReference,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CommentPlacement {
     Leading,
     Trailing,
@@ -29,7 +37,12 @@ pub(crate) enum CommentSourcePosition {
 pub(crate) struct CommentTrivia {
     pub span: Span,
     pub preceding_token_end: Option<u32>,
+    pub preceding_token_kind: Option<super::TokenKind>,
     pub kind: CommentKind,
+    pub class: CommentClass,
+    /// The scanner saw the authored JSDoc opener `/**` (excluding `/**/`).
+    /// Association with a declaration remains parser-owned.
+    pub jsdoc: bool,
     pub placement: CommentPlacement,
     pub source_position: CommentSourcePosition,
     pub has_trailing_line_break: bool,

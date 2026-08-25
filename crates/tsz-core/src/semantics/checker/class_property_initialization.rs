@@ -21,11 +21,14 @@ impl Checker<'_> {
         {
             return;
         }
-        let source_path = &self.program.files[file.0 as usize].source.path;
-        if is_declaration_source(source_path) {
+        let source = &self.program.files[file.0 as usize].source;
+        if source.is_declaration_source() {
             return;
         }
-        let source_supported = is_plain_typescript_source(source_path);
+        let source_supported = source
+            .path
+            .extension()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("ts"));
         let has_constructor = declaration
             .members
             .iter()
@@ -155,18 +158,4 @@ impl Checker<'_> {
                 )
             })
     }
-}
-
-fn is_plain_typescript_source(path: &std::path::Path) -> bool {
-    path.extension()
-        .is_some_and(|extension| extension.eq_ignore_ascii_case("ts"))
-}
-
-fn is_declaration_source(path: &std::path::Path) -> bool {
-    path.file_name()
-        .and_then(std::ffi::OsStr::to_str)
-        .is_some_and(|name| {
-            let name = name.to_ascii_lowercase();
-            name.ends_with(".d.ts") || name.ends_with(".d.mts") || name.ends_with(".d.cts")
-        })
 }

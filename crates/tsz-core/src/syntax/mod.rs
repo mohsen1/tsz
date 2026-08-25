@@ -1,5 +1,55 @@
 //! Per-file syntax pipeline. Parsed trees are immutable after construction.
 
+macro_rules! direct_var_literal_predicates {
+    ($safe:ident, $variable:ident, $comments:ident, $kind:pat $(if $guard:expr)?, $($expression:ident)?) => {
+        pub(crate) fn $safe(
+            source: &SourceText,
+            statements: &[Statement],
+            supported_literal_count: usize,
+        ) -> bool {
+            source.is_regular_typescript_source()
+                && source_uses_supported_line_breaks(source)
+                && statement_starts_at_supported_column(source, statements)
+                && supported_literal_count == 1
+                && ($($expression(statements) ||)? $variable(source, statements))
+        }
+
+        pub(crate) fn $variable(source: &SourceText, statements: &[Statement]) -> bool {
+            let [Statement {
+                kind: StatementKind::Variable(declaration),
+                ..
+            }] = statements
+            else {
+                return false;
+            };
+            declaration.declaration_kind == VariableKind::Var
+                && !declaration.exported
+                && declaration.annotation.is_none()
+                && is_plain_strict_binding_identifier(source.slice(declaration.name_span))
+                && matches!(
+                    declaration.initializer.as_ref(),
+                    Some(Expression { kind: $kind, .. }) $(if $guard)?
+                )
+        }
+
+        pub(crate) fn $comments(
+            source: &SourceText,
+            statements: &[Statement],
+            comments: &[CommentTrivia],
+        ) -> bool {
+            if comments.is_empty() {
+                return source.text.is_ascii();
+            }
+            let [statement] = statements else {
+                return false;
+            };
+            $variable(source, statements)
+                && comments_form_contiguous_plain_leading_run(source, statement, comments)
+                && source_is_ascii_outside_comments(source, comments)
+        }
+    };
+}
+
 mod ast;
 mod descendant_walk;
 mod numeric_literal;
@@ -45,7 +95,7 @@ pub(crate) use template_literal::{
 };
 pub use token::{Token, TokenKind};
 pub(crate) use trivia::{
-    CommentKind, CommentPlacement, CommentSourcePosition, CommentTrivia,
+    CommentClass, CommentKind, CommentPlacement, CommentSourcePosition, CommentTrivia,
     comments_form_contiguous_plain_leading_run,
     comments_form_no_substitution_template_expression_file, is_single_line_whitespace,
     parse_source_check_directive, source_is_ascii_outside_comments,

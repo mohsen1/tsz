@@ -613,6 +613,7 @@ impl ReferenceVisitor<'_> {
                             parameters,
                             body,
                             has_body,
+                            ..
                         } => {
                             let retained_type_locals = self.visit_signature_types_with_host(
                                 member.id,
@@ -860,7 +861,7 @@ impl ReferenceVisitor<'_> {
             ExpressionKind::Unary { operand, .. } => {
                 self.visit_expression(operand, scope, false);
             }
-            ExpressionKind::Assignment { left, right } => {
+            ExpressionKind::Assignment { left, right, .. } => {
                 self.visit_expression(left, scope, true);
                 self.visit_expression(right, scope, false);
             }
@@ -1500,7 +1501,9 @@ fn fallback_metadata(kind: DeclarationKind, name: &str) -> SyntaxMetadata {
         DeclarationKind::Class => ("class", format!("class {name}")),
         DeclarationKind::TypeAlias => ("type", format!("type {name}")),
         DeclarationKind::Interface => ("interface", format!("interface {name}")),
-        DeclarationKind::TypeMember => ("property", format!("(property) {name}")),
+        DeclarationKind::TypeMember | DeclarationKind::JavaScriptPropertyAssignment => {
+            ("property", format!("(property) {name}"))
+        }
         DeclarationKind::AnonymousSignature => ("type", "(anonymous signature)".to_string()),
         DeclarationKind::UnmodeledHost => ("module", format!("module {name}")),
     };

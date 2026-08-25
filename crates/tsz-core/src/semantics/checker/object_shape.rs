@@ -680,6 +680,7 @@ impl Checker<'_> {
             self.store.builtins.any
         };
         Completion::Complete(ShapeSignature {
+            untyped_javascript: false,
             parameters: semantic_parameters,
             return_type,
         })

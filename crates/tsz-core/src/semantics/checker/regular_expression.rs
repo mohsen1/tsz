@@ -70,16 +70,8 @@ impl Checker<'_> {
     ) {
         let mut seen = [false; 5];
         for (offset, flag) in literal.flags.char_indices() {
-            let known = match flag {
-                'g' => Some(0),
-                'i' => Some(1),
-                'm' => Some(2),
-                'u' => Some(3),
-                'y' => Some(4),
-                _ => None,
-            };
             let span = relative_span(literal.flags_span, offset, flag.len_utf8());
-            let Some(index) = known else {
+            let Some(index) = "gimuy".find(flag) else {
                 self.push_diagnostic(
                     file,
                     span,
@@ -88,15 +80,13 @@ impl Checker<'_> {
                 );
                 continue;
             };
-            if seen[index] {
+            if std::mem::replace(&mut seen[index], true) {
                 self.push_diagnostic(
                     file,
                     span,
                     "Duplicate regular expression flag.".to_string(),
                     1500,
                 );
-            } else {
-                seen[index] = true;
             }
         }
     }
@@ -160,9 +150,11 @@ impl Checker<'_> {
             }
 
             let value = digits.iter().fold(0_u64, |value, byte| {
-                value
-                    .saturating_mul(16)
-                    .saturating_add(u64::from(hex_value(*byte)))
+                value.saturating_mul(16).saturating_add(u64::from(
+                    char::from(*byte)
+                        .to_digit(16)
+                        .expect("validated hexadecimal digit"),
+                ))
             });
             if value > 0x10_ffff {
                 self.push_diagnostic(
@@ -185,14 +177,5 @@ const fn relative_span(base: Span, start: usize, length: usize) -> Span {
         file: base.file,
         start,
         end: start.saturating_add(length as u32),
-    }
-}
-
-const fn hex_value(byte: u8) -> u8 {
-    match byte {
-        b'0'..=b'9' => byte - b'0',
-        b'a'..=b'f' => byte - b'a' + 10,
-        b'A'..=b'F' => byte - b'A' + 10,
-        _ => 0,
     }
 }

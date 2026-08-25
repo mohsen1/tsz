@@ -312,10 +312,10 @@ impl LanguageService {
 
 fn definition_result_is_claimed(output: &CompileOutput, result: &DefinitionAndBoundSpan) -> bool {
     result.definitions.iter().all(|definition| {
-        service_location_claimed(
+        service_operation_claimed(
             output,
             &definition.file_name,
-            definition.text_span,
+            definition.text_span.start,
             CapabilityTarget::Definition,
         )
     })
@@ -323,16 +323,16 @@ fn definition_result_is_claimed(output: &CompileOutput, result: &DefinitionAndBo
 
 fn references_result_is_claimed(output: &CompileOutput, result: &[ReferencedSymbol]) -> bool {
     result.iter().all(|symbol| {
-        service_location_claimed(
+        service_operation_claimed(
             output,
             &symbol.definition.file_name,
-            symbol.definition.text_span,
+            symbol.definition.text_span.start,
             CapabilityTarget::References,
         ) && symbol.references.iter().all(|reference| {
-            service_location_claimed(
+            service_operation_claimed(
                 output,
                 &reference.file_name,
-                reference.text_span,
+                reference.text_span.start,
                 CapabilityTarget::References,
             )
         })
@@ -342,10 +342,10 @@ fn references_result_is_claimed(output: &CompileOutput, result: &[ReferencedSymb
 fn highlights_result_is_claimed(output: &CompileOutput, result: &[DocumentHighlights]) -> bool {
     result.iter().all(|document| {
         document.highlight_spans.iter().all(|highlight| {
-            service_location_claimed(
+            service_operation_claimed(
                 output,
                 &document.file_name,
-                highlight.text_span,
+                highlight.text_span.start,
                 CapabilityTarget::Highlights,
             )
         })
@@ -354,35 +354,13 @@ fn highlights_result_is_claimed(output: &CompileOutput, result: &[DocumentHighli
 
 fn rename_result_is_claimed(output: &CompileOutput, result: &RenameResult) -> bool {
     result.locations.iter().all(|location| {
-        service_location_claimed(
+        service_operation_claimed(
             output,
             &location.file_name,
-            location.text_span,
+            location.text_span.start,
             CapabilityTarget::Rename,
         )
     })
-}
-
-fn service_location_claimed(
-    output: &CompileOutput,
-    path: &str,
-    span: TextSpan,
-    target: CapabilityTarget,
-) -> bool {
-    let normalized = normalize_path(path);
-    let Some(file) = output.program.files.iter().find(|file| {
-        normalize_path(&file.source.path.to_string_lossy()) == normalized
-            || normalize_path(&file.source.host_path.to_string_lossy()) == normalized
-    }) else {
-        return false;
-    };
-    output
-        .capabilities
-        .claim(
-            target,
-            capability_scope_at(file, span.start).unwrap_or(CapabilityScope::File(file.source.id)),
-        )
-        .is_claimed()
 }
 
 fn service_operation_claimed(
@@ -411,8 +389,11 @@ fn capability_scope_at(file: &ProgramFile, offset: u32) -> Option<CapabilityScop
     if let Some(declaration) = file.bindings.declarations.iter().find(|declaration| {
         contains(declaration.name_span, offset)
             && file.bindings.declarations.iter().any(|candidate| {
-                candidate.kind == crate::bind::DeclarationKind::FunctionExpression
-                    && candidate.owner == declaration.owner
+                matches!(
+                    candidate.kind,
+                    crate::bind::DeclarationKind::FunctionExpression
+                        | crate::bind::DeclarationKind::JavaScriptPropertyAssignment
+                ) && candidate.owner == declaration.owner
             })
     }) {
         return Some(CapabilityScope::node(file.source.id, declaration.owner));
@@ -447,13 +428,16 @@ fn capability_scope_at(file: &ProgramFile, offset: u32) -> Option<CapabilityScop
         ExpressionRoot::Statements(&file.syntax.statements),
         ExpressionTraversal::All,
         |expression| {
-            if matches!(expression.kind, ExpressionKind::FunctionLike(_))
-                && contains(expression.span, offset)
-            {
+            let candidate_span = match &expression.kind {
+                ExpressionKind::FunctionLike(_) => expression.span,
+                ExpressionKind::Member { name_span, .. } => *name_span,
+                _ => return false,
+            };
+            if contains(candidate_span, offset) {
                 let candidate = (
-                    expression.span.start != offset,
-                    expression.span.len(),
-                    Reverse(expression.span.start),
+                    candidate_span.start != offset,
+                    candidate_span.len(),
+                    Reverse(candidate_span.start),
                 );
                 if best.is_none_or(|current| candidate < current) {
                     owner = Some(expression.id);
@@ -553,14 +537,8 @@ fn quick_info_at_statement(statement: &Statement, offset: u32) -> Option<QuickIn
     }
 }
 
-fn function_expression_initializer_owner(mut expression: &Expression) -> Option<NodeId> {
-    while let ExpressionKind::Parenthesized(inner)
-    | ExpressionKind::As {
-        expression: inner, ..
-    } = &expression.kind
-    {
-        expression = inner;
-    }
+fn function_expression_initializer_owner(expression: &Expression) -> Option<NodeId> {
+    let expression = expression.peel_parentheses_and_assertions();
     let ExpressionKind::FunctionLike(function) = &expression.kind else {
         return None;
     };
