@@ -177,6 +177,7 @@ impl PredicateRoute<'_> {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum FlowNarrowing {
+    TruthinessCandidate(bool),
     Typeof {
         include: bool,
         values: TypeofWitnessSet,
@@ -560,6 +561,12 @@ enum SwitchMode {
     UnsupportedLiteral,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum IfFlowEffects {
+    SubjectOnly,
+    AllMutations,
+}
+
 impl FlowBuilder<'_> {
     fn add_switch(&mut self, statement: &Statement) {
         let StatementKind::Switch(switch) = &statement.kind else {
@@ -591,11 +598,7 @@ impl FlowBuilder<'_> {
             }
         }
         let container = self.container(statement.id);
-        let antecedent = self
-            .graph
-            .references
-            .get(&subject_expression)
-            .map_or(FlowNodeId(0), |(_, node)| *node);
+        let antecedent = self.antecedent(subject_expression);
         if labels.is_empty() && labels_supported {
             let mut mutated = FxHashMap::default();
             self.assign_mutations(
@@ -714,6 +717,29 @@ impl FlowBuilder<'_> {
         if self.add_predicate_if(statement, branch, &branch.condition, [true, true]) {
             return;
         }
+        if let Some(subject) = self
+            .literal_subject(&branch.condition)
+            .filter(|subject| subject.supported && subject.property.is_none())
+            .filter(|subject| !self.if_root_mutates(statement, subject.declaration))
+        {
+            let antecedent = self.antecedent(subject.expression);
+            let nodes = [true, false].map(|truthy| {
+                self.narrowing(
+                    antecedent,
+                    subject.declaration,
+                    FlowNarrowing::TruthinessCandidate(truthy),
+                )
+            });
+            self.assign_if_nodes(
+                statement,
+                subject.declaration,
+                nodes,
+                None,
+                [true, true],
+                IfFlowEffects::SubjectOnly,
+            );
+            return;
+        }
         let ExpressionKind::Binary {
             left,
             operator,
@@ -747,12 +773,8 @@ impl FlowBuilder<'_> {
         else {
             return;
         };
-        let antecedent = self
-            .graph
-            .references
-            .get(&subject.expression)
-            .map_or(FlowNodeId(0), |(_, node)| *node);
-        let mut node = |include| match value.clone().filter(|_| subject.supported) {
+        let antecedent = self.antecedent(subject.expression);
+        let node = |include| match value.clone().filter(|_| subject.supported) {
             Some(value) => self.narrowing(
                 antecedent,
                 subject.declaration,
@@ -768,14 +790,14 @@ impl FlowBuilder<'_> {
                 UnsupportedFlowKind::UnsupportedCase,
             ),
         };
-        let then_node = node(equality);
-        let else_node = node(!equality);
+        let nodes = [equality, !equality].map(node);
         self.assign_if_nodes(
             statement,
             subject.declaration,
-            [then_node, else_node],
+            nodes,
             None,
             [true, true],
+            IfFlowEffects::AllMutations,
         );
     }
 
@@ -786,6 +808,7 @@ impl FlowBuilder<'_> {
         mut nodes: [FlowNodeId; 2],
         routes: Option<[PredicateRoute<'_>; 2]>,
         active: [bool; 2],
+        effects: IfFlowEffects,
     ) {
         let StatementKind::If(branch) = &statement.kind else {
             return;
@@ -807,18 +830,20 @@ impl FlowBuilder<'_> {
             if active[arm] {
                 self.assign_region(branch.span, container, subject, node, route);
             }
-            self.assign_mutations(
-                branch.span,
-                container,
-                statement.id,
-                node,
-                &mut mutated[arm],
-            );
-            if active[arm]
-                && let Some(route) = route
-                && self.assign_path_mutations(branch.span, container, subject, route)
-            {
-                nodes[arm] = route.unknown;
+            if effects == IfFlowEffects::AllMutations {
+                self.assign_mutations(
+                    branch.span,
+                    container,
+                    statement.id,
+                    node,
+                    &mut mutated[arm],
+                );
+                if active[arm]
+                    && let Some(route) = route
+                    && self.assign_path_mutations(branch.span, container, subject, route)
+                {
+                    nodes[arm] = route.unknown;
+                }
             }
         }
         let exits = [
@@ -842,6 +867,9 @@ impl FlowBuilder<'_> {
                 nodes[survivor],
                 routes.map(|routes| routes[survivor]),
             );
+        }
+        if effects == IfFlowEffects::SubjectOnly {
+            return;
         }
         let mut seen = FxHashSet::default();
         let declarations = self
@@ -964,11 +992,7 @@ impl FlowBuilder<'_> {
             let Some((subject, path)) = self.predicate_subject(argument) else {
                 continue;
             };
-            let antecedent = self
-                .graph
-                .references
-                .get(&subject.expression)
-                .map_or(FlowNodeId(0), |(_, node)| *node);
+            let antecedent = self.antecedent(subject.expression);
             let mut predicate_node = |arm: usize, truthy: Option<bool>| {
                 if !active[arm] {
                     return antecedent;
@@ -1005,7 +1029,14 @@ impl FlowBuilder<'_> {
                 path: &path,
                 unknown: unknown[arm],
             });
-            self.assign_if_nodes(statement, subject.declaration, nodes, Some(routes), active);
+            self.assign_if_nodes(
+                statement,
+                subject.declaration,
+                nodes,
+                Some(routes),
+                active,
+                IfFlowEffects::AllMutations,
+            );
         }
         true
     }
@@ -1119,6 +1150,19 @@ impl FlowBuilder<'_> {
     fn container(&self, node: NodeId) -> Option<FlowContainer> {
         let scope = self.bindings.scope_for_node.get(&node)?;
         self.bindings.scopes[scope.0 as usize].flow_container
+    }
+
+    fn antecedent(&self, expression: NodeId) -> FlowNodeId {
+        let reference = self.graph.references.get(&expression);
+        reference.map_or(FlowNodeId(0), |entry| entry.1)
+    }
+
+    fn if_root_mutates(&self, statement: &Statement, declaration: DeclId) -> bool {
+        let container = self.container(statement.id);
+        self.mutations
+            .in_container_span(container, statement.span)
+            .iter()
+            .any(|mutation| mutation.declaration == declaration && mutation.path.is_root())
     }
 
     fn assign_region(

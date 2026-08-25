@@ -902,47 +902,19 @@ fn collect_conditional_infer_names<'a>(root: &'a TypeNode, names: &mut Vec<&'a s
 
 fn push_infer_member_nodes<'a>(members: &'a [TypeMember], pending: &mut Vec<&'a TypeNode>) {
     for member in members {
-        match &member.kind {
-            TypeMemberKind::Property { ty, .. } => pending.extend(ty),
-            TypeMemberKind::Method {
-                parameters,
-                return_type,
-                ..
-            }
-            | TypeMemberKind::Accessor {
-                parameters,
-                return_type,
-                ..
-            }
-            | TypeMemberKind::Call {
-                parameters,
-                return_type,
-                ..
-            }
-            | TypeMemberKind::Construct {
-                parameters,
-                return_type,
-                ..
-            } => {
-                pending.extend(
-                    parameters
-                        .iter()
-                        .filter_map(|parameter| parameter.annotation.as_ref()),
-                );
-                pending.extend(return_type);
-            }
-            TypeMemberKind::Index {
-                parameters,
-                value_type,
-            } => {
-                pending.extend(
-                    parameters
-                        .iter()
-                        .filter_map(|parameter| parameter.annotation.as_ref()),
-                );
-                pending.extend(value_type);
-            }
+        if let TypeMemberKind::Property { ty, .. } = &member.kind {
+            pending.extend(ty);
+            continue;
         }
+        let Some((_, _, parameters, return_type)) = member.kind.signature() else {
+            continue;
+        };
+        pending.extend(
+            parameters
+                .iter()
+                .filter_map(|parameter| parameter.annotation.as_ref()),
+        );
+        pending.extend(return_type);
     }
 }
 

@@ -17,7 +17,7 @@
   "program_completion_gate_terms": 1,
   "program_empty_check_result_sites": 1,
   "program_whole_check_skip_terms": 2,
-  "r0_handwritten_compiler_rust_lines": 45616,
+  "r0_handwritten_compiler_rust_lines": 45599,
   "reference_stack_constructors": 5,
   "required_type_rs_lines": 1823,
   "source_unit_boolean_fields": 1,

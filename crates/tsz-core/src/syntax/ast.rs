@@ -1264,66 +1264,26 @@ impl TypeMember {
         {
             return true;
         }
-        match &self.kind {
-            TypeMemberKind::Property {
-                ty, initializer, ..
-            } => {
-                ty.as_ref().is_some_and(|node| node.contains(containment))
-                    || containment == TypeContainment::RecoveredTypeMembers
-                        && initializer
-                            .as_ref()
-                            .is_some_and(expression_contains_recovered_type_members)
-            }
-            TypeMemberKind::Method {
-                type_parameters,
-                parameters,
-                return_type,
-                ..
-            }
-            | TypeMemberKind::Call {
-                type_parameters,
-                parameters,
-                return_type,
-            }
-            | TypeMemberKind::Construct {
-                type_parameters,
-                parameters,
-                return_type,
-            } => {
-                type_parameters
-                    .iter()
-                    .any(|parameter| containment.contains_type_parameter(parameter))
-                    || parameters
-                        .iter()
-                        .any(|parameter| containment.contains_parameter(parameter))
-                    || return_type
+        if let TypeMemberKind::Property {
+            ty, initializer, ..
+        } = &self.kind
+        {
+            return ty.as_ref().is_some_and(|node| node.contains(containment))
+                || containment == TypeContainment::RecoveredTypeMembers
+                    && initializer
                         .as_ref()
-                        .is_some_and(|node| node.contains(containment))
-            }
-            TypeMemberKind::Accessor {
-                parameters,
-                return_type,
-                ..
-            } => {
-                parameters
-                    .iter()
-                    .any(|parameter| containment.contains_parameter(parameter))
-                    || return_type
-                        .as_ref()
-                        .is_some_and(|node| node.contains(containment))
-            }
-            TypeMemberKind::Index {
-                parameters,
-                value_type,
-            } => {
-                parameters
-                    .iter()
-                    .any(|parameter| containment.contains_parameter(parameter))
-                    || value_type
-                        .as_ref()
-                        .is_some_and(|node| node.contains(containment))
-            }
+                        .is_some_and(expression_contains_recovered_type_members);
         }
+        let Some((_, type_parameters, parameters, return_type)) = self.kind.signature() else {
+            return false;
+        };
+        type_parameters
+            .iter()
+            .any(|parameter| containment.contains_type_parameter(parameter))
+            || parameters
+                .iter()
+                .any(|parameter| containment.contains_parameter(parameter))
+            || return_type.is_some_and(|node| node.contains(containment))
     }
 }
 

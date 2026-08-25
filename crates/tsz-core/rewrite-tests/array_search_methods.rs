@@ -83,6 +83,188 @@ fn canonical_array_search_calls_project_receiver_elements_for_dot_and_literal_ke
 }
 
 #[test]
+fn strict_direct_truthiness_narrows_generic_array_search_receivers() {
+    for source in [
+        concat!(
+            "function locate<Element>(items:Array<Element>|undefined,hit:Element):number{",
+            "if(items){return items.indexOf(hit);}",
+            "const absent:undefined=items;return -1;}",
+        ),
+        concat!(
+            "type Maybe<Value>=Array<Value>|undefined;",
+            "function find<Value>(renamed:Maybe<Value>,hit:Value):number{",
+            "if((((renamed)))){return renamed['lastIndexOf'](hit);}",
+            "else{const absent:undefined=renamed;return -1;}}",
+        ),
+        concat!(
+            "function find(renamed:undefined|number[],hit:number):number{",
+            "if((((renamed)))){return renamed.lastIndexOf(hit);}return -1;}",
+        ),
+        concat!(
+            "function locate<Item>(items:Array<Item>|undefined,hit:Item):number{",
+            "if(items){if(items){return items.indexOf(hit);}}return -1;}",
+        ),
+    ] {
+        assert_complete(source);
+    }
+
+    let files = [
+        ("alias.ts", "type Maybe<Item>=Array<Item>|undefined;"),
+        (
+            "use.ts",
+            concat!(
+                "function locate<Item>(values:Maybe<Item>,hit:Item):number{",
+                "if(values){return values.indexOf(hit);}return -1;}",
+            ),
+        ),
+    ];
+    for files in [files, [files[1], files[0]]] {
+        let output = compile_files(&files, options());
+        assert_eq!(output.diagnostics, [], "{files:#?}");
+        assert_eq!(output.semantic_completion, SemanticCompletion::Complete);
+        assert_eq!(output.exit_status, CompileExitStatus::Success);
+    }
+}
+
+#[test]
+fn exact_truthiness_flow_preserves_joins_suffixes_and_mutation_abstention() {
+    assert_complete(concat!(
+        "function locate<Item>(items:Array<Item>|undefined,hit:Item):number{",
+        "if(items){}else{return -1;}return items.indexOf(hit);}",
+    ));
+
+    for source in [
+        concat!(
+            "function locate<Item>(items:Array<Item>|undefined,hit:Item):number{",
+            "if(items){items.indexOf(hit);}return items.indexOf(hit);}",
+        ),
+        concat!(
+            "function locate<Item>(items:Array<Item>|undefined,hit:Item):number{",
+            "if(items){items=undefined;return items.indexOf(hit);}return -1;}",
+        ),
+        concat!(
+            "function locate<Item>(items:Array<Item>|undefined,next:Array<Item>,hit:Item):number{",
+            "if(items){items=next;return items.indexOf(hit);}return -1;}",
+        ),
+    ] {
+        assert_deferred(source);
+    }
+}
+
+#[test]
+fn inapplicable_truthiness_candidates_preserve_existing_results() {
+    assert_complete(concat!(
+        "function keep<Value>(value:Value|undefined):Value|undefined{",
+        "if(value){const same:Value|undefined=value;return same;}return value;}",
+    ));
+
+    for source in [
+        concat!(
+            "function locate<Item>(items:Array<Item>|undefined,hit:Item):number{",
+            "if(!items){return -1;}return items.indexOf(hit);}",
+        ),
+        concat!(
+            "function locate<Item>(items:Array<Item>|undefined,hit:Item,flag:boolean):number{",
+            "if(flag&&items){return items.indexOf(hit);}return -1;}",
+        ),
+        concat!(
+            "function locate<Item>(box:{items:Array<Item>|undefined},hit:Item):number{",
+            "if(box.items){return box.items.indexOf(hit);}return -1;}",
+        ),
+        concat!(
+            "function locate<Item>(items:Array<Item>|undefined|null,hit:Item):number{",
+            "if(items){return items.indexOf(hit);}return -1;}",
+        ),
+        concat!(
+            "function locate<Item>(items:Array<Item>|null,hit:Item):number{",
+            "if(items){return items.indexOf(hit);}return -1;}",
+        ),
+        concat!(
+            "function locate<Item>(items:Array<Item>|undefined,hit:Item):number{",
+            "const present=items;if(present){return items.indexOf(hit);}return -1;}",
+        ),
+        concat!(
+            "function locate<Item>(items:Array<Item>|undefined,hit:Item):number{",
+            "const present=!!items;if(present){return items.indexOf(hit);}return -1;}",
+        ),
+    ] {
+        assert_deferred(source);
+    }
+
+    for body in [
+        "return items.indexOf(hit);",
+        "if(items){return items.indexOf(hit);}return -1;",
+        "if(items){return -1;}return items.indexOf(hit);",
+    ] {
+        let source = format!(
+            "function locate<Item>(items:Array<Item>|undefined,hit:Item):number{{{body}}}",
+        );
+        let output = compile_with(
+            &source,
+            CompilerOptions {
+                strict: false,
+                strict_null_checks: Some(false),
+                ..options()
+            },
+        );
+        assert_eq!(output.diagnostics, [], "{source}");
+        assert_eq!(output.semantic_completion, SemanticCompletion::Deferred);
+        assert_eq!(output.exit_status, CompileExitStatus::SemanticIncomplete);
+    }
+
+    let output = compile_with(
+        "function locate<Item>(items:Array<Item>,hit:Item):number{if(items){return items.indexOf(hit);}return -1;}",
+        CompilerOptions {
+            strict: false,
+            strict_null_checks: Some(false),
+            ..options()
+        },
+    );
+    assert_eq!(output.diagnostics, []);
+    assert_eq!(output.semantic_completion, SemanticCompletion::Complete);
+    assert_eq!(output.exit_status, CompileExitStatus::Success);
+}
+
+#[test]
+fn truthiness_candidates_do_not_model_preexisting_mutation_gaps() {
+    assert_complete("function f(flag:''|'yes'):''|'yes'{if(flag){flag='';}return flag;}");
+
+    let source = concat!(
+        "declare function takeText(value:string):void;",
+        "function shell(tag:'yes'|'no',flag:boolean,value:string){",
+        "let one:string|number=0;",
+        "if(tag==='yes'){if(flag){one=value;}takeText(one);}",
+        "const sibling:MissingControlSibling=1;}",
+    );
+    let output = compile(source);
+    assert_eq!(output.semantic_completion, SemanticCompletion::Deferred);
+    assert_eq!(
+        output
+            .diagnostics
+            .iter()
+            .map(|diagnostic| diagnostic.code)
+            .collect::<Vec<_>>(),
+        [2304],
+    );
+
+    let source = concat!(
+        "declare function takeText(value:string):void;",
+        "function inspect(value:string|number,replacement:string):void{",
+        "if(value){value=replacement;takeText(value);}}",
+    );
+    let output = compile(source);
+    assert_eq!(output.semantic_completion, SemanticCompletion::Complete);
+    assert_eq!(
+        output
+            .diagnostics
+            .iter()
+            .map(|diagnostic| diagnostic.code)
+            .collect::<Vec<_>>(),
+        [2345],
+    );
+}
+
+#[test]
 fn concrete_argument_mismatches_use_the_existing_exact_ts2345_relation() {
     for (source, needle) in [
         ("const values:number[]=[];values.indexOf('bad');", "'bad'"),
@@ -280,6 +462,10 @@ fn inferred_search_declaration_products_fail_closed_across_supported_hosts() {
     for source in [
         "export const values:number[]=[];export const found:number=values.indexOf(1);",
         "export class Holder{found:number=([] as number[]).indexOf(1);}",
+        concat!(
+            "export function locate<Item>(items:Array<Item>|undefined,hit:Item):number{",
+            "if(items){return items.indexOf(hit);}return -1;}",
+        ),
     ] {
         let output = compile_with(source, emit_options.clone());
         assert_eq!(

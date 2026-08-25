@@ -43,7 +43,7 @@ impl Checker<'_> {
         let mut narrowings = Vec::new();
         let mut assigned = None;
         loop {
-            match flow.node(node).clone() {
+            node = match flow.node(node).clone() {
                 BoundFlowNode::Start => break,
                 BoundFlowNode::Narrowing {
                     antecedent,
@@ -53,7 +53,7 @@ impl Checker<'_> {
                     if subject == declaration {
                         narrowings.push(narrowing);
                     }
-                    node = antecedent;
+                    antecedent
                 }
                 BoundFlowNode::Assignment {
                     antecedent,
@@ -69,7 +69,7 @@ impl Checker<'_> {
                         )));
                         break;
                     }
-                    node = antecedent;
+                    antecedent
                 }
                 BoundFlowNode::Unsupported {
                     antecedent,
@@ -79,9 +79,9 @@ impl Checker<'_> {
                     if subject == declaration {
                         return Completion::Deferred;
                     }
-                    node = antecedent;
+                    antecedent
                 }
-            }
+            };
         }
 
         let mut narrowed = match assigned {
@@ -90,6 +90,11 @@ impl Checker<'_> {
         };
         for narrowing in narrowings.into_iter().rev() {
             narrowed = completed!(match &narrowing {
+                FlowNarrowing::TruthinessCandidate(truthy) => {
+                    let candidate =
+                        completed!(self.narrow_truthiness_candidate(narrowed, *truthy, depth + 1,));
+                    Completion::Complete(candidate.unwrap_or(narrowed))
+                }
                 FlowNarrowing::Typeof { include, values } => {
                     self.narrow_typeof(narrowed, *include, *values, depth + 1)
                 }
@@ -120,6 +125,30 @@ impl Checker<'_> {
             });
         }
         Completion::Complete(narrowed)
+    }
+
+    /// `None` preserves the antecedent because this bounded candidate is inapplicable.
+    fn narrow_truthiness_candidate(
+        &mut self,
+        ty: TypeId,
+        truthy: bool,
+        depth: usize,
+    ) -> Completion<Option<TypeId>> {
+        if !self.options.effective_strict_null_checks() {
+            return Completion::Complete(None);
+        }
+        let ty = completed!(self.force_operand(ty, depth));
+        let TypeKind::Union(members) = self.store.kind(ty) else {
+            return Completion::Complete(None);
+        };
+        let [left, right] = members.as_slice() else {
+            return Completion::Complete(None);
+        };
+        Completion::Complete(match (self.store.kind(*left), self.store.kind(*right)) {
+            (TypeKind::Array(_), TypeKind::Undefined) => Some(if truthy { *left } else { *right }),
+            (TypeKind::Undefined, TypeKind::Array(_)) => Some(if truthy { *right } else { *left }),
+            _ => None,
+        })
     }
 
     fn flow_assignment_source(
@@ -157,18 +186,15 @@ impl Checker<'_> {
                     Some(self.literal_type(&literal, LiteralProvenance::Regular)),
                 )
             }
-            FlowAssignmentSource::DirectCall(
-                (callee_expression, callee),
-                (argument_expression, argument),
-            ) => {
-                let callee_type =
-                    completed!(self.flow_source(file, (callee_expression, callee), depth + 1,));
-                let argument =
-                    completed!(self.flow_source(file, (argument_expression, argument), depth + 1,));
-                let source =
-                    completed!(
-                        self.direct_call_type(Some(callee), callee_type, Some(argument), 1,)
-                    );
+            FlowAssignmentSource::DirectCall(callee, argument) => {
+                let callee_type = completed!(self.flow_source(file, callee, depth + 1));
+                let argument = completed!(self.flow_source(file, argument, depth + 1));
+                let source = completed!(self.direct_call_type(
+                    Some(callee.1),
+                    callee_type,
+                    Some(argument),
+                    1,
+                ));
                 (source, None)
             }
             FlowAssignmentSource::Join(_) => return Completion::Deferred,
@@ -330,6 +356,7 @@ impl Checker<'_> {
         depth: usize,
     ) -> Completion<TypeId> {
         let never = self.store.builtins.never;
+        let incomplete = |this: &Self, ty| matches!(this.store.kind(ty), TypeKind::Intersection(_));
         let select = |when_true, when_false| {
             Completion::Complete(if truthy { when_true } else { when_false })
         };
@@ -360,9 +387,7 @@ impl Checker<'_> {
                     depth,
                 )) {
                     overlap.push(candidate);
-                } else if self.predicate_type_is_incomplete(member)
-                    || self.predicate_type_is_incomplete(candidate)
-                {
+                } else if incomplete(self, member) || incomplete(self, candidate) {
                     return Completion::Deferred;
                 } else if !self.predicate_types_are_disjoint(member, candidate) {
                     all_disjoint = false;
@@ -386,13 +411,13 @@ impl Checker<'_> {
         if truthy {
             return Completion::Complete(true_part);
         }
-        let true_part_is_incomplete = self.predicate_type_is_incomplete(true_part);
+        let true_part_is_incomplete = incomplete(self, true_part);
         let mut retained = Vec::new();
         for member in source {
             if completed!(self.flow_related(member, true_part, RelationMode::Subtype, depth)) {
                 continue;
             }
-            if true_part_is_incomplete || self.predicate_type_is_incomplete(member) {
+            if true_part_is_incomplete || incomplete(self, member) {
                 return Completion::Deferred;
             }
             retained.push(member);
@@ -417,10 +442,6 @@ impl Checker<'_> {
                 .to_vec(),
             _ => vec![ty],
         }
-    }
-
-    fn predicate_type_is_incomplete(&self, ty: TypeId) -> bool {
-        matches!(self.store.kind(ty), TypeKind::Intersection(_))
     }
 
     fn predicate_type_is_structural(&self, ty: TypeId) -> bool {
@@ -500,10 +521,26 @@ impl Checker<'_> {
     ) -> Completion<TypeId> {
         self.filter_flow_type(ty, depth, |this, member, depth| {
             let member = completed!(this.force_operand(member, depth));
-            this.typeof_witness_for_type(member)
-                .map_or(Completion::Deferred, |witness| {
-                    Completion::Complete(values.contains(witness) == include)
-                })
+            let kind = this.store.kind(member);
+            let witness = Self::predicate_scalar_domain(kind).or(match kind {
+                TypeKind::Array(_) | TypeKind::Tuple(_) | TypeKind::ClassInstance { .. } => {
+                    Some(TypeofWitness::Object)
+                }
+                TypeKind::Object(shape) => Some(
+                    if shape.call_signatures.is_empty() && shape.construct_signatures.is_empty() {
+                        TypeofWitness::Object
+                    } else {
+                        TypeofWitness::Function
+                    },
+                ),
+                TypeKind::ClassConstructor { .. }
+                | TypeKind::Function(_)
+                | TypeKind::ShapeFunction(_) => Some(TypeofWitness::Function),
+                _ => None,
+            });
+            witness.map_or(Completion::Deferred, |witness| {
+                Completion::Complete(values.contains(witness) == include)
+            })
         })
     }
 
@@ -570,14 +607,10 @@ impl Checker<'_> {
                 .collect::<Vec<_>>();
             return Completion::Complete(self.store.union(literals, UnionPolicy::Canonical));
         }
+        let never = self.store.builtins.never;
+        let select = |matched| Completion::Complete(if matched == include { ty } else { never });
         match self.store.kind(ty).clone() {
-            TypeKind::LiteralString(value, _) => {
-                Completion::Complete(if values.contains(&value) == include {
-                    ty
-                } else {
-                    self.store.builtins.never
-                })
-            }
+            TypeKind::LiteralString(value, _) => select(values.contains(&value)),
             TypeKind::Any | TypeKind::Never | TypeKind::Error | TypeKind::Invalid(_) => {
                 Completion::Complete(ty)
             }
@@ -589,11 +622,7 @@ impl Checker<'_> {
             | TypeKind::BigInt
             | TypeKind::Symbol
             | TypeKind::LiteralBoolean(_, _)
-            | TypeKind::LiteralNumber(_, _) => Completion::Complete(if include {
-                self.store.builtins.never
-            } else {
-                ty
-            }),
+            | TypeKind::LiteralNumber(_, _) => select(false),
             _ => Completion::Deferred,
         }
     }
@@ -619,27 +648,5 @@ impl Checker<'_> {
             }
         }
         Completion::Complete(self.store.union(retained, UnionPolicy::Canonical))
-    }
-
-    fn typeof_witness_for_type(&self, ty: TypeId) -> Option<TypeofWitness> {
-        let kind = self.store.kind(ty);
-        if let Some(witness) = Self::predicate_scalar_domain(kind) {
-            return Some(witness);
-        }
-        match kind {
-            TypeKind::Array(_) | TypeKind::Tuple(_) | TypeKind::ClassInstance { .. } => {
-                Some(TypeofWitness::Object)
-            }
-            TypeKind::Object(shape)
-                if shape.call_signatures.is_empty() && shape.construct_signatures.is_empty() =>
-            {
-                Some(TypeofWitness::Object)
-            }
-            TypeKind::Object(_)
-            | TypeKind::ClassConstructor { .. }
-            | TypeKind::Function(_)
-            | TypeKind::ShapeFunction(_) => Some(TypeofWitness::Function),
-            _ => None,
-        }
     }
 }
