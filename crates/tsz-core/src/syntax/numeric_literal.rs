@@ -63,11 +63,7 @@ impl NumberLiteral {
         let Self::Separated(literal) = self else {
             return false;
         };
-        let selected = if preserve_separators {
-            &literal.raw
-        } else {
-            &literal.canonical
-        };
+        let selected = self.emit_text(preserve_separators);
         !literal.with_radix_specifier
             && !selected
                 .bytes()

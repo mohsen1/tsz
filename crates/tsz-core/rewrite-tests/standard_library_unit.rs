@@ -52,3 +52,37 @@ fn generated_function_string_methods_and_member_ids_are_stable() {
         ARRAY_FUNCTION_MEMBER_OWNER_TYPES
     );
 }
+
+#[test]
+fn generated_array_search_member_ids_follow_structural_library_order() {
+    let es5 = library("es5").expect("pinned ES5 library");
+    assert_eq!(es5.array_search_method_names, &["indexOf", "lastIndexOf"]);
+
+    let environment = StandardLibraryEnvironment::from_roots(&["es5"]);
+    let owner = environment
+        .resolve("Array", Meaning::Type)
+        .expect("ambient Array type");
+    for (local, name) in ["indexOf", "lastIndexOf"].into_iter().enumerate() {
+        assert_eq!(
+            environment.array_search_member(name, |_| false),
+            Some(StandardLibraryMemberId {
+                owner,
+                local: local as u32,
+            })
+        );
+    }
+    assert_eq!(
+        environment.array_search_member("renamedMissing", |_| false),
+        None
+    );
+    assert_eq!(environment.array_search_member("indexOf", |_| true), None);
+    assert_eq!(
+        StandardLibraryEnvironment::from_roots(&[]).array_search_member("indexOf", |_| false),
+        None
+    );
+    assert_eq!(
+        StandardLibraryEnvironment::from_roots(&["es2015.core"])
+            .array_search_member("indexOf", |_| false),
+        None
+    );
+}

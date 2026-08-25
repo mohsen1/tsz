@@ -250,18 +250,9 @@ impl Checker<'_> {
         scope: ScopeId,
         parameters: &[Parameter],
     ) {
-        let context = SemanticDescendantContext::deferred(scope);
-        let mut adapter = SemanticDescendantAdapter {
-            checker: self,
-            file,
-            function_action: FunctionLikeExpressionAction::SemanticOwner,
-            nested_action: NestedSemanticAction::FunctionLikeOwners,
-            allow_identifier_semantics: false,
-            _order: std::marker::PhantomData,
-        };
         for parameter in parameters {
             if let Some(initializer) = &parameter.initializer {
-                walk_expression_descendants(&mut adapter, &context, initializer);
+                self.check_function_like_expression_descendants(file, scope, initializer);
             }
         }
     }
@@ -336,16 +327,14 @@ impl Checker<'_> {
                                 initializer,
                                 expected,
                             );
+                        } else if is_lexical_this_call_host(initializer) {
+                            self.infer_expression(file, member_scope, initializer, None);
                         } else {
-                            if is_lexical_this_call_host(initializer) {
-                                self.infer_expression(file, member_scope, initializer, None);
-                            } else {
-                                self.check_function_like_expression_descendants(
-                                    file,
-                                    member_scope,
-                                    initializer,
-                                );
-                            }
+                            self.check_function_like_expression_descendants(
+                                file,
+                                member_scope,
+                                initializer,
+                            );
                         }
                     }
                 }

@@ -13,7 +13,7 @@ use super::{
 };
 use crate::semantics::types::{
     Completion, DeferredType, IndexKeyKind, IndexSignature, ObjectShape, Property, ShapeParameter,
-    ShapeSignature, TypeId, TypeKind,
+    ShapeSignature, TypeId, TypeKind, TypeStore,
 };
 
 impl Checker<'_> {
@@ -700,37 +700,6 @@ impl Checker<'_> {
         }
         let kind = self.store.kind(ty).clone();
         let result = match kind {
-            TypeKind::Array(child) => self.shape_child_type_supported(child, active),
-            TypeKind::Tuple(children)
-            | TypeKind::Union(children)
-            | TypeKind::Intersection(children) => {
-                for child in children {
-                    completed!(self.shape_child_type_supported(child, active));
-                }
-                Completion::Complete(())
-            }
-            TypeKind::Object(shape) => self.shape_children_supported(&shape, active),
-            TypeKind::ClassInstance {
-                arguments,
-                properties,
-                ..
-            } => {
-                for argument in arguments {
-                    completed!(self.shape_child_type_supported(argument, active));
-                }
-                self.shape_children_supported(&properties, active)
-            }
-            TypeKind::ShapeFunction(signature) => {
-                for child in signature
-                    .parameters
-                    .iter()
-                    .map(|parameter| parameter.ty)
-                    .chain(std::iter::once(signature.return_type))
-                {
-                    completed!(self.shape_child_type_supported(child, active));
-                }
-                Completion::Complete(())
-            }
             TypeKind::Deferred(deferred @ DeferredType::Reference { .. }) => {
                 let DeferredType::Reference {
                     declaration,
@@ -802,42 +771,20 @@ impl Checker<'_> {
                     Completion::Limit => Completion::Limit,
                 }
             }
+            // Authored callables and unresolved children both lack a definitive shape.
             TypeKind::Function(_) | TypeKind::Deferred(_) => Completion::Deferred,
-            TypeKind::Error | TypeKind::Invalid(_) | non_recursive_type_kind!() => {
+            TypeKind::Invalid(_) => Completion::Complete(()),
+            kind => {
+                let mut children = Vec::new();
+                TypeStore::push_type_children(&kind, &mut children);
+                for child in children {
+                    completed!(self.shape_child_type_supported(child, active));
+                }
                 Completion::Complete(())
             }
         };
         active.remove(&ty);
         result
-    }
-
-    fn shape_children_supported(
-        &mut self,
-        shape: &ObjectShape,
-        active: &mut HashSet<TypeId>,
-    ) -> Completion<()> {
-        for child in shape
-            .properties
-            .iter()
-            .map(|property| property.ty)
-            .chain(
-                shape
-                    .call_signatures
-                    .iter()
-                    .chain(&shape.construct_signatures)
-                    .flat_map(|signature| {
-                        signature
-                            .parameters
-                            .iter()
-                            .map(|parameter| parameter.ty)
-                            .chain(std::iter::once(signature.return_type))
-                    }),
-            )
-            .chain(shape.index_signatures.iter().map(|index| index.value))
-        {
-            completed!(self.shape_child_type_supported(child, active));
-        }
-        Completion::Complete(())
     }
 
     fn force_reference_shape(

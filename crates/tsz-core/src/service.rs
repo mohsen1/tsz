@@ -15,16 +15,12 @@ use crate::program::{
 };
 use crate::source::{NodeId, Span};
 use crate::syntax::{
-    Expression, ExpressionKind, ExpressionRoot, ExpressionTraversal, FunctionLikeSyntax, Statement,
-    StatementKind, VariableKind, contains_matching_expression, for_each_statement_in,
+    Expression, ExpressionKind, ExpressionRoot, ExpressionTraversal, FunctionLikeSyntax,
+    StatementKind, contains_matching_expression, for_each_statement_in,
 };
 
 mod display;
 mod navigation;
-
-use display::{
-    display_parameter, display_parameter_type, display_type_node, display_variable_type,
-};
 
 pub use navigation::{
     DefinitionAndBoundSpan, DefinitionInfo, DocumentHighlights, HighlightSpan, ReferenceEntry,
@@ -231,7 +227,7 @@ impl LanguageService {
             {
                 return None;
             }
-            quick_info_in_statements(&file.syntax.statements, offset)
+            navigation::NavigationIndex::build(&output.program).quick_info(path, offset)
         })
     }
 
@@ -452,91 +448,6 @@ fn capability_scope_at(file: &ProgramFile, offset: u32) -> Option<CapabilityScop
         .map(|owner| CapabilityScope::node(file.source.id, owner))
 }
 
-fn quick_info_in_statements(statements: &[Statement], offset: u32) -> Option<QuickInfo> {
-    let mut info = None;
-    for_each_statement_in(statements, &mut |statement| {
-        if info.is_none() {
-            info = quick_info_at_statement(statement, offset);
-        }
-    });
-    info
-}
-
-fn quick_info_at_statement(statement: &Statement, offset: u32) -> Option<QuickInfo> {
-    match &statement.kind {
-        StatementKind::Variable(declaration) if contains(declaration.name_span, offset) => {
-            let annotation = display_variable_type(declaration)?;
-            let declaration_kind = match declaration.declaration_kind {
-                VariableKind::Const => "const",
-                VariableKind::Let => "let",
-                VariableKind::Var => "var",
-            };
-            Some(QuickInfo {
-                kind: declaration_kind.to_string(),
-                text_span: text_span(declaration.name_span),
-                display: format!("{declaration_kind} {}: {annotation}", declaration.name),
-            })
-        }
-        StatementKind::Function(declaration) if contains(declaration.name_span, offset) => {
-            if !declaration.type_parameters.is_empty() {
-                return None;
-            }
-            let parameters = declaration
-                .parameters
-                .iter()
-                .map(display_parameter)
-                .collect::<Option<Vec<_>>>()?
-                .join(", ");
-            let result = display_type_node(declaration.return_type.as_ref()?)?;
-            Some(QuickInfo {
-                kind: "function".to_string(),
-                text_span: text_span(declaration.name_span),
-                display: format!("function {}({parameters}): {result}", declaration.name),
-            })
-        }
-        StatementKind::TypeAlias(declaration) if contains(declaration.name_span, offset) => {
-            if !declaration.type_parameters.is_empty() {
-                return None;
-            }
-            Some(QuickInfo {
-                kind: "type".to_string(),
-                text_span: text_span(declaration.name_span),
-                display: format!(
-                    "type {} = {}",
-                    declaration.name,
-                    display_type_node(&declaration.ty)?
-                ),
-            })
-        }
-        StatementKind::Interface(declaration) if contains(declaration.name_span, offset) => {
-            if !declaration.type_parameters.is_empty() {
-                return None;
-            }
-            Some(QuickInfo {
-                kind: "interface".to_string(),
-                text_span: text_span(declaration.name_span),
-                display: format!("interface {}", declaration.name),
-            })
-        }
-        StatementKind::Import(_)
-        | StatementKind::Export(_)
-        | StatementKind::Variable(_)
-        | StatementKind::Function(_)
-        | StatementKind::Class(_)
-        | StatementKind::TypeAlias(_)
-        | StatementKind::Interface(_)
-        | StatementKind::Break(_)
-        | StatementKind::Continue(_)
-        | StatementKind::Return(_)
-        | StatementKind::Block(_)
-        | StatementKind::If(_)
-        | StatementKind::Switch(_)
-        | StatementKind::Expression(_)
-        | StatementKind::Empty
-        | StatementKind::Unknown => None,
-    }
-}
-
 fn function_expression_initializer_owner(expression: &Expression) -> Option<NodeId> {
     let expression = expression.peel_parentheses_and_assertions();
     let ExpressionKind::FunctionLike(function) = &expression.kind else {
@@ -551,13 +462,6 @@ fn normalize_path(path: &str) -> String {
 
 const fn contains(span: Span, offset: u32) -> bool {
     span.start <= offset && offset <= span.end
-}
-
-const fn text_span(span: Span) -> TextSpan {
-    TextSpan {
-        start: span.start,
-        length: span.len(),
-    }
 }
 
 #[cfg(test)]

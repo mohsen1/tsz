@@ -3,6 +3,16 @@ use crate::syntax::{
     AuthoredBindingName, ParserRecoveryKind, TokenKind, VariableDeclaration, VariableKind,
 };
 
+const fn delimiter_depth_after(kind: TokenKind, depth: u32) -> u32 {
+    match kind {
+        TokenKind::LeftParen | TokenKind::LeftBracket | TokenKind::LeftBrace => depth + 1,
+        TokenKind::RightParen | TokenKind::RightBracket | TokenKind::RightBrace => {
+            depth.saturating_sub(1)
+        }
+        _ => depth,
+    }
+}
+
 impl Parser<'_> {
     pub(super) fn starts_import_declaration(&self) -> bool {
         self.at(TokenKind::Import)
@@ -241,15 +251,7 @@ impl Parser<'_> {
                     _ => {}
                 }
             }
-            match kind {
-                TokenKind::LeftParen | TokenKind::LeftBracket | TokenKind::LeftBrace => depth += 1,
-                TokenKind::RightParen | TokenKind::RightBracket | TokenKind::RightBrace
-                    if depth > 0 =>
-                {
-                    depth -= 1
-                }
-                _ => {}
-            }
+            depth = delimiter_depth_after(kind, depth);
             *cursor += 1;
         }
         false
@@ -402,15 +404,7 @@ impl Parser<'_> {
             {
                 break;
             }
-            match kind {
-                TokenKind::LeftParen | TokenKind::LeftBracket | TokenKind::LeftBrace => depth += 1,
-                TokenKind::RightParen | TokenKind::RightBracket | TokenKind::RightBrace
-                    if depth > 0 =>
-                {
-                    depth -= 1
-                }
-                _ => {}
-            }
+            depth = delimiter_depth_after(kind, depth);
             *cursor += 1;
         }
     }

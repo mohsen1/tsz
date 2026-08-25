@@ -185,16 +185,9 @@ impl Diagnostic {
 
 /// Merge worker-private diagnostic buffers under one deterministic total key.
 pub fn sort_and_deduplicate(diagnostics: &mut Vec<Diagnostic>) {
-    sort_and_deduplicate_by(diagnostics, |diagnostic| diagnostic.file_id);
-}
-
-fn sort_and_deduplicate_by<K: Ord>(
-    diagnostics: &mut Vec<Diagnostic>,
-    file_key: impl Fn(&Diagnostic) -> Option<K>,
-) {
     diagnostics.sort_by(|left, right| {
         let left_key = (
-            file_key(left),
+            left.file_id,
             &left.file,
             left.start,
             left.code,
@@ -202,7 +195,7 @@ fn sort_and_deduplicate_by<K: Ord>(
             &left.message_text,
         );
         let right_key = (
-            file_key(right),
+            right.file_id,
             &right.file,
             right.start,
             right.code,

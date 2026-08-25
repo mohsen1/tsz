@@ -154,6 +154,10 @@ name = "rewrite_element_access"
 path = "rewrite-tests/element_access.rs"
 
 [[test]]
+name = "rewrite_array_search_methods"
+path = "rewrite-tests/array_search_methods.rs"
+
+[[test]]
 name = "rewrite_element_access_containment"
 path = "rewrite-tests/element_access_containment.rs"
 

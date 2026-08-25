@@ -43,6 +43,7 @@ struct GeneratedLibrary {
     value_names: &'static [&'static str],
     string_record_type_names: &'static [&'static str],
     function_zero_argument_string_method_names: &'static [&'static str],
+    array_search_method_names: &'static [&'static str],
 }
 
 include!(concat!(env!("OUT_DIR"), "/standard_library_data.rs"));
@@ -186,6 +187,29 @@ impl StandardLibraryEnvironment {
                 kind: member.kind,
             }
         }
+    }
+
+    #[must_use]
+    pub(crate) fn array_search_member(
+        &self,
+        name: &str,
+        mut has_authored_declarations: impl FnMut(DeclId) -> bool,
+    ) -> Option<StandardLibraryMemberId> {
+        let owner = self.resolve("Array", Meaning::Type)?;
+        let local = ARRAY_SEARCH_METHOD_NAMES.binary_search(&name).ok()?;
+        (!has_authored_declarations(owner)
+            && self.selected_libraries.iter().any(|library_name| {
+                library(library_name).is_some_and(|library| {
+                    library
+                        .array_search_method_names
+                        .binary_search(&name)
+                        .is_ok()
+                })
+            }))
+        .then_some(StandardLibraryMemberId {
+            owner,
+            local: local as u32,
+        })
     }
 
     #[must_use]

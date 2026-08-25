@@ -10,6 +10,7 @@ struct LibraryIndex {
     value_names: BTreeSet<String>,
     string_record_type_names: BTreeSet<String>,
     function_zero_argument_string_method_names: BTreeSet<String>,
+    array_search_method_names: BTreeSet<String>,
 }
 
 fn main() {
@@ -33,22 +34,7 @@ fn main() {
         let name = library_name(&path);
         let source = fs::read_to_string(&path).unwrap();
         let references = reference_libraries(&source);
-        let (
-            type_names,
-            value_names,
-            string_record_type_names,
-            function_zero_argument_string_method_names,
-        ) = declaration_names(&source);
-        libraries.insert(
-            name,
-            LibraryIndex {
-                references,
-                type_names,
-                value_names,
-                string_record_type_names,
-                function_zero_argument_string_method_names,
-            },
-        );
+        libraries.insert(name, declaration_names(&source, references));
     }
     for (name, library) in &libraries {
         for reference in &library.references {
@@ -87,20 +73,14 @@ fn reference_libraries(source: &str) -> Vec<String> {
     references
 }
 
-fn declaration_names(
-    source: &str,
-) -> (
-    BTreeSet<String>,
-    BTreeSet<String>,
-    BTreeSet<String>,
-    BTreeSet<String>,
-) {
+fn declaration_names(source: &str, references: Vec<String>) -> LibraryIndex {
     let tokens = tokens(source);
     let mut scopes = Vec::new();
     let mut type_names = BTreeSet::new();
     let mut value_names = BTreeSet::new();
     let mut string_record_type_names = BTreeSet::new();
     let mut function_zero_argument_string_method_names = BTreeSet::new();
+    let mut array_search_method_names = BTreeSet::new();
 
     for (index, token) in tokens.iter().enumerate() {
         match token.as_str() {
@@ -131,6 +111,9 @@ fn declaration_names(
                             function_zero_argument_string_method_names
                                 .extend(zero_argument_string_methods(&tokens, index));
                         }
+                        if token == "interface" && name == "Array" {
+                            array_search_method_names.extend(array_search_methods(&tokens, index));
+                        }
                     }
                     "class" | "enum" | "namespace" | "module" => {
                         type_names.insert(name.clone());
@@ -149,12 +132,14 @@ fn declaration_names(
         }
     }
 
-    (
+    LibraryIndex {
+        references,
         type_names,
         value_names,
         string_record_type_names,
         function_zero_argument_string_method_names,
-    )
+        array_search_method_names,
+    }
 }
 
 /// Extract the pinned intrinsic interface member shape `name(): string`.
@@ -187,6 +172,59 @@ fn zero_argument_string_methods(tokens: &[String], interface_start: usize) -> BT
                     && shape[3] == ":"
                     && shape[4] == "string"
                     && shape[5] == ";"
+                {
+                    methods.insert(shape[0].clone());
+                    index += shape.len();
+                    continue;
+                }
+            }
+            _ => {}
+        }
+        index += 1;
+    }
+    methods
+}
+
+/// Extract direct members from canonical pinned `interface Array<E>`
+/// declarations whose complete callable shape is
+/// `(required E, optional number) => number`.
+fn array_search_methods(tokens: &[String], interface_start: usize) -> BTreeSet<String> {
+    let Some(header) = tokens.get(interface_start..interface_start + 6) else {
+        return BTreeSet::new();
+    };
+    if header[0] != "interface"
+        || !is_identifier(&header[1])
+        || header[2] != "<"
+        || !is_identifier(&header[3])
+        || header[4] != ">"
+        || header[5] != "{"
+    {
+        return BTreeSet::new();
+    }
+    let element_parameter = &header[3];
+    let mut methods = BTreeSet::new();
+    let mut depth = 1_u32;
+    let mut index = interface_start + header.len();
+    while index < tokens.len() && depth > 0 {
+        match tokens[index].as_str() {
+            "{" => depth += 1,
+            "}" => depth -= 1,
+            _ if depth == 1 => {
+                if let Some(shape) = tokens.get(index..index + 14)
+                    && is_identifier(&shape[0])
+                    && shape[1] == "("
+                    && is_identifier(&shape[2])
+                    && shape[3] == ":"
+                    && shape[4] == *element_parameter
+                    && shape[5] == ","
+                    && is_identifier(&shape[6])
+                    && shape[7] == "?"
+                    && shape[8] == ":"
+                    && shape[9] == "number"
+                    && shape[10] == ")"
+                    && shape[11] == ":"
+                    && shape[12] == "number"
+                    && shape[13] == ";"
                 {
                     methods.insert(shape[0].clone());
                     index += shape.len();
@@ -270,7 +308,8 @@ fn tokens(source: &str) -> Vec<String> {
                     }
                 }
             }
-            b'{' | b'}' | b'[' | b']' | b'(' | b')' | b'<' | b'>' | b',' | b':' | b';' | b'=' => {
+            b'{' | b'}' | b'[' | b']' | b'(' | b')' | b'<' | b'>' | b',' | b':' | b';' | b'='
+            | b'?' => {
                 tokens.push(char::from(bytes[index]).to_string());
                 index += 1;
             }
@@ -326,9 +365,18 @@ fn generated_source(libraries: &BTreeMap<String, LibraryIndex>) -> String {
         output.push_str(&render_strings(
             &library.function_zero_argument_string_method_names,
         ));
+        output.push_str(", array_search_method_names: &");
+        output.push_str(&render_strings(&library.array_search_method_names));
         output.push_str(" },\n");
     }
     output.push_str("];\n");
+    let array_search_method_names = libraries
+        .values()
+        .flat_map(|library| library.array_search_method_names.iter().cloned())
+        .collect::<BTreeSet<_>>();
+    output.push_str("static ARRAY_SEARCH_METHOD_NAMES: &[&str] = &");
+    output.push_str(&render_strings(&array_search_method_names));
+    output.push_str(";\n");
     output
 }
 

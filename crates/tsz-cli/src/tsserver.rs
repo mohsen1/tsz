@@ -2,7 +2,6 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
-use serde::ser::{SerializeMap, SerializeSeq};
 use serde::{Serialize, Serializer};
 use serde_json::{Value, json};
 use tsz::CompilerOptions;
@@ -527,31 +526,19 @@ impl Serialize for OrderedReferencesJson<'_> {
         S: Serializer,
     {
         match self.0 {
-            Value::Null => serializer.serialize_unit(),
-            Value::Bool(value) => serializer.serialize_bool(*value),
-            Value::Number(value) => value.serialize(serializer),
-            Value::String(value) => serializer.serialize_str(value),
-            Value::Array(values) => {
-                let mut sequence = serializer.serialize_seq(Some(values.len()))?;
-                for value in values {
-                    sequence.serialize_element(&Self(value))?;
-                }
-                sequence.end()
-            }
+            Value::Array(values) => serializer.collect_seq(values.iter().map(Self)),
             Value::Object(values) => {
                 let mut keys = values.keys().map(String::as_str).collect::<Vec<_>>();
-                let field_order = references_field_order(values);
-                keys.sort_by(|left, right| {
-                    field_priority(field_order, left)
-                        .cmp(&field_priority(field_order, right))
-                        .then_with(|| left.cmp(right))
+                let order = references_field_order(values);
+                keys.sort_by_key(|key| {
+                    order
+                        .iter()
+                        .position(|candidate| candidate == key)
+                        .unwrap_or(order.len())
                 });
-                let mut map = serializer.serialize_map(Some(values.len()))?;
-                for key in keys {
-                    map.serialize_entry(key, &Self(&values[key]))?;
-                }
-                map.end()
+                serializer.collect_map(keys.into_iter().map(|key| (key, Self(&values[key]))))
             }
+            value => value.serialize(serializer),
         }
     }
 }
@@ -583,13 +570,6 @@ fn references_field_order(values: &serde_json::Map<String, Value>) -> &'static [
     } else {
         &[]
     }
-}
-
-fn field_priority(field_order: &[&str], key: &str) -> usize {
-    field_order
-        .iter()
-        .position(|candidate| *candidate == key)
-        .unwrap_or(field_order.len())
 }
 
 fn response(
@@ -668,38 +648,23 @@ fn position_to_offset(text: &str, line: u32, offset: u32) -> Option<u32> {
     if line == 0 || offset == 0 {
         return None;
     }
-    let mut current_line = 1_u32;
-    let mut line_start = 0_usize;
-    for (index, byte) in text.bytes().enumerate() {
-        if current_line == line {
-            break;
-        }
-        if byte == b'\n' {
-            current_line += 1;
-            line_start = index + 1;
-        }
-    }
-    if current_line != line {
-        return None;
-    }
-
+    let line_start = match line {
+        1 => 0,
+        _ => text.match_indices('\n').nth(line as usize - 2)?.0 + 1,
+    };
     let target_units = offset - 1;
-    let line_text = text.get(line_start..)?;
+    let line_text = text.get(line_start..)?.split(['\r', '\n']).next()?;
     let mut units = 0_u32;
     for (relative, character) in line_text.char_indices() {
         if units == target_units {
             return Some((line_start + relative) as u32);
-        }
-        if character == '\r' || character == '\n' {
-            break;
         }
         units += character.len_utf16() as u32;
         if units > target_units {
             return None;
         }
     }
-    (units == target_units)
-        .then_some((line_start + line_text.find(['\r', '\n']).unwrap_or(line_text.len())) as u32)
+    (units == target_units).then_some((line_start + line_text.len()) as u32)
 }
 
 fn protocol_span(text: &str, span: TextSpan) -> Value {
@@ -728,17 +693,8 @@ fn offset_to_position(text: &str, offset: u32) -> Value {
     let end = usize::try_from(offset)
         .unwrap_or(usize::MAX)
         .min(text.len());
-    let mut line = 1_u32;
-    let mut column = 1_u32;
-    for character in text[..end].chars() {
-        if character == '\n' {
-            line += 1;
-            column = 1;
-        } else {
-            column += character.len_utf16() as u32;
-        }
-    }
-    json!({"line": line, "offset": column})
+    let (line, line_text) = text[..end].split('\n').enumerate().last().unwrap();
+    json!({"line": line as u32 + 1, "offset": line_text.encode_utf16().count() as u32 + 1})
 }
 
 fn byte_to_utf16_offset(text: &str, offset: u32) -> u32 {

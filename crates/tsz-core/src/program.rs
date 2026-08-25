@@ -288,6 +288,14 @@ impl Program {
         self.standard_library.declaration(id)
     }
 
+    /// Conservatively fence a canonical library type when any authored global
+    /// declaration participates in its merge group.
+    pub(crate) fn standard_library_type_has_authored_declarations(&self, owner: DeclId) -> bool {
+        self.standard_library
+            .declaration(owner)
+            .is_none_or(|owner| self.resolve_global(&owner.name, Meaning::Type) != Some(owner.id))
+    }
+
     /// Query one canonical library owner's authored global group for a member.
     pub(crate) fn standard_library_type_has_authored_member(
         &self,

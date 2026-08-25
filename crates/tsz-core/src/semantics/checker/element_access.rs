@@ -9,6 +9,7 @@ use crate::source::FileId;
 use crate::standard_library::{StandardLibraryMemberKind, StandardLibraryValueMemberLookup};
 use crate::syntax::{Expression, ExpressionKind, ObjectProperty, parse_number_literal};
 
+use super::call_model::InferredCallCallee;
 use super::relation_diagnostic::RelationDiagnosticStyle;
 use super::{Checker, DeclarationModel};
 
@@ -85,6 +86,45 @@ impl Checker<'_> {
                 mode,
             }));
         self.complete_type(query).unwrap_or(query)
+    }
+
+    pub(super) fn infer_element_access_call_callee(
+        &mut self,
+        file: FileId,
+        scope: ScopeId,
+        object: &Expression,
+        index: &Expression,
+    ) -> InferredCallCallee {
+        let object = self.infer_expression(file, scope, object, None);
+        let index = self.infer_expression(file, scope, index, None);
+        let query = self
+            .store
+            .intern(TypeKind::Deferred(DeferredType::ElementAccess {
+                object,
+                index,
+                mode: ElementAccessMode::Read,
+            }));
+        if let TypeKind::LiteralString(name, _) = self.store.kind(index).clone() {
+            match self.array_search_call_projection(object, &name) {
+                Completion::Complete(Some((ty, id))) => {
+                    return InferredCallCallee {
+                        ty,
+                        library_member: Completion::Complete(Some(id)),
+                    };
+                }
+                Completion::Complete(None) => {}
+                Completion::Deferred | Completion::Cycle | Completion::Limit => {
+                    return InferredCallCallee {
+                        ty: query,
+                        library_member: Completion::Deferred,
+                    };
+                }
+            }
+        }
+        InferredCallCallee {
+            ty: self.complete_type(query).unwrap_or(query),
+            library_member: Completion::Complete(None),
+        }
     }
 
     pub(super) fn infer_assignment_target(

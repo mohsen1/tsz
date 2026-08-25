@@ -134,17 +134,7 @@ impl<'a> Scanner<'a> {
             }
             if self.offset == 0 && self.bytes.get(..2) == Some(b"#!") {
                 self.output.has_unmodeled_trivia = true;
-                self.offset += 2;
-                while self
-                    .bytes
-                    .get(self.offset)
-                    .is_some_and(|byte| *byte != b'\n' && *byte != b'\r')
-                    && !self.is_unicode_line_separator_at(self.offset)
-                {
-                    self.offset += 1;
-                }
-                self.output.has_unicode_line_comment_terminator |=
-                    self.is_unicode_line_separator_at(self.offset);
+                self.skip_line_body();
                 continue;
             }
             while self.skip_one_whitespace() {}
@@ -152,17 +142,7 @@ impl<'a> Scanner<'a> {
                 let start = self.offset;
                 let placement = self.comment_placement(start);
                 let source_position = self.comment_source_position();
-                self.offset += 2;
-                while self
-                    .bytes
-                    .get(self.offset)
-                    .is_some_and(|byte| *byte != b'\n' && *byte != b'\r')
-                    && !self.is_unicode_line_separator_at(self.offset)
-                {
-                    self.offset += 1;
-                }
-                self.output.has_unicode_line_comment_terminator |=
-                    self.is_unicode_line_separator_at(self.offset);
+                self.skip_line_body();
                 let plain = self.is_plain_line_comment(start, self.offset);
                 let class = if is_recognized_triple_slash(&self.source.text[start..self.offset]) {
                     CommentClass::TripleSlashReference
@@ -227,6 +207,20 @@ impl<'a> Scanner<'a> {
             }
             break;
         }
+    }
+
+    fn skip_line_body(&mut self) {
+        self.offset += 2;
+        while self
+            .bytes
+            .get(self.offset)
+            .is_some_and(|byte| *byte != b'\n' && *byte != b'\r')
+            && !self.is_unicode_line_separator_at(self.offset)
+        {
+            self.offset += 1;
+        }
+        self.output.has_unicode_line_comment_terminator |=
+            self.is_unicode_line_separator_at(self.offset);
     }
 
     fn comment_placement(&self, comment_start: usize) -> CommentPlacement {
@@ -597,19 +591,12 @@ impl<'a> Scanner<'a> {
             "Unterminated regular expression literal.".to_string(),
             1161,
         ));
-        if at_line_break {
-            Some(ScannedRegularExpressionLiteral::unterminated_at_line_break(
-                self.source,
-                start,
-                end,
-            ))
-        } else {
-            Some(ScannedRegularExpressionLiteral::unterminated(
-                self.source,
-                start,
-                end,
-            ))
-        }
+        Some(ScannedRegularExpressionLiteral::unterminated(
+            self.source,
+            start,
+            end,
+            at_line_break,
+        ))
     }
 
     fn scan_template_start(&mut self, start: usize) -> TokenKind {

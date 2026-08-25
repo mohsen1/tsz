@@ -18,11 +18,10 @@ use super::{
 
 mod flow_containment;
 mod function_products;
-mod unsigned_shift;
+mod inferred_products;
 use flow_containment::FileBoundary;
 
-/// A compiler operation or externally visible product whose answer must be
-/// either claimed or withheld for a specific scope.
+/// A compiler operation or product whose answer is claimed or withheld by scope.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum CapabilityTarget {
     SemanticCheck,
@@ -119,10 +118,11 @@ pub(crate) enum SemanticGap {
     FunctionLikeTypeParameters,
     FunctionExpressionBindingName,
     DeclarationFunctionSummary,
+    /// Remove when declaration emit consumes checked expression summaries.
+    DeclarationExpressionSummary,
     FunctionLikeService,
     ExplicitThisParameter,
-    /// Remove only when TS7.0.2 operands/results, TS18046/TS2365, TS6807
-    /// category/span/folding, and checked declaration-expression summaries are owned.
+    /// Remove with TS7.0.2 TS18046/TS2365/TS6807, folding, and checked summaries.
     UnsignedRightShift,
 }
 
@@ -927,7 +927,7 @@ fn derive_file_nonclaims(
         file.syntax.parser_recovery_facts(),
         &javascript_jsdoc_casts,
     );
-    unsigned_shift::add_inferred_product_nonclaims(nonclaims, file);
+    inferred_products::add_nonclaims(nonclaims, file);
 
     if file.syntax.statements.iter().any(|statement| {
         matches!(

@@ -14,8 +14,9 @@ use super::{
 use crate::semantics::relation::RelationContext;
 use crate::semantics::types::{
     Completion, DeferredType, IndexKeyKind, InvalidType, LiteralProvenance, ParameterType,
-    Property, TypeId, TypeKind, UnionPolicy,
+    Property, ShapeParameter, ShapeSignature, TypeId, TypeKind, UnionPolicy,
 };
+use crate::standard_library::StandardLibraryMemberId;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum PropertyOrderTree {
@@ -412,11 +413,23 @@ impl Checker<'_> {
         object: &Expression,
         name: &str,
         name_span: Span,
-        allow_shape_callable: bool,
+        mut library_member: Option<&mut Completion<Option<StandardLibraryMemberId>>>,
     ) -> TypeId {
         let object_type = self.infer_expression(file, scope, object, None);
+        if let Some(library_member) = library_member.as_deref_mut() {
+            match self.array_search_call_projection(object_type, name) {
+                Completion::Complete(Some((ty, id))) => {
+                    *library_member = Completion::Complete(Some(id));
+                    return ty;
+                }
+                Completion::Complete(None) => {}
+                Completion::Deferred => *library_member = Completion::Deferred,
+                Completion::Cycle => *library_member = Completion::Cycle,
+                Completion::Limit => *library_member = Completion::Limit,
+            }
+        }
         let property_order = self.property_order_for_expression(file, scope, object);
-        let completion = self.property_type(object_type, name, allow_shape_callable);
+        let completion = self.property_type(object_type, name, library_member.is_some());
         match self.require_completion(completion) {
             Completion::Complete(Some(ty)) => ty,
             Completion::Complete(None) => {
@@ -442,6 +455,49 @@ impl Checker<'_> {
                 self.deferred_property_type_with_order(object_type, name, name_span, property_order)
             }
         }
+    }
+
+    pub(super) fn array_search_call_projection(
+        &mut self,
+        object: TypeId,
+        name: &str,
+    ) -> Completion<Option<(TypeId, StandardLibraryMemberId)>> {
+        let Some(object) = self.complete_type(object) else {
+            return Completion::Deferred;
+        };
+        let TypeKind::Array(element) = *self.store.kind(object) else {
+            return Completion::Complete(None);
+        };
+        if element == self.store.builtins.never {
+            return Completion::Deferred;
+        }
+        let Some(id) = self
+            .program
+            .standard_library
+            .array_search_member(name, |owner| {
+                self.program
+                    .standard_library_type_has_authored_declarations(owner)
+            })
+        else {
+            return Completion::Deferred;
+        };
+        let ty = self.store.intern(TypeKind::ShapeFunction(ShapeSignature {
+            untyped_javascript: false,
+            parameters: vec![
+                ShapeParameter {
+                    ty: element,
+                    optional: false,
+                    rest: false,
+                },
+                ShapeParameter {
+                    ty: self.store.builtins.number,
+                    optional: true,
+                    rest: false,
+                },
+            ],
+            return_type: self.store.builtins.number,
+        }));
+        Completion::Complete(Some((ty, id)))
     }
 
     fn property_type(

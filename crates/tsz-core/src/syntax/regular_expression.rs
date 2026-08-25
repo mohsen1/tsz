@@ -86,16 +86,13 @@ impl ScannedRegularExpressionLiteral {
         Self::new(source, start, pattern_end, flags_start, end, true, false)
     }
 
-    pub(super) fn unterminated(source: &SourceText, start: usize, end: usize) -> Self {
-        Self::new(source, start, end, end, end, false, false)
-    }
-
-    pub(super) fn unterminated_at_line_break(
+    pub(super) fn unterminated(
         source: &SourceText,
         start: usize,
         end: usize,
+        recovery_at_line_break: bool,
     ) -> Self {
-        Self::new(source, start, end, end, end, false, true)
+        Self::new(source, start, end, end, end, false, recovery_at_line_break)
     }
 
     fn new(

@@ -55,6 +55,13 @@ pub fn main_entry(arguments: impl IntoIterator<Item = OsString>) -> Result<i32> 
     }
 }
 
+pub fn main_exit_code() -> i32 {
+    main_entry(std::env::args_os().skip(1)).unwrap_or_else(|error| {
+        println!("{error:#}");
+        1
+    })
+}
+
 pub fn parse_arguments(arguments: &[OsString]) -> Result<Invocation> {
     let mut invocation = Invocation {
         pretty: true,

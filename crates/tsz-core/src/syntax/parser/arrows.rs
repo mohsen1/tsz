@@ -24,15 +24,8 @@ impl Parser<'_> {
         &mut self,
         has_arrow: bool,
     ) -> (ArrowBody, Option<crate::source::Span>) {
-        if self.at(TokenKind::LeftBrace) {
-            let (statements, span) = self.parse_block();
-            return (ArrowBody::Block(statements), span);
-        }
-        if has_arrow {
-            return (
-                ArrowBody::Expression(Box::new(self.parse_expression())),
-                None,
-            );
+        if self.at(TokenKind::LeftBrace) || has_arrow {
+            return self.parse_arrow_body();
         }
         let token = *self.current();
         let expression = if token.kind.is_identifier() {

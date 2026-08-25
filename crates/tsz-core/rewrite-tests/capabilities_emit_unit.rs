@@ -187,6 +187,85 @@ fn inferred_return_nonclaim_withholds_only_its_file_declaration_product() {
 }
 
 #[test]
+fn inferred_call_products_have_one_typed_declaration_boundary() {
+    let file = program_file(
+        0,
+        "inferred-calls.ts",
+        concat!(
+            "declare const values:number[];",
+            "const inferred=values.indexOf(1);",
+            "const typed:number=values.indexOf(1);",
+            "function defaulted(value=values.indexOf(1)):void{}",
+            "function typedDefault(value:number=values.indexOf(1)):void{}",
+            "class Holder{inferred=values.indexOf(1);",
+            "typed:number=values.indexOf(1);",
+            "method(value=values.indexOf(1)):void{}",
+            "typedMethod(value:number=values.indexOf(1)):void{}}",
+            "export = values.indexOf(1);",
+        ),
+    );
+    let [_, inferred, typed, defaulted, typed_default, class, export] =
+        file.syntax.statements.as_slice()
+    else {
+        panic!("seven declarations expected")
+    };
+    let StatementKind::Class(class_declaration) = &class.kind else {
+        panic!("class declaration expected")
+    };
+    let analysis = default_analysis(&file);
+    let affected = [
+        inferred.id,
+        defaulted.id,
+        class_declaration.members[0].id,
+        class_declaration.members[2].id,
+        export.id,
+    ];
+    for owner in affected {
+        let scope = CapabilityScope::node(file.source.id, owner);
+        let CapabilityClaim::Nonclaimed(reasons) =
+            analysis.claim(CapabilityTarget::Declaration, scope)
+        else {
+            panic!("inferred call declaration product must stay nonclaimed")
+        };
+        assert_eq!(
+            reasons.copied().collect::<Vec<_>>(),
+            [CapabilityNonclaim {
+                target: CapabilityTarget::Declaration,
+                scope,
+                reason: NonclaimReason::Semantic(SemanticGap::DeclarationExpressionSummary),
+                deletion: DeletionCondition::SemanticOwner(
+                    SemanticGap::DeclarationExpressionSummary,
+                ),
+            }]
+        );
+    }
+    for owner in [
+        typed.id,
+        typed_default.id,
+        class_declaration.members[1].id,
+        class_declaration.members[3].id,
+    ] {
+        assert!(
+            analysis
+                .claim(
+                    CapabilityTarget::Declaration,
+                    CapabilityScope::node(file.source.id, owner),
+                )
+                .is_claimed(),
+            "authored type makes the declaration product independent"
+        );
+    }
+    assert!(
+        analysis
+            .claim(
+                CapabilityTarget::JavaScript,
+                CapabilityScope::File(file.source.id),
+            )
+            .is_claimed()
+    );
+}
+
+#[test]
 fn unsigned_shift_withholds_only_inferred_declaration_and_quick_info_products() {
     let file = program_file(
         0,

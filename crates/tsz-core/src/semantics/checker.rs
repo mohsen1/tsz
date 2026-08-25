@@ -709,7 +709,7 @@ impl<'a> Checker<'a> {
                 object,
                 name,
                 name_span,
-            } => self.infer_member_expression(file, scope, object, name, *name_span, false),
+            } => self.infer_member_expression(file, scope, object, name, *name_span, None),
             ExpressionKind::ElementAccess { object, index } => self
                 .infer_element_access_expression(
                     file,

@@ -19,10 +19,10 @@ use crate::syntax::{
     walk_statement_descendants,
 };
 
-use super::{
-    TextSpan, display_parameter, display_parameter_type, display_type_node, display_variable_type,
-    normalize_path,
+use super::display::{
+    display_parameter, display_parameter_type, display_type_node, display_variable_type,
 };
+use super::{QuickInfo, TextSpan, normalize_path};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -154,6 +154,7 @@ struct DeclarationMetadata {
     is_ambient: bool,
     display: String,
     display_parts: Vec<SymbolDisplayPart>,
+    quick_info_kind: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -214,6 +215,25 @@ impl NavigationIndex {
                 })
                 .collect(),
             text_span: occurrence.span,
+        })
+    }
+
+    pub(super) fn quick_info(&self, path: &str, offset: u32) -> Option<QuickInfo> {
+        let occurrence = self.occurrence_at(path, offset)?;
+        if !occurrence.is_declaration {
+            return None;
+        }
+        let normalized_path = normalize_path(path);
+        let declaration = self
+            .declarations
+            .get(&occurrence.key)?
+            .iter()
+            .find(|item| item.file_name == normalized_path && item.span == occurrence.span)?;
+        let kind = declaration.quick_info_kind.as_ref()?;
+        Some(QuickInfo {
+            kind: kind.clone(),
+            text_span: occurrence.span,
+            display: declaration.display.clone(),
         })
     }
 
@@ -389,9 +409,9 @@ impl NavigationIndex {
             self.declaration_keys.insert(declaration.id, key.clone());
 
             if self.declarations.get(&key).is_some_and(|items| {
-                items
-                    .iter()
-                    .any(|item| item.span == text_span(declaration.name_span))
+                items.iter().any(|item| {
+                    item.file_name == file_name && item.span == text_span(declaration.name_span)
+                })
             }) {
                 continue;
             }
@@ -426,6 +446,7 @@ impl NavigationIndex {
                     || vec![display_part(&fallback_display, "text")],
                     |metadata| metadata.display_parts.clone(),
                 ),
+                quick_info_kind: syntax.and_then(|metadata| metadata.quick_info_kind.clone()),
             };
             self.declarations
                 .entry(key.clone())
@@ -1023,6 +1044,7 @@ impl ReferenceVisitor<'_> {
                 is_ambient: false,
                 display: display.clone(),
                 display_parts: vec![display_part(&display, "text")],
+                quick_info_kind: None,
             });
         self.record_occurrence(key.clone(), span, true, true);
         key
@@ -1067,6 +1089,7 @@ struct SyntaxMetadata {
     ambient: bool,
     display: String,
     display_parts: Vec<SymbolDisplayPart>,
+    quick_info_kind: Option<String>,
 }
 
 fn syntax_declaration_metadata(file: &ProgramFile) -> BTreeMap<(u32, u32), SyntaxMetadata> {
@@ -1100,7 +1123,7 @@ impl SyntaxMetadataCollector<'_> {
                         (binding.local_span, statement.span),
                         "alias",
                         (false, ambient_context),
-                        (display.clone(), vec![display_part(&display, "text")]),
+                        (display.clone(), vec![display_part(&display, "text")], None),
                     );
                 }
             }
@@ -1111,6 +1134,7 @@ impl SyntaxMetadataCollector<'_> {
                     VariableKind::Var => "var",
                 };
                 let ty = display_variable_type(declaration);
+                let quick_info_kind = ty.as_ref().map(|_| kind.to_string());
                 let display = ty.as_ref().map_or_else(
                     || format!("{kind} {}", declaration.name),
                     |ty| format!("{kind} {}: {ty}", declaration.name),
@@ -1122,6 +1146,7 @@ impl SyntaxMetadataCollector<'_> {
                     (
                         display,
                         variable_display_parts(kind, &declaration.name, ty.as_deref()),
+                        quick_info_kind,
                     ),
                 );
             }
@@ -1139,6 +1164,10 @@ impl SyntaxMetadataCollector<'_> {
                     }
                     _ => format!("function {}", declaration.name),
                 };
+                let quick_info_kind = (declaration.type_parameters.is_empty()
+                    && parameters.is_some()
+                    && result.is_some())
+                .then(|| "function".to_string());
                 self.insert(
                     (declaration.name_span, statement.span),
                     "function",
@@ -1146,7 +1175,11 @@ impl SyntaxMetadataCollector<'_> {
                         declaration.exported,
                         ambient_context || declaration.declared,
                     ),
-                    (display, function_display_parts(declaration)),
+                    (
+                        display,
+                        function_display_parts(declaration),
+                        quick_info_kind,
+                    ),
                 );
             }
             StatementKind::Class(declaration) => {
@@ -1165,28 +1198,45 @@ impl SyntaxMetadataCollector<'_> {
                             display_part(" ", "space"),
                             display_part(&declaration.name, "className"),
                         ],
+                        None,
                     ),
                 );
             }
             StatementKind::TypeAlias(declaration) => {
-                let display = display_type_node(&declaration.ty).map_or_else(
+                let rendered = display_type_node(&declaration.ty);
+                let display = rendered.as_ref().map_or_else(
                     || format!("type {}", declaration.name),
                     |ty| format!("type {} = {ty}", declaration.name),
                 );
+                let quick_info_kind = (declaration.type_parameters.is_empty()
+                    && rendered.is_some())
+                .then(|| "type".to_string());
                 self.insert(
                     (declaration.name_span, statement.span),
                     "type",
                     (declaration.exported, ambient_context),
-                    (display.clone(), vec![display_part(&display, "text")]),
+                    (
+                        display.clone(),
+                        vec![display_part(&display, "text")],
+                        quick_info_kind,
+                    ),
                 );
             }
             StatementKind::Interface(declaration) => {
                 let display = format!("interface {}", declaration.name);
+                let quick_info_kind = declaration
+                    .type_parameters
+                    .is_empty()
+                    .then(|| "interface".to_string());
                 self.insert(
                     (declaration.name_span, statement.span),
                     "interface",
                     (declaration.exported, ambient_context),
-                    (display.clone(), vec![display_part(&display, "text")]),
+                    (
+                        display.clone(),
+                        vec![display_part(&display, "text")],
+                        quick_info_kind,
+                    ),
                 );
             }
             StatementKind::Export(_)
@@ -1208,7 +1258,7 @@ impl SyntaxMetadataCollector<'_> {
         (name_span, context_span): (Span, Span),
         kind: &str,
         (exported, ambient): (bool, bool),
-        (display, display_parts): (String, Vec<SymbolDisplayPart>),
+        (display, display_parts, quick_info_kind): (String, Vec<SymbolDisplayPart>, Option<String>),
     ) {
         self.metadata.insert(
             (name_span.start, name_span.end),
@@ -1219,6 +1269,7 @@ impl SyntaxMetadataCollector<'_> {
                 ambient,
                 display,
                 display_parts,
+                quick_info_kind,
             },
         );
     }
@@ -1297,6 +1348,7 @@ fn insert_parameter_metadata(
             ambient,
             display,
             display_parts: parameter_display_parts(parameter),
+            quick_info_kind: None,
         },
     );
 }

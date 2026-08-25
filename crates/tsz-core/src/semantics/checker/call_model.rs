@@ -7,6 +7,7 @@ use crate::semantics::types::{
     CallArityGap, CallArityResolution, Completion, DeferredType, ShapeSignature, TypeId, TypeKind,
 };
 use crate::source::{DeclId, FileId};
+use crate::standard_library::StandardLibraryMemberId;
 use crate::syntax::{Expression, ExpressionKind, FunctionLikeExpression, ParameterNameKind};
 
 use super::{
@@ -14,6 +15,12 @@ use super::{
     generic_call_instantiation::IdentityCallInstantiation,
     relation_diagnostic::{ContextualType, RelationDiagnosticOutcome, RelationDiagnosticStyle},
 };
+
+#[derive(Debug, Clone)]
+pub(super) struct InferredCallCallee {
+    pub(super) ty: TypeId,
+    pub(super) library_member: Completion<Option<StandardLibraryMemberId>>,
+}
 
 impl Checker<'_> {
     pub(super) fn callable_signature(&self, ty: TypeId) -> Option<ShapeSignature> {
@@ -36,27 +43,54 @@ impl Checker<'_> {
         arguments: &[Expression],
     ) -> TypeId {
         let member_callee = callee.peel_parentheses();
-        let callee_query = if let ExpressionKind::Member {
-            object,
-            name,
-            name_span,
-        } = &member_callee.kind
-        {
-            let ty = self
+        let inferred_callee = match &member_callee.kind {
+            ExpressionKind::Member {
+                object,
+                name,
+                name_span,
+            } => self
                 .lexical_this_method_type(file, scope, object, name)
-                .unwrap_or_else(|| {
-                    self.infer_member_expression(file, scope, object, name, *name_span, true)
-                });
-            self.expression_type_origins.insert((file, callee.id), ty);
-            ty
-        } else {
-            self.infer_expression(file, scope, callee, None)
+                .map_or_else(
+                    || {
+                        let mut library_member = Completion::Complete(None);
+                        let ty = self.infer_member_expression(
+                            file,
+                            scope,
+                            object,
+                            name,
+                            *name_span,
+                            Some(&mut library_member),
+                        );
+                        InferredCallCallee { ty, library_member }
+                    },
+                    |ty| InferredCallCallee {
+                        ty,
+                        library_member: Completion::Complete(None),
+                    },
+                ),
+            ExpressionKind::ElementAccess { object, index } => {
+                self.infer_element_access_call_callee(file, scope, object, index)
+            }
+            _ => InferredCallCallee {
+                ty: self.infer_expression(file, scope, callee, None),
+                library_member: Completion::Complete(None),
+            },
         };
+        let callee_query = inferred_callee.ty;
+        self.expression_type_origins
+            .insert((file, callee.id), callee_query);
         if has_type_arguments {
             self.observe_file_completion(file, SemanticCompletion::Deferred);
             self.infer_deferred_call_arguments(file, scope, arguments);
             return self.store.deferred_generic_call();
         }
+        let Completion::Complete(standard_library_array_search_member) =
+            inferred_callee.library_member
+        else {
+            self.observe_file_completion(file, SemanticCompletion::Deferred);
+            self.infer_deferred_call_arguments(file, scope, arguments);
+            return self.deferred_call_type(callee_query, arguments.len());
+        };
         let completion = self.force_type(callee_query, 0);
         let callee_type = match self.require_completion(completion) {
             Completion::Complete(callee_type) => callee_type,
@@ -131,6 +165,11 @@ impl Checker<'_> {
         let too_few = arity.is_some_and(|(minimum, _)| arguments.len() < minimum);
         let too_many = arity
             .is_some_and(|(_, maximum)| maximum.is_some_and(|maximum| arguments.len() > maximum));
+        if (too_few || too_many) && standard_library_array_search_member.is_some() {
+            self.observe_file_completion(file, SemanticCompletion::Deferred);
+            self.infer_deferred_call_arguments(file, scope, arguments);
+            return self.deferred_call_type(callee_type, arguments.len());
+        }
         let mut generic_instantiation = signature_owner
             .map(|owner| IdentityCallInstantiation::new(&self.store, owner, &signature));
         if too_many && let Some(instantiation) = &mut generic_instantiation {
@@ -159,6 +198,8 @@ impl Checker<'_> {
                 if maximum.is_none() { 2555 } else { 2554 },
             );
         }
+        let standard_library_array_search = standard_library_array_search_member.is_some();
+        let mut deferred_standard_library_argument = false;
         let mut stopped_argument_relations = arity.is_none() || too_few || too_many;
         for (index, argument) in arguments.iter().enumerate() {
             let Some(parameter) = signature
@@ -218,6 +259,17 @@ impl Checker<'_> {
             }
             let context = ContextualType::Known(expected);
             let actual = self.infer_expression_contextual(file, scope, argument, context);
+            if standard_library_array_search {
+                match self.array_search_argument_disposition(index, expected, actual) {
+                    Completion::Complete(true) => continue,
+                    Completion::Complete(false) => {}
+                    Completion::Deferred | Completion::Cycle | Completion::Limit => {
+                        deferred_standard_library_argument = true;
+                        stopped_argument_relations = true;
+                        continue;
+                    }
+                }
+            }
             let target_order =
                 self.relation_order_for_call_argument(file, scope, callee, index, parameter.rest);
             if !stopped_argument_relations {
@@ -234,6 +286,10 @@ impl Checker<'_> {
                     RelationDiagnosticOutcome::Compatible
                 );
             }
+        }
+        if deferred_standard_library_argument {
+            self.observe_file_completion(file, SemanticCompletion::Deferred);
+            return self.deferred_call_type(callee_type, arguments.len());
         }
         let direct_declaration = match self.store.kind(callee_query) {
             TypeKind::Deferred(DeferredType::Value(declaration)) => Some(*declaration),
@@ -371,6 +427,40 @@ impl Checker<'_> {
         for argument in arguments {
             let _ =
                 self.infer_expression_contextual(file, scope, argument, ContextualType::Deferred);
+        }
+    }
+
+    fn array_search_argument_disposition(
+        &mut self,
+        index: usize,
+        expected: TypeId,
+        actual: TypeId,
+    ) -> Completion<bool> {
+        if index == 0 && matches!(self.store.kind(expected), TypeKind::TypeParameter { .. }) {
+            let actual = (actual == expected)
+                .then_some(actual)
+                .or_else(|| self.complete_type(actual));
+            return if actual == Some(expected) {
+                Completion::Complete(true)
+            } else {
+                Completion::Deferred
+            };
+        }
+        if index != 1 {
+            return Completion::Complete(false);
+        }
+        let actual = match self.store.kind(actual) {
+            TypeKind::Deferred(_) => self.complete_type(actual),
+            _ => Some(actual),
+        };
+        let Some(actual) = actual else {
+            return Completion::Deferred;
+        };
+        match self.store.kind(actual) {
+            TypeKind::Undefined => Completion::Complete(true),
+            TypeKind::Null if self.options.effective_strict_null_checks() => Completion::Deferred,
+            TypeKind::TypeParameter { .. } | TypeKind::Union(_) => Completion::Deferred,
+            _ => Completion::Complete(false),
         }
     }
 

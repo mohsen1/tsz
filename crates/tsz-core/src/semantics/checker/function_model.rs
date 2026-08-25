@@ -1018,7 +1018,7 @@ impl Checker<'_> {
             sites: Vec::new(),
             supported: true,
         };
-        collect_return_sites(body, &mut analysis);
+        let definitely_returns = collect_return_sites(body, &mut analysis);
         if !analysis.supported {
             return Completion::Deferred;
         }
@@ -1033,7 +1033,7 @@ impl Checker<'_> {
         {
             return Completion::Complete(self.store.builtins.void);
         }
-        if !block_definitely_returns(body) {
+        if !definitely_returns {
             return Completion::Deferred;
         }
 
@@ -1114,24 +1114,36 @@ const fn bounded_inferred_return(kind: &TypeKind) -> bool {
     )
 }
 
-fn collect_return_sites<'a>(statements: &'a [Statement], analysis: &mut ReturnAnalysis<'a>) {
+fn collect_return_sites<'a>(
+    statements: &'a [Statement],
+    analysis: &mut ReturnAnalysis<'a>,
+) -> bool {
+    let mut definitely_returns = false;
     for statement in statements {
-        match &statement.kind {
-            StatementKind::Return(expression) => analysis.sites.push(ReturnSite {
-                statement,
-                expression: expression.as_ref(),
-            }),
+        definitely_returns |= match &statement.kind {
+            StatementKind::Return(expression) => {
+                analysis.sites.push(ReturnSite {
+                    statement,
+                    expression: expression.as_ref(),
+                });
+                true
+            }
             StatementKind::Block(statements) => collect_return_sites(statements, analysis),
             StatementKind::If(control_flow) => {
-                collect_return_sites(
+                let then_returns = collect_return_sites(
                     std::slice::from_ref(control_flow.then_statement.as_ref()),
                     analysis,
                 );
-                if let Some(else_statement) = &control_flow.else_statement {
-                    collect_return_sites(std::slice::from_ref(else_statement.as_ref()), analysis);
-                }
+                let else_statement = control_flow.else_statement.as_deref();
+                let else_returns = else_statement.is_some_and(|statement| {
+                    collect_return_sites(std::slice::from_ref(statement), analysis)
+                });
+                then_returns && else_returns
             }
-            StatementKind::Switch(_) | StatementKind::Unknown => analysis.supported = false,
+            StatementKind::Switch(_) | StatementKind::Unknown => {
+                analysis.supported = false;
+                false
+            }
             StatementKind::Import(_)
             | StatementKind::Export(_)
             | StatementKind::Variable(_)
@@ -1142,38 +1154,8 @@ fn collect_return_sites<'a>(statements: &'a [Statement], analysis: &mut ReturnAn
             | StatementKind::Break(_)
             | StatementKind::Continue(_)
             | StatementKind::Expression(_)
-            | StatementKind::Empty => {}
-        }
+            | StatementKind::Empty => false,
+        };
     }
-}
-
-fn block_definitely_returns(statements: &[Statement]) -> bool {
-    statements.iter().any(statement_definitely_returns)
-}
-
-fn statement_definitely_returns(statement: &Statement) -> bool {
-    match &statement.kind {
-        StatementKind::Return(_) => true,
-        StatementKind::Block(statements) => block_definitely_returns(statements),
-        StatementKind::If(control_flow) => {
-            let Some(else_statement) = &control_flow.else_statement else {
-                return false;
-            };
-            statement_definitely_returns(&control_flow.then_statement)
-                && statement_definitely_returns(else_statement)
-        }
-        StatementKind::Import(_)
-        | StatementKind::Export(_)
-        | StatementKind::Variable(_)
-        | StatementKind::Function(_)
-        | StatementKind::Class(_)
-        | StatementKind::TypeAlias(_)
-        | StatementKind::Interface(_)
-        | StatementKind::Switch(_)
-        | StatementKind::Break(_)
-        | StatementKind::Continue(_)
-        | StatementKind::Expression(_)
-        | StatementKind::Empty
-        | StatementKind::Unknown => false,
-    }
+    definitely_returns
 }

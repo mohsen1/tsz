@@ -70,3 +70,38 @@ fn capability_scope_prefers_adjacent_starts_and_nested_right_edges() {
         assert_eq!(definition.definitions[0].name, "sibling");
     }
 }
+
+#[test]
+fn quick_info_keeps_same_offset_merged_interfaces_across_root_orders() {
+    let name_start = "interface ".len() as u32;
+    for paths in [["alpha.ts", "omega.ts"], ["omega.ts", "alpha.ts"]] {
+        let roots = paths
+            .into_iter()
+            .map(|path| {
+                let source = match path {
+                    "alpha.ts" => "interface Shared { alpha: number; }",
+                    "omega.ts" => "interface Shared { omega: string; }",
+                    _ => unreachable!(),
+                };
+                SourceInput::new(path, Arc::<str>::from(source))
+            })
+            .collect();
+        let output = Compiler::new().compile(roots, &CompilerOptions::default());
+        let index = navigation::NavigationIndex::build(&output.program);
+
+        for path in paths {
+            let info = index
+                .quick_info(path, name_start)
+                .expect("each merged declaration keeps its file-local quick info");
+            assert_eq!(info.kind, "interface");
+            assert_eq!(
+                info.text_span,
+                TextSpan {
+                    start: name_start,
+                    length: "Shared".len() as u32,
+                }
+            );
+            assert_eq!(info.display, "interface Shared");
+        }
+    }
+}

@@ -266,32 +266,22 @@ impl Binder {
             let Some(name_span) = host.name_span else {
                 continue;
             };
-            if matches!(
-                host.kind,
-                UnmodeledDeclarationHostKind::Namespace
-                    | UnmodeledDeclarationHostKind::Module
-                    | UnmodeledDeclarationHostKind::Using
-            ) {
+            let meanings: &[Meaning] = match host.kind {
+                UnmodeledDeclarationHostKind::Namespace | UnmodeledDeclarationHostKind::Module => {
+                    &[Meaning::Value, Meaning::Type]
+                }
+                UnmodeledDeclarationHostKind::Using => &[Meaning::Value],
+                UnmodeledDeclarationHostKind::ExternalModule
+                | UnmodeledDeclarationHostKind::Global => &[],
+            };
+            for meaning in meanings {
                 self.declare(
                     scope,
                     statement.id,
                     name,
                     name_span,
                     DeclarationKind::UnmodeledHost,
-                    Meaning::Value,
-                );
-            }
-            if matches!(
-                host.kind,
-                UnmodeledDeclarationHostKind::Namespace | UnmodeledDeclarationHostKind::Module
-            ) {
-                self.declare(
-                    scope,
-                    statement.id,
-                    name,
-                    name_span,
-                    DeclarationKind::UnmodeledHost,
-                    Meaning::Type,
+                    *meaning,
                 );
             }
         }
