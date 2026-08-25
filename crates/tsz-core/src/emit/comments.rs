@@ -135,7 +135,7 @@ impl Printer<'_> {
         match separator {
             GapSeparator::Space | GapSeparator::Hanging if !ended_line => self.output.push(' '),
             GapSeparator::Space | GapSeparator::Indent if ended_line => self.write_indent(),
-            GapSeparator::Newline if !ended_line => self.output.push('\n'),
+            GapSeparator::Newline if !ended_line => self.write_newline(),
             GapSeparator::Hanging if ended_line => {
                 self.indent += 1;
                 self.write_indent();

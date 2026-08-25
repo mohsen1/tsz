@@ -225,7 +225,7 @@ impl<'a> Printer<'a> {
         let separator = if declaration.initializer.is_some() {
             Gap::Space
         } else {
-            Gap::None
+            Gap::Indent
         };
         self.write_gap(End(declaration.name_span.end), true, separator);
         if let Some(initializer) = &declaration.initializer {

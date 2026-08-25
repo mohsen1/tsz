@@ -329,6 +329,11 @@ fn if_statement_token_gaps_match_ts7_keyword_and_delimiter_owners() {
     let source = concat!(
         "/*1*/ if /*2*/ ( /*3*/ true /*4*/ ) /*5*/ {}\n\n",
         "/*1*/ if /*2*/ ( /*3*/ true /*4*/ ) /*5*/ {} /*6*/ else /*7*/  {}\n",
+        "if (renamed) { work(); } else { fallback(); }\n",
+        "if (renamed) work(); else fallback();\n",
+        "if (renamed) work(); /* block boundary */ else fallback();\n",
+        "if (renamed) work(); // line boundary\nelse fallback();\n",
+        "function wrapper() { if (renamed) work(); else fallback(); }\n",
     );
     assert_eq!(
         javascript(source, "", false),
@@ -337,6 +342,64 @@ fn if_statement_token_gaps_match_ts7_keyword_and_delimiter_owners() {
             "/*1*/ if /*2*/ ( /*3*/true /*4*/) /*5*/ { }\n",
             "/*1*/ if /*2*/ ( /*3*/true /*4*/) /*5*/ { } /*6*/\n",
             "else /*7*/ { }\n",
+            "if (renamed) {\n",
+            "    work();\n",
+            "}\n",
+            "else {\n",
+            "    fallback();\n",
+            "}\n",
+            "if (renamed)\n",
+            "    work();\n",
+            "else\n",
+            "    fallback();\n",
+            "if (renamed)\n",
+            "    work(); /* block boundary */\n",
+            "else\n",
+            "    fallback();\n",
+            "if (renamed)\n",
+            "    work(); // line boundary\n",
+            "else\n",
+            "    fallback();\n",
+            "function wrapper() {\n",
+            "    if (renamed)\n",
+            "        work();\n",
+            "    else\n",
+            "        fallback();\n",
+            "}\n",
+        )
+    );
+}
+
+#[test]
+fn no_initializer_variable_line_comment_gap_matches_ts7_nested_and_removed() {
+    let source = concat!(
+        "let renamed // top line\n",
+        ";\n",
+        "function wrapper() {\n",
+        "    var nested // nested line\n",
+        "    ;\n",
+        "}\n",
+    );
+    assert_eq!(
+        javascript(source, "", false),
+        concat!(
+            "\"use strict\";\n",
+            "let renamed // top line\n",
+            ";\n",
+            "function wrapper() {\n",
+            "    var nested // nested line\n",
+            "    ;\n",
+            "}\n",
+        )
+    );
+    assert_eq!(
+        javascript(source, "", true),
+        concat!(
+            "\"use strict\";\n",
+            "let renamed;\n",
+            "function wrapper() {\n",
+            "    var nested;\n",
+            "}\n",
         )
     );
 }
@@ -352,6 +415,11 @@ fn token_gap_comments_remove_cleanly_without_changing_nested_runtime_shape() {
         "if /*after-if*/ (/*after-open*/ true /*before-close*/) /*after-close*/ {\n",
         "    fn /*nested-call*/ ();\n",
         "} /*before-else*/ else /*after-else*/ { renamed /*pre-dot*/ . /*after-dot*/ value; }\n",
+        "function wrapper() {\n",
+        "    let nested /*removed block*/ // removed line\n",
+        "    ;\n",
+        "    if /*nested-if*/ (renamed) work /*then-call*/ (); /*between*/ else fallback /*else-call*/ ();\n",
+        "}\n",
     );
     assert_eq!(
         javascript(source, "", true),
@@ -367,6 +435,13 @@ fn token_gap_comments_remove_cleanly_without_changing_nested_runtime_shape() {
             "}\n",
             "else {\n",
             "    renamed.value;\n",
+            "}\n",
+            "function wrapper() {\n",
+            "    let nested;\n",
+            "    if (renamed)\n",
+            "        work();\n",
+            "    else\n",
+            "        fallback();\n",
             "}\n",
         )
     );
